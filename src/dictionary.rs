@@ -11,7 +11,7 @@ use html5ever::tendril::StrTendril;
 use html5ever::tokenizer::{
     BufferQueue, TagKind, Token, TokenSink, TokenSinkResult, Tokenizer, states::RawKind,
 };
-use icu_casemap::CaseMapper;
+use icu_casemap::{CaseMapper, CaseMapperBorrowed};
 
 const MAX_DIRECTORIES_DEPTH: usize = 2;
 const MAX_SCAN_ENTRIES: usize = 1024;
@@ -71,9 +71,8 @@ pub(crate) fn installed(root: &Path) -> io::Result<Vec<InstalledDictionary>> {
         .collect())
 }
 
-/// Find exact spellings in the configured dictionaries, then try Unicode
-/// caseless matching if no exact definition was found. Files are closed before
-/// returning so the caller can release its storage lease.
+/// Find exact and Unicode caseless headwords, then try optional synonym indexes
+/// if there is no headword definition. Close all files before returning.
 pub fn lookup(root: &Path, word: &str) -> io::Result<Vec<Definition>> {
     lookup_preferred(root, word, None)
 }
@@ -99,37 +98,70 @@ pub(crate) fn lookup_preferred(
         files[..=index].rotate_right(1);
     }
     let folded = CaseMapper::new().fold_string(word);
-    let mut exact = Vec::new();
-    let mut fallback = Vec::new();
+    let query = Query {
+        word,
+        folded: &folded,
+    };
+    let mut hits = Hits::new();
     let mut budget = LookupBudget {
         index_bytes: MAX_TOTAL_INDEX_BYTES,
         dictzip_bytes: MAX_DZ_LOOKUP_BYTES,
     };
-    let mut valid = 0;
+    let mut valid = Vec::new();
     let mut first_error = None;
-    for info in files {
-        match lookup_dictionary(&root, &info, word, &folded, &mut budget) {
-            Ok(found) => {
-                valid += 1;
-                let exact_room = MAX_RESULTS - exact.len();
-                let fallback_room = MAX_RESULTS - fallback.len();
-                exact.extend(found.exact.into_iter().take(exact_room));
-                fallback.extend(found.fallback.into_iter().take(fallback_room));
+    for path in files {
+        let result = (|| {
+            let info = Info::load(open_dictionary_file(&root, &path)?)?;
+            let found = lookup_dictionary(
+                &root,
+                &path,
+                &info,
+                IndexQuery::Headwords(query),
+                &mut budget,
+            )?;
+            Ok((info, found))
+        })();
+        match result {
+            Ok((info, found)) => {
+                valid.push((path, info));
+                hits.extend(found);
             }
             Err(error) => {
                 first_error.get_or_insert(error);
             }
         }
-        if exact.len() == MAX_RESULTS || budget.index_bytes == 0 {
+        if hits.exact.len() == MAX_RESULTS || budget.index_bytes == 0 {
             break;
         }
     }
-    if valid == 0
+    if valid.is_empty()
         && let Some(error) = first_error
     {
         return Err(error);
     }
-    Ok(if exact.is_empty() { fallback } else { exact })
+    if hits.is_empty() {
+        for (path, info) in valid {
+            let Ok(targets) = synonym_targets(&root, &path, &info, query, &mut budget) else {
+                // A malformed optional sidecar does not invalidate the base dictionary.
+                continue;
+            };
+            if !targets.is_empty()
+                && let Ok(found) = lookup_dictionary(
+                    &root,
+                    &path,
+                    &info,
+                    IndexQuery::Synonyms(targets),
+                    &mut budget,
+                )
+            {
+                hits.extend(found);
+            }
+            if hits.exact.len() == MAX_RESULTS || budget.index_bytes == 0 {
+                break;
+            }
+        }
+    }
+    Ok(hits.into_best())
 }
 
 fn dictionary_root(root: &Path) -> io::Result<Option<PathBuf>> {
@@ -177,6 +209,7 @@ fn dictionary_files(root: &Path) -> io::Result<Vec<PathBuf>> {
 struct Info {
     title: String,
     words: usize,
+    synonyms: Option<usize>,
     index_size: usize,
     offset_bytes: usize,
     fields: Option<Vec<u8>>,
@@ -199,6 +232,7 @@ impl Info {
         let mut version = "";
         let mut title = None;
         let mut words = None;
+        let mut synonyms = None;
         let mut index_size = None;
         let mut offset_bits = "32";
         let mut fields = None;
@@ -216,6 +250,7 @@ impl Info {
                     );
                 }
                 "wordcount" => words = positive_number(value, MAX_WORDS),
+                "synwordcount" => synonyms = positive_number(value, MAX_WORDS),
                 "idxfilesize" => index_size = positive_number(value, MAX_INDEX_BYTES),
                 "idxoffsetbits" => offset_bits = value,
                 "sametypesequence" => {
@@ -245,6 +280,7 @@ impl Info {
             title: title.ok_or_else(|| invalid("The dictionary has no title"))?,
             words: words
                 .ok_or_else(|| invalid("The dictionary word count is missing or too large"))?,
+            synonyms,
             index_size: index_size
                 .ok_or_else(|| invalid("The dictionary index size is missing or too large"))?,
             offset_bytes,
@@ -264,6 +300,59 @@ struct Hits<T> {
     fallback: Vec<T>,
 }
 
+impl<T> Hits<T> {
+    fn new() -> Self {
+        Self {
+            exact: Vec::new(),
+            fallback: Vec::new(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.exact.is_empty() && self.fallback.is_empty()
+    }
+
+    fn extend(&mut self, found: Self) {
+        self.exact
+            .extend(found.exact.into_iter().take(MAX_RESULTS - self.exact.len()));
+        self.fallback.extend(
+            found
+                .fallback
+                .into_iter()
+                .take(MAX_RESULTS - self.fallback.len()),
+        );
+    }
+
+    fn into_best(self) -> Vec<T> {
+        if self.exact.is_empty() {
+            self.fallback
+        } else {
+            self.exact
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Query<'a> {
+    word: &'a str,
+    folded: &'a str,
+}
+
+impl Query<'_> {
+    fn caseless(self, headword: &str, mapper: CaseMapperBorrowed<'_>) -> bool {
+        if headword.is_ascii() {
+            headword.eq_ignore_ascii_case(self.folded)
+        } else {
+            mapper.fold_string(headword) == self.folded
+        }
+    }
+}
+
+enum IndexQuery<'a> {
+    Headwords(Query<'a>),
+    Synonyms(Hits<usize>),
+}
+
 struct IndexMatch {
     word: String,
     offset: u64,
@@ -273,11 +362,10 @@ struct IndexMatch {
 fn lookup_dictionary(
     root: &Path,
     path: &Path,
-    word: &str,
-    folded: &str,
+    info: &Info,
+    query: IndexQuery<'_>,
     budget: &mut LookupBudget,
 ) -> io::Result<Hits<Definition>> {
-    let info = Info::load(open_dictionary_file(root, path)?)?;
     let (index, gzip) = open_variant(root, path, "idx", "idx.gz")?;
     let file_size = index.metadata()?.len();
     if gzip && file_size > MAX_COMPRESSED_INDEX_BYTES {
@@ -306,13 +394,12 @@ fn lookup_dictionary(
     let matches = if gzip {
         scan_index(
             MultiGzDecoder::new(index.take(file_size)),
-            &info,
-            word,
-            folded,
+            info,
+            query,
             data_size,
         )?
     } else {
-        scan_index(index, &info, word, folded, data_size)?
+        scan_index(index, info, query, data_size)?
     };
     let mut read_hits = |matches: Vec<IndexMatch>| -> io::Result<Vec<Definition>> {
         let mut definitions = Vec::new();
@@ -587,24 +674,88 @@ fn dictzip_table(mut extra: &[u8]) -> io::Result<(u64, Vec<u16>)> {
     })
 }
 
+fn synonym_targets(
+    root: &Path,
+    path: &Path,
+    info: &Info,
+    query: Query<'_>,
+    budget: &mut LookupBudget,
+) -> io::Result<Hits<usize>> {
+    let mut hits = Hits::new();
+    let Some(count) = info.synonyms else {
+        return Ok(hits);
+    };
+    let file = match open_dictionary_file(root, &path.with_extension("syn")) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(hits),
+        Err(error) => return Err(error),
+    };
+    let size = file.metadata()?.len();
+    let limit = MAX_INDEX_BYTES.min(budget.index_bytes.saturating_sub(info.index_size));
+    if size > limit as u64 || size < (count * 6) as u64 {
+        return Err(invalid(
+            "The dictionary synonym index exceeds its limits or is truncated",
+        ));
+    }
+    budget.index_bytes -= size as usize;
+    let mut index = BufReader::new(file.take(size + 1));
+    let mut word = Vec::with_capacity(MAX_WORD_BYTES + 1);
+    let mut ordinal = [0; 4];
+    let mut bytes_read = 0;
+    let mapper = CaseMapper::new();
+    for _ in 0..count {
+        word.clear();
+        bytes_read += (&mut index)
+            .take((MAX_WORD_BYTES + 1) as u64)
+            .read_until(0, &mut word)?;
+        if word.pop() != Some(0) || word.is_empty() {
+            return Err(invalid("A dictionary synonym is invalid or too long"));
+        }
+        let word =
+            std::str::from_utf8(&word).map_err(|_| invalid("Dictionary synonyms must be UTF-8"))?;
+        index.read_exact(&mut ordinal)?;
+        bytes_read += ordinal.len();
+        let target = u32::from_be_bytes(ordinal) as usize;
+        if target >= info.words {
+            return Err(invalid(
+                "A dictionary synonym references an absent index entry",
+            ));
+        }
+        let matches = if word == query.word {
+            &mut hits.exact
+        } else if hits.fallback.len() < MAX_RESULTS && query.caseless(word, mapper) {
+            &mut hits.fallback
+        } else {
+            continue;
+        };
+        if matches.len() < MAX_RESULTS && !matches.contains(&target) {
+            matches.push(target);
+        }
+    }
+    if bytes_read as u64 != size || !index.fill_buf()?.is_empty() {
+        return Err(invalid(
+            "The dictionary synonym count does not match its index",
+        ));
+    }
+    hits.exact.sort_unstable();
+    hits.fallback.sort_unstable();
+    Ok(hits)
+}
+
 fn scan_index(
     index: impl Read,
     info: &Info,
-    word: &str,
-    folded: &str,
+    query: IndexQuery<'_>,
     data_size: u64,
 ) -> io::Result<Hits<IndexMatch>> {
     let mut index = BufReader::new(index.take(info.index_size as u64 + 1));
-    let mut hits = Hits {
-        exact: Vec::new(),
-        fallback: Vec::new(),
-    };
+    let mut hits = Hits::new();
     let mut headword = Vec::with_capacity(MAX_WORD_BYTES + 1);
     let mut position = [0; 12];
     let record_size = info.offset_bytes + 4;
     let mut bytes_read = 0;
     let mapper = CaseMapper::new();
-    for _ in 0..info.words {
+    for ordinal in 0..info.words {
         headword.clear();
         bytes_read += (&mut index)
             .take((MAX_WORD_BYTES + 1) as u64)
@@ -631,15 +782,21 @@ fn scan_index(
         if size == 0 || size as usize > MAX_ENTRY_BYTES {
             continue;
         }
-        let matches = if headword == word {
-            &mut hits.exact
-        } else if hits.fallback.len() < MAX_RESULTS && {
-            if headword.is_ascii() {
-                headword.eq_ignore_ascii_case(folded)
-            } else {
-                mapper.fold_string(headword) == folded
+        let (exact, fallback) = match &query {
+            IndexQuery::Headwords(query) => {
+                let exact = headword == query.word;
+                let fallback =
+                    !exact && hits.fallback.len() < MAX_RESULTS && query.caseless(headword, mapper);
+                (exact, fallback)
             }
-        } {
+            IndexQuery::Synonyms(targets) => (
+                targets.exact.binary_search(&ordinal).is_ok(),
+                targets.fallback.binary_search(&ordinal).is_ok(),
+            ),
+        };
+        let matches = if exact {
+            &mut hits.exact
+        } else if fallback {
             &mut hits.fallback
         } else {
             continue;
@@ -847,6 +1004,20 @@ mod tests {
         fs::write(root.join(format!("{name}.dict")), data).unwrap();
     }
 
+    fn write_synonyms(root: &Path, name: &str, entries: &[(&str, u32)]) {
+        let path = root.join(format!("{name}.ifo"));
+        let mut info = fs::read_to_string(&path).unwrap();
+        info.push_str(&format!("synwordcount={}\n", entries.len()));
+        fs::write(path, info).unwrap();
+        let mut index = Vec::new();
+        for &(word, ordinal) in entries {
+            index.extend_from_slice(word.as_bytes());
+            index.push(0);
+            index.extend_from_slice(&ordinal.to_be_bytes());
+        }
+        fs::write(root.join(format!("{name}.syn")), index).unwrap();
+    }
+
     fn gzip(bytes: &[u8]) -> Vec<u8> {
         let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
         encoder.write_all(bytes).unwrap();
@@ -1029,6 +1200,90 @@ mod tests {
         let fallback =
             lookup_preferred(&temp.0, "word", Some(Path::new("../unavailable.ifo"))).unwrap();
         assert_eq!(fallback[0].dictionary, "Harbor");
+    }
+
+    #[test]
+    fn follows_synonym_ordinals_through_plain_and_compressed_dictionaries() {
+        let temp = TestDirectory::new();
+        write_dictionary(
+            &temp.0,
+            "Harbor",
+            "sametypesequence=m\n",
+            &[("lamp", b"First."), ("lantern", b"Second.")],
+        );
+        write_synonyms(
+            &temp.0,
+            "Harbor",
+            &[("firelight", 0), ("firelight", 1), ("Straße", 1)],
+        );
+        write_dictionary(
+            &temp.0,
+            "Shore",
+            "sametypesequence=m\n",
+            &[("torch", b"Third.")],
+        );
+        write_synonyms(&temp.0, "Shore", &[("firelight", 0), ("lantern", 0)]);
+        pack_dictionary(&temp.0, "Shore", 8);
+
+        let names = |rows: Vec<Definition>| {
+            rows.into_iter()
+                .map(|definition| (definition.word, definition.text))
+                .collect::<Vec<_>>()
+        };
+        let first = ("lamp".into(), "First.".into());
+        let second = ("lantern".into(), "Second.".into());
+        let third = ("torch".into(), "Third.".into());
+        assert_eq!(
+            names(lookup(&temp.0, "firelight").unwrap()),
+            vec![first.clone(), second.clone(), third.clone()]
+        );
+        assert_eq!(
+            names(lookup_preferred(&temp.0, "firelight", Some(Path::new("Shore.ifo"))).unwrap()),
+            vec![third, first, second.clone()]
+        );
+        assert_eq!(
+            names(lookup(&temp.0, "STRASSE").unwrap()),
+            vec![second.clone()]
+        );
+        for query in ["lantern", "LANTERN"] {
+            assert_eq!(
+                names(lookup_preferred(&temp.0, query, Some(Path::new("Shore.ifo"))).unwrap()),
+                vec![second.clone()]
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_or_missing_synonyms_leave_the_headword_available() {
+        let temp = TestDirectory::new();
+        write_dictionary(
+            &temp.0,
+            "Shore",
+            "sametypesequence=m\n",
+            &[("lamp", b"Still here.")],
+        );
+        write_synonyms(&temp.0, "Shore", &[("firelight", 0), ("lantern", 0)]);
+        let path = temp.0.join("Shore.syn");
+        let valid = fs::read(&path).unwrap();
+        let mut invalid_target = valid.clone();
+        *invalid_target.last_mut().unwrap() = 1;
+        let mut invalid_utf8 = valid.clone();
+        invalid_utf8[valid.len() - 5 - "lantern".len()] = 0xff;
+        let mut extra = valid.clone();
+        extra.push(0);
+        for bytes in [
+            &valid[..valid.len() - 1],
+            &invalid_target,
+            &invalid_utf8,
+            &extra,
+        ] {
+            fs::write(&path, bytes).unwrap();
+            assert!(lookup(&temp.0, "firelight").unwrap().is_empty());
+            assert_eq!(lookup(&temp.0, "lamp").unwrap()[0].text, "Still here.");
+        }
+        fs::remove_file(&path).unwrap();
+        assert!(lookup(&temp.0, "firelight").unwrap().is_empty());
+        assert_eq!(lookup(&temp.0, "lamp").unwrap()[0].text, "Still here.");
     }
 
     #[test]

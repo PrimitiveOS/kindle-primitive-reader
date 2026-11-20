@@ -1,5 +1,6 @@
 //! Static rendering for uniformly fixed-layout EPUB XHTML publications.
 use std::cell::{Ref, RefCell};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use parley::FontContext;
@@ -20,6 +21,7 @@ pub struct FixedEpub {
     spine: FixedSpine,
     fonts: FontContext,
     outline: Vec<PdfOutlineItem>,
+    printed_pages: Vec<(usize, String)>,
     cache: RefCell<Option<(usize, ImagePage)>>,
 }
 
@@ -191,6 +193,20 @@ impl FixedEpub {
                 depth: item.depth,
             })
             .collect();
+        let paths: BTreeMap<_, _> = book
+            .chapters
+            .iter()
+            .enumerate()
+            .map(|(index, chapter)| (chapter.href.as_str(), index))
+            .collect();
+        let printed_pages = book
+            .printed_pages()
+            .iter()
+            .filter_map(|entry| {
+                let destination = entry.destination.as_ref()?;
+                Some((*paths.get(destination.path.as_str())?, entry.label.clone()))
+            })
+            .collect();
         Ok(Some(Self {
             path: path.to_owned(),
             revision: book.revision(),
@@ -199,6 +215,7 @@ impl FixedEpub {
             author: book.author,
             fonts: font_context(fonts)?,
             outline,
+            printed_pages,
             cache: RefCell::new(None),
         }))
     }
@@ -278,6 +295,21 @@ impl FixedEpub {
 
     pub fn outline(&self) -> Vec<PdfOutlineItem> {
         self.outline.clone()
+    }
+
+    pub fn page_label(&self, page: usize) -> Option<&str> {
+        self.printed_pages
+            .iter()
+            .find_map(|(index, label)| (*index == page).then_some(label.as_str()))
+    }
+
+    pub fn find_page_label(&self, label: &str) -> Option<usize> {
+        let mut matches = self
+            .printed_pages
+            .iter()
+            .filter_map(|(page, value)| (value == label).then_some(*page));
+        let page = matches.next()?;
+        matches.all(|other| other == page).then_some(page)
     }
 
     /// Load just the requested page and cache its source-size pixels for zoom and pan.
@@ -532,6 +564,8 @@ mod tests {
             <nav epub:type="toc"><ol><li><a href="pages/first.xhtml">Opening</a><ol>
                 <li><a href="pages/second.xhtml#target">Second</a></li>
             </ol></li></ol></nav>
+            <nav epub:type="page-list"><ol><li><a href="pages/first.xhtml">iv</a></li>
+                <li><a href="pages/second.xhtml#target">12</a></li></ol></nav>
         </body></html>"##;
         let first = r#"<html xmlns="http://www.w3.org/1999/xhtml">
             <head><meta name="viewport" content="width=224, height=320"/><link rel="stylesheet" href="../style.css"/></head>
@@ -722,6 +756,8 @@ mod tests {
         let book = FixedEpub::open(&fixture.0, &fonts).unwrap().unwrap();
         assert_eq!(book.title(), "Positioned Pages");
         assert_eq!(book.page_count(), 2);
+        assert_eq!(book.page_label(0), Some("iv"));
+        assert_eq!(book.find_page_label("12"), Some(1));
         let outline = book.outline();
         assert_eq!(
             (&outline[0].title[..], outline[0].depth, outline[0].page),

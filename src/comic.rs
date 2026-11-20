@@ -1,4 +1,4 @@
-//! Native CBZ, USTAR CBT, and standalone raster pages. Archive and image file handles
+//! Native CBZ, USTAR CBT, bounded CBR, and standalone raster pages. File handles
 //! are short-lived so Reader can give up its USB storage lease between reads.
 
 use std::cmp::Ordering;
@@ -15,6 +15,7 @@ use image::{
 use zip::{CompressionMethod, ZipArchive};
 
 use crate::Result;
+use crate::cbr::Cbr;
 use crate::epub::{check_zip_directory, is_archive_path};
 use crate::fixed::{MAX_VIEWPORT_PIXELS, MAX_VIEWPORT_SIDE, RenderRequest};
 
@@ -34,8 +35,12 @@ const MAX_TAR_TRAILER_BYTES: u64 = 1024 * 1024;
 type Archive = ZipArchive<BufReader<File>>;
 
 pub struct Comic {
-    path: PathBuf,
-    pages: Vec<Member>,
+    source: ComicSource,
+}
+
+enum ComicSource {
+    ZipOrTar { path: PathBuf, pages: Vec<Member> },
+    Rar(Cbr),
 }
 
 struct Member {
@@ -59,11 +64,16 @@ enum MemberLocation {
 
 impl Comic {
     pub fn open(path: &Path) -> Result<Self> {
-        let mut pages = if path
+        let extension = path
             .extension()
             .and_then(|extension| extension.to_str())
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("cbt"))
-        {
+            .unwrap_or_default();
+        if extension.eq_ignore_ascii_case("cbr") {
+            return Ok(Self {
+                source: ComicSource::Rar(Cbr::open(path)?),
+            });
+        }
+        let mut pages = if extension.eq_ignore_ascii_case("cbt") {
             tar_pages(path)?
         } else {
             zip_pages(path)?
@@ -73,31 +83,46 @@ impl Comic {
         }
         pages.sort_by(|left, right| natural_cmp(&left.name, &right.name));
         Ok(Self {
-            path: path.to_owned(),
-            pages,
+            source: ComicSource::ZipOrTar {
+                path: path.to_owned(),
+                pages,
+            },
         })
     }
 
     pub fn page_count(&self) -> usize {
-        self.pages.len()
+        match &self.source {
+            ComicSource::ZipOrTar { pages, .. } => pages.len(),
+            ComicSource::Rar(comic) => comic.page_count(),
+        }
     }
 
     pub fn page_name(&self, page: usize) -> Option<&str> {
-        self.pages.get(page).map(|member| member.name.as_str())
+        match &self.source {
+            ComicSource::ZipOrTar { pages, .. } => {
+                pages.get(page).map(|member| member.name.as_str())
+            }
+            ComicSource::Rar(comic) => comic.page_name(page),
+        }
     }
 
     pub fn decode_page(&self, page: usize) -> Result<ImagePage> {
-        let member = self
-            .pages
+        let (path, pages) = match &self.source {
+            ComicSource::ZipOrTar { path, pages } => (path, pages),
+            ComicSource::Rar(comic) => {
+                return ImagePage::decode(&comic.read_page(page)?);
+            }
+        };
+        let member = pages
             .get(page)
             .ok_or("That page is outside this comic archive")?;
         let bytes = match member.location {
-            MemberLocation::Zip { index, crc } => zip_image(&self.path, member, index, crc)?,
+            MemberLocation::Zip { index, crc } => zip_image(path, member, index, crc)?,
             MemberLocation::Tar {
                 header,
                 length,
                 modified,
-            } => tar_image(&self.path, member, header, length, modified)?,
+            } => tar_image(path, member, header, length, modified)?,
         };
         ImagePage::decode(&bytes)
     }
@@ -343,7 +368,7 @@ fn tar_octal(field: &[u8]) -> Option<u64> {
     u64::from_str_radix(std::str::from_utf8(&field[..end]).ok()?, 8).ok()
 }
 
-fn page_name(name: &str) -> bool {
+pub(crate) fn page_name(name: &str) -> bool {
     if name.len() > MAX_MEMBER_NAME
         || name.contains(['\\', ':'])
         || name.chars().any(char::is_control)
@@ -659,7 +684,7 @@ impl ImagePage {
     }
 }
 
-fn raster_input_limit(path: &Path) -> u64 {
+pub(crate) fn raster_input_limit(path: &Path) -> u64 {
     if path
         .extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case("webp"))

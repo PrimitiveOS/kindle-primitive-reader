@@ -3,7 +3,7 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use crate::epub::Destination;
+use crate::epub::{Book, Destination};
 use crate::selection::{HighlightRect, TextSelection};
 use crate::{Anchor, Engine, Probe, Result, Settings};
 use primitive_app::{App, Change, HEIGHT, WIDTH, with_storage};
@@ -355,7 +355,7 @@ impl Reading {
     }
 
     pub(crate) fn jump(&mut self, chapter: usize, fragment: Option<&str>) -> Result<()> {
-        let mut candidate = self.config.chapter(chapter)?;
+        let candidate = self.config.chapter(chapter)?;
         let anchor = match fragment {
             Some(name) => candidate
                 .fragment(name)
@@ -364,15 +364,44 @@ impl Reading {
                 .ok_or("That location is unavailable")?,
             None => None,
         };
+        self.use_chapter(candidate, chapter, anchor.as_ref(), 0)
+    }
+
+    pub(crate) fn jump_progress(&mut self, fraction: f64) -> Result<()> {
+        let (chapter, in_chapter, probe) = with_storage(|| {
+            let mut book = Book::open(&self.config.book).map_err(io::Error::other)?;
+            let (chapter, in_chapter) = book.progress_target(fraction).map_err(io::Error::other)?;
+            let probe = Probe::from_book(
+                book,
+                self.config.engine,
+                &self.config.fonts,
+                self.config.settings,
+                chapter,
+            )
+            .map_err(io::Error::other)?;
+            Ok((chapter, in_chapter, probe))
+        })?;
+        let anchor = (0.0 < in_chapter && in_chapter < 1.0)
+            .then(|| probe.proportional_anchor(in_chapter))
+            .flatten();
+        let fallback = ((probe.page_count() - 1) as f64 * in_chapter).round() as usize;
+        self.use_chapter(probe, chapter, anchor.as_ref(), fallback)
+    }
+
+    fn use_chapter(
+        &mut self,
+        mut candidate: Probe,
+        chapter: usize,
+        anchor: Option<&Anchor>,
+        fallback_page: usize,
+    ) -> Result<()> {
         let page = anchor
-            .as_ref()
             .and_then(|anchor| candidate.page_for(anchor))
-            .unwrap_or(0);
+            .unwrap_or(fallback_page);
         let top = self.config.scroll.then(|| {
             anchor
-                .as_ref()
                 .and_then(|anchor| candidate.anchor_top(anchor))
-                .unwrap_or(0.0)
+                .unwrap_or_else(|| candidate.page_range(page).start)
                 .clamp(0.0, candidate.scroll_end())
         });
         let frame = capture(&mut candidate, chapter, page, top)?;
@@ -441,6 +470,9 @@ impl Reading {
             }
         }
         let full = paint.is_full();
+        if !full {
+            self.clear_lines_cut_by_tools(&mut page, &paint.visible);
+        }
         draw_page_picture(canvas, page, paint);
         if !full {
             return;
@@ -460,6 +492,26 @@ impl Reading {
             CAPTION,
         );
         canvas.button(DONE, action, false, false);
+    }
+
+    fn clear_lines_cut_by_tools(&self, page: &mut GrayImage, visible: &Range<u32>) {
+        let offset = self.config.settings.margin as f32 - self.visible_range().start;
+        let (mut start, mut end) = (visible.start, visible.end);
+        // Hide fragments of lines divided by the bars while keeping complete lines in place.
+        for line in self.probe.lines.iter() {
+            let top = line.top + offset;
+            let bottom = line.bottom + offset;
+            if top < visible.start as f32 && bottom > visible.start as f32 {
+                start = start.max((bottom.ceil() as u32).min(visible.end));
+            }
+            if top < visible.end as f32 && bottom > visible.end as f32 {
+                end = end.min((top.floor() as u32).max(visible.start));
+            }
+        }
+        for rows in [visible.start..start, end..visible.end] {
+            let pixels = (rows.start * WIDTH) as usize..(rows.end * WIDTH) as usize;
+            page.pixels[pixels].fill(255);
+        }
     }
 }
 

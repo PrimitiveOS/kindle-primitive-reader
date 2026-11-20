@@ -4,9 +4,12 @@ mod annotation_export;
 pub mod app;
 mod blitz;
 mod book_style;
+mod cbr;
+mod chm;
 pub mod comic;
 pub mod dictionary;
 pub mod djvu;
+mod docx;
 pub mod epub;
 pub mod epub_cfi;
 pub mod fixed;
@@ -15,6 +18,7 @@ pub mod fixed_epub;
 mod fixed_session;
 pub mod fixed_text;
 mod gray_glyph;
+mod kf8;
 pub mod koreader_import;
 pub mod koreader_sidecar;
 pub mod library;
@@ -236,6 +240,8 @@ pub struct Probe {
     book: u64,
     chapters: Vec<Chapter>,
     pub toc: Vec<TocEntry>,
+    #[cfg(feature = "kindle")]
+    pub(crate) printed_pages: Vec<TocEntry>,
     settings: Settings,
     source: Source,
     lines: Vec<Line>,
@@ -294,6 +300,8 @@ impl Probe {
         let publication = book.revision();
         let chapters = book.chapters.clone();
         let toc = book.toc.clone();
+        #[cfg(feature = "kindle")]
+        let printed_pages = book.printed_pages().to_vec();
         let xhtml = book.chapter(chapter).map_err(|e| e.to_string())?;
         let source = Source::parse(&xhtml)?;
         let fonts = font_context(fonts)?;
@@ -319,6 +327,8 @@ impl Probe {
             book: publication,
             chapters,
             toc,
+            #[cfg(feature = "kindle")]
+            printed_pages,
             settings,
             source,
             lines,
@@ -333,6 +343,24 @@ impl Probe {
 
     pub fn chapter_count(&self) -> usize {
         self.chapters.len()
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn proportional_anchor(&self, fraction: f64) -> Option<Anchor> {
+        let total: usize = self
+            .source
+            .blocks
+            .iter()
+            .map(|block| block.text.len())
+            .sum();
+        let mut remaining = (total.saturating_sub(1) as f64 * fraction).round() as usize;
+        for block in &self.source.blocks {
+            if remaining < block.text.len() {
+                return Some(self.anchor(block.key, block.text.floor_char_boundary(remaining)));
+            }
+            remaining -= block.text.len();
+        }
+        None
     }
 
     pub fn chapter_index(&self, path: &str) -> Option<usize> {
@@ -581,9 +609,16 @@ impl Probe {
 }
 
 fn revision(text: &str) -> u64 {
-    text.bytes().fold(0xcbf29ce484222325_u64, |hash, byte| {
-        (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
-    })
+    revision_bytes(text.as_bytes())
+}
+
+fn revision_bytes(bytes: &[u8]) -> u64 {
+    bytes
+        .iter()
+        .copied()
+        .fold(0xcbf29ce484222325_u64, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
+        })
 }
 
 fn font_context(paths: &[PathBuf]) -> Result<FontContext> {

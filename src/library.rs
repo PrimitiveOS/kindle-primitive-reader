@@ -51,6 +51,8 @@ pub enum DocumentFormat {
     Text,
     Html,
     Htmlz,
+    Docx,
+    Chm,
     Markdown,
     Fb2,
     Mobi,
@@ -60,6 +62,7 @@ pub enum DocumentFormat {
     Djvu,
     Cbz,
     Cbt,
+    Cbr,
     Jpeg,
     Png,
     Gif,
@@ -77,6 +80,8 @@ impl DocumentFormat {
                 Format::Text => Self::Text,
                 Format::Html => Self::Html,
                 Format::Htmlz => Self::Htmlz,
+                Format::Docx => Self::Docx,
+                Format::Chm => Self::Chm,
                 Format::Markdown => Self::Markdown,
                 Format::Fb2 => Self::Fb2,
                 Format::Mobi => Self::Mobi,
@@ -91,6 +96,7 @@ impl DocumentFormat {
             "djvu" | "djv" => Some(Self::Djvu),
             "cbz" => Some(Self::Cbz),
             "cbt" => Some(Self::Cbt),
+            "cbr" => Some(Self::Cbr),
             "svg" => Some(Self::Svg),
             _ => match format_for_extension(extension)? {
                 ImageFormat::Jpeg => Some(Self::Jpeg),
@@ -120,7 +126,7 @@ impl DocumentFormat {
     }
 
     pub const fn is_comic(self) -> bool {
-        matches!(self, Self::Cbz | Self::Cbt)
+        matches!(self, Self::Cbz | Self::Cbt | Self::Cbr)
     }
 
     pub const fn max_bytes(self) -> u64 {
@@ -128,6 +134,8 @@ impl DocumentFormat {
             Self::Epub => MAX_ARCHIVE,
             Self::Text | Self::Html | Self::Markdown => MAX_INPUT as u64,
             Self::Htmlz => MAX_HTMLZ_INPUT as u64,
+            Self::Docx => crate::docx::MAX_INPUT as u64,
+            Self::Chm => crate::chm::MAX_CHM_BYTES,
             Self::Fb2 => MAX_FB2_INPUT as u64,
             Self::Mobi => MAX_MOBI_BYTES as u64,
             Self::Rtf => crate::rtf::MAX_INPUT as u64,
@@ -135,6 +143,7 @@ impl DocumentFormat {
             Self::Pdf => MAX_PDF_BYTES as u64,
             Self::Djvu => MAX_DJVU_BYTES as u64,
             Self::Cbz | Self::Cbt => MAX_COMIC_BYTES,
+            Self::Cbr => crate::cbr::MAX_CBR_BYTES,
             Self::Jpeg | Self::Png | Self::Gif | Self::Bmp | Self::Pnm | Self::Tiff => {
                 MAX_IMAGE_BYTES
             }
@@ -143,12 +152,14 @@ impl DocumentFormat {
         }
     }
 
-    fn tag(self) -> &'static [u8] {
+    pub(crate) fn tag(self) -> &'static [u8] {
         match self {
             Self::Epub => b"",
             Self::Text => b"reader-txt\0",
             Self::Html => b"reader-html\0",
             Self::Htmlz => b"reader-htmlz\0",
+            Self::Docx => b"reader-docx\0",
+            Self::Chm => b"reader-chm\0",
             Self::Markdown => b"reader-markdown\0",
             Self::Fb2 => b"reader-fb2\0",
             Self::Mobi => b"reader-mobi\0",
@@ -158,6 +169,7 @@ impl DocumentFormat {
             Self::Djvu => b"reader-djvu\0",
             Self::Cbz => b"reader-cbz\0",
             Self::Cbt => b"reader-cbt\0",
+            Self::Cbr => b"reader-cbr\0",
             Self::Jpeg => b"reader-jpeg\0",
             Self::Png => b"reader-png\0",
             Self::Gif => b"reader-gif\0",
@@ -677,6 +689,8 @@ impl Library {
                 | DocumentFormat::Text
                 | DocumentFormat::Html
                 | DocumentFormat::Htmlz
+                | DocumentFormat::Docx
+                | DocumentFormat::Chm
                 | DocumentFormat::Markdown
                 | DocumentFormat::Fb2
                 | DocumentFormat::Mobi
@@ -745,9 +759,10 @@ impl Library {
         Ok(verified)
     }
 
-    /// Hash a file or a validated ZIP directory, independent of its library path.
+    /// Fingerprint a file or a validated archive index, independent of its library path.
     pub fn identify(&self, entry: &LibraryBook) -> io::Result<u64> {
-        let file = File::open(self.absolute_path(&entry.path)?)?;
+        let path = self.absolute_path(&entry.path)?;
+        let file = File::open(&path)?;
         let size = file.metadata()?.len();
         let format = DocumentFormat::for_path(&entry.path)
             .filter(|format| *format == entry.format)
@@ -757,6 +772,11 @@ impl Library {
                 io::ErrorKind::InvalidData,
                 "The document changed while opening",
             ));
+        }
+        if format == DocumentFormat::Cbr {
+            return crate::cbr::Cbr::open(&path)
+                .map(|comic| comic.identity())
+                .map_err(io::Error::other);
         }
         if !matches!(format, DocumentFormat::Epub | DocumentFormat::Cbz) {
             return fingerprint(file, size, format.tag(), size);
@@ -959,11 +979,10 @@ impl Library {
             })
             .take(MAX_RELOCATION_CHECKS)
         {
-            // A ZIP identification reads only the preflight and central directory.
-            let cost = if matches!(book.format, DocumentFormat::Epub | DocumentFormat::Cbz) {
-                book.size.min(9 * 1024 * 1024)
-            } else {
-                book.size
+            let cost = match book.format {
+                DocumentFormat::Epub | DocumentFormat::Cbz => book.size.min(9 * 1024 * 1024),
+                DocumentFormat::Cbr => book.size.min(4 * 1024 * 1024),
+                _ => book.size,
             };
             let Some(remaining) = bytes_left.checked_sub(cost) else {
                 break;
@@ -1382,7 +1401,12 @@ fn load_library_state(path: &Path) -> io::Result<(Vec<BookState>, Vec<Collection
     Ok((recent, collections))
 }
 
-fn fingerprint(mut input: impl Read, size: u64, tag: &[u8], mut length: u64) -> io::Result<u64> {
+pub(crate) fn fingerprint(
+    mut input: impl Read,
+    size: u64,
+    tag: &[u8],
+    mut length: u64,
+) -> io::Result<u64> {
     let hash_bytes = |hash: u64, byte: u8| (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3);
     let mut hash = size
         .to_le_bytes()
@@ -1807,14 +1831,14 @@ mod tests {
     }
 
     #[test]
-    fn discovers_markdown_and_gate_checks_legacy_kindle_containers() {
+    fn discovers_markdown_and_checks_kindle_container_contents_when_opened() {
         let scratch = Scratch::new();
         fs::write(scratch.0.join("Notebook.MARKDOWN"), b"# Tides\n\nA note.\n").unwrap();
         fs::write(scratch.0.join("Database.PDB"), b"not a Palm document").unwrap();
-        fs::write(scratch.0.join("New Format.AZW3"), b"unsupported format").unwrap();
+        fs::write(scratch.0.join("Invalid.AZW3"), b"invalid Kindle container").unwrap();
         let mut library = Library::open(&scratch.0, &scratch.0.join("reader.json")).unwrap();
         library.scan().unwrap();
-        assert_eq!(library.entries().len(), 2);
+        assert_eq!(library.entries().len(), 3);
         let markdown = library.resolve(Path::new("Notebook.MARKDOWN")).unwrap();
         let mobi = library.resolve(Path::new("Database.PDB")).unwrap();
         assert_eq!(markdown.format, DocumentFormat::Markdown);
@@ -1834,7 +1858,9 @@ mod tests {
             library.locate(library.state(id).unwrap()).unwrap().path,
             Path::new("Tides.md")
         );
-        assert!(library.resolve(Path::new("New Format.AZW3")).is_err());
+        let kf8 = library.resolve(Path::new("Invalid.AZW3")).unwrap();
+        assert_eq!(kf8.format, DocumentFormat::Mobi);
+        assert!(library.metadata(&kf8).is_err());
     }
 
     #[test]

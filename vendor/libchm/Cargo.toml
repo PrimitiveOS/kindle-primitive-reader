@@ -1,0 +1,34 @@
+# Upstream commit 54164731f2defd92856a63eab8e7cee9a2df2896.
+# Crate SHA-256 d4c8e206aaeeee4150ca5615c2ce3e023f5c5ae10f8d21f22dd4e2cce2f58100.
+# PrimitiveOS caps directory, reset-table, frame and member allocations.
+[package]
+name = "libchm"
+version = "0.3.0"
+description = "Pure-Rust reader for CHM (Compiled HTML Help) archives, with LZX decompression."
+edition = "2024"
+rust-version = "1.87"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/trypsynth/libchm"
+documentation = "https://docs.rs/libchm"
+keywords = ["chm", "htmlhelp", "lzx", "ebook", "parser"]
+categories = ["parser-implementations", "compression", "filesystem"]
+exclude = [".claude/", "prek.toml", "rustfmt.toml"]
+
+[dependencies]
+bitflags = "2.13.1"
+thiserror = "2.0.20"
+
+[lints.rust]
+missing_docs = "warn"
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

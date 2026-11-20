@@ -27,6 +27,7 @@ icu_casemap = "=2.4.0"
 icu_normalizer = { version = "=2.4.0", default-features = false, features = ["compiled_data"] }
 icu_segmenter = "=2.4.0"
 image = { version = "=0.25.10", default-features = false, features = ["bmp", "jpeg", "png", "pnm", "webp"] }
+libchm = { path = "vendor/libchm", version = "=0.3.0" }
 lopdf = { version = "=0.47.0", default-features = false }
 md5 = "=0.8.0"
 parley = { version = "=0.12.0", default-features = false, features = ["std"] }
@@ -34,6 +35,7 @@ png = "=0.17.16"
 primitive-app = { git = "https://github.com/PrimitiveOS/kindle-primtitive-tools.git", rev = "398679696d19e0334a164775a3740cc700ffc9de", optional = true }
 primitive-ui = { git = "https://github.com/PrimitiveOS/kindle-primtitive-tools.git", rev = "398679696d19e0334a164775a3740cc700ffc9de", optional = true }
 pulldown-cmark = { version = "=0.13.0", default-features = false, features = ["html"] }
+rars = { version = "=0.12.3", default-features = false }
 resvg = { version = "=0.50.0", default-features = false }
 roxmltree = "=0.21.2"
 serde = { version = "1", features = ["derive"] }

@@ -14,6 +14,9 @@ https://static.crates.io/crates/adler2/adler2-2.0.1.crate
 aes 0.9.4 (MIT OR Apache-2.0)
 https://static.crates.io/crates/aes/aes-0.9.4.crate
 
+aho-corasick 1.1.5 (Unlicense OR MIT)
+https://static.crates.io/crates/aho-corasick/aho-corasick-1.1.5.crate
+
 alloc-no-stdlib 2.0.4 (BSD-3-Clause)
 https://static.crates.io/crates/alloc-no-stdlib/alloc-no-stdlib-2.0.4.crate
 
@@ -410,6 +413,9 @@ https://static.crates.io/crates/kurbo/kurbo-0.13.1.crate
 libc 0.2.191 (MIT OR Apache-2.0)
 https://static.crates.io/crates/libc/libc-0.2.191.crate
 
+libchm 0.3.0 (MIT)
+https://github.com/trypsynth/libchm/tree/54164731f2defd92856a63eab8e7cee9a2df2896
+
 libm 0.2.16 (MIT)
 https://static.crates.io/crates/libm/libm-0.2.16.crate
 
@@ -604,6 +610,9 @@ https://static.crates.io/crates/rand_core/rand_core-0.10.1.crate
 
 rangemap 1.8.0 (MIT/Apache-2.0)
 https://static.crates.io/crates/rangemap/rangemap-1.8.0.crate
+
+rars 0.12.3 (Apache-2.0)
+https://static.crates.io/crates/rars/rars-0.12.3.crate
 
 raw-window-handle 0.6.2 (MIT OR Apache-2.0 OR Zlib)
 https://static.crates.io/crates/raw-window-handle/raw-window-handle-0.6.2.crate
@@ -1664,6 +1673,79 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------
+aho-corasick 1.1.5 (COPYING)
+byteorder 1.5.0 (COPYING)
+memchr 2.8.3 (COPYING)
+same-file 1.0.6 (COPYING)
+walkdir 2.5.0 (COPYING)
+
+This project is dual-licensed under the Unlicense and MIT licenses.
+
+You may use this code under the terms of either license.
+
+------------------------------------------------------------------------
+aho-corasick 1.1.5 (LICENSE-MIT)
+byteorder 1.5.0 (LICENSE-MIT)
+byteorder-lite 0.1.0 (LICENSE-MIT)
+memchr 2.8.3 (LICENSE-MIT)
+walkdir 2.5.0 (LICENSE-MIT)
+
+The MIT License (MIT)
+
+Copyright (c) 2015 Andrew Gallant
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+------------------------------------------------------------------------
+aho-corasick 1.1.5 (UNLICENSE)
+byteorder 1.5.0 (UNLICENSE)
+byteorder-lite 0.1.0 (UNLICENSE)
+memchr 2.8.3 (UNLICENSE)
+same-file 1.0.6 (UNLICENSE)
+walkdir 2.5.0 (UNLICENSE)
+
+This is free and unencumbered software released into the public domain.
+
+Anyone is free to copy, modify, publish, use, compile, sell, or
+distribute this software, either in source code form or as a compiled
+binary, for any purpose, commercial or non-commercial, and by any
+means.
+
+In jurisdictions that recognize copyright laws, the author or authors
+of this software dedicate any and all copyright interest in the
+software to the public domain. We make this dedication for the benefit
+of the public at large and to the detriment of our heirs and
+successors. We intend this dedication to be an overt act of
+relinquishment in perpetuity of all present and future rights to this
+software under copyright law.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
+
+For more information, please refer to <http://unlicense.org/>
+
+------------------------------------------------------------------------
 alloc-no-stdlib 2.0.4 (LICENSE)
 alloc-stdlib 0.2.4 (https://raw.githubusercontent.com/dropbox/rust-alloc-no-stdlib/ae42d22078b98549e987d2f03d12df7b984fde47/LICENSE)
 brotli 8.0.4 (LICENSE.BSD-3-Clause)
@@ -2417,6 +2499,7 @@ kurbo 0.13.1 (LICENSE-APACHE)
 multiversion_no_op 1.0.0 (LICENSE-APACHE)
 peniko 0.6.1 (LICENSE-APACHE)
 polycool 0.4.0 (LICENSE-APACHE)
+rars 0.12.3 (COPYING)
 siphasher 1.0.4 (LICENSE-APACHE)
 static_assertions 1.1.0 (LICENSE-APACHE)
 tinyvec 1.13.3 (LICENSE-APACHE.md)
@@ -3123,76 +3206,6 @@ Permission is granted to anyone to use this software for any purpose, including 
 2. Altered source versions must be plainly marked as such, and must not be misrepresented as being the original software.
 
 3. This notice may not be removed or altered from any source distribution.
-
-------------------------------------------------------------------------
-byteorder 1.5.0 (COPYING)
-memchr 2.8.3 (COPYING)
-same-file 1.0.6 (COPYING)
-walkdir 2.5.0 (COPYING)
-
-This project is dual-licensed under the Unlicense and MIT licenses.
-
-You may use this code under the terms of either license.
-
-------------------------------------------------------------------------
-byteorder 1.5.0 (LICENSE-MIT)
-byteorder-lite 0.1.0 (LICENSE-MIT)
-memchr 2.8.3 (LICENSE-MIT)
-walkdir 2.5.0 (LICENSE-MIT)
-
-The MIT License (MIT)
-
-Copyright (c) 2015 Andrew Gallant
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
-
-------------------------------------------------------------------------
-byteorder 1.5.0 (UNLICENSE)
-byteorder-lite 0.1.0 (UNLICENSE)
-memchr 2.8.3 (UNLICENSE)
-same-file 1.0.6 (UNLICENSE)
-walkdir 2.5.0 (UNLICENSE)
-
-This is free and unencumbered software released into the public domain.
-
-Anyone is free to copy, modify, publish, use, compile, sell, or
-distribute this software, either in source code form or as a compiled
-binary, for any purpose, commercial or non-commercial, and by any
-means.
-
-In jurisdictions that recognize copyright laws, the author or authors
-of this software dedicate any and all copyright interest in the
-software to the public domain. We make this dedication for the benefit
-of the public at large and to the detriment of our heirs and
-successors. We intend this dedication to be an overt act of
-relinquishment in perpetuity of all present and future rights to this
-software under copyright law.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR
-OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
-ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
-OTHER DEALINGS IN THE SOFTWARE.
-
-For more information, please refer to <http://unlicense.org/>
 
 ------------------------------------------------------------------------
 bytes 1.12.2 (LICENSE)
@@ -6594,6 +6607,31 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
+
+------------------------------------------------------------------------
+libchm 0.3.0 (LICENSE)
+
+MIT License
+
+Copyright (c) [2025 Quin Gillespie
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 ------------------------------------------------------------------------
 libm 0.2.16 (LICENSE.txt)

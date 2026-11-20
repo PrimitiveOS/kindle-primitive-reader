@@ -7,7 +7,9 @@ use std::path::Path;
 use roxmltree::{Document, Node, ParsingOptions};
 use zip::{CompressionMethod, ZipArchive};
 
-use crate::{Result, loose};
+use crate::chm::{Chm, MAX_CHM_BYTES};
+use crate::library::{DocumentFormat, fingerprint};
+use crate::{Result, kf8, loose, mobi};
 
 pub(crate) const MAX_ARCHIVE: u64 = 128 * 1024 * 1024;
 const MAX_ENTRIES: usize = 8192;
@@ -20,6 +22,7 @@ const MAX_SERIES: usize = 8;
 const MAX_COLLECTION_HINTS: usize = 128;
 const MAX_SERIES_NAME: usize = 256;
 const MAX_SERIES_POSITION: usize = 64;
+const MAX_PAGE_REFERENCES: usize = 8192;
 
 type Archive = ZipArchive<BufReader<File>>;
 
@@ -70,6 +73,7 @@ pub struct Book {
     pub author: Option<String>,
     pub chapters: Vec<Chapter>,
     pub toc: Vec<TocEntry>,
+    printed_pages: Vec<TocEntry>,
     revision: u64,
     fixed_spine: Option<FixedSpine>,
     series: Vec<BookSeries>,
@@ -83,9 +87,10 @@ enum Content {
         package_path: String,
     },
     Loose {
-        xhtml: String,
+        xhtml: BTreeMap<String, String>,
         resources: BTreeMap<String, Vec<u8>>,
     },
+    Chm(Box<Chm>),
 }
 
 struct Item {
@@ -127,8 +132,12 @@ pub(crate) struct FixedSpine {
 
 impl Book {
     pub fn open(path: &Path) -> Result<Self> {
-        if loose::Format::for_path(path).is_some() {
-            return Ok(Self::from_loose(loose::Document::open(path)?));
+        if let Some(format) = loose::Format::for_path(path) {
+            return match format {
+                loose::Format::Mobi => Self::open_mobi(path),
+                loose::Format::Chm => Self::open_chm(path),
+                _ => loose::Document::open(path, format).map(Self::from_loose),
+            };
         }
         let file = File::open(path)?;
         let metadata = file.metadata()?;
@@ -227,18 +236,22 @@ impl Book {
         }
         let cover = package_cover(metadata, &manifest);
         let spine = child(root, "spine")?;
-        let toc = if let Some(nav) = manifest.values().find(|item| item.navigation) {
-            let xml = xml_entry(&mut archive, &nav.path)?;
-            let xml = loose::without_plain_html_doctype(&xml);
-            let doc = parse_xml(&xml)?;
-            xhtml_toc(&doc, &nav.path)
-        } else if let Some(ncx) = spine.attribute("toc").and_then(|id| manifest.get(id)) {
-            let xml = xml_entry(&mut archive, &ncx.path)?;
-            let doc = parse_xml(&xml)?;
-            ncx_toc(&doc, &ncx.path)
-        } else {
-            Vec::new()
-        };
+        let (toc, mut printed_pages) =
+            if let Some(nav) = manifest.values().find(|item| item.navigation) {
+                let xml = xml_entry(&mut archive, &nav.path)?;
+                let xml = loose::without_plain_html_doctype(&xml);
+                let doc = parse_xml(&xml)?;
+                (
+                    xhtml_nav(&doc, &nav.path, "toc"),
+                    xhtml_nav(&doc, &nav.path, "page-list"),
+                )
+            } else if let Some(ncx) = spine.attribute("toc").and_then(|id| manifest.get(id)) {
+                let xml = xml_entry(&mut archive, &ncx.path)?;
+                let doc = parse_xml(&xml)?;
+                (ncx_toc(&doc, &ncx.path), ncx_pages(&doc, &ncx.path))
+            } else {
+                (Vec::new(), Vec::new())
+            };
         let mut labels = BTreeMap::new();
         for entry in &toc {
             if let Some(destination) = &entry.destination {
@@ -293,11 +306,25 @@ impl Book {
         if chapters.is_empty() {
             return Err("The EPUB contains no reading chapters".into());
         }
+        if !printed_pages.is_empty() {
+            let mut paths = BTreeMap::new();
+            for chapter in &chapters {
+                *paths.entry(chapter.href.as_str()).or_insert(0) += 1;
+            }
+            printed_pages.retain(|entry| {
+                entry.label.len() <= 256
+                    && entry
+                        .destination
+                        .as_ref()
+                        .is_some_and(|destination| paths.get(destination.path.as_str()) == Some(&1))
+            });
+        }
         Ok(Self {
             title,
             author,
             chapters,
             toc,
+            printed_pages,
             revision,
             fixed_spine: fixed_layout.filter(|fixed| *fixed).map(|_| FixedSpine {
                 right_to_left: spine.attribute("page-progression-direction") == Some("rtl"),
@@ -322,7 +349,9 @@ impl Book {
                 archive,
                 package_path,
             } => xml_entry(archive, package_path),
-            Content::Loose { .. } => Err("EPUB CFI positions require an EPUB publication".into()),
+            Content::Loose { .. } | Content::Chm(_) => {
+                Err("EPUB CFI positions require an EPUB publication".into())
+            }
         }
     }
 
@@ -339,6 +368,7 @@ impl Book {
     }
 
     fn from_loose(document: loose::Document) -> Self {
+        let chapter_path = document.chapter_path;
         Self {
             revision: crate::revision(&document.xhtml),
             fixed_spine: None,
@@ -346,17 +376,107 @@ impl Book {
             cover: None,
             chapters: vec![Chapter {
                 is_svg: false,
-                href: document.chapter_path,
+                href: chapter_path.clone(),
                 label: document.title.clone(),
             }],
             title: document.title,
             author: document.author,
             toc: document.toc,
+            printed_pages: Vec::new(),
             content: Content::Loose {
-                xhtml: document.xhtml,
+                xhtml: BTreeMap::from([(chapter_path, document.xhtml)]),
                 resources: document.resources,
             },
         }
+    }
+
+    fn open_mobi(path: &Path) -> Result<Self> {
+        let input = File::open(path)?;
+        let metadata = input.metadata()?;
+        if !metadata.is_file() || metadata.len() > mobi::MAX_MOBI_BYTES as u64 {
+            return Err(mobi::MobiError::TooLarge.into());
+        }
+        let bytes = loose::read_bounded(input, mobi::MAX_MOBI_BYTES)?;
+        let fallback_title = loose::fallback_title(path);
+        match mobi::decode(&bytes) {
+            Ok(document) => {
+                return Ok(Self::from_loose(loose::Document {
+                    title: document.title.unwrap_or_else(|| fallback_title.into()),
+                    author: document.author,
+                    chapter_path: loose::CHAPTER_PATH.to_owned(),
+                    xhtml: document.xhtml,
+                    toc: Vec::new(),
+                    resources: BTreeMap::new(),
+                }));
+            }
+            Err(mobi::MobiError::Kf8) => {}
+            Err(error) => return Err(error.into()),
+        }
+        let publication = kf8::decode(&bytes)?;
+        let revision = crate::revision_bytes(&bytes);
+        let mut chapters = Vec::with_capacity(publication.chapters.len());
+        let mut toc = Vec::with_capacity(publication.chapters.len());
+        let mut xhtml = BTreeMap::new();
+        for chapter in publication.chapters {
+            toc.push(TocEntry {
+                label: chapter.label.clone(),
+                depth: 0,
+                destination: Some(Destination {
+                    path: chapter.path.clone(),
+                    fragment: None,
+                }),
+            });
+            chapters.push(Chapter {
+                href: chapter.path.clone(),
+                label: chapter.label,
+                is_svg: false,
+            });
+            xhtml.insert(chapter.path, chapter.xhtml);
+        }
+        let title = publication.title.unwrap_or_else(|| fallback_title.into());
+        Ok(Self {
+            title,
+            author: publication.author,
+            chapters,
+            toc,
+            printed_pages: Vec::new(),
+            revision,
+            fixed_spine: None,
+            series: Vec::new(),
+            cover: None,
+            content: Content::Loose {
+                xhtml,
+                resources: publication.resources,
+            },
+        })
+    }
+
+    fn open_chm(path: &Path) -> Result<Self> {
+        let mut file = File::open(path)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_file() || metadata.len() > MAX_CHM_BYTES {
+            return Err("The CHM file exceeds the 32 MiB archive limit or is unavailable".into());
+        }
+        let size = metadata.len();
+        let revision = fingerprint(&mut file, size, DocumentFormat::Chm.tag(), size)?;
+        file.seek(SeekFrom::Start(0))?;
+        let mut chm = Chm::open(file)?;
+        let title = chm
+            .title
+            .take()
+            .unwrap_or_else(|| loose::fallback_title(path).into());
+        Ok(Self {
+            title,
+            author: None,
+            chapters: chm.chapters.clone(),
+            toc: chm.toc.clone(),
+            printed_pages: Vec::new(),
+            revision,
+            fixed_spine: None,
+            series: Vec::new(),
+            cover: None,
+            content: Content::Chm(Box::new(chm)),
+        })
     }
 
     pub fn is_fixed_layout(&self) -> bool {
@@ -370,6 +490,10 @@ impl Book {
     /// Return the publication's ordered reading contents.
     pub fn toc(&self) -> &[TocEntry] {
         &self.toc
+    }
+
+    pub fn printed_pages(&self) -> &[TocEntry] {
+        &self.printed_pages
     }
 
     pub fn series(&self) -> &[BookSeries] {
@@ -401,7 +525,11 @@ impl Book {
             .ok_or("That EPUB chapter is unavailable")?;
         match &mut self.content {
             Content::Archive { archive, .. } => xml_entry(archive, &chapter.href),
-            Content::Loose { xhtml, .. } => Ok(xhtml.clone()),
+            Content::Loose { xhtml, .. } => xhtml
+                .get(&chapter.href)
+                .cloned()
+                .ok_or_else(|| "That chapter is unavailable".into()),
+            Content::Chm(chm) => chm.chapter(&chapter.href),
         }
     }
 
@@ -410,6 +538,44 @@ impl Book {
         self.chapters
             .iter()
             .position(|chapter| chapter.href == path)
+    }
+
+    /// Estimate a publication position from uncompressed chapter lengths.
+    /// The estimate is independent of current typography and needs no chapter layout.
+    #[cfg(feature = "kindle")]
+    pub(crate) fn progress_target(&mut self, fraction: f64) -> Result<(usize, f64)> {
+        if fraction == 0.0 {
+            return Ok((0, 0.0));
+        }
+        if fraction == 1.0 {
+            return Ok((self.chapters.len() - 1, 1.0));
+        }
+        let mut weights = Vec::with_capacity(self.chapters.len());
+        for chapter in &self.chapters {
+            let length = match &mut self.content {
+                Content::Archive { archive, .. } => {
+                    let index = archive
+                        .index_for_name(&chapter.href)
+                        .ok_or("A chapter is unavailable")?;
+                    archive.by_index_raw(index)?.size().min(MAX_XML as u64)
+                }
+                Content::Loose { xhtml, .. } => xhtml
+                    .get(&chapter.href)
+                    .ok_or("A chapter is unavailable")?
+                    .len() as u64,
+                Content::Chm(chm) => chm.chapter_length(&chapter.href)?,
+            };
+            weights.push(length.max(1));
+        }
+        let total: u64 = weights.iter().sum();
+        let mut position = fraction * total as f64;
+        for (index, weight) in weights.into_iter().enumerate() {
+            if position < weight as f64 {
+                return Ok((index, position / weight as f64));
+            }
+            position -= weight as f64;
+        }
+        Ok((self.chapters.len() - 1, 1.0))
     }
 
     /// Read a canonical, decoded archive path without extracting it to disk.
@@ -435,6 +601,7 @@ impl Book {
                 }
                 Ok(bytes.clone())
             }
+            Content::Chm(chm) => chm.resource_limited(path, cap),
         }
     }
 
@@ -736,13 +903,13 @@ fn agreed_hint<T: PartialEq>(mut hints: impl Iterator<Item = T>, conflict: T) ->
 }
 
 // EPUB 3.3 §7.3–7.4: https://www.w3.org/TR/epub-33/#sec-nav-def-model
-fn xhtml_toc(doc: &Document<'_>, base: &str) -> Vec<TocEntry> {
+fn xhtml_nav(doc: &Document<'_>, base: &str, kind: &str) -> Vec<TocEntry> {
     let Some(toc) = doc.descendants().find(|node| {
         node.has_tag_name("nav")
             && node
                 .attribute(("http://www.idpf.org/2007/ops", "type"))
                 .or_else(|| node.attribute("type"))
-                .is_some_and(|kinds| kinds.split_ascii_whitespace().any(|kind| kind == "toc"))
+                .is_some_and(|kinds| kinds.split_ascii_whitespace().any(|value| value == kind))
     }) else {
         return Vec::new();
     };
@@ -750,6 +917,9 @@ fn xhtml_toc(doc: &Document<'_>, base: &str) -> Vec<TocEntry> {
     let mut pending = Vec::new();
     push_xhtml_items(&mut pending, toc, 0);
     while let Some((item, depth)) = pending.pop() {
+        if kind == "page-list" && entries.len() == MAX_PAGE_REFERENCES {
+            break;
+        }
         if let Some(label) = item
             .children()
             .find(|node| node.has_tag_name("a") || node.has_tag_name("span"))
@@ -804,6 +974,26 @@ fn ncx_toc(doc: &Document<'_>, base: &str) -> Vec<TocEntry> {
         pending.extend(point.children().rev().map(|node| (node, depth + 1)));
     }
     entries
+}
+
+fn ncx_pages(doc: &Document<'_>, base: &str) -> Vec<TocEntry> {
+    child(doc.root_element(), "pageList").map_or_else(
+        |_| Vec::new(),
+        |pages| {
+            pages
+                .children()
+                .filter(|item| item.has_tag_name("pageTarget"))
+                .filter_map(|target| {
+                    let label = child(target, "navLabel")
+                        .and_then(|label| child(label, "text"))
+                        .ok()?;
+                    let href = child(target, "content").ok()?.attribute("src")?;
+                    toc_entry(base, Some(href), label, 0)
+                })
+                .take(MAX_PAGE_REFERENCES)
+                .collect()
+        },
+    )
 }
 
 fn toc_entry(base: &str, href: Option<&str>, node: Node<'_, '_>, depth: usize) -> Option<TocEntry> {
@@ -1037,6 +1227,41 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn reads_epub3_and_ncx_printed_page_references_separately_from_contents() {
+        let nav = br##"<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+         <body><nav epub:type="toc"><ol><li><a href="chapter.xhtml">Chapter</a></li></ol></nav>
+         <nav epub:type="page-list" hidden="hidden"><ol>
+         <li><a href="chapter.xhtml#page-v">v</a></li>
+         <li><a href="https://example.invalid/">Outside</a></li>
+         </ol></nav></body></html>"##;
+        let fixture = MetadataFixture::new(
+            "3.0",
+            "",
+            r#"<item id="navigation" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>"#,
+            &[("EPUB/nav.xhtml", nav)],
+        );
+        let book = Book::open(&fixture.0).unwrap();
+        assert_eq!(book.toc()[0].label, "Chapter");
+        let [printed] = book.printed_pages() else {
+            panic!("Expected one local print page")
+        };
+        assert_eq!(printed.label, "v");
+        assert_eq!(
+            printed.destination.as_ref().unwrap().fragment.as_deref(),
+            Some("page-v")
+        );
+
+        let ncx = parse_xml(
+            r##"<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/">
+          <pageList><pageTarget value="7" type="normal" id="page-7">
+            <navLabel><text>7</text></navLabel><content src="chapter.xhtml#page-7"/>
+          </pageTarget></pageList></ncx>"##,
+        )
+        .unwrap();
+        assert_eq!(ncx_pages(&ncx, "EPUB/nav.ncx")[0].label, "7");
     }
 
     #[test]

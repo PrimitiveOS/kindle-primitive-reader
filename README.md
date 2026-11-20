@@ -54,24 +54,27 @@ These captures use Reader's Kindle interface in the desktop simulator.
 | Fixed-layout EPUB 3 | Static XHTML and supported SVG spine pages, contents, zoom and rotation. Publisher page progression and facing-page hints control spreads. |
 | PDF | Page turns or continuous scrolling, printed page labels, local outlines and links, bookmarks, passwords, page, width and height fit, crop, zoom, pan and rotation. Embedded text supports search, selection, highlights and notes. |
 | DjVu | Fixed pages, crop, and embedded text with search and annotations |
-| CBZ, CBT, JPEG, PNG, BMP, GIF and portable anymaps | Natural comic page order, single pages or two-page spreads, and selectable reading direction. CBT accepts standard uncompressed USTAR entries. Animated GIF shows its first frame. Portable anymaps include PBM, PGM, PPM and PAM. |
+| CBZ, CBT, CBR, JPEG, PNG, BMP, GIF and portable anymaps | Natural comic page order, single pages or two-page spreads, and selectable reading direction. CBT accepts standard uncompressed USTAR entries. CBR accepts supported single-volume, non-solid RAR4 and RAR5. Animated GIF shows its first frame. Portable anymaps include PBM, PGM, PPM and PAM. |
 | SVG | Static geometry and local gradients in standalone files, linked EPUB illustrations, and fixed-layout EPUB pages. |
 | WebP and TIFF | Lossy, single-image VP8 WebP. Single-page uncompressed strip-based TIFF with top-left orientation and 1-bit or 8-bit grayscale. |
 | TXT, HTML/XHTML, HTMLZ, Markdown and FB2 | Shared text search and reading positions. Single-document HTMLZ archives use local illustrations and stylesheets. FB2 preserves section navigation and supported embedded images, including ZIP and gzip packages. Markdown builds a contents list from headings. |
-| Legacy MOBI and PalmDOC | Unencrypted text and metadata from supported legacy files |
+| MOBI, PalmDOC and AZW3 | Text and metadata from supported DRM-free legacy files. Standalone reflowable KF8/AZW3 with UTF-8 text, reconstructed chapters, supported local links, and JPEG or PNG illustrations. |
+| DOCX | Macro-free Strict and Transitional Word documents. Text, headings, basic emphasis, table reading order, and title and author metadata. |
+| CHM | Static help topics in single archives, with nested contents, headings, links and local JPEG or PNG illustrations. |
 | RTF and TCR | RTF preserves paragraphs and basic character styling. TCR opens bounded 8-bit dictionary-compressed text in the reflow reader. |
-| StarDict | Local dictionaries in `reader/data/dictionaries/`, including gzip indexes and indexed dictzip data |
+| StarDict | Local dictionaries in `reader/data/dictionaries/`, including gzip indexes, indexed dictzip data and optional synonym entries. |
 
 In Library, open Reading data to export or preview and restore a local backup
 of progress, per-book settings, bookmarks and annotations.
 From Highlights, export quotations and notes as text, Markdown or HTML. Reader
 can import visible embedded highlights from supported unencrypted PDFs up to
 16 MiB and save a separate annotated PDF with the original annotations intact.
-Use Go to with a physical page number, a printed label, or a document percentage
+Use Go to with a physical page number, a printed PDF or EPUB label, or a document percentage
 such as `75%`. When both numbers and labels are numeric, type `label ` before
-the printed number. The percentage in a reflowable book refers to the current
-chapter. The Pages grid browses other chapters while keeping your place until
-you choose a thumbnail. Use History to return to an earlier jump.
+the printed number. For reflowable books, Reader estimates the whole-book
+position from chapter lengths. The Pages grid browses other chapters while
+keeping your place until you choose a thumbnail. Use History to return to
+an earlier jump.
 
 Find results offer previous and next match controls. Previous location returns
 to the passage where you began exploring the results. Use Reading controls to

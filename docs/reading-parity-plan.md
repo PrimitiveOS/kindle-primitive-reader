@@ -8,15 +8,15 @@ Compare against the installed KOReader release for hardware measurements. Record
 
 | Area | Development coverage | Remaining work |
 | --- | --- | --- |
-| EPUB reading | Saved positions, page and scroll modes, reading bars, navigation and footnotes, publisher CSS, local fonts and illustrations, bounded static SVG, horizontal ruby, inherited language and explicit reading direction. Fixed pages include publisher-defined spreads. Find, bookmarks, highlights and notes share source locations. | Broader ruby and stylesheet fidelity, dictionary-based hyphenation, vertical writing, and the final device suite |
+| EPUB reading | Saved positions, page and scroll modes, reading bars, printed page references, whole-book percentage jumps, publisher CSS, local fonts and illustrations, bounded static SVG, horizontal ruby, inherited language, writing direction, and publisher line-breaking rules. Fixed pages include publisher-defined spreads. Find, bookmarks, highlights and notes share source locations. | Broader ruby and stylesheet fidelity, discretionary hyphens, dictionary-based hyphenation, vertical writing, and the final device suite |
 | PDF | Fixed pages and continuous scroll, printed labels, page thumbnails, outlines and links, passwords, page, width and height fit, crop, contrast, text search and local annotations. Visible embedded highlights import and annotated-copy export for intact unencrypted PDFs up to 16 MiB. | Broader password, outline and annotation types, and sustained large-scan tests |
-| Other offline reading | Fixed-layout EPUB, DjVu, TXT, HTML, single-document HTMLZ, Markdown, FB2, legacy MOBI and PalmDOC, RTF, TCR, CBZ and uncompressed USTAR CBT, JPEG, PNG, BMP, GIF first frame, portable anymaps, static SVG, selected WebP and TIFF, and compressed StarDict | Wider format variants and the final device suite |
+| Other offline reading | Fixed-layout EPUB, DjVu, TXT, HTML, single-document HTMLZ, Markdown, FB2, supported MOBI/PalmDOC and KF8, DOCX, CHM, RTF, TCR, CBZ, uncompressed USTAR CBT, selected CBR, JPEG, PNG, BMP, GIF first frame, portable anymaps, static SVG, selected WebP and TIFF, and compressed StarDict with synonyms | Wider format variants and the final device suite |
 | Scanned documents | Embedded and recognized text reflow across readable source pages. Original word-image reflow for scans with complete horizontal left-to-right OCR and a column view for clear two-column scans. English and Vietnamese recognized by the worker on desktop. The ARMHF package bundles English and accepts local additional models. | OCR in the Kindle runtime, broader layout and language cases, and sustained tests with real scans |
 | Library and controls | Favorites, reading status, collections, author and recent views, EPUB cover previews and series, reading time, reusable text profiles, night pages, adjustable toolbar sizes, mirrored or disabled tap turns, touch lock, chapter-spanning page thumbnails and location history | More configurable gestures, broader accessibility, and the final device suite |
 | Reading data | Backup and restore with preview, text/Markdown/HTML annotation exports, KOReader JSON annotations by unique quotation, and sampled-fingerprint checks for fixed-page sidecar progress and a subset of reflowable EPUB CFIs | Legacy CREngine pointers, broader CFI and sidecar variants, and the final device suite |
 | Kindle verification | EPUB engine timing, probe page buttons, sleep and USB resume, and a temporary preview's contents jump and reopen passed on Oasis 3 | Deploy the completed core reader and run the consolidated automatic hardware workflow |
 
-The desktop checkpoint passed 210 Reader tests and 16 Files tests. Reader
+The desktop checkpoint passed 229 Reader tests and 16 Files tests. Reader
 rendered three public-domain DjVu samples and 12 narrative chapters from the
 Standard Ebooks edition of *Alice’s Adventures in Wonderland*. The licensed
 ARMHF development archive passed its checksum and package-content checks. The
@@ -99,12 +99,12 @@ Use this table as the initial format inventory. A decoder that opens a file qual
 | DjVu/DJV | P3 native decoder evaluation followed by scan tools. | Multipage containers, single pages, outlines, embedded text, coordinate accuracy and scanned reflow. |
 | JPEG/PNG and standalone image sequences | P2 native using the fixed-page surface. | EXIF orientation, alpha, grayscale, zoom, dimension limits, invalid input, and resume in image sequences. |
 | GIF, BMP, WebP, TIFF, SVG, JPEG 2000, JPEG XR, and portable bitmap images | Native BMP, GIF first frame, PAM/PBM/PGM/PNM/PPM, bounded static SVG and single-image lossy VP8 WebP. TIFF accepts one top-left page of uncompressed 1-bit or 8-bit grayscale strips. Evaluate broader codec variants, J2K, JP2, JXR, HDP and WDP individually. | Animation/static policy, multi-image behavior, compression variants, orientation, alpha, external SVG resource rules, and bounded decode. |
-| CBZ, CBT, CBR | Native CBZ and uncompressed USTAR CBT with single pages and spreads. Evaluate RAR comic containers separately. | Entry order, paths, archive variants and signatures, grayscale displays, reading direction, spreads and large archive limits. |
+| CBZ, CBT, CBR | Native CBZ and uncompressed USTAR CBT. CBR supports bounded single-volume, unencrypted, non-solid RAR4 and RAR5 with independent page extraction and checksum checks. Opening an installed KOReader remains available in Files for wider RAR variants. | Entry order, paths, archive variants and signatures, grayscale displays, reading direction, spreads and large archive limits. |
 | TXT, FB2/FB2.ZIP, FB3 | P2 native TXT/FB2. P3 verifies ZIP packaging and FB3 packaging. | BOM and encoding variants, FB2 metadata/sections/notes/images, embedded identifiers, and bounded archive resources. |
 | HTML, XHTML, HTM, HTMLZ, Markdown, XML, and plain text aliases | Native offline HTML/XHTML and single-document Calibre-style HTMLZ with one root HTML file, local PNG/JPEG and CSS, and optional OPF metadata. Evaluate other markup and archive variants in P3. | Links, images and anchors within permitted book resources, conversion fidelity, text selection, and explicit handling of unsupported script or remote content. |
-| MOBI, PRC, DRM-free AZW and KF8 variants | P3 evaluate a native parse/normalize adapter. Verify AZW3 as its own reported variant. Offer explicit conversion pending a verified parser. | Metadata, text encoding, links, images and mixed layouts, location recovery, and clear messages for encrypted inputs. |
-| RTF, legacy DOC, CHM, PalmDoc/PDB, and TCR | Native RTF, PalmDOC and bounded TCR text. Evaluate legacy DOC and CHM with suitable adapters or conversion. | Structural fidelity, character sets, images, links, nested archive handling, and reading state tied to the original revision. |
-| DOCX/DOCM, ODT, PPTX, XLSX, XPS and compound files | P3 evaluate document preview and reading renderers individually. Treat office content as static material. Confirm the installed KOReader provider behavior before setting each fidelity target. | TOC or sheet order, displayed content, text search/selection where available, malformed or unsupported variants, and bounded document processing. |
+| MOBI, PRC, DRM-free AZW and KF8 variants | Native legacy MOBI and PalmDOC. Standalone UTF-8 reflowable KF8 uses plain or PalmDOC-compressed content, with chapter reconstruction, supported local links, and JPEG or PNG images. Hybrid KF8 sections and HUFF/CDIC remain open. | Metadata, text encoding, links, images and mixed layouts, location recovery, and clear messages for encrypted inputs. |
+| RTF, legacy DOC, CHM, PalmDOC/PDB, and TCR | Native RTF, PalmDOC and bounded TCR text. CHM opens static local help topics and nested contents through a bounded ITSF/LZX adapter. Merged help files, active content and legacy binary DOC remain open. | Structural fidelity, character sets, images, links, nested archive handling, and reading state tied to the original revision. |
+| DOCX/DOCM, ODT, PPTX, XLSX, XPS and compound files | Native DOCX reading subset for macro-free Strict and Transitional Word files. Supports title and author metadata, heading contents, paragraphs, basic emphasis, and table cell order. Files offers XPS to an installed KOReader. Native XPS would require a fixed-page renderer for OpenXPS resources, font obfuscation, glyph runs and package links. [ECMA-376](https://ecma-international.org/publications-and-standards/standards/ecma-376/) · [KOReader XPS provider](https://github.com/koreader/koreader/blob/v2026.07.1/frontend/document/pdfdocument.lua) | TOC or sheet order, displayed content, text search/selection where available, malformed or unsupported variants, and bounded document processing. |
 | ZIP and TAR as document wrappers | P3 validate book, image and comic payload combinations individually. | Entry recognition, collision and storage limits, format selection, and position after reopening a verified payload. |
 
 The DjVu development path uses the pinned Rust decoder and reads embedded text.
@@ -113,6 +113,34 @@ scans. Reader caps the vendored BZZ decoder's expanded output at 8 MiB and
 checks the declared IW44 coefficient allocation before rendering.
 Large-file memory, additional OCR languages and scan-reflow performance still
 need Kindle evidence. [Offline OCR build](ocr-build.md)
+
+The Mac Reader rendered an independently generated macOS DOCX with its bold
+heading and italic paragraph intact. A Calibre-generated standalone KF8 sample
+produced seven pages and covered all 3,312 extracted characters. That sample
+uses PalmDOC compression and contains obfuscated fonts, which Reader leaves
+unused. [Pinned KF8 reference sample](https://github.com/bfabiszewski/libmobi/blob/906274205c11944b628da1c553b255acb1af7c55/tests/samples/sample-obfuscated-fonts.mobi)
+
+Reader rendered all 567 topics from the official PuTTY 0.83 CHM on the Mac
+with complete coverage of 489,427 source characters and zero missing glyphs.
+The pinned CHM dependency read all 570 ordinary members of that archive.
+The package retains the upstream MIT notice and limits archive directory,
+topic, LZX window and frame allocations. [PuTTY 0.83 release](https://www.chiark.greenend.org.uk/~sgtatham/putty/releases/0.83.html)
+
+The desktop Reader rendered the same first page from independently prepared
+compressed RAR4 and RAR5 comics. Tests cover natural ordering, independent
+page access, invalid checksums and unsupported archive variants. CBR limits
+the tracked decoder workspace to 32 MiB, the RAR5 dictionary to 16 MiB,
+and each encoded or packed image page to 16 MiB or the format's smaller
+limit. [Pinned RAR decoder](https://docs.rs/rars/0.12.3/rars/)
+
+The pinned Parley shaper handles horizontal runs. True vertical EPUB needs a
+vertical glyph shaping and painting path with source-aware pagination. Blitz
+can transpose CSS box geometry. Manual soft hyphens need a line breaker that
+counts and paints the glyph at the chosen break while preserving the source
+offset. Dictionary hyphenation builds on the same capability.
+[Parley shaping](https://github.com/linebender/parley/blob/6e1143dda817360dd3a2a64f9133c6e5dfabd881/parley_engine/src/shape/shaper.rs)
+· [Parley line breaking](https://github.com/linebender/parley/blob/6e1143dda817360dd3a2a64f9133c6e5dfabd881/parley/src/layout/line_break.rs)
+· [Blitz writing modes](https://github.com/dioxuslabs/blitz/blob/92b11f1bd8ab7975411328b0406a95a09445b4e7/packages/blitz-dom/src/layout/writing_mode.rs)
 [DjVu codec source](https://github.com/matyushkin/djvu-rs/tree/c8e86c93214f9f10093c2c696945cfef0c9e500d)
 
 ## Evidence and release checkpoints

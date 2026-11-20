@@ -633,7 +633,7 @@ impl Reader {
             self.editor.caret = self.editor.text.len();
         }
         if screen == Screen::GoToPage {
-            self.editor = Editor::new(if self.fixed.is_some() { 96 } else { 11 });
+            self.editor = Editor::new(96);
         }
         if screen == Screen::ProfileName {
             self.editor = Editor::new(reading_profiles::MAX_NAME);
@@ -2538,12 +2538,34 @@ impl Reader {
     }
 
     fn jump_reflow_number(&mut self) -> Result<()> {
-        let active = self.active.as_ref().ok_or("No open book")?;
         let input = self.editor.string();
         let input = input.trim();
         if let Some(percent) = input.strip_suffix('%') {
-            let page = page_at_percent(percent, active.reading.probe.page_count())?;
-            return self.follow_reflow_page(active.reading.chapter, page);
+            let active = self.active.as_mut().ok_or("No open book")?;
+            let previous = position(&active.reading);
+            active.reading.jump_progress(percent_fraction(percent)?)?;
+            self.finish_reflow_jump(previous);
+            return Ok(());
+        }
+        let active = self.active.as_ref().ok_or("No open book")?;
+        if let Some(label) = input.strip_prefix("label ") {
+            let mut matches = active
+                .reading
+                .probe
+                .printed_pages
+                .iter()
+                .filter_map(|entry| {
+                    (entry.label == label.trim())
+                        .then_some(entry.destination.as_ref())
+                        .flatten()
+                });
+            let target = matches
+                .next()
+                .ok_or("Enter a printed page label from the book")?;
+            if matches.next().is_some() {
+                return Err("That printed page label occurs more than once".into());
+            }
+            return self.follow(target.clone());
         }
         let number = |value: &str| {
             value
@@ -2571,13 +2593,17 @@ impl Reader {
         }
         let previous = position(&active.reading);
         active.reading.go_to_page(chapter, page)?;
+        self.finish_reflow_jump(previous);
+        Ok(())
+    }
+
+    fn finish_reflow_jump(&mut self, previous: ReadingPosition) {
         self.push_history(previous);
         self.selection = None;
         self.result_selection = None;
         self.search_result = None;
         self.show(Screen::Book);
         self.record_position();
-        Ok(())
     }
 
     fn update_overview(&mut self, chapter: Option<usize>, first: Option<usize>) -> Result<()> {
@@ -4250,7 +4276,16 @@ impl App for Reader {
                 Screen::ProfileName => ("Profile name", "Save"),
                 Screen::PdfPassword => ("PDF password", "Open"),
                 Screen::GoToPage if self.fixed.is_none() => {
-                    ("Page, chapter:page, or % of chapter", "Go")
+                    let hint = if self
+                        .active
+                        .as_ref()
+                        .is_some_and(|book| !book.reading.probe.printed_pages.is_empty())
+                    {
+                        "Page, chapter:page, book %, or label followed by a printed page"
+                    } else {
+                        "Page, chapter:page, or book percentage"
+                    };
+                    (hint, "Go")
                 }
                 Screen::GoToPage => ("Page, printed label, or % of document", "Go"),
                 _ => ("Search text", "Find"),
@@ -4751,14 +4786,19 @@ fn fixed_page_label(reading: &FixedReading, page: usize) -> String {
 }
 
 fn page_at_percent(percent: &str, count: usize) -> Result<usize> {
-    let percent = percent
+    let fraction = percent_fraction(percent)?;
+    let last = count.saturating_sub(1);
+    Ok(((last as f64 * fraction).round() as usize).min(last))
+}
+
+fn percent_fraction(input: &str) -> Result<f64> {
+    let percent = input
         .trim()
         .parse::<f64>()
         .ok()
         .filter(|value| (0.0..=100.0).contains(value))
         .ok_or("Enter a percentage from 0% to 100%")?;
-    let last = count.saturating_sub(1);
-    Ok(((last as f64 * percent / 100.0).round() as usize).min(last))
+    Ok(percent / 100.0)
 }
 
 fn same_pdf_highlight(left: &PdfHighlight, right: &PdfHighlight) -> bool {
@@ -5617,6 +5657,34 @@ mod tests {
         assert_eq!(app.active.as_ref().unwrap().reading.chapter, 1);
         app.activate(Action::ReturnToLocation).unwrap();
         assert_eq!(position(&app.active.as_ref().unwrap().reading), original);
+    }
+
+    #[test]
+    fn jumps_to_a_whole_book_percentage_and_returns_to_the_starting_passage() {
+        let fixture = Fixture::new();
+        let book = fixture.root.join("Harbor Notebook.epub");
+        fs::write(
+            &book,
+            include_bytes!("../tests/fixtures/many-chapters.epub"),
+        )
+        .unwrap();
+        let mut app = fixture.app();
+        app.open_path(&book).unwrap();
+        let original = position(&app.active.as_ref().unwrap().reading);
+        app.show(Screen::GoToPage);
+        app.editor.text = "75%".chars().collect();
+        app.jump_reflow_number().unwrap();
+        let active = app.active.as_ref().unwrap();
+        assert!((35..=36).contains(&active.reading.chapter));
+        app.activate(Action::ReturnToLocation).unwrap();
+        assert_eq!(position(&app.active.as_ref().unwrap().reading), original);
+
+        app.show(Screen::GoToPage);
+        app.editor.text = "100%".chars().collect();
+        app.jump_reflow_number().unwrap();
+        let reading = &app.active.as_ref().unwrap().reading;
+        assert_eq!(reading.chapter + 1, reading.probe.chapter_count());
+        assert_eq!(reading.page + 1, reading.probe.page_count());
     }
 
     #[test]

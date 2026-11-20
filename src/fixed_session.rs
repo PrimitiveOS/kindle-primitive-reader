@@ -142,11 +142,9 @@ impl FixedReading {
                 })?;
                 FixedDocument::Djvu(Box::new(Djvu::open(bytes)?))
             }
-            DocumentFormat::Cbz | DocumentFormat::Cbt => {
-                FixedDocument::Comic(with_storage(|| {
-                    Comic::open(path).map_err(io::Error::other)
-                })?)
-            }
+            format if format.is_comic() => FixedDocument::Comic(with_storage(|| {
+                Comic::open(path).map_err(io::Error::other)
+            })?),
             format if format.is_still_image() => FixedDocument::Image(with_storage(|| {
                 ImagePage::open(path).map_err(io::Error::other)
             })?),
@@ -211,6 +209,7 @@ impl FixedReading {
 
     pub(crate) fn page_label(&self, page: usize) -> Option<String> {
         match &self.source {
+            FixedDocument::Epub(book) => book.page_label(page).map(str::to_owned),
             FixedDocument::Pdf(pdf) => pdf.page_label(page),
             _ => None,
         }
@@ -218,6 +217,7 @@ impl FixedReading {
 
     pub(crate) fn find_page_label(&self, label: &str) -> Option<usize> {
         match &self.source {
+            FixedDocument::Epub(book) => book.find_page_label(label),
             FixedDocument::Pdf(pdf) => pdf.find_page_label(label),
             _ => None,
         }

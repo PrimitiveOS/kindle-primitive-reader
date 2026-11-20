@@ -58,7 +58,9 @@ impl fmt::Display for MobiError {
                 formatter.write_str("This is not a supported MOBI or PalmDOC database.")
             }
             Self::Protected => formatter.write_str("This MOBI file is encrypted."),
-            Self::Kf8 => formatter.write_str("This file requires a KF8 reader."),
+            Self::Kf8 => formatter.write_str(
+                "This Kindle file uses a KF8 variant or feature Reader does not support.",
+            ),
             Self::UnsupportedCompression(17_480) => {
                 formatter.write_str("This MOBI file uses HUFF/CDIC compression.")
             }
@@ -117,39 +119,8 @@ pub fn decode(bytes: &[u8]) -> Result<MobiDocument, MobiError> {
         return Err(MobiError::Protected);
     }
     let mobi = is_mobi.then(|| mobi_header(header)).transpose()?;
-    let compression = u16_at(header, 0)?;
-    if !matches!(compression, 1 | 2) {
-        return Err(MobiError::UnsupportedCompression(compression));
-    }
-    let text_length = u32_at(header, 4)? as usize;
-    let text_records = usize::from(u16_at(header, 8)?);
-    let record_size = usize::from(u16_at(header, 10)?);
-    if text_length > MAX_TEXT_BYTES || record_size > MAX_RECORD_BYTES {
-        return Err(MobiError::TextTooLarge);
-    }
-    if text_length == 0
-        || text_records == 0
-        || record_size == 0
-        || text_records + 1 >= records.len()
-    {
-        return Err(MobiError::InvalidHeader);
-    }
-
     let extra_data = mobi.as_ref().map_or(0, |mobi| mobi.extra_data);
-    let mut text = Vec::with_capacity(text_length);
-    for pair in records[1..=text_records + 1].windows(2) {
-        let payload = without_trailers(&bytes[pair[0]..pair[1]], extra_data)?;
-        let limit = record_size.min(text_length + record_size - text.len());
-        match compression {
-            1 if payload.len() <= limit => text.extend_from_slice(payload),
-            1 => return Err(MobiError::InvalidText),
-            _ => decode_palmdoc_record(payload, limit, &mut text)?,
-        }
-    }
-    if text.len() < text_length || text[text_length..].iter().any(|&byte| byte != 0) {
-        return Err(MobiError::InvalidText);
-    }
-    text.truncate(text_length);
+    let text = decode_records(bytes, &records, header, extra_data)?;
     let encoding = mobi.as_ref().map_or(Encoding::Auto, |mobi| mobi.encoding);
     let text = decode_text(text, encoding)?;
     let text = text.trim_start_matches('\u{feff}');
@@ -171,7 +142,48 @@ pub fn decode(bytes: &[u8]) -> Result<MobiDocument, MobiError> {
     })
 }
 
-fn record_offsets(bytes: &[u8]) -> Result<Vec<usize>, MobiError> {
+pub(crate) fn decode_records(
+    bytes: &[u8],
+    records: &[usize],
+    header: &[u8],
+    extra_data: u16,
+) -> Result<Vec<u8>, MobiError> {
+    let compression = u16_at(header, 0)?;
+    if !matches!(compression, 1 | 2) {
+        return Err(MobiError::UnsupportedCompression(compression));
+    }
+    let text_length = u32_at(header, 4)? as usize;
+    let text_records = usize::from(u16_at(header, 8)?);
+    let record_size = usize::from(u16_at(header, 10)?);
+    if text_length > MAX_TEXT_BYTES || record_size > MAX_RECORD_BYTES {
+        return Err(MobiError::TextTooLarge);
+    }
+    if text_length == 0
+        || text_records == 0
+        || record_size == 0
+        || text_records + 1 >= records.len()
+    {
+        return Err(MobiError::InvalidHeader);
+    }
+
+    let mut text = Vec::with_capacity(text_length);
+    for pair in records[1..=text_records + 1].windows(2) {
+        let payload = without_trailers(&bytes[pair[0]..pair[1]], extra_data)?;
+        let limit = record_size.min(text_length + record_size - text.len());
+        match compression {
+            1 if payload.len() <= limit => text.extend_from_slice(payload),
+            1 => return Err(MobiError::InvalidText),
+            _ => decode_palmdoc_record(payload, limit, &mut text)?,
+        }
+    }
+    if text.len() < text_length || text[text_length..].iter().any(|&byte| byte != 0) {
+        return Err(MobiError::InvalidText);
+    }
+    text.truncate(text_length);
+    Ok(text)
+}
+
+pub(crate) fn record_offsets(bytes: &[u8]) -> Result<Vec<usize>, MobiError> {
     let attributes = u16_at(bytes, 32)?;
     let next_list = u32_at(bytes, 72)?;
     if attributes & 1 != 0 || next_list != 0 {
@@ -221,6 +233,26 @@ fn mobi_header(record: &[u8]) -> Result<MobiHeader, MobiError> {
         65001 => Encoding::Utf8,
         other => return Err(MobiError::UnsupportedEncoding(other)),
     };
+    let (title, author) = mobi_labels(record, header, encoding);
+    Ok(MobiHeader {
+        encoding,
+        extra_data: if version >= 5 {
+            u16_at(header, 242).unwrap_or(0)
+        } else {
+            0
+        },
+        is_plain_text: matches!(kind, 3 | 517),
+        title,
+        author,
+    })
+}
+
+fn mobi_labels(
+    record: &[u8],
+    header: &[u8],
+    encoding: Encoding,
+) -> (Option<String>, Option<String>) {
+    let end = header.len();
     let full_name = u32_at(header, 84)
         .ok()
         .zip(u32_at(header, 88).ok())
@@ -233,17 +265,19 @@ fn mobi_header(record: &[u8]) -> Result<MobiHeader, MobiError> {
             read_label(record.get(offset..offset.checked_add(length)?)?, encoding)
         });
     let (updated_title, author) = exth_labels(&record[end..], encoding);
-    Ok(MobiHeader {
-        encoding,
-        extra_data: if version >= 5 {
-            u16_at(header, 242).unwrap_or(0)
-        } else {
-            0
-        },
-        is_plain_text: matches!(kind, 3 | 517),
-        title: updated_title.or(full_name),
+    (updated_title.or(full_name), author)
+}
+
+pub(crate) fn kf8_labels(
+    pdb: &[u8],
+    record: &[u8],
+    header: &[u8],
+) -> (Option<String>, Option<String>) {
+    let (title, author) = mobi_labels(record, header, Encoding::Utf8);
+    (
+        title.or_else(|| read_label(&pdb[..32], Encoding::Utf8)),
         author,
-    })
+    )
 }
 
 fn exth_labels(bytes: &[u8], encoding: Encoding) -> (Option<String>, Option<String>) {
@@ -392,7 +426,7 @@ fn cp1252(byte: u8) -> char {
     }
 }
 
-fn u16_at(bytes: &[u8], offset: usize) -> Result<u16, MobiError> {
+pub(crate) fn u16_at(bytes: &[u8], offset: usize) -> Result<u16, MobiError> {
     Ok(u16::from_be_bytes(
         *bytes
             .get(offset..)
@@ -401,7 +435,7 @@ fn u16_at(bytes: &[u8], offset: usize) -> Result<u16, MobiError> {
     ))
 }
 
-fn u32_at(bytes: &[u8], offset: usize) -> Result<u32, MobiError> {
+pub(crate) fn u32_at(bytes: &[u8], offset: usize) -> Result<u32, MobiError> {
     Ok(u32::from_be_bytes(
         *bytes
             .get(offset..)

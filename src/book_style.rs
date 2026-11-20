@@ -11,7 +11,7 @@ use cssparser::{
     parse_important,
 };
 use parley::{
-    Alignment, FontContext, FontFamily, FontStyle, FontWeight, GenericFamily,
+    Alignment, FontContext, FontFamily, FontStyle, FontWeight, GenericFamily, LineBreak, WordBreak,
     fontique::{Blob, FontInfoOverride},
 };
 
@@ -54,6 +54,8 @@ pub(crate) struct Style {
     pub line_height: Option<f32>,
     pub background: Option<u8>,
     pub alignment: Option<Alignment>,
+    pub line_break: Option<LineBreak>,
+    pub word_break: WordBreak,
 }
 
 impl Default for Style {
@@ -66,6 +68,8 @@ impl Default for Style {
             line_height: None,
             background: None,
             alignment: None,
+            line_break: None,
+            word_break: WordBreak::Normal,
         }
     }
 }
@@ -150,7 +154,7 @@ impl BookStyle {
                 .as_deref()
                 .filter(|text| text.len() <= MAX_INLINE_BYTES)
                 .map_or_else(Vec::new, |text| declarations(&mut Parser::new(text)));
-            let mut winners: Winners<'_> = [None; 7];
+            let mut winners: Winners<'_> = [None; 9];
             for rule in &self.rules {
                 if let Some(specificity) = rule
                     .selectors
@@ -195,6 +199,8 @@ impl BookStyle {
                         style.font_weight = weight.resolve(parent.font_weight)
                     }
                     Property::Slant(slant) => style.font_style = *slant,
+                    Property::LineBreak(breaking) => style.line_break = *breaking,
+                    Property::WordBreak(breaking) => style.word_break = *breaking,
                     Property::FontSource(_) => {}
                 }
             }
@@ -479,7 +485,7 @@ fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
 }
 
 type Priority = (bool, bool, Specificity);
-type Winners<'a> = [Option<(Priority, &'a Property)>; 7];
+type Winners<'a> = [Option<(Priority, &'a Property)>; 9];
 
 fn choose<'a>(
     winners: &mut Winners<'a>,
@@ -496,6 +502,8 @@ fn choose<'a>(
             Property::Alignment(_) => 4,
             Property::Weight(_) => 5,
             Property::Slant(_) => 6,
+            Property::LineBreak(_) => 7,
+            Property::WordBreak(_) => 8,
             Property::FontSource(_) => continue,
         };
         let priority = (declaration.important, inline, specificity);
@@ -544,6 +552,8 @@ enum Property {
     Alignment(Alignment),
     Weight(Weight),
     Slant(FontStyle),
+    LineBreak(Option<LineBreak>),
+    WordBreak(WordBreak),
 }
 
 struct Properties;
@@ -644,6 +654,24 @@ impl<'i> DeclarationParser<'i> for Properties {
                         "right" => Alignment::Right,
                         "center" => Alignment::Center,
                         "justify" => Alignment::Justify,
+                        _ => return Err(ParseError::unexpected_token()),
+                    })
+                }
+                "line-break" => {
+                    Property::LineBreak(match input.expect_ident()?.to_ascii_lowercase().as_str() {
+                        "auto" => None,
+                        "loose" => Some(LineBreak::Loose),
+                        "normal" => Some(LineBreak::Normal),
+                        "strict" => Some(LineBreak::Strict),
+                        "anywhere" => Some(LineBreak::Anywhere),
+                        _ => return Err(ParseError::unexpected_token()),
+                    })
+                }
+                "word-break" => {
+                    Property::WordBreak(match input.expect_ident()?.to_ascii_lowercase().as_str() {
+                        "normal" => WordBreak::Normal,
+                        "break-all" => WordBreak::BreakAll,
+                        "keep-all" => WordBreak::KeepAll,
                         _ => return Err(ParseError::unexpected_token()),
                     })
                 }

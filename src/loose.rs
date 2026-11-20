@@ -49,6 +49,8 @@ pub(crate) enum Format {
     Text,
     Html,
     Htmlz,
+    Docx,
+    Chm,
     Markdown,
     Mobi,
     Rtf,
@@ -63,8 +65,10 @@ impl Format {
             "txt" => Some(Self::Text),
             "htm" | "html" | "xht" | "xhtml" => Some(Self::Html),
             "htmlz" => Some(Self::Htmlz),
+            "docx" => Some(Self::Docx),
+            "chm" => Some(Self::Chm),
             "md" | "markdown" => Some(Self::Markdown),
-            "mobi" | "prc" | "azw" | "pdb" => Some(Self::Mobi),
+            "mobi" | "prc" | "azw" | "azw3" | "pdb" => Some(Self::Mobi),
             "rtf" => Some(Self::Rtf),
             "tcr" => Some(Self::Tcr),
             "fb2" | "fbz" => Some(Self::Fb2),
@@ -91,13 +95,12 @@ pub(crate) struct Document {
 
 impl Document {
     /// Open the selected file with any supported resources contained inside it.
-    pub(crate) fn open(path: &Path) -> Result<Self> {
-        let format = Format::for_path(path).ok_or("This document format is unsupported")?;
+    pub(crate) fn open(path: &Path, format: Format) -> Result<Self> {
         let metadata = fs::metadata(path)?;
         let limit = match format {
             Format::Fb2 => MAX_FB2_INPUT,
             Format::Htmlz => MAX_HTMLZ_INPUT,
-            Format::Mobi => crate::mobi::MAX_MOBI_BYTES,
+            Format::Docx => crate::docx::MAX_INPUT,
             Format::Rtf => crate::rtf::MAX_INPUT,
             Format::Tcr => crate::tcr::MAX_INPUT,
             _ => MAX_INPUT,
@@ -110,24 +113,12 @@ impl Document {
             .into());
         }
         let file = File::open(path)?;
-        let filename = path.file_stem();
-        let fallback_title = filename
-            .map(|name| {
-                let stem = Path::new(name);
-                if (has_extension(path, "zip") || has_extension(path, "gz"))
-                    && has_extension(stem, "fb2")
-                {
-                    stem.file_stem().unwrap_or(name)
-                } else {
-                    name
-                }
-            })
-            .and_then(|name| name.to_str())
-            .map(str::trim)
-            .filter(|name| !name.is_empty())
-            .unwrap_or("Untitled document");
+        let fallback_title = fallback_title(path);
         if format == Format::Htmlz {
             return read_htmlz(file, metadata.len(), fallback_title);
+        }
+        if format == Format::Docx {
+            return crate::docx::open(BufReader::new(file), metadata.len(), fallback_title);
         }
         let bytes = if has_extension(path, "gz") {
             read_bounded(MultiGzDecoder::new(file), limit)?
@@ -136,17 +127,6 @@ impl Document {
         } else {
             read_bounded(file, limit)?
         };
-        if format == Format::Mobi {
-            let document = crate::mobi::decode(&bytes)?;
-            return Ok(Self {
-                title: document.title.unwrap_or_else(|| fallback_title.into()),
-                author: document.author,
-                chapter_path: CHAPTER_PATH.to_owned(),
-                xhtml: document.xhtml,
-                toc: Vec::new(),
-                resources: BTreeMap::new(),
-            });
-        }
         if format == Format::Rtf {
             return html_document(&crate::rtf::decode(&bytes)?, fallback_title);
         }
@@ -169,9 +149,34 @@ impl Document {
             Format::Html => html_document(input, fallback_title),
             Format::Markdown => markdown_document(input, fallback_title),
             Format::Fb2 => fb2_document(input, fallback_title),
-            Format::Htmlz | Format::Mobi | Format::Rtf | Format::Tcr => unreachable!(),
+            Format::Htmlz
+            | Format::Docx
+            | Format::Chm
+            | Format::Mobi
+            | Format::Rtf
+            | Format::Tcr => {
+                unreachable!()
+            }
         }
     }
+}
+
+pub(crate) fn fallback_title(path: &Path) -> &str {
+    path.file_stem()
+        .map(|name| {
+            let stem = Path::new(name);
+            if (has_extension(path, "zip") || has_extension(path, "gz"))
+                && has_extension(stem, "fb2")
+            {
+                stem.file_stem().unwrap_or(name)
+            } else {
+                name
+            }
+        })
+        .and_then(|name| name.to_str())
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or("Untitled document")
 }
 
 fn decode_document(bytes: &[u8], format: Format) -> Result<Cow<'_, str>> {
@@ -242,7 +247,7 @@ fn has_extension(path: &Path, expected: &str) -> bool {
         .is_some_and(|extension| extension.eq_ignore_ascii_case(expected))
 }
 
-fn read_bounded(input: impl Read, limit: usize) -> Result<Vec<u8>> {
+pub(crate) fn read_bounded(input: impl Read, limit: usize) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     input.take(limit as u64 + 1).read_to_end(&mut bytes)?;
     if bytes.len() > limit {
@@ -1444,7 +1449,7 @@ mod tests {
             Some(Format::Markdown)
         );
         assert_eq!(Format::for_path(Path::new("book.azw")), Some(Format::Mobi));
-        assert_eq!(Format::for_path(Path::new("book.azw3")), None);
+        assert_eq!(Format::for_path(Path::new("book.azw3")), Some(Format::Mobi));
         assert_eq!(Format::for_path(Path::new("book.FB2")), Some(Format::Fb2));
     }
 }

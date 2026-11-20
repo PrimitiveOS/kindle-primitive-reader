@@ -496,16 +496,21 @@ fn make_paragraph(
     builder.push_default(StyleProperty::FontWeight(weight(style)));
     builder.push_default(StyleProperty::FontStyle(style.font_style));
     builder.push_default(StyleProperty::Locale(language));
-    builder.push_default(StyleProperty::LineBreak(line_break(language)));
+    let paragraph_line_break = style.line_break.unwrap_or_else(|| line_break(language));
+    builder.push_default(StyleProperty::LineBreak(paragraph_line_break));
+    builder.push_default(StyleProperty::WordBreak(style.word_break));
     builder.set_base_direction(block.direction);
     for text in &block.styled_text {
         let run = &styles[text.element];
         if text.language != language {
             builder.push(StyleProperty::Locale(text.language), text.bytes.clone());
-            builder.push(
-                StyleProperty::LineBreak(line_break(text.language)),
-                text.bytes.clone(),
-            );
+        }
+        let run_line_break = run.line_break.unwrap_or_else(|| line_break(text.language));
+        if run_line_break != paragraph_line_break {
+            builder.push(StyleProperty::LineBreak(run_line_break), text.bytes.clone());
+        }
+        if run.word_break != style.word_break {
+            builder.push(StyleProperty::WordBreak(run.word_break), text.bytes.clone());
         }
         if !settings.override_fonts && run.font_family != style.font_family {
             builder.push(
@@ -723,6 +728,64 @@ mod tests {
         };
         assert!(!layout(&mut context, &mut fonts, 4).is_rtl());
         assert!(layout(&mut context, &mut fonts, 5).is_rtl());
+    }
+
+    #[test]
+    fn publisher_break_rules_change_wrapping_without_moving_source_anchors() {
+        let source = Source::parse(
+            r#"<html lang="ja"><head><style>
+                .strict { line-break: strict }
+                .split { word-break: break-all }
+            </style></head><body>
+                <p>Lead 文〜文.</p>
+                <section class="strict">
+                    <p>Lead 文〜文.</p>
+                    <p>Lead <span style="line-break: auto">文<span id="anchor">〜</span>文</span>.</p>
+                </section>
+                <p>Lead abcdefghi.</p>
+                <p class="split">Lead abcdefghi.</p>
+            </body></html>"#,
+        )
+        .unwrap();
+        let mut book = Book::open(&crate::test_fixture("field-notes-epub3.epub")).unwrap();
+        let href = book.chapters[0].href.clone();
+        let fonts = [crate::test_fixture("fonts/Silkscreen-Regular.ttf")];
+        let mut fonts = crate::font_context(&fonts).unwrap();
+        let styles = BookStyle::load(&mut book, &href, &source.stylesheets, &mut fonts)
+            .compute(&source.elements);
+        let mut context = LayoutContext::new();
+        let settings = Settings {
+            font_size: 24.0,
+            ..Settings::default()
+        };
+        let mut first_line_end = |block: usize, width| {
+            let block = &source.blocks[block];
+            let (layout, _) =
+                layout_paragraph(&mut context, &mut fonts, block, width, settings, &styles);
+            let end = layout.get(0).unwrap().text_range().end;
+            assert!(block.text.is_char_boundary(end));
+            end
+        };
+        let (block, anchor) = source.fragments["anchor"];
+        assert_eq!(block, source.blocks[2].key);
+        assert_eq!(anchor, "Lead 文".len());
+        assert_eq!(&source.blocks[2].text[anchor..], "〜文.");
+        assert!(
+            (20..160).any(|width| {
+                first_line_end(0, width) == anchor
+                    && first_line_end(1, width) < anchor
+                    && first_line_end(2, width) == anchor
+            }),
+            "Inherited strict wrapping should suppress the Japanese punctuation break that inline auto restores"
+        );
+        assert!(
+            (40..160).any(|width| {
+                first_line_end(3, width) == "Lead ".len()
+                    && first_line_end(4, width) > "Lead a".len()
+                    && first_line_end(4, width) < "Lead abcdefghi.".len()
+            }),
+            "Publisher break-all should fill the line with part of the next word"
+        );
     }
 
     #[test]
