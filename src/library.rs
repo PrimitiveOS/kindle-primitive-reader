@@ -7,15 +7,16 @@ use std::path::{Component, Path, PathBuf};
 
 use icu_casemap::CaseMapper;
 use icu_normalizer::{ComposingNormalizer, DecomposingNormalizer};
+use image::ImageFormat;
 use serde::{Deserialize, Serialize};
 use zip::ZipArchive;
 
-use crate::comic::{MAX_COMIC_BYTES, MAX_IMAGE_BYTES};
+use crate::comic::{MAX_COMIC_BYTES, MAX_IMAGE_BYTES, format_for_extension};
 use crate::djvu::MAX_DJVU_BYTES;
 use crate::epub::{Book, MAX_ARCHIVE, check_zip_directory};
 use crate::fixed::MAX_PDF_BYTES;
 use crate::fixed_text::PdfTextRect;
-use crate::loose::{Format, MAX_FB2_INPUT, MAX_INPUT};
+use crate::loose::{Format, MAX_FB2_INPUT, MAX_HTMLZ_INPUT, MAX_INPUT};
 use crate::mobi::MAX_MOBI_BYTES;
 use crate::selection::TextSelection;
 use crate::{Anchor, Settings, TextAlignment};
@@ -36,6 +37,9 @@ const MAX_FIXED_OFFSET: f32 = 32_768.0;
 const MIN_CROP_SIZE: f32 = 0.025;
 const BACKUP_VERSION: u32 = 1;
 const MAX_BACKUP_BOOKS: usize = 16_384;
+const MAX_COLLECTIONS: usize = 128;
+const MAX_COLLECTION_MEMBERS: usize = 4096;
+const MAX_COLLECTION_NAME_CHARS: usize = 64;
 const MAX_IMPORTED_MARKS: usize = 512;
 const MAX_ANCHOR_PATH_BYTES: usize = 4096;
 
@@ -44,15 +48,21 @@ pub enum DocumentFormat {
     Epub,
     Text,
     Html,
+    Htmlz,
     Markdown,
     Fb2,
     Mobi,
     Rtf,
+    Tcr,
     Pdf,
     Djvu,
     Cbz,
+    Cbt,
     Jpeg,
     Png,
+    Gif,
+    Bmp,
+    Pnm,
 }
 
 impl DocumentFormat {
@@ -61,34 +71,52 @@ impl DocumentFormat {
             return Some(match format {
                 Format::Text => Self::Text,
                 Format::Html => Self::Html,
+                Format::Htmlz => Self::Htmlz,
                 Format::Markdown => Self::Markdown,
                 Format::Fb2 => Self::Fb2,
                 Format::Mobi => Self::Mobi,
                 Format::Rtf => Self::Rtf,
+                Format::Tcr => Self::Tcr,
             });
         }
-        match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
+        let extension = path.extension()?.to_str()?;
+        match extension.to_ascii_lowercase().as_str() {
             "epub" => Some(Self::Epub),
             "pdf" => Some(Self::Pdf),
             "djvu" | "djv" => Some(Self::Djvu),
             "cbz" => Some(Self::Cbz),
-            "jpg" | "jpeg" => Some(Self::Jpeg),
-            "png" => Some(Self::Png),
-            _ => None,
+            "cbt" => Some(Self::Cbt),
+            _ => match format_for_extension(extension)? {
+                ImageFormat::Jpeg => Some(Self::Jpeg),
+                ImageFormat::Png => Some(Self::Png),
+                ImageFormat::Gif => Some(Self::Gif),
+                ImageFormat::Bmp => Some(Self::Bmp),
+                ImageFormat::Pnm => Some(Self::Pnm),
+                _ => None,
+            },
         }
+    }
+
+    pub const fn is_still_image(self) -> bool {
+        matches!(
+            self,
+            Self::Jpeg | Self::Png | Self::Gif | Self::Bmp | Self::Pnm
+        )
     }
 
     pub const fn max_bytes(self) -> u64 {
         match self {
             Self::Epub => MAX_ARCHIVE,
             Self::Text | Self::Html | Self::Markdown => MAX_INPUT as u64,
+            Self::Htmlz => MAX_HTMLZ_INPUT as u64,
             Self::Fb2 => MAX_FB2_INPUT as u64,
             Self::Mobi => MAX_MOBI_BYTES as u64,
             Self::Rtf => crate::rtf::MAX_INPUT as u64,
+            Self::Tcr => crate::tcr::MAX_INPUT as u64,
             Self::Pdf => MAX_PDF_BYTES as u64,
             Self::Djvu => MAX_DJVU_BYTES as u64,
-            Self::Cbz => MAX_COMIC_BYTES,
-            Self::Jpeg | Self::Png => MAX_IMAGE_BYTES,
+            Self::Cbz | Self::Cbt => MAX_COMIC_BYTES,
+            Self::Jpeg | Self::Png | Self::Gif | Self::Bmp | Self::Pnm => MAX_IMAGE_BYTES,
         }
     }
 
@@ -97,15 +125,21 @@ impl DocumentFormat {
             Self::Epub => b"",
             Self::Text => b"reader-txt\0",
             Self::Html => b"reader-html\0",
+            Self::Htmlz => b"reader-htmlz\0",
             Self::Markdown => b"reader-markdown\0",
             Self::Fb2 => b"reader-fb2\0",
             Self::Mobi => b"reader-mobi\0",
             Self::Rtf => b"reader-rtf\0",
+            Self::Tcr => b"reader-tcr\0",
             Self::Pdf => b"reader-pdf\0",
             Self::Djvu => b"reader-djvu\0",
             Self::Cbz => b"reader-cbz\0",
+            Self::Cbt => b"reader-cbt\0",
             Self::Jpeg => b"reader-jpeg\0",
             Self::Png => b"reader-png\0",
+            Self::Gif => b"reader-gif\0",
+            Self::Bmp => b"reader-bmp\0",
+            Self::Pnm => b"reader-pnm\0",
         }
     }
 }
@@ -114,6 +148,7 @@ impl DocumentFormat {
 pub struct LibraryBook {
     pub path: PathBuf,
     pub title: String,
+    pub author: Option<String>,
     pub size: u64,
     pub format: DocumentFormat,
     searchable: String,
@@ -125,7 +160,7 @@ pub struct BookMetadata {
     pub author: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct BookPreferences {
     pub font_size: Option<f32>,
@@ -135,6 +170,8 @@ pub struct BookPreferences {
     pub alignment: TextAlignment,
     pub bold_text: bool,
     pub override_fonts: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_file: Option<String>,
 }
 
 impl BookPreferences {
@@ -161,6 +198,10 @@ pub struct FixedPreferences {
     pub zoom: usize,
     pub turns: u8,
     pub width_fit: bool,
+    pub height_fit: bool,
+    pub continuous: bool,
+    pub spread: bool,
+    pub scan_contrast: bool,
     pub offset_x: f32,
     pub offset_y: f32,
     pub right_to_left: bool,
@@ -177,6 +218,7 @@ impl FixedPreferences {
         Self {
             zoom: self.zoom.min(MAX_FIXED_ZOOM),
             turns: self.turns % 4,
+            height_fit: self.height_fit && !self.width_fit,
             offset_x: normalized_offset(f64::from(self.offset_x)),
             offset_y: normalized_offset(f64::from(self.offset_y)),
             crop: self.crop.filter(valid_crop),
@@ -209,10 +251,15 @@ impl<'de> Deserialize<'de> for FixedPreferences {
                     .unwrap_or(0.0),
             )
         };
+        let width_fit = switch("width_fit");
         Ok(Self {
             zoom: integer("zoom").min(MAX_FIXED_ZOOM as u64) as usize,
             turns: (integer("turns") % 4) as u8,
-            width_fit: switch("width_fit"),
+            width_fit,
+            height_fit: !width_fit && switch("height_fit"),
+            continuous: switch("continuous"),
+            spread: switch("spread"),
+            scan_contrast: switch("scan_contrast"),
             offset_x: offset("offset_x"),
             offset_y: offset("offset_y"),
             right_to_left: switch("right_to_left"),
@@ -290,14 +337,54 @@ impl PdfHighlight {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadingStatus {
+    #[default]
+    Unread,
+    Reading,
+    OnHold,
+    Finished,
+}
+
+impl ReadingStatus {
+    pub const ALL: [Self; 4] = [Self::Unread, Self::Reading, Self::OnHold, Self::Finished];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Unread => "Unread",
+            Self::Reading => "Reading",
+            Self::OnHold => "On hold",
+            Self::Finished => "Finished",
+        }
+    }
+}
+
+fn read_status<'de, D: serde::Deserializer<'de>>(
+    input: D,
+) -> Result<Option<ReadingStatus>, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(input)?;
+    Ok(value.and_then(|value| serde_json::from_value(value).ok()))
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BookState {
     pub id: u64,
     pub path: PathBuf,
     pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
     #[serde(default)]
     size: u64,
     pub position: Option<ReadingPosition>,
+    #[serde(
+        default,
+        deserialize_with = "read_status",
+        skip_serializing_if = "Option::is_none"
+    )]
+    reading_status: Option<ReadingStatus>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub favorite: bool,
     #[serde(default)]
     pub preferences: BookPreferences,
     #[serde(default)]
@@ -311,6 +398,38 @@ pub struct BookState {
 }
 
 impl BookState {
+    fn new(entry: &LibraryBook, id: u64) -> Self {
+        Self {
+            id,
+            path: entry.path.clone(),
+            title: entry.title.clone(),
+            author: entry.author.clone(),
+            size: entry.size,
+            position: None,
+            reading_status: None,
+            favorite: false,
+            preferences: BookPreferences::default(),
+            fixed_preferences: FixedPreferences::default(),
+            bookmarks: Vec::new(),
+            highlights: Vec::new(),
+            pdf_highlights: Vec::new(),
+        }
+    }
+
+    pub fn status(&self) -> ReadingStatus {
+        self.reading_status.unwrap_or_else(|| {
+            if self.position.is_some() {
+                ReadingStatus::Reading
+            } else {
+                ReadingStatus::Unread
+            }
+        })
+    }
+
+    pub fn set_status(&mut self, status: ReadingStatus) {
+        self.reading_status = Some(status);
+    }
+
     pub fn add_pdf_highlight(&mut self, highlight: PdfHighlight) -> io::Result<()> {
         if self.pdf_highlights.len() >= MAX_PDF_HIGHLIGHTS {
             return Err(io::Error::new(
@@ -329,6 +448,27 @@ impl BookState {
     }
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Collection {
+    pub name: String,
+    #[serde(default)]
+    book_ids: Vec<u64>,
+}
+
+impl Collection {
+    pub fn book_ids(&self) -> &[u64] {
+        &self.book_ids
+    }
+
+    pub fn contains(&self, id: u64) -> bool {
+        self.book_ids.contains(&id)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BackupSummary {
     pub new_books: usize,
@@ -340,10 +480,13 @@ pub struct BackupSummary {
     pub duplicates: usize,
     pub skipped: usize,
     pub note_conflicts: usize,
+    pub collections_added: usize,
+    pub memberships_added: usize,
 }
 
 pub struct BackupImport {
     books: Vec<BookState>,
+    collections: Vec<Collection>,
     summary: BackupSummary,
 }
 
@@ -353,10 +496,19 @@ impl BackupImport {
     }
 }
 
-#[derive(Deserialize, Serialize)]
-struct Backup<T> {
+#[derive(Deserialize)]
+struct SavedLibrary {
     version: u32,
-    books: T,
+    books: Vec<BookState>,
+    #[serde(default)]
+    collections: Vec<Collection>,
+}
+
+#[derive(Serialize)]
+struct SavedLibraryRef<'a> {
+    version: u32,
+    books: &'a [BookState],
+    collections: &'a [Collection],
 }
 
 pub struct Library {
@@ -365,6 +517,7 @@ pub struct Library {
     state_path: PathBuf,
     books: Vec<LibraryBook>,
     recent: Vec<BookState>,
+    collections: Vec<Collection>,
     truncated: bool,
 }
 
@@ -378,11 +531,13 @@ impl Library {
         if !fs::symlink_metadata(&original_root)?.is_dir() {
             return Err(denied());
         }
+        let (recent, collections) = load_library_state(state_path)?;
         Ok(Self {
             root: original_root.canonicalize()?,
             original_root,
             state_path: state_path.to_owned(),
-            recent: load_recents(state_path)?,
+            recent,
+            collections,
             books: Vec::new(),
             truncated: false,
         })
@@ -397,11 +552,11 @@ impl Library {
         let mut seen = 0;
         let mut books = Vec::new();
         let mut truncated = false;
-        let known_titles = self
+        let known_metadata = self
             .recent
             .iter()
             .rev()
-            .map(|state| (state.path.as_path(), (state.size, state.title.as_str())))
+            .map(|state| (state.path.as_path(), state))
             .collect::<HashMap<_, _>>();
         while let Some((relative, entries)) = dirs.last_mut() {
             let Some(entry) = entries.next() else {
@@ -437,10 +592,10 @@ impl Library {
                 };
                 if metadata.len() <= format.max_bytes() {
                     let size = metadata.len();
-                    let title = known_titles
+                    let saved = known_metadata
                         .get(path.as_path())
-                        .and_then(|&(length, title)| (length == size).then_some(title));
-                    books.push(library_book(path, size, format, title));
+                        .filter(|state| state.size == size);
+                    books.push(library_book(path, size, format, saved.copied()));
                 }
             }
         }
@@ -454,7 +609,7 @@ impl Library {
         &self.books
     }
 
-    /// Case-folded substring filtering across titles and root-relative file paths.
+    /// Case-folded substring filtering across titles, known authors, and file paths.
     pub fn matching<'a>(&'a self, query: &str) -> impl Iterator<Item = &'a LibraryBook> + use<'a> {
         let query = fold_search(query);
         self.books.iter().filter(move |book| {
@@ -471,10 +626,12 @@ impl Library {
             DocumentFormat::Epub
                 | DocumentFormat::Text
                 | DocumentFormat::Html
+                | DocumentFormat::Htmlz
                 | DocumentFormat::Markdown
                 | DocumentFormat::Fb2
                 | DocumentFormat::Mobi
                 | DocumentFormat::Rtf
+                | DocumentFormat::Tcr
         ) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -581,6 +738,27 @@ impl Library {
         &self.recent
     }
 
+    /// Filter out organization-only records that have never recorded a reading position.
+    pub fn recently_read(&self) -> impl Iterator<Item = &BookState> {
+        self.recent.iter().filter(|book| book.position.is_some())
+    }
+
+    pub fn favorites(&self) -> impl Iterator<Item = &BookState> {
+        self.recent.iter().filter(|book| book.favorite)
+    }
+
+    /// Create or relocate metadata for a book without changing the reading order in Recents.
+    pub fn track(&mut self, entry: &LibraryBook, id: u64) -> &mut BookState {
+        if let Some(index) = self.recent.iter().position(|book| book.id == id) {
+            let book = &mut self.recent[index];
+            book.path.clone_from(&entry.path);
+            book.size = entry.size;
+            return book;
+        }
+        self.recent.push(BookState::new(entry, id));
+        self.recent.last_mut().unwrap()
+    }
+
     pub fn remember(&mut self, entry: &LibraryBook, id: u64, title: &str) -> &mut BookState {
         let title = clean_metadata(title);
         let title = if title.is_empty() {
@@ -588,34 +766,128 @@ impl Library {
         } else {
             title
         };
-        let mut state = self
-            .recent
-            .iter()
-            .position(|item| item.id == id)
+        let prior = self.recent.iter().position(|item| item.id == id);
+        let mut state = prior
             .map(|index| self.recent.remove(index))
-            .unwrap_or_else(|| BookState {
-                id,
-                path: PathBuf::new(),
-                title: String::new(),
-                size: entry.size,
-                position: None,
-                preferences: BookPreferences::default(),
-                fixed_preferences: FixedPreferences::default(),
-                bookmarks: Vec::new(),
-                highlights: Vec::new(),
-                pdf_highlights: Vec::new(),
-            });
-        if (state.path != entry.path || state.title != title)
+            .unwrap_or_else(|| BookState::new(entry, id));
+        if (prior.is_none() || state.path != entry.path || state.title != title)
             && let Some(book) = self.books.iter_mut().find(|book| book.path == entry.path)
         {
             book.title.clone_from(&title);
-            book.searchable = search_key(&book.title, &book.path);
+            book.searchable = search_key(&book.title, book.author.as_deref(), &book.path);
         }
         state.path.clone_from(&entry.path);
         state.title = title;
         state.size = entry.size;
         self.recent.insert(0, state);
         &mut self.recent[0]
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn cache_author(&mut self, id: u64, author: Option<&str>) {
+        let Some(state) = self.recent.iter_mut().find(|book| book.id == id) else {
+            return;
+        };
+        let author = author.map(clean_metadata).filter(|value| !value.is_empty());
+        if state.author != author {
+            state.author.clone_from(&author);
+        }
+        if let Some(entry) = self.books.iter_mut().find(|entry| entry.path == state.path)
+            && entry.author != author
+        {
+            entry.author = author;
+            entry.searchable = search_key(&entry.title, entry.author.as_deref(), &entry.path);
+        }
+    }
+
+    pub fn collections(&self) -> &[Collection] {
+        &self.collections
+    }
+
+    pub fn collection(&self, name: &str) -> Option<&Collection> {
+        collection_index(&self.collections, name).map(|index| &self.collections[index])
+    }
+
+    pub fn create_collection(&mut self, name: &str) -> io::Result<()> {
+        let name = collection_name(name)?;
+        if self.collection(name).is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "A collection already uses that name",
+            ));
+        }
+        if self.collections.len() >= MAX_COLLECTIONS {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Reader reached its collection limit",
+            ));
+        }
+        self.collections.push(Collection {
+            name: name.to_owned(),
+            book_ids: Vec::new(),
+        });
+        Ok(())
+    }
+
+    pub fn rename_collection(&mut self, old: &str, new: &str) -> io::Result<bool> {
+        let name = collection_name(new)?;
+        let index = collection_index(&self.collections, old).ok_or_else(collection_missing)?;
+        if collection_index(&self.collections, name).is_some_and(|existing| existing != index) {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "A collection already uses that name",
+            ));
+        }
+        let collection = &mut self.collections[index];
+        if collection.name == name {
+            return Ok(false);
+        }
+        collection.name = name.to_owned();
+        Ok(true)
+    }
+
+    pub fn remove_collection(&mut self, name: &str) -> bool {
+        let Some(index) = collection_index(&self.collections, name) else {
+            return false;
+        };
+        self.collections.remove(index);
+        true
+    }
+
+    pub fn set_collection_membership(
+        &mut self,
+        name: &str,
+        id: u64,
+        included: bool,
+    ) -> io::Result<bool> {
+        let index = collection_index(&self.collections, name).ok_or_else(collection_missing)?;
+        if included && self.state(id).is_none() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "That book is absent from Reader's tracked library",
+            ));
+        }
+        let collection = &mut self.collections[index];
+        match (
+            collection.book_ids.iter().position(|&member| member == id),
+            included,
+        ) {
+            (Some(member), false) => {
+                collection.book_ids.remove(member);
+                Ok(true)
+            }
+            (None, true) if collection.book_ids.len() >= MAX_COLLECTION_MEMBERS => {
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "This collection reached its book limit",
+                ))
+            }
+            (None, true) => {
+                collection.book_ids.push(id);
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
     }
 
     pub fn locate(&self, state: &BookState) -> io::Result<LibraryBook> {
@@ -656,20 +928,12 @@ impl Library {
     }
 
     pub fn bytes(&self) -> io::Result<Vec<u8>> {
-        validate_state(&self.recent)?;
-        state_json(&self.recent, MAX_STATE_BYTES)
+        encode_library(&self.recent, &self.collections, MAX_STATE_BYTES)
     }
 
     /// Export Reader metadata as a versioned JSON document.
     pub fn backup_bytes(&self) -> io::Result<Vec<u8>> {
-        validate_state(&self.recent)?;
-        state_json(
-            &Backup {
-                version: BACKUP_VERSION,
-                books: &self.recent,
-            },
-            MAX_BACKUP_BYTES,
-        )
+        encode_library(&self.recent, &self.collections, MAX_BACKUP_BYTES)
     }
 
     /// Calculate the effect of an import without touching the library, books, or state file.
@@ -677,28 +941,39 @@ impl Library {
         if bytes.len() as u64 > MAX_BACKUP_BYTES {
             return Err(invalid_state("Reader backup exceeds its size limit"));
         }
-        let backup: Backup<Vec<BookState>> =
-            serde_json::from_slice(bytes).map_err(io::Error::other)?;
+        let backup: SavedLibrary = serde_json::from_slice(bytes).map_err(io::Error::other)?;
         if backup.version != BACKUP_VERSION || backup.books.len() > MAX_BACKUP_BOOKS {
             return Err(invalid_state(
                 "Reader backup version or book count is unsupported",
             ));
         }
-        let (merged, summary) = merge_states(&self.recent, &backup.books);
-        validate_state(&merged)?;
-        state_json(&merged, MAX_STATE_BYTES)?;
+        let (merged, mut summary) = merge_states(&self.recent, &backup.books);
+        let collections = merge_collections(
+            &self.collections,
+            &backup.collections,
+            &merged,
+            &mut summary,
+        );
+        encode_library(&merged, &collections, MAX_STATE_BYTES)?;
         Ok(BackupImport {
             books: backup.books,
+            collections: backup.collections,
             summary,
         })
     }
 
     /// Revalidate the proposed merge against current state, then apply it in memory.
     pub fn merge_backup(&mut self, import: BackupImport) -> io::Result<BackupSummary> {
-        let (merged, summary) = merge_states(&self.recent, &import.books);
-        validate_state(&merged)?;
-        state_json(&merged, MAX_STATE_BYTES)?;
+        let (merged, mut summary) = merge_states(&self.recent, &import.books);
+        let collections = merge_collections(
+            &self.collections,
+            &import.collections,
+            &merged,
+            &mut summary,
+        );
+        encode_library(&merged, &collections, MAX_STATE_BYTES)?;
         self.recent = merged;
+        self.collections = collections;
         Ok(summary)
     }
 
@@ -710,6 +985,105 @@ impl Library {
     pub fn persist(&self) -> io::Result<()> {
         self.save_with(primitive_app::save)
     }
+}
+
+fn collection_name(value: &str) -> io::Result<&str> {
+    let name = value.trim();
+    if name.is_empty()
+        || name.chars().any(char::is_control)
+        || name.chars().count() > MAX_COLLECTION_NAME_CHARS
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Enter a collection name of 1 to 64 characters",
+        ));
+    }
+    Ok(name)
+}
+
+fn collection_index(collections: &[Collection], name: &str) -> Option<usize> {
+    let key = fold_search(name.trim());
+    collections
+        .iter()
+        .position(|collection| fold_search(&collection.name) == key)
+}
+
+fn collection_missing() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::NotFound,
+        "That collection is absent from Reader",
+    )
+}
+
+fn merge_collections(
+    existing: &[Collection],
+    imported: &[Collection],
+    books: &[BookState],
+    summary: &mut BackupSummary,
+) -> Vec<Collection> {
+    let valid_ids: HashSet<_> = books.iter().map(|book| book.id).collect();
+    let mut collections = existing.to_vec();
+    let mut names: HashMap<_, _> = collections
+        .iter()
+        .enumerate()
+        .map(|(index, collection)| (fold_search(&collection.name), index))
+        .collect();
+    let mut members = HashMap::<usize, HashSet<u64>>::new();
+    for source in imported {
+        let Ok(name) = collection_name(&source.name) else {
+            summary.skipped += 1;
+            continue;
+        };
+        let key = fold_search(name);
+        let index = if let Some(index) = names.get(&key) {
+            *index
+        } else if collections.len() < MAX_COLLECTIONS {
+            let index = collections.len();
+            collections.push(Collection {
+                name: name.to_owned(),
+                book_ids: Vec::new(),
+            });
+            names.insert(key, index);
+            summary.collections_added += 1;
+            index
+        } else {
+            summary.skipped += 1;
+            continue;
+        };
+        let ids = &mut collections[index].book_ids;
+        let seen = members
+            .entry(index)
+            .or_insert_with(|| ids.iter().copied().collect());
+        for &id in &source.book_ids {
+            if seen.contains(&id) {
+                continue;
+            }
+            if ids.len() == MAX_COLLECTION_MEMBERS || !valid_ids.contains(&id) {
+                summary.skipped += 1;
+                continue;
+            }
+            seen.insert(id);
+            ids.push(id);
+            summary.memberships_added += 1;
+        }
+    }
+    collections
+}
+
+fn encode_library(
+    books: &[BookState],
+    collections: &[Collection],
+    limit: u64,
+) -> io::Result<Vec<u8>> {
+    validate_state(books)?;
+    state_json(
+        &SavedLibraryRef {
+            version: BACKUP_VERSION,
+            books,
+            collections,
+        },
+        limit,
+    )
 }
 
 fn validate_state(states: &[BookState]) -> io::Result<()> {
@@ -775,6 +1149,11 @@ fn merge_states(current: &[BookState], backup: &[BookState]) -> (Vec<BookState>,
             added.highlights = Vec::new();
             added.pdf_highlights = Vec::new();
             added.title = clean_metadata(&added.title);
+            added.author = added
+                .author
+                .as_deref()
+                .map(clean_metadata)
+                .filter(|author| !author.is_empty());
             if added
                 .position
                 .as_ref()
@@ -902,7 +1281,7 @@ fn valid_highlight(mark: &Highlight) -> bool {
             .is_none_or(|note| note.len() <= MAX_NOTE_BYTES)
 }
 
-fn load_recents(path: &Path) -> io::Result<Vec<BookState>> {
+fn load_library_state(path: &Path) -> io::Result<(Vec<BookState>, Vec<Collection>)> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.is_file() && metadata.len() <= MAX_STATE_BYTES => {}
         Ok(_) => {
@@ -911,7 +1290,9 @@ fn load_recents(path: &Path) -> io::Result<Vec<BookState>> {
                 "Reader state is unavailable or too large",
             ));
         }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok((Vec::new(), Vec::new()));
+        }
         Err(error) => return Err(error),
     }
     let mut bytes = Vec::new();
@@ -924,7 +1305,17 @@ fn load_recents(path: &Path) -> io::Result<Vec<BookState>> {
             "Reader state exceeds its size limit",
         ));
     }
-    let mut recent: Vec<BookState> = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+    let (mut recent, collections) =
+        if bytes.iter().find(|byte| !byte.is_ascii_whitespace()) == Some(&b'[') {
+            let books: Vec<BookState> = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+            (books, Vec::new())
+        } else {
+            let state: SavedLibrary = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+            if state.version != BACKUP_VERSION {
+                return Err(invalid_state("Reader state version is unsupported"));
+            }
+            (state.books, state.collections)
+        };
     let mut ids = HashSet::new();
     recent.retain(|state| {
         safe_path(&state.path)
@@ -935,7 +1326,8 @@ fn load_recents(path: &Path) -> io::Result<Vec<BookState>> {
         state.pdf_highlights.retain(PdfHighlight::is_valid);
         state.pdf_highlights.truncate(MAX_PDF_HIGHLIGHTS);
     }
-    Ok(recent)
+    let collections = merge_collections(&[], &collections, &recent, &mut BackupSummary::default());
+    Ok((recent, collections))
 }
 
 fn fingerprint(mut input: impl Read, size: u64, tag: &[u8], mut length: u64) -> io::Result<u64> {
@@ -965,26 +1357,35 @@ fn library_book(
     path: PathBuf,
     size: u64,
     format: DocumentFormat,
-    known_title: Option<&str>,
+    known: Option<&BookState>,
 ) -> LibraryBook {
-    let title = known_title.map(str::to_owned).unwrap_or_else(|| {
+    let title = known.map(|state| state.title.clone()).unwrap_or_else(|| {
         path.file_stem().map_or_else(
             || "Untitled book".to_owned(),
             |name| name.to_string_lossy().into_owned(),
         )
     });
-    let searchable = search_key(&title, &path);
+    let author = known
+        .and_then(|state| state.author.as_deref())
+        .map(clean_metadata)
+        .filter(|author| !author.is_empty());
+    let searchable = search_key(&title, author.as_deref(), &path);
     LibraryBook {
         path,
         title,
+        author,
         size,
         format,
         searchable,
     }
 }
 
-fn search_key(title: &str, path: &Path) -> String {
-    fold_search(&format!("{title}\n{}", path.to_string_lossy()))
+fn search_key(title: &str, author: Option<&str>, path: &Path) -> String {
+    fold_search(&format!(
+        "{title}\n{}\n{}",
+        author.unwrap_or_default(),
+        path.to_string_lossy()
+    ))
 }
 
 fn fold_search(text: &str) -> String {
@@ -1187,7 +1588,15 @@ mod tests {
         let root = scratch.0.join("documents");
         fs::create_dir(&root).unwrap();
         let input = b"fixed-page test data";
-        for name in ["sample.PDF", "sample.JPG", "sample.PNG", "sample.DJV"] {
+        for name in [
+            "sample.PDF",
+            "sample.JPG",
+            "sample.PNG",
+            "sample.DJV",
+            "sample.GIF",
+            "sample.BMP",
+            "sample.PPM",
+        ] {
             fs::write(root.join(name), input).unwrap();
         }
         fs::write(root.join("archive.CBZ"), EPUB3).unwrap();
@@ -1198,18 +1607,28 @@ mod tests {
 
         let mut library = Library::open(&root, &scratch.0.join("reader.json")).unwrap();
         library.scan().unwrap();
-        assert_eq!(library.entries().len(), 5);
+        assert_eq!(library.entries().len(), 8);
         let mut ids = HashSet::new();
         for (name, format) in [
             ("sample.PDF", DocumentFormat::Pdf),
             ("sample.DJV", DocumentFormat::Djvu),
             ("sample.JPG", DocumentFormat::Jpeg),
             ("sample.PNG", DocumentFormat::Png),
+            ("sample.GIF", DocumentFormat::Gif),
+            ("sample.BMP", DocumentFormat::Bmp),
+            ("sample.PPM", DocumentFormat::Pnm),
             ("archive.CBZ", DocumentFormat::Cbz),
         ] {
             let book = library.resolve(Path::new(name)).unwrap();
             assert_eq!(book.format, format);
             assert!(ids.insert(library.identify(&book).unwrap()));
+        }
+        for ext in ["PNM", "PBM", "PGM", "PPM", "PAM"] {
+            let name = format!("image.{ext}");
+            let format = DocumentFormat::for_path(Path::new(&name)).unwrap();
+            assert_eq!(format, DocumentFormat::Pnm);
+            assert!(format.is_still_image());
+            assert_eq!(format.max_bytes(), MAX_IMAGE_BYTES);
         }
         let jpeg = library.resolve(Path::new("sample.JPG")).unwrap();
         let id = library.identify(&jpeg).unwrap();
@@ -1392,7 +1811,7 @@ mod tests {
             r#"{
             "id":7,"path":"old.cbz","title":"Comic","position":{"chapter":0,"page":3},
             "fixed_preferences":{"zoom":99,"turns":259,"width_fit":true,"offset_x":1e40,
-                                 "offset_y":null,"right_to_left":true,
+                                 "offset_y":null,"right_to_left":true,"scan_contrast":"higher",
                                  "crop":{"x0":0.1,"y0":0.2,"x1":0.11,"y1":0.8}}
         }"#,
         )
@@ -1404,6 +1823,10 @@ mod tests {
                 zoom: 4,
                 turns: 3,
                 width_fit: true,
+                height_fit: false,
+                continuous: false,
+                spread: false,
+                scan_contrast: false,
                 offset_x: MAX_FIXED_OFFSET,
                 offset_y: 0.0,
                 right_to_left: true,
@@ -1413,10 +1836,15 @@ mod tests {
         assert!(state.fixed_preferences.is_valid());
         let invalid = FixedPreferences {
             offset_y: f32::NAN,
+            height_fit: true,
             ..state.fixed_preferences
         };
         assert!(!invalid.is_valid());
         assert_eq!(invalid.normalized(), state.fixed_preferences);
+        let conflicting: FixedPreferences =
+            serde_json::from_str(r#"{"width_fit":true,"height_fit":true}"#).unwrap();
+        assert!(conflicting.width_fit);
+        assert!(!conflicting.height_fit);
         let crop: FixedPreferences =
             serde_json::from_str(r#"{"crop":{"x0":0.1,"y0":0.2,"x1":0.9,"y1":0.8}}"#).unwrap();
         assert_eq!(crop.crop.unwrap().x1, 0.9);
@@ -1527,6 +1955,7 @@ mod tests {
                 duplicates: 3,
                 skipped: 0,
                 note_conflicts: 1,
+                ..BackupSummary::default()
             }
         );
         assert_eq!(target.recents().len(), 1);
@@ -1588,6 +2017,198 @@ mod tests {
         assert_eq!(preview.summary().skipped, 1);
         library.merge_backup(preview).unwrap();
         assert!(library.recents().is_empty());
+    }
+
+    #[test]
+    fn older_state_infers_reading_status_and_initializes_organization() {
+        let scratch = Scratch::new();
+        let state_path = scratch.0.join("library.json");
+        fs::write(&state_path, br#"[
+            {"id":1,"path":"Positioned.epub","title":"Positioned","position":{"chapter":2,"page":3}},
+            {"id":2,"path":"Unopened.epub","title":"Unopened"},
+            {"id":3,"path":"Future.epub","title":"Future","reading_status":"future_status","position":{"chapter":0}}
+        ]"#).unwrap();
+
+        let library = Library::open(&scratch.0, &state_path).unwrap();
+        assert_eq!(library.state(1).unwrap().status(), ReadingStatus::Reading);
+        assert_eq!(library.state(2).unwrap().status(), ReadingStatus::Unread);
+        assert_eq!(library.state(3).unwrap().status(), ReadingStatus::Reading);
+        assert_eq!(library.recently_read().count(), 2);
+        assert_eq!(library.favorites().count(), 0);
+        assert!(library.collections().is_empty());
+        library
+            .save_with(|path, bytes| fs::write(path, bytes))
+            .unwrap();
+
+        let reopened = Library::open(&scratch.0, &state_path).unwrap();
+        assert_eq!(
+            reopened.state(1).unwrap().position.as_ref().unwrap().page,
+            3
+        );
+        assert_eq!(reopened.state(2).unwrap().status(), ReadingStatus::Unread);
+    }
+
+    #[test]
+    fn tracks_unopened_favorites_and_persists_overlapping_collections_through_rename() {
+        let scratch = Scratch::new();
+        let state_path = scratch.0.join("library.json");
+        fs::write(scratch.0.join("Started.epub"), EPUB2).unwrap();
+        fs::write(scratch.0.join("Unopened.epub"), EPUB3).unwrap();
+        let mut library = Library::open(&scratch.0, &state_path).unwrap();
+        let started = library.resolve(Path::new("Started.epub")).unwrap();
+        let unopened = library.resolve(Path::new("Unopened.epub")).unwrap();
+        let started_id = library.identify(&started).unwrap();
+        let unopened_id = library.identify(&unopened).unwrap();
+        let book = library.remember(&started, started_id, "First book");
+        book.position = Some(ReadingPosition {
+            chapter: 0,
+            page: 2,
+            anchor: None,
+        });
+        book.set_status(ReadingStatus::Finished);
+        let book = library.track(&unopened, unopened_id);
+        book.favorite = true;
+        book.set_status(ReadingStatus::OnHold);
+
+        assert_eq!(
+            library
+                .recently_read()
+                .map(|book| book.id)
+                .collect::<Vec<_>>(),
+            [started_id]
+        );
+        assert_eq!(
+            library.favorites().map(|book| book.id).collect::<Vec<_>>(),
+            [unopened_id]
+        );
+        library.create_collection(" Straße ").unwrap();
+        assert_eq!(
+            library.create_collection("STRASSE").unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        assert!(library.create_collection(" ").is_err());
+        assert!(library.create_collection("An\ninvalid name").is_err());
+        assert!(
+            library
+                .create_collection(&"a".repeat(MAX_COLLECTION_NAME_CHARS + 1))
+                .is_err()
+        );
+        library.create_collection("Weekend").unwrap();
+        assert!(
+            library
+                .set_collection_membership("strasse", unopened_id, true)
+                .unwrap()
+        );
+        assert!(
+            !library
+                .set_collection_membership("Straße", unopened_id, true)
+                .unwrap()
+        );
+        assert!(
+            library
+                .set_collection_membership("Weekend", unopened_id, true)
+                .unwrap()
+        );
+        assert!(
+            library
+                .set_collection_membership("Weekend", started_id, true)
+                .unwrap()
+        );
+        assert!(
+            library
+                .set_collection_membership("Weekend", 7, true)
+                .is_err()
+        );
+        assert!(library.rename_collection("strasse", "Weekend").is_err());
+        assert!(
+            library
+                .rename_collection("strasse", "Favorites to revisit")
+                .unwrap()
+        );
+        library
+            .save_with(|path, bytes| fs::write(path, bytes))
+            .unwrap();
+
+        fs::rename(
+            scratch.0.join("Unopened.epub"),
+            scratch.0.join("Moved.epub"),
+        )
+        .unwrap();
+        let mut reopened = Library::open(&scratch.0, &state_path).unwrap();
+        reopened.scan().unwrap();
+        let new_path = reopened
+            .locate(reopened.state(unopened_id).unwrap())
+            .unwrap();
+        assert_eq!(new_path.path, Path::new("Moved.epub"));
+        assert_eq!(
+            reopened.track(&new_path, unopened_id).status(),
+            ReadingStatus::OnHold
+        );
+        assert!(reopened.state(unopened_id).unwrap().favorite);
+        assert!(
+            reopened
+                .collection("Favorites to revisit")
+                .unwrap()
+                .contains(unopened_id)
+        );
+        assert_eq!(
+            reopened.collection("weekend").unwrap().book_ids(),
+            [unopened_id, started_id]
+        );
+        assert!(reopened.remove_collection("Weekend"));
+        assert!(scratch.0.join("Moved.epub").is_file());
+        assert!(
+            reopened
+                .collection("Favorites to revisit")
+                .unwrap()
+                .contains(unopened_id)
+        );
+        assert_eq!(
+            reopened.state(started_id).unwrap().status(),
+            ReadingStatus::Finished
+        );
+    }
+
+    #[test]
+    fn backup_combines_collection_members_without_replacing_current_status() {
+        let scratch = Scratch::new();
+        let state_path = scratch.0.join("library.json");
+        fs::write(
+            &state_path,
+            br#"{
+           "version":1,
+           "books":[{"id":1,"path":"First.epub","title":"First","reading_status":"finished"}],
+           "collections":[{"name":"Trips","book_ids":[1,1,47]},{"name":"TRIPS","book_ids":[1]},
+                          {"name":"  ","book_ids":[1]}]
+        }"#,
+        )
+        .unwrap();
+        let mut library = Library::open(&scratch.0, &state_path).unwrap();
+        assert_eq!(library.collections().len(), 1);
+        assert_eq!(library.collections()[0].book_ids(), [1]);
+        let bytes = br#"{
+           "version":1,
+           "books":[{"id":1,"path":"First.epub","title":"Old","favorite":true,"reading_status":"reading"},
+                    {"id":2,"path":"Second.epub","title":"Second","favorite":true,"reading_status":"on_hold"}],
+           "collections":[{"name":"TRIPS","book_ids":[2,2,99]},{"name":"Empty","book_ids":[]}]
+        }"#;
+        let preview = library.preview_backup(bytes).unwrap();
+        assert_eq!(preview.summary().collections_added, 1);
+        assert_eq!(preview.summary().memberships_added, 1);
+        assert_eq!(preview.summary().skipped, 1);
+        assert_eq!(library.collections().len(), 1);
+        let expected = preview.summary();
+        assert_eq!(library.merge_backup(preview).unwrap(), expected);
+        assert_eq!(library.collection("Trips").unwrap().name, "Trips");
+        assert_eq!(library.collection("Trips").unwrap().book_ids(), [1, 2]);
+        assert_eq!(library.state(1).unwrap().status(), ReadingStatus::Finished);
+        assert!(!library.state(1).unwrap().favorite);
+        assert_eq!(library.state(2).unwrap().status(), ReadingStatus::OnHold);
+        assert!(library.state(2).unwrap().favorite);
+        let exported = library.backup_bytes().unwrap();
+        let repeated = library.preview_backup(&exported).unwrap();
+        assert_eq!(repeated.summary().collections_added, 0);
+        assert_eq!(repeated.summary().memberships_added, 0);
     }
 
     #[cfg(unix)]

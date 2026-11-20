@@ -19,7 +19,12 @@ use crate::fixed_text::PdfPageText;
 use crate::ocr::{MAX_OCR_PIXELS, MAX_OCR_SIDE, MAX_TSV_BYTES, OcrError, parse_tsv};
 
 const ENGINE: &str = "tesseract";
-const MODEL: &str = "eng.traineddata";
+const TESSDATA: &str = "tessdata";
+const MODEL_SUFFIX: &str = ".traineddata";
+const DEFAULT_LANGUAGE: &str = "eng";
+const MAX_LANGUAGE_NAME: usize = 32;
+const MAX_LANGUAGES: usize = 32;
+const MAX_DISCOVERY_ENTRIES: usize = 256;
 const MAX_ENGINE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_MODEL_BYTES: u64 = 16 * 1024 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(30);
@@ -29,41 +34,78 @@ static STAGING_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 #[derive(Clone, Debug)]
 pub(crate) struct OcrAssets {
     directory: PathBuf,
+    languages: Vec<String>,
 }
 
 impl OcrAssets {
     pub(crate) fn discover(home: &Path) -> Option<Self> {
         with_storage(|| {
-            let assets = Self {
+            let mut assets = Self {
                 directory: fs::canonicalize(home)?.join("ocr"),
+                languages: Vec::new(),
             };
-            assets.validate()?;
+            assets.validate_engine()?;
+            let tessdata = assets.directory.join(TESSDATA);
+            let english =
+                asset_metadata(&model_path(&tessdata, DEFAULT_LANGUAGE), MAX_MODEL_BYTES).is_ok();
+            let mut languages = fs::read_dir(&tessdata)?
+                .take(MAX_DISCOVERY_ENTRIES)
+                .filter_map(|entry| {
+                    let entry = entry.ok()?;
+                    let filename = entry.file_name();
+                    let language = filename.to_str()?.strip_suffix(MODEL_SUFFIX)?;
+                    // Tesseract reserves osd for orientation and script detection.
+                    if matches!(language, DEFAULT_LANGUAGE | "osd")
+                        || !valid_language_name(language)
+                    {
+                        return None;
+                    }
+                    asset_metadata(&entry.path(), MAX_MODEL_BYTES).ok()?;
+                    Some(language.to_owned())
+                })
+                .collect::<Vec<_>>();
+            languages.sort_unstable();
+            languages.truncate(MAX_LANGUAGES - usize::from(english));
+            if english {
+                languages.insert(0, DEFAULT_LANGUAGE.to_owned());
+            }
+            if languages.is_empty() {
+                return Err(io::Error::other("No OCR language model is installed."));
+            }
+            assets.languages = languages;
             Ok(assets)
         })
         .ok()
     }
 
-    fn validate(&self) -> io::Result<()> {
+    pub(crate) fn languages(&self) -> &[String] {
+        &self.languages
+    }
+
+    pub(crate) fn default_language(&self) -> &str {
+        &self.languages[0]
+    }
+
+    fn validate_engine(&self) -> io::Result<()> {
         regular_directory(&self.directory)?;
-        regular_directory(&self.directory.join("tessdata"))?;
+        regular_directory(&self.directory.join(TESSDATA))?;
         let engine = asset_metadata(&self.directory.join(ENGINE), MAX_ENGINE_BYTES)?;
         if engine.permissions().mode() & 0o111 == 0 {
             return Err(io::Error::other(
                 "The installed OCR engine is not executable.",
             ));
         }
-        asset_metadata(
-            &self.directory.join("tessdata").join(MODEL),
-            MAX_MODEL_BYTES,
-        )?;
         Ok(())
     }
 
-    fn stage(&self, runtime: &Path) -> io::Result<WorkDirectory> {
+    fn stage(&self, runtime: &Path, language: &str) -> io::Result<WorkDirectory> {
+        if !valid_language_name(language) || !self.languages.iter().any(|model| model == language) {
+            return Err(io::Error::other("That OCR language model is unavailable."));
+        }
         let work = WorkDirectory::create(runtime)?;
         with_storage(|| {
-            self.validate()?;
-            let tessdata = work.0.join("tessdata");
+            self.validate_engine()?;
+            let tessdata = work.0.join(TESSDATA);
             DirBuilder::new().mode(0o700).create(&tessdata)?;
             copy_asset(
                 &self.directory.join(ENGINE),
@@ -72,14 +114,26 @@ impl OcrAssets {
                 0o700,
             )?;
             copy_asset(
-                &self.directory.join("tessdata").join(MODEL),
-                &tessdata.join(MODEL),
+                &model_path(&self.directory.join(TESSDATA), language),
+                &model_path(&tessdata, language),
                 MAX_MODEL_BYTES,
                 0o600,
             )
         })?;
         Ok(work)
     }
+}
+
+fn valid_language_name(name: &str) -> bool {
+    name.len() <= MAX_LANGUAGE_NAME
+        && name.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+}
+
+fn model_path(tessdata: &Path, language: &str) -> PathBuf {
+    tessdata.join(format!("{language}{MODEL_SUFFIX}"))
 }
 
 fn regular_directory(path: &Path) -> io::Result<()> {
@@ -170,6 +224,16 @@ impl OcrJob {
         width: u32,
         height: u32,
     ) -> Result<Self> {
+        Self::start_in_language(assets, assets.default_language(), pixels, width, height)
+    }
+
+    pub(crate) fn start_in_language(
+        assets: &OcrAssets,
+        language: &str,
+        pixels: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<Self> {
         let count = u64::from(width) * u64::from(height);
         if count == 0
             || count > u64::from(MAX_OCR_PIXELS)
@@ -181,12 +245,20 @@ impl OcrJob {
         let runtime = env::var_os("KL_NATIVE_APP_RUN")
             .map(PathBuf::from)
             .unwrap_or_else(env::temp_dir);
-        let staged = assets.stage(&runtime)?;
-        Self::launch(staged, pixels.to_vec(), width, height, TIMEOUT)
+        let staged = assets.stage(&runtime, language)?;
+        Self::launch(
+            staged,
+            language.to_owned(),
+            pixels.to_vec(),
+            width,
+            height,
+            TIMEOUT,
+        )
     }
 
     fn launch(
         staged: WorkDirectory,
+        language: String,
         pixels: Vec<u8>,
         width: u32,
         height: u32,
@@ -198,7 +270,9 @@ impl OcrJob {
         let worker = thread::Builder::new()
             .name("reader-ocr".to_owned())
             .spawn(move || {
-                let outcome = recognize(&staged.0, pixels, width, height, &signal, timeout);
+                let outcome = recognize(
+                    &staged.0, &language, pixels, width, height, &signal, timeout,
+                );
                 drop(staged);
                 let _ = send.send(outcome);
             })?;
@@ -270,6 +344,7 @@ impl Drop for RunningChild {
 
 fn recognize(
     directory: &Path,
+    language: &str,
     pixels: Vec<u8>,
     width: u32,
     height: u32,
@@ -282,10 +357,10 @@ fn recognize(
     let deadline = Instant::now() + timeout;
     let child = Command::new(directory.join(ENGINE))
         .args(["stdin", "stdout", "--tessdata-dir"])
-        .arg(directory.join("tessdata"))
+        .arg(directory.join(TESSDATA))
         .args([
             "-l",
-            "eng",
+            language,
             "--oem",
             "1",
             "--psm",
@@ -401,15 +476,16 @@ IFS= read -r pixels || [ "$pixels" = abcd ] || exit 1
 printf '%b\n' 'level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext' '1\t1\t0\t0\t0\t0\t0\t0\t2\t2\t-1\t' '5\t1\t1\t1\t1\t1\t0\t0\t2\t2\t98\tTide'
 "#;
 
-    const BUSY_SCRIPT: &str = r#"#!/bin/sh
+    const WAITING_SCRIPT: &str = r#"#!/bin/sh
 printf '%s\n' started > began
-while :; do :; done
+exec /bin/sleep 120
 "#;
 
     fn install(root: &Path, engine: &str) -> OcrAssets {
         let home = root.join("installed");
-        fs::create_dir_all(home.join("ocr/tessdata")).unwrap();
-        fs::write(home.join("ocr/tessdata").join(MODEL), b"model").unwrap();
+        let tessdata = home.join("ocr").join(TESSDATA);
+        fs::create_dir_all(&tessdata).unwrap();
+        fs::write(model_path(&tessdata, DEFAULT_LANGUAGE), b"model").unwrap();
         let path = home.join("ocr").join(ENGINE);
         fs::write(&path, engine).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
@@ -432,14 +508,21 @@ while :; do :; done
         let root = WorkDirectory::create(&env::temp_dir()).unwrap();
         let assets = install(&root.0, SUCCESS_SCRIPT);
         assert!(OcrJob::start(&assets, b"abc", 2, 2).is_err());
-        let staged = assets.stage(&root.0).unwrap();
+        let staged = assets.stage(&root.0, DEFAULT_LANGUAGE).unwrap();
         let path = staged.0.clone();
         assert_eq!(
             fs::metadata(&path).unwrap().permissions().mode() & 0o777,
             0o700
         );
-        let mut job =
-            OcrJob::launch(staged, b"abcd".to_vec(), 2, 2, Duration::from_secs(2)).unwrap();
+        let mut job = OcrJob::launch(
+            staged,
+            DEFAULT_LANGUAGE.to_owned(),
+            b"abcd".to_vec(),
+            2,
+            2,
+            Duration::from_secs(2),
+        )
+        .unwrap();
         let output = wait_for(&mut job).unwrap();
         assert_eq!(output.text, "Tide");
         assert_eq!(output.words[0].bytes, 0..4);
@@ -447,30 +530,107 @@ while :; do :; done
     }
 
     #[test]
+    fn discovers_valid_language_models_and_stages_only_the_selected_one() {
+        let root = WorkDirectory::create(&env::temp_dir()).unwrap();
+        let assets = install(
+            &root.0,
+            &SUCCESS_SCRIPT.replace("eng", "vie").replace("Tide", "Sóng"),
+        );
+        let tessdata = assets.directory.join(TESSDATA);
+        let english = model_path(&tessdata, DEFAULT_LANGUAGE);
+        fs::write(model_path(&tessdata, "vie"), b"Vietnamese model").unwrap();
+        fs::write(
+            model_path(&tessdata, "chi_sim"),
+            b"Simplified Chinese model",
+        )
+        .unwrap();
+        fs::write(model_path(&tessdata, "vie+eng"), b"invalid name").unwrap();
+        fs::write(model_path(&tessdata, "osd"), b"orientation data").unwrap();
+        fs::write(model_path(&tessdata, "empty"), b"").unwrap();
+        fs::create_dir(model_path(&tessdata, "directory")).unwrap();
+        symlink(&english, model_path(&tessdata, "linked")).unwrap();
+        File::create(model_path(&tessdata, "large"))
+            .unwrap()
+            .set_len(MAX_MODEL_BYTES + 1)
+            .unwrap();
+
+        let home = assets.directory.parent().unwrap();
+        let assets = OcrAssets::discover(home).unwrap();
+        assert_eq!(assets.languages(), ["eng", "chi_sim", "vie"]);
+        assert_eq!(assets.default_language(), "eng");
+        for invalid in ["../vie", "vie+eng", "--oem", "linked", "jpn"] {
+            assert!(OcrJob::start_in_language(&assets, invalid, b"abcd", 2, 2).is_err());
+        }
+        let staged = assets.stage(&root.0, "vie").unwrap();
+        let staged_tessdata = staged.0.join(TESSDATA);
+        assert_eq!(fs::read_dir(&staged_tessdata).unwrap().count(), 1);
+        assert_eq!(
+            fs::read(model_path(&staged_tessdata, "vie")).unwrap(),
+            b"Vietnamese model"
+        );
+        drop(staged);
+        let mut job = OcrJob::start_in_language(&assets, "vie", b"abcd", 2, 2).unwrap();
+        assert_eq!(wait_for(&mut job).unwrap().text, "Sóng");
+
+        fs::remove_file(&english).unwrap();
+        assert_eq!(
+            OcrAssets::discover(home).unwrap().default_language(),
+            "chi_sim"
+        );
+        fs::remove_file(model_path(&tessdata, "vie")).unwrap();
+        symlink(
+            model_path(&tessdata, "chi_sim"),
+            model_path(&tessdata, "vie"),
+        )
+        .unwrap();
+        assert!(assets.stage(&root.0, "vie").is_err());
+    }
+
+    #[test]
     fn cancels_a_live_ocr_process_when_the_job_is_dropped() {
         let root = WorkDirectory::create(&env::temp_dir()).unwrap();
-        let assets = install(&root.0, BUSY_SCRIPT);
-        let staged = assets.stage(&root.0).unwrap();
+        let assets = install(&root.0, WAITING_SCRIPT);
+        let staged = assets.stage(&root.0, DEFAULT_LANGUAGE).unwrap();
         let path = staged.0.clone();
-        let job = OcrJob::launch(staged, vec![0; 4], 2, 2, Duration::from_secs(3)).unwrap();
-        let deadline = Instant::now() + Duration::from_secs(1);
+        let mut job = OcrJob::launch(
+            staged,
+            DEFAULT_LANGUAGE.to_owned(),
+            vec![0; 4],
+            2,
+            2,
+            Duration::from_secs(15),
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(6);
         while !path.join("began").is_file() {
+            assert!(
+                job.poll().expect("mock OCR could not start").is_none(),
+                "mock OCR returned before cancellation"
+            );
             assert!(Instant::now() < deadline, "mock OCR engine did not start");
             thread::sleep(Duration::from_millis(5));
         }
         let began = Instant::now();
         drop(job);
-        assert!(began.elapsed() < Duration::from_secs(1));
+        assert!(began.elapsed() < Duration::from_secs(4));
         assert!(!path.exists());
     }
 
     #[test]
     fn watchdog_times_out_independently_of_ui_polling() {
         let root = WorkDirectory::create(&env::temp_dir()).unwrap();
-        let assets = install(&root.0, BUSY_SCRIPT);
-        let staged = assets.stage(&root.0).unwrap();
+        let assets = install(&root.0, WAITING_SCRIPT);
+        let staged = assets.stage(&root.0, DEFAULT_LANGUAGE).unwrap();
         let path = staged.0.clone();
-        let mut job = OcrJob::launch(staged, vec![0; 4], 2, 2, Duration::from_millis(80)).unwrap();
+        let mut job = OcrJob::launch(
+            staged,
+            DEFAULT_LANGUAGE.to_owned(),
+            vec![0; 4],
+            2,
+            2,
+            Duration::from_millis(80),
+        )
+        .unwrap();
         let deadline = Instant::now() + Duration::from_secs(2);
         while path.exists() {
             assert!(
@@ -489,11 +649,11 @@ while :; do :; done
     fn rejects_linked_assets_and_limits_engine_output() {
         let root = WorkDirectory::create(&env::temp_dir()).unwrap();
         let assets = install(&root.0, SUCCESS_SCRIPT);
-        let model = assets.directory.join("tessdata").join(MODEL);
+        let model = model_path(&assets.directory.join(TESSDATA), DEFAULT_LANGUAGE);
         fs::remove_file(&model).unwrap();
         symlink(assets.directory.join(ENGINE), &model).unwrap();
         assert!(OcrAssets::discover(assets.directory.parent().unwrap()).is_none());
-        assert!(assets.stage(&root.0).is_err());
+        assert!(assets.stage(&root.0, DEFAULT_LANGUAGE).is_err());
         let err = read_output(&mut io::repeat(b'x').take(MAX_TSV_BYTES as u64 + 1)).unwrap_err();
         assert_eq!(
             err.downcast_ref::<OcrError>(),

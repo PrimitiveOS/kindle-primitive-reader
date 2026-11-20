@@ -16,6 +16,42 @@ const PREFETCH_DELAY: Duration = Duration::from_millis(480);
 // Give a partial E Ink update time to settle before submitting another.
 pub(crate) const PAGE_REFRESH_GAP: Duration = Duration::from_millis(450);
 
+pub(crate) struct PagePaint {
+    pub visible: Range<u32>,
+    pub inverted: bool,
+}
+
+impl PagePaint {
+    pub fn full(inverted: bool) -> Self {
+        Self {
+            visible: 0..PAGE_HEIGHT,
+            inverted,
+        }
+    }
+
+    pub fn is_full(&self) -> bool {
+        self.visible == (0..PAGE_HEIGHT)
+    }
+
+    pub(crate) fn apply(self, mut page: GrayImage) -> (Rect, GrayImage) {
+        let Self { visible, inverted } = self;
+        if visible != (0..PAGE_HEIGHT) {
+            let rows = (visible.start * WIDTH) as usize..(visible.end * WIDTH) as usize;
+            let length = rows.len();
+            page.pixels.copy_within(rows, 0);
+            page.pixels.truncate(length);
+            page.height = visible.end - visible.start;
+        }
+        if inverted {
+            for pixel in &mut page.pixels {
+                *pixel = 255 - *pixel;
+            }
+        }
+        let rect = Rect::new(0, visible.start as i32, WIDTH as i32, page.height as i32);
+        (rect, page)
+    }
+}
+
 pub(crate) struct PageTurns {
     pub(crate) pending: Vec<isize>,
     pub(crate) next_refresh: Instant,
@@ -221,6 +257,13 @@ impl Reading {
         Ok(())
     }
 
+    pub(crate) fn set_fonts(&mut self, fonts: Vec<PathBuf>) -> Result<()> {
+        let mut config = self.config.clone();
+        config.fonts = fonts;
+        *self = Self::restore(config, self.chapter, self.page, self.anchor().as_ref())?;
+        Ok(())
+    }
+
     pub(crate) fn set_scroll(&mut self, scroll: bool) -> Result<()> {
         let anchor = self.anchor();
         let mut config = self.config.clone();
@@ -236,6 +279,20 @@ impl Reading {
         }
         *self = next;
         Ok(())
+    }
+
+    pub(crate) fn thumbnail(&mut self, page: usize) -> Result<GrayImage> {
+        let full = self.probe.capture(page)?;
+        let image = image::GrayImage::from_raw(WIDTH, PAGE_HEIGHT, full)
+            .ok_or("The page has incorrect dimensions")?;
+        let size = 280;
+        let width = WIDTH * size / PAGE_HEIGHT;
+        let pixels = image::imageops::thumbnail(&image, width, size).into_raw();
+        Ok(GrayImage {
+            width,
+            height: size,
+            pixels,
+        })
     }
 
     fn visible_range(&self) -> Range<f32> {
@@ -256,6 +313,18 @@ impl Reading {
 
     pub(crate) fn link_at(&self, x: f32, y: f32) -> Option<Destination> {
         self.probe.link_in(self.visible_range(), x, y)
+    }
+
+    pub(crate) fn illustration_at(&self, x: f32, y: f32) -> Option<&str> {
+        self.probe.illustration_in(self.visible_range(), x, y)
+    }
+
+    pub(crate) fn open_illustration(&self, package_path: &str) -> Result<crate::comic::ImagePage> {
+        Ok(with_storage(|| {
+            self.probe
+                .open_illustration(&self.config.book, package_path)
+                .map_err(io::Error::other)
+        })?)
     }
 
     pub(crate) fn links(&self) -> Vec<(String, Destination)> {
@@ -364,7 +433,7 @@ impl Reading {
         notice: Option<&str>,
         highlights: &[HighlightRect],
         selection: &[HighlightRect],
-        visible: Range<u32>,
+        paint: PagePaint,
     ) {
         let mut page = self.frame.clone();
         for (rects, gray) in [(highlights, 220_u8), (selection, 176_u8)] {
@@ -385,8 +454,9 @@ impl Reading {
                 }
             }
         }
-        draw_page_picture(canvas, page, visible.clone());
-        if visible != (0..PAGE_HEIGHT) {
+        let full = paint.is_full();
+        draw_page_picture(canvas, page, paint);
+        if !full {
             return;
         }
         canvas.fill(Rect::new(0, PAGE_HEIGHT as i32, WIDTH as i32, 1), HAIRLINE);
@@ -407,23 +477,14 @@ impl Reading {
     }
 }
 
-pub(crate) fn draw_page_picture(canvas: &mut Canvas, mut page: GrayImage, visible: Range<u32>) {
-    if visible != (0..PAGE_HEIGHT) {
-        let rows = (visible.start * WIDTH) as usize..(visible.end * WIDTH) as usize;
-        let length = rows.len();
-        page.pixels.copy_within(rows, 0);
-        page.pixels.truncate(length);
-        page.height = visible.end - visible.start;
-    }
-    canvas.picture(
-        Rect::new(0, visible.start as i32, WIDTH as i32, page.height as i32),
-        page,
-    );
+pub(crate) fn draw_page_picture(canvas: &mut Canvas, page: GrayImage, paint: PagePaint) {
+    let (rect, page) = paint.apply(page);
+    canvas.picture(rect, page);
 }
 
 impl App for Reading {
     fn draw(&self, canvas: &mut Canvas) {
-        self.draw_page(canvas, Some("Done"), None, &[], &[], 0..PAGE_HEIGHT);
+        self.draw_page(canvas, Some("Done"), None, &[], &[], PagePaint::full(false));
     }
 
     fn input(&mut self, input: Input) -> Change {

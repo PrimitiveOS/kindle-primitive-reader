@@ -15,6 +15,7 @@ use hayro::{RenderCache, RenderSettings, render_into};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::OnceLock;
 
 use crate::fixed_text::{self, PdfPageText, PdfTextError, PdfTextRect};
 
@@ -29,11 +30,29 @@ const MAX_NAME_TREE_NODES: usize = 512;
 const MAX_NAMED_DESTINATIONS: usize = 4096;
 const MAX_DESTINATION_NAME: usize = 512;
 const MAX_TITLE_BYTES: usize = 1024;
+const MAX_PAGE_LABEL_NODES: usize = 512;
+const MAX_PAGE_LABEL_DEPTH: usize = 16;
+const MAX_PAGE_LABEL_CHARACTERS: u32 = 256;
 const MAX_PAGE_ANNOTATIONS: usize = 1024;
 const HIDDEN_LINK_FLAGS: u32 = (1 << 1) | (1 << 5);
 
 pub struct Pdf {
     document: Document,
+    page_labels: OnceLock<Vec<PageLabelRange>>,
+}
+
+struct PageLabelRange {
+    first: usize,
+    start: u32,
+    prefix: String,
+    style: PageLabelStyle,
+}
+
+enum PageLabelStyle {
+    Prefix,
+    Decimal,
+    Roman { uppercase: bool },
+    Alphabetic { uppercase: bool },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -202,11 +221,69 @@ impl Pdf {
         if count > MAX_PAGES {
             return Err(PdfError::TooManyPages);
         }
-        Ok(Self { document })
+        Ok(Self {
+            document,
+            page_labels: OnceLock::new(),
+        })
     }
 
     pub fn page_count(&self) -> usize {
         self.document.pages().len()
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn title(&self) -> Option<String> {
+        self.document
+            .metadata()
+            .title
+            .as_deref()
+            .and_then(pdf_title)
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn author(&self) -> Option<String> {
+        self.document
+            .metadata()
+            .author
+            .as_deref()
+            .and_then(pdf_title)
+    }
+
+    /// The printed label for a zero-based page, if the PDF provides one.
+    pub fn page_label(&self, page: usize) -> Option<String> {
+        if page >= self.page_count() {
+            return None;
+        }
+        let ranges = self.page_labels.get_or_init(|| {
+            catch_unwind(AssertUnwindSafe(|| read_page_labels(&self.document))).unwrap_or_default()
+        });
+        let index = ranges.partition_point(|range| range.first <= page);
+        ranges.get(index.checked_sub(1)?)?.label(page)
+    }
+
+    /// Look up a unique printed label. Prefer an exact match before ASCII case folding.
+    pub fn find_page_label(&self, input: &str) -> Option<usize> {
+        let input = input.trim();
+        if input.is_empty() || input.len() > MAX_TITLE_BYTES + MAX_PAGE_LABEL_CHARACTERS as usize {
+            return None;
+        }
+        let mut exact_match = None;
+        let mut folded_match = None;
+        let mut folded_ambiguous = false;
+        for page in 0..self.page_count() {
+            let Some(label) = self.page_label(page) else {
+                continue;
+            };
+            let label = label.trim();
+            if label == input {
+                if exact_match.replace(page).is_some() {
+                    return None;
+                }
+            } else if label.eq_ignore_ascii_case(input) && folded_match.replace(page).is_some() {
+                folded_ambiguous = true;
+            }
+        }
+        exact_match.or_else(|| folded_match.filter(|_| !folded_ambiguous))
     }
 
     /// Outline items in visual order. Follow only destinations in this document.
@@ -248,6 +325,20 @@ impl Pdf {
             return Err(PdfError::InvalidPageSize);
         }
         Ok((width, height))
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn page_geometry(
+        &self,
+        index: usize,
+    ) -> Option<crate::pdf_annotations::PageGeometry> {
+        let (width, height) = self.page_size(index).ok()?;
+        let page = self.document.pages().get(index)?;
+        Some(crate::pdf_annotations::PageGeometry {
+            width,
+            height,
+            upright_from_pdf: page.initial_transform(true).to_kurbo(),
+        })
     }
 
     /// Render a centered, aspect-preserving view of the whole page on white.
@@ -325,6 +416,164 @@ impl Pdf {
 }
 
 type PageReferences = HashMap<ObjectIdentifier, usize>;
+
+impl PageLabelRange {
+    fn from_dict(first: usize, dict: Dict<'_>) -> Option<Self> {
+        let style = match dict.get::<Name<'_>>(b"S").as_deref() {
+            None if !dict.contains_key(b"S") => PageLabelStyle::Prefix,
+            Some(b"D") => PageLabelStyle::Decimal,
+            Some(b"R") => PageLabelStyle::Roman { uppercase: true },
+            Some(b"r") => PageLabelStyle::Roman { uppercase: false },
+            Some(b"A") => PageLabelStyle::Alphabetic { uppercase: true },
+            Some(b"a") => PageLabelStyle::Alphabetic { uppercase: false },
+            _ => return None,
+        };
+        let start = if dict.contains_key(b"St") {
+            u32::try_from(dict.get::<i32>(b"St")?)
+                .ok()
+                .filter(|n| *n > 0)?
+        } else {
+            1
+        };
+        let prefix = if dict.contains_key(b"P") {
+            let prefix = dict.get::<PdfString<'_>>(b"P")?;
+            if prefix.len() > MAX_TITLE_BYTES {
+                return None;
+            }
+            let prefix: String = pdf_text(prefix.as_bytes())
+                .chars()
+                .filter(|character| !character.is_control())
+                .collect();
+            if prefix.chars().count() > MAX_PAGE_LABEL_CHARACTERS as usize {
+                return None;
+            }
+            prefix
+        } else {
+            String::new()
+        };
+        Some(Self {
+            first,
+            start,
+            prefix,
+            style,
+        })
+    }
+
+    fn label(&self, page: usize) -> Option<String> {
+        let number = self
+            .start
+            .checked_add(u32::try_from(page - self.first).ok()?)?;
+        let mut label = self.prefix.clone();
+        match self.style {
+            PageLabelStyle::Prefix => (),
+            PageLabelStyle::Decimal => label.push_str(&number.to_string()),
+            PageLabelStyle::Roman { uppercase } => {
+                let mut digits = roman_page_number(number)?;
+                if !uppercase {
+                    digits.make_ascii_lowercase();
+                }
+                label.push_str(&digits);
+            }
+            PageLabelStyle::Alphabetic { uppercase } => {
+                // PDF labels repeat one letter: A … Z, AA, BB … ZZ, AAA …
+                let index = number - 1;
+                let repeats = index / 26 + 1;
+                if repeats > MAX_PAGE_LABEL_CHARACTERS {
+                    return None;
+                }
+                let base = if uppercase { b'A' } else { b'a' };
+                let letter = char::from(base + (index % 26) as u8);
+                label.extend(std::iter::repeat_n(letter, repeats as usize));
+            }
+        }
+        (!label.trim().is_empty()).then_some(label)
+    }
+}
+
+fn roman_page_number(mut value: u32) -> Option<String> {
+    const DIGITS: [(u32, &str); 13] = [
+        (1000, "M"),
+        (900, "CM"),
+        (500, "D"),
+        (400, "CD"),
+        (100, "C"),
+        (90, "XC"),
+        (50, "L"),
+        (40, "XL"),
+        (10, "X"),
+        (9, "IX"),
+        (5, "V"),
+        (4, "IV"),
+        (1, "I"),
+    ];
+    if value / 1000 > MAX_PAGE_LABEL_CHARACTERS {
+        return None;
+    }
+    let mut output = String::new();
+    for (unit, digit) in DIGITS {
+        for _ in 0..value / unit {
+            output.push_str(digit);
+        }
+        value %= unit;
+    }
+    (output.len() <= MAX_PAGE_LABEL_CHARACTERS as usize).then_some(output)
+}
+
+fn read_page_labels(document: &Document) -> Vec<PageLabelRange> {
+    let xref = document.xref();
+    let Some(root) = xref
+        .get::<Dict<'_>>(xref.root_id())
+        .and_then(|catalog| catalog.get_raw::<Object<'_>>(b"PageLabels"))
+    else {
+        return Vec::new();
+    };
+    let mut ranges = Vec::new();
+    let mut seen = HashSet::new();
+    let mut pending = vec![(root, 0)];
+    let mut nodes = 0;
+    let mut pairs = 0;
+    while let Some((node, depth)) = pending.pop() {
+        if nodes == MAX_PAGE_LABEL_NODES || pairs == MAX_PAGES {
+            break;
+        }
+        nodes += 1;
+        if node.as_obj_ref().is_some_and(|id| !seen.insert(id)) {
+            continue;
+        }
+        let Some(node) = resolve_object(xref, node).and_then(Object::into_dict) else {
+            continue;
+        };
+        if let Some(labels) = node.get::<Array<'_>>(b"Nums") {
+            let mut labels = labels.raw_iter();
+            while pairs < MAX_PAGES {
+                let (Some(first), Some(label)) = (labels.next(), labels.next()) else {
+                    break;
+                };
+                pairs += 1;
+                if let Some(first) = resolve_object(xref, first)
+                    .and_then(Object::into_i32)
+                    .and_then(|first| usize::try_from(first).ok())
+                    && first < document.pages().len()
+                    && let Some(label) = resolve_object(xref, label).and_then(Object::into_dict)
+                    && let Some(range) = PageLabelRange::from_dict(first, label)
+                {
+                    ranges.push(range);
+                }
+            }
+        }
+        if depth + 1 < MAX_PAGE_LABEL_DEPTH
+            && let Some(kids) = node.get::<Array<'_>>(b"Kids")
+        {
+            let first = pending.len();
+            let room = MAX_PAGE_LABEL_NODES - nodes - first;
+            pending.extend(kids.raw_iter().take(room).map(|kid| (kid, depth + 1)));
+            pending[first..].reverse();
+        }
+    }
+    ranges.sort_by_key(|range| range.first);
+    ranges.dedup_by_key(|range| range.first);
+    ranges
+}
 
 fn read_page_links(document: &Document, page: usize, viewport: Rect) -> Vec<PdfLink> {
     let page = &document.pages()[page];
@@ -572,7 +821,19 @@ fn resolve_object<'a>(xref: &'a XRef, object: MaybeRef<Object<'a>>) -> Option<Ob
 
 fn pdf_title(bytes: &[u8]) -> Option<String> {
     let bytes = &bytes[..bytes.len().min(MAX_TITLE_BYTES)];
-    let title: String = if let Some(bytes) = bytes.strip_prefix(b"\xfe\xff") {
+    let title: String = pdf_text(bytes)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .filter(|char| !char.is_control())
+        .take(256)
+        .collect();
+    (!title.is_empty()).then_some(title)
+}
+
+fn pdf_text(bytes: &[u8]) -> String {
+    if let Some(bytes) = bytes.strip_prefix(b"\xfe\xff") {
         char::decode_utf16(
             bytes
                 .as_chunks::<2>()
@@ -586,16 +847,7 @@ fn pdf_title(bytes: &[u8]) -> Option<String> {
         String::from_utf8_lossy(bytes).into_owned()
     } else {
         bytes.iter().copied().map(pdf_doc_char).collect()
-    };
-    let title: String = title
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .chars()
-        .filter(|char| !char.is_control())
-        .take(256)
-        .collect();
-    (!title.is_empty()).then_some(title)
+    }
 }
 
 fn pdf_doc_char(byte: u8) -> char {
@@ -638,7 +890,7 @@ pub(crate) mod tests {
         pdf_objects(&objects)
     }
 
-    fn pdf_objects(objects: &[impl AsRef<str>]) -> Vec<u8> {
+    pub(crate) fn pdf_objects(objects: &[impl AsRef<str>]) -> Vec<u8> {
         let mut pdf = b"%PDF-1.4\n".to_vec();
         let mut offsets = Vec::new();
         for (i, object) in objects.iter().enumerate() {
@@ -657,6 +909,86 @@ pub(crate) mod tests {
         )
         .unwrap();
         pdf
+    }
+
+    fn labeled_document(pages: usize, labels: &[&str]) -> Pdf {
+        let root = pages + 3;
+        let kids = (3..root)
+            .map(|number| format!("{number} 0 R"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut objects = vec![
+            format!("<< /Type /Catalog /Pages 2 0 R /PageLabels {root} 0 R >>"),
+            format!("<< /Type /Pages /Count {pages} /Kids [{kids}] >>"),
+        ];
+        objects.extend(std::iter::repeat_n(
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 120 80] >>".to_owned(),
+            pages,
+        ));
+        objects.extend(labels.iter().map(|label| (*label).to_owned()));
+        Pdf::open(pdf_objects(&objects)).unwrap()
+    }
+
+    #[test]
+    fn renders_printed_page_labels_from_nested_number_tree() {
+        let pdf = labeled_document(
+            14,
+            &[
+                "<< /Kids [18 0 R 19 0 R] >>",
+                "<< /Limits [0 7] /Nums [0 << /S /r /St 3 >> 3 << /S /A /St 26 >> 6 << /S /a /St 52 >> 7 << /S /D /P ( Ch- ) /St 7 >>] >>",
+                "<< /Limits [8 13] /Kids [17 0 R 20 0 R] >>",
+                "<< /Limits [8 13] /Nums [8 << /S /R /St 9 >> 9 << /S /r /St 9 >> 10 21 0 R 12 << /S /D >> 13 << /S /R /St 2147483647 >>] >>",
+                "<< /P <FEFF03A9> >>",
+            ],
+        );
+        let labels: Vec<_> = (0..pdf.page_count())
+            .map(|page| pdf.page_label(page))
+            .collect();
+        let expected = [
+            Some("iii"),
+            Some("iv"),
+            Some("v"),
+            Some("Z"),
+            Some("AA"),
+            Some("BB"),
+            Some("zz"),
+            Some(" Ch- 7"),
+            Some("IX"),
+            Some("ix"),
+            Some("Ω"),
+            Some("Ω"),
+            Some("1"),
+            None,
+        ];
+        assert_eq!(
+            labels.iter().map(Option::as_deref).collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(pdf.page_label(14), None);
+        assert_eq!(pdf.find_page_label("  ch- 7  "), Some(7));
+        assert_eq!(pdf.find_page_label("IX"), Some(8));
+        assert_eq!(pdf.find_page_label("ix"), Some(9));
+        assert_eq!(pdf.find_page_label("Ix"), None);
+        assert_eq!(pdf.find_page_label("Ω"), None);
+    }
+
+    #[test]
+    fn invalid_or_missing_page_labels_leave_physical_navigation_available() {
+        let ordinary_pdf = Pdf::open(document()).unwrap();
+        assert_eq!(ordinary_pdf.page_label(0), None);
+        assert_eq!(ordinary_pdf.find_page_label("1"), None);
+
+        let malformed_pdf = labeled_document(
+            4,
+            &[
+                "<< /Nums [-1 << /S /D >> 0 << /S /d >> 1 << /S /D /St 0 >> 2 << /P ( ) >> 3 << /P (End) >> 4 << /S /D >> 5] >>",
+            ],
+        );
+        assert_eq!(malformed_pdf.page_label(0), None);
+        assert_eq!(malformed_pdf.page_label(1), None);
+        assert_eq!(malformed_pdf.page_label(2), None);
+        assert_eq!(malformed_pdf.page_label(3).as_deref(), Some("End"));
+        assert_eq!(malformed_pdf.find_page_label("end"), Some(3));
     }
 
     #[test]

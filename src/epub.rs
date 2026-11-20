@@ -233,6 +233,7 @@ impl Book {
         Ok(Self::from_loose(loose::Document {
             title,
             author: None,
+            chapter_path: loose::CHAPTER_PATH.to_owned(),
             xhtml: loose::text_as_xhtml(text)?,
             toc: Vec::new(),
             resources: BTreeMap::new(),
@@ -244,7 +245,7 @@ impl Book {
             revision: crate::revision(&document.xhtml),
             fixed_layout: false,
             chapters: vec![Chapter {
-                href: loose::CHAPTER_PATH.to_owned(),
+                href: document.chapter_path,
                 label: document.title.clone(),
             }],
             title: document.title,
@@ -558,7 +559,7 @@ fn safe_segment(segment: &str) -> bool {
         .any(|c| c.is_control() || matches!(c, '/' | '\\' | ':'))
 }
 
-fn is_archive_path(path: &str) -> bool {
+pub(crate) fn is_archive_path(path: &str) -> bool {
     path.split('/')
         .all(|part| !matches!(part, "" | "." | "..") && safe_segment(part))
 }

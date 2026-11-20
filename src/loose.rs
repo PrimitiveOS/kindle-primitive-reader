@@ -18,15 +18,23 @@ use flate2::read::MultiGzDecoder;
 use image::ImageFormat;
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag};
 use roxmltree::{Document as Xml, Node, ParsingOptions};
-use zip::ZipArchive;
+use zip::{CompressionMethod, ZipArchive};
 
 use crate::Result;
-use crate::epub::{Book, Destination, TocEntry, check_zip_directory};
+use crate::epub::{Book, Destination, TocEntry, check_zip_directory, is_archive_path};
 
 pub(crate) const CHAPTER_PATH: &str = "document.xhtml";
 pub(crate) const MAX_INPUT: usize = 512 * 1024;
 pub(crate) const MAX_FB2_INPUT: usize = 8 * 1024 * 1024;
+pub(crate) const MAX_HTMLZ_INPUT: usize = 16 * 1024 * 1024;
 const MAX_OUTPUT: usize = 1024 * 1024;
+const MAX_HTMLZ_ENTRIES: usize = 256;
+const MAX_HTMLZ_PATH: usize = 512;
+const MAX_HTMLZ_RESOURCES: usize = 8 * 1024 * 1024;
+const MAX_HTMLZ_IMAGE: usize = 2 * 1024 * 1024;
+const MAX_HTMLZ_CSS: usize = 256 * 1024;
+const MAX_HTMLZ_METADATA: usize = 64 * 1024;
+const MAX_HTMLZ_HEADINGS: usize = 512;
 const MAX_FB2_ZIP_ENTRIES: usize = 64;
 const MAX_FB2_IMAGES: usize = 32;
 const MAX_FB2_IMAGE: usize = 1024 * 1024;
@@ -40,9 +48,11 @@ const MAX_FB2_DEPTH: usize = 48;
 pub(crate) enum Format {
     Text,
     Html,
+    Htmlz,
     Markdown,
     Mobi,
     Rtf,
+    Tcr,
     Fb2,
 }
 
@@ -52,9 +62,11 @@ impl Format {
         match extension.as_str() {
             "txt" => Some(Self::Text),
             "htm" | "html" | "xht" | "xhtml" => Some(Self::Html),
+            "htmlz" => Some(Self::Htmlz),
             "md" | "markdown" => Some(Self::Markdown),
             "mobi" | "prc" | "azw" | "pdb" => Some(Self::Mobi),
             "rtf" => Some(Self::Rtf),
+            "tcr" => Some(Self::Tcr),
             "fb2" | "fbz" => Some(Self::Fb2),
             "gz" | "zip"
                 if path
@@ -71,20 +83,23 @@ impl Format {
 pub(crate) struct Document {
     pub(crate) title: String,
     pub(crate) author: Option<String>,
+    pub(crate) chapter_path: String,
     pub(crate) xhtml: String,
     pub(crate) toc: Vec<TocEntry>,
     pub(crate) resources: BTreeMap<String, Vec<u8>>,
 }
 
 impl Document {
-    /// Open just the selected file. The adapter does not load external resources.
+    /// Open the selected file with any supported resources contained inside it.
     pub(crate) fn open(path: &Path) -> Result<Self> {
         let format = Format::for_path(path).ok_or("This document format is unsupported")?;
         let metadata = fs::metadata(path)?;
         let limit = match format {
             Format::Fb2 => MAX_FB2_INPUT,
+            Format::Htmlz => MAX_HTMLZ_INPUT,
             Format::Mobi => crate::mobi::MAX_MOBI_BYTES,
             Format::Rtf => crate::rtf::MAX_INPUT,
+            Format::Tcr => crate::tcr::MAX_INPUT,
             _ => MAX_INPUT,
         };
         if !metadata.is_file() || metadata.len() > limit as u64 {
@@ -95,13 +110,6 @@ impl Document {
             .into());
         }
         let file = File::open(path)?;
-        let bytes = if has_extension(path, "gz") {
-            read_bounded(MultiGzDecoder::new(file), limit)?
-        } else if has_extension(path, "zip") || has_extension(path, "fbz") {
-            read_fb2_zip(file, metadata.len())?
-        } else {
-            read_bounded(file, limit)?
-        };
         let filename = path.file_stem();
         let fallback_title = filename
             .map(|name| {
@@ -118,11 +126,22 @@ impl Document {
             .map(str::trim)
             .filter(|name| !name.is_empty())
             .unwrap_or("Untitled document");
+        if format == Format::Htmlz {
+            return read_htmlz(file, metadata.len(), fallback_title);
+        }
+        let bytes = if has_extension(path, "gz") {
+            read_bounded(MultiGzDecoder::new(file), limit)?
+        } else if has_extension(path, "zip") || has_extension(path, "fbz") {
+            read_fb2_zip(file, metadata.len())?
+        } else {
+            read_bounded(file, limit)?
+        };
         if format == Format::Mobi {
             let document = crate::mobi::decode(&bytes)?;
             return Ok(Self {
                 title: document.title.unwrap_or_else(|| fallback_title.into()),
                 author: document.author,
+                chapter_path: CHAPTER_PATH.to_owned(),
                 xhtml: document.xhtml,
                 toc: Vec::new(),
                 resources: BTreeMap::new(),
@@ -131,12 +150,18 @@ impl Document {
         if format == Format::Rtf {
             return html_document(&crate::rtf::decode(&bytes)?, fallback_title);
         }
+        let (bytes, format) = if format == Format::Tcr {
+            (crate::tcr::decode(&bytes)?, Format::Text)
+        } else {
+            (bytes, format)
+        };
         let input = decode_document(&bytes, format)?;
         let input = input.trim_start_matches('\u{feff}');
         match format {
             Format::Text => Ok(Self {
                 title: fallback_title.to_owned(),
                 author: None,
+                chapter_path: CHAPTER_PATH.to_owned(),
                 xhtml: text_as_xhtml(input)?,
                 toc: Vec::new(),
                 resources: BTreeMap::new(),
@@ -144,7 +169,7 @@ impl Document {
             Format::Html => html_document(input, fallback_title),
             Format::Markdown => markdown_document(input, fallback_title),
             Format::Fb2 => fb2_document(input, fallback_title),
-            Format::Mobi | Format::Rtf => unreachable!(),
+            Format::Htmlz | Format::Mobi | Format::Rtf | Format::Tcr => unreachable!(),
         }
     }
 }
@@ -260,6 +285,249 @@ fn read_fb2_zip(file: File, length: u64) -> Result<Vec<u8>> {
     read_bounded(entry, MAX_FB2_INPUT)
 }
 
+fn read_htmlz(file: File, length: u64, fallback: &str) -> Result<Document> {
+    let mut input = BufReader::new(file);
+    let count = check_zip_directory(&mut input, length)
+        .map_err(|_| "The HTMLZ has an invalid ZIP directory")?;
+    if count > MAX_HTMLZ_ENTRIES {
+        return Err("The HTMLZ ZIP has too many entries".into());
+    }
+    let mut archive = ZipArchive::new(input)?;
+    if archive.len() != count {
+        return Err("The HTMLZ ZIP has ambiguous or duplicate entries".into());
+    }
+    let mut chapter = None;
+    let mut metadata = None;
+    let mut resources = Vec::new();
+    let mut remaining = MAX_HTMLZ_RESOURCES as u64;
+    for index in 0..archive.len() {
+        let entry = archive.by_index_raw(index)?;
+        let name = entry.name();
+        let path = if entry.is_dir() {
+            name.strip_suffix('/').unwrap_or(name)
+        } else {
+            name
+        };
+        if path.len() > MAX_HTMLZ_PATH || !is_archive_path(path) || entry.is_symlink() {
+            return Err("The HTMLZ ZIP has an unsafe entry path".into());
+        }
+        if entry.encrypted()
+            || !matches!(
+                entry.compression(),
+                CompressionMethod::Stored | CompressionMethod::Deflated
+            )
+        {
+            return Err("The HTMLZ ZIP contains an encrypted or unsupported entry".into());
+        }
+        if !entry.is_file() {
+            continue;
+        }
+        match path
+            .rsplit_once('.')
+            .map(|(_, ext)| ext.to_ascii_lowercase())
+            .as_deref()
+        {
+            Some("htm" | "html" | "xht" | "xhtml") if !path.contains('/') => {
+                if chapter.replace((index, path.to_owned())).is_some() {
+                    return Err("The HTMLZ ZIP has more than one top-level HTML document".into());
+                }
+            }
+            Some("opf") if path.eq_ignore_ascii_case("metadata.opf") => {
+                if metadata.replace(index).is_some() {
+                    return Err("The HTMLZ ZIP has more than one metadata entry".into());
+                }
+            }
+            Some(extension @ ("css" | "jpeg" | "jpg" | "png")) => {
+                let limit = if extension == "css" {
+                    MAX_HTMLZ_CSS
+                } else {
+                    MAX_HTMLZ_IMAGE
+                };
+                if entry.size() > limit as u64 {
+                    return Err("An HTMLZ resource exceeds its size limit".into());
+                }
+                remaining = remaining
+                    .checked_sub(entry.size())
+                    .ok_or("The HTMLZ exceeds its total resource limit")?;
+                resources.push((index, path.to_owned(), limit));
+            }
+            _ => {}
+        }
+    }
+    let (index, chapter_path) = chapter.ok_or("The HTMLZ ZIP has no top-level HTML document")?;
+    let bytes = read_htmlz_member(&mut archive, index, MAX_INPUT)?;
+    let input = decode_document(&bytes, Format::Html)?;
+    // Calibre may emit named HTML entities in otherwise XML-compatible markup.
+    let input = input
+        .replace("&shy;", "\u{ad}")
+        .replace("&mdash;", "—")
+        .replace("&ndash;", "–")
+        .replace("&nbsp;", "\u{a0}");
+    check_output(&input)?;
+    let mut document = html_document(&input, fallback)?;
+    document.chapter_path = chapter_path;
+    add_htmlz_contents(&mut document)?;
+    if let Some(index) = metadata
+        && let Some((title, author)) =
+            htmlz_metadata(&read_htmlz_member(&mut archive, index, MAX_HTMLZ_METADATA)?)
+    {
+        if let Some(title) = title {
+            document.title = title;
+        }
+        if let Some(author) = author {
+            document.author = Some(author);
+        }
+    }
+    for (index, name, limit) in resources {
+        let bytes = read_htmlz_member(&mut archive, index, limit)?;
+        document.resources.insert(name, bytes);
+    }
+    Ok(document)
+}
+
+fn read_htmlz_member(
+    archive: &mut ZipArchive<BufReader<File>>,
+    index: usize,
+    limit: usize,
+) -> Result<Vec<u8>> {
+    let entry = archive.by_index(index)?;
+    let size = usize::try_from(entry.size())?;
+    if size > limit {
+        return Err("An HTMLZ member exceeds its size limit".into());
+    }
+    let mut bytes = Vec::with_capacity(size);
+    entry.take(size as u64 + 1).read_to_end(&mut bytes)?;
+    if bytes.len() != size {
+        return Err("An HTMLZ member's size does not match its ZIP directory".into());
+    }
+    Ok(bytes)
+}
+
+fn htmlz_metadata(bytes: &[u8]) -> Option<(Option<String>, Option<String>)> {
+    const DC: &str = "http://purl.org/dc/elements/1.1/";
+    let xml = decode_document(bytes, Format::Htmlz).ok()?;
+    let document = Xml::parse_with_options(
+        &xml,
+        ParsingOptions {
+            nodes_limit: 4_000,
+            ..ParsingOptions::default()
+        },
+    )
+    .ok()?;
+    let metadata = document
+        .root_element()
+        .children()
+        .find(|node| node.has_tag_name("metadata"))?;
+    let value = |tag| {
+        metadata
+            .children()
+            .filter(|node| node.has_tag_name((DC, tag)))
+            .filter_map(|node| node.text().map(str::trim))
+            .find(|text| !text.is_empty())
+            .map(str::to_owned)
+    };
+    Some((value("title"), value("creator")))
+}
+
+fn add_htmlz_contents(document: &mut Document) -> Result<()> {
+    let xml = Xml::parse_with_options(
+        &document.xhtml,
+        ParsingOptions {
+            nodes_limit: 80_000,
+            ..ParsingOptions::default()
+        },
+    )?;
+    let body = xml
+        .root_element()
+        .children()
+        .find(|node| node.has_tag_name("body"))
+        .ok_or("The HTMLZ entry has no body")?;
+    let ids = body
+        .descendants()
+        .filter_map(|node| node.attribute("id"))
+        .collect::<BTreeSet<_>>();
+    let mut next_id = 0;
+    let mut generated = Vec::new();
+    for node in body.descendants().filter(Node::is_element) {
+        if document.toc.len() == MAX_HTMLZ_HEADINGS {
+            break;
+        }
+        let depth = match node.tag_name().name() {
+            "h1" => 0,
+            "h2" => 1,
+            "h3" => 2,
+            "h4" => 3,
+            "h5" => 4,
+            "h6" => 5,
+            _ => continue,
+        };
+        if node.ancestors().any(|node| {
+            node.has_attribute("hidden")
+                || matches!(
+                    node.tag_name().name(),
+                    "script" | "style" | "noscript" | "template" | "svg"
+                )
+        }) {
+            continue;
+        }
+        let label = node
+            .descendants()
+            .filter(Node::is_text)
+            .filter_map(|node| node.text())
+            .flat_map(str::split_whitespace)
+            .take(25)
+            .collect::<Vec<_>>()
+            .join(" ");
+        if label.is_empty() {
+            continue;
+        }
+        let fragment = if let Some(id) = node.attribute("id") {
+            if id.is_empty() || id.chars().any(char::is_control) {
+                continue;
+            }
+            id.to_owned()
+        } else {
+            let id = loop {
+                next_id += 1;
+                let id = format!("reader-htmlz-heading-{next_id}");
+                if !ids.contains(id.as_str()) {
+                    break id;
+                }
+            };
+            let start = node.range().start;
+            let offset = start
+                + document.xhtml[start..]
+                    .find(|ch: char| ch.is_ascii_whitespace() || matches!(ch, '/' | '>'))
+                    .ok_or("The HTMLZ entry has an incomplete heading")?;
+            generated.push((offset, id.clone()));
+            id
+        };
+        document.toc.push(TocEntry {
+            label,
+            depth,
+            destination: Some(Destination {
+                path: document.chapter_path.clone(),
+                fragment: Some(fragment),
+            }),
+        });
+    }
+    if !generated.is_empty() {
+        let mut previous_end = 0;
+        let mut output = String::with_capacity(document.xhtml.len());
+        for (offset, id) in generated {
+            output.push_str(&document.xhtml[previous_end..offset]);
+            output.push_str(" id=\"");
+            output.push_str(&id);
+            output.push('"');
+            previous_end = offset;
+        }
+        output.push_str(&document.xhtml[previous_end..]);
+        check_output(&output)?;
+        document.xhtml = output;
+    }
+    Ok(())
+}
+
 pub(crate) fn text_as_xhtml(input: &str) -> Result<String> {
     if input.trim().is_empty() {
         return Err("The text file is empty".into());
@@ -356,6 +624,7 @@ fn html_document(input: &str, fallback_title: &str) -> Result<Document> {
     Ok(Document {
         title,
         author,
+        chapter_path: CHAPTER_PATH.to_owned(),
         xhtml: xhtml.into_owned(),
         toc: Vec::new(),
         resources: BTreeMap::new(),
@@ -542,6 +811,7 @@ fn fb2_document(input: &str, fallback_title: &str) -> Result<Document> {
     Ok(Document {
         title,
         author: (!authors.is_empty()).then(|| authors.join(", ")),
+        chapter_path: CHAPTER_PATH.to_owned(),
         xhtml: output.xhtml,
         toc: output.toc,
         resources: output
@@ -840,6 +1110,15 @@ fn fb2_section_title(section: Node<'_, '_>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Cursor, Write};
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use zip::{ZipWriter, write::SimpleFileOptions};
+
+    use super::*;
+    use crate::source::Source;
+
     #[test]
     fn markdown_has_section_anchors_footnotes_and_literal_raw_html() {
         let input = "# Title\n\nA note[^entry].\n\n## Scope {#scope}\n\n<script>ignored()</script>\n\n[^entry]: At dusk.";
@@ -880,8 +1159,170 @@ mod tests {
         assert!(word.ends_with("<p>Привет</p>"));
         assert!(super::decode_document(b"a\0b", super::Format::Text).is_err());
     }
-    use super::*;
-    use crate::source::Source;
+    struct HtmlzFixture(PathBuf);
+
+    impl HtmlzFixture {
+        fn new(write: impl FnOnce(&mut ZipWriter<File>)) -> Self {
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "reader-htmlz-{}-{}.HTMLZ",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            let output = File::options()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+                .unwrap();
+            let mut zip = ZipWriter::new(output);
+            write(&mut zip);
+            zip.finish().unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for HtmlzFixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.0);
+        }
+    }
+
+    fn htmlz_member(zip: &mut ZipWriter<File>, name: &str, contents: &[u8]) {
+        zip.start_file(
+            name,
+            SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
+        )
+        .unwrap();
+        zip.write_all(contents).unwrap();
+    }
+
+    #[test]
+    fn htmlz_book_preserves_local_styles_images_navigation_and_metadata() {
+        let mut image = Cursor::new(Vec::new());
+        image::DynamicImage::ImageLuma8(image::GrayImage::from_pixel(3, 2, image::Luma([80])))
+            .write_to(&mut image, ImageFormat::Png)
+            .unwrap();
+        let css = b"h2 { font-style: italic; }";
+        let fixture = HtmlzFixture::new(|zip| {
+            htmlz_member(zip, "Field Notes.html", br##"<html><head><title>Note</title>
+                <link rel="stylesheet" href="style.css" /></head><body>
+                <h1 id="tide-a">Shore&nbsp;Watch</h1><h2>Night &mdash; Tide</h2>
+                <p id="reader-htmlz-heading-1">Back to <a href="Field%20Notes.html#tide%2Da">the shore</a>.</p>
+                <p><img src="images/shore%20view.png" /></p></body></html>"##);
+            htmlz_member(zip, "metadata.opf", br#"<package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <metadata><dc:title>Field Notes</dc:title><dc:creator>Linh</dc:creator></metadata></package>"#);
+            zip.add_directory("images/", SimpleFileOptions::default())
+                .unwrap();
+            htmlz_member(zip, "images/shore view.png", image.get_ref());
+            htmlz_member(zip, "style.css", css);
+        });
+        assert_eq!(
+            crate::library::DocumentFormat::for_path(&fixture.0),
+            Some(crate::library::DocumentFormat::Htmlz)
+        );
+        let mut book = Book::open(&fixture.0).unwrap();
+        assert_eq!(book.title, "Field Notes");
+        assert_eq!(book.author.as_deref(), Some("Linh"));
+        assert_eq!(book.chapters.len(), 1);
+        let path = book.chapters[0].href.clone();
+        assert_eq!(path, "Field Notes.html");
+        let xhtml = book.chapter(0).unwrap();
+        assert!(xhtml.contains("Shore\u{a0}Watch"));
+        assert!(xhtml.contains("Night — Tide"));
+        let source = Source::parse(&xhtml).unwrap();
+        assert_eq!(book.toc().len(), 2);
+        assert_eq!(book.toc()[1].label, "Night — Tide");
+        let generated = book.toc()[1].destination.as_ref().unwrap();
+        assert_eq!(generated.path, path);
+        assert_eq!(
+            generated.fragment.as_deref(),
+            Some("reader-htmlz-heading-2")
+        );
+        assert!(
+            source
+                .fragments
+                .contains_key(generated.fragment.as_ref().unwrap())
+        );
+        let link = source
+            .blocks
+            .iter()
+            .flat_map(|block| &block.links)
+            .next()
+            .unwrap();
+        let target = Book::resolve_link(&path, &link.href).unwrap();
+        assert_eq!(book.chapter_index(&target.path), Some(0));
+        assert_eq!(target.fragment.as_deref(), Some("tide-a"));
+        assert!(Book::resolve_link(&path, "../outside.html#tide-a").is_err());
+        assert!(Book::resolve_link(&path, "https://example.invalid/#tide-a").is_err());
+        let image_href = source
+            .blocks
+            .iter()
+            .flat_map(|block| &block.images)
+            .next()
+            .unwrap();
+        assert_eq!(
+            book.resource(&Book::resolve(&path, image_href).unwrap())
+                .unwrap(),
+            *image.get_ref()
+        );
+        assert_eq!(book.resource("style.css").unwrap(), css);
+        assert!(book.resource("metadata.opf").is_err());
+    }
+
+    #[test]
+    fn htmlz_rejects_unsafe_ambiguous_or_oversized_archives() {
+        let chapter = b"<html><body><p>Only one document</p></body></html>";
+        for unsafe_entry in ["../outside.png", "/absolute.png", "folder/./same.png"] {
+            let fixture = HtmlzFixture::new(|zip| {
+                htmlz_member(zip, "index.html", chapter);
+                htmlz_member(zip, unsafe_entry, b"data");
+            });
+            assert!(
+                Book::open(&fixture.0)
+                    .err()
+                    .unwrap()
+                    .to_string()
+                    .contains("unsafe entry")
+            );
+        }
+        let fixture = HtmlzFixture::new(|zip| {
+            htmlz_member(zip, "index.html", chapter);
+            zip.add_symlink("cover.png", "../outside.png", SimpleFileOptions::default())
+                .unwrap();
+        });
+        assert!(
+            Book::open(&fixture.0)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("unsafe entry")
+        );
+        let fixture = HtmlzFixture::new(|zip| {
+            htmlz_member(zip, "index.html", chapter);
+            htmlz_member(zip, "another.xhtml", chapter);
+        });
+        assert!(
+            Book::open(&fixture.0)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("more than one")
+        );
+        let fixture = HtmlzFixture::new(|zip| {
+            htmlz_member(zip, "index.html", chapter);
+            let image = vec![0; MAX_HTMLZ_IMAGE];
+            for entry in 0..=MAX_HTMLZ_RESOURCES / MAX_HTMLZ_IMAGE {
+                htmlz_member(zip, &format!("images/{entry}.png"), &image);
+            }
+        });
+        assert!(
+            Book::open(&fixture.0)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("total resource limit")
+        );
+    }
 
     #[test]
     fn text_import_preserves_lines_paragraphs_unicode_and_literals() {

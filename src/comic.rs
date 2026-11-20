@@ -1,25 +1,33 @@
-//! Native CBZ and standalone PNG/JPEG pages. Archive and image file handles
+//! Native CBZ, USTAR CBT, and standalone raster pages. Archive and image file handles
 //! are short-lived so Reader can give up its USB storage lease between reads.
 
 use std::cmp::Ordering;
+use std::collections::HashSet;
 use std::fs::{self, File};
-use std::io::{BufReader, Cursor, Read};
+use std::io::{BufReader, Cursor, Read, Seek, SeekFrom};
+use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
-use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, Limits, metadata::Orientation};
+use image::{
+    DynamicImage, ImageDecoder, ImageFormat, ImageReader, Limits, Pixel, metadata::Orientation,
+};
 use zip::{CompressionMethod, ZipArchive};
 
 use crate::Result;
-use crate::epub::check_zip_directory;
+use crate::epub::{check_zip_directory, is_archive_path};
 use crate::fixed::{MAX_VIEWPORT_PIXELS, MAX_VIEWPORT_SIDE, RenderRequest};
 
 pub const MAX_COMIC_BYTES: u64 = 512 * 1024 * 1024;
 pub const MAX_IMAGE_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_COMIC_MEMBERS: usize = 8192;
 const MAX_IMAGE_SIDE: u32 = 4096;
 const MAX_IMAGE_PIXELS: u64 = 8 * 1024 * 1024;
 const MAX_DECODE_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_PROJECTED_SIDE: f32 = 32_768.0;
 const MAX_MEMBER_NAME: usize = 512;
+const TAR_BLOCK_BYTES: usize = 512;
+const MAX_TAR_TRAILER_BYTES: u64 = 1024 * 1024;
 
 type Archive = ZipArchive<BufReader<File>>;
 
@@ -29,30 +37,37 @@ pub struct Comic {
 }
 
 struct Member {
-    index: usize,
     name: String,
     size: u64,
-    crc: u32,
+    location: MemberLocation,
+}
+
+#[derive(Clone, Copy)]
+enum MemberLocation {
+    Zip {
+        index: usize,
+        crc: u32,
+    },
+    Tar {
+        header: u64,
+        length: u64,
+        modified: Option<SystemTime>,
+    },
 }
 
 impl Comic {
     pub fn open(path: &Path) -> Result<Self> {
-        let mut archive = open_archive(path)?;
-        let mut pages = Vec::new();
-        for index in 0..archive.len() {
-            let entry = archive.by_index_raw(index)?;
-            if !page_name(entry.name()) || !entry.is_file() {
-                continue;
-            }
-            pages.push(Member {
-                index,
-                name: entry.name().to_owned(),
-                size: entry.size(),
-                crc: entry.crc32(),
-            });
-        }
+        let mut pages = if path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("cbt"))
+        {
+            tar_pages(path)?
+        } else {
+            zip_pages(path)?
+        };
         if pages.is_empty() {
-            return Err("This CBZ contains no PNG or JPEG pages".into());
+            return Err("This comic archive contains no supported image pages".into());
         }
         pages.sort_by(|left, right| natural_cmp(&left.name, &right.name));
         Ok(Self {
@@ -73,30 +88,60 @@ impl Comic {
         let member = self
             .pages
             .get(page)
-            .ok_or("That page is outside this CBZ")?;
-        let mut archive = open_archive(&self.path)?;
-        {
-            let header = archive.by_index_raw(member.index)?;
-            if header.name() != member.name
-                || header.size() != member.size
-                || header.crc32() != member.crc
-                || !header.is_file()
-            {
-                return Err("This CBZ changed after it was opened".into());
-            }
-            if header.encrypted() {
-                return Err("This CBZ page is password-protected".into());
-            }
-            if !matches!(
-                header.compression(),
-                CompressionMethod::Stored | CompressionMethod::Deflated
-            ) {
-                return Err("This CBZ page uses an unsupported compression method".into());
-            }
-        }
-        let bytes = read_image(archive.by_index(member.index)?, member.size)?;
+            .ok_or("That page is outside this comic archive")?;
+        let bytes = match member.location {
+            MemberLocation::Zip { index, crc } => zip_image(&self.path, member, index, crc)?,
+            MemberLocation::Tar {
+                header,
+                length,
+                modified,
+            } => tar_image(&self.path, member, header, length, modified)?,
+        };
         ImagePage::decode(&bytes)
     }
+}
+
+fn zip_pages(path: &Path) -> Result<Vec<Member>> {
+    let mut archive = open_archive(path)?;
+    let mut pages = Vec::new();
+    for index in 0..archive.len() {
+        let entry = archive.by_index_raw(index)?;
+        if page_name(entry.name()) && entry.is_file() {
+            pages.push(Member {
+                name: entry.name().to_owned(),
+                size: entry.size(),
+                location: MemberLocation::Zip {
+                    index,
+                    crc: entry.crc32(),
+                },
+            });
+        }
+    }
+    Ok(pages)
+}
+
+fn zip_image(path: &Path, member: &Member, index: usize, crc: u32) -> Result<Vec<u8>> {
+    let mut archive = open_archive(path)?;
+    {
+        let header = archive.by_index_raw(index)?;
+        if header.name() != member.name
+            || header.size() != member.size
+            || header.crc32() != crc
+            || !header.is_file()
+        {
+            return Err("This CBZ changed after it was opened".into());
+        }
+        if header.encrypted() {
+            return Err("This CBZ page is password-protected".into());
+        }
+        if !matches!(
+            header.compression(),
+            CompressionMethod::Stored | CompressionMethod::Deflated
+        ) {
+            return Err("This CBZ page uses an unsupported compression method".into());
+        }
+    }
+    read_image(archive.by_index(index)?, member.size)
 }
 
 fn open_archive(path: &Path) -> Result<Archive> {
@@ -104,11 +149,193 @@ fn open_archive(path: &Path) -> Result<Archive> {
     let mut input = BufReader::new(file);
     let entry_count = check_zip_directory(&mut input, size)
         .map_err(|_| "This CBZ has an invalid or oversized ZIP directory")?;
+    if entry_count > MAX_COMIC_MEMBERS {
+        return Err("This CBZ has too many entries".into());
+    }
     let archive = ZipArchive::new(input)?;
     if archive.len() != entry_count {
         return Err("This CBZ has duplicate or inconsistent entries".into());
     }
     Ok(archive)
+}
+
+struct TarHeader {
+    name: String,
+    size: u64,
+    directory: bool,
+}
+
+fn tar_pages(path: &Path) -> Result<Vec<Member>> {
+    let (file, length) = open_regular(path, MAX_COMIC_BYTES)?;
+    let block_bytes = TAR_BLOCK_BYTES as u64;
+    if length < block_bytes * 2 || !length.is_multiple_of(block_bytes) {
+        return Err("The CBT length is invalid for a USTAR archive".into());
+    }
+    let modified = file.metadata()?.modified().ok();
+    let mut input = BufReader::new(file);
+    let mut offset = 0;
+    let mut names = HashSet::new();
+    let mut pages = Vec::new();
+    let mut block = [0; TAR_BLOCK_BYTES];
+    for count in 0..=MAX_COMIC_MEMBERS {
+        input.read_exact(&mut block)?;
+        if block.iter().all(|&byte| byte == 0) {
+            check_tar_trailer(&mut input, length - offset - block_bytes)?;
+            return Ok(pages);
+        }
+        if count == MAX_COMIC_MEMBERS {
+            return Err("The CBT has too many entries".into());
+        }
+        let header = parse_tar_header(&block)?;
+        if !names.insert(header.name.clone()) {
+            return Err("The CBT has duplicate entry names".into());
+        }
+        let next = tar_next_header(offset, header.size, length)?;
+        if !header.directory && page_name(&header.name) {
+            if !(1..=MAX_IMAGE_BYTES).contains(&header.size) {
+                return Err("A CBT page is empty or exceeds the image size limit".into());
+            }
+            pages.push(Member {
+                name: header.name,
+                size: header.size,
+                location: MemberLocation::Tar {
+                    header: offset,
+                    length,
+                    modified,
+                },
+            });
+        }
+        input.seek_relative(i64::try_from(next - offset - block_bytes)?)?;
+        offset = next;
+    }
+    Err("The CBT has no archive trailer".into())
+}
+
+fn tar_image(
+    path: &Path,
+    member: &Member,
+    offset: u64,
+    archive_length: u64,
+    modified: Option<SystemTime>,
+) -> Result<Vec<u8>> {
+    let (mut file, length) = open_regular(path, MAX_COMIC_BYTES)?;
+    if length != archive_length
+        || modified.is_some() && file.metadata()?.modified().ok() != modified
+    {
+        return Err("This CBT changed after it was opened".into());
+    }
+    tar_next_header(offset, member.size, length)?;
+    file.seek(SeekFrom::Start(offset))?;
+    let mut block = [0; TAR_BLOCK_BYTES];
+    file.read_exact(&mut block)?;
+    let header = parse_tar_header(&block)?;
+    if header.directory || header.name != member.name || header.size != member.size {
+        return Err("This CBT changed after it was opened".into());
+    }
+    read_image(file.take(member.size), member.size)
+}
+
+fn tar_next_header(offset: u64, size: u64, length: u64) -> Result<u64> {
+    let block_bytes = TAR_BLOCK_BYTES as u64;
+    size.checked_next_multiple_of(block_bytes)
+        .and_then(|padded| offset.checked_add(block_bytes)?.checked_add(padded))
+        .filter(|&next| next <= length.saturating_sub(2 * block_bytes))
+        .ok_or_else(|| "A CBT entry exceeds the archive length".into())
+}
+
+fn check_tar_trailer(input: &mut impl Read, mut remaining: u64) -> Result<()> {
+    if !(TAR_BLOCK_BYTES as u64..=MAX_TAR_TRAILER_BYTES).contains(&remaining) {
+        return Err("The CBT has an invalid USTAR trailer length".into());
+    }
+    let mut buffer = [0; 4096];
+    while remaining > 0 {
+        let count = remaining.min(buffer.len() as u64) as usize;
+        input.read_exact(&mut buffer[..count])?;
+        if buffer[..count].iter().any(|&byte| byte != 0) {
+            return Err("The CBT has data after its archive trailer".into());
+        }
+        remaining -= count as u64;
+    }
+    Ok(())
+}
+
+fn parse_tar_header(block: &[u8; TAR_BLOCK_BYTES]) -> Result<TarHeader> {
+    if &block[257..265] != b"ustar\0\x30\x30" {
+        return Err("The CBT uses a TAR format outside Reader's USTAR support".into());
+    }
+    let checksum = block[..148]
+        .iter()
+        .chain(&block[156..])
+        .map(|&byte| u64::from(byte))
+        .sum::<u64>()
+        + (u64::from(b' ') * 8);
+    if tar_octal(&block[148..156]) != Some(checksum) {
+        return Err("A CBT entry has an invalid USTAR checksum".into());
+    }
+    let size = tar_octal(&block[124..136]).ok_or("A CBT entry has an invalid USTAR size")?;
+    let directory = match block[156] {
+        b'0' | 0 => false,
+        b'5' if size == 0 => true,
+        _ => return Err("The CBT has a link, special file, or unsupported TAR extension".into()),
+    };
+    if block[157..257].iter().any(|&byte| byte != 0) {
+        return Err("A CBT entry has a link name".into());
+    }
+    let prefix = tar_string(&block[345..500])?;
+    let name = tar_string(&block[..100])?;
+    if name.is_empty() {
+        return Err("A CBT entry has an empty USTAR name".into());
+    }
+    let joined = if prefix.is_empty() {
+        name.to_owned()
+    } else {
+        format!("{prefix}/{name}")
+    };
+    let name = joined.strip_prefix("./").unwrap_or(&joined);
+    let name = if directory {
+        name.strip_suffix('/').unwrap_or(name)
+    } else {
+        name
+    };
+    if directory && (joined == "./" || joined == ".") {
+        return Ok(TarHeader {
+            name: String::from("."),
+            size,
+            directory,
+        });
+    }
+    if !is_archive_path(name) {
+        return Err("The CBT has an unsafe entry path".into());
+    }
+    Ok(TarHeader {
+        name: name.to_owned(),
+        size,
+        directory,
+    })
+}
+
+fn tar_string(field: &[u8]) -> Result<&str> {
+    let end = field
+        .iter()
+        .position(|&byte| byte == 0)
+        .unwrap_or(field.len());
+    if field[end..].iter().any(|&byte| byte != 0) {
+        return Err("A CBT entry has invalid USTAR name padding".into());
+    }
+    Ok(std::str::from_utf8(&field[..end])?)
+}
+
+fn tar_octal(field: &[u8]) -> Option<u64> {
+    let start = field.iter().position(|&byte| byte != b' ')?;
+    let field = &field[start..];
+    let end = field
+        .iter()
+        .take_while(|&&byte| matches!(byte, b'0'..=b'7'))
+        .count();
+    if end == 0 || field[end..].iter().any(|&byte| !matches!(byte, 0 | b' ')) {
+        return None;
+    }
+    u64::from_str_radix(std::str::from_utf8(&field[..end]).ok()?, 8).ok()
 }
 
 fn page_name(name: &str) -> bool {
@@ -121,11 +348,19 @@ fn page_name(name: &str) -> bool {
     {
         return false;
     }
-    name.rsplit_once('.').is_some_and(|(_, extension)| {
-        extension.eq_ignore_ascii_case("png")
-            || extension.eq_ignore_ascii_case("jpg")
-            || extension.eq_ignore_ascii_case("jpeg")
-    })
+    name.rsplit_once('.')
+        .is_some_and(|(_, extension)| format_for_extension(extension).is_some())
+}
+
+pub(crate) fn format_for_extension(extension: &str) -> Option<ImageFormat> {
+    match extension.to_ascii_lowercase().as_str() {
+        "jpg" | "jpeg" => Some(ImageFormat::Jpeg),
+        "png" => Some(ImageFormat::Png),
+        "gif" => Some(ImageFormat::Gif),
+        "bmp" => Some(ImageFormat::Bmp),
+        "pnm" | "pbm" | "pgm" | "ppm" | "pam" => Some(ImageFormat::Pnm),
+        _ => None,
+    }
 }
 
 /// Compare digit groups by numeric value without converting them to integers.
@@ -177,9 +412,7 @@ pub struct ImagePage {
 
 impl ImagePage {
     pub(crate) fn from_grayscale(width: u32, height: u32, gray: Vec<u8>) -> Result<Self> {
-        if !(1..=MAX_IMAGE_SIDE).contains(&width)
-            || !(1..=MAX_IMAGE_SIDE).contains(&height)
-            || u64::from(width) * u64::from(height) > MAX_IMAGE_PIXELS
+        if !image_dimensions_valid(width, height)
             || gray.len() as u64 != u64::from(width) * u64::from(height)
         {
             return Err("The grayscale page exceeds Reader's image limits".into());
@@ -291,8 +524,10 @@ impl ImagePage {
 
     fn decode(bytes: &[u8]) -> Result<Self> {
         let mut reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
-        if !matches!(reader.format(), Some(ImageFormat::Png | ImageFormat::Jpeg)) {
-            return Err("Reader supports PNG and JPEG image pages".into());
+        match reader.format() {
+            Some(ImageFormat::Gif) => return Self::decode_gif(bytes),
+            Some(ImageFormat::Png | ImageFormat::Jpeg | ImageFormat::Bmp | ImageFormat::Pnm) => (),
+            _ => return Err("Reader supports JPEG, PNG, GIF, BMP, and PNM image pages".into()),
         }
         let mut limits = Limits::default();
         limits.max_image_width = Some(MAX_IMAGE_SIDE);
@@ -301,11 +536,7 @@ impl ImagePage {
         reader.limits(limits);
         let mut decoder = reader.into_decoder()?;
         let (width, height) = decoder.dimensions();
-        if width == 0
-            || height == 0
-            || u64::from(width) * u64::from(height) > MAX_IMAGE_PIXELS
-            || decoder.total_bytes() > MAX_DECODE_BYTES
-        {
+        if !image_dimensions_valid(width, height) || decoder.total_bytes() > MAX_DECODE_BYTES {
             return Err("This image exceeds Reader's decoded image limit".into());
         }
         let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
@@ -322,6 +553,64 @@ impl ImagePage {
             gray: gray.into_raw(),
         })
     }
+
+    fn decode_gif(bytes: &[u8]) -> Result<Self> {
+        let mut options = gif::DecodeOptions::new();
+        options.set_color_output(gif::ColorOutput::Indexed);
+        options.set_memory_limit(gif::MemoryLimit::Bytes(
+            NonZeroU64::new(MAX_IMAGE_PIXELS).unwrap(),
+        ));
+        options.check_frame_consistency(true);
+        let mut decoder = options.read_info(Cursor::new(bytes))?;
+        let (width, height) = (u32::from(decoder.width()), u32::from(decoder.height()));
+        if !image_dimensions_valid(width, height) {
+            return Err("This GIF exceeds Reader's image limits".into());
+        }
+        let global_palette = decoder.global_palette().map(<[u8]>::to_vec);
+        let frame = decoder
+            .read_next_frame()?
+            .ok_or("This GIF has no image frame")?;
+        let palette = frame
+            .palette
+            .as_deref()
+            .or(global_palette.as_deref())
+            .ok_or("This GIF has no color palette")?;
+        let colors: Vec<_> = palette
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|color| image::Rgb(*color).to_luma().0[0])
+            .collect();
+        let (stride, rows) = (width as usize, height as usize);
+        let (left, top) = (usize::from(frame.left), usize::from(frame.top));
+        let (frame_width, frame_height) = (usize::from(frame.width), usize::from(frame.height));
+        if frame_width == 0
+            || frame_height == 0
+            || left + frame_width > stride
+            || top + frame_height > rows
+            || frame.buffer.len() != frame_width * frame_height
+        {
+            return Err("This GIF has an invalid image frame".into());
+        }
+        let mut gray = vec![255; stride * rows];
+        for (row, source) in frame.buffer.chunks_exact(frame_width).enumerate() {
+            let offset = (top + row) * stride + left;
+            for (&index, pixel) in source.iter().zip(&mut gray[offset..offset + frame_width]) {
+                if frame.transparent != Some(index) {
+                    *pixel = *colors
+                        .get(usize::from(index))
+                        .ok_or("This GIF contains an invalid color index")?;
+                }
+            }
+        }
+        Self::from_grayscale(width, height, gray)
+    }
+}
+
+fn image_dimensions_valid(width: u32, height: u32) -> bool {
+    (1..=MAX_IMAGE_SIDE).contains(&width)
+        && (1..=MAX_IMAGE_SIDE).contains(&height)
+        && u64::from(width) * u64::from(height) <= MAX_IMAGE_PIXELS
 }
 
 fn grayscale(decoded: DynamicImage) -> image::GrayImage {
@@ -341,12 +630,12 @@ fn first_pixel(edge: f32, side: u32) -> usize {
 
 fn open_regular(path: &Path, max_bytes: u64) -> Result<(File, u64)> {
     if !fs::metadata(path)?.is_file() {
-        return Err("Reader can only open regular image or CBZ files".into());
+        return Err("Reader can only open regular image or comic files".into());
     }
     let file = File::open(path)?;
     let info = file.metadata()?;
     if !info.is_file() || info.len() > max_bytes {
-        return Err("This image or CBZ exceeds Reader's file size limit".into());
+        return Err("This image or comic exceeds Reader's file size limit".into());
     }
     Ok((file, info.len()))
 }
@@ -410,6 +699,185 @@ mod tests {
             writer.write_all(data).unwrap();
         }
         writer.finish().unwrap();
+    }
+
+    fn ustar_header(name: &str, prefix: &str, kind: u8, size: u64) -> [u8; TAR_BLOCK_BYTES] {
+        let mut header = [0; TAR_BLOCK_BYTES];
+        header[..name.len()].copy_from_slice(name.as_bytes());
+        header[100..108].copy_from_slice(b"0000644\0");
+        header[108..116].copy_from_slice(b"0000000\0");
+        header[116..124].copy_from_slice(b"0000000\0");
+        header[124..136].copy_from_slice(format!("{size:011o}\0").as_bytes());
+        header[136..148].copy_from_slice(b"00000000000\0");
+        header[156] = kind;
+        header[257..265].copy_from_slice(b"ustar\0\x30\x30");
+        header[345..345 + prefix.len()].copy_from_slice(prefix.as_bytes());
+        header[148..156].fill(b' ');
+        let checksum: u32 = header.iter().map(|&byte| u32::from(byte)).sum();
+        header[148..156].copy_from_slice(format!("{checksum:06o}\0 ").as_bytes());
+        header
+    }
+
+    fn tar_entry(archive: &mut Vec<u8>, name: &str, prefix: &str, kind: u8, bytes: &[u8]) {
+        archive.extend(ustar_header(name, prefix, kind, bytes.len() as u64));
+        archive.extend(bytes);
+        archive.resize(archive.len().next_multiple_of(TAR_BLOCK_BYTES), 0);
+    }
+
+    fn tar_fixture(mut bytes: Vec<u8>) -> Fixture {
+        bytes.resize(bytes.len() + 2 * TAR_BLOCK_BYTES, 0);
+        let fixture = Fixture::new("CBT");
+        fs::write(&fixture.0, bytes).unwrap();
+        fixture
+    }
+
+    #[test]
+    fn ustar_comic_indexes_natural_order_and_decodes_pages_by_offset() {
+        let black = png(GrayImage::from_pixel(3, 2, Luma([0])).into());
+        let white = png(GrayImage::from_pixel(3, 2, Luma([255])).into());
+        let mut bytes = Vec::new();
+        tar_entry(&mut bytes, "./", "", b'5', b"");
+        tar_entry(&mut bytes, "./pages/", "", b'5', b"");
+        tar_entry(&mut bytes, "10.png", "./pages", b'0', &white);
+        tar_entry(&mut bytes, "./readme.txt", "", b'0', b"Comic fixture");
+        tar_entry(&mut bytes, "./pages/2.PNG", "", 0, &black);
+        let fixture = tar_fixture(bytes);
+        let document = Comic::open(&fixture.0).unwrap();
+        assert_eq!(document.page_count(), 2);
+        assert_eq!(document.page_name(0), Some("pages/2.PNG"));
+        assert_eq!(document.page_name(1), Some("pages/10.png"));
+        assert_eq!(
+            document.decode_page(1).unwrap().fit(3, 2, 0).unwrap(),
+            [255; 6]
+        );
+        assert_eq!(
+            document.decode_page(0).unwrap().fit(2, 3, 1).unwrap(),
+            [0; 6]
+        );
+        assert!(document.decode_page(2).is_err());
+        let mut changed = fs::OpenOptions::new()
+            .append(true)
+            .open(&fixture.0)
+            .unwrap();
+        changed.write_all(&[0; TAR_BLOCK_BYTES]).unwrap();
+        assert!(document.decode_page(0).is_err());
+    }
+
+    #[test]
+    fn ustar_comic_rejects_traversal_extensions_and_duplicate_paths() {
+        for (name, prefix, kind) in [
+            ("../outside.png", "", b'0'),
+            ("absolute.png", "/outside", b'0'),
+            ("PaxHeader", "", b'x'),
+            ("LongName", "", b'L'),
+            ("Sparse", "", b'S'),
+            ("link.png", "", b'2'),
+        ] {
+            let mut bytes = Vec::new();
+            tar_entry(&mut bytes, name, prefix, kind, b"fixture");
+            assert!(Comic::open(&tar_fixture(bytes).0).is_err(), "{name}");
+        }
+        let mut bytes = Vec::new();
+        tar_entry(&mut bytes, "page.pgm", "", b'0', b"P5\n1 1\n255\n\0");
+        tar_entry(&mut bytes, "./page.pgm", "", b'0', b"P5\n1 1\n255\n\0");
+        assert!(Comic::open(&tar_fixture(bytes).0).is_err());
+    }
+
+    #[test]
+    fn ustar_comic_checks_header_size_checksum_entry_count_and_empty_trailer() {
+        let image = b"P5\n1 1\n255\n\0";
+        let mut bytes = Vec::new();
+        tar_entry(&mut bytes, "page.pgm", "", b'0', image);
+        let mut corrupt = bytes.clone();
+        corrupt[0] = b'X';
+        assert!(Comic::open(&tar_fixture(corrupt).0).is_err());
+        let invalid_size = ustar_header("page.pgm", "", b'0', 0o77777777777);
+        assert!(Comic::open(&tar_fixture(invalid_size.to_vec()).0).is_err());
+        assert!(tar_next_header(0, u64::MAX, MAX_COMIC_BYTES).is_err());
+        let mut unexpected_tail = bytes.clone();
+        unexpected_tail.extend([0; TAR_BLOCK_BYTES]);
+        unexpected_tail.extend(ustar_header("extra.pgm", "", b'0', image.len() as u64));
+        assert!(Comic::open(&tar_fixture(unexpected_tail).0).is_err());
+        for index in 0..MAX_COMIC_MEMBERS {
+            tar_entry(&mut bytes, &format!("dir{index}"), "", b'5', b"");
+        }
+        assert!(Comic::open(&tar_fixture(bytes).0).is_err());
+    }
+
+    fn gif_bytes(width: u16, height: u16, frames: &[gif::Frame<'_>]) -> Vec<u8> {
+        let mut data = Vec::new();
+        let mut encoder =
+            gif::Encoder::new(&mut data, width, height, &[0, 0, 0, 255, 255, 255]).unwrap();
+        for frame in frames {
+            encoder.write_frame(frame).unwrap();
+        }
+        drop(encoder);
+        data
+    }
+
+    #[test]
+    fn uses_only_the_gif_first_frame_with_local_palette_and_transparency() {
+        let mut first =
+            gif::Frame::from_palette_pixels(2, 1, [1, 0], [255, 0, 0, 0, 0, 0], Some(0));
+        first.left = 1;
+        first.top = 1;
+        let second = gif::Frame::from_indexed_pixels(3, 2, [0; 6], None);
+        let bytes = gif_bytes(3, 2, &[first, second]);
+        let fixture = Fixture::new("gif");
+        fs::write(&fixture.0, bytes).unwrap();
+        let page = ImagePage::open(&fixture.0).unwrap();
+        assert_eq!(page.page_size(), (3.0, 2.0));
+        assert_eq!(page.fit(3, 2, 0).unwrap(), [255, 255, 255, 255, 0, 255]);
+    }
+
+    #[test]
+    fn rejects_gif_oversized_canvas_and_frames_outside_it() {
+        let pixel = gif::Frame::from_indexed_pixels(1, 1, [0], None);
+        for (width, height) in [(4097, 1), (3000, 3000), (0, 1)] {
+            assert!(
+                ImagePage::decode(&gif_bytes(width, height, std::slice::from_ref(&pixel))).is_err()
+            );
+        }
+        let mut outside = pixel;
+        outside.left = 2;
+        assert!(ImagePage::decode(&gif_bytes(2, 1, &[outside])).is_err());
+        assert!(ImagePage::decode(&gif_bytes(2, 1, &[])).is_err());
+    }
+
+    #[test]
+    fn decodes_bmp_and_portable_anymaps_standalone_and_in_cbz() {
+        let mut bmp = Cursor::new(Vec::new());
+        DynamicImage::ImageLuma8(GrayImage::from_raw(2, 1, vec![0, 255]).unwrap())
+            .write_to(&mut bmp, ImageFormat::Bmp)
+            .unwrap();
+        let first = gif::Frame::from_indexed_pixels(2, 1, [0, 1], None);
+        let gif = gif_bytes(2, 1, &[first]);
+        let pages: &[(&str, &[u8])] = &[
+            ("1.BMP", bmp.get_ref()),
+            ("2.PBM", b"P1\n2 1\n1 0\n"),
+            ("3.PGM", b"P5\n2 1\n255\n\x00\xff"),
+            ("4.PPM", b"P3\n2 1\n255\n0 0 0 255 255 255\n"),
+            ("5.PAM", b"P7\nWIDTH 2\nHEIGHT 1\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n\x00\x00\x00\xff\x00\x00\x00\x00"),
+            ("6.PNM", b"P2\n2 1\n255\n0 255\n"),
+            ("7.GIF", &gif),
+        ];
+        for (_, data) in pages {
+            assert_eq!(
+                ImagePage::decode(data).unwrap().fit(2, 1, 0).unwrap(),
+                [0, 255]
+            );
+        }
+        let fixture = Fixture::new("cbz");
+        comic(&fixture.0, pages);
+        let document = Comic::open(&fixture.0).unwrap();
+        assert_eq!(document.page_count(), pages.len());
+        for index in 0..pages.len() {
+            assert_eq!(
+                document.decode_page(index).unwrap().fit(2, 1, 0).unwrap(),
+                [0, 255]
+            );
+        }
+        assert!(ImagePage::decode(b"P5\n4097 1\n255\n\x00").is_err());
     }
 
     #[test]

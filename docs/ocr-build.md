@@ -1,6 +1,6 @@
 # Reader's offline OCR build
 
-Reader uses a separate static Tesseract process for recognizing English on a PDF
+Reader uses a separate static Tesseract process for recognizing text on a PDF
 or DjVu page. The app sends a bounded grayscale raster, imports the word boxes,
 and keeps recognized text with the document's reading data. Recognition can
 be cancelled. The text can be searched, selected, or opened in the page's
@@ -25,7 +25,17 @@ The OCR stage contains the static executable, English model and separate
 [upstream notices](licenses/ocr). A package can omit the OCR assets. Its PDF and
 DjVu readers still render pages and read text layers already present in files.
 
+Install additional compatible Tesseract `.traineddata` files in
+`reader/ocr/tessdata/` alongside the English model. Names use lowercase
+language codes such as `vie.traineddata` or `chi_sim.traineddata`. Each model
+must be a regular file of up to 16 MiB. Open OCR from the reading bar to pick
+among the installed languages. Reader stages only the selected model and
+keeps its language code with the recognized page text. Additional models are
+provided separately under their original terms.
+
 The desktop OCR worker recognized 316 words from a public-domain scan with the
-pinned English model. The ARMHF engine and package passed build and archive
-checks. Kindle runtime and memory measurements remain in the consolidated
-device verification.
+pinned English model. On macOS with Tesseract 5.5.2 it also recognized all 28
+words across four Vietnamese test lines using the pinned `vie.traineddata`
+from the same tessdata_fast revision. The ARMHF engine and package passed
+build and archive checks. Kindle runtime and memory measurements remain in the
+consolidated device verification. [Vietnamese model source](https://github.com/tesseract-ocr/tessdata_fast/blob/65727574dfcd264acbb0c3e07860e4e9e9b22185/vie.traineddata)

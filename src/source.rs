@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::Range;
 
 use roxmltree::{Document, Node, ParsingOptions};
@@ -8,6 +8,7 @@ use crate::Result;
 pub(crate) const SOURCE_ATTRIBUTE: &str = "data-primos-source";
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[cfg(test)]
 pub(crate) struct Emphasis {
     pub bold: bool,
     pub italic: bool,
@@ -16,15 +17,31 @@ pub(crate) struct Emphasis {
 pub(crate) struct Block {
     pub key: usize,
     pub text: String,
+    pub element: usize,
+    pub styled_text: Vec<StyledText>,
+    #[cfg(test)]
     pub emphasis: Vec<(Range<usize>, Emphasis)>,
     pub links: Vec<InlineLink>,
-    pub heading: bool,
     pub rtl: bool,
     pub images: Vec<String>,
+}
+
+pub(crate) struct Element {
     pub tag: String,
     pub classes: String,
     pub id: Option<String>,
     pub inline_style: Option<String>,
+    pub parent: Option<usize>,
+}
+
+pub(crate) struct StyledText {
+    pub bytes: Range<usize>,
+    pub element: usize,
+}
+
+pub(crate) enum Stylesheet {
+    Linked(String),
+    Inline(String),
 }
 
 pub(crate) struct InlineLink {
@@ -36,8 +53,8 @@ pub(crate) struct Source {
     pub revision: u64,
     pub blocks: Vec<Block>,
     pub fragments: BTreeMap<String, (usize, usize)>,
-    pub stylesheets: Vec<String>,
-    pub inline_sheets: Vec<String>,
+    pub stylesheets: Vec<Stylesheet>,
+    pub elements: Vec<Element>,
     insertions: Vec<(usize, usize)>,
     head_end: usize,
 }
@@ -73,13 +90,12 @@ impl Source {
         }
         let head = root.children().find(|node| node.has_tag_name("head"));
         let mut stylesheets = Vec::new();
-        let mut inline_sheets = Vec::new();
         if let Some(head) = head {
             for node in head.children() {
                 if node.has_tag_name("style")
                     && let Some(css) = node.text()
                 {
-                    inline_sheets.push(css.to_owned());
+                    stylesheets.push(Stylesheet::Inline(css.to_owned()));
                 }
                 if node.has_tag_name("link")
                     && node.attribute("rel").is_some_and(|rel| {
@@ -88,7 +104,7 @@ impl Source {
                     })
                     && let Some(href) = node.attribute("href")
                 {
-                    stylesheets.push(href.to_owned());
+                    stylesheets.push(Stylesheet::Linked(href.to_owned()));
                 }
             }
         }
@@ -101,6 +117,27 @@ impl Source {
             .any(|node| node.ancestors().take(65).count() == 65)
         {
             return Err("The chapter exceeds the nesting limit".into());
+        }
+        let mut elements = Vec::new();
+        let mut element_ids = HashMap::new();
+        for node in std::iter::once(root)
+            .chain(body.descendants())
+            .filter(Node::is_element)
+        {
+            let parent = node
+                .parent()
+                .and_then(|parent| element_ids.get(&parent.id()).copied());
+            if (node != root && parent.is_none()) || hidden_element(node) {
+                continue;
+            }
+            element_ids.insert(node.id(), elements.len());
+            elements.push(Element {
+                tag: node.tag_name().name().to_owned(),
+                classes: node.attribute("class").unwrap_or_default().to_owned(),
+                id: node.attribute("id").map(str::to_owned),
+                inline_style: node.attribute("style").map(str::to_owned),
+                parent,
+            });
         }
         let mut blocks = Vec::new();
         let mut fragments = BTreeMap::new();
@@ -117,6 +154,8 @@ impl Source {
             }
             let key = node.range().start;
             let mut text = String::new();
+            let mut styled_text: Vec<StyledText> = Vec::new();
+            #[cfg(test)]
             let mut emphasis: Vec<(Range<usize>, Emphasis)> = Vec::new();
             let mut links: Vec<InlineLink> = Vec::new();
             let mut last_link = None;
@@ -156,15 +195,33 @@ impl Source {
                     }
                 }
                 if start < text.len() {
-                    let flags = Emphasis {
-                        bold: descendant
-                            .ancestors()
-                            .any(|a| a.has_tag_name("strong") || a.has_tag_name("b")),
-                        italic: descendant
-                            .ancestors()
-                            .any(|a| a.has_tag_name("em") || a.has_tag_name("i")),
-                    };
-                    emphasis.push((start..text.len(), flags));
+                    let element = descendant
+                        .parent()
+                        .and_then(|parent| element_ids.get(&parent.id()).copied())
+                        .ok_or("The chapter's text has no style element")?;
+                    if let Some(previous) = styled_text.last_mut()
+                        && previous.element == element
+                        && previous.bytes.end == start
+                    {
+                        previous.bytes.end = text.len();
+                    } else {
+                        styled_text.push(StyledText {
+                            bytes: start..text.len(),
+                            element,
+                        });
+                    }
+                    #[cfg(test)]
+                    emphasis.push((
+                        start..text.len(),
+                        Emphasis {
+                            bold: descendant
+                                .ancestors()
+                                .any(|a| a.has_tag_name("strong") || a.has_tag_name("b")),
+                            italic: descendant
+                                .ancestors()
+                                .any(|a| a.has_tag_name("em") || a.has_tag_name("i")),
+                        },
+                    ));
                     if let Some(anchor) = descendant
                         .ancestors()
                         .take_while(|a| *a != node)
@@ -206,18 +263,13 @@ impl Source {
             blocks.push(Block {
                 key,
                 text,
+                element: element_ids[&node.id()],
+                styled_text,
+                #[cfg(test)]
                 emphasis,
                 links,
                 images,
-                heading: matches!(
-                    node.tag_name().name(),
-                    "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
-                ),
                 rtl: node.ancestors().find_map(|a| a.attribute("dir")) == Some("rtl"),
-                tag: node.tag_name().name().to_owned(),
-                classes: node.attribute("class").unwrap_or_default().to_owned(),
-                id: node.attribute("id").map(str::to_owned),
-                inline_style: node.attribute("style").map(str::to_owned),
             });
         }
         if blocks.is_empty() {
@@ -251,7 +303,7 @@ impl Source {
             blocks,
             fragments,
             stylesheets,
-            inline_sheets,
+            elements,
             insertions,
             head_end,
         })
@@ -304,11 +356,13 @@ fn is_block(node: Node<'_, '_>) -> bool {
 }
 
 fn hidden(node: Node<'_, '_>) -> bool {
-    node.ancestors().any(|ancestor| {
-        ancestor.is_element()
-            && (matches!(
-                ancestor.tag_name().name(),
-                "script" | "style" | "noscript" | "template" | "svg"
-            ) || ancestor.has_attribute("hidden"))
-    })
+    node.ancestors().any(hidden_element)
+}
+
+fn hidden_element(node: Node<'_, '_>) -> bool {
+    node.is_element()
+        && (matches!(
+            node.tag_name().name(),
+            "script" | "style" | "noscript" | "template" | "svg"
+        ) || node.has_attribute("hidden"))
 }

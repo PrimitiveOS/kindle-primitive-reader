@@ -106,7 +106,10 @@ def collect():
         sections.append("")
     for notice, components in notices.items():
         sections += ["-" * 72, *components, "", notice, ""]
-    (HERE / "THIRD-PARTY.txt").write_text("\n".join(sections), encoding="utf-8")
+    text = "\n".join(sections)
+    (HERE / "THIRD-PARTY.txt").write_text(
+        "\n".join(line.rstrip() for line in text.split("\n")), encoding="utf-8"
+    )
 
 
 if __name__ == "__main__":

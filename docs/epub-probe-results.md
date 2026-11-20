@@ -95,3 +95,17 @@ against KOReader.
 Expand coverage of longer books and publisher styles within the declared
 EPUB subset. The [execution plan](execution-plan.md) defines the gates
 for the daily-reader build and publication.
+
+## Expanded desktop corpus
+
+Parley laid out and rasterized the first page of all 12 narrative chapters of
+the Standard Ebooks illustrated edition of *Alice’s Adventures in Wonderland*.
+The run covered all 115,703 extracted source characters and reported zero
+missing glyphs using the Launcher’s Noto Sans regular and bold fonts. On the
+Mac, first-frame software times ranged from 7.7 to 17.7 ms. A separate 30-frame
+run in chapter 1 measured a warm rasterization p95 of 0.47 ms. These measurements
+cover Mac rendering. Kindle performance and publisher layout fidelity have
+separate acceptance checks. [Illustrated EPUB source](https://standardebooks.org/ebooks/lewis-carroll/alices-adventures-in-wonderland/john-tenniel)
+
+The tested EPUB archive has SHA-256
+`e8a352212579562c9b0ab6c2439c635886409d75812288547da15f3d18c2641d`.

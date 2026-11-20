@@ -1,4 +1,6 @@
 #[cfg(feature = "kindle")]
+mod annotation_export;
+#[cfg(feature = "kindle")]
 pub mod app;
 mod blitz;
 mod book_style;
@@ -13,6 +15,7 @@ mod fixed_session;
 pub mod fixed_text;
 mod gray_glyph;
 pub mod koreader_import;
+pub mod koreader_sidecar;
 pub mod library;
 mod loose;
 pub mod mobi;
@@ -20,12 +23,25 @@ pub mod ocr;
 #[cfg(feature = "kindle")]
 mod ocr_job;
 mod parley_layout;
+#[cfg(feature = "kindle")]
+mod pdf_annotations;
+#[cfg(feature = "kindle")]
+mod reading_controls;
+#[cfg(feature = "kindle")]
+mod reading_fonts;
+#[cfg(feature = "kindle")]
+mod reading_profiles;
+#[cfg(feature = "kindle")]
+mod reading_stats;
 mod rtf;
+#[cfg(feature = "kindle")]
+mod scan_columns;
 pub mod search;
 pub mod selection;
 #[cfg(feature = "kindle")]
 mod session;
 mod source;
+mod tcr;
 #[cfg(feature = "kindle")]
 mod text_flow;
 
@@ -209,6 +225,7 @@ enum Renderer {
 /// One bounded chapter layout. The renderer and cache are replaced at a chapter turn.
 pub struct Probe {
     pub title: String,
+    pub author: Option<String>,
     pub chapter: String,
     pub chapter_label: String,
     book: u64,
@@ -268,6 +285,7 @@ impl Probe {
         let href = entry.href.clone();
         let chapter_label = entry.label.clone();
         let title = book.title.clone();
+        let author = book.author.clone();
         let publication = book.revision();
         let chapters = book.chapters.clone();
         let toc = book.toc.clone();
@@ -290,6 +308,7 @@ impl Probe {
         let pages = Pagination::new(&lines, settings.text_height() as f32, content_height)?;
         Ok(Self {
             title,
+            author,
             chapter: href,
             chapter_label,
             book: publication,
@@ -319,6 +338,33 @@ impl Probe {
 
     pub fn chapter_entries(&self) -> &[Chapter] {
         &self.chapters
+    }
+
+    /// Resolve a successfully displayed illustration at a page's viewport coordinates.
+    pub fn illustration_at(&self, page: usize, x: f32, y: f32) -> Option<&str> {
+        self.illustration_in(self.pages.range(page)?, x, y)
+    }
+
+    pub(crate) fn illustration_in(&self, range: Range<f32>, x: f32, y: f32) -> Option<&str> {
+        let Renderer::Parley(layout) = &self.renderer else {
+            return None;
+        };
+        layout.illustration_at(range, self.settings, x, y)
+    }
+
+    /// Load original pixels for a displayed illustration, reopening the local book as needed.
+    pub fn open_illustration(&self, path: &Path, package_path: &str) -> Result<comic::ImagePage> {
+        if !matches!(&self.renderer, Renderer::Parley(layout) if layout.has_illustration(package_path))
+        {
+            return Err("This illustration is unavailable in the current chapter".into());
+        }
+        let mut book = Book::open(path)?;
+        if book.revision() != self.book || book.chapter_index(&self.chapter).is_none() {
+            return Err("This book changed after it was opened".into());
+        }
+        let bytes = book.resource(package_path)?;
+        drop(book);
+        parley_layout::original_illustration(&bytes)
     }
 
     pub fn link_at(&self, page: usize, x: f32, y: f32) -> Option<Destination> {

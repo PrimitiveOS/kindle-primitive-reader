@@ -12,6 +12,7 @@ The [manifest](manifest.json) records the expected reading order, locations, lin
 | `malformed-container.epub` | A valid ZIP contains incomplete package-location XML. Check that opening fails cleanly. |
 | `truncated.epub` | The ZIP has no end of central directory record. Check that opening fails cleanly. |
 | `password-required.pdf` | One generated blank page. Verify the password flow rejects a wrong password and accepts `reader-test`. |
+| `field-notes.tcr` | Calibre 9.5.0 TCR output with original Windows-1252 sample text. Verify decompression and non-ASCII punctuation. |
 
 In each of the two valid Field Notes books, `tide-a` and `tide-b` contain the identical sentence `The tide keeps its own time.` Save a location at each occurrence and verify that it resolves correctly after repagination. The chapter also contains Vietnamese, right-to-left Arabic, and Japanese samples. The EPUB 3 `INK SAMPLE` line uses an embedded Silkscreen face. Use available fallback fonts for the other samples, and record their names when comparing glyph coverage.
 
@@ -29,3 +30,6 @@ The generator uses fixed timestamps and stores ZIP members without compression. 
 The password fixture was generated with pypdf 6.1.1, a 120 × 80 point blank page,
 and RC4-128 encryption. Its SHA-256 is
 `3d2ecdcffc6efdb74e58f660cbf017d3162d42fc08279dc4c274974633b11798`.
+
+The TCR fixture has SHA-256
+`a918383808daa49e5cdd101e4f121b6175fcdd2df6ab406b3c33559cb9b67af3`.

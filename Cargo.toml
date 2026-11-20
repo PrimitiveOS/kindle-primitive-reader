@@ -20,12 +20,15 @@ cssparser = "=0.38.0"
 djvu-rs = { version = "=0.46.0", default-features = false, features = ["std"] }
 encoding_rs = "=0.8.44"
 flate2 = "=1.1.11"
+gif = { version = "=0.14.2", default-features = false, features = ["std", "raii_no_panic"] }
 hayro = "=0.9.0"
 html5ever = "=0.40.1"
 icu_casemap = "=2.4.0"
 icu_normalizer = { version = "=2.4.0", default-features = false, features = ["compiled_data"] }
 icu_segmenter = "=2.4.0"
-image = { version = "=0.25.10", default-features = false, features = ["jpeg", "png"] }
+image = { version = "=0.25.10", default-features = false, features = ["bmp", "jpeg", "png", "pnm"] }
+lopdf = { version = "=0.47.0", default-features = false }
+md5 = "=0.8.0"
 parley = { version = "=0.12.0", default-features = false, features = ["std"] }
 png = "=0.17.16"
 primitive-app = { git = "https://github.com/PrimitiveOS/kindle-primtitive-tools.git", rev = "398679696d19e0334a164775a3740cc700ffc9de", optional = true }

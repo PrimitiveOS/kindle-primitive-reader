@@ -33,7 +33,7 @@ pub struct SearchHit {
 /// The caller can stop or replace the task between steps. Search borrows
 /// the book only during the step, so a device can release the storage lease.
 pub struct Search {
-    query: String,
+    query: Query,
     publication: Option<(u64, usize)>,
     next_chapter: usize,
     hits: usize,
@@ -45,8 +45,12 @@ impl Search {
     /// Queries use Unicode default case folding and literal text matching.
     /// Matches stay within a source text block and preserve its UTF-8 offsets.
     pub fn new(query: &str) -> Result<Self> {
+        Self::with_case(query, false)
+    }
+
+    pub fn with_case(query: &str, match_case: bool) -> Result<Self> {
         Ok(Self {
-            query: folded_query(query)?,
+            query: Query::new(query, match_case)?,
             publication: None,
             next_chapter: 0,
             hits: 0,
@@ -104,11 +108,7 @@ impl Search {
 
         let mut hits = Vec::new();
         for block in source.blocks {
-            let folded = FoldedText::new(&block.text);
-            for range in folded
-                .matches(&self.query)
-                .take(MAX_SEARCH_HITS - self.hits)
-            {
+            for range in self.query.matches(&block.text, MAX_SEARCH_HITS - self.hits) {
                 let offset = range.start;
                 let end = range.end;
                 let (snippet, matched) = snippet(&block.text, range);
@@ -142,17 +142,55 @@ impl Search {
     }
 }
 
-fn folded_query(query: &str) -> Result<String> {
-    let query = query.trim();
-    if query.is_empty() || query.len() > MAX_QUERY_BYTES {
-        return Err("Enter a search term of up to 256 UTF-8 bytes".into());
+struct Query {
+    text: String,
+    match_case: bool,
+}
+
+impl Query {
+    fn new(text: &str, match_case: bool) -> Result<Self> {
+        let text = text.trim();
+        if text.is_empty() || text.len() > MAX_QUERY_BYTES {
+            return Err("Enter a search term of up to 256 UTF-8 bytes".into());
+        }
+        let text = if match_case {
+            text.to_owned()
+        } else {
+            CASE_MAPPER.fold_string(text).into_owned()
+        };
+        Ok(Self { text, match_case })
     }
-    Ok(CASE_MAPPER.fold_string(query).into_owned())
+
+    fn matches(&self, source: &str, limit: usize) -> Vec<Range<usize>> {
+        if self.match_case {
+            source
+                .match_indices(&self.text)
+                .take(limit)
+                .map(|(start, found)| start..start + found.len())
+                .collect()
+        } else {
+            FoldedText::new(source)
+                .matches(&self.text)
+                .take(limit)
+                .collect()
+        }
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn match_case_preserves_original_utf8_offsets() {
+    let source = "straße Straße STRASSE";
+    let exact = Query::new("Straße", true).unwrap().matches(source, 10);
+    assert_eq!(exact.len(), 1);
+    assert_eq!(&source[exact[0].clone()], "Straße");
+    let insensitive = Query::new("Straße", false).unwrap().matches(source, 10);
+    assert_eq!(insensitive.len(), 3);
 }
 
 #[cfg(feature = "kindle")]
 pub(crate) struct PdfSearch {
-    query: String,
+    query: Query,
     pub(crate) next_page: usize,
     pub(crate) text_pages: usize,
     pub(crate) skipped: usize,
@@ -167,9 +205,9 @@ pub(crate) struct PdfSearchHit {
 
 #[cfg(feature = "kindle")]
 impl PdfSearch {
-    pub(crate) fn new(query: &str) -> Result<Self> {
+    pub(crate) fn new(query: &str, match_case: bool) -> Result<Self> {
         Ok(Self {
-            query: folded_query(query)?,
+            query: Query::new(query, match_case)?,
             next_page: 0,
             text_pages: 0,
             skipped: 0,
@@ -185,10 +223,9 @@ impl PdfSearch {
         if !text.text.trim().is_empty() {
             self.text_pages += 1;
         }
-        let folded = FoldedText::new(&text.text);
-        folded
-            .matches(&self.query)
-            .take(limit)
+        self.query
+            .matches(&text.text, limit)
+            .into_iter()
             .map(|range| {
                 let region = text
                     .words

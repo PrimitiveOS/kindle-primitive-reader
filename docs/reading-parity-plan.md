@@ -8,18 +8,20 @@ Compare against the installed KOReader release for hardware measurements. Record
 
 | Area | Development coverage | Remaining work |
 | --- | --- | --- |
-| EPUB reading | Library and resume, page and continuous scroll modes, direct reading bars, navigation and footnotes, per-book text settings, find, bookmarks, editable highlights and notes | Extended publication fidelity, accessibility controls and the final device suite |
-| PDF | Fixed-page viewport, outlines and internal links, passwords, page jumps, manual and automatic crop, text search and local annotations | Annotated-PDF export, broader password and outline variants, and sustained large-scan tests |
-| Other offline reading | Fixed-layout XHTML EPUB, DjVu pages, TXT and HTML, Markdown, FB2 with local images, legacy MOBI and PalmDOC, RTF, CBZ, JPEG, PNG, and compressed StarDict | Wider format variants and the final device suite |
-| Scanned documents | Embedded-text reading and page-level text reflow. English OCR worker tested on desktop and cross-built for ARMHF. | OCR in the Kindle runtime, further languages, column segmentation and scanned image reflow |
-| Reading data | Local backup and restore with preview, plus KOReader JSON annotation import by exact unique quotation | KOReader reading positions and sidecar migration, validation across representative exports and editions, and the final device suite |
+| EPUB reading | Saved positions, page and scroll modes, reading bars, navigation and footnotes, source-ordered publisher CSS with inherited typography, local reading fonts, find, bookmarks, highlights and notes | Advanced publisher layout, spread behavior, and the final device suite |
+| PDF | Fixed pages and continuous scroll, printed labels, page thumbnails, outlines and links, passwords, page, width and height fit, crop, contrast, text search and local annotations. Visible embedded highlights import and annotated-copy export for intact unencrypted PDFs up to 16 MiB. | Broader password, outline and annotation types, and sustained large-scan tests |
+| Other offline reading | Fixed-layout XHTML EPUB, DjVu, TXT, HTML, single-document HTMLZ, Markdown, FB2, legacy MOBI and PalmDOC, RTF, CBZ and uncompressed USTAR CBT with spreads, JPEG, PNG, BMP, GIF first frame, portable anymaps, and compressed StarDict | Wider format variants and the final device suite |
+| Scanned documents | Embedded and recognized text reflow across readable source pages, plus a column view for clear two-column scans. English and Vietnamese recognized by the worker on desktop. The ARMHF package bundles English and accepts local additional models. | OCR in the Kindle runtime, broader language and column cases, and scanned image word reflow |
+| Library and controls | Favorites, reading status, collections, local reading time, reusable text profiles, night pages, adjustable toolbar sizes, mirrored tap zones, touch lock, and page thumbnail navigation | Full-book overview and more gesture choices. Verify the new controls on Kindle. |
+| Reading data | Backup and restore with preview, text/Markdown/HTML annotation exports, KOReader JSON annotations by unique quotation, and fixed-page sidecar progress with a sampled fingerprint and page-count check | CREngine pointer mapping, more sidecar variants and editions, and the final device suite |
 | Kindle verification | EPUB engine timing, probe page buttons, sleep and USB resume, and a temporary preview's contents jump and reopen passed on Oasis 3 | Deploy the completed core reader and run the consolidated automatic hardware workflow |
 
-The desktop checkpoint passed 96 Reader tests and 16 Files tests. Reader
-rendered three public-domain DjVu samples in the desktop app. The licensed
-ARMHF development package and the standalone ARMHF test bundle built
-successfully. The recent interface and document-format changes have desktop
-evidence. The device evidence in the table refers to the earlier previews.
+The desktop checkpoint passed 158 Reader tests and 16 Files tests. Reader
+rendered three public-domain DjVu samples and 12 narrative chapters from the
+Standard Ebooks edition of *Alice’s Adventures in Wonderland*. The licensed
+ARMHF development archive passed its checksum and package-content checks. Three
+ARMHF test executables are staged for the consolidated hardware run. The current
+device evidence comes from earlier probes and previews.
 
 ## P0 · Close the feasibility gate
 
@@ -95,12 +97,12 @@ Use this table as the initial format inventory. A decoder that opens a file qual
 | PDF | P2 native fixed pages and text. P3 scanned PDF tools. | Text and image-only PDFs, outlines, passwords, rotation, crop, source preservation, and PDF annotation interchange. |
 | DjVu/DJV | P3 native decoder evaluation followed by scan tools. | Multipage containers, single pages, outlines, embedded text, coordinate accuracy and scanned reflow. |
 | JPEG/PNG and standalone image sequences | P2 native using the fixed-page surface. | EXIF orientation, alpha, grayscale, zoom, dimension limits, invalid input, and resume in image sequences. |
-| GIF, WebP, TIFF, SVG, JPEG 2000, JPEG XR, and portable bitmap images | P3 codec-by-codec evaluation. Include JPG, J2K, JP2, JXR, HDP, WDP, TIFF/TIF, and PAM/PBM/PGM/PNM/PPM aliases where verified. | Animation/static policy, multi-image behavior, compression variants, orientation, alpha, external SVG resource rules, and bounded decode. |
-| CBZ, CBT, CBR | Native CBZ in P2. P3 adds TAR and RAR comic-container evaluation with an approved decoder. | Entry order, paths, archive variants and signatures, grayscale displays, reading direction, spreads and large archive limits. |
+| GIF, BMP, WebP, TIFF, SVG, JPEG 2000, JPEG XR, and portable bitmap images | P3 implements BMP, the first GIF frame and PAM/PBM/PGM/PNM/PPM as still images. WebP and TIFF remain open pending decoder memory bounds. Evaluate SVG, J2K, JP2, JXR, HDP and WDP individually. | Animation/static policy, multi-image behavior, compression variants, orientation, alpha, external SVG resource rules, and bounded decode. |
+| CBZ, CBT, CBR | Native CBZ and uncompressed USTAR CBT with single pages and spreads. Evaluate RAR comic containers separately. | Entry order, paths, archive variants and signatures, grayscale displays, reading direction, spreads and large archive limits. |
 | TXT, FB2/FB2.ZIP, FB3 | P2 native TXT/FB2. P3 verifies ZIP packaging and FB3 packaging. | BOM and encoding variants, FB2 metadata/sections/notes/images, embedded identifiers, and bounded archive resources. |
-| HTML, XHTML, HTM, HTMLZ, Markdown, XML, and plain text aliases | Native offline HTML/XHTML in P2. Evaluate archive and other markup variants in P3. | Links, images and anchors within permitted book resources, conversion fidelity, text selection, and explicit handling of unsupported script or remote content. |
+| HTML, XHTML, HTM, HTMLZ, Markdown, XML, and plain text aliases | Native offline HTML/XHTML and single-document Calibre-style HTMLZ with one root HTML file, local PNG/JPEG and CSS, and optional OPF metadata. Evaluate other markup and archive variants in P3. | Links, images and anchors within permitted book resources, conversion fidelity, text selection, and explicit handling of unsupported script or remote content. |
 | MOBI, PRC, DRM-free AZW and KF8 variants | P3 evaluate a native parse/normalize adapter. Verify AZW3 as its own reported variant. Offer explicit conversion pending a verified parser. | Metadata, text encoding, links, images and mixed layouts, location recovery, and clear messages for encrypted inputs. |
-| RTF, legacy DOC, CHM, PalmDoc/PDB, and TCR | P3 independent adapters or a licence-compatible conversion pipeline per format. | Structural fidelity, character sets, images, links, nested archive handling, and reading state tied to the original revision. |
+| RTF, legacy DOC, CHM, PalmDoc/PDB, and TCR | Native RTF, PalmDOC and bounded TCR text. Evaluate legacy DOC and CHM with suitable adapters or conversion. | Structural fidelity, character sets, images, links, nested archive handling, and reading state tied to the original revision. |
 | DOCX/DOCM, ODT, PPTX, XLSX, XPS and compound files | P3 evaluate document preview and reading renderers individually. Treat office content as static material. Confirm the installed KOReader provider behavior before setting each fidelity target. | TOC or sheet order, displayed content, text search/selection where available, malformed or unsupported variants, and bounded document processing. |
 | ZIP and TAR as document wrappers | P3 validate book, image and comic payload combinations individually. | Entry recognition, collision and storage limits, format selection, and position after reopening a verified payload. |
 

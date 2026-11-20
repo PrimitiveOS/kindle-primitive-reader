@@ -16,6 +16,7 @@ pub struct FixedEpub {
     path: PathBuf,
     revision: u64,
     title: String,
+    author: Option<String>,
     count: usize,
     fonts: FontContext,
     outline: Vec<PdfOutlineItem>,
@@ -46,6 +47,7 @@ impl FixedEpub {
             revision: book.revision(),
             count: book.chapters.len(),
             title: book.title,
+            author: book.author,
             fonts: font_context(fonts)?,
             outline,
             cache: RefCell::new(None),
@@ -54,6 +56,10 @@ impl FixedEpub {
 
     pub fn title(&self) -> &str {
         &self.title
+    }
+
+    pub fn author(&self) -> Option<&str> {
+        self.author.as_deref()
     }
 
     pub fn page_count(&self) -> usize {

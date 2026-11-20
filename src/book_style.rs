@@ -1,20 +1,22 @@
-//! Bounded publisher styles for the compact EPUB layout. The subset supports
-//! simple selectors and local outline fonts. It applies linked sheets in order,
-//! then document style blocks, then per-element declarations.
+//! Publisher typography for the compact EPUB layout. The cascade handles
+//! compound and descendant selectors, author order, inline styles, importance,
+//! and inherited text properties. See https://www.w3.org/TR/css-cascade-5/.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use cssparser::{
-    AtRuleParser, CowRcStr, DeclarationParser, ParseError, Parser, ParserState,
+    AtRuleParser, CowRcStr, DeclarationParser, Delimiter, ParseError, Parser, ParserState,
     QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser, StyleSheetParser, Token,
+    parse_important,
 };
 use parley::{
-    Alignment, FontContext,
+    Alignment, FontContext, FontFamily, FontStyle, FontWeight, GenericFamily,
     fontique::{Blob, FontInfoOverride},
 };
 
 use crate::epub::Book;
+use crate::source::{Element, Stylesheet};
 
 const MAX_SHEETS: usize = 8;
 const MAX_SHEET_BYTES: usize = 96 * 1024;
@@ -22,23 +24,56 @@ const MAX_CSS_BYTES: usize = 256 * 1024;
 const MAX_INLINE_BYTES: usize = 4 * 1024;
 const MAX_RULES: usize = 256;
 const MAX_SELECTOR_BYTES: usize = 128;
+const MAX_SELECTORS_PER_RULE: usize = 24;
+const MAX_SELECTOR_STEPS: usize = 8;
 const MAX_FONT_READS: usize = 6;
 const MAX_FONT_BYTES: usize = 2 * 1024 * 1024;
 const MAX_TOTAL_FONT_BYTES: usize = 4 * 1024 * 1024;
 
-#[derive(Default)]
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Family {
+    Named(Arc<str>),
+    Generic(GenericFamily),
+}
+
+impl Family {
+    pub(crate) fn layout(&self) -> FontFamily<'_> {
+        match self {
+            Self::Named(name) => FontFamily::named(name),
+            Self::Generic(family) => (*family).into(),
+        }
+    }
+}
+
+#[derive(Clone)]
 pub(crate) struct Style {
-    pub font_family: Option<String>,
-    pub size_scale: Option<f32>,
+    pub font_family: Family,
+    pub size_scale: f32,
+    pub font_weight: FontWeight,
+    pub font_style: FontStyle,
     pub line_height: Option<f32>,
     pub background: Option<u8>,
     pub alignment: Option<Alignment>,
 }
 
+impl Default for Style {
+    fn default() -> Self {
+        Self {
+            font_family: Family::Generic(GenericFamily::Serif),
+            size_scale: 1.0,
+            font_weight: FontWeight::NORMAL,
+            font_style: FontStyle::Normal,
+            line_height: None,
+            background: None,
+            alignment: None,
+        }
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct BookStyle {
     rules: Vec<Rule>,
-    families: HashMap<String, String>,
+    families: HashMap<String, Arc<str>>,
     font_paths: HashSet<String>,
     font_reads: usize,
     font_bytes: usize,
@@ -48,8 +83,7 @@ impl BookStyle {
     pub fn load(
         book: &mut Book,
         chapter: &str,
-        links: &[String],
-        inline_sheets: &[String],
+        sheets: &[Stylesheet],
         fonts: &mut FontContext,
     ) -> Self {
         let mut styled = Self::default();
@@ -57,99 +91,117 @@ impl BookStyle {
             fonts
                 .collection
                 .family_names()
-                .map(|name| (name.to_ascii_lowercase(), name.to_owned())),
+                .map(|name| (name.to_ascii_lowercase(), Arc::from(name))),
         );
         let mut remaining = MAX_CSS_BYTES;
-        for link in links.iter().take(MAX_SHEETS) {
-            let Ok(path) = Book::resolve(chapter, link) else {
-                continue;
-            };
-            if !path
-                .rsplit_once('.')
-                .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("css"))
-            {
-                continue;
+        let mut linked = 0;
+        let mut inline = 0;
+        for sheet in sheets {
+            match sheet {
+                Stylesheet::Linked(href) if linked < MAX_SHEETS => {
+                    linked += 1;
+                    let Ok(path) = Book::resolve(chapter, href) else {
+                        continue;
+                    };
+                    if !path
+                        .rsplit_once('.')
+                        .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("css"))
+                    {
+                        continue;
+                    }
+                    let Ok(bytes) = book.resource(&path) else {
+                        continue;
+                    };
+                    if let Ok(text) = std::str::from_utf8(&bytes) {
+                        styled.read_sheet(book, &path, text, &mut remaining, fonts);
+                    }
+                }
+                Stylesheet::Inline(sheet) if inline < MAX_SHEETS => {
+                    inline += 1;
+                    styled.read_sheet(book, chapter, sheet, &mut remaining, fonts);
+                }
+                _ => {}
             }
-            let Ok(bytes) = book.resource(&path) else {
-                continue;
-            };
-            if let Ok(text) = std::str::from_utf8(&bytes) {
-                styled.read_sheet(book, &path, text, &mut remaining, fonts);
-            }
-        }
-        for sheet in inline_sheets.iter().take(MAX_SHEETS) {
-            styled.read_sheet(book, chapter, sheet, &mut remaining, fonts);
         }
         styled
     }
 
-    pub fn properties(
-        &self,
-        tag: &str,
-        classes: &str,
-        id: Option<&str>,
-        inline: Option<&str>,
-    ) -> Style {
-        let mut style = Style::default();
-        let mut priority = [0_u8; 5];
-        let mut apply = |declarations: &Declarations, specificity| {
-            if let Some(families) = &declarations.families
-                && specificity >= priority[0]
-            {
-                priority[0] = specificity;
-                style.font_family = families
+    pub fn compute(&self, elements: &[Element]) -> Vec<Style> {
+        let defaults = Style::default();
+        let mut result: Vec<Style> = Vec::with_capacity(elements.len());
+        for (index, element) in elements.iter().enumerate() {
+            let parent = element.parent.map_or(&defaults, |parent| &result[parent]);
+            let mut style = parent.clone();
+            // A parent's background paints its box. It is not a text property.
+            style.background = None;
+            match element.tag.as_str() {
+                "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
+                    style.size_scale *= 1.4;
+                    style.font_weight = FontWeight::BOLD;
+                }
+                "b" | "strong" | "th" => {
+                    style.font_weight = Weight::Bolder.resolve(parent.font_weight)
+                }
+                "em" | "i" => style.font_style = FontStyle::Italic,
+                _ => {}
+            }
+            let inline = element
+                .inline_style
+                .as_deref()
+                .filter(|text| text.len() <= MAX_INLINE_BYTES)
+                .map_or_else(Vec::new, |text| declarations(&mut Parser::new(text)));
+            let mut winners: Winners<'_> = [None; 7];
+            for rule in &self.rules {
+                if let Some(specificity) = rule
+                    .selectors
                     .iter()
-                    .map(|name| name.to_ascii_lowercase())
-                    .take_while(|name| {
-                        !matches!(
-                            name.as_str(),
-                            "serif" | "sans-serif" | "monospace" | "system-ui"
-                        )
-                    })
-                    .find_map(|name| self.families.get(&name))
-                    .cloned();
+                    .filter(|selector| selector.matches(elements, index))
+                    .map(|selector| selector.specificity)
+                    .max()
+                {
+                    choose(&mut winners, &rule.declarations, false, specificity);
+                }
             }
-            if let Some(scale) = declarations.size_scale
-                && specificity >= priority[1]
-            {
-                priority[1] = specificity;
-                style.size_scale = Some(scale);
+            choose(&mut winners, &inline, true, (0, 0, 0));
+            for (_, property) in winners.into_iter().flatten() {
+                match property {
+                    Property::Family(families) => {
+                        style.font_family = families
+                            .iter()
+                            .find_map(|family| match family {
+                                Family::Named(name) => self
+                                    .families
+                                    .get(&name.to_ascii_lowercase())
+                                    .cloned()
+                                    .map(Family::Named),
+                                Family::Generic(family) => Some(Family::Generic(*family)),
+                            })
+                            .unwrap_or(Family::Generic(GenericFamily::Serif));
+                    }
+                    Property::Size(size) => {
+                        let root = result
+                            .first()
+                            .map_or(defaults.size_scale, |root| root.size_scale);
+                        style.size_scale = match size {
+                            Size::Parent(scale) => parent.size_scale * scale,
+                            Size::Root(scale) => root * scale,
+                            Size::Reference(scale) => *scale,
+                        };
+                    }
+                    Property::LineHeight(height) => style.line_height = *height,
+                    Property::Background(gray) => style.background = *gray,
+                    Property::Alignment(alignment) => style.alignment = Some(*alignment),
+                    Property::Weight(weight) => {
+                        style.font_weight = weight.resolve(parent.font_weight)
+                    }
+                    Property::Slant(slant) => style.font_style = *slant,
+                    Property::FontSource(_) => {}
+                }
             }
-            if let Some(height) = declarations.line_height
-                && specificity >= priority[2]
-            {
-                priority[2] = specificity;
-                style.line_height = Some(height);
-            }
-            if let Some(background) = declarations.background
-                && specificity >= priority[3]
-            {
-                priority[3] = specificity;
-                style.background = background;
-            }
-            if let Some(alignment) = declarations.alignment
-                && specificity >= priority[4]
-            {
-                priority[4] = specificity;
-                style.alignment = Some(alignment);
-            }
-        };
-
-        for rule in &self.rules {
-            if let Some(specificity) = rule
-                .selectors
-                .iter()
-                .filter_map(|selector| selector.specificity(tag, classes, id))
-                .max()
-            {
-                apply(&rule.declarations, specificity);
-            }
+            style.size_scale = style.size_scale.clamp(0.125, 8.0);
+            result.push(style);
         }
-        if let Some(text) = inline.filter(|value| value.len() <= MAX_INLINE_BYTES) {
-            let mut parser = Parser::new(text);
-            apply(&Declarations::parse(&mut parser), 4);
-        }
-        style
+        result
     }
 
     fn read_sheet(
@@ -183,22 +235,34 @@ impl BookStyle {
         &mut self,
         book: &mut Book,
         base: &str,
-        declaration: Declarations,
+        declarations: Vec<Declaration>,
         fonts: &mut FontContext,
     ) {
-        let Some(alias) = declaration
-            .families
-            .as_ref()
-            .filter(|families| families.len() == 1)
-            .and_then(|families| families.first())
+        let Some([Family::Named(alias)]) =
+            declarations.iter().rev().find_map(|declaration| {
+                match (&declaration.property, declaration.important) {
+                    (Property::Family(families), false) => Some(families.as_slice()),
+                    _ => None,
+                }
+            })
         else {
             return;
         };
-        for url in declaration.sources {
+        let sources = declarations
+            .iter()
+            .rev()
+            .find_map(
+                |declaration| match (&declaration.property, declaration.important) {
+                    (Property::FontSource(sources), false) => Some(sources.as_slice()),
+                    _ => None,
+                },
+            )
+            .unwrap_or_default();
+        for url in sources {
             if self.font_reads >= MAX_FONT_READS || self.font_bytes >= MAX_TOTAL_FONT_BYTES {
                 return;
             }
-            let Ok(path) = Book::resolve(base, &url) else {
+            let Ok(path) = Book::resolve(base, url) else {
                 continue;
             };
             if !path
@@ -233,58 +297,122 @@ impl BookStyle {
                 .is_empty()
             {
                 self.font_bytes += length;
-                self.families.insert(alias.to_ascii_lowercase(), family);
+                self.families
+                    .insert(alias.to_ascii_lowercase(), Arc::from(family));
                 return;
             }
         }
     }
 }
 
-enum Selector {
-    Tag(String),
-    Class(String),
-    Id(String),
+type Specificity = (u8, u8, u8);
+
+struct Selector {
+    steps: Vec<Compound>,
+    specificity: Specificity,
+}
+
+#[derive(Default)]
+struct Compound {
+    tag: Option<String>,
+    universal: bool,
+    classes: Vec<String>,
+    ids: Vec<String>,
+}
+
+impl Compound {
+    fn is_empty(&self) -> bool {
+        self.tag.is_none() && !self.universal && self.classes.is_empty() && self.ids.is_empty()
+    }
+
+    fn matches(&self, element: &Element) -> bool {
+        self.tag
+            .as_ref()
+            .is_none_or(|tag| tag.eq_ignore_ascii_case(&element.tag))
+            && self.ids.iter().all(|id| element.id.as_ref() == Some(id))
+            && self.classes.iter().all(|class| {
+                element
+                    .classes
+                    .split_ascii_whitespace()
+                    .any(|name| name == class)
+            })
+    }
 }
 
 impl Selector {
     fn parse<'i>(input: &mut Parser<'i>) -> CssResult<Self> {
-        let (name, kind) = match input.next()?.clone() {
-            Token::Ident(name) => (name, 1),
-            Token::Delim('.') => (input.expect_ident_cloned()?, 2),
-            Token::IDHash(name) => (name, 3),
-            _ => return Err(ParseError::unexpected_token()),
-        };
-        if name.len() > MAX_SELECTOR_BYTES {
+        let start = input.position().byte_index();
+        let mut steps = Vec::new();
+        let mut compound = Compound::default();
+        let mut separated = false;
+        let mut specificity: Specificity = (0, 0, 0);
+        while let Ok(token) = input.next_including_whitespace().cloned() {
+            if matches!(token, Token::WhiteSpace(_)) {
+                separated = !compound.is_empty();
+                continue;
+            }
+            if separated {
+                steps.push(std::mem::take(&mut compound));
+                separated = false;
+            }
+            match token {
+                Token::Ident(tag) if compound.is_empty() => {
+                    compound.tag = Some(tag.to_string());
+                    specificity.2 += 1;
+                }
+                Token::Delim('*') if compound.is_empty() => compound.universal = true,
+                Token::IDHash(id) => {
+                    compound.ids.push(id.to_string());
+                    specificity.0 = specificity.0.saturating_add(1);
+                }
+                Token::Delim('.') => {
+                    let Token::Ident(name) = input.next_including_whitespace()? else {
+                        return Err(ParseError::unexpected_token());
+                    };
+                    compound.classes.push(name.to_string());
+                    specificity.1 = specificity.1.saturating_add(1);
+                }
+                _ => return Err(ParseError::unexpected_token()),
+            }
+            if steps.len() >= MAX_SELECTOR_STEPS
+                || input.position().byte_index() - start > MAX_SELECTOR_BYTES
+            {
+                return Err(ParseError::unexpected_token());
+            }
+        }
+        if compound.is_empty() {
             return Err(ParseError::unexpected_token());
         }
-        input.expect_exhausted()?;
-        Ok(match kind {
-            1 => Self::Tag(name.to_string()),
-            2 => Self::Class(name.to_string()),
-            _ => Self::Id(name.to_string()),
-        })
+        steps.push(compound);
+        Ok(Self { steps, specificity })
     }
 
-    fn specificity(&self, tag: &str, classes: &str, id: Option<&str>) -> Option<u8> {
-        match self {
-            Self::Tag(name) if tag.eq_ignore_ascii_case(name) => Some(1),
-            Self::Class(name) if classes.split_ascii_whitespace().any(|class| class == name) => {
-                Some(2)
-            }
-            Self::Id(name) if id == Some(name.as_str()) => Some(3),
-            _ => None,
+    fn matches(&self, elements: &[Element], index: usize) -> bool {
+        let (subject, ancestors) = self.steps.split_last().unwrap();
+        if !subject.matches(&elements[index]) {
+            return false;
         }
+        let mut parent = elements[index].parent;
+        for step in ancestors.iter().rev() {
+            let Some(matched) = std::iter::successors(parent, |&index| elements[index].parent)
+                .find(|&index| step.matches(&elements[index]))
+            else {
+                return false;
+            };
+            parent = elements[matched].parent;
+        }
+        true
     }
 }
 
 struct Rule {
     selectors: Vec<Selector>,
-    declarations: Declarations,
+    declarations: Vec<Declaration>,
 }
 
 enum SheetItem {
     Rule(Rule),
-    Font(Declarations),
+    Font(Vec<Declaration>),
 }
 
 type CssResult<T> = Result<T, ParseError<()>>;
@@ -297,7 +425,11 @@ impl<'i> QualifiedRuleParser<'i> for SheetParser {
     type Error = ();
 
     fn parse_prelude(&mut self, input: &mut Parser<'i>) -> CssResult<Self::Prelude> {
-        input.parse_comma_separated(Selector::parse)
+        let selectors = input.parse_comma_separated(Selector::parse)?;
+        if selectors.len() > MAX_SELECTORS_PER_RULE {
+            return Err(ParseError::unexpected_token());
+        }
+        Ok(selectors)
     }
 
     fn parse_block(
@@ -308,7 +440,7 @@ impl<'i> QualifiedRuleParser<'i> for SheetParser {
     ) -> CssResult<SheetItem> {
         Ok(SheetItem::Rule(Rule {
             selectors,
-            declarations: Declarations::parse(input),
+            declarations: declarations(input),
         }))
     }
 }
@@ -331,50 +463,93 @@ impl<'i> AtRuleParser<'i> for SheetParser {
         _: &ParserState,
         input: &mut Parser<'i>,
     ) -> CssResult<SheetItem> {
-        Ok(SheetItem::Font(Declarations::parse(input)))
+        Ok(SheetItem::Font(declarations(input)))
     }
 }
 
-#[derive(Default)]
-struct Declarations {
-    families: Option<Vec<String>>,
-    sources: Vec<String>,
-    size_scale: Option<f32>,
-    line_height: Option<f32>,
-    background: Option<Option<u8>>,
-    alignment: Option<Alignment>,
+struct Declaration {
+    property: Property,
+    important: bool,
 }
 
-impl Declarations {
-    fn parse(input: &mut Parser<'_>) -> Self {
-        let mut result = Self::default();
-        for declaration in RuleBodyParser::new(input, &mut Properties).flatten() {
-            match declaration {
-                Property::Family(value) => result.families = Some(value),
-                Property::FontSource(value) => result.sources = value,
-                Property::Size(value) => result.size_scale = Some(value),
-                Property::LineHeight(value) => result.line_height = Some(value),
-                Property::Background(value) => result.background = Some(value),
-                Property::Alignment(value) => result.alignment = Some(value),
-            }
+fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
+    RuleBodyParser::new(input, &mut Properties)
+        .flatten()
+        .collect()
+}
+
+type Priority = (bool, bool, Specificity);
+type Winners<'a> = [Option<(Priority, &'a Property)>; 7];
+
+fn choose<'a>(
+    winners: &mut Winners<'a>,
+    declarations: &'a [Declaration],
+    inline: bool,
+    specificity: Specificity,
+) {
+    for declaration in declarations {
+        let index = match declaration.property {
+            Property::Family(_) => 0,
+            Property::Size(_) => 1,
+            Property::LineHeight(_) => 2,
+            Property::Background(_) => 3,
+            Property::Alignment(_) => 4,
+            Property::Weight(_) => 5,
+            Property::Slant(_) => 6,
+            Property::FontSource(_) => continue,
+        };
+        let priority = (declaration.important, inline, specificity);
+        if winners[index].is_none_or(|(current, _)| priority >= current) {
+            winners[index] = Some((priority, &declaration.property));
         }
-        result
+    }
+}
+
+enum Size {
+    Parent(f32),
+    Root(f32),
+    /// Author px and pt use the CSS 16 px reference size, scaled by reader typography.
+    Reference(f32),
+}
+
+#[derive(Clone, Copy)]
+enum Weight {
+    Fixed(FontWeight),
+    Bolder,
+    Lighter,
+}
+
+impl Weight {
+    fn resolve(self, inherited: FontWeight) -> FontWeight {
+        match self {
+            Self::Fixed(weight) => weight,
+            Self::Bolder if inherited < FontWeight::SEMI_LIGHT => FontWeight::NORMAL,
+            Self::Bolder if inherited < FontWeight::new(550.0) => FontWeight::BOLD,
+            Self::Bolder if inherited < FontWeight::BLACK => FontWeight::BLACK,
+            Self::Lighter if inherited < FontWeight::THIN => inherited,
+            Self::Lighter if inherited < FontWeight::new(550.0) => FontWeight::THIN,
+            Self::Lighter if inherited < FontWeight::new(750.0) => FontWeight::NORMAL,
+            Self::Lighter => FontWeight::BOLD,
+            Self::Bolder => inherited,
+        }
     }
 }
 
 enum Property {
-    Family(Vec<String>),
+    Family(Vec<Family>),
     FontSource(Vec<String>),
-    Size(f32),
-    LineHeight(f32),
+    Size(Size),
+    LineHeight(Option<f32>),
     Background(Option<u8>),
     Alignment(Alignment),
+    Weight(Weight),
+    Slant(FontStyle),
 }
 
 struct Properties;
 
 impl<'i> DeclarationParser<'i> for Properties {
-    type Declaration = Property;
+    type Declaration = Declaration;
     type Error = ();
 
     fn parse_value(
@@ -382,62 +557,123 @@ impl<'i> DeclarationParser<'i> for Properties {
         name: CowRcStr<'i>,
         input: &mut Parser<'i>,
         _: &ParserState,
-    ) -> CssResult<Property> {
-        let property = match name.to_ascii_lowercase().as_ref() {
-            "font-family" => Property::Family(input.parse_comma_separated(font_family)?),
-            "src" => Property::FontSource(input.parse_comma_separated_ignoring_errors(font_url)),
-            "font-size" => {
-                let scale = match input.next()?.clone() {
-                    Token::Percentage { unit_value, .. } => unit_value,
-                    Token::Dimension { value, unit, .. } if unit.eq_ignore_ascii_case("em") => {
-                        value
+    ) -> CssResult<Declaration> {
+        let property = input.parse_until_before(Delimiter::Bang, |input| {
+            let property = match name.to_ascii_lowercase().as_ref() {
+                "font-family" => Property::Family(input.parse_comma_separated(font_family)?),
+                "src" => {
+                    Property::FontSource(input.parse_comma_separated_ignoring_errors(font_url))
+                }
+                "font-size" => {
+                    let size = match input.next()?.clone() {
+                        Token::Percentage { unit_value, .. } => Size::Parent(unit_value),
+                        Token::Dimension { value, unit, .. } if unit.eq_ignore_ascii_case("em") => {
+                            Size::Parent(value)
+                        }
+                        Token::Dimension { value, unit, .. }
+                            if unit.eq_ignore_ascii_case("rem") =>
+                        {
+                            Size::Root(value)
+                        }
+                        Token::Dimension { value, unit, .. } if unit.eq_ignore_ascii_case("px") => {
+                            Size::Reference(value / 16.0)
+                        }
+                        Token::Dimension { value, unit, .. } if unit.eq_ignore_ascii_case("pt") => {
+                            Size::Reference(value / 12.0)
+                        }
+                        _ => return Err(ParseError::unexpected_token()),
+                    };
+                    let scale = match size {
+                        Size::Parent(value) | Size::Root(value) | Size::Reference(value) => value,
+                    };
+                    if !(0.125..=8.0).contains(&scale) {
+                        return Err(ParseError::unexpected_token());
                     }
-                    _ => return Err(ParseError::unexpected_token()),
-                };
-                if !(0.45..=2.0).contains(&scale) {
-                    return Err(ParseError::unexpected_token());
+                    Property::Size(size)
                 }
-                Property::Size(scale)
-            }
-            "line-height" => {
-                let height = input.expect_number()?;
-                if !(1.0..=3.0).contains(&height) {
-                    return Err(ParseError::unexpected_token());
+                "font-weight" => {
+                    let weight = match input.next()?.clone() {
+                        Token::Number { value, .. } if (1.0..=1000.0).contains(&value) => {
+                            Weight::Fixed(FontWeight::new(value))
+                        }
+                        Token::Ident(keyword) if keyword.eq_ignore_ascii_case("normal") => {
+                            Weight::Fixed(FontWeight::NORMAL)
+                        }
+                        Token::Ident(keyword) if keyword.eq_ignore_ascii_case("bold") => {
+                            Weight::Fixed(FontWeight::BOLD)
+                        }
+                        Token::Ident(keyword) if keyword.eq_ignore_ascii_case("bolder") => {
+                            Weight::Bolder
+                        }
+                        Token::Ident(keyword) if keyword.eq_ignore_ascii_case("lighter") => {
+                            Weight::Lighter
+                        }
+                        _ => return Err(ParseError::unexpected_token()),
+                    };
+                    Property::Weight(weight)
                 }
-                Property::LineHeight(height)
-            }
-            "background" | "background-color" => Property::Background(background(input)?),
-            "text-align" => {
-                Property::Alignment(match input.expect_ident()?.to_ascii_lowercase().as_str() {
-                    "start" => Alignment::Start,
-                    "end" => Alignment::End,
-                    "left" => Alignment::Left,
-                    "right" => Alignment::Right,
-                    "center" => Alignment::Center,
-                    "justify" => Alignment::Justify,
-                    _ => return Err(ParseError::unexpected_token()),
-                })
-            }
-            _ => return Err(ParseError::unexpected_token()),
-        };
+                "font-style" => {
+                    let style = match input.expect_ident()?.to_ascii_lowercase().as_str() {
+                        "normal" => FontStyle::Normal,
+                        "italic" => FontStyle::Italic,
+                        "oblique" => FontStyle::Oblique(None),
+                        _ => return Err(ParseError::unexpected_token()),
+                    };
+                    Property::Slant(style)
+                }
+                "line-height" => {
+                    if input
+                        .try_parse(|input| input.expect_ident_matching("normal"))
+                        .is_ok()
+                    {
+                        Property::LineHeight(None)
+                    } else {
+                        let height = input.expect_number()?;
+                        if !(1.0..=3.0).contains(&height) {
+                            return Err(ParseError::unexpected_token());
+                        }
+                        Property::LineHeight(Some(height))
+                    }
+                }
+                "background" | "background-color" => Property::Background(background(input)?),
+                "text-align" => {
+                    Property::Alignment(match input.expect_ident()?.to_ascii_lowercase().as_str() {
+                        "start" => Alignment::Start,
+                        "end" => Alignment::End,
+                        "left" => Alignment::Left,
+                        "right" => Alignment::Right,
+                        "center" => Alignment::Center,
+                        "justify" => Alignment::Justify,
+                        _ => return Err(ParseError::unexpected_token()),
+                    })
+                }
+                _ => return Err(ParseError::unexpected_token()),
+            };
+            input.expect_exhausted()?;
+            Ok(property)
+        })?;
+        let important = input.try_parse(parse_important).is_ok();
         input.expect_exhausted()?;
-        Ok(property)
+        Ok(Declaration {
+            property,
+            important,
+        })
     }
 }
 
 impl<'i> QualifiedRuleParser<'i> for Properties {
     type Prelude = ();
-    type QualifiedRule = Property;
+    type QualifiedRule = Declaration;
     type Error = ();
 }
 
 impl<'i> AtRuleParser<'i> for Properties {
     type Prelude = ();
-    type AtRule = Property;
+    type AtRule = Declaration;
     type Error = ();
 }
 
-impl<'i> RuleBodyItemParser<'i, Property, ()> for Properties {
+impl<'i> RuleBodyItemParser<'i, Declaration, ()> for Properties {
     fn parse_declarations(&self) -> bool {
         true
     }
@@ -446,16 +682,22 @@ impl<'i> RuleBodyItemParser<'i, Property, ()> for Properties {
     }
 }
 
-fn font_family<'i>(input: &mut Parser<'i>) -> CssResult<String> {
+fn font_family<'i>(input: &mut Parser<'i>) -> CssResult<Family> {
     if let Ok(quoted) = input.try_parse(Parser::expect_string_cloned) {
-        return Ok(quoted.to_string());
+        return Ok(Family::Named(Arc::from(quoted.as_ref())));
     }
     let mut name = input.expect_ident_cloned()?.to_string();
     while let Ok(part) = input.try_parse(Parser::expect_ident_cloned) {
         name.push(' ');
         name.push_str(&part);
     }
-    Ok(name)
+    if matches!(
+        name.to_ascii_lowercase().as_str(),
+        "inherit" | "initial" | "unset" | "revert" | "revert-layer"
+    ) {
+        return Err(ParseError::unexpected_token());
+    }
+    Ok(GenericFamily::parse(&name).map_or_else(|| Family::Named(Arc::from(name)), Family::Generic))
 }
 
 fn font_url<'i>(input: &mut Parser<'i>) -> CssResult<String> {
@@ -503,5 +745,85 @@ fn background<'i>(input: &mut Parser<'i>) -> CssResult<Option<u8>> {
         Token::Ident(value) if value.eq_ignore_ascii_case("gray") => Ok(Some(128)),
         Token::Ident(value) if value.eq_ignore_ascii_case("black") => Ok(Some(0)),
         _ => Err(ParseError::unexpected_token()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::source::Source;
+
+    fn computed(xhtml: &str) -> (Source, Vec<Style>) {
+        let source = Source::parse(xhtml).unwrap();
+        let mut book = Book::open(&crate::test_fixture("field-notes-epub3.epub")).unwrap();
+        let chapter = book.chapters[0].href.clone();
+        let fonts = [crate::test_fixture("fonts/Silkscreen-Regular.ttf")];
+        let mut fonts = crate::font_context(&fonts).unwrap();
+        let styles = BookStyle::load(&mut book, &chapter, &source.stylesheets, &mut fonts)
+            .compute(&source.elements);
+        (source, styles)
+    }
+
+    #[test]
+    fn author_cascade_preserves_ancestor_typography_and_inline_resets() {
+        let (source, styles) = computed(
+            r##"<html style="font-size: 125%">
+                <head><style>
+                    #cell { font-weight: 200; font-style: italic; }
+                    section.chapter table p.copy { font-weight: 600 !important; font-weight: 300; }
+                    p.copy { font-size: 110%; }
+                    p.copy { font-size: 120%; }
+                    .chapter span.size { font-size: 150%; font-weight: bolder; }
+                    span.size { font-size: 200%; }
+                    span.root-size { font-size: 2rem; line-height: normal; }
+                    strong.plain { font-weight: normal; font-style: normal; }
+                </style></head>
+                <body style="font-size: 80%; font-family: Unavailable, sans-serif; text-align: right">
+                    <section class="chapter" style="font-size: 1.5em; line-height: 1.8; background: #eee">
+                        <table><tr><td><p id="cell" class="copy" style="font-weight: 700; font-style: normal">
+                            Outer text <span id="large" class="size" style="font-style: italic">larger text</span>
+                            <span id="root-size" class="root-size">root-sized text</span>
+                            <strong id="plain" class="plain">plain text</strong>
+                        </p></td></tr></table>
+                    </section>
+                </body></html>"##,
+        );
+        let style_of = |id| {
+            let index = source
+                .elements
+                .iter()
+                .position(|node| node.id.as_deref() == Some(id))
+                .unwrap();
+            &styles[index]
+        };
+        let cell = style_of("cell");
+        assert!((cell.size_scale - 1.8).abs() < 0.001);
+        assert_eq!(cell.font_family, Family::Generic(GenericFamily::SansSerif));
+        assert_eq!(cell.font_weight, FontWeight::SEMI_BOLD);
+        assert_eq!(cell.font_style, FontStyle::Normal);
+        assert_eq!(cell.line_height, Some(1.8));
+        assert_eq!(cell.alignment, Some(Alignment::Right));
+        assert_eq!(cell.background, None);
+
+        let large = style_of("large");
+        assert!((large.size_scale - 2.7).abs() < 0.001);
+        assert_eq!(large.font_weight, FontWeight::BLACK);
+        assert_eq!(large.font_style, FontStyle::Italic);
+        let root = style_of("root-size");
+        assert_eq!(root.size_scale, 2.5);
+        assert_eq!(root.line_height, None);
+        let explicit = style_of("plain");
+        assert_eq!(explicit.font_weight, FontWeight::NORMAL);
+        assert_eq!(explicit.font_style, FontStyle::Normal);
+    }
+
+    #[test]
+    fn linked_and_inline_sheets_follow_their_document_order() {
+        let (source, styles) = computed(
+            r##"<html><head><style>.notice { background: #000; }</style>
+                <link rel="stylesheet" href="../styles/reader.css" />
+                </head><body><p class="notice">The last matching sheet wins.</p></body></html>"##,
+        );
+        assert_eq!(styles[source.blocks[0].element].background, Some(229));
     }
 }
