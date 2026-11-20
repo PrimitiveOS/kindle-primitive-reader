@@ -32,7 +32,13 @@ PROFILE = """#!/bin/sh
 set -eu
 cd "$(dirname "$0")"
 if [ "$#" -eq 0 ]; then
-    set -- /mnt/us/reader/fonts/NotoSans-Regular.ttf
+    for directory in /mnt/us/reader/fonts /var/tmp/kl/fonts /mnt/us/launcher/fonts; do
+        if [ -r "$directory/NotoSans-Regular.ttf" ]; then
+            set -- "$directory/NotoSans-Regular.ttf"
+            break
+        fi
+    done
+    [ "$#" -gt 0 ] || { printf 'Pass the path to a reading font.\n' >&2; exit 1; }
 fi
 for font in "$@"; do
     [ -r "$font" ] || { printf 'Reading font unavailable: %s\n' "$font" >&2; exit 1; }

@@ -111,7 +111,7 @@ prepare the same native Rust tests and fixtures for the Oasis 3, run
 `run.sh` executes the suites in a private temporary directory. Its results
 cover ARM execution of the document engines and simulated app inputs.
 Run the bundle's `profile.sh` to measure five cold processes per EPUB fixture
-and 30 warm rasterizations per process using the installed Reader font. It
+and 30 warm rasterizations per process using the normal Reader or Launcher font. It
 writes one software timing and peak-memory record per process. The
 hardware batch still verifies the actual panel, Launcher return and storage
 ownership through the Kindle runtime.
