@@ -29,6 +29,9 @@ https://static.crates.io/crates/anyrender_vello_cpu/anyrender_vello_cpu-0.18.0.c
 app_units 0.7.8 (MPL-2.0)
 https://static.crates.io/crates/app_units/app_units-0.7.8.crate
 
+arrayref 0.3.9 (BSD-2-Clause)
+https://static.crates.io/crates/arrayref/arrayref-0.3.9.crate
+
 arrayvec 0.7.8 (MIT OR Apache-2.0)
 https://static.crates.io/crates/arrayvec/arrayvec-0.7.8.crate
 
@@ -155,6 +158,9 @@ https://static.crates.io/crates/darling_core/darling_core-0.20.11.crate
 darling_macro 0.20.11 (MIT)
 https://static.crates.io/crates/darling_macro/darling_macro-0.20.11.crate
 
+data-url 0.3.2 (MIT OR Apache-2.0)
+https://static.crates.io/crates/data-url/data-url-0.3.2.crate
+
 debug_timer 0.1.3 (MIT OR Apache-2.0)
 https://static.crates.io/crates/debug_timer/debug_timer-0.1.3.crate
 
@@ -232,6 +238,9 @@ https://static.crates.io/crates/find-msvc-tools/find-msvc-tools-0.1.15.crate
 
 flate2 1.1.11 (MIT OR Apache-2.0)
 https://static.crates.io/crates/flate2/flate2-1.1.11.crate
+
+float-cmp 0.9.0 (MIT)
+https://static.crates.io/crates/float-cmp/float-cmp-0.9.0.crate
 
 fnv 1.0.7 (Apache-2.0 / MIT)
 https://static.crates.io/crates/fnv/fnv-1.0.7.crate
@@ -361,6 +370,9 @@ https://static.crates.io/crates/idna_adapter/idna_adapter-1.2.2.crate
 
 image 0.25.10 (MIT OR Apache-2.0)
 https://static.crates.io/crates/image/image-0.25.10.crate
+
+imagesize 0.15.0 (MIT)
+https://static.crates.io/crates/imagesize/imagesize-0.15.0.crate
 
 indexmap 2.14.2 (Apache-2.0 OR MIT)
 https://static.crates.io/crates/indexmap/indexmap-2.14.2.crate
@@ -524,6 +536,9 @@ https://static.crates.io/crates/phf_shared/phf_shared-0.14.0.crate
 pic-scale 0.7.14 (BSD-3-Clause OR Apache-2.0)
 https://static.crates.io/crates/pic-scale/pic-scale-0.7.14.crate
 
+pico-args 0.5.0 (MIT)
+https://static.crates.io/crates/pico-args/pico-args-0.5.0.crate
+
 png 0.17.16 (MIT OR Apache-2.0)
 https://static.crates.io/crates/png/png-0.17.16.crate
 
@@ -599,6 +614,12 @@ https://static.crates.io/crates/read-fonts/read-fonts-0.41.0.crate
 read-fonts 0.46.0 (MIT OR Apache-2.0)
 https://static.crates.io/crates/read-fonts/read-fonts-0.46.0.crate
 
+resvg 0.50.0 (Apache-2.0 OR MIT)
+https://static.crates.io/crates/resvg/resvg-0.50.0.crate
+
+rgb 0.8.53 (MIT)
+https://static.crates.io/crates/rgb/rgb-0.8.53.crate
+
 ring 0.17.14 (Apache-2.0 AND ISC)
 https://static.crates.io/crates/ring/ring-0.17.14.crate
 
@@ -653,6 +674,9 @@ https://static.crates.io/crates/shlex/shlex-2.0.1.crate
 simd-adler32 0.3.10 (MIT)
 https://static.crates.io/crates/simd-adler32/simd-adler32-0.3.10.crate
 
+simplecss 0.2.2 (Apache-2.0 OR MIT)
+https://static.crates.io/crates/simplecss/simplecss-0.2.2.crate
+
 siphasher 1.0.4 (MIT OR Apache-2.0)
 https://static.crates.io/crates/siphasher/siphasher-1.0.4.crate
 
@@ -679,6 +703,9 @@ https://static.crates.io/crates/stable_deref_trait/stable_deref_trait-1.2.1.crat
 
 static_assertions 1.1.0 (MIT OR Apache-2.0)
 https://static.crates.io/crates/static_assertions/static_assertions-1.1.0.crate
+
+strict-num 0.1.1 (MIT)
+https://static.crates.io/crates/strict-num/strict-num-0.1.1.crate
 
 string_cache 0.11.0 (MIT OR Apache-2.0)
 https://static.crates.io/crates/string_cache/string_cache-0.11.0.crate
@@ -719,6 +746,9 @@ https://static.crates.io/crates/stylo_taffy/stylo_taffy-0.3.0-beta.4.crate
 stylo_traits 0.22.0 (MPL-2.0)
 https://static.crates.io/crates/stylo_traits/stylo_traits-0.22.0.crate
 
+svgtypes 0.16.2 (Apache-2.0 OR MIT)
+https://static.crates.io/crates/svgtypes/svgtypes-0.16.2.crate
+
 syn 2.0.119 (MIT OR Apache-2.0)
 https://static.crates.io/crates/syn/syn-2.0.119.crate
 
@@ -748,6 +778,12 @@ https://static.crates.io/crates/thiserror-impl/thiserror-impl-2.0.21.crate
 
 thread_local 1.1.10 (MIT OR Apache-2.0)
 https://static.crates.io/crates/thread_local/thread_local-1.1.10.crate
+
+tiny-skia 0.12.0 (BSD-3-Clause)
+https://static.crates.io/crates/tiny-skia/tiny-skia-0.12.0.crate
+
+tiny-skia-path 0.12.0 (BSD-3-Clause)
+https://static.crates.io/crates/tiny-skia-path/tiny-skia-path-0.12.0.crate
 
 tinystr 0.8.5 (Unicode-3.0)
 https://static.crates.io/crates/tinystr/tinystr-0.8.5.crate
@@ -799,6 +835,9 @@ https://static.crates.io/crates/untrusted/untrusted-0.9.0.crate
 
 url 2.5.8 (MIT OR Apache-2.0)
 https://static.crates.io/crates/url/url-2.5.8.crate
+
+usvg 0.50.0 (Apache-2.0 OR MIT)
+https://static.crates.io/crates/usvg/usvg-0.50.0.crate
 
 utf8_iter 1.1.0 (Apache-2.0 OR MIT)
 https://static.crates.io/crates/utf8_iter/utf8_iter-1.1.0.crate
@@ -904,6 +943,8 @@ linebender_resource_handle 0.1.1 (LICENSE-APACHE)
 miniz_oxide 0.8.9 (LICENSE-APACHE.md)
 miniz_oxide 0.9.1 (LICENSE-APACHE.md)
 raw-window-handle 0.6.2 (LICENSE-APACHE.md)
+resvg 0.50.0 (LICENSE-APACHE)
+usvg 0.50.0 (LICENSE-APACHE)
 vello_common 0.3.0 (LICENSE-APACHE)
 vello_cpu 0.3.0 (LICENSE-APACHE)
 
@@ -2023,6 +2064,36 @@ Exhibit B - "Incompatible With Secondary Licenses" Notice
   defined by the Mozilla Public License, v. 2.0.
 
 ------------------------------------------------------------------------
+arrayref 0.3.9 (LICENSE)
+
+Copyright (c) 2015 David Roundy <roundyd@physics.oregonstate.edu>
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the
+   distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+------------------------------------------------------------------------
 arrayvec 0.7.8 (LICENSE-APACHE)
 autocfg 1.5.1 (LICENSE-APACHE)
 base64 0.23.1 (LICENSE-APACHE)
@@ -2034,6 +2105,7 @@ cfg-if 1.0.5 (LICENSE-APACHE)
 crossbeam-deque 0.8.8 (LICENSE-APACHE)
 crossbeam-epoch 0.9.21 (LICENSE-APACHE)
 crossbeam-utils 0.8.23 (LICENSE-APACHE)
+data-url 0.3.2 (LICENSE-APACHE)
 displaydoc 0.2.7 (LICENSE-APACHE)
 either 1.19.0 (LICENSE-APACHE)
 equivalent 1.0.3 (LICENSE-APACHE)
@@ -2078,6 +2150,7 @@ roxmltree 0.21.2 (LICENSE-APACHE)
 rustc_version 0.4.1 (LICENSE-APACHE)
 scopeguard 1.2.0 (LICENSE-APACHE)
 servo_arc 0.5.0 (LICENSE-APACHE)
+simplecss 0.2.2 (LICENSE-APACHE)
 smallbitvec 2.6.1 (LICENSE-APACHE)
 smallvec 1.16.6 (LICENSE-APACHE)
 smol_str 0.3.7 (LICENSE-APACHE)
@@ -2085,6 +2158,7 @@ stable_deref_trait 1.2.1 (LICENSE-APACHE)
 string_cache 0.11.0 (LICENSE-APACHE)
 string_cache_codegen 0.11.2 (LICENSE-APACHE)
 stylo_malloc_size_of 0.22.0 (LICENSE-APACHE)
+svgtypes 0.16.2 (LICENSE-APACHE)
 tendril 0.5.1 (LICENSE-APACHE)
 thread_local 1.1.10 (LICENSE-APACHE)
 unicase 2.10.0 (LICENSE-APACHE)
@@ -3976,6 +4050,38 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------
+data-url 0.3.2 (LICENSE-MIT)
+idna 1.1.0 (LICENSE-MIT)
+percent-encoding 2.3.2 (LICENSE-MIT)
+url 2.5.8 (LICENSE-MIT)
+
+Copyright (c) 2013-2025 The rust-url developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+------------------------------------------------------------------------
 derive_more 2.1.1 (LICENSE)
 derive_more-impl 2.1.1 (LICENSE)
 
@@ -4941,6 +5047,29 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
+
+------------------------------------------------------------------------
+float-cmp 0.9.0 (LICENSE)
+
+Copyright (c) 2014-2020 Optimal Computing (NZ) Ltd
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+IN THE SOFTWARE.
 
 ------------------------------------------------------------------------
 fnv 1.0.7 (LICENSE-MIT)
@@ -6204,37 +6333,6 @@ Portions of ICU4X may have been adapted from ICU4C and/or ICU4J.
 ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation and others.
 
 ------------------------------------------------------------------------
-idna 1.1.0 (LICENSE-MIT)
-percent-encoding 2.3.2 (LICENSE-MIT)
-url 2.5.8 (LICENSE-MIT)
-
-Copyright (c) 2013-2025 The rust-url developers
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-
-------------------------------------------------------------------------
 idna_adapter 1.2.2 (LICENSE-MIT)
 
 Copyright (c) The rust-url developers
@@ -6262,6 +6360,31 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
+
+------------------------------------------------------------------------
+imagesize 0.15.0 (LICENSE)
+
+MIT License
+
+Copyright (c) 2017 Maiddog
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 ------------------------------------------------------------------------
 indexmap 2.14.2 (LICENSE-MIT)
@@ -7663,6 +7786,29 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------
+pico-args 0.5.0 (LICENSE)
+
+Copyright (c) 2019 Yevhenii Reizner
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+------------------------------------------------------------------------
 png 0.17.16 (LICENSE-MIT)
 png 0.18.1 (LICENSE-MIT)
 
@@ -8478,6 +8624,61 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------
+resvg 0.50.0 (LICENSE-MIT)
+usvg 0.50.0 (LICENSE-MIT)
+
+Copyright 2017 the Resvg Authors
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+------------------------------------------------------------------------
+rgb 0.8.53 (LICENSE)
+
+MIT License
+
+Copyright (c) 2019 Kornel
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+------------------------------------------------------------------------
 ring 0.17.14 (LICENSE)
 
 *ring* uses an "ISC" license, like BoringSSL used to use, for new code
@@ -9211,6 +9412,31 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------
+simplecss 0.2.2 (LICENSE-MIT)
+
+The MIT License (MIT)
+
+Copyright (c) 2018 Reizner Evgeniy
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+------------------------------------------------------------------------
 siphasher 1.0.4 (COPYING)
 
 Copyright 2012-2016 The Rust Project Developers.
@@ -9378,6 +9604,29 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------
+strict-num 0.1.1 (LICENSE)
+
+Copyright (c) 2022 Yevhenii Reizner
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+------------------------------------------------------------------------
 stringprep 0.1.5 (LICENSE-MIT)
 
 Copyright (c) 2017 The rust-stringprep Developers
@@ -9459,6 +9708,29 @@ NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ------------------------------------------------------------------------
+svgtypes 0.16.2 (LICENSE-MIT)
+
+Copyright (c) 2018 Yevhenii Reizner
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+------------------------------------------------------------------------
 synstructure 0.13.2 (LICENSE)
 synstructure 0.14.0 (LICENSE)
 
@@ -9524,6 +9796,41 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
+
+------------------------------------------------------------------------
+tiny-skia 0.12.0 (LICENSE)
+tiny-skia-path 0.12.0 (LICENSE)
+
+Copyright (c) 2011 Google Inc. All rights reserved.
+Copyright (c) 2020 Yevhenii Reizner All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+  * Redistributions of source code must retain the above copyright
+    notice, this list of conditions and the following disclaimer.
+
+  * Redistributions in binary form must reproduce the above copyright
+    notice, this list of conditions and the following disclaimer in
+    the documentation and/or other materials provided with the
+    distribution.
+
+  * Neither the name of the copyright holder nor the names of its
+    contributors may be used to endorse or promote products derived
+    from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ------------------------------------------------------------------------
 tinyvec 1.13.3 (LICENSE-MIT.md)

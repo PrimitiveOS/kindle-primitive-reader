@@ -8,7 +8,7 @@ Compare against the installed KOReader release for hardware measurements. Record
 
 | Area | Development coverage | Remaining work |
 | --- | --- | --- |
-| EPUB reading | Saved positions, page and scroll modes, reading bars, navigation and footnotes, source-ordered publisher CSS with inherited typography, local reading fonts, find, bookmarks, highlights and notes | Advanced publisher layout, spread behavior, and the final device suite |
+| EPUB reading | Saved positions, page and scroll modes, reading bars, navigation and footnotes, source-ordered publisher CSS, local fonts and illustrations, linked static SVG, and publisher-defined fixed-layout spreads. Find, bookmarks, highlights and notes use shared source locations. | Advanced publisher layout and SVG, vertical writing, and the final device suite |
 | PDF | Fixed pages and continuous scroll, printed labels, page thumbnails, outlines and links, passwords, page, width and height fit, crop, contrast, text search and local annotations. Visible embedded highlights import and annotated-copy export for intact unencrypted PDFs up to 16 MiB. | Broader password, outline and annotation types, and sustained large-scan tests |
 | Other offline reading | Fixed-layout XHTML EPUB, DjVu, TXT, HTML, single-document HTMLZ, Markdown, FB2, legacy MOBI and PalmDOC, RTF, CBZ and uncompressed USTAR CBT with spreads, JPEG, PNG, BMP, GIF first frame, portable anymaps, and compressed StarDict | Wider format variants and the final device suite |
 | Scanned documents | Embedded and recognized text reflow across readable source pages, plus a column view for clear two-column scans. English and Vietnamese recognized by the worker on desktop. The ARMHF package bundles English and accepts local additional models. | OCR in the Kindle runtime, broader language and column cases, and scanned image word reflow |
@@ -16,7 +16,7 @@ Compare against the installed KOReader release for hardware measurements. Record
 | Reading data | Backup and restore with preview, text/Markdown/HTML annotation exports, KOReader JSON annotations by unique quotation, and fixed-page sidecar progress with a sampled fingerprint and page-count check | CREngine pointer mapping, more sidecar variants and editions, and the final device suite |
 | Kindle verification | EPUB engine timing, probe page buttons, sleep and USB resume, and a temporary preview's contents jump and reopen passed on Oasis 3 | Deploy the completed core reader and run the consolidated automatic hardware workflow |
 
-The desktop checkpoint passed 158 Reader tests and 16 Files tests. Reader
+The desktop checkpoint passed 171 Reader tests and 16 Files tests. Reader
 rendered three public-domain DjVu samples and 12 narrative chapters from the
 Standard Ebooks edition of *Alice’s Adventures in Wonderland*. The licensed
 ARMHF development archive passed its checksum and package-content checks. Three
@@ -93,7 +93,7 @@ Use this table as the initial format inventory. A decoder that opens a file qual
 | Format or family | Stage and planned disposition | Checks before a support claim |
 | --- | --- | --- |
 | Reflowable EPUB 2 and 3 | P0 subset measured. Native daily reading in P1, broader standards cases in P3. | Content order, nav documents, CSS and fonts, links and footnotes, glyph coverage, selection, repagination and resume. |
-| Fixed-layout EPUB 3 | P3 native fixed-page adapter. | Viewport metadata, embedded content, spreads and direction, pan and zoom, links, and per-page resume. |
+| Fixed-layout EPUB 3 | P3 native static XHTML adapter with facing-page placement and publisher direction. | Viewport metadata, embedded content, spreads and direction, pan and zoom, links, and per-page resume. |
 | PDF | P2 native fixed pages and text. P3 scanned PDF tools. | Text and image-only PDFs, outlines, passwords, rotation, crop, source preservation, and PDF annotation interchange. |
 | DjVu/DJV | P3 native decoder evaluation followed by scan tools. | Multipage containers, single pages, outlines, embedded text, coordinate accuracy and scanned reflow. |
 | JPEG/PNG and standalone image sequences | P2 native using the fixed-page surface. | EXIF orientation, alpha, grayscale, zoom, dimension limits, invalid input, and resume in image sequences. |

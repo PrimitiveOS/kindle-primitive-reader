@@ -46,21 +46,58 @@ pub struct Definition {
     pub text: String,
 }
 
+#[cfg(feature = "kindle")]
+pub(crate) struct InstalledDictionary {
+    pub(crate) path: PathBuf,
+    pub(crate) title: String,
+}
+
+#[cfg(feature = "kindle")]
+pub(crate) fn installed(root: &Path) -> io::Result<Vec<InstalledDictionary>> {
+    let Some(root) = dictionary_root(root)? else {
+        return Ok(Vec::new());
+    };
+    Ok(dictionary_files(&root)?
+        .into_iter()
+        .filter_map(|path| {
+            let title = Info::load(open_dictionary_file(&root, &path).ok()?)
+                .ok()?
+                .title;
+            Some(InstalledDictionary {
+                path: path.strip_prefix(&root).ok()?.to_owned(),
+                title,
+            })
+        })
+        .collect())
+}
+
 /// Find exact spellings in the configured dictionaries, then try Unicode
 /// caseless matching if no exact definition was found. Files are closed before
 /// returning so the caller can release its storage lease.
 pub fn lookup(root: &Path, word: &str) -> io::Result<Vec<Definition>> {
+    lookup_preferred(root, word, None)
+}
+
+pub(crate) fn lookup_preferred(
+    root: &Path,
+    word: &str,
+    preferred: Option<&Path>,
+) -> io::Result<Vec<Definition>> {
     let word = word.trim();
     if word.is_empty() || word.len() > MAX_WORD_BYTES {
         return Ok(Vec::new());
     }
-    let root = match fs::symlink_metadata(root) {
-        Ok(info) if info.is_dir() => root.canonicalize()?,
-        Ok(_) => return Err(invalid("The dictionary path is not a directory")),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(error),
+    let Some(root) = dictionary_root(root)? else {
+        return Ok(Vec::new());
     };
-    let files = dictionary_files(&root)?;
+    let mut files = dictionary_files(&root)?;
+    if let Some(preferred) = preferred
+        && let Some(index) = files
+            .iter()
+            .position(|path| path.strip_prefix(&root).ok() == Some(preferred))
+    {
+        files[..=index].rotate_right(1);
+    }
     let folded = CaseMapper::new().fold_string(word);
     let mut exact = Vec::new();
     let mut fallback = Vec::new();
@@ -93,6 +130,15 @@ pub fn lookup(root: &Path, word: &str) -> io::Result<Vec<Definition>> {
         return Err(error);
     }
     Ok(if exact.is_empty() { fallback } else { exact })
+}
+
+fn dictionary_root(root: &Path) -> io::Result<Option<PathBuf>> {
+    match fs::symlink_metadata(root) {
+        Ok(info) if info.is_dir() => root.canonicalize().map(Some),
+        Ok(_) => Err(invalid("The dictionary path is not a directory")),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 fn dictionary_files(root: &Path) -> io::Result<Vec<PathBuf>> {
@@ -965,6 +1011,24 @@ mod tests {
         assert_eq!(result[0].word, "Straße");
         assert_eq!(result[0].dictionary, "Shore");
         assert!(lookup(&temp.0, "absent").unwrap().is_empty());
+    }
+
+    #[test]
+    fn preferred_dictionary_changes_the_order_of_exact_matches() {
+        let temp = TestDirectory::new();
+        for (name, meaning) in [
+            ("Harbor", b"One.".as_slice()),
+            ("Shore", b"Two.".as_slice()),
+        ] {
+            write_dictionary(&temp.0, name, "sametypesequence=m\n", &[("word", meaning)]);
+        }
+        assert_eq!(lookup(&temp.0, "word").unwrap()[0].dictionary, "Harbor");
+        let rows = lookup_preferred(&temp.0, "word", Some(Path::new("Shore.ifo"))).unwrap();
+        assert_eq!(rows[0].dictionary, "Shore");
+        assert_eq!(rows[1].dictionary, "Harbor");
+        let fallback =
+            lookup_preferred(&temp.0, "word", Some(Path::new("../unavailable.ifo"))).unwrap();
+        assert_eq!(fallback[0].dictionary, "Harbor");
     }
 
     #[test]

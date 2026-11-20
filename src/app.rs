@@ -1,5 +1,5 @@
 //! The daily reader interface and foreground lifecycle.
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -12,6 +12,7 @@ use primitive_ui::{
 };
 
 use crate::annotation_export;
+use crate::dictionary::{self, InstalledDictionary};
 use crate::epub::{Book, Destination};
 use crate::fixed::{PdfError, PdfLinkTarget};
 use crate::fixed_session::{FixedReading, PdfSelection};
@@ -60,6 +61,10 @@ const EXIT_CONTROL: Rect = Rect::new(1048, 15, 196, 62);
 const UNLOCK_TOUCH: Rect = Rect::new(832, PAGE_HEIGHT as i32 + 5, 258, 60);
 const CANCEL_OCR: Rect = Rect::new(624, PAGE_HEIGHT as i32 + 5, 200, 60);
 const FIND_CASE: Rect = Rect::new(LIST_X, LIST_Y + 260, 335, 70);
+const DEFINITION_BOTTOM: i32 = HEIGHT as i32 - 82;
+const DEFINITION_PREV: Rect = Rect::new(94, DEFINITION_BOTTOM - 82, 214, 66);
+const DEFINITION_NEXT: Rect = Rect::new(WIDTH as i32 - 308, DEFINITION_BOTTOM - 82, 214, 66);
+const DEFINITION_EXPAND: Rect = Rect::new(WIDTH as i32 / 2 - 105, DEFINITION_BOTTOM - 82, 210, 66);
 const OCR_POLL: Duration = Duration::from_millis(120);
 const AUTO_CROP: Rect = Rect::new(674, PAGE_HEIGHT as i32 + 5, 182, 60);
 const RESET_CROP: Rect = Rect::new(868, PAGE_HEIGHT as i32 + 5, 172, 60);
@@ -112,6 +117,7 @@ enum Screen {
     Note,
     EditNote,
     Definition,
+    Dictionaries,
 }
 
 impl Screen {
@@ -160,6 +166,7 @@ impl Screen {
             Self::Note => "Add note",
             Self::EditNote => "Edit note",
             Self::Definition => "Dictionary",
+            Self::Dictionaries => "Preferred dictionary",
         }
     }
 }
@@ -196,6 +203,8 @@ enum Action {
     ReturnToLocation,
     Text(Settings),
     ShowFonts,
+    ShowDictionaries,
+    UseDictionary(Option<PathBuf>),
     SetFont(Option<String>),
     ApplyProfile(usize),
     RemoveProfile(usize),
@@ -228,6 +237,9 @@ enum Action {
 
 enum BookList {
     Favorites,
+    Recent,
+    Authors,
+    Author(Option<String>),
     Status(ReadingStatus),
     Collection(String),
 }
@@ -355,7 +367,11 @@ pub struct Reader {
     highlight_index: usize,
     exports: PathBuf,
     dictionaries: PathBuf,
+    dictionary_preference: PathBuf,
+    preferred_dictionary: Option<PathBuf>,
+    installed_dictionaries: Vec<InstalledDictionary>,
     definitions: Vec<(String, String)>,
+    definition_expanded: bool,
 }
 
 impl Reader {
@@ -372,6 +388,11 @@ impl Reader {
         let stats = ReadingStats::load(&stats_path);
         let profiles_path = data.join("reading-profiles.json");
         let profiles = reading_profiles::load(&profiles_path);
+        let dictionary_preference = data.join("dictionary-preference.json");
+        let preferred_dictionary = read_import_file(&dictionary_preference, 4096)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Option<PathBuf>>(&bytes).ok())
+            .flatten();
         let ocr_assets = with_storage(|| Ok(data.parent().and_then(OcrAssets::discover)))?;
         Ok(Self {
             library,
@@ -430,7 +451,11 @@ impl Reader {
             highlight_index: 0,
             exports: state.parent().unwrap_or(documents).join("exports"),
             dictionaries: state.parent().unwrap_or(documents).join("dictionaries"),
+            dictionary_preference,
+            preferred_dictionary,
+            installed_dictionaries: Vec::new(),
             definitions: Vec::new(),
+            definition_expanded: false,
         })
     }
 
@@ -578,6 +603,9 @@ impl Reader {
         if screen == Screen::Find && self.screen != Screen::Matches {
             self.editor = Editor::new(64);
         }
+        if screen == Screen::Definition {
+            self.definition_expanded = false;
+        }
         if screen == Screen::LibraryFind {
             self.editor = Editor::new(96);
             self.editor.text = self.library_query.chars().take(96).collect();
@@ -685,13 +713,7 @@ impl Reader {
                 self.library
                     .matching(&self.library_query)
                     .cloned()
-                    .map(|entry| {
-                        let title = entry.title.clone();
-                        let author = entry.author.clone();
-                        let mut item = Item::new(title, Action::Open(entry));
-                        item.detail = author;
-                        item
-                    }),
+                    .map(library_book_item),
             );
             return items;
         }
@@ -737,6 +759,13 @@ impl Reader {
                 } else {
                     "Compact labels and controls"
                 }),
+                Item::new("Preferred dictionary", Action::ShowDictionaries).detail(
+                    self.preferred_dictionary
+                        .as_deref()
+                        .and_then(Path::file_stem)
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("Default order"),
+                ),
             ];
             if self.active.is_some() || self.fixed.is_some() {
                 items.push(Item::new("Book details", Action::OrganizeCurrent));
@@ -747,6 +776,29 @@ impl Reader {
                 items.push(
                     Item::new("Import KOReader position", Action::PreviewKoReaderPosition)
                         .detail("Copy metadata to reader/data/koreader-progress.lua"),
+                );
+            }
+            return items;
+        }
+        if self.screen == Screen::Dictionaries {
+            let mut items = vec![Item::new("Default order", Action::UseDictionary(None))];
+            items.extend(self.installed_dictionaries.iter().map(|dictionary| {
+                let selected = self.preferred_dictionary.as_deref() == Some(&dictionary.path);
+                let detail = if selected {
+                    "Preferred"
+                } else {
+                    "Check this dictionary first"
+                };
+                Item::new(
+                    &dictionary.title,
+                    Action::UseDictionary(Some(dictionary.path.clone())),
+                )
+                .detail(detail)
+            }));
+            if self.installed_dictionaries.is_empty() {
+                items.push(
+                    Item::new("Add StarDict dictionaries", Action::Heading)
+                        .detail("Copy dictionaries to reader/data/dictionaries"),
                 );
             }
             return items;
@@ -1089,6 +1141,11 @@ impl Reader {
                     "Favorites",
                     Action::ListBooks(BookList::Favorites),
                 ));
+                items.push(Item::new(
+                    "Recently read",
+                    Action::ListBooks(BookList::Recent),
+                ));
+                items.push(Item::new("Authors", Action::ListBooks(BookList::Authors)));
                 items.extend(ReadingStatus::ALL.into_iter().map(|status| {
                     Item::new(status.label(), Action::ListBooks(BookList::Status(status)))
                 }));
@@ -1106,6 +1163,39 @@ impl Reader {
                 BookList::Favorites => {
                     items.extend(self.library.favorites().map(tracked_book_item))
                 }
+                BookList::Recent => {
+                    items.extend(self.library.recently_read().map(tracked_book_item))
+                }
+                BookList::Authors => {
+                    let authors: BTreeSet<_> = self
+                        .library
+                        .entries()
+                        .iter()
+                        .filter_map(|book| book.author.as_deref())
+                        .collect();
+                    items.extend(authors.into_iter().map(|name| {
+                        Item::new(name, Action::ListBooks(BookList::Author(Some(name.into()))))
+                    }));
+                    if self
+                        .library
+                        .entries()
+                        .iter()
+                        .any(|book| book.author.is_none())
+                    {
+                        items.push(Item::new(
+                            "Unknown author",
+                            Action::ListBooks(BookList::Author(None)),
+                        ));
+                    }
+                }
+                BookList::Author(author) => items.extend(
+                    self.library
+                        .entries()
+                        .iter()
+                        .filter(|entry| entry.author == *author)
+                        .cloned()
+                        .map(library_book_item),
+                ),
                 BookList::Status(status) => {
                     items.extend(
                         self.library
@@ -1127,7 +1217,7 @@ impl Reader {
                                 .iter()
                                 .filter(|entry| !tracked.contains(&entry.path))
                                 .cloned()
-                                .map(|entry| Item::new(entry.title.clone(), Action::Open(entry))),
+                                .map(library_book_item),
                         );
                     }
                 }
@@ -1655,6 +1745,26 @@ impl Reader {
                 with_storage(|| fs::create_dir_all(&self.fonts_directory))?;
                 self.available_fonts = reading_fonts::available(&self.fonts_directory)?;
                 self.show(Screen::ReadingFonts);
+            }
+            Action::ShowDictionaries => {
+                with_storage(|| fs::create_dir_all(&self.dictionaries))?;
+                self.installed_dictionaries =
+                    with_storage(|| dictionary::installed(&self.dictionaries))?;
+                self.show(Screen::Dictionaries);
+            }
+            Action::UseDictionary(preferred) => {
+                if preferred.as_ref().is_some_and(|path| {
+                    !self
+                        .installed_dictionaries
+                        .iter()
+                        .any(|dictionary| &dictionary.path == path)
+                }) {
+                    return Err("That dictionary is unavailable".into());
+                }
+                let bytes = serde_json::to_vec(&preferred)?;
+                primitive_app::save(&self.dictionary_preference, &bytes)?;
+                self.preferred_dictionary = preferred;
+                self.notice = Some("Dictionary preference saved".into());
             }
             Action::SetFont(font) => {
                 let fonts = self.fonts_for(font.as_deref())?;
@@ -3214,7 +3324,13 @@ impl Reader {
                     .map(|selection| selection.text.as_str())
             })
             .ok_or("Select a word first")?;
-        let definitions = with_storage(|| crate::dictionary::lookup(&self.dictionaries, word))?;
+        let definitions = with_storage(|| {
+            dictionary::lookup_preferred(
+                &self.dictionaries,
+                word,
+                self.preferred_dictionary.as_deref(),
+            )
+        })?;
         self.definitions.clear();
         for definition in definitions {
             let title = format!("{} · {}", definition.word, definition.dictionary);
@@ -3242,20 +3358,38 @@ impl Reader {
     }
 
     fn definition_input(&mut self, input: Input) -> Change {
-        if matches!(input, Input::Tap(x, y) if primitive_ui::back_button(WIDTH as i32).contains(x, y))
-        {
-            self.show(if self.fixed.is_some() {
-                Screen::Fixed
+        let (previous, next) = if self.definition_expanded {
+            (PREV, NEXT)
+        } else {
+            (DEFINITION_PREV, DEFINITION_NEXT)
+        };
+        if let Input::Tap(x, y) = input {
+            if self.definition_expanded {
+                if primitive_ui::back_button(WIDTH as i32).contains(x, y) {
+                    self.definition_expanded = false;
+                    return Change::Partial;
+                }
             } else {
-                Screen::Book
-            });
-            return Change::Partial;
+                let (popup, done, _) = self.definition_layout();
+                if done.contains(x, y) || !popup.contains(x, y) {
+                    self.show(if self.fixed.is_some() {
+                        Screen::Fixed
+                    } else {
+                        Screen::Book
+                    });
+                    return Change::Partial;
+                }
+                if !self.definitions.is_empty() && DEFINITION_EXPAND.contains(x, y) {
+                    self.definition_expanded = true;
+                    return Change::Partial;
+                }
+            }
         }
         let direction = match input {
             Input::PageBack => -1,
             Input::PageForward => 1,
-            Input::Tap(x, y) if PREV.contains(x, y) => -1,
-            Input::Tap(x, y) if NEXT.contains(x, y) => 1,
+            Input::Tap(x, y) if previous.contains(x, y) => -1,
+            Input::Tap(x, y) if next.contains(x, y) => 1,
             _ => return Change::None,
         };
         if let Some(page) = self
@@ -3267,6 +3401,60 @@ impl Reader {
             Change::Partial
         } else {
             Change::None
+        }
+    }
+
+    fn definition_over_book(&self) -> bool {
+        self.screen == Screen::Definition && !self.definition_expanded
+    }
+
+    fn definition_layout(&self) -> (Rect, Rect, usize) {
+        let lines = self.definitions.get(self.list_page).map_or(1, |(_, text)| {
+            text.lines()
+                .map(|line| line.chars().count().max(1).div_ceil(47))
+                .sum::<usize>()
+                .clamp(1, 7)
+        });
+        let height = 197 + lines as i32 * 48;
+        let top = DEFINITION_BOTTOM - height;
+        (
+            Rect::new(64, top, WIDTH as i32 - 128, height),
+            Rect::new(WIDTH as i32 - 246, top + 18, 154, 64),
+            lines,
+        )
+    }
+
+    fn draw_definition_popup(&self, canvas: &mut Canvas) {
+        let (popup, done, lines) = self.definition_layout();
+        canvas.popup(popup);
+        canvas.button(done, "Done", false, false);
+        let (title, text) = self.definitions.get(self.list_page).map_or(
+            ("Dictionary", "No matches in installed dictionaries"),
+            |(title, text)| (title.as_str(), text.as_str()),
+        );
+        canvas.text(
+            Rect::new(96, popup.y + 20, done.x - 112, 60),
+            title,
+            BODY.bold(),
+        );
+        canvas.text(
+            Rect::new(
+                96,
+                popup.y + 102,
+                WIDTH as i32 - 192,
+                DEFINITION_PREV.y - popup.y - 112,
+            ),
+            text,
+            BODY.lines(lines),
+        );
+        if self.list_page > 0 {
+            canvas.button(DEFINITION_PREV, "Previous", false, false);
+        }
+        if self.list_page + 1 < self.definitions.len() {
+            canvas.button(DEFINITION_NEXT, "Next", false, false);
+        }
+        if !self.definitions.is_empty() {
+            canvas.button(DEFINITION_EXPAND, "Expand", false, false);
         }
     }
 
@@ -3549,7 +3737,8 @@ impl App for Reader {
             draw_toolbar_button(canvas, CANCEL_CROP, "Cancel");
             return;
         }
-        if matches!(self.screen, Screen::Fixed | Screen::FixedTools)
+        if (matches!(self.screen, Screen::Fixed | Screen::FixedTools)
+            || self.definition_over_book())
             && let Some(fixed) = &self.fixed
         {
             let mut marks: Vec<_> = self
@@ -3574,7 +3763,7 @@ impl App for Reader {
                 &selection,
                 self.page_paint(),
             );
-            if !selection.is_empty() {
+            if !selection.is_empty() && !self.definition_over_book() {
                 draw_selection_footer(canvas, self.notice.as_deref());
             }
             if self.screen == Screen::FixedTools {
@@ -3584,9 +3773,12 @@ impl App for Reader {
             } else if self.ocr.is_some() && selection.is_empty() {
                 canvas.button(CANCEL_OCR, "Cancel OCR", false, false);
             }
+            if self.definition_over_book() {
+                self.draw_definition_popup(canvas);
+            }
             return;
         }
-        if matches!(self.screen, Screen::Book | Screen::BookTools)
+        if (matches!(self.screen, Screen::Book | Screen::BookTools) || self.definition_over_book())
             && let Some(active) = &self.active
         {
             let reading = &active.reading;
@@ -3612,7 +3804,7 @@ impl App for Reader {
                 &selection,
                 self.page_paint(),
             );
-            if self.selection.is_some() {
+            if self.selection.is_some() && !self.definition_over_book() {
                 draw_selection_footer(canvas, self.notice.as_deref());
             }
             if self.screen == Screen::BookTools {
@@ -3620,10 +3812,18 @@ impl App for Reader {
             } else if self.touch_locked {
                 draw_locked_footer(canvas, self.notice.as_deref());
             }
+            if self.definition_over_book() {
+                self.draw_definition_popup(canvas);
+            }
             return;
         }
         let title = match (self.screen, self.book_list.as_ref()) {
             (Screen::BookList, Some(BookList::Favorites)) => "Favorites",
+            (Screen::BookList, Some(BookList::Recent)) => "Recently read",
+            (Screen::BookList, Some(BookList::Authors)) => "Authors",
+            (Screen::BookList, Some(BookList::Author(author))) => {
+                author.as_deref().unwrap_or("Unknown author")
+            }
             (Screen::BookList, Some(BookList::Status(status))) => status.label(),
             (Screen::BookList, Some(BookList::Collection(name))) => name,
             _ => self.screen.title(),
@@ -3896,9 +4096,14 @@ impl App for Reader {
                 match self.screen {
                     Screen::Library => return self.exit(),
                     Screen::OrganizeLibrary => self.show(Screen::Library),
+                    Screen::BookList if matches!(self.book_list, Some(BookList::Author(_))) => {
+                        self.book_list = Some(BookList::Authors);
+                        self.show(Screen::BookList);
+                    }
                     Screen::BookList => self.show(Screen::OrganizeLibrary),
                     Screen::RemoveCollection => self.show(Screen::BookList),
                     Screen::ReadingFonts => self.show(Screen::Typography),
+                    Screen::Dictionaries => self.show(Screen::ReadingControls),
                     Screen::ReadingProfiles => self.show(Screen::Typography),
                     Screen::RemoveProfiles => self.show(Screen::ReadingProfiles),
                     Screen::BookDetails => {
@@ -4237,6 +4442,16 @@ fn tracked_book_item(book: &BookState) -> Item {
             .as_deref()
             .map_or_else(|| book.path.to_string_lossy().into_owned(), str::to_owned),
     )
+}
+
+fn library_book_item(entry: LibraryBook) -> Item {
+    let title = entry.title.clone();
+    let detail = entry.author.clone();
+    Item {
+        title,
+        detail,
+        action: Action::Open(entry),
+    }
 }
 
 fn reading_time(seconds: u64) -> String {
@@ -4882,9 +5097,23 @@ mod tests {
         app.open_path(&fixture.book).unwrap();
         assert_eq!(app.library.matching("primitiveos field").count(), 1);
         app.save().unwrap();
-        let reopened = fixture.app();
+        let mut reopened = fixture.app();
         let entry = reopened.library.matching("primitiveos").next().unwrap();
         assert_eq!(entry.author.as_deref(), Some("PrimitiveOS"));
+        reopened
+            .activate(Action::ListBooks(BookList::Authors))
+            .unwrap();
+        assert_eq!(reopened.items()[0].title, "PrimitiveOS");
+        reopened
+            .activate(Action::ListBooks(BookList::Author(Some(
+                "PrimitiveOS".into(),
+            ))))
+            .unwrap();
+        assert!(matches!(reopened.items()[0].action, Action::Open(_)));
+        reopened
+            .activate(Action::ListBooks(BookList::Recent))
+            .unwrap();
+        assert!(matches!(reopened.items()[0].action, Action::OpenTracked(_)));
     }
 
     #[test]
@@ -4938,6 +5167,46 @@ mod tests {
         assert!(app.illustration.is_none());
         assert_eq!(app.screen, Screen::Book);
         assert_eq!(position(&app.active.as_ref().unwrap().reading), initial);
+    }
+
+    #[test]
+    fn dictionary_preview_expands_and_dismisses_without_moving_the_book() {
+        let fixture = Fixture::new();
+        let mut app = fixture.app();
+        app.open_path(&fixture.book).unwrap();
+        let original = position(&app.active.as_ref().unwrap().reading);
+        app.definitions = vec![
+            ("Tide".into(), "The movement of the sea".into()),
+            ("Tide".into(), "A flow of water".into()),
+        ];
+        app.show(Screen::Definition);
+        assert!(app.definition_over_book());
+        assert_eq!(app.input(Input::PageForward), Change::Partial);
+        assert_eq!(app.list_page, 1);
+        assert_eq!(
+            app.input(Input::Tap(
+                (DEFINITION_EXPAND.x + 15) as f32,
+                (DEFINITION_EXPAND.y + 15) as f32
+            )),
+            Change::Partial
+        );
+        assert!(app.definition_expanded);
+        let back = primitive_ui::back_button(WIDTH as i32);
+        assert_eq!(
+            app.input(Input::Tap((back.x + 15) as f32, (back.y + 15) as f32)),
+            Change::Partial
+        );
+        assert!(app.definition_over_book());
+        let (_, popup_done, _) = app.definition_layout();
+        assert_eq!(
+            app.input(Input::Tap(
+                (popup_done.x + 15) as f32,
+                (popup_done.y + 15) as f32
+            )),
+            Change::Partial
+        );
+        assert_eq!(app.screen, Screen::Book);
+        assert_eq!(position(&app.active.as_ref().unwrap().reading), original);
     }
 
     #[test]

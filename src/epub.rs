@@ -44,7 +44,7 @@ pub struct Book {
     pub chapters: Vec<Chapter>,
     pub toc: Vec<TocEntry>,
     revision: u64,
-    fixed_layout: bool,
+    fixed_spine: Option<FixedSpine>,
     content: Content,
 }
 
@@ -60,6 +60,36 @@ struct Item {
     path: String,
     media: String,
     navigation: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum RenditionSpread {
+    #[default]
+    Auto,
+    None,
+    Landscape,
+    Both,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum SpreadSide {
+    #[default]
+    Auto,
+    Left,
+    Right,
+    Center,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ItemPlacement {
+    pub(crate) spread: RenditionSpread,
+    pub(crate) side: SpreadSide,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct FixedSpine {
+    pub(crate) right_to_left: bool,
+    pub(crate) placements: Vec<ItemPlacement>,
 }
 
 impl Book {
@@ -115,6 +145,7 @@ impl Book {
         }
         let metadata = child(root, "metadata")?;
         let default_layout = package_layout(metadata)?;
+        let default_spread = package_spread(metadata);
         let title = metadata
             .children()
             .find(|node| node.has_tag_name("title"))
@@ -180,6 +211,7 @@ impl Book {
         }
         let mut chapters = Vec::new();
         let mut fixed_layout = None;
+        let mut placements = Vec::new();
         for reference in spine.children().filter(|node| node.has_tag_name("itemref")) {
             let item = reference
                 .attribute("idref")
@@ -197,6 +229,12 @@ impl Book {
             }
             if fixed && item.media != "application/xhtml+xml" {
                 return Err("Reader supports fixed-layout EPUB pages stored as XHTML".into());
+            }
+            if fixed {
+                if placements.len() == MAX_ENTRIES {
+                    return Err("The fixed-layout EPUB has too many pages".into());
+                }
+                placements.push(item_placement(reference, default_spread));
             }
             if item.media != "application/xhtml+xml" && item.media != "text/html" {
                 return Err("The probe supports only XHTML spine documents".into());
@@ -219,7 +257,10 @@ impl Book {
             chapters,
             toc,
             revision,
-            fixed_layout: fixed_layout.unwrap_or(false),
+            fixed_spine: fixed_layout.filter(|fixed| *fixed).map(|_| FixedSpine {
+                right_to_left: spine.attribute("page-progression-direction") == Some("rtl"),
+                placements,
+            }),
             content: Content::Archive(archive),
         })
     }
@@ -243,7 +284,7 @@ impl Book {
     fn from_loose(document: loose::Document) -> Self {
         Self {
             revision: crate::revision(&document.xhtml),
-            fixed_layout: false,
+            fixed_spine: None,
             chapters: vec![Chapter {
                 href: document.chapter_path,
                 label: document.title.clone(),
@@ -259,7 +300,11 @@ impl Book {
     }
 
     pub fn is_fixed_layout(&self) -> bool {
-        self.fixed_layout
+        self.fixed_spine.is_some()
+    }
+
+    pub(crate) fn fixed_spine(&self) -> Option<&FixedSpine> {
+        self.fixed_spine.as_ref()
     }
 
     /// Return the publication's ordered reading contents.
@@ -287,15 +332,27 @@ impl Book {
 
     /// Read a canonical, decoded archive path without extracting it to disk.
     pub fn resource(&mut self, path: &str) -> Result<Vec<u8>> {
+        self.resource_limited(path, MAX_RESOURCE)
+    }
+
+    pub(crate) fn resource_limited(&mut self, path: &str, cap: usize) -> Result<Vec<u8>> {
         if !is_archive_path(path) {
             return Err("The EPUB resource path is invalid".into());
         }
+        let cap = cap.min(MAX_RESOURCE);
         match &mut self.content {
-            Content::Archive(archive) => read_entry(archive, path, MAX_RESOURCE),
-            Content::Loose { resources, .. } => resources
-                .get(path)
-                .cloned()
-                .ok_or_else(|| "The standalone document has no such local resource".into()),
+            Content::Archive(archive) => read_entry(archive, path, cap),
+            Content::Loose { resources, .. } => {
+                let bytes = resources
+                    .get(path)
+                    .ok_or("The standalone document has no such local resource")?;
+                if bytes.len() > cap {
+                    return Err(
+                        format!("The document resource exceeds its size limit: {path}").into(),
+                    );
+                }
+                Ok(bytes.clone())
+            }
         }
     }
 
@@ -393,6 +450,57 @@ fn spine_layout(reference: Node<'_, '_>, default: bool) -> Result<bool> {
         }
     }
     Ok(layout.unwrap_or(default))
+}
+
+// EPUB 3.3 §8.2.2.3–4 and EPUB Reading Systems 3.3 §8.1.1.3–4.
+fn package_spread(metadata: Node<'_, '_>) -> RenditionSpread {
+    let hints = metadata
+        .children()
+        .filter(|node| {
+            node.has_tag_name("meta")
+                && node.attribute("property") == Some("rendition:spread")
+                && !node.has_attribute("refines")
+        })
+        .filter_map(|node| rendition_spread(node.text()?.trim()));
+    agreed_hint(hints, RenditionSpread::None).unwrap_or_default()
+}
+
+fn rendition_spread(value: &str) -> Option<RenditionSpread> {
+    match value {
+        "auto" => Some(RenditionSpread::Auto),
+        "none" => Some(RenditionSpread::None),
+        "landscape" => Some(RenditionSpread::Landscape),
+        "both" | "portrait" => Some(RenditionSpread::Both),
+        _ => None,
+    }
+}
+
+fn item_placement(reference: Node<'_, '_>, default: RenditionSpread) -> ItemPlacement {
+    let properties = reference.attribute("properties").unwrap_or_default();
+    let spreads = properties
+        .split_ascii_whitespace()
+        .filter_map(|property| rendition_spread(property.strip_prefix("rendition:spread-")?));
+    let sides = properties
+        .split_ascii_whitespace()
+        .filter_map(|property| match property {
+            "page-spread-left" | "rendition:page-spread-left" => Some(SpreadSide::Left),
+            "page-spread-right" | "rendition:page-spread-right" => Some(SpreadSide::Right),
+            "rendition:page-spread-center" => Some(SpreadSide::Center),
+            _ => None,
+        });
+    ItemPlacement {
+        spread: agreed_hint(spreads, RenditionSpread::None).unwrap_or(default),
+        side: agreed_hint(sides, SpreadSide::Center).unwrap_or_default(),
+    }
+}
+
+fn agreed_hint<T: PartialEq>(mut hints: impl Iterator<Item = T>, conflict: T) -> Option<T> {
+    let first = hints.next()?;
+    Some(if hints.all(|hint| hint == first) {
+        first
+    } else {
+        conflict
+    })
 }
 
 // EPUB 3.3 §7.3–7.4: https://www.w3.org/TR/epub-33/#sec-nav-def-model
@@ -585,4 +693,75 @@ fn decode_segment(segment: &str) -> Result<String> {
         bytes.push(value);
     }
     Ok(String::from_utf8(bytes)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fixed_spread_advisories_use_standard_aliases_and_safe_conflict_defaults() {
+        let xml = parse_xml(
+            r#"<package><metadata><meta property="rendition:spread">portrait</meta></metadata>
+                <spine><itemref properties="page-spread-left rendition:page-spread-left"/>
+                <itemref properties="rendition:spread-none page-spread-right"/>
+                <itemref properties="page-spread-left page-spread-right rendition:spread-unknown"/>
+                </spine></package>"#,
+        )
+        .unwrap();
+        let root = xml.root_element();
+        let mode = package_spread(child(root, "metadata").unwrap());
+        assert_eq!(mode, RenditionSpread::Both);
+        let placements = child(root, "spine")
+            .unwrap()
+            .children()
+            .filter(Node::is_element)
+            .map(|item| item_placement(item, mode))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            placements,
+            [
+                ItemPlacement {
+                    spread: RenditionSpread::Both,
+                    side: SpreadSide::Left
+                },
+                ItemPlacement {
+                    spread: RenditionSpread::None,
+                    side: SpreadSide::Right
+                },
+                ItemPlacement {
+                    spread: RenditionSpread::Both,
+                    side: SpreadSide::Center
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn resource_limit_applies_to_archive_and_in_memory_books() {
+        let mut archive = Book::open(&crate::test_fixture("field-notes-epub3.epub")).unwrap();
+        let path = "EPUB/images/shore.png";
+        let image = archive.resource(path).unwrap();
+        assert!(archive.resource_limited(path, image.len() - 1).is_err());
+        assert_eq!(archive.resource_limited(path, image.len()).unwrap(), image);
+
+        let mut loose = Book::from_loose(loose::Document {
+            title: "Package".into(),
+            author: None,
+            chapter_path: "document.xhtml".into(),
+            xhtml: "<html><body><p>Read.</p></body></html>".into(),
+            toc: Vec::new(),
+            resources: BTreeMap::from([("shore.png".into(), image.clone())]),
+        });
+        assert!(
+            loose
+                .resource_limited("shore.png", image.len() - 1)
+                .is_err()
+        );
+        assert_eq!(
+            loose.resource_limited("shore.png", image.len()).unwrap(),
+            image
+        );
+        assert!(loose.resource_limited("../shore.png", usize::MAX).is_err());
+    }
 }

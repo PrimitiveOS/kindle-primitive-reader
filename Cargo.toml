@@ -34,6 +34,7 @@ png = "=0.17.16"
 primitive-app = { git = "https://github.com/PrimitiveOS/kindle-primtitive-tools.git", rev = "398679696d19e0334a164775a3740cc700ffc9de", optional = true }
 primitive-ui = { git = "https://github.com/PrimitiveOS/kindle-primtitive-tools.git", rev = "398679696d19e0334a164775a3740cc700ffc9de", optional = true }
 pulldown-cmark = { version = "=0.13.0", default-features = false, features = ["html"] }
+resvg = { version = "=0.50.0", default-features = false }
 roxmltree = "=0.21.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

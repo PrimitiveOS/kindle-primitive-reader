@@ -1,4 +1,4 @@
-//! Static, single-page rendering for uniformly fixed-layout EPUB XHTML publications.
+//! Static rendering for uniformly fixed-layout EPUB XHTML publications.
 use std::cell::{Ref, RefCell};
 use std::path::{Path, PathBuf};
 
@@ -6,8 +6,8 @@ use parley::FontContext;
 use roxmltree::{Document, ParsingOptions};
 
 use crate::comic::ImagePage;
-use crate::epub::Book;
-use crate::fixed::{MAX_VIEWPORT_PIXELS, MAX_VIEWPORT_SIDE, PdfOutlineItem};
+use crate::epub::{Book, FixedSpine, ItemPlacement, RenditionSpread, SpreadSide};
+use crate::fixed::{MAX_VIEWPORT_PIXELS, MAX_VIEWPORT_SIDE, PdfOutlineItem, RenderRequest};
 use crate::{Result, blitz, font_context, loose};
 
 const MAX_LAYOUT_DEPTH: usize = 48;
@@ -17,19 +17,168 @@ pub struct FixedEpub {
     revision: u64,
     title: String,
     author: Option<String>,
-    count: usize,
+    spine: FixedSpine,
     fonts: FontContext,
     outline: Vec<PdfOutlineItem>,
     cache: RefCell<Option<(usize, ImagePage)>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FixedSpread {
+    Single(usize),
+    Facing {
+        left: Option<usize>,
+        right: Option<usize>,
+    },
+}
+
+impl FixedSpread {
+    /// Original spine indices in logical reading order.
+    pub fn pages(self) -> [Option<usize>; 2] {
+        match self {
+            Self::Single(page) => [Some(page), None],
+            Self::Facing {
+                left: Some(left),
+                right: Some(right),
+            } => [Some(left.min(right)), Some(left.max(right))],
+            Self::Facing { left, right } => [left.or(right), None],
+        }
+    }
+
+    pub(crate) fn first_page(self) -> usize {
+        self.pages()[0].expect("A planned spread contains at least one page")
+    }
+
+    fn facing(leading: Option<usize>, trailing: Option<usize>, rtl: bool) -> Self {
+        if rtl {
+            Self::Facing {
+                left: trailing,
+                right: leading,
+            }
+        } else {
+            Self::Facing {
+                left: leading,
+                right: trailing,
+            }
+        }
+    }
+}
+
+pub struct SpreadPlan {
+    groups: Vec<FixedSpread>,
+    page_to_group: Vec<usize>,
+    has_facing: bool,
+}
+
+impl SpreadPlan {
+    fn new(spine: &FixedSpine, user_mode: Option<bool>, rtl: bool, landscape: bool) -> Self {
+        let mut plan = Self {
+            groups: Vec::new(),
+            page_to_group: vec![0; spine.placements.len()],
+            has_facing: false,
+        };
+        let (publisher_leading, publisher_trailing) = spread_sides(spine.right_to_left);
+        let (_, trailing) = spread_sides(rtl);
+        let side = |placement| effective_side(placement, user_mode, landscape);
+        let mut pages = spine.placements.iter().copied().enumerate().peekable();
+        let mut pending = None;
+        let flush = |plan: &mut Self, pending: &mut Option<usize>| {
+            if let Some(page) = pending.take() {
+                plan.push(FixedSpread::facing(Some(page), None, rtl));
+            }
+        };
+        while let Some((page, placement)) = pages.next() {
+            let slot = side(placement);
+            if slot == publisher_leading
+                && let Some(&(partner, next)) = pages.peek()
+                && side(next) == publisher_trailing
+            {
+                // A publisher's explicit two-page artwork keeps its physical sides.
+                flush(&mut plan, &mut pending);
+                plan.push(FixedSpread::facing(
+                    Some(page),
+                    Some(partner),
+                    spine.right_to_left,
+                ));
+                let _ = pages.next();
+            } else if slot == SpreadSide::Center {
+                flush(&mut plan, &mut pending);
+                plan.push(FixedSpread::Single(page));
+            } else if slot == trailing || slot == SpreadSide::Auto && pending.is_some() {
+                plan.push(FixedSpread::facing(pending.take(), Some(page), rtl));
+            } else {
+                flush(&mut plan, &mut pending);
+                pending = Some(page);
+            }
+        }
+        flush(&mut plan, &mut pending);
+        plan
+    }
+
+    fn push(&mut self, spread: FixedSpread) {
+        let index = self.groups.len();
+        for page in spread.pages().into_iter().flatten() {
+            self.page_to_group[page] = index;
+        }
+        self.has_facing |= matches!(spread, FixedSpread::Facing { .. });
+        self.groups.push(spread);
+    }
+
+    pub fn has_facing(&self) -> bool {
+        self.has_facing
+    }
+
+    pub fn group(&self, page: usize) -> Option<FixedSpread> {
+        self.page_to_group
+            .get(page)
+            .map(|&index| self.groups[index])
+    }
+
+    pub fn step(&self, page: usize, direction: isize) -> usize {
+        if direction == 0 {
+            return page;
+        }
+        self.page_to_group
+            .get(page)
+            .and_then(|index| index.checked_add_signed(direction))
+            .and_then(|index| self.groups.get(index))
+            .map_or(page, |group| group.first_page())
+    }
+}
+
+fn spread_sides(rtl: bool) -> (SpreadSide, SpreadSide) {
+    if rtl {
+        (SpreadSide::Right, SpreadSide::Left)
+    } else {
+        (SpreadSide::Left, SpreadSide::Right)
+    }
+}
+
+fn effective_side(
+    placement: ItemPlacement,
+    user_mode: Option<bool>,
+    landscape: bool,
+) -> SpreadSide {
+    let paired = match placement.spread {
+        RenditionSpread::None => false,
+        RenditionSpread::Auto => user_mode.unwrap_or(false),
+        RenditionSpread::Landscape => landscape && user_mode.unwrap_or(true),
+        RenditionSpread::Both => user_mode.unwrap_or(true),
+    };
+    if paired {
+        placement.side
+    } else {
+        SpreadSide::Center
+    }
 }
 
 impl FixedEpub {
     /// Return None for a reflowable book. No archive handle is kept between pages.
     pub fn open(path: &Path, fonts: &[PathBuf]) -> Result<Option<Self>> {
         let book = Book::open(path)?;
-        if !book.is_fixed_layout() {
+        let Some(spine) = book.fixed_spine().cloned() else {
             return Ok(None);
-        }
+        };
         let outline = book
             .toc()
             .iter()
@@ -45,7 +194,7 @@ impl FixedEpub {
         Ok(Some(Self {
             path: path.to_owned(),
             revision: book.revision(),
-            count: book.chapters.len(),
+            spine,
             title: book.title,
             author: book.author,
             fonts: font_context(fonts)?,
@@ -63,7 +212,68 @@ impl FixedEpub {
     }
 
     pub fn page_count(&self) -> usize {
-        self.count
+        self.spine.placements.len()
+    }
+
+    pub fn right_to_left(&self) -> bool {
+        self.spine.right_to_left
+    }
+
+    pub fn spread_plan(&self, user_mode: Option<bool>, rtl: bool, landscape: bool) -> SpreadPlan {
+        SpreadPlan::new(&self.spine, user_mode, rtl, landscape)
+    }
+
+    pub fn compose_spread(
+        &self,
+        spread: FixedSpread,
+        width: u32,
+        height: u32,
+        turns: u8,
+    ) -> Result<Vec<u8>> {
+        if !(1..=MAX_VIEWPORT_SIDE).contains(&width)
+            || !(1..=MAX_VIEWPORT_SIDE).contains(&height)
+            || width * height > MAX_VIEWPORT_PIXELS
+        {
+            return Err("The EPUB spread exceeds Reader's viewport limit".into());
+        }
+        let FixedSpread::Facing { left, right } = spread else {
+            return self
+                .decode_page(spread.first_page())?
+                .fit(width, height, turns);
+        };
+        if width < 2 || left.is_none() && right.is_none() {
+            return Err("The EPUB spread has no usable viewport slots".into());
+        }
+        let seam = width / 2;
+        let mut frame = vec![255; (width * height) as usize];
+        for (page, x, slot_width) in [(left, 0, seam), (right, seam, width - seam)] {
+            let Some(page) = page else { continue };
+            let image = self.decode_page(page)?;
+            let (mut natural_width, mut natural_height) = image.page_size();
+            if !turns.is_multiple_of(2) {
+                std::mem::swap(&mut natural_width, &mut natural_height);
+            }
+            let scale = (slot_width as f32 / natural_width).min(height as f32 / natural_height);
+            let half = image.render(RenderRequest {
+                width: slot_width,
+                height,
+                scale,
+                x: if x == 0 {
+                    (slot_width as f32 - natural_width * scale).max(0.0)
+                } else {
+                    0.0
+                },
+                y: (height as f32 - natural_height * scale).max(0.0) / 2.0,
+                turns,
+            })?;
+            for (row, piece) in frame
+                .chunks_exact_mut(width as usize)
+                .zip(half.chunks_exact(slot_width as usize))
+            {
+                row[x as usize..(x + slot_width) as usize].copy_from_slice(piece);
+            }
+        }
+        Ok(frame)
     }
 
     pub fn outline(&self) -> Vec<PdfOutlineItem> {
@@ -72,7 +282,7 @@ impl FixedEpub {
 
     /// Load just the requested page and cache its source-size pixels for zoom and pan.
     pub fn decode_page(&self, page: usize) -> Result<Ref<'_, ImagePage>> {
-        if page >= self.count {
+        if page >= self.page_count() {
             return Err("That page is outside this fixed-layout EPUB".into());
         }
         let cached = self
@@ -85,6 +295,7 @@ impl FixedEpub {
                 .cache
                 .try_borrow_mut()
                 .map_err(|_| "The current fixed-layout EPUB page is still in use")?;
+            *cache = None;
             let mut book = Book::open(&self.path)?;
             if !book.is_fixed_layout() || book.revision() != self.revision {
                 return Err("The fixed-layout EPUB changed after it was opened".into());
@@ -213,6 +424,16 @@ mod tests {
     }
 
     fn write_book(layout: &str, first_override: &str, second_override: &str) -> TestBook {
+        write_book_rendition(layout, "auto", "default", first_override, second_override)
+    }
+
+    fn write_book_rendition(
+        layout: &str,
+        spread: &str,
+        progression: &str,
+        first_override: &str,
+        second_override: &str,
+    ) -> TestBook {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -233,6 +454,7 @@ mod tests {
                 <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
                     <dc:title>Positioned Pages</dc:title>
                     <meta property="rendition:layout">{layout}</meta>
+                    <meta property="rendition:spread">{spread}</meta>
                 </metadata>
                 <manifest>
                     <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
@@ -240,7 +462,7 @@ mod tests {
                     <item id="second" href="pages/second.xhtml" media-type="application/xhtml+xml"/>
                     <item id="css" href="style.css" media-type="text/css"/>
                 </manifest>
-                <spine><itemref idref="first" properties="{first_override}"/><itemref idref="second" properties="{second_override}"/></spine>
+                <spine page-progression-direction="{progression}"><itemref idref="first" properties="{first_override}"/><itemref idref="second" properties="{second_override}"/></spine>
             </package>"#,
         );
         let container = r#"<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">
@@ -253,11 +475,13 @@ mod tests {
         </body></html>"##;
         let first = r#"<html xmlns="http://www.w3.org/1999/xhtml">
             <head><meta name="viewport" content="width=224, height=320"/><link rel="stylesheet" href="../style.css"/></head>
-            <body><div class="mark"></div></body>
+            <body><div class="mark"></div>
+            <div style="position:absolute;left:208px;top:0;width:16px;height:320px;background:rgb(32,32,32)"></div></body>
         </html>"#;
         let second = r#"<html xmlns="http://www.w3.org/1999/xhtml">
             <head><meta name="viewport" content="height = 200 width = 290; initial-scale = 2"/></head>
-            <body><div id="target" style="position:absolute; left:130px; top:20px; width:55px; height:40px; background:black"></div></body>
+            <body><div id="target" style="position:absolute; left:130px; top:20px; width:55px; height:40px; background:black"></div>
+            <div style="position:absolute;left:0;top:0;width:16px;height:200px;background:rgb(96,96,96)"></div></body>
         </html>"#;
         let style = ".mark { position:absolute; left:21px; top:41px; width:38px; height:28px; background:#000; }";
         for (path, data) in [
@@ -290,6 +514,140 @@ mod tests {
             turns: 0,
         })
         .unwrap()
+    }
+
+    #[test]
+    fn publisher_pair_joins_its_inner_edges_even_at_mixed_intrinsic_sizes() {
+        let fixture = write_book_rendition(
+            "pre-paginated",
+            "both",
+            "ltr",
+            "page-spread-left rendition:page-spread-left",
+            "rendition:page-spread-right",
+        );
+        let fonts = [crate::test_fixture("fonts/Silkscreen-Regular.ttf")];
+        let book = FixedEpub::open(&fixture.0, &fonts).unwrap().unwrap();
+        assert!(!book.right_to_left());
+        let plan = book.spread_plan(None, true, false);
+        assert!(plan.has_facing());
+        let group = plan.group(1).unwrap();
+        assert_eq!(
+            group,
+            FixedSpread::Facing {
+                left: Some(0),
+                right: Some(1)
+            }
+        );
+        assert_eq!(group.pages(), [Some(0), Some(1)]);
+        assert_eq!(plan.step(1, 1), 1);
+        assert_eq!(plan.step(1, 0), 1);
+        let frame = book.compose_spread(group, 400, 100, 0).unwrap();
+        assert_eq!(frame.len(), 40_000);
+        assert!(
+            frame[50 * 400 + 199] < 50,
+            "The left content should end at the seam"
+        );
+        assert!(
+            (64..128).contains(&frame[50 * 400 + 200]),
+            "The right content should start at the seam"
+        );
+        assert_eq!(frame[50 * 400], 255);
+        let single = book.spread_plan(Some(false), true, false);
+        assert!(!single.has_facing());
+        assert_eq!(single.group(1), Some(FixedSpread::Single(1)));
+        assert!(book.compose_spread(group, 2049, 200, 0).is_err());
+    }
+
+    #[test]
+    fn respects_landscape_global_and_item_spread_overrides() {
+        let fixture = write_book_rendition(
+            "pre-paginated",
+            "landscape",
+            "rtl",
+            "rendition:spread-both rendition:page-spread-left",
+            "rendition:page-spread-center",
+        );
+        let fonts = [crate::test_fixture("fonts/Silkscreen-Regular.ttf")];
+        let book = FixedEpub::open(&fixture.0, &fonts).unwrap().unwrap();
+        assert!(book.right_to_left());
+        let plan = book.spread_plan(None, book.right_to_left(), false);
+        let first = FixedSpread::Facing {
+            left: Some(0),
+            right: None,
+        };
+        assert_eq!(plan.group(0), Some(first));
+        assert_eq!(plan.group(1), Some(FixedSpread::Single(1)));
+        assert_eq!(plan.step(0, 1), 1);
+        let frame = book.compose_spread(first, 224, 120, 0).unwrap();
+        assert!(
+            frame
+                .as_chunks::<224>()
+                .0
+                .iter()
+                .all(|row| row[112..].iter().all(|&tone| tone == 255))
+        );
+        assert!(frame.iter().any(|&tone| tone != 255));
+
+        let landscape_fixture = write_book_rendition("pre-paginated", "landscape", "rtl", "", "");
+        let landscape = FixedEpub::open(&landscape_fixture.0, &fonts)
+            .unwrap()
+            .unwrap();
+        assert!(!landscape.spread_plan(None, true, false).has_facing());
+        assert_eq!(
+            landscape.spread_plan(None, true, true).group(0),
+            Some(FixedSpread::Facing {
+                left: Some(1),
+                right: Some(0)
+            })
+        );
+    }
+
+    #[test]
+    fn keeps_original_spine_order_through_blanks_center_and_automatic_pages() {
+        let spine = FixedSpine {
+            right_to_left: true,
+            placements: [
+                SpreadSide::Left,
+                SpreadSide::Auto,
+                SpreadSide::Left,
+                SpreadSide::Center,
+                SpreadSide::Auto,
+                SpreadSide::Auto,
+                SpreadSide::Right,
+            ]
+            .into_iter()
+            .map(|side| ItemPlacement {
+                side,
+                spread: RenditionSpread::Both,
+            })
+            .collect(),
+        };
+        let plan = SpreadPlan::new(&spine, None, true, false);
+        let expected = [
+            FixedSpread::Facing {
+                left: Some(0),
+                right: None,
+            },
+            FixedSpread::Facing {
+                left: Some(2),
+                right: Some(1),
+            },
+            FixedSpread::Single(3),
+            FixedSpread::Facing {
+                left: Some(5),
+                right: Some(4),
+            },
+            FixedSpread::Facing {
+                left: None,
+                right: Some(6),
+            },
+        ];
+        assert_eq!(plan.groups, expected);
+        assert_eq!(plan.group(2), Some(expected[1]));
+        assert_eq!(plan.step(2, 1), 3);
+        assert_eq!(plan.step(5, -1), 3);
+        assert_eq!(plan.step(6, 1), 6);
+        assert_eq!(plan.group(7), None);
     }
 
     #[test]

@@ -5,6 +5,7 @@ use crate::comic::ImagePage;
 use crate::epub::Book;
 use crate::gray_glyph::GlyphCache;
 use crate::source::{Block, Source};
+use crate::svg_image;
 use crate::{Line, Result, Settings, image_reader};
 use image::{DynamicImage, GrayImage, Luma, imageops::FilterType};
 use parley::{
@@ -365,6 +366,20 @@ fn load_image(
     budget: &mut usize,
 ) -> Option<(String, GrayImage)> {
     let path = Book::resolve(chapter_href, image_href).ok()?;
+    if svg_image::is_package_svg(&path) {
+        if image_href
+            .split_once('#')
+            .is_some_and(|(_, fragment)| !fragment.is_empty())
+        {
+            return None;
+        }
+        let bytes = book
+            .resource_limited(&path, svg_image::MAX_SVG_BYTES)
+            .ok()?;
+        let image = svg_image::rasterize(&bytes, width, height, *budget).ok()?;
+        *budget -= image.width() as usize * image.height() as usize;
+        return Some((path, image));
+    }
     let bytes = book.resource(&path).ok()?;
     let (original_w, original_h) = image_reader(&bytes).ok()?.into_dimensions().ok()?;
     if original_w == 0 || original_h == 0 || original_w > 2048 || original_h > 2048 {
@@ -379,7 +394,15 @@ fn load_image(
 }
 
 pub(crate) fn original_illustration(bytes: &[u8]) -> Result<ImagePage> {
-    let gray = grayscale_image(image_reader(bytes)?.decode()?);
+    let gray = match image_reader(bytes) {
+        Ok(reader) => grayscale_image(reader.decode()?),
+        Err(_) => svg_image::rasterize(
+            bytes,
+            svg_image::MAX_SVG_SIDE,
+            svg_image::MAX_SVG_SIDE,
+            svg_image::MAX_SVG_PIXELS,
+        )?,
+    };
     ImagePage::from_grayscale(gray.width(), gray.height(), gray.into_raw())
 }
 
@@ -419,6 +442,74 @@ impl Illustration {
 mod tests {
     use super::*;
     use crate::{Engine, Probe, Renderer};
+    use std::fs::{self, File, OpenOptions};
+    use std::io::{Read, Write};
+    use std::path::PathBuf;
+
+    struct TemporaryEpub(PathBuf);
+
+    impl Drop for TemporaryEpub {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.0);
+        }
+    }
+
+    #[test]
+    fn opens_a_linked_svg_with_the_existing_illustration_target() {
+        let path =
+            std::env::temp_dir().join(format!("reader-linked-svg-{}.epub", std::process::id()));
+        let file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        let publication = TemporaryEpub(path);
+        let original = File::open(crate::test_fixture("field-notes-epub3.epub")).unwrap();
+        let mut archive = zip::ZipArchive::new(original).unwrap();
+        let mut changed = zip::ZipWriter::new(file);
+        for index in 0..archive.len() {
+            let mut entry = archive.by_index(index).unwrap();
+            let name = entry.name().replace("shore.png", "shore.svg");
+            let options =
+                zip::write::SimpleFileOptions::default().compression_method(entry.compression());
+            changed.start_file(&name, options).unwrap();
+            match name.as_str() {
+                "EPUB/images/shore.svg" => changed.write_all(br##"<svg xmlns="http://www.w3.org/2000/svg" width="80" height="40" viewBox="0 0 80 40">
+                    <defs><linearGradient id="coast"><stop offset="0" stop-color="black"/><stop offset="1" stop-color="white"/></linearGradient></defs>
+                    <rect width="80" height="40" fill="url(#coast)"/>
+                </svg>"##).unwrap(),
+                "EPUB/chapters/shore.xhtml" | "EPUB/package.opf" => {
+                    let mut text = String::new();
+                    entry.read_to_string(&mut text).unwrap();
+                    let text = text.replace("shore.png", "shore.svg").replace("image/png", "image/svg+xml");
+                    changed.write_all(text.as_bytes()).unwrap();
+                }
+                _ => { std::io::copy(&mut entry, &mut changed).unwrap(); }
+            }
+        }
+        changed.finish().unwrap();
+
+        let fonts = [crate::test_fixture("fonts/Silkscreen-Regular.ttf")];
+        let probe = Probe::open(
+            &publication.0,
+            Engine::Parley,
+            &fonts,
+            Settings::default(),
+            0,
+        )
+        .unwrap();
+        let Renderer::Parley(layout) = &probe.renderer else {
+            unreachable!()
+        };
+        let package = "EPUB/images/shore.svg";
+        assert!(layout.has_illustration(package));
+        let image = &layout.illustrations[0].pixels;
+        assert_eq!(image.dimensions(), (80, 40));
+        assert!(image.get_pixel(4, 4).0[0] < 32);
+        assert!(image.get_pixel(76, 4).0[0] > 224);
+        let original = probe.open_illustration(&publication.0, package).unwrap();
+        assert_eq!(original.page_size(), (80.0, 40.0));
+    }
 
     #[test]
     fn opens_full_local_illustration_at_its_drawn_page_and_scroll_coordinates() {

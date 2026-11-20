@@ -206,6 +206,10 @@ pub struct FixedPreferences {
     pub offset_y: f32,
     pub right_to_left: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub epub_spread: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub epub_right_to_left: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub crop: Option<PdfTextRect>,
 }
 
@@ -237,12 +241,8 @@ impl<'de> Deserialize<'de> for FixedPreferences {
                 .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0)
         };
-        let switch = |key| {
-            values
-                .get(key)
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false)
-        };
+        let optional_switch = |key| values.get(key).and_then(serde_json::Value::as_bool);
+        let switch = |key| optional_switch(key).unwrap_or(false);
         let offset = |key| {
             normalized_offset(
                 values
@@ -263,6 +263,8 @@ impl<'de> Deserialize<'de> for FixedPreferences {
             offset_x: offset("offset_x"),
             offset_y: offset("offset_y"),
             right_to_left: switch("right_to_left"),
+            epub_spread: optional_switch("epub_spread"),
+            epub_right_to_left: optional_switch("epub_right_to_left"),
             crop: values
                 .get("crop")
                 .and_then(|value| serde_json::from_value(value.clone()).ok())
@@ -1830,6 +1832,8 @@ mod tests {
                 offset_x: MAX_FIXED_OFFSET,
                 offset_y: 0.0,
                 right_to_left: true,
+                epub_spread: None,
+                epub_right_to_left: None,
                 crop: None,
             }
         );

@@ -11,7 +11,7 @@ use crate::Result;
 use crate::comic::{Comic, ImagePage};
 use crate::djvu::{Djvu, MAX_DJVU_BYTES};
 use crate::fixed::{MAX_PDF_BYTES, Pdf, PdfLinkTarget, PdfOutlineItem, RenderRequest};
-use crate::fixed_epub::FixedEpub;
+use crate::fixed_epub::{FixedEpub, SpreadPlan};
 use crate::fixed_text::{PdfPageText, PdfTextRect};
 use crate::library::{DocumentFormat, FixedPreferences as View};
 use crate::session::{
@@ -38,6 +38,7 @@ pub(crate) struct FixedReading {
     view: View,
     frame: GrayImage,
     visible: Vec<VisiblePage>,
+    epub_spreads: Option<EpubSpreads>,
     turns: PageTurns,
     pending_scroll: (f32, f32),
     outline: Vec<PdfOutlineItem>,
@@ -56,6 +57,12 @@ struct VisiblePage {
     size: (f32, f32),
     rows: Range<u32>,
     request: RenderRequest,
+}
+
+struct EpubSpreads {
+    plan: SpreadPlan,
+    available: bool,
+    right_to_left: bool,
 }
 
 enum Fit {
@@ -159,13 +166,17 @@ impl FixedReading {
             FixedDocument::Pdf(pdf) => pdf.outline(),
             _ => Vec::new(),
         };
-        let (page, view, frame, visible) = source.presentation(page, preferences.normalized())?;
+        let view = preferences.normalized();
+        let epub_spreads = source.epub_spreads(view);
+        let (page, view, frame, visible) =
+            source.presentation(page, view, epub_spreads.as_ref())?;
         Ok(Self {
             source,
             page,
             view,
             frame,
             visible,
+            epub_spreads,
             turns: PageTurns::new(Instant::now()),
             pending_scroll: (0.0, 0.0),
             outline,
@@ -220,11 +231,15 @@ impl FixedReading {
     }
 
     pub(crate) fn visible_pages(&self) -> impl Iterator<Item = usize> + '_ {
+        let fixed = if self.visible.is_empty() {
+            self.spread_pages()
+        } else {
+            [None, None]
+        };
         self.visible
             .iter()
             .map(|page| page.index)
-            .chain(self.visible.is_empty().then_some(self.page))
-            .chain(self.spread_partner())
+            .chain(fixed.into_iter().flatten())
     }
 
     /// Render one complete page for the overview in the current orientation.
@@ -343,11 +358,13 @@ impl FixedReading {
 
     pub(crate) fn reverse_direction(&mut self) -> Result<()> {
         let right_to_left = !self.view.right_to_left;
-        if self.spread_partner().is_some() {
+        let epub_right_to_left = self.epub_spreads.as_ref().map(|_| right_to_left);
+        if epub_right_to_left.is_some() || self.spread_pages()[1].is_some() {
             self.present(
                 self.page,
                 View {
                     right_to_left,
+                    epub_right_to_left,
                     ..self.view
                 },
             )?;
@@ -359,7 +376,10 @@ impl FixedReading {
     }
 
     pub(crate) fn supports_spreads(&self) -> bool {
-        self.source.supports_spreads()
+        self.epub_spreads.as_ref().map_or_else(
+            || self.source.supports_comic_spreads(),
+            |epub| epub.available,
+        )
     }
 
     pub(crate) fn is_spread(&self) -> bool {
@@ -368,13 +388,14 @@ impl FixedReading {
 
     pub(crate) fn set_spread(&mut self, enabled: bool) -> Result<()> {
         if enabled && !self.supports_spreads() {
-            return Err("Spreads are available for comics with two or more pages".into());
+            return Err("Spreads are unavailable for this document".into());
         }
         if self.is_spread() != enabled {
             self.present(
                 self.page,
                 View {
                     spread: enabled,
+                    epub_spread: self.epub_spreads.as_ref().map(|_| enabled),
                     ..self.view
                 },
             )?;
@@ -383,10 +404,20 @@ impl FixedReading {
         Ok(())
     }
 
-    fn spread_partner(&self) -> Option<usize> {
-        self.is_spread()
-            .then_some(self.page)
-            .and_then(|page| comic_spread_partner(page, self.count()))
+    fn spread_pages(&self) -> [Option<usize>; 2] {
+        if self.is_spread() {
+            if let Some(epub) = &self.epub_spreads {
+                if let Some(spread) = epub.plan.group(self.page) {
+                    return spread.pages();
+                }
+            } else {
+                return [
+                    Some(self.page),
+                    comic_spread_partner(self.page, self.count()),
+                ];
+            }
+        }
+        [Some(self.page), None]
     }
 
     pub(crate) fn supports_crop(&self) -> bool {
@@ -710,6 +741,8 @@ impl FixedReading {
                     0.0
                 },
                 right_to_left: self.view.right_to_left,
+                epub_spread: self.view.epub_spread,
+                epub_right_to_left: self.view.epub_right_to_left,
                 crop: self.view.crop,
                 ..View::default()
             },
@@ -763,7 +796,10 @@ impl FixedReading {
             .into_iter()
             .fold(self.page, |page, step| {
                 if self.is_spread() {
-                    comic_spread_step(page, count, step)
+                    self.epub_spreads.as_ref().map_or_else(
+                        || comic_spread_step(page, count, step),
+                        |epub| epub.plan.step(page, step),
+                    )
                 } else {
                     page.saturating_add_signed(step).min(count - 1)
                 }
@@ -858,7 +894,18 @@ impl FixedReading {
     }
 
     fn present(&mut self, page: usize, view: View) -> Result<()> {
-        let (page, view, frame, visible) = self.source.presentation(page, view)?;
+        let new_epub_spreads = if view.epub_spread != self.view.epub_spread
+            || view.epub_right_to_left != self.view.epub_right_to_left
+        {
+            self.source.epub_spreads(view)
+        } else {
+            None
+        };
+        let spreads = new_epub_spreads.as_ref().or(self.epub_spreads.as_ref());
+        let (page, view, frame, visible) = self.source.presentation(page, view, spreads)?;
+        if new_epub_spreads.is_some() {
+            self.epub_spreads = new_epub_spreads;
+        }
         self.frame = frame;
         self.visible = visible;
         self.page = page;
@@ -921,9 +968,11 @@ impl FixedReading {
         let physical = self.page + 1;
         let zoom = (ZOOM[self.view.zoom] * 100.0) as u32;
         let label = if self.is_spread() {
-            match self.spread_partner() {
-                Some(partner) => format!("Pages {physical}–{} of {}", partner + 1, self.count()),
-                None => format!("Page {physical} of {}", self.count()),
+            match self.spread_pages() {
+                [Some(first), Some(last)] => {
+                    format!("Pages {}–{} of {}", first + 1, last + 1, self.count())
+                }
+                _ => format!("Page {physical} of {}", self.count()),
             }
         } else {
             match self.page_label(self.page) {
@@ -957,8 +1006,28 @@ impl FixedDocument {
         }
     }
 
-    fn supports_spreads(&self) -> bool {
+    fn supports_comic_spreads(&self) -> bool {
         matches!(self, Self::Comic(comic) if comic.page_count() > 1)
+    }
+
+    fn epub_spreads(&self, view: View) -> Option<EpubSpreads> {
+        let Self::Epub(book) = self else { return None };
+        // Legacy explicit RTL selections still apply. An unset override otherwise follows the book.
+        let right_to_left = view
+            .epub_right_to_left
+            .unwrap_or_else(|| view.right_to_left || book.right_to_left());
+        let landscape = WIDTH > PAGE_HEIGHT;
+        let plan = book.spread_plan(view.epub_spread, right_to_left, landscape);
+        let available = plan.has_facing()
+            || (view.epub_spread != Some(true)
+                && book
+                    .spread_plan(Some(true), right_to_left, landscape)
+                    .has_facing());
+        Some(EpubSpreads {
+            plan,
+            available,
+            right_to_left,
+        })
     }
 
     fn supports_scan_contrast(&self) -> bool {
@@ -969,8 +1038,14 @@ impl FixedDocument {
         &self,
         page: usize,
         mut view: View,
+        epub_spreads: Option<&EpubSpreads>,
     ) -> Result<(usize, View, GrayImage, Vec<VisiblePage>)> {
-        view.spread &= self.supports_spreads();
+        if let Some(epub) = epub_spreads {
+            view.spread = epub.plan.has_facing();
+            view.right_to_left = epub.right_to_left;
+        } else {
+            view.spread &= self.supports_comic_spreads();
+        }
         view.scan_contrast &= self.supports_scan_contrast();
         if view.continuous
             && view.width_fit
@@ -979,18 +1054,30 @@ impl FixedDocument {
             return continuous_frame(pdf, page, view);
         }
         view.continuous = false;
-        let page = if view.spread {
+        let page = if view.spread && epub_spreads.is_none() {
             comic_spread_start(page)
         } else {
             page
         };
-        let frame = self.frame(page, &mut view)?;
+        let frame = self.frame(page, &mut view, epub_spreads)?;
         Ok((page, view, frame, Vec::new()))
     }
 
-    fn frame(&self, page: usize, view: &mut View) -> Result<GrayImage> {
+    fn frame(
+        &self,
+        page: usize,
+        view: &mut View,
+        epub_spreads: Option<&EpubSpreads>,
+    ) -> Result<GrayImage> {
         let pixels = match self {
             Self::Epub(book) => with_storage(|| {
+                if view.spread
+                    && let Some(spread) = epub_spreads.and_then(|epub| epub.plan.group(page))
+                {
+                    return book
+                        .compose_spread(spread, WIDTH, PAGE_HEIGHT, view.turns)
+                        .map_err(io::Error::other);
+                }
                 let image = book.decode_page(page).map_err(io::Error::other)?;
                 image
                     .render(viewport(image.page_size(), view))
@@ -1318,6 +1405,7 @@ fn viewport(size: (f32, f32), view: &mut View) -> RenderRequest {
 mod tests {
     use super::*;
     use std::io::Write;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct ComicFixture(PathBuf);
 
@@ -1343,6 +1431,97 @@ mod tests {
     }
 
     impl Drop for ComicFixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.0);
+        }
+    }
+
+    struct EpubFixture(PathBuf);
+
+    impl EpubFixture {
+        fn striped(spread: &str) -> Self {
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "reader-fixed-spread-{}-{}.epub",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            let file = File::options()
+                .create_new(true)
+                .write(true)
+                .open(&path)
+                .unwrap();
+            let fixture = Self(path);
+            let mut archive = zip::ZipWriter::new(file);
+            let mut add = |name: &str, data: &str| {
+                archive
+                    .start_file(
+                        name,
+                        zip::write::SimpleFileOptions::default()
+                            .compression_method(zip::CompressionMethod::Stored),
+                    )
+                    .unwrap();
+                archive.write_all(data.as_bytes()).unwrap();
+            };
+            add("mimetype", "application/epub+zip");
+            add(
+                "META-INF/container.xml",
+                r#"<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">
+                    <rootfiles><rootfile full-path="book.opf" media-type="application/oebps-package+xml"/></rootfiles>
+                   </container>"#,
+            );
+            let mut manifest = String::new();
+            let mut spine = String::new();
+            for (index, (properties, tone)) in [
+                ("page-spread-left", 32),
+                ("rendition:page-spread-right", 64),
+                ("page-spread-left", 128),
+                ("rendition:page-spread-center", 96),
+                ("", 160),
+                ("", 192),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                manifest.push_str(&format!(
+                    r#"<item id="p{index}" href="p{index}.xhtml" media-type="application/xhtml+xml"/>"#,
+                ));
+                spine.push_str(&format!(
+                    r#"<itemref idref="p{index}" properties="{properties}"/>"#
+                ));
+                add(
+                    &format!("p{index}.xhtml"),
+                    &format!(
+                        r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Page</title>
+                        <meta name="viewport" content="width=80,height=120"/></head><body>
+                        <div style="position:absolute;left:0;top:0;width:80px;height:120px;background:rgb({tone},{tone},{tone})"/>
+                        </body></html>"#,
+                    ),
+                );
+            }
+            add(
+                "book.opf",
+                &format!(
+                    r#"<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+                    <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+                    <dc:title>Spread Tests</dc:title><meta property="rendition:layout">pre-paginated</meta>
+                    <meta property="rendition:spread">{spread}</meta></metadata>
+                    <manifest>{manifest}</manifest><spine page-progression-direction="rtl">{spine}</spine></package>"#,
+                ),
+            );
+            archive.finish().unwrap();
+            fixture
+        }
+
+        fn open(&self, page: usize, view: View) -> FixedReading {
+            let fonts = [crate::test_fixture("fonts/Silkscreen-Regular.ttf")];
+            FixedReading::open(DocumentFormat::Epub, &self.0, page, &fonts, view, None)
+                .unwrap()
+                .unwrap()
+        }
+    }
+
+    impl Drop for EpubFixture {
         fn drop(&mut self) {
             let _ = fs::remove_file(&self.0);
         }
@@ -1401,20 +1580,7 @@ mod tests {
     }
 
     fn reading(pdf: Pdf, view: View) -> FixedReading {
-        let source = FixedDocument::Pdf(pdf);
-        let (page, view, frame, visible) = source.presentation(0, view).unwrap();
-        FixedReading {
-            source,
-            page,
-            view,
-            frame,
-            visible,
-            turns: PageTurns::new(Instant::now()),
-            pending_scroll: (0.0, 0.0),
-            outline: Vec::new(),
-            ocr_path: None,
-            last_ocr: None,
-        }
+        FixedReading::with_source(FixedDocument::Pdf(pdf), 0, view).unwrap()
     }
 
     #[test]
@@ -1698,5 +1864,78 @@ mod tests {
         assert_eq!(reader.visible_pages().collect::<Vec<_>>(), [1]);
         assert!(turn(&mut reader, Input::PageForward));
         assert_eq!(reader.visible_pages().collect::<Vec<_>>(), [2]);
+    }
+
+    #[test]
+    fn epub_spreads_honor_physical_slots_and_keep_a_selected_spine_page() {
+        let fixture = EpubFixture::striped("both");
+        let mut reader = fixture.open(0, View::default());
+        let pixel = |reader: &FixedReading, x: u32| {
+            reader.frame.pixels[(PAGE_HEIGHT / 2 * WIDTH + x) as usize]
+        };
+        assert!(reader.supports_spreads());
+        assert!(reader.is_spread());
+        assert!(reader.preferences().right_to_left);
+        assert_eq!(reader.visible_pages().collect::<Vec<_>>(), [0]);
+        assert_eq!(pixel(&reader, WIDTH / 4), 32);
+        assert_eq!(pixel(&reader, WIDTH * 3 / 4), 255);
+
+        reader.jump(2).unwrap();
+        assert_eq!(reader.page(), 2);
+        assert_eq!(reader.visible_pages().collect::<Vec<_>>(), [1, 2]);
+        assert_eq!(pixel(&reader, WIDTH / 2 - 1), 128);
+        assert_eq!(pixel(&reader, WIDTH / 2), 64);
+        let saved: View =
+            serde_json::from_slice(&serde_json::to_vec(&reader.preferences()).unwrap()).unwrap();
+        let mut reopened = fixture.open(reader.page(), saved);
+        assert_eq!(reopened.page(), 2);
+        assert_eq!(reopened.visible_pages().collect::<Vec<_>>(), [1, 2]);
+
+        reopened.set_spread(false).unwrap();
+        assert_eq!(reopened.page(), 2);
+        assert_eq!(reopened.visible_pages().collect::<Vec<_>>(), [2]);
+        reopened.fit_height().unwrap();
+        assert_eq!(reopened.preferences().epub_spread, Some(false));
+        reopened.set_spread(true).unwrap();
+        assert_eq!(reopened.page(), 2);
+        assert_eq!(reopened.visible_pages().collect::<Vec<_>>(), [1, 2]);
+        reopened.turns.next_refresh = Instant::now();
+        assert!(reopened.input(Input::PageForward).unwrap());
+        assert_eq!(reopened.page(), 3);
+        assert_eq!(reopened.visible_pages().collect::<Vec<_>>(), [3]);
+        assert_eq!(pixel(&reopened, WIDTH / 2), 96);
+
+        reopened.reverse_direction().unwrap();
+        assert_eq!(reopened.preferences().epub_right_to_left, Some(false));
+        assert!(!reopened.preferences().right_to_left);
+        let preferences: View =
+            serde_json::from_slice(&serde_json::to_vec(&reopened.preferences()).unwrap()).unwrap();
+        let mut reopened = fixture.open(reopened.page(), preferences);
+        assert!(!reopened.preferences().right_to_left);
+        assert_eq!(reopened.preferences().epub_spread, Some(true));
+        assert_eq!(reopened.page(), 3);
+
+        reopened.jump(2).unwrap();
+        assert_eq!(reopened.page(), 2);
+        assert_eq!(pixel(&reopened, WIDTH / 2 - 1), 128);
+        assert_eq!(pixel(&reopened, WIDTH / 2), 64);
+        reopened.jump(5).unwrap();
+        assert_eq!(reopened.visible_pages().collect::<Vec<_>>(), [4, 5]);
+        assert_eq!(pixel(&reopened, WIDTH / 2 - 1), 160);
+        assert_eq!(pixel(&reopened, WIDTH / 2), 192);
+        reopened.turns.next_refresh = Instant::now();
+        assert!(!reopened.input(Input::PageForward).unwrap());
+        assert_eq!(reopened.page(), 5);
+    }
+
+    #[test]
+    fn epub_spread_none_keeps_all_spine_items_centered() {
+        let fixture = EpubFixture::striped("none");
+        let mut reader = fixture.open(1, View::default());
+        assert_eq!(reader.page(), 1);
+        assert_eq!(reader.visible_pages().collect::<Vec<_>>(), [1]);
+        assert!(!reader.supports_spreads());
+        assert!(!reader.is_spread());
+        assert!(reader.set_spread(true).is_err());
     }
 }

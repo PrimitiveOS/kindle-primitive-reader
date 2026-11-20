@@ -41,6 +41,7 @@ pub mod selection;
 #[cfg(feature = "kindle")]
 mod session;
 mod source;
+mod svg_image;
 mod tcr;
 #[cfg(feature = "kindle")]
 mod text_flow;
@@ -362,7 +363,11 @@ impl Probe {
         if book.revision() != self.book || book.chapter_index(&self.chapter).is_none() {
             return Err("This book changed after it was opened".into());
         }
-        let bytes = book.resource(package_path)?;
+        let bytes = if svg_image::is_package_svg(package_path) {
+            book.resource_limited(package_path, svg_image::MAX_SVG_BYTES)?
+        } else {
+            book.resource(package_path)?
+        };
         drop(book);
         parley_layout::original_illustration(&bytes)
     }

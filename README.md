@@ -7,9 +7,9 @@ Kindle. [EPUB feasibility results](docs/epub-probe-results.md)
 
 ## Preview
 
-| Reading | Reading bars |
-| --- | --- |
-| <img src="docs/screenshots/reading.png" width="320" alt="Reader displaying an EPUB with a compact Done control"> | <img src="docs/screenshots/reading-controls.png" width="320" alt="The same book with Library and Exit at the top and reading tools along the bottom"> |
+| Reading | Reading bars | Dictionary |
+| --- | --- | --- |
+| <img src="docs/screenshots/reading.png" width="260" alt="Reader displaying an EPUB with a compact Done control"> | <img src="docs/screenshots/reading-controls.png" width="260" alt="The same book with Library and Exit at the top and reading tools along the bottom"> | <img src="docs/screenshots/dictionary.png" width="260" alt="A compact dictionary definition displayed over the reading page"> |
 
 These captures use Reader's Kindle interface in the desktop simulator.
 
@@ -27,6 +27,8 @@ These captures use Reader's Kindle interface in the desktop simulator.
   or fixed-page document. Open a preview and return with Previous location.
 - Hold a word to select it, then tap another word to extend the selection.
   Add a highlight or note, or look up a word in an installed offline dictionary.
+  Definitions appear over the current page and can expand for longer entries.
+  Choose a preferred installed dictionary under Controls.
 - Hold a local EPUB illustration to open it for zoom and pan. Done returns
   to the same passage.
 - Search with or without case matching. Title and filename search also covers
@@ -45,8 +47,8 @@ These captures use Reader's Kindle interface in the desktop simulator.
 
 | Format | Current implementation |
 | --- | --- |
-| EPUB 2 and EPUB 3 reflow | Publisher navigation, local links, saved text positions, per-book typography, bookmarks, search and notes |
-| Fixed-layout EPUB 3 | Static XHTML pages, contents, zoom and rotation |
+| EPUB 2 and EPUB 3 reflow | Publisher navigation, local links, saved text positions, per-book typography, bookmarks, search and notes. Linked static SVG geometry and gradients render within image limits. |
+| Fixed-layout EPUB 3 | Static XHTML pages, contents, zoom and rotation. Publisher page progression and facing-page hints control spreads. |
 | PDF | Page turns or continuous scrolling, printed page labels, local outlines and links, bookmarks, passwords, page, width and height fit, crop, zoom, pan and rotation. Embedded text supports search, selection, highlights and notes. |
 | DjVu | Fixed pages, crop, and embedded text with search and annotations |
 | CBZ, CBT, JPEG, PNG, BMP, GIF and portable anymaps | Natural comic page order, single pages or two-page spreads, and selectable reading direction. CBT accepts standard uncompressed USTAR entries. Animated GIF shows its first frame. Portable anymaps include PBM, PGM, PPM and PAM. |
