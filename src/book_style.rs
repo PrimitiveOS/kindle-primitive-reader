@@ -87,6 +87,7 @@ impl Default for Style {
 
 #[derive(Default)]
 pub(crate) struct BookStyle {
+    author_inline: bool,
     rules: Vec<Rule>,
     families: HashMap<String, Arc<str>>,
     font_paths: HashSet<String>,
@@ -101,7 +102,10 @@ impl BookStyle {
         sheets: &[Stylesheet],
         fonts: &mut FontContext,
     ) -> Self {
-        let mut styled = Self::default();
+        let mut styled = Self {
+            author_inline: true,
+            ..Self::default()
+        };
         styled.families.extend(
             fonts
                 .collection
@@ -163,7 +167,7 @@ impl BookStyle {
             let inline = element
                 .inline_style
                 .as_deref()
-                .filter(|text| text.len() <= MAX_INLINE_BYTES)
+                .filter(|text| self.author_inline && text.len() <= MAX_INLINE_BYTES)
                 .map_or_else(Vec::new, |text| declarations(&mut Parser::new(text)));
             let mut winners = Winners::default();
             for rule in &self.rules {
@@ -890,5 +894,30 @@ mod tests {
                 </head><body><p class="notice">The last matching sheet wins.</p></body></html>"##,
         );
         assert_eq!(styles[source.blocks[0].element].background, Some(229));
+    }
+
+    #[test]
+    fn publisher_styles_off_retains_semantic_heading_bold_and_italic() {
+        let (source, published) = computed(
+            r##"<html><head><style>strong, em {font-style: normal; font-weight: normal}</style></head>
+                <body><h1 style="font-size: 100%; font-weight: normal">Title</h1>
+                <p style="background: #d0d0d0"><strong>Bold</strong> <em>Italic</em></p></body></html>"##,
+        );
+        let plain = BookStyle::default().compute(&source.elements);
+        let element = |tag| {
+            source
+                .elements
+                .iter()
+                .position(|element| element.tag == tag)
+                .unwrap()
+        };
+        assert_eq!(published[element("h1")].size_scale, 1.0);
+        assert_eq!(plain[element("h1")].size_scale, 1.4);
+        assert_eq!(published[element("strong")].font_weight, FontWeight::NORMAL);
+        assert_eq!(plain[element("strong")].font_weight, FontWeight::BOLD);
+        assert_eq!(published[element("em")].font_style, FontStyle::Normal);
+        assert_eq!(plain[element("em")].font_style, FontStyle::Italic);
+        assert_eq!(published[element("p")].background, Some(208));
+        assert_eq!(plain[element("p")].background, None);
     }
 }

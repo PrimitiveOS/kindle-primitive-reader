@@ -5,7 +5,7 @@
 
 use std::ops::Range;
 
-use harfrust::{Direction, FontRef, ShapeOptions, ShaperData, UnicodeBuffer};
+use harfrust::{Direction, Feature, FontRef, ShapeOptions, ShaperData, Tag, UnicodeBuffer};
 use icu_properties::{
     CodePointMapData, CodePointSetData,
     props::{DefaultIgnorableCodePoint, GeneralCategory, Script, VerticalOrientation},
@@ -191,7 +191,7 @@ impl VerticalChapter {
             columns_per_page,
             pitch,
             ruby_gutter,
-            cache: GlyphCache::default(),
+            cache: GlyphCache::with_hinting(settings.font_hinting),
         };
         let mut lines = Vec::new();
         for block in source.blocks.iter().filter(|block| !block.text.is_empty()) {
@@ -207,7 +207,13 @@ impl VerticalChapter {
             };
             let runs = font_runs(text, styles, &mut fonts, &mut reader.faces, settings)?;
             let limit = MAX_GLYPHS - reader.glyphs.len();
-            let mut shaped = shape_block(&block.text, &runs, &reader.faces, limit)?;
+            let mut shaped = shape_block(
+                &block.text,
+                &runs,
+                &reader.faces,
+                limit,
+                settings.font_kerning,
+            )?;
             let mut overlays =
                 reader.ruby_overlays(block, &mut shaped, styles, &mut fonts, settings, limit)?;
             reader.place_block(block, &mut shaped, &mut overlays, &mut lines, settings)?;
@@ -363,7 +369,13 @@ impl VerticalChapter {
                 scale: RUBY_SCALE,
             };
             let runs = font_runs(text, styles, fonts, &mut self.faces, settings)?;
-            let mut annotation = shape_block(&ruby.annotation, &runs, &self.faces, remaining)?;
+            let mut annotation = shape_block(
+                &ruby.annotation,
+                &runs,
+                &self.faces,
+                remaining,
+                settings.font_kerning,
+            )?;
             remaining -= annotation.glyphs.len();
             let height = annotation
                 .clusters
@@ -730,8 +742,18 @@ fn find_face(
     Ok(index)
 }
 
-fn shape_block(text: &str, runs: &[Run], faces: &[Face], limit: usize) -> Result<Shaped> {
+fn shape_block(
+    text: &str,
+    runs: &[Run],
+    faces: &[Face],
+    limit: usize,
+    kerning: bool,
+) -> Result<Shaped> {
     let mut shaped = Shaped::default();
+    let disable_kerning = [
+        Feature::new(Tag::new(b"kern"), 0, ..),
+        Feature::new(Tag::new(b"vkrn"), 0, ..),
+    ];
     for run in runs {
         let face = &faces[run.face];
         let font = FontRef::from_index(face.font.data.as_ref(), face.font.index)?;
@@ -750,7 +772,13 @@ fn shape_block(text: &str, runs: &[Run], faces: &[Face], limit: usize) -> Result
             buffer.set_language(language);
         }
         buffer.guess_segment_properties();
-        let output = shaper.shape(buffer, ShapeOptions::new());
+        let options = ShapeOptions::new();
+        let options = if kerning {
+            options
+        } else {
+            options.features(&disable_kerning)
+        };
+        let output = shaper.shape(buffer, options);
         if output.glyph_infos().len() > limit - shaped.glyphs.len() {
             return Err("The chapter exceeds the vertical glyph limit".into());
         }

@@ -107,6 +107,16 @@ pub enum TextAlignment {
     Justify,
 }
 
+/// Grid fitting applied to the native grayscale glyph renderer.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FontHinting {
+    #[default]
+    Off,
+    Native,
+    Auto,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Settings {
     pub width: u32,
@@ -124,6 +134,11 @@ pub struct Settings {
     pub text_contrast: bool,
     pub override_fonts: bool,
     pub disable_soft_hyphens: bool,
+    /// Load author stylesheets and apply inline CSS during native reflow.
+    pub publisher_styles: bool,
+    /// Use each font's normal OpenType kerning when shaping text.
+    pub font_kerning: bool,
+    pub font_hinting: FontHinting,
 }
 
 impl Default for Settings {
@@ -144,6 +159,9 @@ impl Default for Settings {
             text_contrast: false,
             override_fonts: false,
             disable_soft_hyphens: false,
+            publisher_styles: true,
+            font_kerning: true,
+            font_hinting: FontHinting::Off,
         }
     }
 }
@@ -341,6 +359,13 @@ impl Probe {
         if book.is_fixed_layout() {
             return Err("Open this fixed-layout EPUB in Reader".into());
         }
+        if engine == Engine::Blitz
+            && (!settings.publisher_styles
+                || !settings.font_kerning
+                || settings.font_hinting != FontHinting::Off)
+        {
+            return Err("Publisher style, kerning and hinting controls require Parley".into());
+        }
         let entry = book
             .chapters
             .get(chapter)
@@ -364,9 +389,18 @@ impl Probe {
                 (Renderer::Blitz(Box::new(layout)), lines, extent)
             }
             Engine::Parley => {
-                let styles =
-                    book_style::BookStyle::load(&mut book, &href, &source.stylesheets, &mut fonts)
-                        .compute(&source.elements);
+                let author = settings
+                    .publisher_styles
+                    .then(|| {
+                        book_style::BookStyle::load(
+                            &mut book,
+                            &href,
+                            &source.stylesheets,
+                            &mut fonts,
+                        )
+                    })
+                    .unwrap_or_default();
+                let styles = author.compute(&source.elements);
                 let mut text = source
                     .blocks
                     .iter()

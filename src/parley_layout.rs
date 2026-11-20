@@ -12,6 +12,7 @@ use parley::{
     Affinity, Alignment, AlignmentOptions, BoundingBox, Cursor, FontContext, FontFamily,
     FontWeight, GenericFamily, Language, Layout, LayoutContext, LineBreak, LineHeight,
     OverflowWrap, PositionedLayoutItem, Selection, SoftHyphenAction, StyleProperty, WordBreak,
+    setting::{FontFeature, Tag},
 };
 
 const MAX_TEXT_BYTES: usize = 512 * 1024;
@@ -20,6 +21,7 @@ const MAX_HEIGHT: f32 = 2_000_000.0;
 const MAX_IMAGES: usize = 48;
 const MAX_IMAGE_PIXELS: usize = 8 * 1024 * 1024;
 const MAX_RUBY_BASE_BYTES: usize = 192;
+const DISABLE_KERNING: [FontFeature; 1] = [FontFeature::new(Tag::new(b"kern"), 0)];
 
 struct Paragraph {
     key: usize,
@@ -81,7 +83,7 @@ impl ParleyChapter {
         let mut chapter = Self {
             paragraphs: Vec::new(),
             illustrations: Vec::new(),
-            glyphs: GlyphCache::default(),
+            glyphs: GlyphCache::with_hinting(settings.font_hinting),
         };
         let mut context = LayoutContext::new();
         let mut lines = Vec::new();
@@ -444,6 +446,9 @@ fn make_annotation(
     settings: Settings,
 ) -> Layout<()> {
     let mut builder = context.ranged_builder(fonts, text, 1.0, true);
+    if !settings.font_kerning {
+        builder.push_default(StyleProperty::FontFeatures((&DISABLE_KERNING).into()));
+    }
     let family: FontFamily<'_> = if settings.override_fonts {
         GenericFamily::Serif.into()
     } else {
@@ -471,6 +476,9 @@ fn make_paragraph(
     let style = &styles[block.element];
     let language = block.language;
     let mut builder = context.ranged_builder(fonts, &block.text, 1.0, true);
+    if !settings.font_kerning {
+        builder.push_default(StyleProperty::FontFeatures((&DISABLE_KERNING).into()));
+    }
     let soft_hyphen = |offset| {
         let index = block
             .styled_text

@@ -5,8 +5,12 @@ use parley::{FontData, GlyphRun};
 use skrifa::{
     FontRef, GlyphId, MetadataProvider,
     instance::{NormalizedCoord, Size},
-    outline::{DrawSettings, OutlinePen},
+    outline::{
+        DrawSettings, Engine, HintingInstance, HintingOptions, OutlinePen, SmoothMode, Target,
+    },
 };
+
+use crate::FontHinting;
 
 const CACHE_BYTES: usize = 2 * 1024 * 1024;
 const ENTRY_OVERHEAD: usize = 128;
@@ -51,12 +55,20 @@ struct Mask {
 /// Horizontal positions retain quarter-pixel phases. Baselines snap to pixels.
 #[derive(Default)]
 pub(crate) struct GlyphCache {
+    hinting: FontHinting,
     faces: HashMap<FaceKey, HashMap<(u32, u8), Mask>>,
     bytes: usize,
     full: bool,
 }
 
 impl GlyphCache {
+    pub(crate) fn with_hinting(hinting: FontHinting) -> Self {
+        Self {
+            hinting,
+            ..Self::default()
+        }
+    }
+
     pub(crate) fn draw_run(
         &mut self,
         page: &mut [u8],
@@ -149,6 +161,9 @@ impl GlyphCache {
 
         let face = self.faces.entry(key).or_default();
         let mut scaled_variations = None;
+        // Reuse one hinting instance for misses in this run, without keeping additional
+        // font-sized allocations in the bound on cached masks.
+        let mut hinter = None;
         let reach = MAX_OUTLINE_OFFSET + MAX_EDGE as f32;
         let x_bounds = -reach..=stride as f32 + reach;
         let y_bounds = -reach..=(page.len() / stride) as f32 + reach;
@@ -172,7 +187,10 @@ impl GlyphCache {
                             .map(|&coord| NormalizedCoord::from_bits(coord))
                             .collect::<Vec<_>>()
                     });
-                    let mask = rasterize(&style, glyph, phase, variations).unwrap_or_default();
+                    let hints = hinter
+                        .get_or_insert_with(|| hinting_instance(self.hinting, &style, variations));
+                    let mask = rasterize(&style, glyph, phase, variations, hints.as_ref())
+                        .unwrap_or_default();
                     mask.blend(page, stride, margin, x, baseline, contrast);
                     let cost = mask.alpha.len() + ENTRY_OVERHEAD;
                     if self.bytes + cost <= CACHE_BYTES {
@@ -296,18 +314,47 @@ impl OutlinePen for Outline {
     }
 }
 
+fn hinting_instance(
+    hinting: FontHinting,
+    style: &GlyphStyle<'_>,
+    variations: &[NormalizedCoord],
+) -> Option<HintingInstance> {
+    let engine = match hinting {
+        FontHinting::Off => return None,
+        FontHinting::Native => Engine::Interpreter,
+        FontHinting::Auto => Engine::Auto(None),
+    };
+    let face = FontRef::from_index(style.font.data.data(), style.font.index).ok()?;
+    let options = HintingOptions {
+        engine,
+        target: Target::Smooth {
+            mode: SmoothMode::Light,
+            symmetric_rendering: false,
+            preserve_linear_metrics: true,
+        },
+    };
+    HintingInstance::new(
+        &face.outline_glyphs(),
+        Size::new(style.size),
+        variations,
+        options,
+    )
+    .ok()
+}
+
 fn rasterize(
     style: &GlyphStyle<'_>,
     glyph: u32,
     phase: u8,
     variations: &[NormalizedCoord],
+    hints: Option<&HintingInstance>,
 ) -> Option<Mask> {
     let font = style.font;
     let size = style.size;
     let face = FontRef::from_index(font.data.data(), font.index).ok()?;
     let glyphs = face.outline_glyphs();
     let glyph = glyphs.get(GlyphId::new(glyph))?;
-    let mut outline = Outline {
+    let fresh_outline = || Outline {
         segments: Vec::new(),
         min: point(f32::INFINITY, f32::INFINITY),
         max: point(f32::NEG_INFINITY, f32::NEG_INFINITY),
@@ -316,8 +363,14 @@ fn rasterize(
         clockwise: style.clockwise,
         invalid: false,
     };
-    let settings = DrawSettings::unhinted(Size::new(size), variations);
-    glyph.draw(settings, &mut outline).ok()?;
+    let mut outline = fresh_outline();
+    let unhinted = || DrawSettings::unhinted(Size::new(size), variations);
+    let settings = hints.map_or_else(unhinted, |hints| DrawSettings::hinted(hints, false));
+    if glyph.draw(settings, &mut outline).is_err() {
+        hints?;
+        outline = fresh_outline();
+        glyph.draw(unhinted(), &mut outline).ok()?;
+    }
     if outline.invalid || outline.segments.is_empty() {
         return None;
     }

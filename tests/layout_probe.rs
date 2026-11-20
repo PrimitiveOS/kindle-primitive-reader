@@ -11,6 +11,58 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 #[test]
+fn publisher_styles_off_changes_rendering_without_losing_anchors_links_or_images() {
+    let book = fixture("field-notes-epub3.epub");
+    let fonts = [fixture("fonts/Silkscreen-Regular.ttf")];
+    let settings = Settings {
+        width: 650,
+        height: 760,
+        margin: 25,
+        ..Settings::default()
+    };
+    let mut styled = Probe::open(&book, Engine::Parley, &fonts, settings, 0).unwrap();
+    let mut plain = Probe::open(
+        &book,
+        Engine::Parley,
+        &fonts,
+        Settings {
+            publisher_styles: false,
+            ..settings
+        },
+        0,
+    )
+    .unwrap();
+    assert_ne!(styled.capture(0).unwrap(), plain.capture(0).unwrap());
+    assert_eq!(styled.coverage(), plain.coverage());
+    for name in ["shore", "tide-a", "tide-b", "note-ref", "tide-note"] {
+        let saved = styled.fragment(name).unwrap();
+        assert_eq!(plain.fragment(name).as_ref(), Some(&saved));
+        assert!(plain.page_for(&saved).is_some());
+    }
+    let start = plain.matches("[1]").remove(0);
+    let end = Anchor {
+        offset: start.offset + "[1]".len(),
+        ..start.clone()
+    };
+    let selection = plain.select_range(&start, &end).unwrap();
+    let page = plain.page_for(&start).unwrap();
+    let rect = plain.selection_rects(page, &selection)[0];
+    let link = plain
+        .link_at(
+            page,
+            rect.x as f32 + rect.width as f32 / 2.0,
+            rect.y as f32 + rect.height as f32 / 2.0,
+        )
+        .unwrap();
+    assert_eq!(link.fragment.as_deref(), Some("tide-note"));
+    assert!(
+        plain
+            .open_illustration(&book, "EPUB/images/shore.png")
+            .is_ok()
+    );
+}
+
+#[test]
 fn repeated_text_resolves_to_the_same_passages_after_reflow() {
     let font = fixture("fonts/Silkscreen-Regular.ttf");
     let settings = Settings {
