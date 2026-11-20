@@ -114,8 +114,9 @@ impl FixedReading {
     ) -> Result<Option<Self>> {
         let source = match format {
             DocumentFormat::Epub => {
-                let source =
-                    with_storage(|| FixedEpub::open(path, fonts).map_err(io::Error::other))?;
+                let source = with_storage(|| {
+                    FixedEpub::open_at(path, fonts, (WIDTH, PAGE_HEIGHT)).map_err(io::Error::other)
+                })?;
                 let Some(book) = source else { return Ok(None) };
                 FixedDocument::Epub(Box::new(book))
             }

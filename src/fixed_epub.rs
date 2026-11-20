@@ -19,6 +19,7 @@ pub struct FixedEpub {
     title: String,
     author: Option<String>,
     spine: FixedSpine,
+    content_size: (u32, u32),
     fonts: FontContext,
     outline: Vec<PdfOutlineItem>,
     printed_pages: Vec<(usize, String)>,
@@ -177,6 +178,15 @@ fn effective_side(
 impl FixedEpub {
     /// Return None for a reflowable book. No archive handle is kept between pages.
     pub fn open(path: &Path, fonts: &[PathBuf]) -> Result<Option<Self>> {
+        let settings = crate::Settings::default();
+        Self::open_at(path, fonts, (settings.width, settings.height))
+    }
+
+    pub(crate) fn open_at(
+        path: &Path,
+        fonts: &[PathBuf],
+        content_size: (u32, u32),
+    ) -> Result<Option<Self>> {
         let book = Book::open(path)?;
         let Some(spine) = book.fixed_spine().cloned() else {
             return Ok(None);
@@ -211,6 +221,7 @@ impl FixedEpub {
             path: path.to_owned(),
             revision: book.revision(),
             spine,
+            content_size,
             title: book.title,
             author: book.author,
             fonts: font_context(fonts)?,
@@ -345,7 +356,7 @@ impl FixedEpub {
             } else {
                 let xhtml = book.chapter(page)?;
                 let xhtml = loose::without_plain_html_doctype(&xhtml);
-                let (width, height) = viewport_size(&xhtml)?;
+                let (width, height) = viewport_size(&xhtml, self.content_size)?;
                 let gray =
                     blitz::fixed_page(book, &href, &xhtml, self.fonts.clone(), (width, height))?;
                 ImagePage::from_grayscale(width, height, gray)?
@@ -359,7 +370,7 @@ impl FixedEpub {
 }
 
 // EPUB 3.3 §8.2.2.6: https://www.w3.org/TR/epub-33/#sec-fxl-dimensions
-fn viewport_size(xhtml: &str) -> Result<(u32, u32)> {
+fn viewport_size(xhtml: &str, content_size: (u32, u32)) -> Result<(u32, u32)> {
     let doc = Document::parse_with_options(
         xhtml,
         ParsingOptions {
@@ -428,20 +439,29 @@ fn viewport_size(xhtml: &str) -> Result<(u32, u32)> {
             (None, tail)
         };
         rest = tail.trim_start_matches(separator);
-        let dimension = if key.eq_ignore_ascii_case("width") {
-            &mut width
+        let (dimension, keyword, device_side) = if key.eq_ignore_ascii_case("width") {
+            (&mut width, "device-width", content_size.0)
         } else if key.eq_ignore_ascii_case("height") {
-            &mut height
+            (&mut height, "device-height", content_size.1)
         } else {
             continue;
         };
-        let number = value
-            .and_then(|value| value.parse::<f32>().ok())
-            .filter(|value| (1.0..=MAX_VIEWPORT_SIDE as f32).contains(value))
-            .ok_or("The fixed-layout EPUB viewport needs bounded numeric width and height")?;
-        if dimension.replace(number.ceil() as u32).is_some() {
-            return Err("The fixed-layout EPUB viewport repeats a dimension".into());
+        if dimension.is_some() {
+            continue;
         }
+        let value = value.ok_or("The fixed-layout EPUB viewport is missing a dimension value")?;
+        let side = if value.eq_ignore_ascii_case(keyword) {
+            device_side as f32
+        } else {
+            value
+                .trim_end_matches(|ch: char| ch.is_ascii_alphabetic() || ch == '%')
+                .parse::<f32>()
+                .map_err(|_| "The fixed-layout EPUB viewport has an invalid dimension")?
+        };
+        if !(1.0..=MAX_VIEWPORT_SIDE as f32).contains(&side) {
+            return Err("The fixed-layout EPUB viewport exceeds Reader's size limits".into());
+        }
+        *dimension = Some(side.ceil() as u32);
     }
     let width = width.ok_or("The fixed-layout EPUB viewport has no width")?;
     let height = height.ok_or("The fixed-layout EPUB viewport has no height")?;
@@ -811,20 +831,34 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unsupported_or_ambiguous_viewport_values() {
+    fn applies_the_first_viewport_dimensions_and_the_available_device_size() {
+        for (declaration, size) in [
+            ("width=device-width,height=device-height", (1264, 1606)),
+            ("width=100px,height=180mm,width=500,height=640", (100, 180)),
+            ("width=100.5,height=159.1,initial-scale=3", (101, 160)),
+        ] {
+            let page = format!(
+                r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><meta name="viewport" content="{declaration}"/><meta name="viewport" content="width=5,height=5"/></head></html>"#
+            );
+            assert_eq!(viewport_size(&page, (1264, 1606)).unwrap(), size);
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_or_oversized_viewport_dimensions() {
         for declaration in [
             "width=100",
-            "width=device-width,height=100",
+            "width=device-height,height=100",
             "width=100,height=0",
             "width=4096,height=4096",
-            "width=100,height=100;width=200",
+            "width=0,height=100;width=200",
         ] {
             let page = format!(
                 r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><meta name="viewport" content="{declaration}"/></head></html>"#
             );
-            assert!(viewport_size(&page).is_err(), "{declaration}");
+            assert!(viewport_size(&page, (1264, 1606)).is_err(), "{declaration}");
         }
         let page = r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><meta name="viewport" content="width=100,height=100"/><script/></head></html>"#;
-        assert!(viewport_size(page).is_err());
+        assert!(viewport_size(page, (1264, 1606)).is_err());
     }
 }
