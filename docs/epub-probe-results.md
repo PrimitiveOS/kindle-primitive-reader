@@ -73,6 +73,12 @@ The comparison implementation uses the fixed-height viewport again.
   page presses can draw immediately after that interval. The owner repeated
   the fast forward and back presses and confirmed the flash was gone and all
   presses counted. The device log recorded batches of up to three presses.
+- In the first USB export and eject check, Reader returned to the same
+  page and the page button worked again. The probe showed a text screen
+  during export. The shared runtime now uses Launcher's embedded
+  `assets/usb-drive-mode.png`. The desktop comparison confirmed that both
+  render paths produced the same pixels. Reader Probe built with the
+  Tools fix at `3986796` is staged for the physical artwork retest.
 - Rust 1.100.0 and Zig 0.17.1 produced static ARMHF executables. The
   locked build also succeeded in a separate workspace using a clean
   PrimitiveOS Tools checkout at revision `9f7e331`. The project licences
@@ -82,8 +88,8 @@ The comparison implementation uses the fixed-height viewport again.
 
 ## Remaining P0 validation
 
-Verify the USB storage export and eject lifecycle, interactive footnote and
-return navigation, and physical display timing against KOReader. Expand
-coverage of longer books and publisher styles within
-the declared EPUB subset. The [execution plan](execution-plan.md) defines the
-gates for the daily-reader build and publication.
+Verify the updated artwork during USB export. Verify interactive footnote
+and return navigation and physical display timing against KOReader.
+Expand coverage of longer books and publisher styles within the declared
+EPUB subset. The [execution plan](execution-plan.md) defines the gates
+for the daily-reader build and publication.
