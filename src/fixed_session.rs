@@ -652,6 +652,25 @@ impl FixedReading {
             }))
     }
 
+    /// Use the same transformed, visible word rectangles as fixed-page highlight drawing.
+    pub(crate) fn selection_bounds(&self, selection: &PdfSelection) -> Option<Rect> {
+        let viewport = hayro::kurbo::Rect::new(0.0, 0.0, f64::from(WIDTH), f64::from(PAGE_HEIGHT));
+        let bounds = selection
+            .bounds()
+            .filter_map(|bounds| self.visible_rectangle(selection.page(), bounds))
+            .map(|bounds| bounds.intersect(viewport))
+            .filter(|bounds| bounds.width() > 0.0 && bounds.height() > 0.0)
+            .reduce(|left, right| left.union(right))?;
+        let x = bounds.x0.floor() as i32;
+        let y = bounds.y0.floor() as i32;
+        Some(Rect::new(
+            x,
+            y,
+            bounds.x1.ceil() as i32 - x,
+            bounds.y1.ceil() as i32 - y,
+        ))
+    }
+
     pub(crate) fn extend_selection(&self, selection: &mut PdfSelection, x: f32, y: f32) {
         if self.page_at(y) != Some(selection.page) {
             return;

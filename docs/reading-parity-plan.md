@@ -26,6 +26,13 @@ and used both Done and Exit Reader to return to Launcher. The installed OCR
 worker recognised 46 structured rows from a grayscale PGM using the bundled
 English model. The verification session used the Kindle's sleep override.
 
+On the same Oasis 3, KOReader v2026.07.1 exposed navigation and general actions
+through top tabs and formatting controls through a separate bottom panel.
+Reader 0.1.1 keeps frequent document actions visible in one lower row and uses
+an anchored panel for related adjustments. Its upper bar holds Library, Pages,
+Controls and Exit. Opening these controls preserves the document layout.
+[KOReader user guide](https://koreader.rocks/user_guide/)
+
 Each EPUB profile ran five times, with 30 warm rasterizations per run. The
 median first frame took 75.4 ms on Field Notes, 300.0 ms on Long Chapter, and
 75.7 ms on the vertical chapter. The median warm p95 was 10.2, 13.1, and 16.0 ms

@@ -2,7 +2,8 @@
 
 Reader 0.1.1 targets the Kindle Oasis 3 on firmware 5.18.2 with an existing
 PrimitiveOS Launcher. It adds a Documents browser with folder icons, file
-types, file sizes, and labels for files Reader cannot open.
+types, file sizes, and labels for files Reader cannot open. Reading controls
+are grouped in compact bars and contextual panels over the current page.
 
 Use Reader in PrimitiveOS Store, or follow the manual install steps below.
 [Reader 0.1.1 release](https://github.com/PrimitiveOS/kindle-primitive-reader/releases/tag/v0.1.1)

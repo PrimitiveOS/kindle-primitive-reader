@@ -1,5 +1,7 @@
 //! The daily reader interface and foreground lifecycle.
 mod library_view;
+mod reading_bars;
+mod selection_popup;
 
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
@@ -10,7 +12,7 @@ use std::time::{Duration, Instant};
 use primitive_app::{App, Change, HEIGHT, WIDTH, with_storage};
 use primitive_ui::{
     BODY, CAPTION, Canvas, Editor, GrayImage, Input, Layout, Press, Rect, Row, RowAccessory, Rows,
-    TextStyle, header, keyboard_key,
+    header, keyboard_key,
 };
 
 use crate::annotation_export;
@@ -36,12 +38,13 @@ use crate::reading_stats::ReadingStats;
 use crate::search::{MAX_SEARCH_HITS, PdfSearch, PdfSearchHit, Search, SearchHit};
 use crate::selection::TextSelection;
 use crate::session::{
-    BookConfig, DONE, PAGE_HEIGHT, PAGE_REFRESH_GAP, PagePaint, PageTurns, Reading, page_thumbnail,
+    BookConfig, DONE, PAGE_HEIGHT, PAGE_REFRESH_GAP, PageTurns, Reading, page_thumbnail,
 };
 use crate::text_flow::TextFlow;
 use crate::{Engine, Probe, Result, Settings, TextAlignment};
 
 use self::library_view::{FileBrowser, file_type};
+use self::reading_bars::BarPanel;
 
 const ROW_HEIGHT: i32 = 116;
 const LIST_X: i32 = 40;
@@ -53,16 +56,6 @@ const NEXT: Rect = Rect::new(WIDTH as i32 - 280, HEIGHT as i32 - 104, 240, 72);
 const SAVE_DELAY: Duration = Duration::from_millis(800);
 const SEARCH_DELAY: Duration = Duration::from_millis(60);
 const SEARCH_REFRESH: Duration = Duration::from_millis(450);
-const MARK: Rect = Rect::new(473, PAGE_HEIGHT as i32 + 5, 200, 60);
-const NOTE: Rect = Rect::new(686, PAGE_HEIGHT as i32 + 5, 154, 60);
-const LOOKUP: Rect = Rect::new(853, PAGE_HEIGHT as i32 + 5, 184, 60);
-const CANCEL_MARK: Rect = Rect::new(1050, PAGE_HEIGHT as i32 + 5, 186, 60);
-const TOP_BAR_HEIGHT: i32 = 94;
-const BOTTOM_BAR_HEIGHT: i32 = 98;
-const LIBRARY_CONTROL: Rect = Rect::new(20, 15, 160, 62);
-const LOCATION_CONTROL: Rect = Rect::new(570, 15, 245, 62);
-const BOOKMARK_CONTROL: Rect = Rect::new(829, 15, 205, 62);
-const EXIT_CONTROL: Rect = Rect::new(1048, 15, 196, 62);
 const UNLOCK_TOUCH: Rect = Rect::new(832, PAGE_HEIGHT as i32 + 5, 258, 60);
 const CANCEL_OCR: Rect = Rect::new(624, PAGE_HEIGHT as i32 + 5, 200, 60);
 const NEXT_COMIC: Rect = Rect::new(598, PAGE_HEIGHT as i32 + 5, 223, 60);
@@ -70,9 +63,6 @@ const FIND_CASE: Rect = Rect::new(LIST_X, LIST_Y + 260, 335, 70);
 const MATCH_PREV: Rect = Rect::new(420, PAGE_HEIGHT as i32 + 5, 196, 60);
 const MATCH_NEXT: Rect = Rect::new(628, PAGE_HEIGHT as i32 + 5, 196, 60);
 const DEFINITION_BOTTOM: i32 = HEIGHT as i32 - 82;
-const DEFINITION_PREV: Rect = Rect::new(94, DEFINITION_BOTTOM - 82, 214, 66);
-const DEFINITION_NEXT: Rect = Rect::new(WIDTH as i32 - 308, DEFINITION_BOTTOM - 82, 214, 66);
-const DEFINITION_EXPAND: Rect = Rect::new(WIDTH as i32 / 2 - 105, DEFINITION_BOTTOM - 82, 210, 66);
 const OCR_POLL: Duration = Duration::from_millis(120);
 const AUTO_CROP: Rect = Rect::new(674, PAGE_HEIGHT as i32 + 5, 182, 60);
 const RESET_CROP: Rect = Rect::new(868, PAGE_HEIGHT as i32 + 5, 172, 60);
@@ -385,6 +375,7 @@ pub struct Reader {
     locked: Option<LibraryBook>,
     crop_dialog: Option<(FixedPreferences, Option<(f32, f32)>)>,
     screen: Screen,
+    reading_panel: Option<BarPanel>,
     list_page: usize,
     back: Vec<ReadingPosition>,
     notice: Option<String>,
@@ -474,6 +465,7 @@ impl Reader {
             locked: None,
             crop_dialog: None,
             screen: Screen::Library,
+            reading_panel: None,
             list_page: 0,
             back: Vec::new(),
             notice: None,
@@ -624,6 +616,7 @@ impl Reader {
     }
 
     fn show(&mut self, screen: Screen) {
+        self.reading_panel = None;
         if screen != Screen::Illustration {
             self.illustration = None;
         }
@@ -1425,204 +1418,6 @@ impl Reader {
             _ => return None,
         }
         Some(items)
-    }
-
-    fn reading_tools(&self) -> Vec<Item> {
-        if let Some(fixed) = &self.fixed {
-            let mut tools = vec![
-                Item::new("Go to", Action::Show(Screen::GoToPage)),
-                Item::new("Pages", Action::Overview),
-                Item::new("Bookmarks", Action::Show(Screen::FixedBookmarks)),
-                Item::new("Rotate", Action::RotatePage),
-            ];
-            if !fixed.reading.is_spread() {
-                tools.push(Item::new("Fit page", Action::FitPage(false)));
-                tools.push(Item::new("Fit width", Action::FitPage(true)));
-                tools.push(Item::new("Fit height", Action::FitHeight));
-            }
-            if fixed.reading.supports_spreads() {
-                let spread = fixed.reading.is_spread();
-                tools.push(Item::new(
-                    if spread { "One page" } else { "Two pages" },
-                    Action::ComicSpread(!spread),
-                ));
-            }
-            if fixed.reading.supports_scan_contrast() {
-                let higher = fixed.reading.scan_contrast();
-                tools.push(Item::new(
-                    if higher { "Contrast −" } else { "Contrast +" },
-                    Action::ScanContrast(!higher),
-                ));
-            }
-            if !fixed.reading.outline().is_empty() {
-                tools.insert(
-                    0,
-                    Item::new("Contents", Action::Show(Screen::FixedContents)),
-                );
-            }
-            if fixed.reading.supports_continuous() {
-                let continuous = fixed.reading.is_continuous();
-                tools.push(Item::new(
-                    if continuous { "Page turns" } else { "Scroll" },
-                    Action::FixedScroll(!continuous),
-                ));
-            }
-            if fixed.reading.supports_text() {
-                tools.push(Item::new("Find", Action::Show(Screen::Find)));
-                tools.push(Item::new("Read text", Action::ReadFixedText));
-                tools.push(Item::new("Reflow scan", Action::ReflowScan));
-                tools.push(Item::new("Highlights", Action::Show(Screen::Highlights)));
-                if !self.pdf_hits.is_empty() {
-                    tools.push(Item::new("Matches", Action::Show(Screen::Matches)));
-                }
-            }
-            if fixed.reading.supports_rtl() {
-                let label = if fixed.reading.preferences().right_to_left {
-                    "Left to right"
-                } else {
-                    "Right to left"
-                };
-                tools.push(Item::new(label, Action::ReversePageDirection));
-            }
-            if fixed.reading.supports_crop() {
-                tools.push(Item::new("Crop", Action::CropPage));
-                tools.push(Item::new("Columns", Action::ScanColumns));
-                if self.ocr_assets.is_some() && self.ocr.is_none() {
-                    tools.push(Item::new("OCR", Action::RecognizeText));
-                }
-            }
-            if !self.back.is_empty() {
-                tools.push(Item::new("History", Action::Show(Screen::LocationHistory)));
-            }
-            tools.push(Item::new("Controls", Action::Show(Screen::ReadingControls)));
-            return tools;
-        }
-        let mut tools = vec![
-            Item::new("Contents", Action::Show(Screen::Contents)),
-            Item::new("Bookmarks", Action::Show(Screen::Bookmarks)),
-            Item::new("Highlights", Action::Show(Screen::Highlights)),
-            Item::new("Find", Action::Show(Screen::Find)),
-            Item::new("Text", Action::Show(Screen::Typography)),
-            Item::new("Go to", Action::Show(Screen::GoToPage)),
-            Item::new("Pages", Action::Overview),
-        ];
-        if !self.hits.is_empty() {
-            tools.push(Item::new("Matches", Action::Show(Screen::Matches)));
-        }
-        if let Some(active) = &self.active
-            && !active.reading.links().is_empty()
-        {
-            tools.push(Item::new("Links", Action::Show(Screen::Links)));
-        }
-        if !self.back.is_empty() {
-            tools.push(Item::new("History", Action::Show(Screen::LocationHistory)));
-        }
-        tools.push(Item::new("Controls", Action::Show(Screen::ReadingControls)));
-        tools
-    }
-
-    fn draw_reading_tools(&self, canvas: &mut Canvas) {
-        let width = WIDTH as i32;
-        let tools = self.reading_tools();
-        let toolbar = ToolbarLayout::new(tools.len(), self.controls.large_toolbar);
-        canvas.fill(Rect::new(0, 0, width, TOP_BAR_HEIGHT), 255);
-        canvas.fill(Rect::new(0, TOP_BAR_HEIGHT - 1, width, 1), 166);
-        canvas.fill(
-            Rect::new(0, toolbar.top, width, HEIGHT as i32 - toolbar.top),
-            255,
-        );
-        canvas.fill(Rect::new(0, toolbar.top, width, 1), 166);
-        toolbar.draw(canvas, LIBRARY_CONTROL, "Library");
-        toolbar.draw(canvas, BOOKMARK_CONTROL, "Bookmark +");
-        toolbar.draw(canvas, EXIT_CONTROL, "Exit Reader");
-        let mut title_right = BOOKMARK_CONTROL.x;
-        if !self.back.is_empty() {
-            toolbar.draw(canvas, LOCATION_CONTROL, "Previous location");
-            title_right = LOCATION_CONTROL.x;
-        }
-        let title = self
-            .active
-            .as_ref()
-            .map(|book| book.reading.probe.title.as_str())
-            .or_else(|| self.fixed.as_ref().map(|book| book.entry.title.as_str()))
-            .unwrap_or("Reader");
-        canvas.text(
-            Rect::new(
-                LIBRARY_CONTROL.x + LIBRARY_CONTROL.w + 18,
-                16,
-                title_right - 210,
-                60,
-            ),
-            self.notice.as_deref().unwrap_or(title),
-            BODY,
-        );
-        for (index, tool) in tools.iter().enumerate() {
-            toolbar.draw(canvas, toolbar.rect(index), &tool.title);
-        }
-    }
-
-    fn page_paint(&self) -> PagePaint {
-        let inverted = self.controls.night_pages;
-        if matches!(self.screen, Screen::BookTools | Screen::FixedTools) {
-            let toolbar =
-                ToolbarLayout::new(self.reading_tools().len(), self.controls.large_toolbar);
-            PagePaint {
-                visible: TOP_BAR_HEIGHT as u32..toolbar.top as u32,
-                inverted,
-            }
-        } else {
-            PagePaint::full(inverted)
-        }
-    }
-
-    fn reading_tools_input(&mut self, input: Input) -> Change {
-        let reading_screen = if self.screen == Screen::FixedTools {
-            Screen::Fixed
-        } else {
-            Screen::Book
-        };
-        match input {
-            Input::Tap(x, y) => {
-                let tools = self.reading_tools();
-                let toolbar = ToolbarLayout::new(tools.len(), self.controls.large_toolbar);
-                let action = if EXIT_CONTROL.contains(x, y) {
-                    return self.exit();
-                } else if LIBRARY_CONTROL.contains(x, y) {
-                    Some(Action::Show(Screen::Library))
-                } else if BOOKMARK_CONTROL.contains(x, y) {
-                    Some(Action::AddBookmark)
-                } else if LOCATION_CONTROL.contains(x, y) && !self.back.is_empty() {
-                    Some(Action::ReturnToLocation)
-                } else {
-                    tools
-                        .into_iter()
-                        .enumerate()
-                        .find(|(index, _)| toolbar.rect(*index).contains(x, y))
-                        .map(|(_, tool)| tool.action)
-                };
-                match action {
-                    Some(action) => match self.activate(action) {
-                        Ok(()) => Change::Partial,
-                        Err(error) => self.report(error),
-                    },
-                    None if y >= TOP_BAR_HEIGHT as f32 && y < toolbar.top as f32 => {
-                        self.show(reading_screen);
-                        Change::Partial
-                    }
-                    None => Change::None,
-                }
-            }
-            Input::PageBack | Input::PageForward | Input::Swipe { .. } => {
-                self.show(reading_screen);
-                let result = self.input(input);
-                if result == Change::None {
-                    Change::Partial
-                } else {
-                    result
-                }
-            }
-            _ => Change::None,
-        }
     }
 
     fn activate(&mut self, action: Action) -> Result<()> {
@@ -2969,26 +2764,8 @@ impl Reader {
         }
         if let Input::Tap(x, y) = input {
             if self.selection.is_some() {
-                if CANCEL_MARK.contains(x, y) {
-                    self.selection = None;
-                    return Change::Partial;
-                }
-                if MARK.contains(x, y) {
-                    return match self.save_highlight(None) {
-                        Ok(()) => Change::Partial,
-                        Err(error) => self.report(error),
-                    };
-                }
-                if NOTE.contains(x, y) {
-                    self.editor = Editor::new(128);
-                    self.show(Screen::Note);
-                    return Change::Partial;
-                }
-                if LOOKUP.contains(x, y) {
-                    return match self.look_up_selection() {
-                        Ok(()) => Change::Partial,
-                        Err(error) => self.report(error),
-                    };
+                if let Some(change) = self.selection_popup_input(x, y) {
+                    return change;
                 }
                 if let (Some(active), Some(selection)) = (&self.active, &self.selection)
                     && let Some(word) = active.reading.word_at(x, y)
@@ -3028,8 +2805,7 @@ impl Reader {
                     Err(error) => self.report(error),
                 };
             }
-            if reading_tools_gesture(x, y) {
-                self.show(Screen::BookTools);
+            if self.reveal_reading_tools(x, y, Screen::BookTools) {
                 return Change::Partial;
             }
         }
@@ -3126,21 +2902,11 @@ impl Reader {
                 self.notice = Some("Text recognition cancelled".into());
                 return Change::Partial;
             }
-            if let Some(selection) = &mut self.pdf_selection {
-                if CANCEL_MARK.contains(x, y) {
-                    self.pdf_selection = None;
-                } else if MARK.contains(x, y) {
-                    if let Err(error) = self.save_pdf_highlight(None) {
-                        return self.report(error);
-                    }
-                } else if NOTE.contains(x, y) {
-                    self.editor = Editor::new(128);
-                    self.show(Screen::Note);
-                } else if LOOKUP.contains(x, y) {
-                    if let Err(error) = self.look_up_selection() {
-                        return self.report(error);
-                    }
-                } else if let Some(fixed) = &self.fixed {
+            if self.pdf_selection.is_some() {
+                if let Some(change) = self.selection_popup_input(x, y) {
+                    return change;
+                }
+                if let (Some(fixed), Some(selection)) = (&self.fixed, &mut self.pdf_selection) {
                     fixed.reading.extend_selection(selection, x, y);
                 }
                 return Change::Partial;
@@ -3176,8 +2942,7 @@ impl Reader {
                     PdfLinkTarget::Unavailable => self.report("This PDF link is unavailable"),
                 };
             }
-            if reading_tools_gesture(x, y) {
-                self.show(Screen::FixedTools);
+            if self.reveal_reading_tools(x, y, Screen::FixedTools) {
                 return Change::Partial;
             }
         }
@@ -3901,10 +3666,12 @@ impl Reader {
     }
 
     fn definition_input(&mut self, input: Input) -> Change {
+        let (popup, done, _) = self.definition_layout();
+        let [popup_previous, expand, popup_next] = definition_actions(popup);
         let (previous, next) = if self.definition_expanded {
             (PREV, NEXT)
         } else {
-            (DEFINITION_PREV, DEFINITION_NEXT)
+            (popup_previous, popup_next)
         };
         if let Input::Tap(x, y) = input {
             if self.definition_expanded {
@@ -3913,7 +3680,6 @@ impl Reader {
                     return Change::Partial;
                 }
             } else {
-                let (popup, done, _) = self.definition_layout();
                 if done.contains(x, y) || !popup.contains(x, y) {
                     self.show(if self.fixed.is_some() {
                         Screen::Fixed
@@ -3922,7 +3688,7 @@ impl Reader {
                     });
                     return Change::Partial;
                 }
-                if !self.definitions.is_empty() && DEFINITION_EXPAND.contains(x, y) {
+                if !self.definitions.is_empty() && expand.contains(x, y) {
                     self.definition_expanded = true;
                     return Change::Partial;
                 }
@@ -3959,16 +3725,17 @@ impl Reader {
                 .clamp(1, 7)
         });
         let height = 197 + lines as i32 * 48;
-        let top = DEFINITION_BOTTOM - height;
+        let popup = definition_bounds(height, self.selection_bounds());
         (
-            Rect::new(64, top, WIDTH as i32 - 128, height),
-            Rect::new(WIDTH as i32 - 246, top + 18, 154, 64),
+            popup,
+            Rect::new(WIDTH as i32 - 246, popup.y + 18, 154, 64),
             lines,
         )
     }
 
     fn draw_definition_popup(&self, canvas: &mut Canvas) {
         let (popup, done, lines) = self.definition_layout();
+        let [previous, expand, next] = definition_actions(popup);
         canvas.popup(popup);
         canvas.button(done, "Done", false, false);
         let (title, text) = self.definitions.get(self.list_page).map_or(
@@ -3985,19 +3752,19 @@ impl Reader {
                 96,
                 popup.y + 102,
                 WIDTH as i32 - 192,
-                DEFINITION_PREV.y - popup.y - 112,
+                previous.y - popup.y - 112,
             ),
             text,
             BODY.lines(lines),
         );
         if self.list_page > 0 {
-            canvas.button(DEFINITION_PREV, "Previous", false, false);
+            canvas.button(previous, "Previous", false, false);
         }
         if self.list_page + 1 < self.definitions.len() {
-            canvas.button(DEFINITION_NEXT, "Next", false, false);
+            canvas.button(next, "Next", false, false);
         }
         if !self.definitions.is_empty() {
-            canvas.button(DEFINITION_EXPAND, "Expand", false, false);
+            canvas.button(expand, "Expand", false, false);
         }
     }
 
@@ -4314,8 +4081,8 @@ impl App for Reader {
                 &selection,
                 self.page_paint(),
             );
-            if !selection.is_empty() && !self.definition_over_book() {
-                draw_selection_footer(canvas, self.notice.as_deref());
+            if self.screen == Screen::Fixed {
+                self.draw_selection_popup(canvas);
             }
             if self.screen == Screen::FixedTools {
                 self.draw_reading_tools(canvas);
@@ -4363,8 +4130,8 @@ impl App for Reader {
                 &selection,
                 self.page_paint(),
             );
-            if self.selection.is_some() && !self.definition_over_book() {
-                draw_selection_footer(canvas, self.notice.as_deref());
+            if self.screen == Screen::Book {
+                self.draw_selection_popup(canvas);
             }
             if self.screen == Screen::BookTools {
                 self.draw_reading_tools(canvas);
@@ -4984,6 +4751,24 @@ fn percent_fraction(input: &str) -> Result<f64> {
     Ok(percent / 100.0)
 }
 
+fn definition_bounds(height: i32, selection: Option<Rect>) -> Rect {
+    const TOP: i32 = 64;
+    let above_selection = selection.is_some_and(|selected| {
+        selected.y >= PAGE_HEIGHT as i32 / 2 && TOP + height + 24 <= selected.y
+    });
+    let y = if above_selection { TOP } else { DEFINITION_BOTTOM - height };
+    Rect::new(64, y, WIDTH as i32 - 128, height)
+}
+
+fn definition_actions(popup: Rect) -> [Rect; 3] {
+    let y = popup.bottom() - 82;
+    [
+        Rect::new(94, y, 214, 66),
+        Rect::new(WIDTH as i32 / 2 - 105, y, 210, 66),
+        Rect::new(WIDTH as i32 - 308, y, 214, 66),
+    ]
+}
+
 fn same_pdf_highlight(left: &PdfHighlight, right: &PdfHighlight) -> bool {
     left.page == right.page
         && left.bounds.len() == right.bounds.len()
@@ -5079,62 +4864,6 @@ fn ocr_language_name(code: &str) -> &str {
     }
 }
 
-fn reading_tools_gesture(x: f32, y: f32) -> bool {
-    (WIDTH as f32 / 3.0..=WIDTH as f32 * 2.0 / 3.0).contains(&x)
-        && (0.0..PAGE_HEIGHT as f32 * 0.55).contains(&y)
-}
-
-struct ToolbarLayout {
-    columns: usize,
-    row_height: i32,
-    top: i32,
-    primary_y: i32,
-    large: bool,
-}
-
-impl ToolbarLayout {
-    fn new(count: usize, large: bool) -> Self {
-        let count = count.max(1);
-        let max_columns = if large { 6 } else { 7 };
-        let rows = count.div_ceil(max_columns);
-        let columns = count.min(max_columns);
-        let row_height = if large { 76 } else { 61 };
-        let primary_y = HEIGHT as i32 - BOTTOM_BAR_HEIGHT - if large { 14 } else { 0 };
-        Self {
-            columns,
-            row_height,
-            top: primary_y - (rows as i32 - 1) * row_height,
-            primary_y,
-            large,
-        }
-    }
-
-    fn rect(&self, index: usize) -> Rect {
-        let step = (WIDTH as i32 - 26) / self.columns as i32;
-        Rect::new(
-            18 + (index % self.columns) as i32 * step,
-            self.primary_y + 16 - (index / self.columns) as i32 * self.row_height,
-            step - 10,
-            self.row_height - 1,
-        )
-    }
-
-    fn draw(&self, canvas: &mut Canvas, rect: Rect, title: &str) {
-        if !self.large {
-            draw_toolbar_button(canvas, rect, title);
-            return;
-        }
-        if canvas.control_pressed(rect, false) {
-            canvas.fill(rect, 218);
-        }
-        canvas.text(
-            Rect::new(rect.x, rect.y + 8, rect.w, rect.h - 8),
-            title,
-            TextStyle::new(34).bold().center(),
-        );
-    }
-}
-
 fn draw_locked_footer(canvas: &mut Canvas, notice: Option<&str>) {
     let top = PAGE_HEIGHT as i32;
     canvas.fill(Rect::new(0, top, WIDTH as i32, HEIGHT as i32 - top), 255);
@@ -5156,18 +4885,6 @@ fn draw_toolbar_button(canvas: &mut Canvas, rect: Rect, title: &str) {
         title,
         CAPTION.center().ink(0).bold(),
     );
-}
-
-fn draw_selection_footer(canvas: &mut Canvas, notice: Option<&str>) {
-    canvas.text(
-        Rect::new(29, PAGE_HEIGHT as i32 + 8, 435, 56),
-        notice.unwrap_or("Tap a word to extend"),
-        CAPTION,
-    );
-    canvas.button(MARK, "Highlight", false, false);
-    canvas.button(NOTE, "Note", false, false);
-    canvas.button(LOOKUP, "Look up", false, false);
-    canvas.button(CANCEL_MARK, "Cancel", false, false);
 }
 
 fn annotation_items<'a>(marks: impl Iterator<Item = (&'a str, Option<&'a str>)>) -> Vec<Item> {
@@ -5203,25 +4920,9 @@ fn device_settings() -> Settings {
     }
 }
 
-fn text_items(settings: Settings, scroll: bool) -> Vec<Item> {
+fn text_size_items(settings: Settings) -> [Item; 2] {
     let size = format!("Current size {} px", settings.font_size.round());
-    let margin = format!("Current margin {} px", settings.margin);
-    let spacing = format!("Current spacing {:.2}×", settings.line_height);
-    let (alignment, next_alignment) = match settings.alignment {
-        TextAlignment::Publisher => ("Publisher", TextAlignment::Start),
-        TextAlignment::Start => ("Start", TextAlignment::Center),
-        TextAlignment::Center => ("Centered", TextAlignment::Justify),
-        TextAlignment::Justify => ("Justified", TextAlignment::Publisher),
-    };
-    vec![
-        Item::new(
-            if scroll {
-                "Switch to pages"
-            } else {
-                "Switch to continuous scroll"
-            },
-            Action::ReadingMode(!scroll),
-        ),
+    [
         Item::new(
             "Larger text",
             Action::Text(Settings {
@@ -5237,6 +4938,30 @@ fn text_items(settings: Settings, scroll: bool) -> Vec<Item> {
                 ..settings
             }),
         ),
+    ]
+}
+
+fn text_items(settings: Settings, scroll: bool) -> Vec<Item> {
+    let margin = format!("Current margin {} px", settings.margin);
+    let spacing = format!("Current spacing {:.2}×", settings.line_height);
+    let (alignment, next_alignment) = match settings.alignment {
+        TextAlignment::Publisher => ("Publisher", TextAlignment::Start),
+        TextAlignment::Start => ("Start", TextAlignment::Center),
+        TextAlignment::Center => ("Centered", TextAlignment::Justify),
+        TextAlignment::Justify => ("Justified", TextAlignment::Publisher),
+    };
+    let [larger, smaller] = text_size_items(settings);
+    vec![
+        Item::new(
+            if scroll {
+                "Switch to pages"
+            } else {
+                "Switch to continuous scroll"
+            },
+            Action::ReadingMode(!scroll),
+        ),
+        larger,
+        smaller,
         Item::new(
             "Wider margins",
             Action::Text(Settings {
@@ -5397,10 +5122,12 @@ mod tests {
         fs::write(nested.join("Archive.zip"), b"archive").unwrap();
         fs::write(nested.join("Essay.TXT"), b"A readable essay.").unwrap();
         let mut app = fixture.app();
-        let tap_row = |index| Input::Tap(
-            150.0,
-            (library_view::LIBRARY_LIST_Y + ROW_HEIGHT * index + 30) as f32,
-        );
+        let tap_row = |index| {
+            Input::Tap(
+                150.0,
+                (library_view::LIBRARY_LIST_Y + ROW_HEIGHT * index + 30) as f32,
+            )
+        };
 
         let first = &app.items()[0];
         assert_eq!(first.title, "A Reference.pdf");
@@ -5412,7 +5139,10 @@ mod tests {
 
         let files = app.items();
         assert_eq!(files[0].title, "Archive.zip");
-        assert_eq!(files[0].detail.as_deref(), Some("ZIP · 7 B · Not supported in Reader"));
+        assert_eq!(
+            files[0].detail.as_deref(),
+            Some("ZIP · 7 B · Not supported in Reader")
+        );
         assert_eq!(app.input(tap_row(0)), Change::None);
         assert_eq!(app.items()[1].detail.as_deref(), Some("TXT · 17 B"));
         assert_eq!(app.input(tap_row(1)), Change::Partial);
@@ -5423,7 +5153,10 @@ mod tests {
         app.library_query = "Essay".into();
         let results = app.items();
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].detail.as_deref(), Some("TXT · A Reference.pdf/Volume 1/Essay.TXT"));
+        assert_eq!(
+            results[0].detail.as_deref(),
+            Some("TXT · A Reference.pdf/Volume 1/Essay.TXT")
+        );
         assert_eq!(app.input(Input::Tap(100.0, 170.0)), Change::Partial);
         assert_eq!(app.items()[0].title, "Archive.zip");
         assert_eq!(app.input(Input::PageBack), Change::Partial);
@@ -5575,12 +5308,7 @@ mod tests {
         );
         reopened.open_path(&fixture.book).unwrap();
         reopened.show(Screen::BookTools);
-        let layout = ToolbarLayout::new(reopened.reading_tools().len(), true);
-        let contents = layout.rect(0);
-        reopened.input(Input::Tap(
-            (contents.x + 30) as f32,
-            (contents.y + 30) as f32,
-        ));
+        tap_reading_control(&mut reopened, "Contents");
         assert_eq!(reopened.screen, Screen::Contents);
     }
 
@@ -5982,16 +5710,8 @@ mod tests {
         app.follow_reflow_page(0, 1).unwrap();
         app.follow_reflow_page(0, 2).unwrap();
         app.show(Screen::BookTools);
-        let tools = app.reading_tools();
-        let index = tools
-            .iter()
-            .position(|item| item.title == "History")
-            .unwrap();
-        let button = ToolbarLayout::new(tools.len(), false).rect(index);
-        assert_eq!(
-            app.input(Input::Tap((button.x + 20) as f32, (button.y + 20) as f32)),
-            Change::Partial
-        );
+        assert_eq!(tap_reading_control(&mut app, "Pages"), Change::Partial);
+        assert_eq!(tap_reading_control(&mut app, "History"), Change::Partial);
         assert_eq!(app.screen, Screen::LocationHistory);
         assert_eq!(app.items().len(), 2);
         assert_eq!(
@@ -6122,10 +5842,11 @@ mod tests {
         assert!(app.definition_over_book());
         assert_eq!(app.input(Input::PageForward), Change::Partial);
         assert_eq!(app.list_page, 1);
+        let [_, expand, _] = definition_actions(app.definition_layout().0);
         assert_eq!(
             app.input(Input::Tap(
-                (DEFINITION_EXPAND.x + 15) as f32,
-                (DEFINITION_EXPAND.y + 15) as f32
+                (expand.x + 15) as f32,
+                (expand.y + 15) as f32
             )),
             Change::Partial
         );
@@ -6146,6 +5867,21 @@ mod tests {
         );
         assert_eq!(app.screen, Screen::Book);
         assert_eq!(position(&app.active.as_ref().unwrap().reading), original);
+    }
+
+    #[test]
+    fn dictionary_result_moves_to_the_other_side_of_selected_text() {
+        let lower_text = Rect::new(410, 1080, 55, 32);
+        let upper_text = Rect::new(410, 160, 55, 32);
+        let above = definition_bounds(420, Some(lower_text));
+        let below = definition_bounds(420, Some(upper_text));
+        assert!(above.bottom() < lower_text.y);
+        assert!(below.y > upper_text.bottom());
+        for popup in [above, below] {
+            assert!(definition_actions(popup)
+                .into_iter()
+                .all(|button| button.y >= popup.y && button.bottom() < popup.bottom()));
+        }
     }
 
     #[test]
@@ -6657,6 +6393,107 @@ mod tests {
         assert_eq!(app.library.recently_read().count(), 2);
     }
 
+    fn tap_reading_control(app: &mut Reader, label: &str) -> Change {
+        let rect = app.reading_button(label);
+        app.input(Input::Tap(
+            (rect.x + rect.w / 2) as f32,
+            (rect.y + rect.h / 2) as f32,
+        ))
+    }
+
+    #[test]
+    fn epub_reading_bars_keep_the_anchor_and_show_one_secondary_panel() {
+        let fixture = Fixture::new();
+        let long = fixture.root.join("Long Chapter.epub");
+        fs::write(&long, include_bytes!("../tests/fixtures/long-chapter.epub")).unwrap();
+        let mut app = fixture.app();
+        app.open_path(&long).unwrap();
+        let reading = |app: &Reader| position(&app.active.as_ref().unwrap().reading);
+        let before = reading(&app);
+        let open = Input::Tap(WIDTH as f32 / 2.0, 23.0);
+        assert_eq!(app.input(open), Change::Partial);
+        assert_eq!(reading(&app), before);
+        let plain = app.page_paint().visible;
+        assert!(plain.start <= 100 && HEIGHT - plain.end <= 104);
+
+        assert_eq!(tap_reading_control(&mut app, "Pages"), Change::Partial);
+        assert_eq!(app.reading_panel, Some(BarPanel::Pages));
+        assert!(app.page_paint().visible.end < plain.end);
+        assert_eq!(
+            tap_reading_control(&mut app, "Add bookmark"),
+            Change::Partial
+        );
+        let id = app.active.as_ref().unwrap().id;
+        assert_eq!(app.library.state(id).unwrap().bookmarks[0].position, before);
+        assert_eq!(app.screen, Screen::Book);
+        assert_eq!(app.input(open), Change::Partial);
+        assert_eq!(tap_reading_control(&mut app, "Pages"), Change::Partial);
+        assert_eq!(tap_reading_control(&mut app, "Text"), Change::Partial);
+        assert_eq!(app.reading_panel, Some(BarPanel::Text));
+        assert_eq!(reading(&app), before);
+        assert_eq!(app.input(Input::Tap(450.0, 810.0)), Change::Partial);
+        assert_eq!(app.reading_panel, None);
+        assert_eq!(app.screen, Screen::BookTools);
+        assert_eq!(app.page_paint().visible, plain);
+
+        let blank = Input::Tap(450.0, 810.0);
+        assert_eq!(app.input(blank), Change::Partial);
+        assert_eq!(app.screen, Screen::Book);
+        let footer = Input::Tap(WIDTH as f32 / 2.0, (PAGE_HEIGHT + 38) as f32);
+        assert_eq!(app.input(footer), Change::Partial);
+        assert_eq!(app.reading_panel, Some(BarPanel::Text));
+        app.input(Input::PageForward);
+        if let Some(due) = app.active.as_ref().unwrap().reading.deadline() {
+            app.tick(due);
+        }
+        assert_eq!(app.screen, Screen::Book);
+        assert_eq!(app.reading_panel, None);
+        assert_eq!(reading(&app).page, before.page + 1);
+    }
+
+    #[test]
+    fn pdf_reading_bars_route_view_scan_and_navigation() {
+        let fixture = Fixture::new();
+        let pdf = fixture.root.join("Reading sample.pdf");
+        fs::write(&pdf, crate::fixed::tests::document()).unwrap();
+        let mut app = fixture.app();
+        app.open_path(&pdf).unwrap();
+        let open = Input::Tap(WIDTH as f32 / 2.0, 23.0);
+        assert_eq!(app.input(open), Change::Partial);
+        assert_eq!(app.screen, Screen::FixedTools);
+        assert_eq!(app.reading_panel, None);
+        assert_eq!(tap_reading_control(&mut app, "View"), Change::Partial);
+        assert_eq!(app.reading_panel, Some(BarPanel::View));
+        assert_eq!(tap_reading_control(&mut app, "Fit width"), Change::Partial);
+        assert_eq!(app.screen, Screen::Fixed);
+        assert!(app.fixed.as_ref().unwrap().reading.preferences().width_fit);
+
+        let footer = Input::Tap(WIDTH as f32 / 2.0, (PAGE_HEIGHT + 38) as f32);
+        assert_eq!(app.input(footer), Change::Partial);
+        assert_eq!(app.reading_panel, Some(BarPanel::View));
+        assert_eq!(tap_reading_control(&mut app, "Scan"), Change::Partial);
+        assert_eq!(app.reading_panel, Some(BarPanel::Scan));
+        assert_eq!(
+            tap_reading_control(&mut app, "Higher contrast"),
+            Change::Partial
+        );
+        assert!(app.fixed.as_ref().unwrap().reading.scan_contrast());
+
+        app.input(open);
+        tap_reading_control(&mut app, "Scan");
+        app.input(Input::PageForward);
+        let deadline = app.fixed.as_ref().unwrap().reading.deadline();
+        if let Some(due) = deadline {
+            app.tick(due);
+        }
+        assert_eq!(app.screen, Screen::Fixed);
+        assert_eq!(app.reading_panel, None);
+        assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 1);
+        assert_eq!(app.input(open), Change::Partial);
+        assert_eq!(tap_reading_control(&mut app, "Bookmarks"), Change::Partial);
+        assert_eq!(app.screen, Screen::FixedBookmarks);
+    }
+
     #[test]
     fn reading_controls_dismiss_or_exit_without_losing_the_current_passage() {
         let fixture = Fixture::new();
@@ -6683,13 +6520,7 @@ mod tests {
         assert_eq!(app.input(Input::Tap(450.0, 920.0)), Change::Partial);
         assert_eq!(app.screen, Screen::Book);
         assert_eq!(app.input(open), Change::Partial);
-        assert_eq!(
-            app.input(Input::Tap(
-                (EXIT_CONTROL.x + 20) as f32,
-                (EXIT_CONTROL.y + 20) as f32
-            )),
-            Change::Exit
-        );
+        assert_eq!(tap_reading_control(&mut app, "Exit"), Change::Exit);
         let mut reopened = fixture.app();
         reopened.activate(Action::Continue).unwrap();
         let reading = &reopened.active.as_ref().unwrap().reading;
@@ -6699,6 +6530,78 @@ mod tests {
             reopened.input(Input::Tap((DONE.x + 15) as f32, (DONE.y + 15) as f32)),
             Change::Exit
         );
+    }
+
+    fn rectangle_center(rect: Rect) -> (f32, f32) {
+        ((rect.x + rect.w / 2) as f32, (rect.y + rect.h / 2) as f32)
+    }
+
+    fn tap_selection_action(app: &mut Reader, action: selection_popup::SelectionAction) -> Change {
+        let (x, y) = rectangle_center(app.selection_button(action));
+        app.input(Input::Tap(x, y))
+    }
+
+    #[test]
+    fn epub_selection_popup_preserves_extension_dictionary_and_exit() {
+        use selection_popup::SelectionAction;
+
+        let fixture = Fixture::new();
+        let mut app = fixture.app();
+        app.open_path(&fixture.book).unwrap();
+        let reading = &app.active.as_ref().unwrap().reading;
+        let target = Book::resolve_link(&reading.probe.chapter, "#tide-note").unwrap();
+        app.follow(target).unwrap();
+        let reading = &app.active.as_ref().unwrap().reading;
+        let origin = reading.probe.fragment("tide-note").unwrap();
+        let point = |offset: usize, len: usize| {
+            let mut start = origin.clone();
+            start.offset += offset;
+            let mut end = start.clone();
+            end.offset += len;
+            let source = reading.probe.select_range(&start, &end).unwrap();
+            let rect = reading.highlight_rects(&source)[0];
+            rectangle_center(Rect::new(rect.x, rect.y, rect.width, rect.height))
+        };
+        let first = point(0, "The".len());
+        let next = point("The ".len(), "first".len());
+        let id = app.active.as_ref().unwrap().id;
+        let saved = position(reading);
+        assert_eq!(app.input(Input::LongTap(first.0, first.1)), Change::Partial);
+        assert_eq!(app.selection.as_ref().unwrap().text, "The");
+        assert_eq!(app.input(Input::Tap(next.0, next.1)), Change::Partial);
+        assert_eq!(app.selection.as_ref().unwrap().text, "The first");
+        assert_eq!(
+            tap_selection_action(&mut app, SelectionAction::Cancel),
+            Change::Partial
+        );
+        assert!(app.selection.is_none());
+
+        app.input(Input::LongTap(first.0, first.1));
+        assert_eq!(
+            tap_selection_action(&mut app, SelectionAction::Dictionary),
+            Change::Partial
+        );
+        assert_eq!(app.screen, Screen::Definition);
+        let (x, y) = rectangle_center(app.definition_layout().1);
+        assert_eq!(app.input(Input::Tap(x, y)), Change::Partial);
+        assert_eq!(app.screen, Screen::Book);
+        assert_eq!(app.selection.as_ref().unwrap().text, "The");
+        assert_eq!(
+            tap_selection_action(&mut app, SelectionAction::Highlight),
+            Change::Partial
+        );
+        assert_eq!(
+            app.library.state(id).unwrap().highlights[0].selection.text,
+            "The"
+        );
+        assert_eq!(position(&app.active.as_ref().unwrap().reading), saved);
+
+        app.input(Input::LongTap(first.0, first.1));
+        let (x, y) = rectangle_center(DONE);
+        assert_eq!(app.input(Input::Tap(x, y)), Change::Exit);
+        let mut reopened = fixture.app();
+        reopened.activate(Action::Continue).unwrap();
+        assert_eq!(position(&reopened.active.as_ref().unwrap().reading), saved);
     }
 
     #[test]
@@ -6746,7 +6649,21 @@ mod tests {
             Change::Partial
         );
         assert_eq!(app.pdf_selection.as_ref().unwrap().text(), "PDF");
-        app.save_pdf_highlight(Some("Read again".into())).unwrap();
+        assert_eq!(
+            tap_selection_action(&mut app, selection_popup::SelectionAction::Note),
+            Change::Partial,
+        );
+        assert_eq!(app.screen, Screen::Note);
+        app.editor.text = "Read again".chars().collect();
+        let save = Layout::new(WIDTH, HEIGHT, 4, 5)
+            .keyboard_keys_with(app.editor.layer, "Save")
+            .into_iter()
+            .find(|(key, _)| key.key == primitive_ui::Key::Go)
+            .unwrap()
+            .1;
+        let (x, y) = rectangle_center(save);
+        assert_eq!(app.input(Input::Tap(x, y)), Change::Partial);
+        assert_eq!(app.screen, Screen::Fixed);
         app.activate(Action::CropPage).unwrap();
         let (size, viewport) = app.fixed.as_ref().unwrap().reading.page_viewport().unwrap();
         let transform = viewport.page_to_viewport(size).unwrap();

@@ -9,9 +9,10 @@ Kindle. [EPUB feasibility results](docs/epub-probe-results.md)
 
 | Documents | Reading | Reading bars | Dictionary |
 | --- | --- | --- | --- |
-| <img src="docs/screenshots/documents.png" width="210" alt="Reader showing folders, file types, sizes, and unsupported files"> | <img src="docs/screenshots/reading.png" width="210" alt="Reader displaying an EPUB with a compact Done control"> | <img src="docs/screenshots/reading-controls.png" width="210" alt="The same book with Library and Exit at the top and reading tools along the bottom"> | <img src="docs/screenshots/dictionary.png" width="210" alt="A compact dictionary definition displayed over the reading page"> |
+| <img src="docs/screenshots/documents.png" width="210" alt="Reader showing folders, file types, sizes, and unsupported files"> | <img src="docs/screenshots/reading.png" width="210" alt="Reader displaying an EPUB with a compact Done control"> | <img src="docs/screenshots/reading-controls.png" width="210" alt="Reader’s compact navigation and document tool bars over an EPUB"> | <img src="docs/screenshots/dictionary.png" width="210" alt="A compact dictionary definition displayed over the reading page"> |
 
 These captures use Reader's Kindle interface in the desktop simulator.
+[Selection popup](docs/screenshots/selection.png)
 
 ## Reading on Kindle
 
@@ -22,10 +23,13 @@ Install Reader from PrimitiveOS Store or follow the manual install guide.
   each file's type and size. Files Reader cannot open are labelled and disabled.
   Use **Up** to return to the parent folder, or **Find** to search all Documents.
   **Continue reading** on the Documents screen returns to your saved passage.
-- Tap near the upper center of a page to reveal the reading bars. The bottom
-  bar opens Contents, Bookmarks, Highlights, Find, Text and Go to. The top
-  bar opens Library, saves a bookmark, or exits Reader. Tap the page to hide
-  the bars. Done is also available from the reading view.
+- Tap near the upper center of a page to reveal both reading bars. The top
+  bar offers **Library**, **Pages**, **Controls**, and **Exit**. Use **Pages**
+  for thumbnails, a quick bookmark, available links, and previous locations.
+  The lower bar keeps Contents, Bookmarks, Highlights, Find, and Go to in
+  consistent positions. Choose Text, View, or Scan for the current format's
+  adjustments. Tap the center of the footer to open Text or View directly.
+  Tap the page to hide the bars. **Done** is available while the bars are closed.
 - Use the Kindle's page buttons, tap the outer thirds of the page, or swipe.
   Text settings switch between paged and continuous reading in horizontal EPUBs.
   Supported `vertical-rl` chapters use right-to-left columns and page turns.
@@ -40,8 +44,10 @@ Install Reader from PrimitiveOS Store or follow the manual install guide.
 - At the end of a comic, Next comic opens the following archive in the same
   folder in natural filename order.
 - Hold a word to select it, then tap another word to extend the selection.
-  Add a highlight or note, or look up a word in an installed offline dictionary.
-  Definitions appear over the current page and can expand for longer entries.
+  Use the selection popup to add a highlight or note, or look up a word in an
+  installed offline dictionary.
+  Definitions open over the current page, away from the selected words when
+  space allows. Expand a longer result to read it at full size.
   Choose a preferred installed dictionary under Controls.
 - Hold a local EPUB illustration to open it for zoom and pan. Done returns
   to the same passage.
