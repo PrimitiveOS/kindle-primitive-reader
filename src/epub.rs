@@ -14,6 +14,12 @@ const MAX_ENTRIES: usize = 8192;
 const MAX_ZIP_DIRECTORY: u64 = 4 * 1024 * 1024;
 const MAX_XML: usize = 512 * 1024;
 const MAX_RESOURCE: usize = 8 * 1024 * 1024;
+const MAX_RASTER_COVER: usize = 4 * 1024 * 1024;
+const MAX_COVER_PATH: usize = 512;
+const MAX_SERIES: usize = 8;
+const MAX_COLLECTION_HINTS: usize = 128;
+const MAX_SERIES_NAME: usize = 256;
+const MAX_SERIES_POSITION: usize = 64;
 
 type Archive = ZipArchive<BufReader<File>>;
 
@@ -21,6 +27,7 @@ type Archive = ZipArchive<BufReader<File>>;
 pub struct Chapter {
     pub href: String,
     pub label: String,
+    pub(crate) is_svg: bool,
 }
 
 /// A local reading destination with a decoded archive path and optional element ID.
@@ -38,6 +45,26 @@ pub struct TocEntry {
     pub destination: Option<Destination>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BookSeries {
+    pub name: String,
+    /// Publisher order, such as 2.2.1 for a hierarchical position.
+    pub position: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CoverKind {
+    Jpeg,
+    Png,
+    Svg,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BookCover {
+    pub path: String,
+    pub kind: CoverKind,
+}
+
 pub struct Book {
     pub title: String,
     pub author: Option<String>,
@@ -45,11 +72,16 @@ pub struct Book {
     pub toc: Vec<TocEntry>,
     revision: u64,
     fixed_spine: Option<FixedSpine>,
+    series: Vec<BookSeries>,
+    cover: Option<BookCover>,
     content: Content,
 }
 
 enum Content {
-    Archive(Archive),
+    Archive {
+        archive: Archive,
+        package_path: String,
+    },
     Loose {
         xhtml: String,
         resources: BTreeMap<String, Vec<u8>>,
@@ -60,6 +92,7 @@ struct Item {
     path: String,
     media: String,
     navigation: bool,
+    cover_image: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -146,6 +179,7 @@ impl Book {
         let metadata = child(root, "metadata")?;
         let default_layout = package_layout(metadata)?;
         let default_spread = package_spread(metadata);
+        let series = package_series(metadata);
         let title = metadata
             .children()
             .find(|node| node.has_tag_name("title"))
@@ -175,19 +209,23 @@ impl Book {
             let Ok(path) = Self::resolve(&package_path, href) else {
                 continue;
             };
+            let properties = node.attribute("properties").unwrap_or_default();
+            let has_property = |name| {
+                properties
+                    .split_ascii_whitespace()
+                    .any(|property| property == name)
+            };
             let item = Item {
                 path,
                 media: node.attribute("media-type").unwrap_or_default().to_owned(),
-                navigation: node
-                    .attribute("properties")
-                    .unwrap_or_default()
-                    .split_ascii_whitespace()
-                    .any(|p| p == "nav"),
+                navigation: has_property("nav"),
+                cover_image: has_property("cover-image"),
             };
             if manifest.insert(id, item).is_some() {
                 return Err("The EPUB manifest contains duplicate IDs".into());
             }
         }
+        let cover = package_cover(metadata, &manifest);
         let spine = child(root, "spine")?;
         let toc = if let Some(nav) = manifest.values().find(|item| item.navigation) {
             let xml = xml_entry(&mut archive, &nav.path)?;
@@ -227,8 +265,11 @@ impl Book {
                         .into(),
                 );
             }
-            if fixed && item.media != "application/xhtml+xml" {
-                return Err("Reader supports fixed-layout EPUB pages stored as XHTML".into());
+            let is_svg = item.media == "image/svg+xml";
+            if fixed && item.media != "application/xhtml+xml" && !is_svg {
+                return Err(
+                    "Reader supports fixed-layout EPUB pages stored as XHTML or static SVG".into(),
+                );
             }
             if fixed {
                 if placements.len() == MAX_ENTRIES {
@@ -236,8 +277,8 @@ impl Book {
                 }
                 placements.push(item_placement(reference, default_spread));
             }
-            if item.media != "application/xhtml+xml" && item.media != "text/html" {
-                return Err("The probe supports only XHTML spine documents".into());
+            if !fixed && !matches!(item.media.as_str(), "application/xhtml+xml" | "text/html") {
+                return Err("Reader supports XHTML or HTML in a reflowable spine".into());
             }
             let label = labels
                 .get(item.path.as_str())
@@ -246,6 +287,7 @@ impl Book {
             chapters.push(Chapter {
                 href: item.path.clone(),
                 label,
+                is_svg,
             });
         }
         if chapters.is_empty() {
@@ -261,12 +303,27 @@ impl Book {
                 right_to_left: spine.attribute("page-progression-direction") == Some("rtl"),
                 placements,
             }),
-            content: Content::Archive(archive),
+            series,
+            cover,
+            content: Content::Archive {
+                archive,
+                package_path,
+            },
         })
     }
 
     pub(crate) fn revision(&self) -> u64 {
         self.revision
+    }
+
+    pub(crate) fn package_xml(&mut self) -> Result<String> {
+        match &mut self.content {
+            Content::Archive {
+                archive,
+                package_path,
+            } => xml_entry(archive, package_path),
+            Content::Loose { .. } => Err("EPUB CFI positions require an EPUB publication".into()),
+        }
     }
 
     #[cfg(feature = "kindle")]
@@ -285,7 +342,10 @@ impl Book {
         Self {
             revision: crate::revision(&document.xhtml),
             fixed_spine: None,
+            series: Vec::new(),
+            cover: None,
             chapters: vec![Chapter {
+                is_svg: false,
                 href: document.chapter_path,
                 label: document.title.clone(),
             }],
@@ -312,13 +372,35 @@ impl Book {
         &self.toc
     }
 
+    pub fn series(&self) -> &[BookSeries] {
+        &self.series
+    }
+
+    /// Return the cover declaration without reading the image resource.
+    pub fn cover(&self) -> Option<&BookCover> {
+        self.cover.as_ref()
+    }
+
+    /// Read only the declared cover, subject to the format's byte limit.
+    pub fn read_cover(&mut self) -> Result<Option<(CoverKind, Vec<u8>)>> {
+        let Some(cover) = self.cover.clone() else {
+            return Ok(None);
+        };
+        let cap = match cover.kind {
+            CoverKind::Jpeg | CoverKind::Png => MAX_RASTER_COVER,
+            CoverKind::Svg => crate::svg_image::MAX_SVG_BYTES,
+        };
+        let bytes = self.resource_limited(&cover.path, cap)?;
+        Ok(Some((cover.kind, bytes)))
+    }
+
     pub fn chapter(&mut self, index: usize) -> Result<String> {
         let chapter = self
             .chapters
             .get(index)
             .ok_or("That EPUB chapter is unavailable")?;
         match &mut self.content {
-            Content::Archive(archive) => xml_entry(archive, &chapter.href),
+            Content::Archive { archive, .. } => xml_entry(archive, &chapter.href),
             Content::Loose { xhtml, .. } => Ok(xhtml.clone()),
         }
     }
@@ -341,7 +423,7 @@ impl Book {
         }
         let cap = cap.min(MAX_RESOURCE);
         match &mut self.content {
-            Content::Archive(archive) => read_entry(archive, path, cap),
+            Content::Archive { archive, .. } => read_entry(archive, path, cap),
             Content::Loose { resources, .. } => {
                 let bytes = resources
                     .get(path)
@@ -413,6 +495,156 @@ fn child<'a, 'input>(node: Node<'a, 'input>, name: &str) -> Result<Node<'a, 'inp
     node.children()
         .find(|node| node.has_tag_name(name))
         .ok_or_else(|| format!("The EPUB has no {name} element").into())
+}
+
+// EPUB 3.3 §D.6.1 and the EPUB 2 cover meta convention described in §5.9.3.
+fn package_cover(metadata: Node<'_, '_>, manifest: &BTreeMap<&str, Item>) -> Option<BookCover> {
+    let mut marked = manifest.values().filter(|item| item.cover_image);
+    if let Some(item) = marked.next() {
+        if marked.next().is_some() {
+            return None;
+        }
+        if let Some(cover) = cover_item(item) {
+            return Some(cover);
+        }
+    }
+    let mut legacy_ids = legacy_meta(metadata, "cover");
+    let id = legacy_ids.next()?;
+    if legacy_ids.any(|candidate| candidate != id) {
+        return None;
+    }
+    cover_item(manifest.get(id)?)
+}
+
+fn cover_item(item: &Item) -> Option<BookCover> {
+    if item.path.len() > MAX_COVER_PATH || !is_archive_path(&item.path) {
+        return None;
+    }
+    let kind = match item.media.as_str() {
+        "image/jpeg" => CoverKind::Jpeg,
+        "image/png" => CoverKind::Png,
+        "image/svg+xml" => CoverKind::Svg,
+        _ => return None,
+    };
+    Some(BookCover {
+        path: item.path.clone(),
+        kind,
+    })
+}
+
+#[derive(Default)]
+struct SeriesRefinements<'a> {
+    kind: Option<&'a str>,
+    position: Option<&'a str>,
+    ambiguous_kind: bool,
+    ambiguous_position: bool,
+}
+
+// EPUB 3.3 §D.3.3–4 and §D.3.7. Refined collections describe nesting rather
+// than direct publication membership.
+fn package_series(metadata: Node<'_, '_>) -> Vec<BookSeries> {
+    let nodes = metadata.children().filter(|node| node.has_tag_name("meta"));
+    let collections = nodes
+        .clone()
+        .filter(|node| {
+            node.attribute("property") == Some("belongs-to-collection")
+                && !node.has_attribute("refines")
+        })
+        .filter_map(|node| {
+            let id = node
+                .attribute("id")
+                .filter(|id| !id.is_empty() && id.len() <= 256)?;
+            Some((id, node.text()?))
+        })
+        .take(MAX_COLLECTION_HINTS)
+        .collect::<Vec<_>>();
+
+    let mut refinements = BTreeMap::<&str, Option<SeriesRefinements<'_>>>::new();
+    for &(id, _) in &collections {
+        refinements
+            .entry(id)
+            .and_modify(|record| *record = None)
+            .or_insert_with(|| Some(SeriesRefinements::default()));
+    }
+    for node in nodes {
+        let Some(id) = node
+            .attribute("refines")
+            .and_then(|reference| reference.strip_prefix('#'))
+        else {
+            continue;
+        };
+        let Some(record) = refinements.get_mut(id).and_then(Option::as_mut) else {
+            continue;
+        };
+        let Some(value) = node.text().map(str::trim).filter(|value| !value.is_empty()) else {
+            continue;
+        };
+        let (slot, ambiguous) = match node.attribute("property") {
+            Some("collection-type") if !node.has_attribute("scheme") => {
+                (&mut record.kind, &mut record.ambiguous_kind)
+            }
+            Some("group-position") => (&mut record.position, &mut record.ambiguous_position),
+            _ => continue,
+        };
+        *ambiguous |= slot.replace(value).is_some_and(|old| old != value);
+    }
+
+    let series: Vec<_> = collections
+        .into_iter()
+        .filter_map(|(id, name)| {
+            let record = refinements.get(id)?.as_ref()?;
+            if record.kind != Some("series") || record.ambiguous_kind {
+                return None;
+            }
+            Some(BookSeries {
+                name: series_name(name)?,
+                position: record
+                    .position
+                    .filter(|_| !record.ambiguous_position)
+                    .filter(|value| valid_group_position(value))
+                    .map(str::to_owned),
+            })
+        })
+        .take(MAX_SERIES)
+        .collect();
+    if !series.is_empty() {
+        return series;
+    }
+    let Some(name) = legacy_meta(metadata, "calibre:series").find_map(series_name) else {
+        return Vec::new();
+    };
+    let position = legacy_meta(metadata, "calibre:series_index")
+        .find(|value| {
+            value.len() <= MAX_SERIES_POSITION && value.parse::<f64>().is_ok_and(f64::is_finite)
+        })
+        .map(str::to_owned);
+    vec![BookSeries { name, position }]
+}
+
+fn legacy_meta<'a>(metadata: Node<'a, '_>, name: &'a str) -> impl Iterator<Item = &'a str> {
+    metadata
+        .children()
+        .filter(move |node| node.has_tag_name("meta") && node.attribute("name") == Some(name))
+        .filter_map(|node| node.attribute("content").map(str::trim))
+        .filter(|text| !text.is_empty())
+}
+
+fn series_name(value: &str) -> Option<String> {
+    let mut name: String = value
+        .split_whitespace()
+        .flat_map(|word| word.chars().chain(std::iter::once(' ')))
+        .filter(|character| !character.is_control())
+        .take(MAX_SERIES_NAME)
+        .collect();
+    name.truncate(name.trim_end().len());
+    (!name.is_empty()).then_some(name)
+}
+
+fn valid_group_position(value: &str) -> bool {
+    value.len() <= MAX_SERIES_POSITION
+        && value.split('.').all(|part| {
+            part.bytes().all(|byte| byte.is_ascii_digit()) && part.parse::<u32>().is_ok()
+        })
 }
 
 // EPUB 3.3 §8.2.2.1: https://www.w3.org/TR/epub-33/#layout
@@ -698,6 +930,222 @@ fn decode_segment(segment: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::io::Write;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use zip::{ZipWriter, write::SimpleFileOptions};
+
+    struct MetadataFixture(PathBuf);
+
+    impl MetadataFixture {
+        fn new(version: &str, metadata: &str, manifest: &str, assets: &[(&str, &[u8])]) -> Self {
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "reader-epub-metadata-{}-{}.epub",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            let file = File::options()
+                .create_new(true)
+                .write(true)
+                .open(&path)
+                .unwrap();
+            let fixture = Self(path);
+            let mut zip = ZipWriter::new(file);
+            let package = format!(
+                r#"<package xmlns="http://www.idpf.org/2007/opf" version="{version}">
+              <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <dc:title>Field Notes</dc:title>{metadata}</metadata>
+              <manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>
+                {manifest}</manifest>
+              <spine><itemref idref="chapter"/></spine></package>"#
+            );
+            for (name, bytes) in [
+                ("mimetype", b"application/epub+zip".as_slice()),
+                ("META-INF/container.xml", br#"<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">
+                     <rootfiles><rootfile full-path="EPUB/book.opf" media-type="application/oebps-package+xml"/></rootfiles></container>"#),
+                ("EPUB/book.opf", package.as_bytes()),
+                ("EPUB/chapter.xhtml", br#"<html xmlns="http://www.w3.org/1999/xhtml"><body><p>Open the chapter.</p></body></html>"#),
+            ] {
+                zip.start_file(name, SimpleFileOptions::default().compression_method(CompressionMethod::Stored)).unwrap();
+                zip.write_all(bytes).unwrap();
+            }
+            for &(name, bytes) in assets {
+                zip.start_file(
+                    name,
+                    SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
+                )
+                .unwrap();
+                zip.write_all(bytes).unwrap();
+            }
+            zip.finish().unwrap();
+            fixture
+        }
+    }
+
+    impl Drop for MetadataFixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.0);
+        }
+    }
+
+    #[test]
+    fn reads_epub3_cover_precedence_and_typed_hierarchical_series() {
+        let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="60">
+            <rect width="40" height="60" fill="#000"/></svg>"##;
+        let fixture = MetadataFixture::new(
+            "3.0",
+            r##"<meta name="cover" content="legacy"/>
+                <meta name="calibre:series" content="Fallback"/>
+                <meta refines="#a" property="group-position">2.2.1</meta>
+                <meta id="collection" property="belongs-to-collection">A set</meta>
+                <meta refines="#collection" property="collection-type">set</meta>
+                <meta id="a" property="belongs-to-collection">  Coastal   Studies  </meta>
+                <meta refines="#a" property="collection-type">series</meta>
+                <meta refines="#collection" id="nested" property="belongs-to-collection">Nested</meta>
+                <meta refines="#nested" property="collection-type">series</meta>
+                <meta id="b" property="belongs-to-collection">Field Journals</meta>
+                <meta refines="#b" property="collection-type">series</meta>
+                <meta refines="#b" property="group-position">invalid</meta>"##,
+            r#"<item id="legacy" href="other.png" media-type="image/png"/>
+               <item id="publisher" href="images/Book%20cover.svg" media-type="image/svg+xml" properties="cover-image"/>"#,
+            &[("EPUB/images/Book cover.svg", svg)],
+        );
+        let mut book = Book::open(&fixture.0).unwrap();
+        assert_eq!(
+            book.cover(),
+            Some(&BookCover {
+                path: "EPUB/images/Book cover.svg".into(),
+                kind: CoverKind::Svg
+            })
+        );
+        assert_eq!(
+            book.read_cover().unwrap(),
+            Some((CoverKind::Svg, svg.to_vec()))
+        );
+        assert_eq!(
+            book.series(),
+            [
+                BookSeries {
+                    name: "Coastal Studies".into(),
+                    position: Some("2.2.1".into())
+                },
+                BookSeries {
+                    name: "Field Journals".into(),
+                    position: None
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn reads_epub2_calibre_cover_and_fractional_series() {
+        let fixture = MetadataFixture::new(
+            "2.0",
+            r#"<meta name="cover" content="jacket"/>
+                <meta name="calibre:series" content="  Lantern   Stories  "/>
+                <meta name="calibre:series_index" content="2.5"/>"#,
+            r#"<item id="jacket" href="jacket.jpg" media-type="image/jpeg"/>"#,
+            &[("EPUB/jacket.jpg", b"Selected cover bytes")],
+        );
+        let mut book = Book::open(&fixture.0).unwrap();
+        assert_eq!(book.cover().unwrap().path, "EPUB/jacket.jpg");
+        assert_eq!(
+            book.read_cover().unwrap(),
+            Some((CoverKind::Jpeg, b"Selected cover bytes".to_vec()))
+        );
+        assert_eq!(
+            book.series(),
+            [BookSeries {
+                name: "Lantern Stories".into(),
+                position: Some("2.5".into())
+            }]
+        );
+    }
+
+    #[test]
+    fn cover_reads_are_lazy_local_and_limited_by_media() {
+        for (media, cap) in [
+            ("image/png", MAX_RASTER_COVER),
+            ("image/svg+xml", crate::svg_image::MAX_SVG_BYTES),
+        ] {
+            let manifest = format!(
+                r#"<item id="cover" href="cover.img" media-type="{media}" properties="cover-image"/>"#
+            );
+            let too_large = vec![0; cap + 1];
+            let fixture =
+                MetadataFixture::new("3.0", "", &manifest, &[("EPUB/cover.img", &too_large)]);
+            let mut book = Book::open(&fixture.0).unwrap();
+            assert!(book.cover().is_some());
+            assert!(
+                book.read_cover()
+                    .err()
+                    .unwrap()
+                    .to_string()
+                    .contains("size limit")
+            );
+            assert!(book.chapter(0).unwrap().contains("Open the chapter."));
+
+            let missing = MetadataFixture::new("3.0", "", &manifest, &[]);
+            let mut book = Book::open(&missing.0).unwrap();
+            assert!(book.cover().is_some());
+            assert!(book.read_cover().is_err());
+        }
+        for href in [
+            "../../outside.png",
+            "https://example.invalid/cover.png",
+            "/cover.png",
+        ] {
+            let manifest = format!(
+                r#"<item id="cover" href="{href}" media-type="image/png" properties="cover-image"/>"#
+            );
+            let fixture = MetadataFixture::new("3.0", "", &manifest, &[]);
+            let mut book = Book::open(&fixture.0).unwrap();
+            assert!(book.cover().is_none());
+            assert_eq!(book.read_cover().unwrap(), None);
+        }
+        let ambiguous = MetadataFixture::new(
+            "3.0",
+            "",
+            r#"
+            <item id="a" href="a.png" media-type="image/png" properties="cover-image"/>
+            <item id="b" href="b.jpg" media-type="image/jpeg" properties="cover-image"/>"#,
+            &[],
+        );
+        assert!(Book::open(&ambiguous.0).unwrap().cover().is_none());
+    }
+
+    #[test]
+    fn series_reject_conflicting_types_and_bound_long_names_and_positions() {
+        use std::fmt::Write as _;
+        let mut metadata = String::from(
+            r##"
+            <meta id="conflicting" property="belongs-to-collection">Ambiguous</meta>
+            <meta refines="#conflicting" property="collection-type">series</meta>
+            <meta refines="#conflicting" property="collection-type">set</meta>"##,
+        );
+        for index in 0..MAX_SERIES + 2 {
+            let name = format!("Volume {index} {}", "日".repeat(MAX_SERIES_NAME + 1));
+            let position = "2".repeat(MAX_SERIES_POSITION + 1);
+            write!(
+                metadata,
+                r##"<meta id="s{index}" property="belongs-to-collection">{name}</meta>
+                <meta refines="#s{index}" property="collection-type">series</meta>
+                <meta refines="#s{index}" property="group-position">{position}</meta>"##
+            )
+            .unwrap();
+        }
+        let fixture = MetadataFixture::new("3.0", &metadata, "", &[]);
+        let book = Book::open(&fixture.0).unwrap();
+        assert_eq!(book.series().len(), MAX_SERIES);
+        assert!(book.series()[0].name.starts_with("Volume 0 "));
+        assert_eq!(book.series()[0].name.chars().count(), MAX_SERIES_NAME);
+        assert!(book.series().iter().all(|series| series.position.is_none()));
+        assert!(valid_group_position("4294967295"));
+        assert!(!valid_group_position("4294967296"));
+        assert!(!valid_group_position("1..2"));
+    }
 
     #[test]
     fn fixed_spread_advisories_use_standard_aliases_and_safe_conflict_defaults() {

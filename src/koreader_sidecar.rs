@@ -28,6 +28,8 @@ pub struct SidecarProgress {
     pub partial_md5_checksum: Option<[u8; 16]>,
     /// The CREngine pointer is retained for preview and diagnosis.
     pub last_xpointer: Option<String>,
+    /// Newer KOReader versions also save an EPUB Canonical Fragment Identifier.
+    pub last_epubcfi: Option<String>,
     pub cre_dom_version: Option<u32>,
     /// The progress fraction, including the legacy `last_percent` fallback.
     pub percent_finished: Option<f64>,
@@ -96,16 +98,11 @@ impl SidecarProgress {
         checksum: [u8; 16],
         page_count: usize,
     ) -> Result<usize, SidecarError> {
-        if self.last_xpointer.is_some() {
+        if self.last_xpointer.is_some() || self.last_epubcfi.is_some() {
             return Err(SidecarError::ReflowablePointer);
         }
         let page = self.last_page.ok_or(SidecarError::MissingPosition)? as usize;
-        let stored = self
-            .partial_md5_checksum
-            .ok_or(SidecarError::MissingChecksum)?;
-        if stored != checksum {
-            return Err(SidecarError::ChecksumMismatch);
-        }
+        self.check_fingerprint(checksum)?;
         if self.doc_pages.ok_or(SidecarError::MissingPageCount)? as usize != page_count {
             return Err(SidecarError::PageCountMismatch);
         }
@@ -113,6 +110,26 @@ impl SidecarProgress {
             return Err(SidecarError::PageOutOfBounds);
         }
         Ok(page - 1)
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn reflow_cfi(&self, checksum: [u8; 16]) -> Result<&str, SidecarError> {
+        let cfi = self
+            .last_epubcfi
+            .as_deref()
+            .ok_or(SidecarError::ReflowablePointer)?;
+        self.check_fingerprint(checksum)?;
+        Ok(cfi)
+    }
+
+    fn check_fingerprint(&self, checksum: [u8; 16]) -> Result<(), SidecarError> {
+        let stored = self
+            .partial_md5_checksum
+            .ok_or(SidecarError::MissingChecksum)?;
+        if stored != checksum {
+            return Err(SidecarError::ChecksumMismatch);
+        }
+        Ok(())
     }
 }
 
@@ -189,7 +206,7 @@ struct ProgressFields {
 
 impl ProgressFields {
     fn insert(&mut self, key: &[u8], value: Value<'_>) -> Result<(), SidecarError> {
-        const FIELDS: [&str; 7] = [
+        const FIELDS: [&str; 8] = [
             "last_page",
             "doc_pages",
             "partial_md5_checksum",
@@ -197,6 +214,7 @@ impl ProgressFields {
             "cre_dom_version",
             "percent_finished",
             "last_percent",
+            "last_epubcfi",
         ];
         let Some((index, key)) = FIELDS
             .iter()
@@ -237,6 +255,20 @@ impl ProgressFields {
                     return Err(invalid);
                 }
                 self.value.last_xpointer = Some(pointer.to_owned());
+            }
+            "last_epubcfi" => {
+                let bytes = value
+                    .string()
+                    .filter(|bytes| (1..=MAX_POINTER_BYTES).contains(&bytes.len()))
+                    .ok_or(invalid)?;
+                let cfi = std::str::from_utf8(bytes).map_err(|_| invalid)?;
+                if !cfi.starts_with("epubcfi(")
+                    || !cfi.ends_with(')')
+                    || cfi.chars().any(char::is_control)
+                {
+                    return Err(invalid);
+                }
+                self.value.last_epubcfi = Some(cfi.to_owned());
             }
             "percent_finished" => {
                 self.value.percent_finished = Some(value.percent().ok_or(invalid)?)
@@ -774,6 +806,31 @@ return {
         assert_eq!(
             parse(b"return {partial_md5_checksum='short'}"),
             Err(SidecarError::InvalidField("partial_md5_checksum"))
+        );
+    }
+
+    #[cfg(feature = "kindle")]
+    #[test]
+    fn retained_cfi_requires_the_same_sampled_fingerprint() {
+        let parsed = parse(
+            br#"return {
+            last_xpointer = "/body/DocFragment[1]/body/p/text().0",
+            last_epubcfi = "epubcfi(/6/2!/4/2/1:0)",
+            partial_md5_checksum = "01010101010101010101010101010101",
+        }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            parsed.reflow_cfi([1; 16]).unwrap(),
+            "epubcfi(/6/2!/4/2/1:0)"
+        );
+        assert_eq!(
+            parsed.reflow_cfi([2; 16]),
+            Err(SidecarError::ChecksumMismatch)
+        );
+        assert_eq!(
+            parsed.resolve_fixed([1; 16], 10),
+            Err(SidecarError::ReflowablePointer)
         );
     }
 

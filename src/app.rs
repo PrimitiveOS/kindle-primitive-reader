@@ -20,9 +20,9 @@ use crate::fixed_text::PdfTextRect;
 use crate::koreader_import::{self, ExportEntry, QuoteMatch, QuoteResolver};
 use crate::koreader_sidecar::{self, SidecarProgress};
 use crate::library::{
-    BackupImport, BookPreferences, BookState, Bookmark, DocumentFormat, FixedPreferences,
-    Highlight, Library, LibraryBook, MAX_BACKUP_BYTES, PdfHighlight, ReadingPosition,
-    ReadingStatus,
+    BackupImport, BookMetadata, BookPreferences, BookState, Bookmark, DocumentFormat,
+    FixedPreferences, Highlight, Library, LibraryBook, MAX_BACKUP_BYTES, PdfHighlight,
+    ReadingPosition, ReadingStatus,
 };
 use crate::ocr_job::{OcrAssets, OcrJob};
 use crate::pdf_annotations;
@@ -33,10 +33,10 @@ use crate::reading_stats::ReadingStats;
 use crate::search::{MAX_SEARCH_HITS, PdfSearch, PdfSearchHit, Search, SearchHit};
 use crate::selection::TextSelection;
 use crate::session::{
-    BookConfig, DONE, PAGE_HEIGHT, PAGE_REFRESH_GAP, PagePaint, PageTurns, Reading,
+    BookConfig, DONE, PAGE_HEIGHT, PAGE_REFRESH_GAP, PagePaint, PageTurns, Reading, page_thumbnail,
 };
 use crate::text_flow::TextFlow;
-use crate::{Engine, Result, Settings, TextAlignment};
+use crate::{Engine, Probe, Result, Settings, TextAlignment};
 
 const ROW_HEIGHT: i32 = 116;
 const LIST_X: i32 = 40;
@@ -60,7 +60,10 @@ const BOOKMARK_CONTROL: Rect = Rect::new(829, 15, 205, 62);
 const EXIT_CONTROL: Rect = Rect::new(1048, 15, 196, 62);
 const UNLOCK_TOUCH: Rect = Rect::new(832, PAGE_HEIGHT as i32 + 5, 258, 60);
 const CANCEL_OCR: Rect = Rect::new(624, PAGE_HEIGHT as i32 + 5, 200, 60);
+const NEXT_COMIC: Rect = Rect::new(598, PAGE_HEIGHT as i32 + 5, 223, 60);
 const FIND_CASE: Rect = Rect::new(LIST_X, LIST_Y + 260, 335, 70);
+const MATCH_PREV: Rect = Rect::new(420, PAGE_HEIGHT as i32 + 5, 196, 60);
+const MATCH_NEXT: Rect = Rect::new(628, PAGE_HEIGHT as i32 + 5, 196, 60);
 const DEFINITION_BOTTOM: i32 = HEIGHT as i32 - 82;
 const DEFINITION_PREV: Rect = Rect::new(94, DEFINITION_BOTTOM - 82, 214, 66);
 const DEFINITION_NEXT: Rect = Rect::new(WIDTH as i32 - 308, DEFINITION_BOTTOM - 82, 214, 66);
@@ -100,6 +103,7 @@ enum Screen {
     PdfPassword,
     GoToPage,
     PageOverview,
+    LocationHistory,
     BookTools,
     Contents,
     Links,
@@ -146,6 +150,7 @@ impl Screen {
             | Self::Illustration => "",
             Self::GoToPage => "Go to page",
             Self::PageOverview => "Pages",
+            Self::LocationHistory => "Location history",
             Self::ReadFixedText => "",
             Self::OcrLanguage => "Recognize text",
             Self::PdfPassword => "Unlock PDF",
@@ -178,6 +183,7 @@ enum Action {
     ClearLibraryFilter,
     ListBooks(BookList),
     OrganizeCurrent,
+    ViewCover,
     Favorite(bool),
     SetStatus(ReadingStatus),
     CollectionMembership(String, bool),
@@ -201,6 +207,7 @@ enum Action {
     Bookmark(usize),
     AddBookmark,
     ReturnToLocation,
+    ReturnToHistory(usize),
     Text(Settings),
     ShowFonts,
     ShowDictionaries,
@@ -233,6 +240,7 @@ enum Action {
     RecognizeText,
     RecognizeLanguage(String),
     ReadFixedText,
+    ReflowScan,
 }
 
 enum BookList {
@@ -248,10 +256,14 @@ struct BookDetails {
     entry: LibraryBook,
     id: u64,
     back: Screen,
+    metadata: Option<BookMetadata>,
 }
 
 struct PageOverview {
     first: usize,
+    count: usize,
+    chapter: Option<usize>,
+    preview: Option<Box<Probe>>,
     tiles: Vec<Option<GrayImage>>,
 }
 
@@ -313,6 +325,11 @@ struct AnnotationImport {
     refresh: Instant,
 }
 
+struct PositionImport {
+    sidecar: SidecarProgress,
+    target: std::result::Result<ReadingPosition, String>,
+}
+
 pub struct Reader {
     library: Library,
     library_query: String,
@@ -329,7 +346,7 @@ pub struct Reader {
     stats_awake: bool,
     backup_import: Option<BackupImport>,
     annotation_import: Option<AnnotationImport>,
-    position_import: Option<SidecarProgress>,
+    position_import: Option<PositionImport>,
     pdf_annotation_import: Vec<PdfHighlight>,
     import_path: PathBuf,
     fonts: Vec<PathBuf>,
@@ -355,6 +372,7 @@ pub struct Reader {
     editor: Editor,
     search: Option<Search>,
     find_match_case: bool,
+    search_result: Option<usize>,
     pdf_search: Option<PdfSearch>,
     pdf_hits: Vec<PdfSearchHit>,
     pdf_result_region: Option<(usize, PdfTextRect)>,
@@ -439,6 +457,7 @@ impl Reader {
             editor: Editor::new(64),
             search: None,
             find_match_case: false,
+            search_result: None,
             pdf_search: None,
             pdf_hits: Vec::new(),
             pdf_result_region: None,
@@ -511,6 +530,8 @@ impl Reader {
         self.ocr = None;
         self.hits.clear();
         self.pdf_hits.clear();
+        self.cancel_search();
+        self.search_result = None;
         self.result_selection = None;
         if let Some(mut reading) = fixed {
             reading.set_ocr_path(self.ocr_root.join(format!("{id:016x}")));
@@ -594,7 +615,7 @@ impl Reader {
         if screen != Screen::ImportPdfAnnotations {
             self.pdf_annotation_import.clear();
         }
-        if screen != Screen::BookDetails {
+        if !matches!(screen, Screen::BookDetails | Screen::Illustration) {
             self.book_details = None;
         }
         if screen != Screen::PageOverview {
@@ -629,15 +650,19 @@ impl Reader {
         {
             active.reading.pause_turns();
         }
-        if screen != Screen::Matches {
-            self.search = None;
-            self.pdf_search = None;
-            self.search_at = None;
+        if !matches!(screen, Screen::Matches | Screen::Book | Screen::Fixed) {
+            self.cancel_search();
         }
         self.screen = screen;
         self.update_stats_activity(Instant::now());
         self.list_page = 0;
         self.notice = None;
+    }
+
+    fn cancel_search(&mut self) {
+        self.search = None;
+        self.pdf_search = None;
+        self.search_at = None;
     }
 
     fn record_position(&mut self) {
@@ -664,7 +689,8 @@ impl Reader {
 
     fn update_stats_activity(&mut self, now: Instant) {
         let book = match self.screen {
-            Screen::Book | Screen::Illustration if self.stats_awake => {
+            Screen::Book if self.stats_awake => self.active.as_ref().map(|book| book.id),
+            Screen::Illustration if self.stats_awake && self.book_details.is_none() => {
                 self.active.as_ref().map(|book| book.id)
             }
             Screen::Fixed | Screen::ReadFixedText | Screen::ScanColumns if self.stats_awake => {
@@ -720,6 +746,30 @@ impl Reader {
         if let Some(items) = self.organization_items() {
             return items;
         }
+        if self.screen == Screen::LocationHistory {
+            return self
+                .back
+                .iter()
+                .enumerate()
+                .rev()
+                .map(|(index, position)| {
+                    let action = Action::ReturnToHistory(index);
+                    if let Some(fixed) = &self.fixed {
+                        Item::new(fixed_page_label(&fixed.reading, position.page), action)
+                    } else {
+                        let chapter = self.active.as_ref().and_then(|active| {
+                            active.reading.probe.chapter_entries().get(position.chapter)
+                        });
+                        Item::new(chapter.map_or("Chapter", |chapter| &chapter.label), action)
+                            .detail(format!(
+                                "Chapter {} · Page {}",
+                                position.chapter + 1,
+                                position.page + 1
+                            ))
+                    }
+                })
+                .collect();
+        }
         if self.screen == Screen::ReadingControls {
             let current = self.controls;
             let mut items = vec![
@@ -746,6 +796,18 @@ impl Reader {
                     "Mirrored touch zones"
                 } else {
                     "Standard touch zones"
+                }),
+                Item::new(
+                    "Turn pages by tapping",
+                    Action::SetReadingControls(ReadingControls {
+                        disable_page_taps: !current.disable_page_taps,
+                        ..current
+                    }),
+                )
+                .detail(if current.disable_page_taps {
+                    "Off · swipe or use page buttons"
+                } else {
+                    "On"
                 }),
                 Item::new(
                     "Reading toolbar size",
@@ -867,18 +929,35 @@ impl Reader {
                                 .detail(format!(
                                     "Page {} → {} of {}",
                                     fixed.reading.page() + 1,
-                                    import.last_page.unwrap_or(0),
+                                    import.sidecar.last_page.unwrap_or(0),
                                     fixed.reading.count()
                                 )),
                             Item::new("Edition check", Action::Heading)
                                 .detail("KOReader sampled fingerprint and page count match"),
                         ];
                     }
-                    let mut rows = vec![
-                        Item::new("Position unresolved", Action::Heading)
-                            .detail("Reader cannot map this reflowable position to a passage"),
-                    ];
-                    if let Some(percent) = import.percent_finished {
+                    let mut rows = match &import.target {
+                        Ok(target) => {
+                            let chapter = self.active.as_ref().and_then(|active| {
+                                active.reading.probe.chapter_entries().get(target.chapter)
+                            });
+                            vec![
+                                Item::new("Apply reading position", Action::ApplyKoReaderPosition)
+                                    .detail(
+                                        chapter.map_or("EPUB reading position", |chapter| {
+                                            &chapter.label
+                                        }),
+                                    ),
+                                Item::new("Edition check", Action::Heading).detail(
+                                    "CFI resolves and the KOReader sampled fingerprint matches",
+                                ),
+                            ]
+                        }
+                        Err(error) => {
+                            vec![Item::new("Position unresolved", Action::Heading).detail(error)]
+                        }
+                    };
+                    if let Some(percent) = import.sidecar.percent_finished {
                         rows.push(Item::new(
                             format!("KOReader progress {:.1}%", percent * 100.0),
                             Action::Heading,
@@ -1242,10 +1321,24 @@ impl Reader {
             },
             Screen::BookDetails => {
                 let book = self.book_details.as_ref()?;
-                items.push(
-                    Item::new(&book.entry.title, Action::Heading)
-                        .detail(book.entry.path.to_string_lossy()),
+                let description = book.entry.author.as_deref().map_or_else(
+                    || book.entry.path.to_string_lossy().into_owned(),
+                    str::to_owned,
                 );
+                items.push(Item::new(&book.entry.title, Action::Heading).detail(description));
+                if let Some(metadata) = &book.metadata {
+                    if metadata.has_cover {
+                        items.push(Item::new("View cover", Action::ViewCover));
+                    }
+                    items.extend(metadata.series.iter().map(|series| {
+                        Item::new(&series.name, Action::Heading).detail(
+                            series.position.as_ref().map_or_else(
+                                || "Series".into(),
+                                |position| format!("Series · {position}"),
+                            ),
+                        )
+                    }));
+                }
                 let seconds = self.stats.seconds_read(book.id, Instant::now());
                 items
                     .push(Item::new("Reading time", Action::Heading).detail(reading_time(seconds)));
@@ -1338,6 +1431,7 @@ impl Reader {
             if fixed.reading.supports_text() {
                 tools.push(Item::new("Find", Action::Show(Screen::Find)));
                 tools.push(Item::new("Read text", Action::ReadFixedText));
+                tools.push(Item::new("Reflow scan", Action::ReflowScan));
                 tools.push(Item::new("Highlights", Action::Show(Screen::Highlights)));
                 if !self.pdf_hits.is_empty() {
                     tools.push(Item::new("Matches", Action::Show(Screen::Matches)));
@@ -1358,6 +1452,9 @@ impl Reader {
                     tools.push(Item::new("OCR", Action::RecognizeText));
                 }
             }
+            if !self.back.is_empty() {
+                tools.push(Item::new("History", Action::Show(Screen::LocationHistory)));
+            }
             tools.push(Item::new("Controls", Action::Show(Screen::ReadingControls)));
             return tools;
         }
@@ -1377,6 +1474,9 @@ impl Reader {
             && !active.reading.links().is_empty()
         {
             tools.push(Item::new("Links", Action::Show(Screen::Links)));
+        }
+        if !self.back.is_empty() {
+            tools.push(Item::new("History", Action::Show(Screen::LocationHistory)));
         }
         tools.push(Item::new("Controls", Action::Show(Screen::ReadingControls)));
         tools
@@ -1525,6 +1625,7 @@ impl Reader {
                 };
                 self.organize_book(entry, back)?;
             }
+            Action::ViewCover => self.view_cover()?,
             Action::Favorite(favorite) => {
                 let book = self.book_details.as_ref().ok_or("Choose a book first")?;
                 self.library.track(&book.entry, book.id).favorite = favorite;
@@ -1607,18 +1708,9 @@ impl Reader {
             Action::Show(screen) => self.show(screen),
             Action::Jump(target) => self.follow(target)?,
             Action::ReturnToLocation => {
-                let previous = self.back.last().cloned().ok_or("No previous location")?;
-                if let Some(fixed) = &mut self.fixed {
-                    fixed.reading.jump(previous.page)?;
-                    self.pdf_result_region = None;
-                    self.pdf_selection = None;
-                    self.show(Screen::Fixed);
-                    self.record_position();
-                } else {
-                    self.restore_position(&previous)?;
-                }
-                self.back.pop();
+                self.return_to_location(self.back.len().saturating_sub(1))?;
             }
+            Action::ReturnToHistory(index) => self.return_to_location(index)?,
             Action::FitPage(width_fit) => {
                 self.fixed
                     .as_mut()
@@ -1669,9 +1761,14 @@ impl Reader {
             }
             Action::ScanColumns => self.open_scan_columns()?,
             Action::Overview => {
-                let (_, current) = self.overview_range().ok_or("Open a book first")?;
+                let (chapter, current) = if let Some(fixed) = &self.fixed {
+                    (None, fixed.reading.page())
+                } else {
+                    let reading = &self.active.as_ref().ok_or("Open a book first")?.reading;
+                    (Some(reading.chapter), reading.page)
+                };
+                self.update_overview(chapter, Some(current / OVERVIEW_PAGES * OVERVIEW_PAGES))?;
                 self.show(Screen::PageOverview);
-                self.update_overview(current / OVERVIEW_PAGES * OVERVIEW_PAGES);
             }
             Action::RotatePage => {
                 let fixed = self.fixed.as_mut().ok_or("No open document")?;
@@ -1692,7 +1789,8 @@ impl Reader {
             }
             Action::RecognizeText => self.start_ocr(None)?,
             Action::RecognizeLanguage(language) => self.start_ocr(Some(&language))?,
-            Action::ReadFixedText => self.read_fixed_text()?,
+            Action::ReadFixedText => self.read_fixed_text(false)?,
+            Action::ReflowScan => self.read_fixed_text(true)?,
             Action::FixedPage(page) => {
                 self.follow_fixed(page, None)?;
             }
@@ -1814,20 +1912,30 @@ impl Reader {
                     page: 0,
                     anchor: Some(hit.anchor.clone()),
                 };
+                let first_result = self.search_result.is_none();
                 self.restore_position(&target)?;
                 if let Some(active) = &self.active
                     && let Some(start) = target.anchor
                 {
                     self.result_selection = active.reading.probe.select_range(&start, &end);
                 }
-                self.push_history(previous);
+                if first_result {
+                    self.push_history(previous);
+                }
+                self.search_result = Some(index);
             }
             Action::PdfSearchHit(index) => {
                 let hit = self
                     .pdf_hits
                     .get(index)
                     .ok_or("That result is unavailable")?;
-                self.follow_fixed(hit.page, hit.region)?;
+                let (page, region) = (hit.page, hit.region);
+                let first_result = self.search_result.is_none();
+                let previous = self.jump_fixed(page, region)?;
+                if first_result {
+                    self.push_history(previous);
+                }
+                self.search_result = Some(index);
             }
             Action::PdfHighlight(index) => {
                 let fixed = self.fixed.as_ref().ok_or("No open PDF")?;
@@ -1967,10 +2075,47 @@ impl Reader {
         Ok(())
     }
 
-    fn organize_book(&mut self, entry: LibraryBook, back: Screen) -> Result<()> {
-        let id = with_storage(|| self.library.identify(&entry))?;
+    fn organize_book(&mut self, mut entry: LibraryBook, back: Screen) -> Result<()> {
+        let (id, metadata) = with_storage(|| {
+            Ok((
+                self.library.identify(&entry)?,
+                self.library.metadata(&entry).ok(),
+            ))
+        })?;
+        if let Some(metadata) = &metadata {
+            if !metadata.title.is_empty() {
+                entry.title.clone_from(&metadata.title);
+            }
+            entry.author.clone_from(&metadata.author);
+        }
         self.show(Screen::BookDetails);
-        self.book_details = Some(BookDetails { entry, id, back });
+        self.book_details = Some(BookDetails {
+            entry,
+            id,
+            back,
+            metadata,
+        });
+        Ok(())
+    }
+
+    fn view_cover(&mut self) -> Result<()> {
+        let details = self.book_details.as_ref().ok_or("Choose a book first")?;
+        let (_, bytes) = with_storage(|| {
+            if self.library.identify(&details.entry)? != details.id {
+                return Err(io::Error::other(
+                    "The publication changed. Reopen its book details.",
+                ));
+            }
+            let path = self.library.absolute_path(&details.entry.path)?;
+            let mut book = Book::open(&path).map_err(io::Error::other)?;
+            book.read_cover()
+                .map_err(io::Error::other)?
+                .ok_or_else(|| io::Error::other("The book has no supported cover"))
+        })?;
+        let image = crate::parley_layout::original_illustration(&bytes)?;
+        let view = FixedReading::inspect_image(image)?;
+        self.show(Screen::Illustration);
+        self.illustration = Some(view);
         Ok(())
     }
 
@@ -2078,23 +2223,30 @@ impl Reader {
         self.push_history(previous);
         self.selection = None;
         self.result_selection = None;
+        self.search_result = None;
         self.show(Screen::Book);
         self.record_position();
         Ok(())
     }
 
     fn follow_fixed(&mut self, page: usize, region: Option<PdfTextRect>) -> Result<()> {
-        let fixed = self.fixed.as_mut().ok_or("No open document")?;
-        let previous = fixed_position(&fixed.reading);
-        fixed.reading.jump(page)?;
+        let previous = self.jump_fixed(page, region)?;
         if page != previous.page {
             self.push_history(previous);
         }
+        Ok(())
+    }
+
+    fn jump_fixed(&mut self, page: usize, region: Option<PdfTextRect>) -> Result<ReadingPosition> {
+        let fixed = self.fixed.as_mut().ok_or("No open document")?;
+        let previous = fixed_position(&fixed.reading);
+        fixed.reading.jump(page)?;
+        self.search_result = None;
         self.pdf_selection = None;
         self.pdf_result_region = region.map(|bounds| (page, bounds));
         self.show(Screen::Fixed);
         self.record_position();
-        Ok(())
+        Ok(previous)
     }
 
     fn restore_position(&mut self, new_position: &ReadingPosition) -> Result<()> {
@@ -2107,16 +2259,35 @@ impl Reader {
         )?;
         self.selection = None;
         self.result_selection = None;
+        self.search_result = None;
         self.show(Screen::Book);
         self.record_position();
         Ok(())
     }
 
     fn push_history(&mut self, previous: ReadingPosition) {
+        if self.back.last() == Some(&previous) {
+            return;
+        }
         if self.back.len() == 64 {
             self.back.remove(0);
         }
         self.back.push(previous);
+    }
+
+    fn return_to_location(&mut self, index: usize) -> Result<()> {
+        let previous = self
+            .back
+            .get(index)
+            .cloned()
+            .ok_or("No previous location")?;
+        if self.fixed.is_some() {
+            self.jump_fixed(previous.page, None)?;
+        } else {
+            self.restore_position(&previous)?;
+        }
+        self.back.truncate(index);
+        Ok(())
     }
 
     fn report(&mut self, error: impl std::fmt::Display) -> Change {
@@ -2197,6 +2368,7 @@ impl Reader {
                 self.show(Screen::Library);
                 return Change::Partial;
             }
+            self.search_result = None;
             if self.fixed.is_some() {
                 return match PdfSearch::new(&query, self.find_match_case) {
                     Ok(search) => {
@@ -2348,9 +2520,9 @@ impl Reader {
         })?;
         if search.is_finished() {
             self.search_at = None;
-            if search.limit_reached() {
+            if self.screen == Screen::Matches && search.limit_reached() {
                 self.notice = Some("Showing first 100 matches".into());
-            } else if search.skipped_chapters() > 0 {
+            } else if self.screen == Screen::Matches && search.skipped_chapters() > 0 {
                 self.notice = Some("Some chapters could not be searched".into());
             }
             Ok(Change::Partial)
@@ -2400,50 +2572,74 @@ impl Reader {
         let previous = position(&active.reading);
         active.reading.go_to_page(chapter, page)?;
         self.push_history(previous);
+        self.selection = None;
+        self.result_selection = None;
+        self.search_result = None;
         self.show(Screen::Book);
         self.record_position();
         Ok(())
     }
 
-    fn overview_range(&self) -> Option<(usize, usize)> {
-        if let Some(fixed) = &self.fixed {
-            Some((fixed.reading.count(), fixed.reading.page()))
-        } else {
-            let reading = &self.active.as_ref()?.reading;
-            Some((reading.probe.page_count(), reading.page))
-        }
-    }
-
-    fn update_overview(&mut self, first: usize) {
-        let Some((count, _)) = self.overview_range() else {
-            return;
-        };
-        let pages = first..(first + OVERVIEW_PAGES).min(count);
-        let tiles = if let Some(fixed) = &self.fixed {
-            pages
+    fn update_overview(&mut self, chapter: Option<usize>, first: Option<usize>) -> Result<()> {
+        let mut preview = None;
+        let (first, count, tiles) = if let Some(fixed) = &self.fixed {
+            let count = fixed.reading.count();
+            let first = overview_start(first, count);
+            let tiles = (first..(first + OVERVIEW_PAGES).min(count))
                 .map(|page| fixed.reading.thumbnail(page).ok())
-                .collect()
-        } else if let Some(active) = &mut self.active {
-            pages
-                .map(|page| active.reading.thumbnail(page).ok())
-                .collect()
+                .collect();
+            (first, count, tiles)
         } else {
-            Vec::new()
+            let reading = &mut self.active.as_mut().ok_or("Open a book first")?.reading;
+            let chapter = chapter.ok_or("Choose a chapter first")?;
+            if chapter != reading.chapter {
+                preview = if let Some(previous) = self.overview.as_mut()
+                    && previous.chapter == Some(chapter)
+                {
+                    previous.preview.take()
+                } else {
+                    Some(Box::new(reading.config.chapter(chapter)?))
+                };
+            }
+            let probe = preview.as_deref_mut().unwrap_or(&mut reading.probe);
+            let count = probe.page_count();
+            let first = overview_start(first, count);
+            let tiles = (first..(first + OVERVIEW_PAGES).min(count))
+                .map(|page| page_thumbnail(probe, page).ok())
+                .collect();
+            (first, count, tiles)
         };
-        self.overview = Some(PageOverview { first, tiles });
+        self.overview = Some(PageOverview {
+            first,
+            count,
+            chapter,
+            preview,
+            tiles,
+        });
+        self.notice = None;
+        Ok(())
     }
 
     fn draw_overview(&self, canvas: &mut Canvas) {
         let Some(overview) = &self.overview else {
             return;
         };
-        let Some((count, current)) = self.overview_range() else {
-            return;
+        let count = overview.count;
+        let (section, current, chapters) = if let Some(active) = &self.active {
+            let reading = &active.reading;
+            let probe = overview.preview.as_deref().unwrap_or(&reading.probe);
+            (
+                format!("{}  ·  {count} pages", probe.chapter_label),
+                (overview.chapter == Some(reading.chapter)).then_some(reading.page),
+                probe.chapter_count(),
+            )
+        } else {
+            (
+                format!("{count} pages"),
+                self.fixed.as_ref().map(|fixed| fixed.reading.page()),
+                0,
+            )
         };
-        let section = self.active.as_ref().map_or_else(
-            || format!("{count} pages"),
-            |active| format!("{}  ·  {count} pages", active.reading.probe.chapter_label),
-        );
         canvas.text(
             Rect::new(LIST_X, LIST_Y, WIDTH as i32 - 2 * LIST_X, 66),
             self.notice.as_deref().unwrap_or(&section),
@@ -2479,15 +2675,22 @@ impl Reader {
             canvas.button(
                 Rect::new(rect.x + 18, rect.y + rect.h - 84, rect.w - 36, 68),
                 &label,
-                page == current,
+                Some(page) == current,
                 false,
             );
         }
         if overview.first != 0 {
             canvas.button(PREV, "Previous", false, false);
+        } else if overview.chapter.is_some_and(|chapter| chapter > 0) {
+            canvas.button(PREV, "Prev chapter", false, false);
         }
         if overview.first + OVERVIEW_PAGES < count {
             canvas.button(NEXT, "Next", false, false);
+        } else if overview
+            .chapter
+            .is_some_and(|chapter| chapter + 1 < chapters)
+        {
+            canvas.button(NEXT, "Next chapter", false, false);
         }
     }
 
@@ -2495,18 +2698,18 @@ impl Reader {
         let Some(overview) = &self.overview else {
             return Change::None;
         };
-        let step = match input {
-            Input::PageForward => OVERVIEW_PAGES as isize,
-            Input::PageBack => -(OVERVIEW_PAGES as isize),
+        let direction = match input {
+            Input::PageForward => 1,
+            Input::PageBack => -1,
             Input::Swipe { dx, dy, .. } if dy.abs() > dx.abs() => {
                 if dy < 0.0 {
-                    OVERVIEW_PAGES as isize
+                    1
                 } else {
-                    -(OVERVIEW_PAGES as isize)
+                    -1
                 }
             }
-            Input::Tap(x, y) if PREV.contains(x, y) => -(OVERVIEW_PAGES as isize),
-            Input::Tap(x, y) if NEXT.contains(x, y) => OVERVIEW_PAGES as isize,
+            Input::Tap(x, y) if PREV.contains(x, y) => -1,
+            Input::Tap(x, y) if NEXT.contains(x, y) => 1,
             Input::Tap(x, y) if primitive_ui::back_button(WIDTH as i32).contains(x, y) => {
                 self.show(if self.fixed.is_some() {
                     Screen::FixedTools
@@ -2522,8 +2725,8 @@ impl Reader {
                     return Change::None;
                 };
                 let page = overview.first + index;
-                let result = if let Some(active) = &self.active {
-                    self.follow_reflow_page(active.reading.chapter, page)
+                let result = if let Some(chapter) = overview.chapter {
+                    self.follow_reflow_page(chapter, page)
                 } else {
                     self.follow_fixed(page, None)
                 };
@@ -2534,15 +2737,25 @@ impl Reader {
             }
             _ => return Change::None,
         };
-        if let Some(first) = overview.first.checked_add_signed(step)
-            && self
-                .overview_range()
-                .is_some_and(|(count, _)| first < count)
+        let chapter = overview.chapter;
+        let (chapter, first) = if let Some(first) = overview
+            .first
+            .checked_add_signed(direction * OVERVIEW_PAGES as isize)
+            .filter(|&first| first < overview.count)
         {
-            self.update_overview(first);
-            Change::Partial
+            (chapter, Some(first))
+        } else if let Some(chapter) = chapter
+            && let Some(active) = &self.active
+            && let Some(next) = chapter.checked_add_signed(direction)
+            && next < active.reading.probe.chapter_count()
+        {
+            (Some(next), (direction > 0).then_some(0))
         } else {
-            Change::None
+            return Change::None;
+        };
+        match self.update_overview(chapter, first) {
+            Ok(()) => Change::Partial,
+            Err(error) => self.report(error),
         }
     }
 
@@ -2569,7 +2782,9 @@ impl Reader {
         }
         if search.next_page == reading.count() || self.pdf_hits.len() == MAX_SEARCH_HITS {
             self.search_at = None;
-            self.notice = if self.pdf_hits.len() == MAX_SEARCH_HITS {
+            self.notice = if self.screen != Screen::Matches {
+                None
+            } else if self.pdf_hits.len() == MAX_SEARCH_HITS {
                 Some("Showing first 100 matches".into())
             } else if search.skipped > 0 {
                 Some("Some pages could not be searched".into())
@@ -2649,6 +2864,9 @@ impl Reader {
                 }
                 return Change::Partial;
             }
+            if let Some(change) = self.search_result_input(x, y) {
+                return change;
+            }
             if DONE.contains(x, y) {
                 return self.exit();
             }
@@ -2669,7 +2887,10 @@ impl Reader {
         let Some(active) = &mut self.active else {
             return Change::None;
         };
-        let change = active.reading.input(self.controls.page_input(input));
+        let Some(input) = self.controls.page_input(input) else {
+            return Change::None;
+        };
+        let change = active.reading.input(input);
         if change == Change::Partial {
             self.notice = None;
             self.clear_stale_selection();
@@ -2740,8 +2961,20 @@ impl Reader {
                 }
                 return Change::Partial;
             }
+            if let Some(change) = self.search_result_input(x, y) {
+                return change;
+            }
             if DONE.contains(x, y) {
                 return self.exit();
+            }
+            if NEXT_COMIC.contains(x, y)
+                && self.ocr.is_none()
+                && let Some(next) = self.next_comic().cloned()
+            {
+                return match self.open_book(next) {
+                    Ok(()) => Change::Partial,
+                    Err(error) => self.report(error),
+                };
             }
             if let Some(target) = self
                 .fixed
@@ -2768,10 +3001,14 @@ impl Reader {
             return Change::None;
         };
         let page = fixed.reading.page();
-        match fixed.reading.input(self.controls.page_input(input)) {
+        let Some(input) = self.controls.page_input(input) else {
+            return Change::None;
+        };
+        match fixed.reading.input(input) {
             Ok(true) => {
                 self.notice = None;
                 if fixed.reading.page() != page || fixed.reading.is_continuous() {
+                    self.search_result = None;
                     self.pdf_selection = None;
                     self.pdf_result_region = None;
                 }
@@ -2783,20 +3020,78 @@ impl Reader {
         }
     }
 
-    fn read_fixed_text(&mut self) -> Result<()> {
-        let fixed = self.fixed.as_ref().ok_or("Open a document first")?;
-        let page = fixed.reading.page();
-        let text = fixed.reading.page_text(page)?;
-        if text.text.trim().is_empty() {
-            return Err("This page has no text. Use OCR to recognize a scan.".into());
+    fn next_comic(&self) -> Option<&LibraryBook> {
+        let fixed = self.fixed.as_ref()?;
+        if !fixed.entry.format.is_comic()
+            || !fixed
+                .reading
+                .visible_pages()
+                .any(|page| page + 1 == fixed.reading.count())
+        {
+            return None;
         }
+        self.library.next_comic_in_folder(&fixed.entry)
+    }
+
+    fn search_step(&self, step: isize) -> Option<Action> {
+        let index = self.search_result?.checked_add_signed(step)?;
+        if self.fixed.is_some() {
+            (index < self.pdf_hits.len()).then_some(Action::PdfSearchHit(index))
+        } else {
+            (index < self.hits.len()).then_some(Action::SearchHit(index))
+        }
+    }
+
+    fn search_result_input(&mut self, x: f32, y: f32) -> Option<Change> {
+        if self.ocr.is_some() {
+            return None;
+        }
+        let step = if MATCH_PREV.contains(x, y) {
+            -1
+        } else if MATCH_NEXT.contains(x, y) {
+            1
+        } else {
+            return None;
+        };
+        let action = self.search_step(step)?;
+        Some(match self.activate(action) {
+            Ok(()) => Change::Partial,
+            Err(error) => self.report(error),
+        })
+    }
+
+    fn draw_search_steps(&self, canvas: &mut Canvas) {
+        if self.search_step(-1).is_some() {
+            canvas.button(MATCH_PREV, "Prev match", false, false);
+        }
+        if self.search_step(1).is_some() {
+            canvas.button(MATCH_NEXT, "Next match", false, false);
+        }
+    }
+
+    fn search_caption(&self) -> Option<String> {
+        let index = self.search_result?;
+        let count = if self.fixed.is_some() {
+            self.pdf_hits.len()
+        } else {
+            self.hits.len()
+        };
+        let found = if self.search_at.is_some() {
+            " found"
+        } else {
+            ""
+        };
+        Some(format!("Match {} of {count}{found}", index + 1))
+    }
+
+    fn read_fixed_text(&mut self, scan: bool) -> Result<()> {
+        let fixed = self.fixed.as_ref().ok_or("Open a document first")?;
         let text_flow = TextFlow::open(
-            page,
-            fixed.reading.count(),
+            &fixed.reading,
             &fixed.entry.title,
-            &text.text,
             &self.fonts,
             device_settings(),
+            scan,
         )?;
         self.show(Screen::ReadFixedText);
         self.text_flow = Some(text_flow);
@@ -2828,7 +3123,7 @@ impl Reader {
             .fixed
             .as_mut()
             .ok_or("Open a supported document first")?;
-        let raster = fixed.reading.ocr_raster()?;
+        let raster = fixed.reading.ocr_raster(fixed.reading.page())?;
         let columns =
             crate::scan_columns::detect_columns(&raster.pixels, raster.width, raster.height)
                 .ok_or("No clear two-column layout on this page")?;
@@ -2850,7 +3145,9 @@ impl Reader {
         let (Some(scan), Some(fixed)) = (&mut self.scan_columns, &mut self.fixed) else {
             return Change::None;
         };
-        let input = self.controls.page_input(input);
+        let Some(input) = self.controls.page_input(input) else {
+            return Change::None;
+        };
         let direction = match input {
             Input::Tap(x, y) if DONE.contains(x, y) => {
                 if let Err(error) = fixed.reading.restore_view(scan.original) {
@@ -2929,7 +3226,7 @@ impl Reader {
             .to_owned();
         let fixed = self.fixed.as_ref().ok_or("Open a PDF or DjVu first")?;
         let page = fixed.reading.page();
-        let raster = fixed.reading.ocr_raster()?;
+        let raster = fixed.reading.ocr_raster(page)?;
         let job = if language == assets.default_language() {
             OcrJob::start(assets, &raster.pixels, raster.width, raster.height)?
         } else {
@@ -3055,6 +3352,7 @@ impl Reader {
 
     fn clear_stale_selection(&mut self) {
         self.result_selection = None;
+        self.search_result = None;
         if let (Some(active), Some(selection)) = (&self.active, &self.selection)
             && selection.start.chapter != active.reading.probe.chapter
         {
@@ -3174,44 +3472,94 @@ impl Reader {
                 }
             },
         )?;
-        let progress = koreader_sidecar::parse(&bytes)?;
-        if self.fixed.is_some() {
-            self.resolve_koreader_position(&progress)?;
-        } else if self.active.is_none() {
+        let sidecar = koreader_sidecar::parse(&bytes)?;
+        if self.fixed.is_none() && self.active.is_none() {
             return Err("Open the matching book first".into());
         }
+        let target = self.resolve_koreader_position(&sidecar);
+        let target = if self.fixed.is_some() {
+            Ok(target?)
+        } else {
+            target.map_err(|error| error.to_string())
+        };
         self.show(Screen::ImportPosition);
-        self.position_import = Some(progress);
+        self.position_import = Some(PositionImport { sidecar, target });
         Ok(())
     }
 
-    fn resolve_koreader_position(&self, progress: &SidecarProgress) -> Result<usize> {
-        let fixed = self
+    fn resolve_koreader_position(&self, progress: &SidecarProgress) -> Result<ReadingPosition> {
+        let (entry, id) = self
             .fixed
             .as_ref()
-            .ok_or("Open a fixed-page document first")?;
-        let checksum = with_storage(|| {
-            if self.library.identify(&fixed.entry)? != fixed.id {
+            .map(|fixed| (&fixed.entry, fixed.id))
+            .or_else(|| {
+                self.active
+                    .as_ref()
+                    .map(|active| (&active.entry, active.id))
+            })
+            .ok_or("Open the matching book first")?;
+        if self.fixed.is_none() {
+            if entry.format != DocumentFormat::Epub {
+                return Err("This format uses a KOReader pointer that Reader cannot map".into());
+            }
+            if progress.last_epubcfi.is_none() {
+                return Err(
+                    "This sidecar has no EPUB CFI. Reader cannot map the legacy CREngine pointer"
+                        .into(),
+                );
+            }
+        }
+        let position = with_storage(|| {
+            if self.library.identify(entry)? != id {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "The document changed. Reopen it and preview the import again.",
                 ));
             }
-            let path = self.library.absolute_path(&fixed.entry.path)?;
-            koreader_sidecar::partial_md5(&mut fs::File::open(path)?)
+            let path = self.library.absolute_path(&entry.path)?;
+            let checksum = koreader_sidecar::partial_md5(&mut fs::File::open(&path)?)?;
+            if let Some(fixed) = &self.fixed {
+                let page = progress
+                    .resolve_fixed(checksum, fixed.reading.count())
+                    .map_err(io::Error::other)?;
+                Ok(ReadingPosition {
+                    chapter: 0,
+                    page,
+                    anchor: None,
+                })
+            } else {
+                let cfi = progress.reflow_cfi(checksum).map_err(io::Error::other)?;
+                let mut book = Book::open(&path).map_err(io::Error::other)?;
+                let target = crate::epub_cfi::resolve(&mut book, cfi).map_err(io::Error::other)?;
+                Ok(ReadingPosition {
+                    chapter: target.chapter,
+                    page: 0,
+                    anchor: Some(target.anchor),
+                })
+            }
         })?;
-        Ok(progress.resolve_fixed(checksum, fixed.reading.count())?)
+        Ok(position)
     }
 
     fn apply_koreader_position(&mut self) -> Result<()> {
-        let progress = self
+        let import = self
             .position_import
             .as_ref()
             .ok_or("Preview the KOReader position first")?;
-        let page = self.resolve_koreader_position(progress)?;
-        self.follow_fixed(page, None)?;
+        let preview = import.target.as_ref().map_err(|error| error.as_str())?;
+        let target = self.resolve_koreader_position(&import.sidecar)?;
+        if &target != preview {
+            return Err("The reading position changed. Preview the import again.".into());
+        }
+        if let Some(active) = &self.active {
+            let previous = position(&active.reading);
+            self.restore_position(&target)?;
+            self.push_history(previous);
+        } else {
+            self.follow_fixed(target.page, None)?;
+        }
         self.save()?;
-        self.notice = Some(format!("KOReader position applied to page {}", page + 1));
+        self.notice = Some("KOReader reading position applied".into());
         Ok(())
     }
 
@@ -3691,7 +4039,12 @@ impl App for Reader {
             return;
         }
         if let Some(illustration) = &self.illustration {
-            let notice = self.notice.as_deref().unwrap_or("Illustration");
+            let title = if self.book_details.is_some() {
+                "Book cover"
+            } else {
+                "Illustration"
+            };
+            let notice = self.notice.as_deref().unwrap_or(title);
             illustration.draw(canvas, Some(notice), &[], &[], self.page_paint());
             return;
         }
@@ -3756,9 +4109,10 @@ impl App for Reader {
                 .into_iter()
                 .flat_map(|selection| selection.bounds().map(|bounds| (selection.page(), bounds)))
                 .collect();
+            let search_caption = self.search_caption();
             fixed.reading.draw(
                 canvas,
-                self.notice.as_deref(),
+                self.notice.as_deref().or(search_caption.as_deref()),
                 &marks,
                 &selection,
                 self.page_paint(),
@@ -3772,6 +4126,13 @@ impl App for Reader {
                 draw_locked_footer(canvas, self.notice.as_deref());
             } else if self.ocr.is_some() && selection.is_empty() {
                 canvas.button(CANCEL_OCR, "Cancel OCR", false, false);
+            } else if self.screen == Screen::Fixed
+                && selection.is_empty()
+                && self.next_comic().is_some()
+            {
+                canvas.button(NEXT_COMIC, "Next comic", false, false);
+            } else if self.screen == Screen::Fixed && selection.is_empty() {
+                self.draw_search_steps(canvas);
             }
             if self.definition_over_book() {
                 self.draw_definition_popup(canvas);
@@ -3796,10 +4157,11 @@ impl App for Reader {
                 .selection
                 .as_ref()
                 .map_or_else(Vec::new, |selection| reading.highlight_rects(selection));
+            let search_caption = self.search_caption();
             reading.draw_page(
                 canvas,
                 self.selection.is_none().then_some("Done"),
-                self.notice.as_deref(),
+                self.notice.as_deref().or(search_caption.as_deref()),
                 &highlights,
                 &selection,
                 self.page_paint(),
@@ -3811,6 +4173,8 @@ impl App for Reader {
                 self.draw_reading_tools(canvas);
             } else if self.touch_locked {
                 draw_locked_footer(canvas, self.notice.as_deref());
+            } else if self.screen == Screen::Book && selection.is_empty() {
+                self.draw_search_steps(canvas);
             }
             if self.definition_over_book() {
                 self.draw_definition_popup(canvas);
@@ -4025,9 +4389,10 @@ impl App for Reader {
                 return Change::Partial;
             }
             if let (Some(flow), Some(fixed)) = (&mut self.text_flow, &self.fixed) {
-                let result = flow.input(self.controls.page_input(input), |page| {
-                    fixed.reading.page_text(page)
-                });
+                let Some(input) = self.controls.page_input(input) else {
+                    return Change::None;
+                };
+                let result = flow.input(input, &fixed.reading);
                 return self.finish_text_flow_update(result);
             }
         }
@@ -4036,7 +4401,11 @@ impl App for Reader {
         }
         if self.screen == Screen::Illustration {
             if matches!(input, Input::Tap(x, y) if DONE.contains(x, y)) {
-                self.show(Screen::Book);
+                self.show(if self.book_details.is_some() {
+                    Screen::BookDetails
+                } else {
+                    Screen::Book
+                });
                 return Change::Partial;
             }
             if let Some(illustration) = &mut self.illustration {
@@ -4129,7 +4498,9 @@ impl App for Reader {
                     Screen::FixedBookmarks | Screen::FixedContents | Screen::OcrLanguage => {
                         self.show(Screen::FixedTools)
                     }
-                    Screen::Highlights if self.fixed.is_some() => self.show(Screen::FixedTools),
+                    Screen::Highlights | Screen::LocationHistory if self.fixed.is_some() => {
+                        self.show(Screen::FixedTools)
+                    }
                     Screen::Matches => self.show(Screen::Find),
                     Screen::Annotation | Screen::ImportAnnotations => self.show(Screen::Highlights),
                     Screen::ImportPosition => self.show(Screen::ReadingControls),
@@ -4267,7 +4638,7 @@ impl App for Reader {
             };
         }
         if let (Some(flow), Some(fixed)) = (&mut self.text_flow, &self.fixed) {
-            let result = flow.tick(now, |page| fixed.reading.page_text(page));
+            let result = flow.tick(now, &fixed.reading);
             return self.finish_text_flow_update(result);
         }
         if self.screen == Screen::Book
@@ -4287,6 +4658,7 @@ impl App for Reader {
             return match fixed.reading.tick(now) {
                 Ok(true) => {
                     self.notice = None;
+                    self.search_result = None;
                     self.pdf_selection = None;
                     self.pdf_result_region = None;
                     self.record_position();
@@ -4415,6 +4787,11 @@ fn list_rect(rows: usize) -> Rect {
         WIDTH as i32 - 2 * LIST_X,
         rows as i32 * ROW_HEIGHT,
     )
+}
+
+fn overview_start(first: Option<usize>, count: usize) -> usize {
+    let last = count.saturating_sub(1) / OVERVIEW_PAGES * OVERVIEW_PAGES;
+    first.map_or(last, |first| first.min(last))
 }
 
 fn overview_tile(index: usize) -> Rect {
@@ -4824,6 +5201,66 @@ mod tests {
     }
 
     #[test]
+    fn previews_a_cover_and_series_from_library_without_creating_progress() {
+        let fixture = Fixture::new();
+        let mut original =
+            zip::ZipArchive::new(Cursor::new(fs::read(&fixture.book).unwrap())).unwrap();
+        let mut repacked = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for index in 0..original.len() {
+            let mut file = original.by_index(index).unwrap();
+            let name = file.name().to_owned();
+            let mut bytes = Vec::new();
+            file.read_to_end(&mut bytes).unwrap();
+            if name == "EPUB/package.opf" {
+                bytes = String::from_utf8(bytes).unwrap().replace(
+                    "media-type=\"image/png\"/>", "media-type=\"image/png\" properties=\"cover-image\"/>",
+                ).replace("</metadata>", concat!(
+                    "<meta property=\"belongs-to-collection\" id=\"series\">Harbor Notes</meta>",
+                    "<meta refines=\"#series\" property=\"collection-type\">series</meta>",
+                    "<meta refines=\"#series\" property=\"group-position\">2.2.1</meta>",
+                    "</metadata>"
+                )).into_bytes();
+            }
+            repacked
+                .start_file(
+                    name,
+                    zip::write::SimpleFileOptions::default()
+                        .compression_method(zip::CompressionMethod::Stored),
+                )
+                .unwrap();
+            repacked.write_all(&bytes).unwrap();
+        }
+        fs::write(&fixture.book, repacked.finish().unwrap().into_inner()).unwrap();
+        let mut app = fixture.app();
+        let entry = app.library.resolve(&fixture.book).unwrap();
+        app.organize_book(entry, Screen::Library).unwrap();
+        let metadata = app
+            .book_details
+            .as_ref()
+            .unwrap()
+            .metadata
+            .as_ref()
+            .unwrap();
+        assert!(metadata.has_cover);
+        assert_eq!(metadata.series[0].name, "Harbor Notes");
+        assert_eq!(metadata.series[0].position.as_deref(), Some("2.2.1"));
+        assert!(
+            app.items()
+                .iter()
+                .any(|item| matches!(item.action, Action::ViewCover))
+        );
+        app.activate(Action::ViewCover).unwrap();
+        assert_eq!(app.screen, Screen::Illustration);
+        assert!(app.illustration.is_some());
+        assert_eq!(
+            app.input(Input::Tap((DONE.x + 15) as f32, (DONE.y + 15) as f32)),
+            Change::Partial
+        );
+        assert_eq!(app.screen, Screen::BookDetails);
+        assert!(app.library.recently_read().next().is_none());
+    }
+
+    #[test]
     fn night_pages_and_larger_controls_persist_without_inverting_the_footer() {
         let fixture = Fixture::new();
         let mut app = fixture.app();
@@ -4838,6 +5275,7 @@ mod tests {
             night_pages: true,
             left_touch: true,
             large_toolbar: true,
+            ..ReadingControls::default()
         };
         app.activate(Action::SetReadingControls(controls)).unwrap();
         let (night_area, night) = app.page_paint().apply(page);
@@ -4849,7 +5287,7 @@ mod tests {
         assert_eq!(reopened.controls, controls);
         assert_eq!(
             reopened.controls.page_input(Input::Tap(100.0, 700.0)),
-            Input::Tap(WIDTH as f32 - 100.0, 700.0)
+            Some(Input::Tap(WIDTH as f32 - 100.0, 700.0))
         );
         reopened.open_path(&fixture.book).unwrap();
         reopened.show(Screen::BookTools);
@@ -5146,6 +5584,155 @@ mod tests {
     }
 
     #[test]
+    fn browses_other_chapters_without_moving_until_a_thumbnail_is_chosen() {
+        let fixture = Fixture::new();
+        let mut app = fixture.app();
+        app.open_path(&fixture.book).unwrap();
+        let original = position(&app.active.as_ref().unwrap().reading);
+        app.activate(Action::Overview).unwrap();
+        let batches = app
+            .overview
+            .as_ref()
+            .unwrap()
+            .count
+            .div_ceil(OVERVIEW_PAGES);
+        for _ in 0..batches {
+            assert_eq!(app.input(Input::PageForward), Change::Partial);
+        }
+        let overview = app.overview.as_ref().unwrap();
+        assert_eq!((overview.chapter, overview.first), (Some(1), 0));
+        assert!(overview.preview.is_some());
+        assert!(overview.tiles[0].is_some());
+        assert_eq!(position(&app.active.as_ref().unwrap().reading), original);
+        assert_eq!(app.input(Input::PageBack), Change::Partial);
+        let overview = app.overview.as_ref().unwrap();
+        assert_eq!(overview.chapter, Some(0));
+        assert_eq!(overview.first, (batches - 1) * OVERVIEW_PAGES);
+        assert_eq!(app.input(Input::PageForward), Change::Partial);
+        let tile = overview_tile(0);
+        assert_eq!(
+            app.input(Input::Tap((tile.x + 20) as f32, (tile.y + 30) as f32)),
+            Change::Partial
+        );
+        assert_eq!(app.active.as_ref().unwrap().reading.chapter, 1);
+        app.activate(Action::ReturnToLocation).unwrap();
+        assert_eq!(position(&app.active.as_ref().unwrap().reading), original);
+    }
+
+    #[test]
+    fn returns_to_a_chosen_older_location_from_the_reading_toolbar() {
+        let fixture = Fixture::new();
+        let long = fixture.root.join("Long Chapter.epub");
+        fs::write(&long, include_bytes!("../tests/fixtures/long-chapter.epub")).unwrap();
+        let mut app = fixture.app();
+        app.open_path(&long).unwrap();
+        let original = position(&app.active.as_ref().unwrap().reading);
+        app.follow_reflow_page(0, 1).unwrap();
+        app.follow_reflow_page(0, 2).unwrap();
+        app.show(Screen::BookTools);
+        let tools = app.reading_tools();
+        let index = tools
+            .iter()
+            .position(|item| item.title == "History")
+            .unwrap();
+        let button = ToolbarLayout::new(tools.len(), false).rect(index);
+        assert_eq!(
+            app.input(Input::Tap((button.x + 20) as f32, (button.y + 20) as f32)),
+            Change::Partial
+        );
+        assert_eq!(app.screen, Screen::LocationHistory);
+        assert_eq!(app.items().len(), 2);
+        assert_eq!(
+            app.input(Input::Tap(
+                (LIST_X + 20) as f32,
+                (LIST_Y + ROW_HEIGHT + 20) as f32
+            )),
+            Change::Partial
+        );
+        assert_eq!(position(&app.active.as_ref().unwrap().reading), original);
+        assert!(app.back.is_empty());
+    }
+
+    #[test]
+    fn previews_an_exact_koreader_cfi_and_applies_it_only_to_the_matching_book() {
+        let fixture = Fixture::new();
+        let mut app = fixture.app();
+        app.open_path(&fixture.book).unwrap();
+        let original = position(&app.active.as_ref().unwrap().reading);
+        let sidecar = app.import_path.with_file_name("koreader-progress.lua");
+        let cfi = "epubcfi(/6/2!/4/20[tide-b]/1:4)";
+        let write_progress = |fingerprint: &str| {
+            fs::write(
+                &sidecar,
+                format!(
+                    "return {{last_epubcfi = '{cfi}', partial_md5_checksum = '{fingerprint}'}}"
+                ),
+            )
+            .unwrap();
+        };
+        write_progress("00000000000000000000000000000000");
+        app.activate(Action::PreviewKoReaderPosition).unwrap();
+        assert!(app.position_import.as_ref().unwrap().target.is_err());
+        assert!(app.activate(Action::ApplyKoReaderPosition).is_err());
+        assert_eq!(position(&app.active.as_ref().unwrap().reading), original);
+
+        let fingerprint = md5::Digest(
+            koreader_sidecar::partial_md5(&mut fs::File::open(&fixture.book).unwrap()).unwrap(),
+        );
+        write_progress(&format!("{fingerprint:x}"));
+        let bytes = fs::read(&sidecar).unwrap();
+        app.activate(Action::PreviewKoReaderPosition).unwrap();
+        let target = app
+            .position_import
+            .as_ref()
+            .unwrap()
+            .target
+            .as_ref()
+            .unwrap();
+        let anchor = target.anchor.clone().unwrap();
+        assert_eq!(target.chapter, 0);
+        let reader = &app.active.as_ref().unwrap().reading;
+        assert_eq!(anchor.block, reader.probe.fragment("tide-b").unwrap().block);
+        assert_eq!(anchor.offset, 4);
+        assert_ne!(anchor.block, reader.probe.fragment("tide-a").unwrap().block);
+        app.activate(Action::ApplyKoReaderPosition).unwrap();
+        let reader = &app.active.as_ref().unwrap().reading;
+        assert_eq!(reader.probe.page_for(&anchor), Some(reader.page));
+        assert_eq!(fs::read(&sidecar).unwrap(), bytes);
+        app.activate(Action::ReturnToLocation).unwrap();
+        assert_eq!(position(&app.active.as_ref().unwrap().reading), original);
+    }
+
+    #[test]
+    fn tap_turns_can_be_disabled_while_leaving_tools_and_buttons_available() {
+        let fixture = Fixture::new();
+        let mut app = fixture.app();
+        app.open_path(&fixture.book).unwrap();
+        app.activate(Action::SetReadingControls(ReadingControls {
+            disable_page_taps: true,
+            ..ReadingControls::default()
+        }))
+        .unwrap();
+        let before = position(&app.active.as_ref().unwrap().reading);
+        assert_eq!(
+            app.input(Input::Tap(WIDTH as f32 - 25.0, 500.0)),
+            Change::None
+        );
+        assert_eq!(position(&app.active.as_ref().unwrap().reading), before);
+        app.input(Input::PageForward);
+        if let Some(deadline) = app.deadline() {
+            app.tick(deadline);
+        }
+        assert_ne!(position(&app.active.as_ref().unwrap().reading), before);
+        assert_eq!(
+            app.input(Input::Tap(WIDTH as f32 / 2.0, 25.0)),
+            Change::Partial
+        );
+        assert_eq!(app.screen, Screen::BookTools);
+        assert!(fixture.app().controls.disable_page_taps);
+    }
+
+    #[test]
     fn opens_an_illustration_from_the_page_and_returns_to_the_same_passage() {
         let fixture = Fixture::new();
         let mut app = fixture.app();
@@ -5342,9 +5929,54 @@ mod tests {
         assert_eq!(app.hits.len(), 2);
         assert_ne!(app.hits[0].anchor, app.hits[1].anchor);
         let target = app.hits[1].anchor.clone();
-        app.activate(Action::SearchHit(1)).unwrap();
+        app.activate(Action::SearchHit(0)).unwrap();
+        assert_eq!(app.search_result, Some(0));
+        assert!(app.search_step(-1).is_none());
+        assert_eq!(
+            app.input(Input::Tap(
+                (MATCH_NEXT.x + 20) as f32,
+                (MATCH_NEXT.y + 20) as f32,
+            )),
+            Change::Partial
+        );
+        assert_eq!(app.search_result, Some(1));
+        assert!(app.search_step(1).is_none());
         let reading = &app.active.as_ref().unwrap().reading;
         assert_eq!(reading.probe.page_for(&target), Some(reading.page));
+        app.activate(Action::ReturnToLocation).unwrap();
+        assert_eq!(position(&app.active.as_ref().unwrap().reading), original);
+        assert_eq!(app.search_result, None);
+    }
+
+    #[test]
+    fn keeps_finding_matches_after_opening_an_early_result() {
+        let fixture = Fixture::new();
+        let many = fixture.root.join("Harbor Notebook.epub");
+        fs::write(
+            &many,
+            include_bytes!("../tests/fixtures/many-chapters.epub"),
+        )
+        .unwrap();
+        let mut app = fixture.app();
+        app.open_path(&many).unwrap();
+        let original = position(&app.active.as_ref().unwrap().reading);
+        app.show(Screen::Matches);
+        app.search = Some(Search::new("harbor notebook records").unwrap());
+        app.step_search(Instant::now()).unwrap();
+        assert_eq!(app.hits.len(), 4);
+        app.activate(Action::SearchHit(3)).unwrap();
+        assert!(app.search_step(1).is_none());
+        let deadline = app.search_at.unwrap();
+        app.tick(deadline);
+        assert_eq!(app.hits.len(), 8);
+        assert_eq!(
+            app.input(Input::Tap(
+                (MATCH_NEXT.x + 20) as f32,
+                (MATCH_NEXT.y + 20) as f32
+            )),
+            Change::Partial
+        );
+        assert_eq!(app.active.as_ref().unwrap().reading.chapter, 4);
         app.activate(Action::ReturnToLocation).unwrap();
         assert_eq!(position(&app.active.as_ref().unwrap().reading), original);
     }
@@ -5404,21 +6036,25 @@ mod tests {
         );
     }
 
-    #[test]
-    fn reads_a_fixed_page_comic_and_preserves_progress_after_reopening() {
-        let fixture = Fixture::new();
-        let comic = fixture.root.join("Field Comics.cbz");
+    fn write_cbz(comic: &Path, pages: &[&str]) {
         let mut png = Cursor::new(Vec::new());
         image::DynamicImage::ImageLuma8(image::GrayImage::from_pixel(8, 12, image::Luma([32])))
             .write_to(&mut png, image::ImageFormat::Png)
             .unwrap();
-        let mut zip = zip::ZipWriter::new(fs::File::create(&comic).unwrap());
-        for name in ["page2.png", "page1.png"] {
+        let mut zip = zip::ZipWriter::new(fs::File::create(comic).unwrap());
+        for &name in pages {
             zip.start_file(name, zip::write::SimpleFileOptions::default())
                 .unwrap();
             zip.write_all(png.get_ref()).unwrap();
         }
         zip.finish().unwrap();
+    }
+
+    #[test]
+    fn reads_a_fixed_page_comic_and_preserves_progress_after_reopening() {
+        let fixture = Fixture::new();
+        let comic = fixture.root.join("Field Comics.cbz");
+        write_cbz(&comic, &["page2.png", "page1.png"]);
 
         let mut app = fixture.app();
         app.open_path(&comic).unwrap();
@@ -5443,6 +6079,33 @@ mod tests {
         let mut reopened = fixture.app();
         reopened.activate(Action::Continue).unwrap();
         assert_eq!(reopened.fixed.as_ref().unwrap().reading.page(), 1);
+    }
+
+    #[test]
+    fn offers_the_next_comic_only_from_the_last_visible_page() {
+        let fixture = Fixture::new();
+        let first = fixture.root.join("Volume 2.cbz");
+        let next = fixture.root.join("Volume 10.cbz");
+        write_cbz(&first, &["page1.png", "page2.png"]);
+        write_cbz(&next, &["page3.png"]);
+        let mut app = fixture.app();
+        app.open_path(&first).unwrap();
+        assert!(app.next_comic().is_none());
+        app.activate(Action::FixedPage(1)).unwrap();
+        assert_eq!(app.next_comic().unwrap().path, Path::new("Volume 10.cbz"));
+        assert_eq!(
+            app.input(Input::Tap(
+                (NEXT_COMIC.x + 15) as f32,
+                (NEXT_COMIC.y + 15) as f32
+            )),
+            Change::Partial
+        );
+        assert_eq!(
+            app.fixed.as_ref().unwrap().entry.path,
+            Path::new("Volume 10.cbz")
+        );
+        assert!(app.next_comic().is_none());
+        assert_eq!(app.library.recently_read().count(), 2);
     }
 
     #[test]
@@ -5573,6 +6236,55 @@ mod tests {
             .activate(Action::ExportHighlights(annotation_export::Format::Text))
             .unwrap();
         assert!(fs::read_dir(&reopened.exports).unwrap().next().is_some());
+    }
+
+    #[test]
+    fn advances_an_original_pixel_scan_reflow_only_across_recognized_pages() {
+        let fixture = Fixture::new();
+        let pdf = fixture.root.join("Scan sample.pdf");
+        fs::write(&pdf, crate::fixed::tests::document()).unwrap();
+        let mut app = fixture.app();
+        app.open_path(&pdf).unwrap();
+        assert!(app.activate(Action::ReflowScan).is_err());
+        let fixed = &mut app.fixed.as_mut().unwrap().reading;
+        let mut text = fixed.page_text(0).unwrap();
+        text.words.truncate(1);
+        text.lines.clear();
+        text.text.truncate(text.words[0].bytes.end);
+        fixed.remember_ocr(0, "eng", text).unwrap();
+
+        app.activate(Action::ReflowScan).unwrap();
+        assert_eq!(app.screen, Screen::ReadFixedText);
+        assert_eq!(
+            app.input(Input::Tap(1030.0, PAGE_HEIGHT as f32 + 30.0)),
+            Change::Partial
+        );
+        assert_eq!(app.text_flow.as_ref().unwrap().document_page(), 0);
+        app.input(Input::PageForward);
+        if let Some(due) = app.text_flow.as_ref().and_then(TextFlow::deadline) {
+            app.tick(due);
+        }
+        assert_eq!(app.text_flow.as_ref().unwrap().document_page(), 0);
+        assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 0);
+        assert_eq!(
+            app.input(Input::Tap((DONE.x + 10) as f32, (DONE.y + 10) as f32)),
+            Change::Partial
+        );
+        assert_eq!(app.screen, Screen::Fixed);
+
+        let fixed = &mut app.fixed.as_mut().unwrap().reading;
+        let mut text = fixed.page_text(1).unwrap();
+        text.words.truncate(1);
+        text.lines.clear();
+        text.text.truncate(text.words[0].bytes.end);
+        fixed.remember_ocr(1, "eng", text).unwrap();
+        app.activate(Action::ReflowScan).unwrap();
+        app.input(Input::PageForward);
+        if let Some(due) = app.text_flow.as_ref().and_then(TextFlow::deadline) {
+            app.tick(due);
+        }
+        assert_eq!(app.text_flow.as_ref().unwrap().document_page(), 1);
+        assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 1);
     }
 
     #[test]

@@ -508,7 +508,7 @@ impl FixedReading {
         self.ocr_path = Some(path);
     }
 
-    fn cached_ocr(&self, page: usize) -> Option<PdfPageText> {
+    pub(crate) fn cached_ocr(&self, page: usize) -> Option<PdfPageText> {
         if let Some((index, text)) = &self.last_ocr
             && *index == page
         {
@@ -570,10 +570,10 @@ impl FixedReading {
         Ok(())
     }
 
-    pub(crate) fn ocr_raster(&self) -> Result<GrayImage> {
+    pub(crate) fn ocr_raster(&self, page: usize) -> Result<GrayImage> {
         let size = match &self.source {
-            FixedDocument::Pdf(pdf) => pdf.page_size(self.page)?,
-            FixedDocument::Djvu(book) => book.page_size(self.page)?,
+            FixedDocument::Pdf(pdf) => pdf.page_size(page)?,
+            FixedDocument::Djvu(book) => book.page_size(page)?,
             _ => return Err("OCR is available for PDF and DjVu".into()),
         };
         let scale = MAX_OCR_RASTER_SIDE / size.0.max(size.1);
@@ -588,8 +588,8 @@ impl FixedReading {
             turns: 0,
         };
         let pixels = match &self.source {
-            FixedDocument::Pdf(pdf) => pdf.render(self.page, request)?,
-            FixedDocument::Djvu(book) => book.render(self.page, request)?,
+            FixedDocument::Pdf(pdf) => pdf.render(page, request)?,
+            FixedDocument::Djvu(book) => book.render(page, request)?,
             _ => unreachable!(),
         };
         Ok(GrayImage {

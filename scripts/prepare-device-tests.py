@@ -12,6 +12,8 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
 TESTS = ("reader", "epub_package", "layout_probe")
+PROBE = "reader-probe"
+EXECUTABLES = (*TESTS, PROBE)
 RUN = """#!/bin/sh
 set -eu
 cd "$(dirname "$0")"
@@ -26,11 +28,41 @@ for suite in reader epub_package layout_probe; do
 done
 exit "$failed"
 """
+PROFILE = """#!/bin/sh
+set -eu
+cd "$(dirname "$0")"
+if [ "$#" -eq 0 ]; then
+    set -- /mnt/us/reader/fonts/NotoSans-Regular.ttf
+fi
+for font in "$@"; do
+    [ -r "$font" ] || { printf 'Reading font unavailable: %s\n' "$font" >&2; exit 1; }
+done
+profile() {
+    book=$1
+    shift
+    # Rebuild the option vector without word splitting font filenames.
+    remaining=$#
+    while [ "$remaining" -gt 0 ]; do
+        font=$1
+        shift
+        set -- "$@" --font "$font"
+        remaining=$((remaining - 1))
+    done
+    iteration=0
+    while [ "$iteration" -lt 5 ]; do
+        ./reader-probe parley "$book" "$@" --width 1264 --height 1606 \
+            --size 42 --margin 54 --line-height 1.35 --turns 30
+        iteration=$((iteration + 1))
+    done
+}
+profile fixtures/field-notes-epub3.epub "$@"
+profile fixtures/long-chapter.epub "$@"
+"""
 
 
 def build(offline):
     command = [
-        "cargo", "zigbuild", "--locked", "--release", "--tests",
+        "cargo", "zigbuild", "--locked", "--release", "--tests", "--bin", PROBE,
         "--target", "armv7-unknown-linux-musleabihf", "--features", "kindle",
         "--message-format=json",
     ]
@@ -49,14 +81,16 @@ def build(offline):
             if item.get("reason") != "compiler-artifact" or not item.get("executable"):
                 continue
             target = item["target"]
-            if not item["profile"]["test"] or target["name"] not in TESTS:
+            if target["name"] not in EXECUTABLES:
+                continue
+            if item["profile"]["test"] != (target["name"] in TESTS):
                 continue
             if not Path(target["src_path"]).resolve().is_relative_to(ROOT):
                 continue
             executables[target["name"]] = Path(item["executable"])
         if cargo.wait() != 0:
             raise SystemExit(cargo.returncode)
-    if missing := set(TESTS) - executables.keys():
+    if missing := set(EXECUTABLES) - executables.keys():
         raise SystemExit("Missing Reader test suites: " + ", ".join(sorted(missing)))
     return executables
 
@@ -77,9 +111,10 @@ def main():
         shutil.copytree(ROOT / "tests" / "fixtures", stage / "fixtures")
         for name, executable in executables.items():
             shutil.copy2(executable, stage / name)
-        runner = stage / "run.sh"
-        runner.write_text(RUN, encoding="utf-8")
-        runner.chmod(0o755)
+        for filename, contents in (("run.sh", RUN), ("profile.sh", PROFILE)):
+            runner = stage / filename
+            runner.write_text(contents, encoding="utf-8")
+            runner.chmod(0o755)
         stage.rename(output)
     print(output)
 

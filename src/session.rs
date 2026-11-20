@@ -87,7 +87,7 @@ pub(crate) struct BookConfig {
 }
 
 impl BookConfig {
-    fn chapter(&self, index: usize) -> Result<Probe> {
+    pub(crate) fn chapter(&self, index: usize) -> Result<Probe> {
         let start = Instant::now();
         let probe = with_storage(|| {
             Probe::open(&self.book, self.engine, &self.fonts, self.settings, index)
@@ -279,20 +279,6 @@ impl Reading {
         }
         *self = next;
         Ok(())
-    }
-
-    pub(crate) fn thumbnail(&mut self, page: usize) -> Result<GrayImage> {
-        let full = self.probe.capture(page)?;
-        let image = image::GrayImage::from_raw(WIDTH, PAGE_HEIGHT, full)
-            .ok_or("The page has incorrect dimensions")?;
-        let size = 280;
-        let width = WIDTH * size / PAGE_HEIGHT;
-        let pixels = image::imageops::thumbnail(&image, width, size).into_raw();
-        Ok(GrayImage {
-            width,
-            height: size,
-            pixels,
-        })
     }
 
     fn visible_range(&self) -> Range<f32> {
@@ -552,6 +538,20 @@ impl App for Reading {
         self.schedule_prefetch();
         Ok(())
     }
+}
+
+pub(crate) fn page_thumbnail(probe: &mut Probe, page: usize) -> Result<GrayImage> {
+    let full = probe.capture(page)?;
+    let image = image::GrayImage::from_raw(WIDTH, PAGE_HEIGHT, full)
+        .ok_or("The page has incorrect dimensions")?;
+    let height = 280;
+    let width = WIDTH * height / PAGE_HEIGHT;
+    let pixels = image::imageops::thumbnail(&image, width, height).into_raw();
+    Ok(GrayImage {
+        width,
+        height,
+        pixels,
+    })
 }
 
 fn capture(probe: &mut Probe, chapter: usize, page: usize, top: Option<f32>) -> Result<GrayImage> {

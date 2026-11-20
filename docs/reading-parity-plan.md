@@ -8,20 +8,21 @@ Compare against the installed KOReader release for hardware measurements. Record
 
 | Area | Development coverage | Remaining work |
 | --- | --- | --- |
-| EPUB reading | Saved positions, page and scroll modes, reading bars, navigation and footnotes, source-ordered publisher CSS, local fonts and illustrations, linked static SVG, and publisher-defined fixed-layout spreads. Find, bookmarks, highlights and notes use shared source locations. | Advanced publisher layout and SVG, vertical writing, and the final device suite |
+| EPUB reading | Saved positions, page and scroll modes, reading bars, navigation and footnotes, publisher CSS, local fonts and illustrations, bounded static SVG, horizontal ruby, inherited language and explicit reading direction. Fixed pages include publisher-defined spreads. Find, bookmarks, highlights and notes share source locations. | Broader ruby and stylesheet fidelity, dictionary-based hyphenation, vertical writing, and the final device suite |
 | PDF | Fixed pages and continuous scroll, printed labels, page thumbnails, outlines and links, passwords, page, width and height fit, crop, contrast, text search and local annotations. Visible embedded highlights import and annotated-copy export for intact unencrypted PDFs up to 16 MiB. | Broader password, outline and annotation types, and sustained large-scan tests |
-| Other offline reading | Fixed-layout XHTML EPUB, DjVu, TXT, HTML, single-document HTMLZ, Markdown, FB2, legacy MOBI and PalmDOC, RTF, CBZ and uncompressed USTAR CBT with spreads, JPEG, PNG, BMP, GIF first frame, portable anymaps, and compressed StarDict | Wider format variants and the final device suite |
-| Scanned documents | Embedded and recognized text reflow across readable source pages, plus a column view for clear two-column scans. English and Vietnamese recognized by the worker on desktop. The ARMHF package bundles English and accepts local additional models. | OCR in the Kindle runtime, broader language and column cases, and scanned image word reflow |
-| Library and controls | Favorites, reading status, collections, local reading time, reusable text profiles, night pages, adjustable toolbar sizes, mirrored tap zones, touch lock, and page thumbnail navigation | Full-book overview and more gesture choices. Verify the new controls on Kindle. |
-| Reading data | Backup and restore with preview, text/Markdown/HTML annotation exports, KOReader JSON annotations by unique quotation, and fixed-page sidecar progress with a sampled fingerprint and page-count check | CREngine pointer mapping, more sidecar variants and editions, and the final device suite |
+| Other offline reading | Fixed-layout EPUB, DjVu, TXT, HTML, single-document HTMLZ, Markdown, FB2, legacy MOBI and PalmDOC, RTF, TCR, CBZ and uncompressed USTAR CBT, JPEG, PNG, BMP, GIF first frame, portable anymaps, static SVG, selected WebP and TIFF, and compressed StarDict | Wider format variants and the final device suite |
+| Scanned documents | Embedded and recognized text reflow across readable source pages. Original word-image reflow for scans with complete horizontal left-to-right OCR and a column view for clear two-column scans. English and Vietnamese recognized by the worker on desktop. The ARMHF package bundles English and accepts local additional models. | OCR in the Kindle runtime, broader layout and language cases, and sustained tests with real scans |
+| Library and controls | Favorites, reading status, collections, author and recent views, EPUB cover previews and series, reading time, reusable text profiles, night pages, adjustable toolbar sizes, mirrored or disabled tap turns, touch lock, chapter-spanning page thumbnails and location history | More configurable gestures, broader accessibility, and the final device suite |
+| Reading data | Backup and restore with preview, text/Markdown/HTML annotation exports, KOReader JSON annotations by unique quotation, and sampled-fingerprint checks for fixed-page sidecar progress and a subset of reflowable EPUB CFIs | Legacy CREngine pointers, broader CFI and sidecar variants, and the final device suite |
 | Kindle verification | EPUB engine timing, probe page buttons, sleep and USB resume, and a temporary preview's contents jump and reopen passed on Oasis 3 | Deploy the completed core reader and run the consolidated automatic hardware workflow |
 
-The desktop checkpoint passed 171 Reader tests and 16 Files tests. Reader
+The desktop checkpoint passed 210 Reader tests and 16 Files tests. Reader
 rendered three public-domain DjVu samples and 12 narrative chapters from the
 Standard Ebooks edition of *Alice’s Adventures in Wonderland*. The licensed
-ARMHF development archive passed its checksum and package-content checks. Three
-ARMHF test executables are staged for the consolidated hardware run. The current
-device evidence comes from earlier probes and previews.
+ARMHF development archive passed its checksum and package-content checks. The
+native test bundle includes three test executables and the automated EPUB
+profiling tool. The current device evidence comes from earlier probes and
+previews.
 
 ## P0 · Close the feasibility gate
 
@@ -97,7 +98,7 @@ Use this table as the initial format inventory. A decoder that opens a file qual
 | PDF | P2 native fixed pages and text. P3 scanned PDF tools. | Text and image-only PDFs, outlines, passwords, rotation, crop, source preservation, and PDF annotation interchange. |
 | DjVu/DJV | P3 native decoder evaluation followed by scan tools. | Multipage containers, single pages, outlines, embedded text, coordinate accuracy and scanned reflow. |
 | JPEG/PNG and standalone image sequences | P2 native using the fixed-page surface. | EXIF orientation, alpha, grayscale, zoom, dimension limits, invalid input, and resume in image sequences. |
-| GIF, BMP, WebP, TIFF, SVG, JPEG 2000, JPEG XR, and portable bitmap images | P3 implements BMP, the first GIF frame and PAM/PBM/PGM/PNM/PPM as still images. WebP and TIFF remain open pending decoder memory bounds. Evaluate SVG, J2K, JP2, JXR, HDP and WDP individually. | Animation/static policy, multi-image behavior, compression variants, orientation, alpha, external SVG resource rules, and bounded decode. |
+| GIF, BMP, WebP, TIFF, SVG, JPEG 2000, JPEG XR, and portable bitmap images | Native BMP, GIF first frame, PAM/PBM/PGM/PNM/PPM, bounded static SVG and single-image lossy VP8 WebP. TIFF accepts one top-left page of uncompressed 1-bit or 8-bit grayscale strips. Evaluate broader codec variants, J2K, JP2, JXR, HDP and WDP individually. | Animation/static policy, multi-image behavior, compression variants, orientation, alpha, external SVG resource rules, and bounded decode. |
 | CBZ, CBT, CBR | Native CBZ and uncompressed USTAR CBT with single pages and spreads. Evaluate RAR comic containers separately. | Entry order, paths, archive variants and signatures, grayscale displays, reading direction, spreads and large archive limits. |
 | TXT, FB2/FB2.ZIP, FB3 | P2 native TXT/FB2. P3 verifies ZIP packaging and FB3 packaging. | BOM and encoding variants, FB2 metadata/sections/notes/images, embedded identifiers, and bounded archive resources. |
 | HTML, XHTML, HTM, HTMLZ, Markdown, XML, and plain text aliases | Native offline HTML/XHTML and single-document Calibre-style HTMLZ with one root HTML file, local PNG/JPEG and CSS, and optional OPF metadata. Evaluate other markup and archive variants in P3. | Links, images and anchors within permitted book resources, conversion fidelity, text selection, and explicit handling of unsupported script or remote content. |
@@ -110,8 +111,8 @@ The DjVu development path uses the pinned Rust decoder and reads embedded text.
 Desktop proof includes rotated text selection and rendering real public-domain
 scans. Reader caps the vendored BZZ decoder's expanded output at 8 MiB and
 checks the declared IW44 coefficient allocation before rendering.
-Large-file memory in the Kindle runtime, additional OCR languages and scanned
-image reflow remain open. [Offline OCR build](ocr-build.md)
+Large-file memory, additional OCR languages and scan-reflow performance still
+need Kindle evidence. [Offline OCR build](ocr-build.md)
 [DjVu codec source](https://github.com/matyushkin/djvu-rs/tree/c8e86c93214f9f10093c2c696945cfef0c9e500d)
 
 ## Evidence and release checkpoints

@@ -67,7 +67,7 @@ impl Probe {
     /// Select an anchored range across adjacent blocks and pages of the loaded
     /// chapter. The caller may supply the endpoints in either direction.
     pub fn select_range(&self, start: &Anchor, end: &Anchor) -> Option<TextSelection> {
-        let (first, last, spans) = self.selection_spans(start, end)?;
+        let spans = self.selection_spans(start, end)?;
         let mut quote = String::new();
         for (offset, block) in self.source.blocks[spans.first..=spans.last]
             .iter()
@@ -86,8 +86,8 @@ impl Probe {
             return None;
         }
         Some(TextSelection {
-            start: first.clone(),
-            end: last.clone(),
+            start: self.anchor(self.source.blocks[spans.first].key, spans.first_byte),
+            end: self.anchor(self.source.blocks[spans.last].key, spans.last_byte),
             text: quote,
         })
     }
@@ -109,7 +109,7 @@ impl Probe {
         let Renderer::Parley(renderer) = &self.renderer else {
             return Vec::new();
         };
-        let Some((_, _, spans)) = self.selection_spans(&selection.start, &selection.end) else {
+        let Some(spans) = self.selection_spans(&selection.start, &selection.end) else {
             return Vec::new();
         };
         let mut rects = Vec::new();
@@ -156,44 +156,19 @@ impl Probe {
             .ok()
     }
 
-    fn selection_spans<'a>(
-        &self,
-        start: &'a Anchor,
-        end: &'a Anchor,
-    ) -> Option<(&'a Anchor, &'a Anchor, Spans)> {
-        let position = |anchor: &Anchor| {
-            if anchor.book != self.book
-                || anchor.chapter != self.chapter
-                || anchor.revision != self.source.revision
-            {
-                return None;
-            }
-            let block = self.selection_block(anchor.block)?;
-            self.source.blocks[block]
-                .text
-                .is_char_boundary(anchor.offset)
-                .then_some((block, anchor.offset))
-        };
-        let a = position(start)?;
-        let b = position(end)?;
+    fn selection_spans(&self, start: &Anchor, end: &Anchor) -> Option<Spans> {
+        let a = self.project_anchor(start)?;
+        let b = self.project_anchor(end)?;
         if a == b {
             return None;
         }
-        let (start, end, (first, first_byte), (last, last_byte)) = if a < b {
-            (start, end, a, b)
-        } else {
-            (end, start, b, a)
-        };
-        Some((
-            start,
-            end,
-            Spans {
-                first,
-                last,
-                first_byte,
-                last_byte,
-            },
-        ))
+        let ((first, first_byte), (last, last_byte)) = if a < b { (a, b) } else { (b, a) };
+        Some(Spans {
+            first,
+            last,
+            first_byte,
+            last_byte,
+        })
     }
 }
 

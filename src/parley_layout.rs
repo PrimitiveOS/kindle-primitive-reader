@@ -9,8 +9,9 @@ use crate::svg_image;
 use crate::{Line, Result, Settings, image_reader};
 use image::{DynamicImage, GrayImage, Luma, imageops::FilterType};
 use parley::{
-    Alignment, AlignmentOptions, BaseDirection, FontContext, FontFamily, FontWeight, GenericFamily,
-    Layout, LayoutContext, LineHeight, OverflowWrap, PositionedLayoutItem, StyleProperty,
+    Affinity, Alignment, AlignmentOptions, BoundingBox, Cursor, FontContext, FontFamily,
+    FontWeight, GenericFamily, Language, Layout, LayoutContext, LineBreak, LineHeight,
+    OverflowWrap, PositionedLayoutItem, Selection, StyleProperty,
 };
 
 const MAX_TEXT_BYTES: usize = 512 * 1024;
@@ -18,6 +19,7 @@ const MAX_LINES: usize = 30_000;
 const MAX_HEIGHT: f32 = 2_000_000.0;
 const MAX_IMAGES: usize = 48;
 const MAX_IMAGE_PIXELS: usize = 8 * 1024 * 1024;
+const MAX_RUBY_BASE_BYTES: usize = 192;
 
 struct Paragraph {
     key: usize,
@@ -25,6 +27,22 @@ struct Paragraph {
     bottom: f32,
     background: Option<u8>,
     layout: Layout<()>,
+    ruby: Vec<RubyOverlay>,
+}
+
+struct RubyOverlay {
+    line: usize,
+    x: f32,
+    y: f32,
+    top: f32,
+    bottom: f32,
+    layout: Layout<()>,
+}
+
+struct RubyCandidate {
+    bytes: Range<usize>,
+    layout: Layout<()>,
+    line_height: f32,
 }
 
 struct Illustration {
@@ -75,8 +93,8 @@ impl ParleyChapter {
         for block in &source.blocks {
             if !block.text.is_empty() {
                 let style = &styles[block.element];
-                let layout =
-                    make_paragraph(&mut context, &mut fonts, block, width, settings, &styles);
+                let (layout, ruby) =
+                    layout_paragraph(&mut context, &mut fonts, block, width, settings, &styles);
                 if lines.len() + layout.len() > MAX_LINES {
                     return Err("The chapter exceeds the Parley line limit".into());
                 }
@@ -85,9 +103,14 @@ impl ParleyChapter {
                     .next()
                     .map_or(0.0, |line| line.metrics().content_block_min_coord.min(0.0));
                 let mut bottom = origin + layout.height();
-                for line in layout.lines() {
+                let mut overlays = ruby.iter().peekable();
+                for (index, line) in layout.lines().enumerate() {
                     let metrics = line.metrics();
-                    let top = origin + metrics.content_block_min_coord;
+                    let mut top = metrics.content_block_min_coord;
+                    while let Some(overlay) = overlays.next_if(|overlay| overlay.line == index) {
+                        top = top.min(overlay.top);
+                    }
+                    let top = origin + top;
                     let line_bottom = origin + metrics.content_block_max_coord;
                     bottom = bottom.max(line_bottom);
                     lines.push(Line {
@@ -115,6 +138,7 @@ impl ParleyChapter {
                     bottom,
                     background: style.background,
                     layout,
+                    ruby,
                 });
             }
 
@@ -245,8 +269,13 @@ impl ParleyChapter {
                 }
                 for item in line.items() {
                     if let PositionedLayoutItem::GlyphRun(run) = item {
-                        self.glyphs
-                            .draw_run(page, stride, margin, paragraph.y - range.start, &run);
+                        self.glyphs.draw_run(
+                            page,
+                            stride,
+                            margin,
+                            (0.0, paragraph.y - range.start),
+                            &run,
+                        );
                         if run.style().underline.is_some() {
                             let y =
                                 (paragraph.y - range.start + run.baseline() + 3.0).round() as isize;
@@ -261,6 +290,24 @@ impl ParleyChapter {
                                 }
                             }
                         }
+                    }
+                }
+            }
+            for overlay in &paragraph.ruby {
+                if paragraph.y + overlay.top >= range.end
+                    || paragraph.y + overlay.bottom <= range.start
+                {
+                    continue;
+                }
+                for item in overlay.layout.lines().flat_map(|line| line.items()) {
+                    if let PositionedLayoutItem::GlyphRun(run) = item {
+                        self.glyphs.draw_run(
+                            page,
+                            stride,
+                            margin,
+                            (overlay.x, paragraph.y + overlay.y - range.start),
+                            &run,
+                        );
                     }
                 }
             }
@@ -279,6 +326,137 @@ fn visible_rows(range: &Range<f32>, settings: Settings) -> usize {
         .clamp(1.0, settings.text_height() as f32) as usize
 }
 
+fn layout_paragraph(
+    context: &mut LayoutContext<()>,
+    fonts: &mut FontContext,
+    block: &Block,
+    width: u32,
+    settings: Settings,
+    styles: &[Style],
+) -> (Layout<()>, Vec<RubyOverlay>) {
+    let layout = make_paragraph(context, fonts, block, width, settings, styles, &[]);
+    let mut candidates = Vec::new();
+    for ruby in &block.ruby {
+        if ruby.bytes.len() > MAX_RUBY_BASE_BYTES {
+            continue;
+        }
+        let Some((base, line)) = base_geometry(&layout, &ruby.bytes) else {
+            continue;
+        };
+        let style = block
+            .styled_text
+            .iter()
+            .find(|run| run.bytes.contains(&ruby.bytes.start))
+            .map_or(&styles[block.element], |run| &styles[run.element]);
+        let annotation = make_annotation(
+            context,
+            fonts,
+            &ruby.annotation,
+            ruby.language,
+            style,
+            settings,
+        );
+        let Some(annotation_line) = annotation.get(0) else {
+            continue;
+        };
+        if annotation.len() != 1 || annotation.width() > base.width() as f32 + 0.25 {
+            continue;
+        }
+        if annotation_line.items().any(|item| match item {
+            PositionedLayoutItem::GlyphRun(run) => {
+                run.positioned_glyphs().any(|glyph| glyph.id == 0)
+            }
+            PositionedLayoutItem::InlineBox(_) => true,
+        }) {
+            continue;
+        }
+        let ink = annotation_line.metrics();
+        let height = ink.content_block_max_coord - ink.content_block_min_coord;
+        let base = layout.get(line).unwrap();
+        let line_height = base.metrics().line_height + 2.0 * (height + 4.0);
+        if line_height > settings.text_height() as f32 {
+            continue;
+        }
+        candidates.push(RubyCandidate {
+            bytes: ruby.bytes.clone(),
+            layout: annotation,
+            line_height,
+        });
+    }
+    if candidates.is_empty() {
+        return (layout, Vec::new());
+    }
+    drop(layout);
+    let layout = make_paragraph(context, fonts, block, width, settings, styles, &candidates);
+    let mut overlays = Vec::new();
+    for candidate in candidates {
+        let Some((base, index)) = base_geometry(&layout, &candidate.bytes) else {
+            continue;
+        };
+        let ink = *candidate.layout.get(0).unwrap().metrics();
+        let width = candidate.layout.width();
+        let line = layout.get(index).unwrap();
+        let metrics = line.metrics();
+        let height = ink.content_block_max_coord - ink.content_block_min_coord;
+        let bottom = metrics.content_block_min_coord - 2.0;
+        let top = bottom - height;
+        if top < metrics.block_min_coord || width > base.width() as f32 + 0.25 {
+            continue;
+        }
+        overlays.push(RubyOverlay {
+            line: index,
+            x: (base.x0 as f32 + (base.width() as f32 - width) * 0.5).max(0.0),
+            y: top - ink.content_block_min_coord,
+            top,
+            bottom,
+            layout: candidate.layout,
+        });
+    }
+    overlays.sort_by_key(|overlay| overlay.line);
+    (layout, overlays)
+}
+
+fn base_geometry(layout: &Layout<()>, bytes: &Range<usize>) -> Option<(BoundingBox, usize)> {
+    let start = Cursor::from_byte_index(layout, bytes.start, Affinity::Downstream);
+    let end = Cursor::from_byte_index(layout, bytes.end, Affinity::Upstream);
+    if start.index() != bytes.start || end.index() != bytes.end {
+        return None;
+    }
+    let mut result = None;
+    let mut multiple = false;
+    Selection::new(start, end).geometry_with(layout, |bounds, line| {
+        multiple |= result.replace((bounds, line)).is_some();
+    });
+    let (bounds, row) = result?;
+    let line = layout.get(row)?.text_range();
+    (!multiple && line.start <= bytes.start && bytes.end <= line.end && bounds.width() > 0.0)
+        .then_some((bounds, row))
+}
+
+fn make_annotation(
+    context: &mut LayoutContext<()>,
+    fonts: &mut FontContext,
+    text: &str,
+    language: Option<Language>,
+    style: &Style,
+    settings: Settings,
+) -> Layout<()> {
+    let mut builder = context.ranged_builder(fonts, text, 1.0, true);
+    let family: FontFamily<'_> = if settings.override_fonts {
+        GenericFamily::Serif.into()
+    } else {
+        style.font_family.layout()
+    };
+    builder.push_default(StyleProperty::FontFamily(family));
+    builder.push_default(StyleProperty::Locale(language));
+    builder.push_default(StyleProperty::FontSize(
+        (settings.font_size * style.size_scale * 0.48).clamp(8.0, 84.0),
+    ));
+    let mut layout = builder.build(text);
+    layout.break_all_lines(None);
+    layout
+}
+
 fn make_paragraph(
     context: &mut LayoutContext<()>,
     fonts: &mut FontContext,
@@ -286,8 +464,10 @@ fn make_paragraph(
     width: u32,
     settings: Settings,
     styles: &[Style],
+    ruby: &[RubyCandidate],
 ) -> Layout<()> {
     let style = &styles[block.element];
+    let language = block.language;
     let mut builder = context.ranged_builder(fonts, &block.text, 1.0, true);
     let family: FontFamily<'_> = if settings.override_fonts {
         GenericFamily::Serif.into()
@@ -315,11 +495,18 @@ fn make_paragraph(
     builder.push_default(StyleProperty::FontSize(font_size(style)));
     builder.push_default(StyleProperty::FontWeight(weight(style)));
     builder.push_default(StyleProperty::FontStyle(style.font_style));
-    if block.rtl {
-        builder.set_base_direction(BaseDirection::Rtl);
-    }
+    builder.push_default(StyleProperty::Locale(language));
+    builder.push_default(StyleProperty::LineBreak(line_break(language)));
+    builder.set_base_direction(block.direction);
     for text in &block.styled_text {
         let run = &styles[text.element];
+        if text.language != language {
+            builder.push(StyleProperty::Locale(text.language), text.bytes.clone());
+            builder.push(
+                StyleProperty::LineBreak(line_break(text.language)),
+                text.bytes.clone(),
+            );
+        }
         if !settings.override_fonts && run.font_family != style.font_family {
             builder.push(
                 StyleProperty::FontFamily(run.font_family.layout()),
@@ -345,6 +532,12 @@ fn make_paragraph(
     for link in &block.links {
         builder.push(StyleProperty::Underline(true), link.bytes.clone());
     }
+    for annotation in ruby {
+        builder.push(
+            StyleProperty::LineHeight(LineHeight::Absolute(annotation.line_height)),
+            annotation.bytes.clone(),
+        );
+    }
     let mut layout = builder.build(&block.text);
     layout.break_all_lines(Some(width as f32));
     let alignment = match settings.alignment {
@@ -355,6 +548,16 @@ fn make_paragraph(
     };
     layout.align(alignment, AlignmentOptions::default());
     layout
+}
+
+fn line_break(language: Option<Language>) -> LineBreak {
+    // Parley's normal breaks enable locale-tailored CJK punctuation. Preserve its strict default
+    // for undeclared language and other scripts.
+    if language.is_some_and(|language| matches!(language.language(), "ja" | "zh")) {
+        LineBreak::Normal
+    } else {
+        LineBreak::Strict
+    }
 }
 
 fn load_image(
@@ -452,6 +655,163 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_file(&self.0);
         }
+    }
+
+    #[test]
+    fn publisher_language_changes_line_breaks_without_changing_source_offsets() {
+        let source = Source::parse(
+            r#"<html lang="en"><body>
+            <p>Lead 文〜文.</p>
+            <p xml:lang="ja">Lead 文〜文.</p>
+            <p>Lead <span xml:lang="zh-Hant">文〜文</span>.</p>
+            <p xml:lang="ja">Lead <span lang="">文〜文</span>.</p>
+            <p dir="ltr">سلام 12</p><p dir="rtl">سلام 12</p>
+        </body></html>"#,
+        )
+        .unwrap();
+        let fixture = crate::test_fixture("field-notes-epub3.epub");
+        let mut book = Book::open(&fixture).unwrap();
+        let href = book.chapters[0].href.clone();
+        let fonts = [crate::test_fixture("fonts/Silkscreen-Regular.ttf")];
+        let mut fonts = crate::font_context(&fonts).unwrap();
+        let styles = BookStyle::load(&mut book, &href, &source.stylesheets, &mut fonts)
+            .compute(&source.elements);
+        let mut context = LayoutContext::new();
+        let settings = Settings {
+            font_size: 24.0,
+            ..Settings::default()
+        };
+        let expected = "Lead 文".len();
+        let witness = (20..160).find(|&width| {
+            let first_line_end =
+                |context: &mut LayoutContext<()>, fonts: &mut FontContext, block: usize| {
+                    let (layout, _) = layout_paragraph(
+                        context,
+                        fonts,
+                        &source.blocks[block],
+                        width,
+                        settings,
+                        &styles,
+                    );
+                    let first = layout.get(0).unwrap().text_range();
+                    assert!(source.blocks[block].text.is_char_boundary(first.end));
+                    first.end
+                };
+            let english = first_line_end(&mut context, &mut fonts, 0);
+            english < expected
+                && first_line_end(&mut context, &mut fonts, 1) == expected
+                && first_line_end(&mut context, &mut fonts, 2) == expected
+                && first_line_end(&mut context, &mut fonts, 3) == english
+        });
+        assert!(
+            witness.is_some(),
+            "An inherited or inline CJK locale must permit a break before the wave dash"
+        );
+        for block in source.blocks.iter().take(4) {
+            assert_eq!(block.text, "Lead 文〜文.");
+        }
+        let layout = |context: &mut LayoutContext<()>, fonts: &mut FontContext, block: usize| {
+            layout_paragraph(
+                context,
+                fonts,
+                &source.blocks[block],
+                300,
+                settings,
+                &styles,
+            )
+            .0
+        };
+        assert!(!layout(&mut context, &mut fonts, 4).is_rtl());
+        assert!(layout(&mut context, &mut fonts, 5).is_rtl());
+    }
+
+    #[test]
+    fn rasterizes_ruby_above_the_base_and_reopens_legacy_selections() {
+        let path = std::env::temp_dir().join(format!("reader-ruby-{}.epub", std::process::id()));
+        let file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        let publication = TemporaryEpub(path);
+        let original = File::open(crate::test_fixture("field-notes-epub3.epub")).unwrap();
+        let mut archive = zip::ZipArchive::new(original).unwrap();
+        let mut changed = zip::ZipWriter::new(file);
+        let chapter = r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Ruby</title></head><body>
+            <p id="sentence">Before <ruby>DAYLIGHT<rp>(</rp><rt>day</rt><rp>)</rp></ruby> <span id="after">after</span>.</p>
+            </body></html>"#;
+        for index in 0..archive.len() {
+            let entry = archive.by_index(index).unwrap();
+            if entry.name() == "EPUB/chapters/shore.xhtml" {
+                changed
+                    .start_file(entry.name(), zip::write::SimpleFileOptions::default())
+                    .unwrap();
+                changed.write_all(chapter.as_bytes()).unwrap();
+            } else {
+                changed.raw_copy_file(entry).unwrap();
+            }
+        }
+        changed.finish().unwrap();
+
+        let fonts = [crate::test_fixture("fonts/Silkscreen-Regular.ttf")];
+        let settings = Settings {
+            width: 440,
+            height: 416,
+            margin: 36,
+            font_size: 24.0,
+            ..Settings::default()
+        };
+        let mut probe = Probe::open(&publication.0, Engine::Parley, &fonts, settings, 0).unwrap();
+        let modern_after = probe.fragment("after").unwrap();
+        let mut old_after = modern_after.clone();
+        old_after.revision = crate::revision(chapter);
+        old_after.offset = "Before DAYLIGHT(day) ".len();
+        let mut old_end = old_after.clone();
+        old_end.offset += "after".len();
+        let former = crate::selection::TextSelection {
+            start: old_after,
+            end: old_end,
+            text: "after".into(),
+        };
+        let saved = serde_json::to_vec(&former).unwrap();
+        assert_eq!(probe.source.blocks[0].text, "Before DAYLIGHT after.");
+        assert!(probe.matches("(day)").is_empty());
+        let Renderer::Parley(layout) = &probe.renderer else {
+            unreachable!()
+        };
+        let paragraph = &layout.paragraphs[0];
+        let overlay = &paragraph.ruby[0];
+        let base = paragraph.layout.get(overlay.line).unwrap();
+        assert!(overlay.bottom < base.metrics().content_block_min_coord);
+        let (left, right) = (
+            settings.margin as usize + overlay.x.floor() as usize,
+            settings.margin as usize + (overlay.x + overlay.layout.width()).ceil() as usize,
+        );
+        let page = probe.pages.page(paragraph.y + overlay.top);
+        let range = probe.pages.range(page).unwrap();
+        let (top, bottom) = (
+            settings.margin as usize + (paragraph.y + overlay.top - range.start).floor() as usize,
+            settings.margin as usize + (paragraph.y + overlay.bottom - range.start).ceil() as usize,
+        );
+        let pixels = probe.capture(page).unwrap();
+        assert!((top..bottom).any(|row| {
+            pixels[row * settings.width as usize + left..row * settings.width as usize + right]
+                .iter()
+                .any(|&pixel| pixel < 180)
+        }));
+
+        let settings = Settings {
+            font_size: 30.0,
+            ..settings
+        };
+        let reopened = Probe::open(&publication.0, Engine::Parley, &fonts, settings, 0).unwrap();
+        let saved: crate::selection::TextSelection = serde_json::from_slice(&saved).unwrap();
+        let projected = reopened.select_range(&saved.start, &saved.end).unwrap();
+        assert_eq!(projected.text, "after");
+        assert_eq!(projected.start, modern_after);
+        let page = reopened.page_for(&saved.start).unwrap();
+        assert_eq!(Some(page), reopened.page_for(&modern_after));
+        assert!(!reopened.selection_rects(page, &saved).is_empty());
     }
 
     #[test]

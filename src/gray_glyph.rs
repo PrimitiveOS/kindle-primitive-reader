@@ -52,7 +52,7 @@ impl GlyphCache {
         page: &mut [u8],
         stride: usize,
         margin: usize,
-        y: f32,
+        origin: (f32, f32),
         glyphs: &GlyphRun<'_, ()>,
     ) {
         let run = glyphs.run();
@@ -96,11 +96,12 @@ impl GlyphCache {
         let x_bounds = -reach..=stride as f32 + reach;
         let y_bounds = -reach..=(page.len() / stride) as f32 + reach;
         for glyph in glyphs.positioned_glyphs() {
-            let baseline = y + glyph.y;
-            if !x_bounds.contains(&glyph.x) || !y_bounds.contains(&baseline) {
+            let x = origin.0 + glyph.x;
+            let baseline = origin.1 + glyph.y;
+            if !x_bounds.contains(&x) || !y_bounds.contains(&baseline) {
                 continue;
             }
-            let x = (glyph.x * X_PHASES as f32).round() as i32;
+            let x = (x * X_PHASES as f32).round() as i32;
             let phase = x.rem_euclid(X_PHASES) as u8;
             let x = x.div_euclid(X_PHASES);
             let baseline = baseline.round() as i32;

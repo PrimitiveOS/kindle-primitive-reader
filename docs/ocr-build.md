@@ -4,7 +4,10 @@ Reader uses a separate static Tesseract process for recognizing text on a PDF
 or DjVu page. The app sends a bounded grayscale raster, imports the word boxes,
 and keeps recognized text with the document's reading data. Recognition can
 be cancelled. The text can be searched, selected, or opened in the page's
-reflowed text view. Reading data offers a way to clear the OCR cache.
+reflowed text view. Reflow scan uses the original grayscale word crops from
+complete horizontal left-to-right OCR. Pages are rendered on demand, and
+the size controls keep the first visible word in view. Reading data offers
+a way to clear the OCR cache.
 
 | Input | Version and source |
 | --- | --- |
@@ -39,3 +42,8 @@ words across four Vietnamese test lines using the pinned `vie.traineddata`
 from the same tessdata_fast revision. The ARMHF engine and package passed
 build and archive checks. Kindle runtime and memory measurements remain in the
 consolidated device verification. [Vietnamese model source](https://github.com/tesseract-ocr/tessdata_fast/blob/65727574dfcd264acbb0c3e07860e4e9e9b22185/vie.traineddata)
+
+The Mac reflow check used both OCR outputs and the exact source rasters.
+The 316-word public-domain page wrapped into one, two, and four reading
+frames at word heights of 32, 40, and 64 pixels. The 28-word Vietnamese page
+fit in one frame at each height.

@@ -8,7 +8,7 @@ use roxmltree::{Document, ParsingOptions};
 use crate::comic::ImagePage;
 use crate::epub::{Book, FixedSpine, ItemPlacement, RenditionSpread, SpreadSide};
 use crate::fixed::{MAX_VIEWPORT_PIXELS, MAX_VIEWPORT_SIDE, PdfOutlineItem, RenderRequest};
-use crate::{Result, blitz, font_context, loose};
+use crate::{Result, blitz, font_context, loose, svg_image};
 
 const MAX_LAYOUT_DEPTH: usize = 48;
 
@@ -301,11 +301,24 @@ impl FixedEpub {
                 return Err("The fixed-layout EPUB changed after it was opened".into());
             }
             let href = book.chapters[page].href.clone();
-            let xhtml = book.chapter(page)?;
-            let xhtml = loose::without_plain_html_doctype(&xhtml);
-            let (width, height) = viewport_size(&xhtml)?;
-            let gray = blitz::fixed_page(book, &href, &xhtml, self.fonts.clone(), (width, height))?;
-            *cache = Some((page, ImagePage::from_grayscale(width, height, gray)?));
+            let image = if book.chapters[page].is_svg {
+                let bytes = book.resource_limited(&href, svg_image::MAX_SVG_BYTES)?;
+                let picture = svg_image::rasterize(
+                    &bytes,
+                    svg_image::MAX_SVG_SIDE,
+                    svg_image::MAX_SVG_SIDE,
+                    svg_image::MAX_SVG_PIXELS,
+                )?;
+                ImagePage::from_grayscale(picture.width(), picture.height(), picture.into_raw())?
+            } else {
+                let xhtml = book.chapter(page)?;
+                let xhtml = loose::without_plain_html_doctype(&xhtml);
+                let (width, height) = viewport_size(&xhtml)?;
+                let gray =
+                    blitz::fixed_page(book, &href, &xhtml, self.fonts.clone(), (width, height))?;
+                ImagePage::from_grayscale(width, height, gray)?
+            };
+            *cache = Some((page, image));
         }
         Ok(Ref::map(self.cache.borrow(), |cache| {
             &cache.as_ref().unwrap().1
@@ -411,7 +424,7 @@ mod tests {
     use super::*;
     use crate::fixed::RenderRequest;
     use std::fs::{self, File};
-    use std::io::Write;
+    use std::io::{Read, Write};
     use std::time::{SystemTime, UNIX_EPOCH};
     use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
@@ -425,6 +438,52 @@ mod tests {
 
     fn write_book(layout: &str, first_override: &str, second_override: &str) -> TestBook {
         write_book_rendition(layout, "auto", "default", first_override, second_override)
+    }
+
+    #[test]
+    fn opens_static_svg_as_a_fixed_layout_spine_page() {
+        let original = write_book("pre-paginated", "", "");
+        let target = TestBook(original.0.with_extension("svg-spine.epub"));
+        let mut source = zip::ZipArchive::new(File::open(&original.0).unwrap()).unwrap();
+        let mut output = ZipWriter::new(File::create(&target.0).unwrap());
+        for index in 0..source.len() {
+            let mut file = source.by_index(index).unwrap();
+            let mut name = file.name().to_owned();
+            let mut contents = String::new();
+            file.read_to_string(&mut contents).unwrap();
+            if name == "EPUB/book.opf" {
+                contents = contents.replace(
+                    "href=\"pages/first.xhtml\" media-type=\"application/xhtml+xml\"",
+                    "href=\"pages/first.svg\" media-type=\"image/svg+xml\"",
+                );
+            } else if name == "EPUB/nav.xhtml" {
+                contents = contents.replace("pages/first.xhtml", "pages/first.svg");
+            } else if name == "EPUB/pages/first.xhtml" {
+                name = "EPUB/pages/first.svg".into();
+                contents = r#"<svg xmlns="http://www.w3.org/2000/svg" width="90" height="140"><rect width="45" height="140" fill="black"/></svg>"#.into();
+            }
+            output
+                .start_file(
+                    name,
+                    SimpleFileOptions::default().compression_method(CompressionMethod::Stored),
+                )
+                .unwrap();
+            output.write_all(contents.as_bytes()).unwrap();
+        }
+        output.finish().unwrap();
+        let book = FixedEpub::open(
+            &target.0,
+            &[crate::test_fixture("fonts/Silkscreen-Regular.ttf")],
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(book.page_count(), 2);
+        assert_eq!(book.outline()[0].page, Some(0));
+        let svg = book.decode_page(0).unwrap();
+        assert_eq!(svg.page_size(), (90.0, 140.0));
+        let image = render(&svg, 90, 140);
+        assert_eq!(image[90 * 30 + 5], 0);
+        assert_eq!(image[90 * 30 + 80], 255);
     }
 
     fn write_book_rendition(
@@ -461,6 +520,7 @@ mod tests {
                     <item id="first" href="pages/first.xhtml" media-type="application/xhtml+xml"/>
                     <item id="second" href="pages/second.xhtml" media-type="application/xhtml+xml"/>
                     <item id="css" href="style.css" media-type="text/css"/>
+                    <item id="shape" href="shape.svg" media-type="image/svg+xml"/>
                 </manifest>
                 <spine page-progression-direction="{progression}"><itemref idref="first" properties="{first_override}"/><itemref idref="second" properties="{second_override}"/></spine>
             </package>"#,
@@ -476,6 +536,7 @@ mod tests {
         let first = r#"<html xmlns="http://www.w3.org/1999/xhtml">
             <head><meta name="viewport" content="width=224, height=320"/><link rel="stylesheet" href="../style.css"/></head>
             <body><div class="mark"></div>
+            <img src="../shape.svg" style="position:absolute;left:90px;top:100px;width:24px;height:24px"/>
             <div style="position:absolute;left:208px;top:0;width:16px;height:320px;background:rgb(32,32,32)"></div></body>
         </html>"#;
         let second = r#"<html xmlns="http://www.w3.org/1999/xhtml">
@@ -492,6 +553,10 @@ mod tests {
             ("EPUB/pages/first.xhtml", first),
             ("EPUB/pages/second.xhtml", second),
             ("EPUB/style.css", style),
+            (
+                "EPUB/shape.svg",
+                r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><rect width="24" height="24" fill="black"/></svg>"#,
+            ),
         ] {
             zip.start_file(
                 path,
@@ -674,6 +739,10 @@ mod tests {
             "local archive CSS did not draw its authored rectangle"
         );
         assert_eq!(pixels[45 * 224 + 18], 255);
+        assert!(
+            pixels[104 * 224 + 95] < 32,
+            "local SVG should draw at its authored position"
+        );
         assert!(book.decode_page(1).is_err());
         drop(first);
         let second = book.decode_page(1).unwrap();

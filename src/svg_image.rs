@@ -27,6 +27,27 @@ pub(crate) fn rasterize(
     max_height: u32,
     available_pixels: usize,
 ) -> Result<GrayImage> {
+    let viewport = render_pixmap(bytes, max_width, max_height, available_pixels)?;
+    GrayImage::from_raw(
+        viewport.width(),
+        viewport.height(),
+        crate::grayscale(viewport.data()).collect(),
+    )
+    .ok_or_else(|| "SVG pixels have unexpected dimensions".into())
+}
+
+pub(crate) fn png_resource(bytes: &[u8], available_pixels: usize) -> Result<(Vec<u8>, usize)> {
+    let viewport = render_pixmap(bytes, MAX_SVG_SIDE, MAX_SVG_SIDE, available_pixels)?;
+    let pixels = viewport.width() as usize * viewport.height() as usize;
+    Ok((viewport.encode_png()?, pixels))
+}
+
+fn render_pixmap(
+    bytes: &[u8],
+    max_width: u32,
+    max_height: u32,
+    available_pixels: usize,
+) -> Result<tiny_skia::Pixmap> {
     if bytes.len() > MAX_SVG_BYTES || bytes.starts_with(&[0x1f, 0x8b]) {
         return Err("SVG must be uncompressed UTF-8 within 256 KiB".into());
     }
@@ -66,8 +87,7 @@ pub(crate) fn rasterize(
     let mut viewport = tiny_skia::Pixmap::new(width, height).ok_or("Cannot allocate SVG pixels")?;
     let transform = tiny_skia::Transform::from_scale(scale.0 as f32, scale.1 as f32);
     resvg::render(&tree, transform, &mut viewport.as_mut());
-    GrayImage::from_raw(width, height, crate::grayscale(viewport.data()).collect())
-        .ok_or_else(|| "SVG pixels have unexpected dimensions".into())
+    Ok(viewport)
 }
 
 fn fitted_size(

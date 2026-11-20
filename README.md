@@ -23,8 +23,10 @@ These captures use Reader's Kindle interface in the desktop simulator.
   the bars. Done is also available from the reading view.
 - Use the Kindle's page buttons, tap the outer thirds of the page, or swipe.
   Text settings switch between paged and continuous reading.
-- Tap Pages on the reading bar to preview pages in the current EPUB chapter
-  or fixed-page document. Open a preview and return with Previous location.
+- Tap Pages on the reading bar to browse thumbnails across EPUB chapters or
+  a fixed-page document. Open a preview and return with Previous location.
+- At the end of a comic, Next comic opens the following archive in the same
+  folder in natural filename order.
 - Hold a word to select it, then tap another word to extend the selection.
   Add a highlight or note, or look up a word in an installed offline dictionary.
   Definitions appear over the current page and can expand for longer entries.
@@ -35,7 +37,8 @@ These captures use Reader's Kindle interface in the desktop simulator.
   authors cached as books are opened.
 - Hold a book in Library to set its reading status, add it to Favorites, or
   organize it into collections. Create collections from Organize library.
-  Book details also shows local time spent on the reading screen.
+  Book details shows available EPUB series information, the cover preview, and
+  local time spent on the reading screen.
 - Open Controls on the reading bar to invert page colors, mirror touch zones,
   enlarge the toolbar, or lock page touch while keeping physical buttons and Done.
 - Copy a TTF or OTF of up to 12 MB to `reader/data/fonts/`. Pick it from Text ›
@@ -47,40 +50,53 @@ These captures use Reader's Kindle interface in the desktop simulator.
 
 | Format | Current implementation |
 | --- | --- |
-| EPUB 2 and EPUB 3 reflow | Publisher navigation, local links, saved text positions, per-book typography, bookmarks, search and notes. Linked static SVG geometry and gradients render within image limits. |
-| Fixed-layout EPUB 3 | Static XHTML pages, contents, zoom and rotation. Publisher page progression and facing-page hints control spreads. |
+| EPUB 2 and EPUB 3 reflow | Publisher navigation, local links, saved text positions, per-book typography, bookmarks, search and notes. Linked static SVG and short horizontal ruby annotations render within documented limits. |
+| Fixed-layout EPUB 3 | Static XHTML and supported SVG spine pages, contents, zoom and rotation. Publisher page progression and facing-page hints control spreads. |
 | PDF | Page turns or continuous scrolling, printed page labels, local outlines and links, bookmarks, passwords, page, width and height fit, crop, zoom, pan and rotation. Embedded text supports search, selection, highlights and notes. |
 | DjVu | Fixed pages, crop, and embedded text with search and annotations |
 | CBZ, CBT, JPEG, PNG, BMP, GIF and portable anymaps | Natural comic page order, single pages or two-page spreads, and selectable reading direction. CBT accepts standard uncompressed USTAR entries. Animated GIF shows its first frame. Portable anymaps include PBM, PGM, PPM and PAM. |
+| SVG | Static geometry and local gradients in standalone files, linked EPUB illustrations, and fixed-layout EPUB pages. |
+| WebP and TIFF | Lossy, single-image VP8 WebP. Single-page uncompressed strip-based TIFF with top-left orientation and 1-bit or 8-bit grayscale. |
 | TXT, HTML/XHTML, HTMLZ, Markdown and FB2 | Shared text search and reading positions. Single-document HTMLZ archives use local illustrations and stylesheets. FB2 preserves section navigation and supported embedded images, including ZIP and gzip packages. Markdown builds a contents list from headings. |
 | Legacy MOBI and PalmDOC | Unencrypted text and metadata from supported legacy files |
 | RTF and TCR | RTF preserves paragraphs and basic character styling. TCR opens bounded 8-bit dictionary-compressed text in the reflow reader. |
 | StarDict | Local dictionaries in `reader/data/dictionaries/`, including gzip indexes and indexed dictzip data |
 
 In Library, open Reading data to export or preview and restore a local backup
-of progress, settings, bookmarks and annotations.
+of progress, per-book settings, bookmarks and annotations.
 From Highlights, export quotations and notes as text, Markdown or HTML. Reader
 can import visible embedded highlights from supported unencrypted PDFs up to
 16 MiB and save a separate annotated PDF with the original annotations intact.
 Use Go to with a physical page number, a printed label, or a document percentage
 such as `75%`. When both numbers and labels are numeric, type `label ` before
 the printed number. The percentage in a reflowable book refers to the current
-chapter. Use Contrast on the fixed-page reading bar for dim scans.
+chapter. The Pages grid browses other chapters while keeping your place until
+you choose a thumbnail. Use History to return to an earlier jump.
+
+Find results offer previous and next match controls. Previous location returns
+to the passage where you began exploring the results. Use Reading controls to
+disable page turn taps while keeping swipes and physical page buttons available.
+
+Use Contrast on the fixed-page reading bar for dim scans.
 Columns enlarges each side of a clear two-column PDF or DjVu scan. Use the page
 buttons to move between the columns and Done to return to the saved view.
 PDF and DjVu can open in a reflowed text view that advances across pages with
 embedded or previously recognized text. The OCR build bundles English and can
-use additional locally installed Tesseract models to recognize scans. [Offline OCR build](docs/ocr-build.md)
+use additional locally installed Tesseract models to recognize scans.
+Reflow scan uses the original word images from a page after OCR and supports
+horizontal left-to-right text. [Offline OCR build](docs/ocr-build.md)
+
 Highlights can also import KOReader JSON annotations for the open reflowable
 book. Reader previews uniquely matched quotations and reports unresolved
 entries before applying the import. [KOReader JSON exporter](https://github.com/koreader/koreader/blob/042d9b39d4835408121970229cc37624e4f794bc/plugins/exporter.koplugin/target/json.lua)
 
-For fixed-page KOReader progress, copy the book's `metadata.<format>.lua`
+For KOReader progress, copy the book's `metadata.<format>.lua`
 to `reader/data/koreader-progress.lua`. Open the matching document, then choose
-Controls › Import KOReader position. Reader checks KOReader's sampled fingerprint
-and the source page count and previews the destination before applying it.
-Reflowable KOReader locations can be previewed with their saved percentage when
-available. Mapping those locations to passages remains open.
+Controls › Import KOReader position. Reader checks KOReader's sampled
+fingerprint and previews the destination. Fixed-page imports also check the
+source page count. Reflowable EPUB imports require a supported EPUB CFI from a
+newer KOReader sidecar. A legacy CREngine pointer can only show progress as a
+percentage when that value is available.
 
 The formats and workflows above are development features. The
 [reading parity plan](docs/reading-parity-plan.md) lists the remaining work and

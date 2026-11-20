@@ -20,10 +20,12 @@ use crate::fixed::{MAX_VIEWPORT_PIXELS, MAX_VIEWPORT_SIDE, RenderRequest};
 
 pub const MAX_COMIC_BYTES: u64 = 512 * 1024 * 1024;
 pub const MAX_IMAGE_BYTES: u64 = 16 * 1024 * 1024;
+pub const MAX_WEBP_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_COMIC_MEMBERS: usize = 8192;
 const MAX_IMAGE_SIDE: u32 = 4096;
 const MAX_IMAGE_PIXELS: u64 = 8 * 1024 * 1024;
 const MAX_DECODE_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_WEBP_PIXELS: u64 = 4 * 1024 * 1024;
 const MAX_PROJECTED_SIDE: f32 = 32_768.0;
 const MAX_MEMBER_NAME: usize = 512;
 const TAR_BLOCK_BYTES: usize = 512;
@@ -121,6 +123,9 @@ fn zip_pages(path: &Path) -> Result<Vec<Member>> {
 }
 
 fn zip_image(path: &Path, member: &Member, index: usize, crc: u32) -> Result<Vec<u8>> {
+    if member.size > raster_input_limit(Path::new(&member.name)) {
+        return Err("This image page exceeds Reader's input size limit or is empty".into());
+    }
     let mut archive = open_archive(path)?;
     {
         let header = archive.by_index_raw(index)?;
@@ -192,7 +197,7 @@ fn tar_pages(path: &Path) -> Result<Vec<Member>> {
         }
         let next = tar_next_header(offset, header.size, length)?;
         if !header.directory && page_name(&header.name) {
-            if !(1..=MAX_IMAGE_BYTES).contains(&header.size) {
+            if !(1..=raster_input_limit(Path::new(&header.name))).contains(&header.size) {
                 return Err("A CBT page is empty or exceeds the image size limit".into());
             }
             pages.push(Member {
@@ -359,13 +364,15 @@ pub(crate) fn format_for_extension(extension: &str) -> Option<ImageFormat> {
         "gif" => Some(ImageFormat::Gif),
         "bmp" => Some(ImageFormat::Bmp),
         "pnm" | "pbm" | "pgm" | "ppm" | "pam" => Some(ImageFormat::Pnm),
+        "webp" => Some(ImageFormat::WebP),
+        "tif" | "tiff" => Some(ImageFormat::Tiff),
         _ => None,
     }
 }
 
 /// Compare digit groups by numeric value without converting them to integers.
 /// Break equal natural order by the whole name so the order is stable.
-fn natural_cmp(left: &str, right: &str) -> Ordering {
+pub(crate) fn natural_cmp(left: &str, right: &str) -> Ordering {
     let (mut a, mut b) = (left.as_bytes(), right.as_bytes());
     while let (Some(&l), Some(&r)) = (a.first(), b.first()) {
         let order = if l.is_ascii_digit() && r.is_ascii_digit() {
@@ -425,7 +432,21 @@ impl ImagePage {
     }
 
     pub fn open(path: &Path) -> Result<Self> {
-        let (file, size) = open_regular(path, MAX_IMAGE_BYTES)?;
+        if path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("svg"))
+        {
+            let (file, length) = open_regular(path, crate::svg_image::MAX_SVG_BYTES as u64)?;
+            let bytes = read_image(file, length)?;
+            let image = crate::svg_image::rasterize(
+                &bytes,
+                crate::svg_image::MAX_SVG_SIDE,
+                crate::svg_image::MAX_SVG_SIDE,
+                crate::svg_image::MAX_SVG_PIXELS,
+            )?;
+            return Self::from_grayscale(image.width(), image.height(), image.into_raw());
+        }
+        let (file, size) = open_regular(path, raster_input_limit(path))?;
         let bytes = read_image(file, size)?;
         Self::decode(&bytes)
     }
@@ -526,8 +547,13 @@ impl ImagePage {
         let mut reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
         match reader.format() {
             Some(ImageFormat::Gif) => return Self::decode_gif(bytes),
+            Some(ImageFormat::WebP) => return Self::decode_webp(bytes),
+            Some(ImageFormat::Tiff) => {
+                let image = crate::tiff_image::decode(bytes)?;
+                return Self::from_grayscale(image.width(), image.height(), image.into_raw());
+            }
             Some(ImageFormat::Png | ImageFormat::Jpeg | ImageFormat::Bmp | ImageFormat::Pnm) => (),
-            _ => return Err("Reader supports JPEG, PNG, GIF, BMP, and PNM image pages".into()),
+            _ => return Err("This image page uses an unsupported format".into()),
         }
         let mut limits = Limits::default();
         limits.max_image_width = Some(MAX_IMAGE_SIDE);
@@ -552,6 +578,32 @@ impl ImagePage {
             height: gray.height(),
             gray: gray.into_raw(),
         })
+    }
+
+    fn decode_webp(bytes: &[u8]) -> Result<Self> {
+        let (width, height) = simple_webp_dimensions(bytes)?;
+        let rgb_bytes = u64::from(width) * u64::from(height) * 3;
+        let rgb = std::panic::catch_unwind(|| -> Result<Vec<u8>> {
+            let decoder = image::codecs::webp::WebPDecoder::new(Cursor::new(bytes))?;
+            if decoder.dimensions() != (width, height)
+                || decoder.color_type() != image::ColorType::Rgb8
+                || decoder.total_bytes() != rgb_bytes
+                || decoder.has_animation()
+            {
+                return Err("The WebP decoder reports an unsupported image format".into());
+            }
+            let mut pixels = vec![0; rgb_bytes as usize];
+            decoder.read_image(&mut pixels)?;
+            Ok(pixels)
+        })
+        .map_err(|_| "The WebP frame could not be decoded")??;
+        let gray = rgb
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|&pixel| image::Rgb(pixel).to_luma().0[0])
+            .collect();
+        Self::from_grayscale(width, height, gray)
     }
 
     fn decode_gif(bytes: &[u8]) -> Result<Self> {
@@ -605,6 +657,66 @@ impl ImagePage {
         }
         Self::from_grayscale(width, height, gray)
     }
+}
+
+fn raster_input_limit(path: &Path) -> u64 {
+    if path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("webp"))
+    {
+        MAX_WEBP_BYTES
+    } else {
+        MAX_IMAGE_BYTES
+    }
+}
+
+// Simple lossy WebP contains only RIFF/WEBP and one VP8 key-frame chunk.
+// Check the raw VP8 dimensions before the decoder allocates its YUV planes.
+fn simple_webp_dimensions(bytes: &[u8]) -> Result<(u32, u32)> {
+    const HEADER_BYTES: usize = 20;
+    const FRAME_HEADER_BYTES: usize = 10;
+    if bytes.len() as u64 > MAX_WEBP_BYTES {
+        return Err("The WebP exceeds Reader's input size limit".into());
+    }
+    let header = bytes
+        .get(..HEADER_BYTES)
+        .ok_or("The WebP header is incomplete")?;
+    if !header.starts_with(b"RIFF") || &header[8..16] != b"WEBPVP8 " {
+        return Err("Reader supports simple lossy WebP with one VP8 image".into());
+    }
+    let riff_size = u64::from(u32::from_le_bytes(header[4..8].try_into().unwrap()));
+    let chunk_size = u64::from(u32::from_le_bytes(header[16..20].try_into().unwrap()));
+    let padding = chunk_size % 2;
+    if riff_size + 8 != bytes.len() as u64
+        || HEADER_BYTES as u64 + chunk_size + padding != bytes.len() as u64
+        || padding != 0 && bytes.last() != Some(&0)
+        || chunk_size < FRAME_HEADER_BYTES as u64
+    {
+        return Err("Reader supports one complete VP8 chunk in a simple lossy WebP".into());
+    }
+    let frame = &bytes[HEADER_BYTES..HEADER_BYTES + FRAME_HEADER_BYTES];
+    let tag = u32::from_le_bytes([frame[0], frame[1], frame[2], 0]);
+    let version = (tag >> 1) & 7;
+    let first_partition = u64::from(tag >> 5);
+    if tag & 1 != 0
+        || tag & 0x10 == 0
+        || version > 3
+        || frame[3..6] != [0x9d, 0x01, 0x2a]
+        || first_partition == 0
+        || first_partition > chunk_size - FRAME_HEADER_BYTES as u64
+    {
+        return Err("The WebP has an invalid or incomplete VP8 key frame".into());
+    }
+    let width = u32::from(u16::from_le_bytes([frame[6], frame[7]]) & 0x3fff);
+    let height = u32::from(u16::from_le_bytes([frame[8], frame[9]]) & 0x3fff);
+    let pixels = u64::from(width) * u64::from(height);
+    if !image_dimensions_valid(width, height)
+        || pixels > MAX_WEBP_PIXELS
+        || pixels * 3 > MAX_DECODE_BYTES
+    {
+        return Err("The WebP exceeds Reader's decoded image limit".into());
+    }
+    Ok((width, height))
 }
 
 fn image_dimensions_valid(width: u32, height: u32) -> bool {
@@ -662,6 +774,14 @@ mod tests {
 
     use super::*;
 
+    // cwebp 1.6.0, quality 90, encoded two 8×8 grayscale blocks from an original PPM.
+    const SIMPLE_LOSSY_WEBP: &[u8] = &[
+        0x52, 0x49, 0x46, 0x46, 0x28, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38,
+        0x20, 0x1c, 0x00, 0x00, 0x00, 0x30, 0x01, 0x00, 0x9d, 0x01, 0x2a, 0x10, 0x00, 0x08, 0x00,
+        0x00, 0xc0, 0x12, 0x25, 0xa4, 0x00, 0x03, 0x70, 0x00, 0xfe, 0xe7, 0xcf, 0xff, 0xff, 0xa6,
+        0xea, 0x00, 0x00,
+    ];
+
     struct Fixture(PathBuf);
 
     impl Fixture {
@@ -679,6 +799,19 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_file(&self.0);
         }
+    }
+
+    #[test]
+    fn opens_static_svg_files_with_the_image_viewport_limits() {
+        let fixture = Fixture::new("SVG");
+        fs::write(&fixture.0, br#"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="20" height="20" fill="black"/></svg>"#).unwrap();
+        let image = ImagePage::open(&fixture.0).unwrap();
+        assert_eq!(image.page_size(), (40.0, 20.0));
+        let fitted = image.fit(80, 40, 0).unwrap();
+        assert_eq!(fitted[80 * 20 + 5], 0);
+        assert_eq!(fitted[80 * 20 + 75], 255);
+        fs::write(&fixture.0, br#"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><image href="file:///tmp/picture.png"/></svg>"#).unwrap();
+        assert!(ImagePage::open(&fixture.0).is_err());
     }
 
     fn png(image: DynamicImage) -> Vec<u8> {
@@ -813,6 +946,82 @@ mod tests {
         }
         drop(encoder);
         data
+    }
+
+    #[test]
+    fn simple_lossy_webp_renders_as_a_standalone_image_and_comic_page() {
+        let fixture = Fixture::new("WEBP");
+        fs::write(&fixture.0, SIMPLE_LOSSY_WEBP).unwrap();
+        assert_eq!(format_for_extension("WebP"), Some(ImageFormat::WebP));
+        let page = ImagePage::open(&fixture.0).unwrap();
+        assert_eq!(page.page_size(), (16.0, 8.0));
+        let raster = page.fit(16, 8, 0).unwrap();
+        assert!(raster[16 * 4 + 3] < 40);
+        assert!(raster[16 * 4 + 12] > 190);
+
+        let zip = Fixture::new("cbz");
+        comic(&zip.0, &[("pages/1.WebP", SIMPLE_LOSSY_WEBP)]);
+        let cbz = Comic::open(&zip.0).unwrap();
+        assert_eq!(cbz.decode_page(0).unwrap().fit(16, 8, 0).unwrap(), raster);
+        let mut bytes = Vec::new();
+        tar_entry(&mut bytes, "pages/1.webp", "", b'0', SIMPLE_LOSSY_WEBP);
+        let tar = tar_fixture(bytes);
+        let cbt = Comic::open(&tar.0).unwrap();
+        assert_eq!(cbt.decode_page(0).unwrap().fit(16, 8, 0).unwrap(), raster);
+    }
+
+    #[test]
+    fn webp_preflight_rejects_extended_or_inconsistent_riff_chunks() {
+        for chunk in [b"VP8X", b"VP8L", b"ALPH", b"ANIM"] {
+            let mut unsupported = SIMPLE_LOSSY_WEBP.to_vec();
+            unsupported[12..16].copy_from_slice(chunk);
+            assert!(ImagePage::decode(&unsupported).is_err());
+        }
+        assert!(simple_webp_dimensions(&SIMPLE_LOSSY_WEBP[..SIMPLE_LOSSY_WEBP.len() - 1]).is_err());
+        let mut additional = SIMPLE_LOSSY_WEBP.to_vec();
+        additional[4..8].copy_from_slice(&48_u32.to_le_bytes());
+        additional.extend(b"EXIF\0\0\0\0");
+        assert!(simple_webp_dimensions(&additional).is_err());
+
+        let mut odd = SIMPLE_LOSSY_WEBP.to_vec();
+        odd[4..8].copy_from_slice(&42_u32.to_le_bytes());
+        odd[16..20].copy_from_slice(&29_u32.to_le_bytes());
+        odd.extend([0, 0]);
+        assert_eq!(simple_webp_dimensions(&odd).unwrap(), (16, 8));
+        odd[49] = 1;
+        assert!(simple_webp_dimensions(&odd).is_err());
+    }
+
+    #[test]
+    fn webp_preflight_checks_keyframe_partitions_dimensions_and_file_cap() {
+        for (width, height) in [(0_u16, 16_u16), (4097, 16), (4096, 2048)] {
+            let mut oversized = SIMPLE_LOSSY_WEBP.to_vec();
+            oversized[26..28].copy_from_slice(&width.to_le_bytes());
+            oversized[28..30].copy_from_slice(&height.to_le_bytes());
+            assert!(simple_webp_dimensions(&oversized).is_err());
+        }
+        let mut malformed = SIMPLE_LOSSY_WEBP.to_vec();
+        malformed[20] |= 1;
+        assert!(simple_webp_dimensions(&malformed).is_err());
+        let tag = (1000_u32 << 5) | 0x10;
+        malformed[20..23].copy_from_slice(&tag.to_le_bytes()[..3]);
+        assert!(simple_webp_dimensions(&malformed).is_err());
+        malformed[20..23].copy_from_slice(&SIMPLE_LOSSY_WEBP[20..23]);
+        malformed[23] ^= 1;
+        assert!(simple_webp_dimensions(&malformed).is_err());
+
+        let fixture = Fixture::new("webp");
+        File::create(&fixture.0)
+            .unwrap()
+            .set_len(MAX_WEBP_BYTES + 1)
+            .unwrap();
+        assert!(
+            ImagePage::open(&fixture.0)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("file size limit")
+        );
     }
 
     #[test]

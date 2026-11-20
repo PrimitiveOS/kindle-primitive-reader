@@ -11,7 +11,9 @@ use image::ImageFormat;
 use serde::{Deserialize, Serialize};
 use zip::ZipArchive;
 
-use crate::comic::{MAX_COMIC_BYTES, MAX_IMAGE_BYTES, format_for_extension};
+use crate::comic::{
+    MAX_COMIC_BYTES, MAX_IMAGE_BYTES, MAX_WEBP_BYTES, format_for_extension, natural_cmp,
+};
 use crate::djvu::MAX_DJVU_BYTES;
 use crate::epub::{Book, MAX_ARCHIVE, check_zip_directory};
 use crate::fixed::MAX_PDF_BYTES;
@@ -63,6 +65,9 @@ pub enum DocumentFormat {
     Gif,
     Bmp,
     Pnm,
+    Svg,
+    WebP,
+    Tiff,
 }
 
 impl DocumentFormat {
@@ -86,12 +91,15 @@ impl DocumentFormat {
             "djvu" | "djv" => Some(Self::Djvu),
             "cbz" => Some(Self::Cbz),
             "cbt" => Some(Self::Cbt),
+            "svg" => Some(Self::Svg),
             _ => match format_for_extension(extension)? {
                 ImageFormat::Jpeg => Some(Self::Jpeg),
                 ImageFormat::Png => Some(Self::Png),
                 ImageFormat::Gif => Some(Self::Gif),
                 ImageFormat::Bmp => Some(Self::Bmp),
                 ImageFormat::Pnm => Some(Self::Pnm),
+                ImageFormat::WebP => Some(Self::WebP),
+                ImageFormat::Tiff => Some(Self::Tiff),
                 _ => None,
             },
         }
@@ -100,8 +108,19 @@ impl DocumentFormat {
     pub const fn is_still_image(self) -> bool {
         matches!(
             self,
-            Self::Jpeg | Self::Png | Self::Gif | Self::Bmp | Self::Pnm
+            Self::Jpeg
+                | Self::Png
+                | Self::Gif
+                | Self::Bmp
+                | Self::Pnm
+                | Self::Svg
+                | Self::WebP
+                | Self::Tiff
         )
+    }
+
+    pub const fn is_comic(self) -> bool {
+        matches!(self, Self::Cbz | Self::Cbt)
     }
 
     pub const fn max_bytes(self) -> u64 {
@@ -116,7 +135,11 @@ impl DocumentFormat {
             Self::Pdf => MAX_PDF_BYTES as u64,
             Self::Djvu => MAX_DJVU_BYTES as u64,
             Self::Cbz | Self::Cbt => MAX_COMIC_BYTES,
-            Self::Jpeg | Self::Png | Self::Gif | Self::Bmp | Self::Pnm => MAX_IMAGE_BYTES,
+            Self::Jpeg | Self::Png | Self::Gif | Self::Bmp | Self::Pnm | Self::Tiff => {
+                MAX_IMAGE_BYTES
+            }
+            Self::Svg => crate::svg_image::MAX_SVG_BYTES as u64,
+            Self::WebP => MAX_WEBP_BYTES,
         }
     }
 
@@ -140,6 +163,9 @@ impl DocumentFormat {
             Self::Gif => b"reader-gif\0",
             Self::Bmp => b"reader-bmp\0",
             Self::Pnm => b"reader-pnm\0",
+            Self::Svg => b"reader-svg\0",
+            Self::WebP => b"reader-webp\0",
+            Self::Tiff => b"reader-tiff\0",
         }
     }
 }
@@ -158,6 +184,8 @@ pub struct LibraryBook {
 pub struct BookMetadata {
     pub title: String,
     pub author: Option<String>,
+    pub series: Vec<crate::epub::BookSeries>,
+    pub has_cover: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -611,6 +639,26 @@ impl Library {
         &self.books
     }
 
+    /// Find the next numbered or named comic in the current folder's scanned entries.
+    pub fn next_comic_in_folder(&self, current: &LibraryBook) -> Option<&LibraryBook> {
+        if !current.format.is_comic() {
+            return None;
+        }
+        let folder = current.path.parent()?;
+        let current_name = current.path.file_name()?.to_str()?;
+        self.books
+            .iter()
+            .filter(|book| book.format.is_comic() && book.path.parent() == Some(folder))
+            .filter_map(|book| {
+                let name = book.path.file_name()?.to_str()?;
+                natural_cmp(name, current_name)
+                    .is_gt()
+                    .then_some((book, name))
+            })
+            .min_by(|(_, left), (_, right)| natural_cmp(left, right))
+            .map(|(book, _)| book)
+    }
+
     /// Case-folded substring filtering across titles, known authors, and file paths.
     pub fn matching<'a>(&'a self, query: &str) -> impl Iterator<Item = &'a LibraryBook> + use<'a> {
         let query = fold_search(query);
@@ -649,6 +697,8 @@ impl Library {
                 .as_deref()
                 .map(clean_metadata)
                 .filter(|author| !author.is_empty()),
+            series: book.series().to_vec(),
+            has_cover: book.cover().is_some(),
         })
     }
 
@@ -1451,6 +1501,56 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn next_comic_uses_natural_filename_order_within_the_same_folder() {
+        let scratch = Scratch::new();
+        let root = scratch.0.join("documents");
+        fs::create_dir_all(root.join("Manga/Other")).unwrap();
+        for path in [
+            "Manga/Volume 10.cbz",
+            "Manga/Volume 2.cbt",
+            "Manga/Volume 02.cbt",
+            "Manga/Volume 1.cbz",
+            "Manga/Volume 3.pdf",
+            "Manga/Other/Volume 4.cbt",
+            "Volume 8.cbz",
+            "Volume 11.cbt",
+        ] {
+            fs::write(root.join(path), b"fixture").unwrap();
+        }
+        let mut library = Library::open(&root, &scratch.0.join("state.json")).unwrap();
+        library.scan().unwrap();
+        let entry = |path: &str| {
+            library
+                .entries()
+                .iter()
+                .find(|book| book.path == Path::new(path))
+                .unwrap()
+        };
+        let next = |path| {
+            library
+                .next_comic_in_folder(entry(path))
+                .map(|book| book.path.as_path())
+        };
+
+        assert_eq!(
+            next("Manga/Volume 1.cbz"),
+            Some(Path::new("Manga/Volume 02.cbt"))
+        );
+        assert_eq!(
+            next("Manga/Volume 02.cbt"),
+            Some(Path::new("Manga/Volume 2.cbt"))
+        );
+        assert_eq!(
+            next("Manga/Volume 2.cbt"),
+            Some(Path::new("Manga/Volume 10.cbz"))
+        );
+        assert_eq!(next("Volume 8.cbz"), Some(Path::new("Volume 11.cbt")));
+        assert_eq!(next("Manga/Volume 10.cbz"), None);
+        assert_eq!(next("Manga/Volume 3.pdf"), None);
+        assert_eq!(next("Manga/Other/Volume 4.cbt"), None);
     }
 
     #[test]

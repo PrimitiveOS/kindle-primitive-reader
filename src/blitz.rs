@@ -10,7 +10,7 @@ use parley::FontContext;
 
 use crate::epub::Book;
 use crate::source::{SOURCE_ATTRIBUTE, Source};
-use crate::{Line, Result, Settings, grayscale, image_reader};
+use crate::{Line, Result, Settings, grayscale, image_reader, svg_image};
 
 const RESOURCE_HOST: &str = "epub.invalid";
 const MAX_RESOURCES: usize = 64;
@@ -42,15 +42,29 @@ impl ArchiveResources {
         let extension = path.rsplit_once('.')?.1.to_ascii_lowercase();
         if !matches!(
             extension.as_str(),
-            "css" | "png" | "jpg" | "jpeg" | "ttf" | "otf"
+            "css" | "png" | "jpg" | "jpeg" | "svg" | "ttf" | "otf"
         ) {
             return None;
         }
         let path = Book::resolve("index.xhtml", path).ok()?;
-        let bytes = self.book.as_mut()?.resource(&path).ok()?;
+        let available = MAX_RESOURCE_BYTES - self.bytes;
+        let limit = if extension == "svg" {
+            available.min(svg_image::MAX_SVG_BYTES)
+        } else {
+            available
+        };
+        let bytes = self.book.as_mut()?.resource_limited(&path, limit).ok()?;
         self.bytes += bytes.len();
-        if self.bytes > MAX_RESOURCE_BYTES {
-            return None;
+        if extension == "svg" {
+            let (data, pixels) =
+                svg_image::png_resource(&bytes, MAX_IMAGE_PIXELS.saturating_sub(self.pixels))
+                    .ok()?;
+            if data.len() > MAX_RESOURCE_BYTES - self.bytes {
+                return None;
+            }
+            self.bytes += data.len();
+            self.pixels += pixels;
+            return Some(data);
         }
         if matches!(extension.as_str(), "png" | "jpg" | "jpeg") {
             let (w, h) = image_reader(&bytes).ok()?.into_dimensions().ok()?;

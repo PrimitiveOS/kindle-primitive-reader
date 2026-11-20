@@ -2,7 +2,7 @@
 
 Reader is a standalone, offline-first Rust app for PrimitiveOS. The first hardware
 target is the ARMHF Kindle Oasis 3 running firmware 5.18.2. The desktop simulator
-and the Kindle build will exercise the same document, layout, and reading-state
+and the Kindle build exercise the same document, layout, and reading-state
 logic. The [Oasis 3 measurements](epub-probe-results.md) selected Parley with
 direct grayscale drawing as the EPUB engine. The optional Blitz probe
 provides a comparison for publisher styling and rendering quality. The
@@ -18,7 +18,7 @@ flowchart TD
     SESSION --> BOOK["Document and text positions"]
     SESSION --> STATE["Progress, preferences and annotations"]
     BOOK --> EPUB["EPUB resources and layout"]
-    BOOK --> PDF["PDF rendering in a later milestone"]
+    BOOK --> PDF["Fixed-page rendering and scan tools"]
     EPUB --> FRAME["Grayscale reading frame"]
     PDF --> FRAME
     UI --> FRAME
@@ -33,12 +33,10 @@ flowchart TD
 | Persistence | Versioned per-book state, reading history, and annotations in Reader-owned storage |
 | Runtime | Shared `primitive-app` lifecycle, storage leases, input, rendering, and device profiles. A desktop driver sends the same actions and captures frames. |
 
-Start with the shared runtime and a headless EPUB test harness. Keep the reader
-engine callable from tests and the simulator without a Kindle display. Add the
-later PDF path using compatible rendering components proven in Viewer, including
-Hayro for rasterization. Reuse the Launcher entry point and the supervised
-`--open` handoff already used by Files. Reader can ship as an independent
-package and share the existing Launcher installation.
+The engines run in the simulator and native test harness without a Kindle
+display. The PDF path uses Hayro for rasterization. Reader's standalone
+package uses the existing Launcher entry point and supervised `--open`
+handoff from Files.
 [PrimitiveOS Tools](https://github.com/PrimitiveOS/kindle-primtitive-tools) ·
 [Viewer](https://github.com/PrimitiveOS/kindle-primitive-viewer) ·
 [Files](https://github.com/PrimitiveOS/kindle-primitive-files)
@@ -84,10 +82,12 @@ chapters before picking the implementation.
   resource handles when USB exports the user volume, pause file access, and
   revalidate the current document on return. Handle a removed or changed file
   with an actionable notice and recover any saved state that still resolves.
-- Treat KOReader migration as an explicit, later import. Read exported data or
-  a snapshot, match each entry to a local book and passage, and report unmatched
-  records. Keep the source import read-only. KOReader's EPUB position data is
-  tied to its document layout engine.
+- Treat KOReader migration as an explicit, read-only import. Resolve exported
+  highlights by uniquely matched quotation. Check fixed-page sidecar progress
+  using the sampled fingerprint and page count. Reflowable import verifies
+  the fingerprint, walks a supported EPUB CFI against the original EPUB
+  package and XHTML, and uses a revision-bound Reader anchor. Other
+  pointers remain unresolved in the preview.
   [KOReader position handling](https://github.com/koreader/koreader/blob/master/frontend/apps/reader/modules/readerrolling.lua)
 
 ## Boundaries and dependencies

@@ -8,6 +8,7 @@ pub mod comic;
 pub mod dictionary;
 pub mod djvu;
 pub mod epub;
+pub mod epub_cfi;
 pub mod fixed;
 pub mod fixed_epub;
 #[cfg(feature = "kindle")]
@@ -36,6 +37,8 @@ mod reading_stats;
 mod rtf;
 #[cfg(feature = "kindle")]
 mod scan_columns;
+#[cfg(feature = "kindle")]
+mod scan_reflow;
 pub mod search;
 pub mod selection;
 #[cfg(feature = "kindle")]
@@ -45,6 +48,7 @@ mod svg_image;
 mod tcr;
 #[cfg(feature = "kindle")]
 mod text_flow;
+mod tiff_image;
 
 use std::error::Error;
 use std::fs;
@@ -456,24 +460,15 @@ impl Probe {
     }
 
     pub(crate) fn anchor_top(&self, anchor: &Anchor) -> Option<f32> {
-        if self.book != anchor.book
-            || self.chapter != anchor.chapter
-            || self.source.revision != anchor.revision
-        {
-            return None;
-        }
+        let (index, offset) = self.project_anchor(anchor)?;
+        let block = &self.source.blocks[index];
         let exact = self
             .lines
             .iter()
-            .find(|line| line.block == anchor.block && line.bytes.contains(&anchor.offset))
+            .find(|line| line.block == anchor.block && line.bytes.contains(&offset))
             .map(|line| line.top);
         exact.or_else(|| {
-            let block = self
-                .source
-                .blocks
-                .iter()
-                .find(|block| block.key == anchor.block)?;
-            if anchor.offset != block.text.len() {
+            if offset != block.text.len() {
                 return None;
             }
             self.lines
@@ -482,6 +477,20 @@ impl Probe {
                 .find(|line| line.block == anchor.block && !line.bytes.is_empty())
                 .map(|line| line.top)
         })
+    }
+
+    fn project_anchor(&self, anchor: &Anchor) -> Option<(usize, usize)> {
+        if self.book != anchor.book || self.chapter != anchor.chapter {
+            return None;
+        }
+        let blocks = &self.source.blocks;
+        let index = blocks
+            .binary_search_by_key(&anchor.block, |block| block.key)
+            .ok()?;
+        let offset = self
+            .source
+            .project_offset(&blocks[index], anchor.revision, anchor.offset)?;
+        Some((index, offset))
     }
 
     pub fn page_anchor(&self, page: usize) -> Option<Anchor> {

@@ -16,6 +16,7 @@ pub(crate) struct ReadingControls {
     pub night_pages: bool,
     pub left_touch: bool,
     pub large_toolbar: bool,
+    pub disable_page_taps: bool,
 }
 
 impl ReadingControls {
@@ -38,12 +39,13 @@ impl ReadingControls {
     }
 
     /// Accept only inputs already routed to the page-turn handler.
-    pub fn page_input(self, input: Input) -> Input {
+    pub fn page_input(self, input: Input) -> Option<Input> {
         match input {
+            Input::Tap(_, y) if self.disable_page_taps && y < PAGE_HEIGHT as f32 => None,
             Input::Tap(x, y) if self.left_touch && y < PAGE_HEIGHT as f32 => {
-                Input::Tap(WIDTH as f32 - x, y)
+                Some(Input::Tap(WIDTH as f32 - x, y))
             }
-            _ => input,
+            _ => Some(input),
         }
     }
 }
