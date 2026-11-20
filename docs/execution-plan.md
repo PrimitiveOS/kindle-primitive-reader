@@ -8,11 +8,13 @@ in the [architecture](architecture.md).
 
 The [EPUB feasibility results](epub-probe-results.md) record the completed
 desktop and Oasis 3 experiments and the remaining acceptance checks.
+The [reading parity plan](reading-parity-plan.md) breaks out each reading
+workflow and format, with prerequisites and side-by-side acceptance checks.
 
 | Stage | Work | Exit evidence |
 |---|---|---|
 | P0 · EPUB feasibility | Test package loading, layout, text positions, and a minimal book view on desktop and Oasis 3. K01–K05. | Corpus results, ARMHF build, device measurements, and a documented engine decision |
-| P1 · Daily EPUB | Build the library, Continue Reading, typography and navigation, bookmarks, highlights, search, and Files integration. K06–K11. | Desktop scenarios and a reading session on the Kindle, including reopening a book and returning to Launcher. Publish the verified release to GitHub and Store. |
+| P1 · Daily EPUB | Build the library, Continue Reading, typography and navigation, bookmarks, highlights, search, and Files integration. K06–K11. | Desktop workflows and an automated Kindle reading session, including reopening a book and returning to Launcher. |
 | P2 · Offline parity | Add the fixed-page PDF workflow and the other offline formats and reading tools in scope. K12–K16. | Documents and annotations verified against format-specific fixtures on desktop and Kindle |
 | P3 · Remaining formats, integrations, and import | Deliver the remaining parity requirements by feature, including advanced PDF, library integrations, and KOReader data import. K17–K24. | Each Kindle workflow has an acceptance result. Import reports matched and unmatched records. |
 
@@ -95,9 +97,18 @@ before advancing to the full reading app.
 
 ## Publication and parity tracking
 
-For each distributable milestone, run desktop checks and verify the applicable
-workflows on the Kindle. Package the ARMHF build with the project licences and
-third-party notices, publish the GitHub release, and verify the Store listing and
-install path. Record evidence against each requirement as its implementation is
-verified. Review KOReader reference updates when expanding the parity matrix so
-each comparison is reproducible.
+Run desktop checks and record the results during implementation. Once the core
+reader is ready, use the existing Launcher for one automated deployment and
+Kindle verification batch. Package the verified ARMHF build with the project
+licences and third-party notices, publish the GitHub release, and verify the
+Store listing and install path. Record evidence against each requirement.
+Review KOReader reference updates when expanding the parity matrix so each
+comparison is reproducible.
+
+Run `cargo test --locked --release --features kindle` on the computer. To
+prepare the same native Rust tests and fixtures for the Oasis 3, run
+`python3 scripts/prepare-device-tests.py build/device-tests`. The bundle's
+`run.sh` executes the suites in a private temporary directory. Its results
+cover ARM execution of the document engines and simulated app inputs. The
+hardware batch still verifies the actual panel, Launcher return and storage
+ownership through the Kindle runtime.

@@ -17,6 +17,7 @@ pub(crate) struct Block {
     pub key: usize,
     pub text: String,
     pub emphasis: Vec<(Range<usize>, Emphasis)>,
+    pub links: Vec<InlineLink>,
     pub heading: bool,
     pub rtl: bool,
     pub images: Vec<String>,
@@ -24,6 +25,11 @@ pub(crate) struct Block {
     pub classes: String,
     pub id: Option<String>,
     pub inline_style: Option<String>,
+}
+
+pub(crate) struct InlineLink {
+    pub bytes: Range<usize>,
+    pub href: String,
 }
 
 pub(crate) struct Source {
@@ -112,6 +118,8 @@ impl Source {
             let key = node.range().start;
             let mut text = String::new();
             let mut emphasis: Vec<(Range<usize>, Emphasis)> = Vec::new();
+            let mut links: Vec<InlineLink> = Vec::new();
+            let mut last_link = None;
             let mut spaces = false;
             let mut images = Vec::new();
             let mut ids = Vec::new();
@@ -157,6 +165,23 @@ impl Source {
                             .any(|a| a.has_tag_name("em") || a.has_tag_name("i")),
                     };
                     emphasis.push((start..text.len(), flags));
+                    if let Some(anchor) = descendant
+                        .ancestors()
+                        .take_while(|a| *a != node)
+                        .find(|a| a.has_tag_name("a") && a.attribute("href").is_some())
+                    {
+                        if last_link == Some(anchor.id()) {
+                            links.last_mut().unwrap().bytes.end = text.len();
+                        } else {
+                            links.push(InlineLink {
+                                bytes: start..text.len(),
+                                href: anchor.attribute("href").unwrap().to_owned(),
+                            });
+                            last_link = Some(anchor.id());
+                        }
+                    } else {
+                        last_link = None;
+                    }
                 }
             }
             if text.is_empty() && images.is_empty() {
@@ -182,6 +207,7 @@ impl Source {
                 key,
                 text,
                 emphasis,
+                links,
                 images,
                 heading: matches!(
                     node.tag_name().name(),

@@ -1,0 +1,1618 @@
+//! Local document discovery and reading state. Paths stored in state are relative to the library.
+
+use std::collections::{HashMap, HashSet};
+use std::fs::{self, File};
+use std::io::{self, BufReader, Read, Seek, SeekFrom};
+use std::path::{Component, Path, PathBuf};
+
+use icu_casemap::CaseMapper;
+use icu_normalizer::{ComposingNormalizer, DecomposingNormalizer};
+use serde::{Deserialize, Serialize};
+use zip::ZipArchive;
+
+use crate::comic::{MAX_COMIC_BYTES, MAX_IMAGE_BYTES};
+use crate::djvu::MAX_DJVU_BYTES;
+use crate::epub::{Book, MAX_ARCHIVE, check_zip_directory};
+use crate::fixed::MAX_PDF_BYTES;
+use crate::fixed_text::PdfTextRect;
+use crate::loose::{Format, MAX_FB2_INPUT, MAX_INPUT};
+use crate::mobi::MAX_MOBI_BYTES;
+use crate::selection::TextSelection;
+use crate::{Anchor, Settings, TextAlignment};
+
+const MAX_PATH_DEPTH: usize = 9;
+const MAX_SCAN_ENTRIES: usize = 20_000;
+const MAX_BOOKS: usize = 4_096;
+const MAX_RELOCATION_CHECKS: usize = 64;
+const MAX_RELOCATION_READ_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_STATE_BYTES: u64 = 4 * 1024 * 1024;
+pub const MAX_BACKUP_BYTES: u64 = MAX_STATE_BYTES + 1024;
+pub const MAX_PDF_HIGHLIGHTS: usize = 256;
+const MAX_PDF_HIGHLIGHT_BOUNDS: usize = 64;
+const MAX_HIGHLIGHT_TEXT_BYTES: usize = 8192;
+const MAX_NOTE_BYTES: usize = 4096;
+const MAX_FIXED_ZOOM: usize = 4;
+const MAX_FIXED_OFFSET: f32 = 32_768.0;
+const MIN_CROP_SIZE: f32 = 0.025;
+const BACKUP_VERSION: u32 = 1;
+const MAX_BACKUP_BOOKS: usize = 16_384;
+const MAX_IMPORTED_MARKS: usize = 512;
+const MAX_ANCHOR_PATH_BYTES: usize = 4096;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DocumentFormat {
+    Epub,
+    Text,
+    Html,
+    Markdown,
+    Fb2,
+    Mobi,
+    Pdf,
+    Djvu,
+    Cbz,
+    Jpeg,
+    Png,
+}
+
+impl DocumentFormat {
+    pub fn for_path(path: &Path) -> Option<Self> {
+        if let Some(format) = Format::for_path(path) {
+            return Some(match format {
+                Format::Text => Self::Text,
+                Format::Html => Self::Html,
+                Format::Markdown => Self::Markdown,
+                Format::Fb2 => Self::Fb2,
+                Format::Mobi => Self::Mobi,
+            });
+        }
+        match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
+            "epub" => Some(Self::Epub),
+            "pdf" => Some(Self::Pdf),
+            "djvu" | "djv" => Some(Self::Djvu),
+            "cbz" => Some(Self::Cbz),
+            "jpg" | "jpeg" => Some(Self::Jpeg),
+            "png" => Some(Self::Png),
+            _ => None,
+        }
+    }
+
+    pub const fn max_bytes(self) -> u64 {
+        match self {
+            Self::Epub => MAX_ARCHIVE,
+            Self::Text | Self::Html | Self::Markdown => MAX_INPUT as u64,
+            Self::Fb2 => MAX_FB2_INPUT as u64,
+            Self::Mobi => MAX_MOBI_BYTES as u64,
+            Self::Pdf => MAX_PDF_BYTES as u64,
+            Self::Djvu => MAX_DJVU_BYTES as u64,
+            Self::Cbz => MAX_COMIC_BYTES,
+            Self::Jpeg | Self::Png => MAX_IMAGE_BYTES,
+        }
+    }
+
+    fn tag(self) -> &'static [u8] {
+        match self {
+            Self::Epub => b"",
+            Self::Text => b"reader-txt\0",
+            Self::Html => b"reader-html\0",
+            Self::Markdown => b"reader-markdown\0",
+            Self::Fb2 => b"reader-fb2\0",
+            Self::Mobi => b"reader-mobi\0",
+            Self::Pdf => b"reader-pdf\0",
+            Self::Djvu => b"reader-djvu\0",
+            Self::Cbz => b"reader-cbz\0",
+            Self::Jpeg => b"reader-jpeg\0",
+            Self::Png => b"reader-png\0",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct LibraryBook {
+    pub path: PathBuf,
+    pub title: String,
+    pub size: u64,
+    pub format: DocumentFormat,
+    searchable: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BookMetadata {
+    pub title: String,
+    pub author: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BookPreferences {
+    pub font_size: Option<f32>,
+    pub margin: Option<u32>,
+    pub line_height: Option<f32>,
+    pub scroll: bool,
+    pub alignment: TextAlignment,
+    pub bold_text: bool,
+    pub override_fonts: bool,
+}
+
+impl BookPreferences {
+    pub fn apply_to(&self, settings: Settings) -> Settings {
+        let adjusted = Settings {
+            font_size: self.font_size.unwrap_or(settings.font_size),
+            margin: self.margin.unwrap_or(settings.margin),
+            line_height: self.line_height.unwrap_or(settings.line_height),
+            alignment: self.alignment,
+            bold_text: self.bold_text,
+            override_fonts: self.override_fonts,
+            ..settings
+        };
+        if adjusted.validate().is_ok() {
+            adjusted
+        } else {
+            settings
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
+pub struct FixedPreferences {
+    pub zoom: usize,
+    pub turns: u8,
+    pub width_fit: bool,
+    pub offset_x: f32,
+    pub offset_y: f32,
+    pub right_to_left: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crop: Option<PdfTextRect>,
+}
+
+impl FixedPreferences {
+    pub fn is_valid(self) -> bool {
+        self == self.normalized()
+    }
+
+    pub fn normalized(self) -> Self {
+        Self {
+            zoom: self.zoom.min(MAX_FIXED_ZOOM),
+            turns: self.turns % 4,
+            offset_x: normalized_offset(f64::from(self.offset_x)),
+            offset_y: normalized_offset(f64::from(self.offset_y)),
+            crop: self.crop.filter(valid_crop),
+            ..self
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for FixedPreferences {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // One unusable view field should leave the book's position and annotations readable.
+        let values = serde_json::Value::deserialize(deserializer)?;
+        let integer = |key| {
+            values
+                .get(key)
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0)
+        };
+        let switch = |key| {
+            values
+                .get(key)
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+        };
+        let offset = |key| {
+            normalized_offset(
+                values
+                    .get(key)
+                    .and_then(serde_json::Value::as_f64)
+                    .unwrap_or(0.0),
+            )
+        };
+        Ok(Self {
+            zoom: integer("zoom").min(MAX_FIXED_ZOOM as u64) as usize,
+            turns: (integer("turns") % 4) as u8,
+            width_fit: switch("width_fit"),
+            offset_x: offset("offset_x"),
+            offset_y: offset("offset_y"),
+            right_to_left: switch("right_to_left"),
+            crop: values
+                .get("crop")
+                .and_then(|value| serde_json::from_value(value.clone()).ok())
+                .filter(valid_crop),
+        })
+    }
+}
+
+fn normalized_offset(value: f64) -> f32 {
+    let limit = f64::from(MAX_FIXED_OFFSET);
+    if value.is_finite() {
+        value.clamp(-limit, limit) as f32
+    } else {
+        0.0
+    }
+}
+
+fn valid_crop(rect: &PdfTextRect) -> bool {
+    valid_page_rect(rect)
+        && rect.x1 - rect.x0 >= MIN_CROP_SIZE
+        && rect.y1 - rect.y0 >= MIN_CROP_SIZE
+}
+
+fn valid_page_rect(rect: &PdfTextRect) -> bool {
+    rect.x0 >= 0.0
+        && rect.x0 < rect.x1
+        && rect.x1 <= 1.0
+        && rect.y0 >= 0.0
+        && rect.y0 < rect.y1
+        && rect.y1 <= 1.0
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReadingPosition {
+    pub chapter: usize,
+    #[serde(default)]
+    pub page: usize,
+    pub anchor: Option<Anchor>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Bookmark {
+    pub label: String,
+    pub position: ReadingPosition,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Highlight {
+    pub selection: TextSelection,
+    pub note: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PdfHighlight {
+    pub page: usize,
+    pub bounds: Vec<PdfTextRect>,
+    pub text: String,
+    pub note: Option<String>,
+}
+
+impl PdfHighlight {
+    pub fn is_valid(&self) -> bool {
+        !self.bounds.is_empty()
+            && self.bounds.len() <= MAX_PDF_HIGHLIGHT_BOUNDS
+            && !self.text.trim().is_empty()
+            && self.text.len() <= MAX_HIGHLIGHT_TEXT_BYTES
+            && self
+                .note
+                .as_ref()
+                .is_none_or(|note| note.len() <= MAX_NOTE_BYTES)
+            && self.bounds.iter().all(valid_page_rect)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BookState {
+    pub id: u64,
+    pub path: PathBuf,
+    pub title: String,
+    #[serde(default)]
+    size: u64,
+    pub position: Option<ReadingPosition>,
+    #[serde(default)]
+    pub preferences: BookPreferences,
+    #[serde(default)]
+    pub fixed_preferences: FixedPreferences,
+    #[serde(default)]
+    pub bookmarks: Vec<Bookmark>,
+    #[serde(default)]
+    pub highlights: Vec<Highlight>,
+    #[serde(default)]
+    pub pdf_highlights: Vec<PdfHighlight>,
+}
+
+impl BookState {
+    pub fn add_pdf_highlight(&mut self, highlight: PdfHighlight) -> io::Result<()> {
+        if self.pdf_highlights.len() >= MAX_PDF_HIGHLIGHTS {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "This PDF reached its highlight limit",
+            ));
+        }
+        if !highlight.is_valid() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "The PDF highlight is empty or too large",
+            ));
+        }
+        self.pdf_highlights.push(highlight);
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BackupSummary {
+    pub new_books: usize,
+    pub existing_books: usize,
+    pub bookmarks_added: usize,
+    pub highlights_added: usize,
+    pub pdf_highlights_added: usize,
+    pub notes_added: usize,
+    pub duplicates: usize,
+    pub skipped: usize,
+    pub note_conflicts: usize,
+}
+
+pub struct BackupImport {
+    books: Vec<BookState>,
+    summary: BackupSummary,
+}
+
+impl BackupImport {
+    pub fn summary(&self) -> BackupSummary {
+        self.summary
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+struct Backup<T> {
+    version: u32,
+    books: T,
+}
+
+pub struct Library {
+    root: PathBuf,
+    original_root: PathBuf,
+    state_path: PathBuf,
+    books: Vec<LibraryBook>,
+    recent: Vec<BookState>,
+    truncated: bool,
+}
+
+impl Library {
+    pub fn open(root: &Path, state_path: &Path) -> io::Result<Self> {
+        let original_root = if root.is_absolute() {
+            root.to_owned()
+        } else {
+            std::env::current_dir()?.join(root)
+        };
+        if !fs::symlink_metadata(&original_root)?.is_dir() {
+            return Err(denied());
+        }
+        Ok(Self {
+            root: original_root.canonicalize()?,
+            original_root,
+            state_path: state_path.to_owned(),
+            recent: load_recents(state_path)?,
+            books: Vec::new(),
+            truncated: false,
+        })
+    }
+
+    pub fn scan(&mut self) -> io::Result<()> {
+        if !fs::symlink_metadata(&self.root)?.is_dir() {
+            return Err(denied());
+        }
+        let root_entries = fs::read_dir(&self.root)?;
+        let mut dirs = vec![(PathBuf::new(), root_entries)];
+        let mut seen = 0;
+        let mut books = Vec::new();
+        let mut truncated = false;
+        let known_titles = self
+            .recent
+            .iter()
+            .rev()
+            .map(|state| (state.path.as_path(), (state.size, state.title.as_str())))
+            .collect::<HashMap<_, _>>();
+        while let Some((relative, entries)) = dirs.last_mut() {
+            let Some(entry) = entries.next() else {
+                dirs.pop();
+                continue;
+            };
+            if seen == MAX_SCAN_ENTRIES || books.len() == MAX_BOOKS {
+                truncated = true;
+                break;
+            }
+            seen += 1;
+            let Ok(entry) = entry else { continue };
+            let path = relative.join(entry.file_name());
+            if !safe_path(&path) {
+                continue;
+            }
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_dir() {
+                if path.components().count() < MAX_PATH_DEPTH {
+                    if let Ok(entries) = fs::read_dir(entry.path()) {
+                        dirs.push((path, entries));
+                    }
+                } else {
+                    truncated = true;
+                }
+            } else if kind.is_file()
+                && let Some(format) = DocumentFormat::for_path(&path)
+            {
+                let Ok(metadata) = entry.metadata() else {
+                    continue;
+                };
+                if metadata.len() <= format.max_bytes() {
+                    let size = metadata.len();
+                    let title = known_titles
+                        .get(path.as_path())
+                        .and_then(|&(length, title)| (length == size).then_some(title));
+                    books.push(library_book(path, size, format, title));
+                }
+            }
+        }
+        books.sort_by_cached_key(|book| (book.title.to_lowercase(), book.path.clone()));
+        self.books = books;
+        self.truncated = truncated;
+        Ok(())
+    }
+
+    pub fn entries(&self) -> &[LibraryBook] {
+        &self.books
+    }
+
+    /// Case-folded substring filtering across titles and root-relative file paths.
+    pub fn matching<'a>(&'a self, query: &str) -> impl Iterator<Item = &'a LibraryBook> + use<'a> {
+        let query = fold_search(query);
+        self.books.iter().filter(move |book| {
+            query
+                .split_whitespace()
+                .all(|word| book.searchable.contains(word))
+        })
+    }
+
+    /// Parse metadata for one selected reflow document, leaving no book or storage handle open.
+    pub fn metadata(&self, entry: &LibraryBook) -> io::Result<BookMetadata> {
+        if !matches!(
+            entry.format,
+            DocumentFormat::Epub
+                | DocumentFormat::Text
+                | DocumentFormat::Html
+                | DocumentFormat::Markdown
+                | DocumentFormat::Fb2
+                | DocumentFormat::Mobi
+        ) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Choose a supported reflow document",
+            ));
+        }
+        let path = self.absolute_path(&entry.path)?;
+        let book = Book::open(&path).map_err(io::Error::other)?;
+        Ok(BookMetadata {
+            title: clean_metadata(&book.title),
+            author: book
+                .author
+                .as_deref()
+                .map(clean_metadata)
+                .filter(|author| !author.is_empty()),
+        })
+    }
+
+    pub fn scan_truncated(&self) -> bool {
+        self.truncated
+    }
+
+    pub fn resolve(&self, path: &Path) -> io::Result<LibraryBook> {
+        let absolute = self.absolute_path(path)?;
+        let relative = absolute.strip_prefix(&self.root).map_err(|_| denied())?;
+        let format = DocumentFormat::for_path(relative).ok_or_else(denied)?;
+        let size = fs::metadata(&absolute)?.len();
+        Ok(library_book(relative.to_owned(), size, format, None))
+    }
+
+    pub fn absolute_path(&self, path: &Path) -> io::Result<PathBuf> {
+        let relative = if path.is_absolute() {
+            path.strip_prefix(&self.root)
+                .or_else(|_| path.strip_prefix(&self.original_root))
+                .map_err(|_| denied())?
+        } else {
+            path
+        };
+        let format = DocumentFormat::for_path(relative)
+            .filter(|_| safe_path(relative))
+            .ok_or_else(denied)?;
+        let mut absolute = self.root.clone();
+        let mut components = relative.components().peekable();
+        while let Some(component) = components.next() {
+            absolute.push(component.as_os_str());
+            let metadata = fs::symlink_metadata(&absolute)?;
+            if components.peek().is_some() {
+                if !metadata.is_dir() {
+                    return Err(denied());
+                }
+            } else if !metadata.is_file() || metadata.len() > format.max_bytes() {
+                return Err(denied());
+            }
+        }
+        let verified = absolute.canonicalize()?;
+        if !verified.starts_with(&self.root) {
+            return Err(denied());
+        }
+        Ok(verified)
+    }
+
+    /// Hash a file or a validated ZIP directory, independent of its library path.
+    pub fn identify(&self, entry: &LibraryBook) -> io::Result<u64> {
+        let file = File::open(self.absolute_path(&entry.path)?)?;
+        let size = file.metadata()?.len();
+        let format = DocumentFormat::for_path(&entry.path)
+            .filter(|format| *format == entry.format)
+            .ok_or_else(denied)?;
+        if size != entry.size || size > format.max_bytes() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "The document changed while opening",
+            ));
+        }
+        if !matches!(format, DocumentFormat::Epub | DocumentFormat::Cbz) {
+            return fingerprint(file, size, format.tag(), size);
+        }
+        let mut input = BufReader::new(file);
+        let entries = check_zip_directory(&mut input, size).map_err(io::Error::other)?;
+        let archive = ZipArchive::new(input).map_err(io::Error::other)?;
+        if archive.len() != entries {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "The EPUB archive has duplicate entries",
+            ));
+        }
+        let directory = archive.central_directory_start();
+        let bytes_to_hash = size.checked_sub(directory).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "The EPUB ZIP directory moved while opening",
+            )
+        })?;
+        let mut input = archive.into_inner();
+        input.seek(SeekFrom::Start(directory))?;
+        fingerprint(input, size, format.tag(), bytes_to_hash)
+    }
+
+    pub fn state(&self, id: u64) -> Option<&BookState> {
+        self.recent.iter().find(|state| state.id == id)
+    }
+
+    pub fn recents(&self) -> &[BookState] {
+        &self.recent
+    }
+
+    pub fn remember(&mut self, entry: &LibraryBook, id: u64, title: &str) -> &mut BookState {
+        let title = clean_metadata(title);
+        let title = if title.is_empty() {
+            entry.title.clone()
+        } else {
+            title
+        };
+        let mut state = self
+            .recent
+            .iter()
+            .position(|item| item.id == id)
+            .map(|index| self.recent.remove(index))
+            .unwrap_or_else(|| BookState {
+                id,
+                path: PathBuf::new(),
+                title: String::new(),
+                size: entry.size,
+                position: None,
+                preferences: BookPreferences::default(),
+                fixed_preferences: FixedPreferences::default(),
+                bookmarks: Vec::new(),
+                highlights: Vec::new(),
+                pdf_highlights: Vec::new(),
+            });
+        if (state.path != entry.path || state.title != title)
+            && let Some(book) = self.books.iter_mut().find(|book| book.path == entry.path)
+        {
+            book.title.clone_from(&title);
+            book.searchable = search_key(&book.title, &book.path);
+        }
+        state.path.clone_from(&entry.path);
+        state.title = title;
+        state.size = entry.size;
+        self.recent.insert(0, state);
+        &mut self.recent[0]
+    }
+
+    pub fn locate(&self, state: &BookState) -> io::Result<LibraryBook> {
+        let matches = |book: &LibraryBook| self.identify(book).is_ok_and(|id| id == state.id);
+        if let Ok(book) = self.resolve(&state.path)
+            && matches(&book)
+        {
+            return Ok(book);
+        }
+        let format = DocumentFormat::for_path(&state.path);
+        let mut bytes_left = MAX_RELOCATION_READ_BYTES;
+        for book in self
+            .books
+            .iter()
+            .filter(|book| {
+                Some(book.format) == format && book.size == state.size && book.path != state.path
+            })
+            .take(MAX_RELOCATION_CHECKS)
+        {
+            // A ZIP identification reads only the preflight and central directory.
+            let cost = if matches!(book.format, DocumentFormat::Epub | DocumentFormat::Cbz) {
+                book.size.min(9 * 1024 * 1024)
+            } else {
+                book.size
+            };
+            let Some(remaining) = bytes_left.checked_sub(cost) else {
+                break;
+            };
+            bytes_left = remaining;
+            if matches(book) {
+                return Ok(book.clone());
+            }
+        }
+        Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "This book is missing. Rescan the library or open it in its new folder.",
+        ))
+    }
+
+    pub fn bytes(&self) -> io::Result<Vec<u8>> {
+        validate_state(&self.recent)?;
+        state_json(&self.recent, MAX_STATE_BYTES)
+    }
+
+    /// Export Reader metadata as a versioned JSON document.
+    pub fn backup_bytes(&self) -> io::Result<Vec<u8>> {
+        validate_state(&self.recent)?;
+        state_json(
+            &Backup {
+                version: BACKUP_VERSION,
+                books: &self.recent,
+            },
+            MAX_BACKUP_BYTES,
+        )
+    }
+
+    /// Calculate the effect of an import without touching the library, books, or state file.
+    pub fn preview_backup(&self, bytes: &[u8]) -> io::Result<BackupImport> {
+        if bytes.len() as u64 > MAX_BACKUP_BYTES {
+            return Err(invalid_state("Reader backup exceeds its size limit"));
+        }
+        let backup: Backup<Vec<BookState>> =
+            serde_json::from_slice(bytes).map_err(io::Error::other)?;
+        if backup.version != BACKUP_VERSION || backup.books.len() > MAX_BACKUP_BOOKS {
+            return Err(invalid_state(
+                "Reader backup version or book count is unsupported",
+            ));
+        }
+        let (merged, summary) = merge_states(&self.recent, &backup.books);
+        validate_state(&merged)?;
+        state_json(&merged, MAX_STATE_BYTES)?;
+        Ok(BackupImport {
+            books: backup.books,
+            summary,
+        })
+    }
+
+    /// Revalidate the proposed merge against current state, then apply it in memory.
+    pub fn merge_backup(&mut self, import: BackupImport) -> io::Result<BackupSummary> {
+        let (merged, summary) = merge_states(&self.recent, &import.books);
+        validate_state(&merged)?;
+        state_json(&merged, MAX_STATE_BYTES)?;
+        self.recent = merged;
+        Ok(summary)
+    }
+
+    pub fn save_with(&self, write: impl FnOnce(&Path, &[u8]) -> io::Result<()>) -> io::Result<()> {
+        write(&self.state_path, &self.bytes()?)
+    }
+
+    #[cfg(feature = "kindle")]
+    pub fn persist(&self) -> io::Result<()> {
+        self.save_with(primitive_app::save)
+    }
+}
+
+fn validate_state(states: &[BookState]) -> io::Result<()> {
+    if states
+        .iter()
+        .any(|state| !state.fixed_preferences.is_valid())
+    {
+        return Err(invalid_state(
+            "Reader state contains an invalid fixed-page view",
+        ));
+    }
+    if states.iter().any(|state| {
+        state.pdf_highlights.len() > MAX_PDF_HIGHLIGHTS
+            || state
+                .pdf_highlights
+                .iter()
+                .any(|highlight| !highlight.is_valid())
+    }) {
+        return Err(invalid_state(
+            "Reader state contains an invalid PDF highlight",
+        ));
+    }
+    Ok(())
+}
+
+fn state_json(value: &impl Serialize, limit: u64) -> io::Result<Vec<u8>> {
+    let bytes = serde_json::to_vec(value).map_err(io::Error::other)?;
+    if bytes.len() as u64 > limit {
+        return Err(invalid_state("Reader state reached its size limit"));
+    }
+    Ok(bytes)
+}
+
+fn invalid_state(message: &str) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, message.to_owned())
+}
+
+fn merge_states(current: &[BookState], backup: &[BookState]) -> (Vec<BookState>, BackupSummary) {
+    let mut merged = current.to_vec();
+    let mut indices: HashMap<u64, usize> = current
+        .iter()
+        .enumerate()
+        .map(|(index, book)| (book.id, index))
+        .collect();
+    let mut summary = BackupSummary::default();
+    for source in backup {
+        let Some(format) = DocumentFormat::for_path(&source.path)
+            .filter(|format| safe_path(&source.path) && source.size <= format.max_bytes())
+        else {
+            summary.skipped += 1;
+            continue;
+        };
+        let target = if let Some(&index) = indices.get(&source.id) {
+            if DocumentFormat::for_path(&merged[index].path) != Some(format) {
+                summary.skipped += 1;
+                continue;
+            }
+            summary.existing_books += 1;
+            &mut merged[index]
+        } else if merged.len() < MAX_BACKUP_BOOKS {
+            let mut added = source.clone();
+            added.bookmarks = Vec::new();
+            added.highlights = Vec::new();
+            added.pdf_highlights = Vec::new();
+            added.title = clean_metadata(&added.title);
+            if added
+                .position
+                .as_ref()
+                .is_some_and(|position| !valid_position(position))
+            {
+                added.position = None;
+                summary.skipped += 1;
+            }
+            let index = merged.len();
+            indices.insert(added.id, index);
+            merged.push(added);
+            summary.new_books += 1;
+            &mut merged[index]
+        } else {
+            summary.skipped += 1;
+            continue;
+        };
+        for bookmark in &source.bookmarks {
+            let label = clean_metadata(&bookmark.label);
+            if !valid_position(&bookmark.position) || label.is_empty() {
+                summary.skipped += 1;
+            } else if target
+                .bookmarks
+                .iter()
+                .any(|existing| same_position(&existing.position, &bookmark.position))
+            {
+                summary.duplicates += 1;
+            } else if target.bookmarks.len() < MAX_IMPORTED_MARKS {
+                target.bookmarks.push(Bookmark {
+                    label,
+                    position: bookmark.position.clone(),
+                });
+                summary.bookmarks_added += 1;
+            } else {
+                summary.skipped += 1;
+            }
+        }
+        for mark in &source.highlights {
+            if !valid_highlight(mark) {
+                summary.skipped += 1;
+            } else if let Some(existing) = target.highlights.iter_mut().find(|existing| {
+                existing.selection.start == mark.selection.start
+                    && existing.selection.end == mark.selection.end
+            }) {
+                merge_note(&mut existing.note, &mark.note, &mut summary);
+            } else if target.highlights.len() < MAX_IMPORTED_MARKS {
+                target.highlights.push(mark.clone());
+                summary.highlights_added += 1;
+                summary.notes_added += usize::from(mark.note.is_some());
+            } else {
+                summary.skipped += 1;
+            }
+        }
+        for mark in &source.pdf_highlights {
+            if !mark.is_valid() {
+                summary.skipped += 1;
+            } else if let Some(existing) = target
+                .pdf_highlights
+                .iter_mut()
+                .find(|existing| existing.page == mark.page && existing.bounds == mark.bounds)
+            {
+                merge_note(&mut existing.note, &mark.note, &mut summary);
+            } else if target.pdf_highlights.len() < MAX_PDF_HIGHLIGHTS {
+                target.pdf_highlights.push(mark.clone());
+                summary.pdf_highlights_added += 1;
+                summary.notes_added += usize::from(mark.note.is_some());
+            } else {
+                summary.skipped += 1;
+            }
+        }
+    }
+    (merged, summary)
+}
+
+fn merge_note(
+    current: &mut Option<String>,
+    imported: &Option<String>,
+    summary: &mut BackupSummary,
+) {
+    summary.duplicates += 1;
+    if let Some(note) = imported.as_ref().filter(|note| !note.trim().is_empty()) {
+        match current {
+            Some(current) if current == note => {}
+            Some(current) if !current.trim().is_empty() => summary.note_conflicts += 1,
+            _ => {
+                *current = Some(note.clone());
+                summary.notes_added += 1;
+            }
+        }
+    }
+}
+
+fn valid_position(position: &ReadingPosition) -> bool {
+    position.anchor.as_ref().is_none_or(valid_anchor)
+}
+
+fn valid_anchor(anchor: &Anchor) -> bool {
+    !anchor.chapter.is_empty()
+        && anchor.chapter.len() <= MAX_ANCHOR_PATH_BYTES
+        && !anchor.chapter.chars().any(char::is_control)
+}
+
+fn same_position(left: &ReadingPosition, right: &ReadingPosition) -> bool {
+    match (&left.anchor, &right.anchor) {
+        (Some(left), Some(right)) => left == right,
+        (None, None) => left.chapter == right.chapter && left.page == right.page,
+        _ => false,
+    }
+}
+
+fn valid_highlight(mark: &Highlight) -> bool {
+    let selection = &mark.selection;
+    valid_anchor(&selection.start)
+        && valid_anchor(&selection.end)
+        && selection.start.book == selection.end.book
+        && selection.start.revision == selection.end.revision
+        && selection.start.chapter == selection.end.chapter
+        && (selection.start.block, selection.start.offset)
+            < (selection.end.block, selection.end.offset)
+        && !selection.text.trim().is_empty()
+        && selection.text.len() <= MAX_HIGHLIGHT_TEXT_BYTES
+        && mark
+            .note
+            .as_ref()
+            .is_none_or(|note| note.len() <= MAX_NOTE_BYTES)
+}
+
+fn load_recents(path: &Path) -> io::Result<Vec<BookState>> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_file() && metadata.len() <= MAX_STATE_BYTES => {}
+        Ok(_) => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Reader state is unavailable or too large",
+            ));
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    }
+    let mut bytes = Vec::new();
+    File::open(path)?
+        .take(MAX_STATE_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_STATE_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Reader state exceeds its size limit",
+        ));
+    }
+    let mut recent: Vec<BookState> = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+    let mut ids = HashSet::new();
+    recent.retain(|state| {
+        safe_path(&state.path)
+            && DocumentFormat::for_path(&state.path).is_some()
+            && ids.insert(state.id)
+    });
+    for state in &mut recent {
+        state.pdf_highlights.retain(PdfHighlight::is_valid);
+        state.pdf_highlights.truncate(MAX_PDF_HIGHLIGHTS);
+    }
+    Ok(recent)
+}
+
+fn fingerprint(mut input: impl Read, size: u64, tag: &[u8], mut length: u64) -> io::Result<u64> {
+    let hash_bytes = |hash: u64, byte: u8| (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3);
+    let mut hash = size
+        .to_le_bytes()
+        .into_iter()
+        .chain(tag.iter().copied())
+        .fold(0xcbf29ce484222325, hash_bytes);
+    let mut buffer = [0; 32 * 1024];
+    while length > 0 {
+        let count = length.min(buffer.len() as u64) as usize;
+        input.read_exact(&mut buffer[..count])?;
+        hash = buffer[..count].iter().copied().fold(hash, hash_bytes);
+        length -= count as u64;
+    }
+    if input.read(&mut buffer[..1])? != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "The document changed while opening",
+        ));
+    }
+    Ok(hash)
+}
+
+fn library_book(
+    path: PathBuf,
+    size: u64,
+    format: DocumentFormat,
+    known_title: Option<&str>,
+) -> LibraryBook {
+    let title = known_title.map(str::to_owned).unwrap_or_else(|| {
+        path.file_stem().map_or_else(
+            || "Untitled book".to_owned(),
+            |name| name.to_string_lossy().into_owned(),
+        )
+    });
+    let searchable = search_key(&title, &path);
+    LibraryBook {
+        path,
+        title,
+        size,
+        format,
+        searchable,
+    }
+}
+
+fn search_key(title: &str, path: &Path) -> String {
+    fold_search(&format!("{title}\n{}", path.to_string_lossy()))
+}
+
+fn fold_search(text: &str) -> String {
+    if text.is_ascii() {
+        return text.to_ascii_lowercase();
+    }
+    let decomposed = DecomposingNormalizer::new_nfd().normalize(text);
+    let folded = CaseMapper::new().fold_string(&decomposed);
+    ComposingNormalizer::new_nfc()
+        .normalize(&folded)
+        .into_owned()
+}
+
+fn clean_metadata(value: &str) -> String {
+    value
+        .trim()
+        .chars()
+        .filter(|char| !char.is_control())
+        .take(256)
+        .collect()
+}
+
+fn safe_path(path: &Path) -> bool {
+    !path.as_os_str().is_empty()
+        && path.components().count() <= MAX_PATH_DEPTH
+        && path.components().all(|component| matches!(component, Component::Normal(name) if name.to_str().is_some_and(|name| !name.starts_with('.'))))
+}
+
+fn denied() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        "Choose a supported document from the library",
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    const EPUB2: &[u8] = include_bytes!("../tests/fixtures/field-notes-epub2.epub");
+    const EPUB3: &[u8] = include_bytes!("../tests/fixtures/field-notes-epub3.epub");
+
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new() -> Self {
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "primitive-reader-test-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed),
+            ));
+            fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn same_title_books_keep_separate_state_after_rename() {
+        let scratch = Scratch::new();
+        let root = scratch.0.join("documents");
+        let state_path = scratch.0.join("reader.json");
+        fs::create_dir_all(root.join("other")).unwrap();
+        fs::write(root.join("Field Notes.epub"), EPUB3).unwrap();
+        fs::write(root.join("other/Field Notes.EPUB"), EPUB2).unwrap();
+
+        let mut library = Library::open(&root, &state_path).unwrap();
+        library.scan().unwrap();
+        assert_eq!(library.entries().len(), 2);
+        let first = library.resolve(&root.join("Field Notes.epub")).unwrap();
+        let second = library
+            .resolve(Path::new("other/Field Notes.EPUB"))
+            .unwrap();
+        let id = library.identify(&first).unwrap();
+        let other_id = library.identify(&second).unwrap();
+        assert_eq!(id, 0xfb0c855bfa08f86a);
+        assert_ne!(id, other_id);
+
+        let anchor = Anchor {
+            book: 1,
+            chapter: "chapter.xhtml".into(),
+            revision: 2,
+            block: 3,
+            offset: 4,
+        };
+        let position = ReadingPosition {
+            chapter: 1,
+            page: 3,
+            anchor: Some(anchor.clone()),
+        };
+        let first_state = library.remember(&first, id, "Field Notes");
+        first_state.position = Some(position.clone());
+        first_state.preferences.font_size = Some(54.0);
+        first_state.bookmarks.push(Bookmark {
+            label: "Beginning".into(),
+            position: position.clone(),
+        });
+        first_state.highlights.push(Highlight {
+            selection: TextSelection {
+                start: anchor.clone(),
+                end: Anchor {
+                    offset: 8,
+                    ..anchor
+                },
+                text: "tide".into(),
+            },
+            note: Some("A passage to revisit".into()),
+        });
+        library
+            .remember(&second, other_id, "Field Notes")
+            .preferences
+            .margin = Some(48);
+        library
+            .save_with(|path, bytes| {
+                let temporary = path.with_extension("tmp");
+                fs::write(&temporary, bytes)?;
+                fs::rename(temporary, path)
+            })
+            .unwrap();
+
+        fs::rename(root.join(&first.path), root.join("other/Renamed.epub")).unwrap();
+        let mut library = Library::open(&root, &state_path).unwrap();
+        library.scan().unwrap();
+        assert_eq!(library.recents()[0].id, other_id);
+        let saved = library.state(id).unwrap();
+        let relocated = library.locate(saved).unwrap();
+        assert_eq!(relocated.path, Path::new("other/Renamed.epub"));
+        assert_eq!(library.identify(&relocated).unwrap(), id);
+        assert_eq!(saved.position.as_ref(), Some(&position));
+        assert_eq!(
+            saved.preferences.apply_to(Settings::default()).font_size,
+            54.0
+        );
+        assert_eq!(saved.bookmarks[0].position, position);
+        assert_eq!(saved.highlights[0].selection.text, "tide");
+        assert_eq!(
+            saved.highlights[0].note.as_deref(),
+            Some("A passage to revisit")
+        );
+        assert_eq!(
+            library.state(other_id).unwrap().preferences.margin,
+            Some(48)
+        );
+        assert!(library.state(other_id).unwrap().position.is_none());
+        assert_eq!(
+            library.remember(&relocated, id, "Field Notes").path,
+            relocated.path
+        );
+        assert_eq!(library.recents()[0].id, id);
+    }
+
+    #[test]
+    fn scans_and_identifies_loose_formats_with_the_reader_limits() {
+        let scratch = Scratch::new();
+        let root = scratch.0.join("documents");
+        fs::create_dir(&root).unwrap();
+        let text = b"<html><body><p>A tide.</p></body></html>";
+        fs::write(root.join("Notes.TXT"), text).unwrap();
+        fs::write(root.join("Notes.XHTML"), text).unwrap();
+        fs::write(
+            root.join("Notes.FB2"),
+            b"<FictionBook><body><section><p>A tide.</p></section></body></FictionBook>",
+        )
+        .unwrap();
+        File::create(root.join("large.txt"))
+            .unwrap()
+            .set_len(MAX_INPUT as u64 + 1)
+            .unwrap();
+        fs::write(root.join("other.dat"), text).unwrap();
+        let mut library = Library::open(&root, &scratch.0.join("reader.json")).unwrap();
+        library.scan().unwrap();
+        assert_eq!(library.entries().len(), 3);
+        let plain = library.resolve(Path::new("Notes.TXT")).unwrap();
+        let xhtml = library.resolve(Path::new("Notes.XHTML")).unwrap();
+        assert!(library.resolve(Path::new("large.txt")).is_err());
+        let id = library.identify(&xhtml).unwrap();
+        assert_ne!(id, library.identify(&plain).unwrap());
+        let fb2 = library.resolve(Path::new("Notes.FB2")).unwrap();
+        assert_ne!(id, library.identify(&fb2).unwrap());
+        library.remember(&xhtml, id, "Story");
+
+        fs::rename(root.join("Notes.XHTML"), root.join("Renamed.HTML")).unwrap();
+        library.scan().unwrap();
+        let moved = library.locate(library.state(id).unwrap()).unwrap();
+        assert_eq!(moved.path, Path::new("Renamed.HTML"));
+        assert_eq!(library.identify(&moved).unwrap(), id);
+    }
+
+    #[test]
+    fn scans_fixed_formats_and_identifies_their_content_across_renames() {
+        let scratch = Scratch::new();
+        let root = scratch.0.join("documents");
+        fs::create_dir(&root).unwrap();
+        let input = b"fixed-page test data";
+        for name in ["sample.PDF", "sample.JPG", "sample.PNG", "sample.DJV"] {
+            fs::write(root.join(name), input).unwrap();
+        }
+        fs::write(root.join("archive.CBZ"), EPUB3).unwrap();
+        File::create(root.join("oversized.pdf"))
+            .unwrap()
+            .set_len(DocumentFormat::Pdf.max_bytes() + 1)
+            .unwrap();
+
+        let mut library = Library::open(&root, &scratch.0.join("reader.json")).unwrap();
+        library.scan().unwrap();
+        assert_eq!(library.entries().len(), 5);
+        let mut ids = HashSet::new();
+        for (name, format) in [
+            ("sample.PDF", DocumentFormat::Pdf),
+            ("sample.DJV", DocumentFormat::Djvu),
+            ("sample.JPG", DocumentFormat::Jpeg),
+            ("sample.PNG", DocumentFormat::Png),
+            ("archive.CBZ", DocumentFormat::Cbz),
+        ] {
+            let book = library.resolve(Path::new(name)).unwrap();
+            assert_eq!(book.format, format);
+            assert!(ids.insert(library.identify(&book).unwrap()));
+        }
+        let jpeg = library.resolve(Path::new("sample.JPG")).unwrap();
+        let id = library.identify(&jpeg).unwrap();
+        library.remember(&jpeg, id, "A photograph");
+        fs::rename(root.join("sample.JPG"), root.join("renamed.jpeg")).unwrap();
+        library.scan().unwrap();
+        let moved = library.locate(library.state(id).unwrap()).unwrap();
+        assert_eq!(moved.path, Path::new("renamed.jpeg"));
+        assert_eq!(library.identify(&moved).unwrap(), id);
+        let djvu = library.resolve(Path::new("sample.DJV")).unwrap();
+        let djvu_id = library.identify(&djvu).unwrap();
+        library.remember(&djvu, djvu_id, "A scan");
+        fs::rename(root.join("sample.DJV"), root.join("renamed.djvu")).unwrap();
+        library.scan().unwrap();
+        let moved = library.locate(library.state(djvu_id).unwrap()).unwrap();
+        assert_eq!(moved.path, Path::new("renamed.djvu"));
+        assert_eq!(library.identify(&moved).unwrap(), djvu_id);
+    }
+
+    #[test]
+    fn filtering_folds_titles_and_paths_and_reads_selected_metadata() {
+        let scratch = Scratch::new();
+        let root = scratch.0.join("docs");
+        let state_path = scratch.0.join("reader.json");
+        let folder = root.join("Schriften");
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(folder.join("Đe\u{302}m Straße Σ.epub"), EPUB3).unwrap();
+        fs::write(root.join("Other.epub"), EPUB2).unwrap();
+        let mut library = Library::open(&root, &state_path).unwrap();
+        library.scan().unwrap();
+        assert_eq!(library.matching("   ").count(), 2);
+        assert_eq!(library.matching("other Straße").count(), 0);
+        let entry = library
+            .matching("SCHRIFTEN ĐÊM STRASSE ς")
+            .next()
+            .unwrap()
+            .clone();
+        let meta = library.metadata(&entry).unwrap();
+        assert_eq!(meta.title, "Field Notes at Dusk (EPUB 3)");
+        assert_eq!(meta.author.as_deref(), Some("PrimitiveOS"));
+
+        let id = library.identify(&entry).unwrap();
+        library.remember(&entry, id, &meta.title);
+        assert_eq!(library.matching("DUSK Schriften").count(), 1);
+        library
+            .save_with(|path, bytes| fs::write(path, bytes))
+            .unwrap();
+        let mut reopened = Library::open(&root, &state_path).unwrap();
+        reopened.scan().unwrap();
+        assert_eq!(reopened.matching("DUSK Schriften").count(), 1);
+    }
+
+    #[test]
+    fn discovers_packed_fictionbook_and_uses_its_shared_size_limit() {
+        let scratch = Scratch::new();
+        let root = scratch.0.join("docs");
+        fs::create_dir(&root).unwrap();
+        let path = root.join("Shore.FB2.ZIP");
+        let mut archive = zip::ZipWriter::new(File::create(&path).unwrap());
+        archive
+            .start_file("story.fb2", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        archive.write_all(br#"<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0"><description><title-info><book-title>Shore Notes</book-title><author><first-name>Linh</first-name><last-name>Tran</last-name></author></title-info></description><body><section><p>A tide.</p></section></body></FictionBook>"#).unwrap();
+        archive.finish().unwrap();
+        let mut library = Library::open(&root, &scratch.0.join("reader.json")).unwrap();
+        library.scan().unwrap();
+        let entry = library.entries().first().unwrap();
+        assert_eq!(entry.format, DocumentFormat::Fb2);
+        assert_eq!(entry.format.max_bytes(), MAX_FB2_INPUT as u64);
+        let metadata = library.metadata(entry).unwrap();
+        assert_eq!(metadata.title, "Shore Notes");
+        assert_eq!(metadata.author.as_deref(), Some("Linh Tran"));
+        assert!(library.identify(entry).is_ok());
+    }
+
+    #[test]
+    fn discovers_markdown_and_gate_checks_legacy_kindle_containers() {
+        let scratch = Scratch::new();
+        fs::write(scratch.0.join("Notebook.MARKDOWN"), b"# Tides\n\nA note.\n").unwrap();
+        fs::write(scratch.0.join("Database.PDB"), b"not a Palm document").unwrap();
+        fs::write(scratch.0.join("New Format.AZW3"), b"unsupported format").unwrap();
+        let mut library = Library::open(&scratch.0, &scratch.0.join("reader.json")).unwrap();
+        library.scan().unwrap();
+        assert_eq!(library.entries().len(), 2);
+        let markdown = library.resolve(Path::new("Notebook.MARKDOWN")).unwrap();
+        let mobi = library.resolve(Path::new("Database.PDB")).unwrap();
+        assert_eq!(markdown.format, DocumentFormat::Markdown);
+        assert_eq!(mobi.format, DocumentFormat::Mobi);
+        assert_eq!(mobi.format.max_bytes(), MAX_MOBI_BYTES as u64);
+        assert!(library.metadata(&markdown).is_ok());
+        assert!(library.metadata(&mobi).is_err());
+        let id = library.identify(&markdown).unwrap();
+        library.remember(&markdown, id, "Notebook");
+        fs::rename(
+            scratch.0.join("Notebook.MARKDOWN"),
+            scratch.0.join("Tides.md"),
+        )
+        .unwrap();
+        library.scan().unwrap();
+        assert_eq!(
+            library.locate(library.state(id).unwrap()).unwrap().path,
+            Path::new("Tides.md")
+        );
+        assert!(library.resolve(Path::new("New Format.AZW3")).is_err());
+    }
+
+    #[test]
+    fn pdf_highlight_round_trips_and_rejects_invalid_or_oversized_marks() {
+        let scratch = Scratch::new();
+        let root = scratch.0.join("docs");
+        let state_path = scratch.0.join("reader.json");
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("Book.pdf"), b"PDF fixture").unwrap();
+        let mut library = Library::open(&root, &state_path).unwrap();
+        let entry = library.resolve(Path::new("Book.pdf")).unwrap();
+        let id = library.identify(&entry).unwrap();
+        let saved = library.remember(&entry, id, "Book");
+        let bounds = PdfTextRect {
+            x0: 0.2,
+            y0: 0.3,
+            x1: 0.5,
+            y1: 0.4,
+        };
+        let mark = PdfHighlight {
+            page: 2,
+            bounds: vec![bounds],
+            text: "a passage".into(),
+            note: Some("One note".into()),
+        };
+        saved.add_pdf_highlight(mark.clone()).unwrap();
+        assert!(
+            saved
+                .add_pdf_highlight(PdfHighlight {
+                    bounds: vec![PdfTextRect {
+                        x0: f32::NAN,
+                        ..bounds
+                    }],
+                    ..mark.clone()
+                })
+                .is_err()
+        );
+        assert!(
+            saved
+                .add_pdf_highlight(PdfHighlight {
+                    bounds: vec![bounds; MAX_PDF_HIGHLIGHT_BOUNDS + 1],
+                    ..mark.clone()
+                })
+                .is_err()
+        );
+        assert!(
+            saved
+                .add_pdf_highlight(PdfHighlight {
+                    note: Some("x".repeat(MAX_NOTE_BYTES + 1)),
+                    ..mark.clone()
+                })
+                .is_err()
+        );
+        library
+            .save_with(|path, bytes| fs::write(path, bytes))
+            .unwrap();
+        let reopened = Library::open(&root, &state_path).unwrap();
+        assert_eq!(
+            reopened.state(id).unwrap().pdf_highlights,
+            vec![mark.clone()]
+        );
+
+        let saved = library.remember(&entry, id, "Book");
+        saved
+            .pdf_highlights
+            .resize(MAX_PDF_HIGHLIGHTS, mark.clone());
+        assert!(saved.add_pdf_highlight(mark).is_err());
+        let old: BookState =
+            serde_json::from_str(r#"{"id":7,"path":"old.pdf","title":"Old"}"#).unwrap();
+        assert!(old.pdf_highlights.is_empty());
+    }
+
+    #[test]
+    fn fixed_view_recovers_unusable_fields_and_preserves_progress() {
+        let state: BookState = serde_json::from_str(
+            r#"{
+            "id":7,"path":"old.cbz","title":"Comic","position":{"chapter":0,"page":3},
+            "fixed_preferences":{"zoom":99,"turns":259,"width_fit":true,"offset_x":1e40,
+                                 "offset_y":null,"right_to_left":true,
+                                 "crop":{"x0":0.1,"y0":0.2,"x1":0.11,"y1":0.8}}
+        }"#,
+        )
+        .unwrap();
+        assert_eq!(state.position.unwrap().page, 3);
+        assert_eq!(
+            state.fixed_preferences,
+            FixedPreferences {
+                zoom: 4,
+                turns: 3,
+                width_fit: true,
+                offset_x: MAX_FIXED_OFFSET,
+                offset_y: 0.0,
+                right_to_left: true,
+                crop: None,
+            }
+        );
+        assert!(state.fixed_preferences.is_valid());
+        let invalid = FixedPreferences {
+            offset_y: f32::NAN,
+            ..state.fixed_preferences
+        };
+        assert!(!invalid.is_valid());
+        assert_eq!(invalid.normalized(), state.fixed_preferences);
+        let crop: FixedPreferences =
+            serde_json::from_str(r#"{"crop":{"x0":0.1,"y0":0.2,"x1":0.9,"y1":0.8}}"#).unwrap();
+        assert_eq!(crop.crop.unwrap().x1, 0.9);
+        assert!(crop.is_valid());
+        assert_eq!(
+            serde_json::from_slice::<FixedPreferences>(&serde_json::to_vec(&crop).unwrap())
+                .unwrap(),
+            crop
+        );
+        let old: BookState =
+            serde_json::from_str(r#"{"id":7,"path":"old.cbz","title":"Comic"}"#).unwrap();
+        assert_eq!(old.fixed_preferences, FixedPreferences::default());
+    }
+
+    #[test]
+    fn backup_preview_merge_and_repeat_preserve_current_progress_and_distinct_annotations() {
+        let scratch = Scratch::new();
+        let current = scratch.0.join("current");
+        let imported = scratch.0.join("source");
+        fs::create_dir(&current).unwrap();
+        fs::create_dir(&imported).unwrap();
+        fs::write(current.join("Current.epub"), EPUB3).unwrap();
+        fs::write(imported.join("Old.epub"), EPUB3).unwrap();
+        fs::write(imported.join("Another.pdf"), b"PDF for identity only").unwrap();
+        let current_state = scratch.0.join("current.json");
+        let mut target = Library::open(&current, &current_state).unwrap();
+        let mut source = Library::open(&imported, &scratch.0.join("source.json")).unwrap();
+        let target_entry = target.resolve(Path::new("Current.epub")).unwrap();
+        let source_entry = source.resolve(Path::new("Old.epub")).unwrap();
+        let id = target.identify(&target_entry).unwrap();
+        assert_eq!(id, source.identify(&source_entry).unwrap());
+        let anchor = |offset| Anchor {
+            book: 1,
+            chapter: "chapter.xhtml".into(),
+            revision: 1,
+            block: 0,
+            offset,
+        };
+        let position = |page, offset| ReadingPosition {
+            chapter: 0,
+            page,
+            anchor: Some(anchor(offset)),
+        };
+        let bookmark = |page, offset| Bookmark {
+            label: "A bookmark".into(),
+            position: position(page, offset),
+        };
+        let mark = |offset, note: Option<&str>| Highlight {
+            selection: TextSelection {
+                start: anchor(offset),
+                end: anchor(offset + 1),
+                text: "x".into(),
+            },
+            note: note.map(str::to_owned),
+        };
+
+        let saved = target.remember(&target_entry, id, "Current title");
+        saved.position = Some(position(4, 40));
+        saved.preferences.font_size = Some(54.0);
+        saved.bookmarks.push(bookmark(1, 2));
+        saved
+            .highlights
+            .extend([mark(2, Some("Keep this")), mark(4, None)]);
+
+        let old = source.remember(&source_entry, id, "Imported title");
+        old.position = Some(position(1, 10));
+        old.preferences.font_size = Some(30.0);
+        old.bookmarks.extend([bookmark(0, 2), bookmark(2, 8)]);
+        old.highlights.extend([
+            mark(2, Some("Conflict")),
+            mark(4, Some("Fill blank")),
+            mark(8, None),
+        ]);
+        let another = source.resolve(Path::new("Another.pdf")).unwrap();
+        let another_id = source.identify(&another).unwrap();
+        let added = source.remember(&another, another_id, "Another document");
+        added.position = Some(ReadingPosition {
+            chapter: 0,
+            page: 2,
+            anchor: None,
+        });
+        added.fixed_preferences.width_fit = true;
+        added
+            .add_pdf_highlight(PdfHighlight {
+                page: 2,
+                bounds: vec![PdfTextRect {
+                    x0: 0.1,
+                    y0: 0.2,
+                    x1: 0.3,
+                    y1: 0.4,
+                }],
+                text: "Another quote".into(),
+                note: Some("PDF note".into()),
+            })
+            .unwrap();
+
+        let backup = source.backup_bytes().unwrap();
+        let preview = target.preview_backup(&backup).unwrap();
+        assert_eq!(
+            preview.summary(),
+            BackupSummary {
+                new_books: 1,
+                existing_books: 1,
+                bookmarks_added: 1,
+                highlights_added: 1,
+                pdf_highlights_added: 1,
+                notes_added: 2,
+                duplicates: 3,
+                skipped: 0,
+                note_conflicts: 1,
+            }
+        );
+        assert_eq!(target.recents().len(), 1);
+        assert!(!current_state.exists());
+        let expected = preview.summary();
+        assert_eq!(target.merge_backup(preview).unwrap(), expected);
+        let saved = target.state(id).unwrap();
+        assert_eq!(saved.title, "Current title");
+        assert_eq!(saved.path, Path::new("Current.epub"));
+        assert_eq!(saved.position, Some(position(4, 40)));
+        assert_eq!(saved.preferences.font_size, Some(54.0));
+        assert_eq!(saved.bookmarks.len(), 2);
+        assert_eq!(saved.highlights[0].note.as_deref(), Some("Keep this"));
+        assert_eq!(saved.highlights[1].note.as_deref(), Some("Fill blank"));
+        assert!(!current.join("Another.pdf").exists());
+        assert_eq!(
+            target
+                .state(another_id)
+                .unwrap()
+                .position
+                .as_ref()
+                .unwrap()
+                .page,
+            2
+        );
+
+        let before = target.bytes().unwrap();
+        let repeated = target.preview_backup(&backup).unwrap();
+        assert_eq!(repeated.summary().new_books, 0);
+        assert_eq!(repeated.summary().notes_added, 0);
+        target.merge_backup(repeated).unwrap();
+        assert_eq!(target.bytes().unwrap(), before);
+        target
+            .save_with(|path, bytes| fs::write(path, bytes))
+            .unwrap();
+        let reopened = Library::open(&current, &current_state).unwrap();
+        assert_eq!(reopened.bytes().unwrap(), before);
+    }
+
+    #[test]
+    fn backup_rejects_bad_versions_and_ignores_paths_outside_the_library() {
+        let scratch = Scratch::new();
+        let mut library = Library::open(&scratch.0, &scratch.0.join("state.json")).unwrap();
+        assert!(
+            library
+                .preview_backup(br#"{"version":2,"books":[]}"#)
+                .is_err()
+        );
+        assert!(
+            library
+                .preview_backup(&vec![0; MAX_BACKUP_BYTES as usize + 1])
+                .is_err()
+        );
+        let preview = library
+            .preview_backup(
+                br#"{"version":1,"books":[{"id":7,"path":"../unsafe.pdf","title":"Unsafe"}]}"#,
+            )
+            .unwrap();
+        assert_eq!(preview.summary().skipped, 1);
+        library.merge_backup(preview).unwrap();
+        assert!(library.recents().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn discovery_and_handoff_reject_hidden_files_and_symlink_escapes() {
+        use std::os::unix::fs::symlink;
+
+        let scratch = Scratch::new();
+        let root = scratch.0.join("documents");
+        let outside = scratch.0.join("private");
+        fs::create_dir_all(root.join(".hidden")).unwrap();
+        fs::create_dir(&outside).unwrap();
+        fs::write(root.join("visible.EPUB"), EPUB3).unwrap();
+        fs::write(root.join(".hidden/story.epub"), EPUB3).unwrap();
+        fs::write(outside.join("story.epub"), EPUB3).unwrap();
+        symlink(&outside, root.join("external")).unwrap();
+        symlink(outside.join("story.epub"), root.join("linked.epub")).unwrap();
+
+        let mut library = Library::open(&root, &scratch.0.join("reader.json")).unwrap();
+        library.scan().unwrap();
+        assert_eq!(library.entries().len(), 1);
+        assert_eq!(library.entries()[0].path, Path::new("visible.EPUB"));
+        for bad_path in [
+            ".hidden/story.epub",
+            "external/story.epub",
+            "linked.epub",
+            "../private/story.epub",
+        ] {
+            assert!(library.resolve(Path::new(bad_path)).is_err());
+        }
+        assert!(library.resolve(&outside.join("story.epub")).is_err());
+    }
+}

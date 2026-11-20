@@ -19,6 +19,7 @@ const MAX_IMAGES: usize = 48;
 const MAX_IMAGE_PIXELS: usize = 8 * 1024 * 1024;
 
 struct Paragraph {
+    key: usize,
     y: f32,
     bottom: f32,
     background: Option<u8>,
@@ -125,6 +126,7 @@ impl ParleyChapter {
                 }
                 y = bottom + gap;
                 chapter.paragraphs.push(Paragraph {
+                    key: block.key,
                     y: origin,
                     bottom,
                     background: style.background,
@@ -167,6 +169,29 @@ impl ParleyChapter {
         Ok((chapter, lines, extent))
     }
 
+    pub(crate) fn source_at(&self, x: f32, y: f32) -> Option<(usize, usize)> {
+        let paragraph = self.paragraphs.get(
+            self.paragraphs
+                .partition_point(|paragraph| paragraph.bottom <= y),
+        )?;
+        let (cluster, _) =
+            parley::Cluster::from_point_exact(&paragraph.layout, x, y - paragraph.y)?;
+        Some((paragraph.key, cluster.text_range().start))
+    }
+
+    pub(crate) fn selection_layouts(
+        &self,
+        page: Range<f32>,
+    ) -> impl Iterator<Item = (usize, f32, &Layout<()>)> {
+        let start = self
+            .paragraphs
+            .partition_point(|paragraph| paragraph.bottom <= page.start);
+        self.paragraphs[start..]
+            .iter()
+            .take_while(move |paragraph| paragraph.y < page.end)
+            .map(|paragraph| (paragraph.key, paragraph.y, &paragraph.layout))
+    }
+
     pub fn capture(&mut self, range: Range<f32>, settings: Settings) -> Result<Vec<u8>> {
         let visible_height = (range.end - range.start)
             .ceil()
@@ -202,6 +227,20 @@ impl ParleyChapter {
                     if let PositionedLayoutItem::GlyphRun(run) = item {
                         self.glyphs
                             .draw_run(page, stride, margin, paragraph.y - range.start, &run);
+                        if run.style().underline.is_some() {
+                            let y =
+                                (paragraph.y - range.start + run.baseline() + 3.0).round() as isize;
+                            let x0 = margin
+                                + (run.offset().floor().max(0.0) as usize).min(stride - 2 * margin);
+                            let x1 = margin
+                                + ((run.offset() + run.advance()).ceil().max(0.0) as usize)
+                                    .min(stride - 2 * margin);
+                            for row in y.max(0) as usize..(y + 2).max(0) as usize {
+                                if row < visible_height && x0 < x1 {
+                                    page[row * stride + x0..row * stride + x1].fill(48);
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -224,13 +263,19 @@ fn make_paragraph(
     body: &Style,
 ) -> Layout<()> {
     let mut builder = context.ranged_builder(fonts, &block.text, 1.0, true);
-    let font = style.font_family.as_deref().or(body.font_family.as_deref());
+    let font = if settings.override_fonts {
+        None
+    } else {
+        style.font_family.as_deref().or(body.font_family.as_deref())
+    };
     let family = font.map_or_else(|| GenericFamily::Serif.into(), FontFamily::named);
     builder.push_default(StyleProperty::FontFamily(family));
-    let line_height = style
+    let default_spacing = Settings::default().line_height;
+    let publisher_spacing = style
         .line_height
         .or(body.line_height)
-        .unwrap_or(settings.line_height);
+        .unwrap_or(default_spacing);
+    let line_height = (publisher_spacing * settings.line_height / default_spacing).clamp(1.0, 3.0);
     builder.push_default(StyleProperty::LineHeight(LineHeight::FontSizeRelative(
         line_height,
     )));
@@ -241,7 +286,7 @@ fn make_paragraph(
     let size =
         (settings.font_size * body.size_scale.unwrap_or(1.0) * block_scale).clamp(12.0, 192.0);
     builder.push_default(StyleProperty::FontSize(size));
-    if block.heading {
+    if block.heading || settings.bold_text {
         builder.push_default(StyleProperty::FontWeight(FontWeight::BOLD));
     }
     if block.rtl {
@@ -255,9 +300,21 @@ fn make_paragraph(
             builder.push(StyleProperty::FontStyle(FontStyle::Italic), bytes.clone());
         }
     }
+    for link in &block.links {
+        builder.push(StyleProperty::Underline(true), link.bytes.clone());
+    }
     let mut layout = builder.build(&block.text);
     layout.break_all_lines(Some(width as f32));
-    layout.align(Alignment::Start, AlignmentOptions::default());
+    let alignment = match settings.alignment {
+        crate::TextAlignment::Publisher => style
+            .alignment
+            .or(body.alignment)
+            .unwrap_or(Alignment::Start),
+        crate::TextAlignment::Start => Alignment::Start,
+        crate::TextAlignment::Center => Alignment::Center,
+        crate::TextAlignment::Justify => Alignment::Justify,
+    };
+    layout.align(alignment, AlignmentOptions::default());
     layout
 }
 

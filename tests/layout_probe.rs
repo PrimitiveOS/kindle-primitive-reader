@@ -4,8 +4,9 @@ use reader::epub::Book;
 use reader::{Anchor, Engine, Probe, Settings};
 
 fn fixture(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures")
+    std::env::var_os("READER_TEST_FIXTURES")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"))
         .join(name)
 }
 
@@ -78,6 +79,7 @@ fn repeated_text_resolves_to_the_same_passages_after_reflow() {
                 font_size: 48.0,
                 margin: 46,
                 line_height: 1.6,
+                ..settings
             };
             let mut reopened =
                 Probe::open(&book, engine, std::slice::from_ref(&font), changed, 0).unwrap();

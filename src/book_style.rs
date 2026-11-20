@@ -10,7 +10,7 @@ use cssparser::{
     QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser, StyleSheetParser, Token,
 };
 use parley::{
-    FontContext,
+    Alignment, FontContext,
     fontique::{Blob, FontInfoOverride},
 };
 
@@ -32,6 +32,7 @@ pub(crate) struct Style {
     pub size_scale: Option<f32>,
     pub line_height: Option<f32>,
     pub background: Option<u8>,
+    pub alignment: Option<Alignment>,
 }
 
 #[derive(Default)]
@@ -90,7 +91,7 @@ impl BookStyle {
         inline: Option<&str>,
     ) -> Style {
         let mut style = Style::default();
-        let mut priority = [0_u8; 4];
+        let mut priority = [0_u8; 5];
         let mut apply = |declarations: &Declarations, specificity| {
             if let Some(families) = &declarations.families
                 && specificity >= priority[0]
@@ -125,6 +126,12 @@ impl BookStyle {
             {
                 priority[3] = specificity;
                 style.background = background;
+            }
+            if let Some(alignment) = declarations.alignment
+                && specificity >= priority[4]
+            {
+                priority[4] = specificity;
+                style.alignment = Some(alignment);
             }
         };
 
@@ -335,6 +342,7 @@ struct Declarations {
     size_scale: Option<f32>,
     line_height: Option<f32>,
     background: Option<Option<u8>>,
+    alignment: Option<Alignment>,
 }
 
 impl Declarations {
@@ -347,6 +355,7 @@ impl Declarations {
                 Property::Size(value) => result.size_scale = Some(value),
                 Property::LineHeight(value) => result.line_height = Some(value),
                 Property::Background(value) => result.background = Some(value),
+                Property::Alignment(value) => result.alignment = Some(value),
             }
         }
         result
@@ -359,6 +368,7 @@ enum Property {
     Size(f32),
     LineHeight(f32),
     Background(Option<u8>),
+    Alignment(Alignment),
 }
 
 struct Properties;
@@ -397,6 +407,17 @@ impl<'i> DeclarationParser<'i> for Properties {
                 Property::LineHeight(height)
             }
             "background" | "background-color" => Property::Background(background(input)?),
+            "text-align" => {
+                Property::Alignment(match input.expect_ident()?.to_ascii_lowercase().as_str() {
+                    "start" => Alignment::Start,
+                    "end" => Alignment::End,
+                    "left" => Alignment::Left,
+                    "right" => Alignment::Right,
+                    "center" => Alignment::Center,
+                    "justify" => Alignment::Justify,
+                    _ => return Err(ParseError::unexpected_token()),
+                })
+            }
             _ => return Err(ParseError::unexpected_token()),
         };
         input.expect_exhausted()?;

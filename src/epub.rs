@@ -7,9 +7,9 @@ use std::path::Path;
 use roxmltree::{Document, Node, ParsingOptions};
 use zip::{CompressionMethod, ZipArchive};
 
-use crate::Result;
+use crate::{Result, loose};
 
-const MAX_ARCHIVE: u64 = 128 * 1024 * 1024;
+pub(crate) const MAX_ARCHIVE: u64 = 128 * 1024 * 1024;
 const MAX_ENTRIES: usize = 8192;
 const MAX_ZIP_DIRECTORY: u64 = 4 * 1024 * 1024;
 const MAX_XML: usize = 512 * 1024;
@@ -23,11 +23,37 @@ pub struct Chapter {
     pub label: String,
 }
 
+/// A local reading destination with a decoded archive path and optional element ID.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Destination {
+    pub path: String,
+    pub fragment: Option<String>,
+}
+
+/// An entry in the publication's table of contents, in depth-first reading order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TocEntry {
+    pub label: String,
+    pub depth: usize,
+    pub destination: Option<Destination>,
+}
+
 pub struct Book {
     pub title: String,
+    pub author: Option<String>,
     pub chapters: Vec<Chapter>,
+    pub toc: Vec<TocEntry>,
     revision: u64,
-    archive: Archive,
+    fixed_layout: bool,
+    content: Content,
+}
+
+enum Content {
+    Archive(Archive),
+    Loose {
+        xhtml: String,
+        resources: BTreeMap<String, Vec<u8>>,
+    },
 }
 
 struct Item {
@@ -38,6 +64,24 @@ struct Item {
 
 impl Book {
     pub fn open(path: &Path) -> Result<Self> {
+        if loose::Format::for_path(path).is_some() {
+            let document = loose::Document::open(path)?;
+            return Ok(Self {
+                revision: crate::revision(&document.xhtml),
+                fixed_layout: false,
+                chapters: vec![Chapter {
+                    href: loose::CHAPTER_PATH.to_owned(),
+                    label: document.title.clone(),
+                }],
+                title: document.title,
+                author: document.author,
+                toc: document.toc,
+                content: Content::Loose {
+                    xhtml: document.xhtml,
+                    resources: document.resources,
+                },
+            });
+        }
         let file = File::open(path)?;
         let metadata = file.metadata()?;
         if !metadata.is_file() || metadata.len() > MAX_ARCHIVE {
@@ -84,7 +128,9 @@ impl Book {
         {
             return Err("The EPUB package version is unsupported".into());
         }
-        let title = child(root, "metadata")?
+        let metadata = child(root, "metadata")?;
+        let default_layout = package_layout(metadata)?;
+        let title = metadata
             .children()
             .find(|node| node.has_tag_name("title"))
             .and_then(|node| node.text())
@@ -92,6 +138,13 @@ impl Book {
             .unwrap_or("Untitled book")
             .trim()
             .to_owned();
+        let authors = metadata
+            .children()
+            .filter(|node| node.has_tag_name(("http://purl.org/dc/elements/1.1/", "creator")))
+            .filter_map(|node| node.text().map(str::trim))
+            .filter(|name| !name.is_empty())
+            .collect::<Vec<_>>();
+        let author = (!authors.is_empty()).then(|| authors.join(", "));
         let mut manifest = BTreeMap::new();
         for node in child(root, "manifest")?
             .children()
@@ -120,54 +173,52 @@ impl Book {
             }
         }
         let spine = child(root, "spine")?;
-        let mut labels = BTreeMap::new();
-        if let Some(nav) = manifest.values().find(|item| item.navigation) {
+        let toc = if let Some(nav) = manifest.values().find(|item| item.navigation) {
             let xml = xml_entry(&mut archive, &nav.path)?;
+            let xml = loose::without_plain_html_doctype(&xml);
             let doc = parse_xml(&xml)?;
-            if let Some(toc) = doc.descendants().find(|node| {
-                node.has_tag_name("nav")
-                    && node.attributes().any(|attr| {
-                        attr.name() == "type"
-                            && attr
-                                .value()
-                                .split_ascii_whitespace()
-                                .any(|kind| kind == "toc")
-                    })
-            }) {
-                for link in toc.descendants().filter(|node| node.has_tag_name("a")) {
-                    add_label(&mut labels, &nav.path, link.attribute("href"), link);
-                }
-            }
+            xhtml_toc(&doc, &nav.path)
         } else if let Some(ncx) = spine.attribute("toc").and_then(|id| manifest.get(id)) {
             let xml = xml_entry(&mut archive, &ncx.path)?;
             let doc = parse_xml(&xml)?;
-            for point in doc
-                .descendants()
-                .filter(|node| node.has_tag_name("navPoint"))
-            {
-                let content = point.children().find(|node| node.has_tag_name("content"));
-                if let Ok(label) = child(point, "navLabel") {
-                    add_label(
-                        &mut labels,
-                        &ncx.path,
-                        content.and_then(|node| node.attribute("src")),
-                        label,
-                    );
-                }
+            ncx_toc(&doc, &ncx.path)
+        } else {
+            Vec::new()
+        };
+        let mut labels = BTreeMap::new();
+        for entry in &toc {
+            if let Some(destination) = &entry.destination {
+                labels
+                    .entry(destination.path.as_str())
+                    .or_insert(entry.label.as_str());
             }
         }
         let mut chapters = Vec::new();
+        let mut fixed_layout = None;
         for reference in spine.children().filter(|node| node.has_tag_name("itemref")) {
             let item = reference
                 .attribute("idref")
                 .and_then(|id| manifest.get(id))
                 .ok_or("The EPUB spine refers to a missing or external item")?;
+            let fixed = spine_layout(reference, default_layout)?;
+            if fixed_layout
+                .replace(fixed)
+                .is_some_and(|previous| previous != fixed)
+            {
+                return Err(
+                    "Reader cannot open an EPUB that mixes fixed-layout and reflowable spine items"
+                        .into(),
+                );
+            }
+            if fixed && item.media != "application/xhtml+xml" {
+                return Err("Reader supports fixed-layout EPUB pages stored as XHTML".into());
+            }
             if item.media != "application/xhtml+xml" && item.media != "text/html" {
                 return Err("The probe supports only XHTML spine documents".into());
             }
             let label = labels
-                .get(&item.path)
-                .cloned()
+                .get(item.path.as_str())
+                .map(|label| (*label).to_owned())
                 .unwrap_or_else(|| format!("Chapter {}", chapters.len() + 1));
             chapters.push(Chapter {
                 href: item.path.clone(),
@@ -179,9 +230,12 @@ impl Book {
         }
         Ok(Self {
             title,
+            author,
             chapters,
+            toc,
             revision,
-            archive,
+            fixed_layout: fixed_layout.unwrap_or(false),
+            content: Content::Archive(archive),
         })
     }
 
@@ -189,23 +243,45 @@ impl Book {
         self.revision
     }
 
+    pub fn is_fixed_layout(&self) -> bool {
+        self.fixed_layout
+    }
+
+    /// Return the publication's ordered reading contents.
+    pub fn toc(&self) -> &[TocEntry] {
+        &self.toc
+    }
+
     pub fn chapter(&mut self, index: usize) -> Result<String> {
         let chapter = self
             .chapters
             .get(index)
             .ok_or("That EPUB chapter is unavailable")?;
-        xml_entry(&mut self.archive, &chapter.href)
+        match &mut self.content {
+            Content::Archive(archive) => xml_entry(archive, &chapter.href),
+            Content::Loose { xhtml, .. } => Ok(xhtml.clone()),
+        }
+    }
+
+    /// Look up a canonical archive path in the reading spine.
+    pub fn chapter_index(&self, path: &str) -> Option<usize> {
+        self.chapters
+            .iter()
+            .position(|chapter| chapter.href == path)
     }
 
     /// Read a canonical, decoded archive path without extracting it to disk.
     pub fn resource(&mut self, path: &str) -> Result<Vec<u8>> {
-        if path
-            .split('/')
-            .any(|part| part.is_empty() || matches!(part, "." | "..") || !safe_segment(part))
-        {
+        if !is_archive_path(path) {
             return Err("The EPUB resource path is invalid".into());
         }
-        read_entry(&mut self.archive, path, MAX_RESOURCE)
+        match &mut self.content {
+            Content::Archive(archive) => read_entry(archive, path, MAX_RESOURCE),
+            Content::Loose { resources, .. } => resources
+                .get(path)
+                .cloned()
+                .ok_or_else(|| "The standalone document has no such local resource".into()),
+        }
     }
 
     /// Resolve a URI reference against a canonical archive path.
@@ -242,6 +318,23 @@ impl Book {
         }
         Ok(components.join("/"))
     }
+
+    /// Resolve an in-book link against a canonical archive path and decode its fragment once.
+    pub fn resolve_link(base: &str, href: &str) -> Result<Destination> {
+        if !is_archive_path(base) {
+            return Err("The EPUB link source path is invalid".into());
+        }
+        let (reference, fragment) = href.split_once('#').unwrap_or((href, ""));
+        let path = Self::resolve(base, reference)?;
+        let fragment = decode_segment(fragment)?;
+        if fragment.chars().any(char::is_control) {
+            return Err("The EPUB link fragment is invalid".into());
+        }
+        Ok(Destination {
+            path,
+            fragment: (!fragment.is_empty()).then_some(fragment),
+        })
+    }
 }
 
 fn child<'a, 'input>(node: Node<'a, 'input>, name: &str) -> Result<Node<'a, 'input>> {
@@ -250,24 +343,131 @@ fn child<'a, 'input>(node: Node<'a, 'input>, name: &str) -> Result<Node<'a, 'inp
         .ok_or_else(|| format!("The EPUB has no {name} element").into())
 }
 
-fn add_label(
-    labels: &mut BTreeMap<String, String>,
-    base: &str,
-    href: Option<&str>,
-    node: Node<'_, '_>,
-) {
-    if let Some(path) = href.and_then(|href| Book::resolve(base, href).ok()) {
-        let label = node
-            .descendants()
-            .filter(Node::is_text)
-            .filter_map(|node| node.text())
-            .flat_map(str::split_whitespace)
-            .collect::<Vec<_>>()
-            .join(" ");
-        if !label.is_empty() {
-            labels.entry(path).or_insert(label);
+// EPUB 3.3 §8.2.2.1: https://www.w3.org/TR/epub-33/#layout
+fn package_layout(metadata: Node<'_, '_>) -> Result<bool> {
+    let mut declarations = metadata.children().filter(|node| {
+        node.has_tag_name("meta") && node.attribute("property") == Some("rendition:layout")
+    });
+    let Some(declaration) = declarations.next() else {
+        return Ok(false);
+    };
+    if declarations.next().is_some() || declaration.has_attribute("refines") {
+        return Err("The EPUB has conflicting rendition:layout declarations".into());
+    }
+    match declaration.text().map(str::trim) {
+        Some("pre-paginated") => Ok(true),
+        Some("reflowable") => Ok(false),
+        _ => Err("The EPUB rendition:layout value is unsupported".into()),
+    }
+}
+
+fn spine_layout(reference: Node<'_, '_>, default: bool) -> Result<bool> {
+    let mut layout = None;
+    for property in reference
+        .attribute("properties")
+        .unwrap_or_default()
+        .split_ascii_whitespace()
+    {
+        let fixed = match property {
+            "rendition:layout-pre-paginated" => true,
+            "rendition:layout-reflowable" => false,
+            _ => continue,
+        };
+        if layout.replace(fixed).is_some() {
+            return Err("The EPUB spine item has more than one layout override".into());
         }
     }
+    Ok(layout.unwrap_or(default))
+}
+
+// EPUB 3.3 §7.3–7.4: https://www.w3.org/TR/epub-33/#sec-nav-def-model
+fn xhtml_toc(doc: &Document<'_>, base: &str) -> Vec<TocEntry> {
+    let Some(toc) = doc.descendants().find(|node| {
+        node.has_tag_name("nav")
+            && node
+                .attribute(("http://www.idpf.org/2007/ops", "type"))
+                .or_else(|| node.attribute("type"))
+                .is_some_and(|kinds| kinds.split_ascii_whitespace().any(|kind| kind == "toc"))
+    }) else {
+        return Vec::new();
+    };
+    let mut entries = Vec::new();
+    let mut pending = Vec::new();
+    push_xhtml_items(&mut pending, toc, 0);
+    while let Some((item, depth)) = pending.pop() {
+        if let Some(label) = item
+            .children()
+            .find(|node| node.has_tag_name("a") || node.has_tag_name("span"))
+        {
+            let href = label
+                .has_tag_name("a")
+                .then(|| label.attribute("href"))
+                .flatten();
+            entries.extend(toc_entry(base, href, label, depth));
+        }
+        push_xhtml_items(&mut pending, item, depth + 1);
+    }
+    entries
+}
+
+fn push_xhtml_items<'a, 'input>(
+    pending: &mut Vec<(Node<'a, 'input>, usize)>,
+    parent: Node<'a, 'input>,
+    depth: usize,
+) {
+    for list in parent
+        .children()
+        .rev()
+        .filter(|node| node.has_tag_name("ol"))
+    {
+        pending.extend(
+            list.children()
+                .rev()
+                .filter(|node| node.has_tag_name("li"))
+                .map(|node| (node, depth)),
+        );
+    }
+}
+
+// OPF 2.0.1 §2.4.1: https://idpf.org/epub/20/spec/OPF_2.0.1_draft.htm#Section2.4.1
+fn ncx_toc(doc: &Document<'_>, base: &str) -> Vec<TocEntry> {
+    let Ok(map) = child(doc.root_element(), "navMap") else {
+        return Vec::new();
+    };
+    let mut entries = Vec::new();
+    let mut pending: Vec<_> = map.children().rev().map(|node| (node, 0)).collect();
+    while let Some((point, depth)) = pending.pop() {
+        if !point.has_tag_name("navPoint") {
+            continue;
+        }
+        if let Ok(label) = child(point, "navLabel").and_then(|node| child(node, "text")) {
+            let href = child(point, "content")
+                .ok()
+                .and_then(|node| node.attribute("src"));
+            entries.extend(toc_entry(base, href, label, depth));
+        }
+        pending.extend(point.children().rev().map(|node| (node, depth + 1)));
+    }
+    entries
+}
+
+fn toc_entry(base: &str, href: Option<&str>, node: Node<'_, '_>, depth: usize) -> Option<TocEntry> {
+    let text: String = node
+        .descendants()
+        .filter(Node::is_text)
+        .filter_map(|node| node.text())
+        .collect();
+    let text = if text.trim().is_empty() {
+        node.attribute("title").unwrap_or_default()
+    } else {
+        &text
+    };
+    let label = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!label.is_empty()).then(|| TocEntry {
+        label,
+        depth,
+        destination: href.and_then(|href| Book::resolve_link(base, href).ok()),
+    })
 }
 
 fn xml_entry(archive: &mut Archive, path: &str) -> Result<String> {
@@ -279,7 +479,7 @@ fn xml_entry(archive: &mut Archive, path: &str) -> Result<String> {
 }
 
 /// Reject unsupported ZIP64 and implausible directory sizes before ZIP metadata allocation.
-fn check_zip_directory(input: &mut (impl Read + Seek), len: u64) -> Result<usize> {
+pub(crate) fn check_zip_directory(input: &mut (impl Read + Seek), len: u64) -> Result<usize> {
     const END_SIZE: usize = 22;
     let tail_start = len.saturating_sub((END_SIZE + usize::from(u16::MAX)) as u64);
     let mut tail = vec![0; (len - tail_start) as usize];
@@ -342,6 +542,11 @@ fn safe_segment(segment: &str) -> bool {
     !segment
         .chars()
         .any(|c| c.is_control() || matches!(c, '/' | '\\' | ':'))
+}
+
+fn is_archive_path(path: &str) -> bool {
+    path.split('/')
+        .all(|part| !matches!(part, "" | "." | "..") && safe_segment(part))
 }
 
 fn decode_segment(segment: &str) -> Result<String> {

@@ -1,8 +1,26 @@
+#[cfg(feature = "kindle")]
+pub mod app;
 mod blitz;
 mod book_style;
+pub mod comic;
+pub mod dictionary;
+pub mod djvu;
 pub mod epub;
+pub mod fixed;
+pub mod fixed_epub;
+#[cfg(feature = "kindle")]
+mod fixed_session;
+pub mod fixed_text;
 mod gray_glyph;
+pub mod koreader_import;
+pub mod library;
+mod loose;
+pub mod mobi;
 mod parley_layout;
+pub mod search;
+pub mod selection;
+#[cfg(feature = "kindle")]
+mod session;
 mod source;
 
 use std::error::Error;
@@ -14,10 +32,18 @@ use std::str::FromStr;
 use parley::{FontContext, GenericFamily};
 use serde::{Deserialize, Serialize};
 
-use crate::epub::Book;
+use crate::epub::{Book, Chapter, Destination, TocEntry};
 use crate::source::Source;
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
+
+#[cfg(test)]
+fn test_fixture(name: &str) -> PathBuf {
+    std::env::var_os("READER_TEST_FIXTURES")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"))
+        .join(name)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Engine {
@@ -37,6 +63,16 @@ impl FromStr for Engine {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TextAlignment {
+    #[default]
+    Publisher,
+    Start,
+    Center,
+    Justify,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Settings {
     pub width: u32,
@@ -44,6 +80,9 @@ pub struct Settings {
     pub font_size: f32,
     pub margin: u32,
     pub line_height: f32,
+    pub alignment: TextAlignment,
+    pub bold_text: bool,
+    pub override_fonts: bool,
 }
 
 impl Default for Settings {
@@ -54,6 +93,9 @@ impl Default for Settings {
             font_size: 42.0,
             margin: 54,
             line_height: 1.35,
+            alignment: TextAlignment::Publisher,
+            bold_text: false,
+            override_fonts: false,
         }
     }
 }
@@ -164,7 +206,8 @@ pub struct Probe {
     pub chapter: String,
     pub chapter_label: String,
     book: u64,
-    chapter_count: usize,
+    chapters: Vec<Chapter>,
+    pub toc: Vec<TocEntry>,
     settings: Settings,
     source: Source,
     lines: Vec<Line>,
@@ -182,6 +225,9 @@ impl Probe {
     ) -> Result<Self> {
         settings.validate()?;
         let mut book = Book::open(path).map_err(|e| e.to_string())?;
+        if book.is_fixed_layout() {
+            return Err("Open this fixed-layout EPUB in Reader".into());
+        }
         let entry = book
             .chapters
             .get(chapter)
@@ -190,7 +236,8 @@ impl Probe {
         let chapter_label = entry.label.clone();
         let title = book.title.clone();
         let publication = book.revision();
-        let chapter_count = book.chapters.len();
+        let chapters = book.chapters.clone();
+        let toc = book.toc.clone();
         let xhtml = book.chapter(chapter).map_err(|e| e.to_string())?;
         let source = Source::parse(&xhtml)?;
         let fonts = font_context(fonts)?;
@@ -213,7 +260,8 @@ impl Probe {
             chapter: href,
             chapter_label,
             book: publication,
-            chapter_count,
+            chapters,
+            toc,
             settings,
             source,
             lines,
@@ -227,7 +275,73 @@ impl Probe {
     }
 
     pub fn chapter_count(&self) -> usize {
-        self.chapter_count
+        self.chapters.len()
+    }
+
+    pub fn chapter_index(&self, path: &str) -> Option<usize> {
+        self.chapters
+            .iter()
+            .position(|chapter| chapter.href == path)
+    }
+
+    pub fn chapter_entries(&self) -> &[Chapter] {
+        &self.chapters
+    }
+
+    pub fn link_at(&self, page: usize, x: f32, y: f32) -> Option<Destination> {
+        let range = self.pages.range(page)?;
+        self.link_in(range, x, y)
+    }
+
+    pub(crate) fn link_in(&self, range: Range<f32>, x: f32, y: f32) -> Option<Destination> {
+        let y = y - self.settings.margin as f32 + range.start;
+        if !range.contains(&y) {
+            return None;
+        }
+        let Renderer::Parley(renderer) = &self.renderer else {
+            return None;
+        };
+        let (key, offset) = renderer.source_at(x - self.settings.margin as f32, y)?;
+        let block = self.source.blocks.iter().find(|block| block.key == key)?;
+        let link = block
+            .links
+            .iter()
+            .find(|link| link.bytes.contains(&offset))?;
+        Book::resolve_link(&self.chapter, &link.href).ok()
+    }
+
+    pub fn links_on_page(&self, page: usize) -> Vec<(String, Destination)> {
+        let Some(bounds) = self.pages.range(page) else {
+            return Vec::new();
+        };
+        self.links_in(bounds)
+    }
+
+    pub(crate) fn links_in(&self, bounds: Range<f32>) -> Vec<(String, Destination)> {
+        let start = self
+            .lines
+            .partition_point(|line| line.top < bounds.start)
+            .saturating_sub(1);
+        let end = self.lines.partition_point(|line| line.top < bounds.end);
+        let visible_lines = &self.lines[start..end];
+        let mut links = Vec::new();
+        for block in &self.source.blocks {
+            for link in &block.links {
+                let visible = visible_lines.iter().any(|line| {
+                    line.bottom > bounds.start
+                        && line.block == block.key
+                        && line.bytes.start < link.bytes.end
+                        && line.bytes.end > link.bytes.start
+                });
+                if visible && let Ok(destination) = Book::resolve_link(&self.chapter, &link.href) {
+                    let label = block.text[link.bytes.clone()].trim();
+                    if !label.is_empty() {
+                        links.push((label.to_owned(), destination));
+                    }
+                }
+            }
+        }
+        links
     }
 
     pub fn matches(&self, text: &str) -> Vec<Anchor> {
@@ -254,6 +368,10 @@ impl Probe {
     }
 
     pub fn page_for(&self, anchor: &Anchor) -> Option<usize> {
+        self.anchor_top(anchor).map(|top| self.pages.page(top))
+    }
+
+    pub(crate) fn anchor_top(&self, anchor: &Anchor) -> Option<f32> {
         if self.book != anchor.book
             || self.chapter != anchor.chapter
             || self.source.revision != anchor.revision
@@ -264,7 +382,7 @@ impl Probe {
             .lines
             .iter()
             .find(|line| line.block == anchor.block && line.bytes.contains(&anchor.offset))
-            .map(|line| self.pages.page(line.top));
+            .map(|line| line.top);
         exact.or_else(|| {
             let block = self
                 .source
@@ -278,16 +396,41 @@ impl Probe {
                 .iter()
                 .rev()
                 .find(|line| line.block == anchor.block && !line.bytes.is_empty())
-                .map(|line| self.pages.page(line.top))
+                .map(|line| line.top)
         })
     }
 
     pub fn page_anchor(&self, page: usize) -> Option<Anchor> {
-        let range = self.pages.range(page)?;
+        self.anchor_in(self.pages.range(page)?)
+    }
+
+    pub(crate) fn anchor_in(&self, range: Range<f32>) -> Option<Anchor> {
         self.lines
             .iter()
-            .find(|line| !line.bytes.is_empty() && range.contains(&line.top))
+            .find(|line| {
+                !line.bytes.is_empty() && line.bottom > range.start && line.top < range.end
+            })
             .map(|line| self.anchor(line.block, line.bytes.start))
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn page_range(&self, page: usize) -> Range<f32> {
+        self.pages.range(page).unwrap_or_default()
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn scroll_end(&self) -> f32 {
+        (*self.pages.bounds.last().unwrap_or(&0.0) - self.settings.text_height() as f32).max(0.0)
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn scroll_range(&self, top: f32) -> Range<f32> {
+        top..(top + self.settings.text_height() as f32)
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn page_at(&self, top: f32) -> usize {
+        self.pages.page(top)
     }
 
     /// Number of non-whitespace source characters represented by a rendered line.
@@ -323,6 +466,10 @@ impl Probe {
 
     pub fn capture(&mut self, page: usize) -> Result<Vec<u8>> {
         let range = self.pages.range(page).ok_or("That page is unavailable")?;
+        self.capture_range(range)
+    }
+
+    pub(crate) fn capture_range(&mut self, range: Range<f32>) -> Result<Vec<u8>> {
         match &mut self.renderer {
             Renderer::Blitz(layout) => layout.capture(range, self.settings),
             Renderer::Parley(layout) => layout.capture(range, self.settings),

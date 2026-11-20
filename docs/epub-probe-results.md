@@ -77,8 +77,10 @@ The comparison implementation uses the fixed-height viewport again.
   page and the page button worked again. The probe showed a text screen
   during export. The shared runtime now uses Launcher's embedded
   `assets/usb-drive-mode.png`. The desktop comparison confirmed that both
-  render paths produced the same pixels. Reader Probe built with the
-  Tools fix at `3986796` is staged for the physical artwork retest.
+  render paths produced the same pixels. The owner verified the correct
+  artwork on the Oasis 3 and Reader returned to the same page after eject.
+  Reader pins the published Tools fix.
+  [Shared USB artwork fix](https://github.com/PrimitiveOS/kindle-primtitive-tools/commit/398679696d19e0334a164775a3740cc700ffc9de)
 - Rust 1.100.0 and Zig 0.17.1 produced static ARMHF executables. The
   locked build also succeeded in a separate workspace using a clean
   PrimitiveOS Tools checkout at revision `9f7e331`. The project licences
@@ -88,8 +90,8 @@ The comparison implementation uses the fixed-height viewport again.
 
 ## Remaining P0 validation
 
-Verify the updated artwork during USB export. Verify interactive footnote
-and return navigation and physical display timing against KOReader.
+Verify interactive footnote and return navigation and physical display timing
+against KOReader.
 Expand coverage of longer books and publisher styles within the declared
 EPUB subset. The [execution plan](execution-plan.md) defines the gates
 for the daily-reader build and publication.

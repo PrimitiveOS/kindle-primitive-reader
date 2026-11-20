@@ -1,0 +1,22 @@
+# Reader release notices
+
+[THIRD-PARTY.txt](THIRD-PARTY.txt) records the locked Kindle dependency versions,
+licences, and exact source links. The source of each MPL 2.0 component is
+available from its listed crate archive. PrimitiveOS Tools is used under its
+PolyForm Noncommercial option. The USB drive-mode artwork is from PrimitiveOS
+Launcher. [Launcher artwork terms](https://github.com/PrimitiveOS/kindle-primitive-launcher#licence)
+
+- [PDF assets](pdf/README.md) covers embedded fonts, character maps, and colour
+  profiles supplied by the Hayro PDF libraries.
+- The MIT-licensed [vendored DjVu BZZ decoder](../../vendor/djvu-bzz) pins the
+  upstream source and adds Reader's decoded-output limit.
+- [Rust Standard Library notices](runtime/RUST-COPYRIGHT.html),
+  [Apache 2.0](runtime/RUST-APACHE.txt), and [MIT](runtime/RUST-MIT.txt) come
+  from the Rust 1.100.0 distribution used for the ARMHF build.
+- [musl copyright](runtime/MUSL-COPYRIGHT.txt) and [Zig MIT](runtime/ZIG-MIT.txt)
+  come from the Zig 0.17.1 distribution used for the ARMHF build.
+
+Run `python3 docs/licenses/collect.py` after changing the locked dependencies.
+It uses the cached Cargo sources and fetches upstream texts for crates published
+without licence files. Update the bundled asset and runtime notices when their
+versions change.

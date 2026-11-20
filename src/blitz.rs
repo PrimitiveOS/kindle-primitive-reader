@@ -1,8 +1,8 @@
 use std::ops::Range;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use anyrender_vello_cpu::VelloCpuScenePainter;
-use blitz_dom::{DocumentConfig, Point};
+use blitz_dom::{DocumentConfig, Point, UserAgentStylesheet};
 use blitz_html::HtmlDocument;
 use blitz_traits::net::{Bytes, Method, NetHandler, NetProvider, Request, Url};
 use blitz_traits::shell::{ColorScheme, Viewport};
@@ -83,6 +83,72 @@ impl NetProvider for OfflineResources {
     }
 }
 
+fn layout_document(
+    book: Book,
+    href: &str,
+    html: &str,
+    fonts: FontContext,
+    size: (u32, u32),
+    fixed: bool,
+) -> Result<HtmlDocument> {
+    let mut url = Url::parse("https://epub.invalid/")?;
+    url.path_segments_mut()
+        .map_err(|_| "The chapter URL is invalid")?
+        .pop_if_empty()
+        .extend(href.split('/'));
+    let resources = Arc::new(OfflineResources(Mutex::new(ArchiveResources {
+        book: Some(book),
+        requests: 0,
+        bytes: 0,
+        pixels: 0,
+    })));
+    let mut config = DocumentConfig {
+        viewport: Some(Viewport::new(size.0, size.1, 1.0, ColorScheme::Light)),
+        base_url: Some(url.into()),
+        font_ctx: Some(fonts),
+        net_provider: Some(resources.clone()),
+        ..DocumentConfig::default()
+    };
+    let mut doc = if fixed {
+        static FIXED_DEFAULTS: LazyLock<UserAgentStylesheet> =
+            LazyLock::new(|| UserAgentStylesheet::parse("html, body { margin: 0; padding: 0; }"));
+        config.ua_stylesheets.push(FIXED_DEFAULTS.clone());
+        HtmlDocument::from_xml(html, config)
+    } else {
+        HtmlDocument::from_html(html, config)
+    };
+    for _ in 0..16 {
+        doc.handle_messages();
+        doc.resolve(0.0);
+        if !doc.has_pending_critical_resources() {
+            doc.handle_messages();
+            doc.resolve(0.0);
+            resources
+                .0
+                .lock()
+                .map_err(|_| "The EPUB resource reader failed")?
+                .book = None;
+            return Ok(doc);
+        }
+    }
+    Err("The chapter exceeded the resource processing limit".into())
+}
+
+/// Render a single author's fixed viewport without reflow or reader typography.
+pub(crate) fn fixed_page(
+    book: Book,
+    href: &str,
+    xhtml: &str,
+    fonts: FontContext,
+    (width, height): (u32, u32),
+) -> Result<Vec<u8>> {
+    let mut doc = layout_document(book, href, xhtml, fonts, (width, height), true)?;
+    let mut painter = VelloCpuScenePainter::new(width as u16, height as u16);
+    blitz_paint::paint_scene(&mut painter, &mut doc, 1.0, width, height, 0, 0);
+    let image = painter.finish();
+    Ok(grayscale(image.data_as_u8_slice()).collect())
+}
+
 pub(crate) struct BlitzChapter {
     doc: HtmlDocument,
 }
@@ -96,17 +162,6 @@ impl BlitzChapter {
         fonts: FontContext,
         settings: Settings,
     ) -> Result<(Self, Vec<Line>, f32)> {
-        let mut url = Url::parse("https://epub.invalid/")?;
-        url.path_segments_mut()
-            .map_err(|_| "The chapter URL is invalid")?
-            .pop_if_empty()
-            .extend(href.split('/'));
-        let resources = Arc::new(OfflineResources(Mutex::new(ArchiveResources {
-            book: Some(book),
-            requests: 0,
-            bytes: 0,
-            pixels: 0,
-        })));
         let css = format!(
             "html, body {{ padding: 0; }} body {{ margin: 0 {}px; font: {}px/{} serif; }}
              img {{ max-width: 100%; max-height: {}px; object-fit: contain; }}
@@ -117,40 +172,14 @@ impl BlitzChapter {
             settings.text_height(),
         );
         let html = source.with_styles(xhtml, &css);
-        let mut doc = HtmlDocument::from_html(
+        let doc = layout_document(
+            book,
+            href,
             &html,
-            DocumentConfig {
-                viewport: Some(Viewport::new(
-                    settings.width,
-                    settings.text_height(),
-                    1.0,
-                    ColorScheme::Light,
-                )),
-                base_url: Some(url.into()),
-                font_ctx: Some(fonts),
-                net_provider: Some(resources.clone()),
-                ..DocumentConfig::default()
-            },
-        );
-        let mut pending = true;
-        for _ in 0..16 {
-            doc.handle_messages();
-            doc.resolve(0.0);
-            pending = doc.has_pending_critical_resources();
-            if !pending {
-                break;
-            }
-        }
-        if pending {
-            return Err("The chapter exceeded the resource processing limit".into());
-        }
-        doc.handle_messages();
-        doc.resolve(0.0);
-        resources
-            .0
-            .lock()
-            .map_err(|_| "The EPUB resource reader failed")?
-            .book = None;
+            fonts,
+            (settings.width, settings.text_height()),
+            false,
+        )?;
 
         let mut lines = Vec::new();
         let mut bottom = 0.0_f32;

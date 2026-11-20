@@ -1,0 +1,1003 @@
+//! Bounded imports of standalone reading documents.
+//!
+//! The FictionBook 2 subset covers title and author metadata, headed and unheaded
+//! sections, textual paragraphs and emphasis, and note and return links. The
+//! package tests exercise the normal file entry point. Unit tests exercise source
+//! anchor resolution, reading order, TOC IDs, and rejection of malformed inputs.
+//! Plain, ZIP, and gzip FB2 entries share the same reading adapter. Embedded
+//! PNG and JPEG assets are confined to each publication.
+use std::borrow::Cow;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs::{self, File};
+use std::io::{BufReader, Read};
+use std::path::Path;
+
+use base64::{Engine as _, engine::general_purpose::STANDARD_PAD_INDIFFERENT};
+use encoding_rs::{Encoding, UTF_8, WINDOWS_1252};
+use flate2::read::MultiGzDecoder;
+use image::ImageFormat;
+use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag};
+use roxmltree::{Document as Xml, Node, ParsingOptions};
+use zip::ZipArchive;
+
+use crate::Result;
+use crate::epub::{Book, Destination, TocEntry, check_zip_directory};
+
+pub(crate) const CHAPTER_PATH: &str = "document.xhtml";
+pub(crate) const MAX_INPUT: usize = 512 * 1024;
+pub(crate) const MAX_FB2_INPUT: usize = 8 * 1024 * 1024;
+const MAX_OUTPUT: usize = 1024 * 1024;
+const MAX_FB2_ZIP_ENTRIES: usize = 64;
+const MAX_FB2_IMAGES: usize = 32;
+const MAX_FB2_IMAGE: usize = 1024 * 1024;
+const MAX_FB2_IMAGE_BYTES: usize = 4 * 1024 * 1024;
+const MAX_FB2_IMAGE_PIXELS: usize = 8 * 1024 * 1024;
+const FB2_NS: &str = "http://www.gribuser.ru/xml/fictionbook/2.0";
+const XLINK_NS: &str = "http://www.w3.org/1999/xlink";
+const MAX_FB2_DEPTH: usize = 48;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Format {
+    Text,
+    Html,
+    Markdown,
+    Mobi,
+    Fb2,
+}
+
+impl Format {
+    pub(crate) fn for_path(path: &Path) -> Option<Self> {
+        let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+        match extension.as_str() {
+            "txt" => Some(Self::Text),
+            "htm" | "html" | "xht" | "xhtml" => Some(Self::Html),
+            "md" | "markdown" => Some(Self::Markdown),
+            "mobi" | "prc" | "azw" | "pdb" => Some(Self::Mobi),
+            "fb2" | "fbz" => Some(Self::Fb2),
+            "gz" | "zip"
+                if path
+                    .file_stem()
+                    .is_some_and(|name| has_extension(Path::new(name), "fb2")) =>
+            {
+                Some(Self::Fb2)
+            }
+            _ => None,
+        }
+    }
+}
+
+pub(crate) struct Document {
+    pub(crate) title: String,
+    pub(crate) author: Option<String>,
+    pub(crate) xhtml: String,
+    pub(crate) toc: Vec<TocEntry>,
+    pub(crate) resources: BTreeMap<String, Vec<u8>>,
+}
+
+impl Document {
+    /// Open just the selected file. The adapter does not load external resources.
+    pub(crate) fn open(path: &Path) -> Result<Self> {
+        let format = Format::for_path(path).ok_or("This document format is unsupported")?;
+        let metadata = fs::metadata(path)?;
+        let limit = match format {
+            Format::Fb2 => MAX_FB2_INPUT,
+            Format::Mobi => crate::mobi::MAX_MOBI_BYTES,
+            _ => MAX_INPUT,
+        };
+        if !metadata.is_file() || metadata.len() > limit as u64 {
+            return Err(format!(
+                "The document is not a regular file or exceeds the {} KiB input limit",
+                limit / 1024
+            )
+            .into());
+        }
+        let file = File::open(path)?;
+        let bytes = if has_extension(path, "gz") {
+            read_bounded(MultiGzDecoder::new(file), limit)?
+        } else if has_extension(path, "zip") || has_extension(path, "fbz") {
+            read_fb2_zip(file, metadata.len())?
+        } else {
+            read_bounded(file, limit)?
+        };
+        let filename = path.file_stem();
+        let fallback_title = filename
+            .map(|name| {
+                let stem = Path::new(name);
+                if (has_extension(path, "zip") || has_extension(path, "gz"))
+                    && has_extension(stem, "fb2")
+                {
+                    stem.file_stem().unwrap_or(name)
+                } else {
+                    name
+                }
+            })
+            .and_then(|name| name.to_str())
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .unwrap_or("Untitled document");
+        if format == Format::Mobi {
+            let document = crate::mobi::decode(&bytes)?;
+            return Ok(Self {
+                title: document.title.unwrap_or_else(|| fallback_title.into()),
+                author: document.author,
+                xhtml: document.xhtml,
+                toc: Vec::new(),
+                resources: BTreeMap::new(),
+            });
+        }
+        let input = decode_document(&bytes, format)?;
+        let input = input.trim_start_matches('\u{feff}');
+        match format {
+            Format::Text => Ok(Self {
+                title: fallback_title.to_owned(),
+                author: None,
+                xhtml: text_as_xhtml(input)?,
+                toc: Vec::new(),
+                resources: BTreeMap::new(),
+            }),
+            Format::Html => html_document(input, fallback_title),
+            Format::Markdown => markdown_document(input, fallback_title),
+            Format::Fb2 => fb2_document(input, fallback_title),
+            Format::Mobi => unreachable!(),
+        }
+    }
+}
+
+fn decode_document(bytes: &[u8], format: Format) -> Result<Cow<'_, str>> {
+    let (encoding, offset) = if let Some(bom) = Encoding::for_bom(bytes) {
+        bom
+    } else if let Some(label) = declared_encoding(bytes, format) {
+        (
+            Encoding::for_label(label.as_bytes())
+                .ok_or("The document declares an unknown encoding")?,
+            0,
+        )
+    } else if format == Format::Text && std::str::from_utf8(bytes).is_err() {
+        (WINDOWS_1252, 0)
+    } else {
+        (UTF_8, 0)
+    };
+    let text = encoding
+        .decode_without_bom_handling_and_without_replacement(&bytes[offset..])
+        .ok_or("The document does not match its text encoding")?;
+    if text.contains('\0') {
+        return Err("The document contains binary characters".into());
+    }
+    Ok(text)
+}
+
+fn declared_encoding(bytes: &[u8], format: Format) -> Option<String> {
+    if format == Format::Text {
+        return None;
+    }
+    let header = String::from_utf8_lossy(&bytes[..bytes.len().min(1024)]).to_ascii_lowercase();
+    if let Some(xml) = header.trim_start().strip_prefix("<?xml")
+        && let Some((declaration, _)) = xml.split_once("?>")
+        && let Some(label) = attribute_value(declaration, "encoding")
+    {
+        return Some(label);
+    }
+    if format == Format::Html {
+        for tag in header.split('<').filter_map(|tag| tag.strip_prefix("meta")) {
+            if tag.starts_with(char::is_whitespace)
+                && let Some((tag, _)) = tag.split_once('>')
+                && let Some(label) = attribute_value(tag, "charset")
+            {
+                return Some(label);
+            }
+        }
+    }
+    None
+}
+
+fn attribute_value(tag: &str, attribute: &str) -> Option<String> {
+    let (prefix, tail) = tag.split_once(attribute)?;
+    if !prefix.ends_with(char::is_whitespace) {
+        return None;
+    }
+    let tail = tail.trim_start().strip_prefix('=')?.trim_start();
+    let value = if let Some(quote @ ('\'' | '"')) = tail.chars().next() {
+        tail[1..].split_once(quote)?.0
+    } else {
+        tail.split(|ch: char| ch.is_whitespace() || ch == '/')
+            .next()?
+    };
+    (!value.is_empty()).then(|| value.into())
+}
+
+fn has_extension(path: &Path, expected: &str) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case(expected))
+}
+
+fn read_bounded(input: impl Read, limit: usize) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    input.take(limit as u64 + 1).read_to_end(&mut bytes)?;
+    if bytes.len() > limit {
+        return Err(format!(
+            "The decoded document exceeds the {} KiB input limit",
+            limit / 1024
+        )
+        .into());
+    }
+    Ok(bytes)
+}
+
+fn read_fb2_zip(file: File, length: u64) -> Result<Vec<u8>> {
+    let mut input = BufReader::new(file);
+    let count = check_zip_directory(&mut input, length)
+        .map_err(|_| "The FictionBook ZIP directory is invalid or exceeds the reader limits")?;
+    if count > MAX_FB2_ZIP_ENTRIES {
+        return Err("The FictionBook ZIP has too many entries".into());
+    }
+    let mut archive = ZipArchive::new(input)?;
+    if archive.len() != count {
+        return Err("The FictionBook ZIP has ambiguous or duplicate entries".into());
+    }
+    let mut book = None;
+    for index in 0..archive.len() {
+        let entry = archive.by_index_raw(index)?;
+        let is_book = entry.is_file()
+            && entry
+                .enclosed_name()
+                .is_some_and(|name| has_extension(&name, "fb2"));
+        if is_book && book.replace(index).is_some() {
+            return Err("The FictionBook ZIP contains more than one .fb2 file".into());
+        }
+    }
+    let entry =
+        archive.by_index(book.ok_or("The FictionBook ZIP contains no readable .fb2 file")?)?;
+    if entry.size() > MAX_FB2_INPUT as u64 {
+        return Err("The FictionBook ZIP's .fb2 file exceeds the input limit".into());
+    }
+    read_bounded(entry, MAX_FB2_INPUT)
+}
+
+fn text_as_xhtml(input: &str) -> Result<String> {
+    if input.trim().is_empty() {
+        return Err("The text file is empty".into());
+    }
+    let mut output =
+        String::from("<html xmlns=\"http://www.w3.org/1999/xhtml\"><head></head><body>");
+    let input = input.replace("\r\n", "\n").replace('\r', "\n");
+    let mut in_paragraph = false;
+    for line in input.lines() {
+        if line.trim().is_empty() {
+            if in_paragraph {
+                output.push_str("</p>");
+                in_paragraph = false;
+            }
+            continue;
+        }
+        output.push_str(if in_paragraph { "<br />" } else { "<p>" });
+        in_paragraph = true;
+        xml_text(&mut output, line)?;
+    }
+    if in_paragraph {
+        output.push_str("</p>");
+    }
+    output.push_str("</body></html>");
+    check_output(&output)?;
+    Ok(output)
+}
+
+fn xml_text(output: &mut String, text: &str) -> Result<()> {
+    for ch in text.chars() {
+        match ch {
+            '&' => output.push_str("&amp;"),
+            '<' => output.push_str("&lt;"),
+            '>' => output.push_str("&gt;"),
+            '"' => output.push_str("&quot;"),
+            '\r'
+            | '\n'
+            | '\t'
+            | '\u{20}'..='\u{d7ff}'
+            | '\u{e000}'..='\u{fffd}'
+            | '\u{10000}'..='\u{10ffff}' => {
+                output.push(ch);
+            }
+            _ => return Err("The document contains an unsupported control character".into()),
+        }
+        check_output(output)?;
+    }
+    Ok(())
+}
+
+fn check_output(output: &str) -> Result<()> {
+    if output.len() > MAX_OUTPUT {
+        return Err("The converted document exceeds the one MiB layout input limit".into());
+    }
+    Ok(())
+}
+
+fn html_document(input: &str, fallback_title: &str) -> Result<Document> {
+    let xhtml = without_plain_html_doctype(input);
+    let document = Xml::parse_with_options(
+        &xhtml,
+        ParsingOptions {
+            nodes_limit: 80_000,
+            ..ParsingOptions::default()
+        },
+    )
+    .map_err(|error| {
+        format!("Reader requires well-formed XHTML or XML-compatible HTML: {error}")
+    })?;
+    let html = document.root_element();
+    if !html.has_tag_name("html") || !html.children().any(|node| node.has_tag_name("body")) {
+        return Err("The HTML document must contain an html element with a body".into());
+    }
+    let head = html.children().find(|node| node.has_tag_name("head"));
+    let title = head
+        .and_then(|head| head.children().find(|node| node.has_tag_name("title")))
+        .and_then(|title| title.text())
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .unwrap_or(fallback_title)
+        .to_owned();
+    let author = head.and_then(|head| {
+        head.children()
+            .filter(|node| {
+                node.has_tag_name("meta")
+                    && node
+                        .attribute("name")
+                        .is_some_and(|name| name.eq_ignore_ascii_case("author"))
+            })
+            .filter_map(|node| node.attribute("content").map(str::trim))
+            .find(|name| !name.is_empty())
+            .map(str::to_owned)
+    });
+    Ok(Document {
+        title,
+        author,
+        xhtml: xhtml.into_owned(),
+        toc: Vec::new(),
+        resources: BTreeMap::new(),
+    })
+}
+
+fn markdown_document(input: &str, fallback_title: &str) -> Result<Document> {
+    let mut xhtml =
+        String::from("<html xmlns=\"http://www.w3.org/1999/xhtml\"><head></head><body>");
+    let options = Options::ENABLE_TABLES
+        | Options::ENABLE_FOOTNOTES
+        | Options::ENABLE_STRIKETHROUGH
+        | Options::ENABLE_HEADING_ATTRIBUTES;
+    let mut heading = 0;
+    let events = Parser::new_ext(input, options).map(|event| match event {
+        Event::Html(text) | Event::InlineHtml(text) => Event::Text(text),
+        Event::Start(Tag::Heading {
+            level,
+            id,
+            classes,
+            attrs,
+        }) => {
+            heading += 1;
+            Event::Start(Tag::Heading {
+                level,
+                id: id.or_else(|| Some(format!("reader-heading-{heading}").into())),
+                classes,
+                attrs,
+            })
+        }
+        event => event,
+    });
+    pulldown_cmark::html::push_html(&mut xhtml, events);
+    xhtml.push_str("</body></html>");
+    if xhtml.len() > MAX_OUTPUT {
+        return Err("The Markdown document exceeds the reading layout limit".into());
+    }
+    let mut document = html_document(&xhtml, fallback_title)?;
+    let xml = Xml::parse(&xhtml)?;
+    for node in xml.descendants().filter(Node::is_element) {
+        let level = match node.tag_name().name() {
+            "h1" => HeadingLevel::H1,
+            "h2" => HeadingLevel::H2,
+            "h3" => HeadingLevel::H3,
+            "h4" => HeadingLevel::H4,
+            "h5" => HeadingLevel::H5,
+            "h6" => HeadingLevel::H6,
+            _ => continue,
+        };
+        let label = node
+            .descendants()
+            .filter(Node::is_text)
+            .filter_map(|text| text.text())
+            .flat_map(str::split_whitespace)
+            .take(25)
+            .collect::<Vec<_>>()
+            .join(" ");
+        if label.is_empty() || document.toc.len() >= 512 {
+            continue;
+        }
+        document.toc.push(TocEntry {
+            depth: level as usize - 1,
+            label,
+            destination: node.attribute("id").map(|id| Destination {
+                path: CHAPTER_PATH.into(),
+                fragment: Some(id.into()),
+            }),
+        });
+    }
+    Ok(document)
+}
+
+/// Permit only the short HTML5 declaration. XML parsing keeps DTD processing disabled.
+pub(crate) fn without_plain_html_doctype(input: &str) -> Cow<'_, str> {
+    let input = input.trim_start();
+    if let Some(range) = html_doctype(input) {
+        let mut xhtml = input.to_owned();
+        xhtml.replace_range(range, "");
+        Cow::Owned(xhtml)
+    } else {
+        Cow::Borrowed(input)
+    }
+}
+
+fn html_doctype(input: &str) -> Option<std::ops::Range<usize>> {
+    const HTML_DOCTYPE: &str = "<!DOCTYPE html>";
+    let after_declaration = if input.starts_with("<?xml ") {
+        input.find("?>")? + 2
+    } else {
+        0
+    };
+    let remainder = input[after_declaration..].trim_start();
+    let start = input.len() - remainder.len();
+    let end = start + HTML_DOCTYPE.len();
+    input
+        .get(start..end)?
+        .eq_ignore_ascii_case(HTML_DOCTYPE)
+        .then_some(start..end)
+}
+
+// FictionBook 2 schema: https://github.com/gribuser/fb2/blob/master/FictionBook.xsd
+fn fb2_document(input: &str, fallback_title: &str) -> Result<Document> {
+    let book = Xml::parse_with_options(
+        input,
+        ParsingOptions {
+            nodes_limit: 80_000,
+            ..ParsingOptions::default()
+        },
+    )
+    .map_err(|error| {
+        format!("Reader requires a well-formed UTF-8 FictionBook 2 document: {error}")
+    })?;
+    let root = book.root_element();
+    if !root.has_tag_name((FB2_NS, "FictionBook")) {
+        return Err("The file has no FictionBook 2 root with the required namespace".into());
+    }
+    let info = fb2_child(root, "description").and_then(|item| fb2_child(item, "title-info"));
+    let book_title = info
+        .and_then(|item| fb2_child(item, "book-title"))
+        .and_then(fb2_text);
+    let title = book_title.unwrap_or(fallback_title).to_owned();
+
+    let mut xhtml = String::from("<html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>");
+    // Keep fallback filenames out of the layout input so its revision survives rename.
+    xml_text(&mut xhtml, book_title.unwrap_or_default())?;
+    xhtml.push_str("</title>");
+    let mut authors = Vec::new();
+    if let Some(info) = info {
+        for author in info
+            .children()
+            .filter(|item| item.has_tag_name((FB2_NS, "author")))
+        {
+            let name = ["first-name", "middle-name", "last-name"]
+                .into_iter()
+                .filter_map(|part| fb2_child(author, part).and_then(fb2_text))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let name = if name.is_empty() {
+                fb2_child(author, "nickname")
+                    .and_then(fb2_text)
+                    .unwrap_or_default()
+            } else {
+                &name
+            };
+            if !name.is_empty() {
+                xhtml.push_str("<meta name=\"author\" content=\"");
+                xml_text(&mut xhtml, name)?;
+                xhtml.push_str("\" />");
+                authors.push(name.to_owned());
+            }
+        }
+    }
+    xhtml.push_str("</head><body>");
+    let mut bodies = root
+        .children()
+        .filter(|item| item.has_tag_name((FB2_NS, "body")))
+        .peekable();
+    if bodies.peek().is_none() {
+        return Err("The FictionBook has no reading body".into());
+    }
+    let mut output = Fb2Output {
+        xhtml,
+        toc: Vec::new(),
+        images: fb2_images(root),
+        image_placements: 0,
+        authored_ids: root
+            .descendants()
+            .filter(|item| item.is_element() && item.tag_name().namespace() == Some(FB2_NS))
+            .filter_map(|item| item.attribute("id"))
+            .collect(),
+        section_id: 0,
+    };
+    if let Some(cover) = info
+        .and_then(|item| fb2_child(item, "coverpage"))
+        .and_then(|item| fb2_child(item, "image"))
+    {
+        output.write_image(cover)?;
+    }
+    for body in bodies {
+        output.write(body, 0)?;
+    }
+    output.xhtml.push_str("</body></html>");
+    check_output(&output.xhtml)?;
+    Ok(Document {
+        title,
+        author: (!authors.is_empty()).then(|| authors.join(", ")),
+        xhtml: output.xhtml,
+        toc: output.toc,
+        resources: output
+            .images
+            .into_values()
+            .map(|image| (image.path, image.bytes))
+            .collect(),
+    })
+}
+
+fn fb2_child<'a, 'input>(parent: Node<'a, 'input>, tag: &str) -> Option<Node<'a, 'input>> {
+    parent
+        .children()
+        .find(|item| item.has_tag_name((FB2_NS, tag)))
+}
+
+fn fb2_text<'a, 'input>(item: Node<'a, 'input>) -> Option<&'a str> {
+    item.text().map(str::trim).filter(|text| !text.is_empty())
+}
+
+struct Fb2Output<'a> {
+    xhtml: String,
+    toc: Vec<TocEntry>,
+    authored_ids: BTreeSet<&'a str>,
+    section_id: usize,
+    images: BTreeMap<&'a str, Fb2Image>,
+    image_placements: usize,
+}
+
+impl Fb2Output<'_> {
+    fn next_section_id(&mut self) -> String {
+        loop {
+            self.section_id += 1;
+            let id = format!("primitiveos-fb2-section-{}", self.section_id);
+            if !self.authored_ids.contains(id.as_str()) {
+                return id;
+            }
+        }
+    }
+
+    fn write(&mut self, item: Node<'_, '_>, depth: usize) -> Result<()> {
+        if depth > MAX_FB2_DEPTH {
+            return Err("The FictionBook exceeds the section nesting limit".into());
+        }
+        if item.is_text() {
+            return xml_text(&mut self.xhtml, item.text().unwrap_or_default());
+        }
+        if !item.is_element() || item.tag_name().namespace() != Some(FB2_NS) {
+            return Ok(());
+        }
+        if item.has_tag_name((FB2_NS, "image")) {
+            return self.write_image(item);
+        }
+        let tag = match item.tag_name().name() {
+            "body" if item.attribute("name") == Some("notes") => "aside",
+            "body" => "article",
+            "section" => "section",
+            "annotation" | "title" | "poem" | "stanza" => "div",
+            "cite" | "epigraph" => "blockquote",
+            "p" if item
+                .parent()
+                .is_some_and(|parent| parent.has_tag_name((FB2_NS, "title"))) =>
+            {
+                let section_depth = item
+                    .ancestors()
+                    .filter(|node| node.has_tag_name((FB2_NS, "section")))
+                    .count();
+                ["h1", "h2", "h3", "h4", "h5", "h6"][section_depth.min(5)]
+            }
+            "p" | "v" | "date" | "text-author" => "p",
+            "subtitle" => "h3",
+            "strong" => "strong",
+            "emphasis" => "em",
+            "strikethrough" => "s",
+            "sub" => "sub",
+            "sup" => "sup",
+            "code" => "code",
+            "style" => "span",
+            "a" => "a",
+            "empty-line" => {
+                self.xhtml.push_str("<p>&#160;</p>");
+                return check_output(&self.xhtml);
+            }
+            _ => return Ok(()),
+        };
+        let id = item
+            .attribute("id")
+            .filter(|id| !id.is_empty())
+            .map(Cow::Borrowed)
+            .or_else(|| (tag == "section").then(|| Cow::Owned(self.next_section_id())));
+        if tag == "section"
+            && let Some(label) = fb2_section_title(item)
+        {
+            let depth = item
+                .ancestors()
+                .skip(1)
+                .filter(|node| node.has_tag_name((FB2_NS, "section")))
+                .count();
+            self.toc.push(TocEntry {
+                label,
+                depth,
+                destination: Some(Destination {
+                    path: CHAPTER_PATH.to_owned(),
+                    fragment: id.as_deref().map(str::to_owned),
+                }),
+            });
+        }
+        self.xhtml.push('<');
+        self.xhtml.push_str(tag);
+        if let Some(id) = id {
+            self.xhtml.push_str(" id=\"");
+            xml_text(&mut self.xhtml, &id)?;
+            self.xhtml.push('"');
+        }
+        if tag == "a"
+            && let Some(href) = item
+                .attribute((XLINK_NS, "href"))
+                .filter(|href| href.starts_with('#') && href.len() > 1)
+        {
+            self.xhtml.push_str(" href=\"");
+            xml_text(&mut self.xhtml, href)?;
+            self.xhtml.push('"');
+        }
+        self.xhtml.push('>');
+        if tag == "aside" && fb2_child(item, "title").is_none() {
+            self.xhtml.push_str("<h1>Notes</h1>");
+        }
+        for child in item.children() {
+            self.write(child, depth + 1)?;
+        }
+        self.xhtml.push_str("</");
+        self.xhtml.push_str(tag);
+        self.xhtml.push('>');
+        check_output(&self.xhtml)
+    }
+
+    fn write_image(&mut self, image: Node<'_, '_>) -> Result<()> {
+        let inline = image.ancestors().skip(1).any(|node| {
+            node.is_element()
+                && node.tag_name().namespace() == Some(FB2_NS)
+                && matches!(
+                    node.tag_name().name(),
+                    "p" | "v" | "subtitle" | "text-author"
+                )
+        });
+        let alt = image.attribute("alt").unwrap_or_default();
+        let id = fb2_image_id(image);
+        if self.image_placements < MAX_FB2_IMAGES
+            && let Some(asset) = id.as_deref().and_then(|id| self.images.get(id))
+        {
+            self.image_placements += 1;
+            if !inline {
+                self.xhtml.push_str("<figure>");
+            }
+            self.xhtml.push_str("<img src=\"");
+            xml_text(&mut self.xhtml, &asset.path)?;
+            self.xhtml.push_str("\" alt=\"");
+            xml_text(&mut self.xhtml, alt)?;
+            self.xhtml.push_str("\" />");
+            if !inline {
+                self.xhtml.push_str("</figure>");
+            }
+        } else if !alt.trim().is_empty() {
+            if !inline {
+                self.xhtml.push_str("<p>");
+            }
+            xml_text(&mut self.xhtml, alt)?;
+            if !inline {
+                self.xhtml.push_str("</p>");
+            }
+        }
+        check_output(&self.xhtml)
+    }
+}
+
+struct Fb2Image {
+    path: String,
+    bytes: Vec<u8>,
+}
+
+fn fb2_image_id(image: Node<'_, '_>) -> Option<String> {
+    let href = image
+        .attribute((XLINK_NS, "href"))
+        .filter(|href| href.starts_with('#'))?;
+    Book::resolve_link(CHAPTER_PATH, href).ok()?.fragment
+}
+
+fn fb2_images<'a, 'input>(root: Node<'a, 'input>) -> BTreeMap<&'a str, Fb2Image> {
+    let wanted: BTreeSet<_> = root
+        .descendants()
+        .filter(|item| item.has_tag_name((FB2_NS, "image")))
+        .filter_map(fb2_image_id)
+        .take(MAX_FB2_IMAGES * 2)
+        .collect();
+    let mut images = BTreeMap::new();
+    let mut bytes_left = MAX_FB2_IMAGE_BYTES;
+    let mut pixels_left = MAX_FB2_IMAGE_PIXELS;
+    for binary in root
+        .children()
+        .filter(|item| item.has_tag_name((FB2_NS, "binary")))
+    {
+        if images.len() == MAX_FB2_IMAGES || bytes_left == 0 || pixels_left == 0 {
+            break;
+        }
+        let Some(id) = binary
+            .attribute("id")
+            .filter(|id| wanted.contains(*id) && !images.contains_key(*id))
+        else {
+            continue;
+        };
+        let Some((bytes, extension, pixels)) =
+            fb2_image_bytes(binary, bytes_left.min(MAX_FB2_IMAGE))
+        else {
+            continue;
+        };
+        if pixels > pixels_left {
+            continue;
+        }
+        bytes_left -= bytes.len();
+        pixels_left -= pixels;
+        images.insert(
+            id,
+            Fb2Image {
+                path: format!("fb2-images/{}.{}", images.len() + 1, extension),
+                bytes,
+            },
+        );
+    }
+    images
+}
+
+fn fb2_image_bytes(
+    binary: Node<'_, '_>,
+    max_bytes: usize,
+) -> Option<(Vec<u8>, &'static str, usize)> {
+    let (format, extension) = match binary.attribute("content-type")? {
+        "image/png" => (ImageFormat::Png, "png"),
+        "image/jpeg" | "image/jpg" => (ImageFormat::Jpeg, "jpg"),
+        _ => return None,
+    };
+    let max_encoded = max_bytes.div_ceil(3) * 4;
+    let encoded: Vec<u8> = binary
+        .children()
+        .filter(Node::is_text)
+        .filter_map(|item| item.text())
+        .flat_map(str::bytes)
+        .filter(|byte| !byte.is_ascii_whitespace())
+        .take(max_encoded + 1)
+        .collect();
+    if encoded.len() > max_encoded {
+        return None;
+    }
+    let bytes = STANDARD_PAD_INDIFFERENT.decode(encoded).ok()?;
+    if bytes.len() > max_bytes {
+        return None;
+    }
+    let reader = crate::image_reader(&bytes).ok()?;
+    if reader.format() != Some(format) {
+        return None;
+    }
+    let (width, height) = reader.into_dimensions().ok()?;
+    if !(1..=2048).contains(&width) || !(1..=2048).contains(&height) {
+        return None;
+    }
+    Some((bytes, extension, (width * height) as usize))
+}
+
+fn fb2_section_title(section: Node<'_, '_>) -> Option<String> {
+    let title = fb2_child(section, "title")?;
+    let mut label = String::new();
+    for paragraph in title
+        .children()
+        .filter(|item| item.has_tag_name((FB2_NS, "p")))
+    {
+        let text: String = paragraph
+            .descendants()
+            .filter(Node::is_text)
+            .filter(|item| {
+                item.ancestors()
+                    .skip(1)
+                    .take(MAX_FB2_DEPTH)
+                    .take_while(|parent| *parent != paragraph)
+                    .all(|parent| parent.tag_name().namespace() == Some(FB2_NS))
+            })
+            .filter_map(|item| item.text())
+            .collect();
+        for word in text.split_whitespace() {
+            if !label.is_empty() {
+                label.push(' ');
+            }
+            label.push_str(word);
+        }
+    }
+    (!label.is_empty()).then_some(label)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn markdown_has_section_anchors_footnotes_and_literal_raw_html() {
+        let input = "# Title\n\nA note[^entry].\n\n## Scope {#scope}\n\n<script>ignored()</script>\n\n[^entry]: At dusk.";
+        let document = super::markdown_document(input, "Field notes").unwrap();
+        assert_eq!(document.toc.len(), 2);
+        assert_eq!(
+            document.toc[0]
+                .destination
+                .as_ref()
+                .unwrap()
+                .fragment
+                .as_deref(),
+            Some("reader-heading-1")
+        );
+        assert_eq!(
+            document.toc[1]
+                .destination
+                .as_ref()
+                .unwrap()
+                .fragment
+                .as_deref(),
+            Some("scope")
+        );
+        assert!(document.xhtml.contains("At dusk."));
+        assert!(document.xhtml.contains("&lt;script&gt;"));
+    }
+    #[test]
+    fn reads_bom_marked_text_and_declared_legacy_fictionbook() {
+        let mut text = vec![0xff, 0xfe];
+        text.extend("Bến nước".encode_utf16().flat_map(u16::to_le_bytes));
+        assert_eq!(
+            super::decode_document(&text, super::Format::Text).unwrap(),
+            "Bến nước"
+        );
+        let mut xml = br#"<?xml version="1.0" encoding="windows-1251"?>"#.to_vec();
+        xml.extend_from_slice(b"<p>\xcf\xf0\xe8\xe2\xe5\xf2</p>");
+        let word = super::decode_document(&xml, super::Format::Fb2).unwrap();
+        assert!(word.ends_with("<p>Привет</p>"));
+        assert!(super::decode_document(b"a\0b", super::Format::Text).is_err());
+    }
+    use super::*;
+    use crate::source::Source;
+
+    #[test]
+    fn text_import_preserves_lines_paragraphs_unicode_and_literals() {
+        let input = "Chữ & <literal> > test\r\nNext line\r\n\r\nSecond paragraph\rEnd";
+        let xhtml = text_as_xhtml(input).unwrap();
+        let source = Source::parse(&xhtml).unwrap();
+        assert_eq!(source.blocks.len(), 2);
+        assert_eq!(source.blocks[0].text, "Chữ & <literal> > test\nNext line");
+        assert_eq!(source.blocks[1].text, "Second paragraph\nEnd");
+        assert!(text_as_xhtml("  \n\t ").is_err());
+        assert!(text_as_xhtml("bad\0").is_err());
+        assert!(text_as_xhtml(&"&".repeat(MAX_INPUT)).is_err());
+    }
+
+    #[test]
+    fn html_import_preserves_content_and_annotations_without_expanding_dtds() {
+        let input = "<?xml version=\"1.0\"?>\n<!doctype html>\n<html><head><title> Field notes </title></head><body><p id=\"first\">Reading <em>the shore</em>.<br /><a href=\"#first\">Back</a></p></body></html>";
+        let imported = html_document(input, "Untitled").unwrap();
+        let source = Source::parse(&imported.xhtml).unwrap();
+        assert_eq!(imported.title, "Field notes");
+        assert_eq!(source.blocks[0].text, "Reading the shore.\nBack");
+        assert_eq!(source.blocks[0].links[0].href, "#first");
+        assert!(source.fragments.contains_key("first"));
+        assert!(html_document("<html><body><p>missing end tag</body></html>", "Untitled").is_err());
+        assert!(html_document("<!DOCTYPE html SYSTEM \"file:///missing.dtd\"><html><body><p>Content</p></body></html>", "Untitled").is_err());
+    }
+
+    #[test]
+    fn fictionbook_import_retains_reading_order_and_note_links() {
+        let input = r##"<?xml version="1.0"?>
+            <fb:FictionBook xmlns:fb="http://www.gribuser.ru/xml/fictionbook/2.0"
+                xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:other="urn:other">
+                <fb:description><fb:title-info>
+                    <fb:author><fb:first-name>Linh</fb:first-name><fb:last-name>Trần</fb:last-name></fb:author>
+                    <fb:book-title>Field &amp; Shore</fb:book-title>
+                </fb:title-info></fb:description>
+                <fb:body><fb:section id="shore"><fb:title><fb:p>The shore</fb:p></fb:title>
+                    <fb:section id="tide"><fb:title><fb:p>Watching the tide<other:p>Wrong namespace</other:p></fb:p></fb:title>
+                        <fb:p>At the <fb:emphasis>shore</fb:emphasis>.<fb:a id="ref" xlink:href="#ghi%2Dchu">[1]</fb:a></fb:p>
+                        <fb:p><fb:a xlink:href="https://example.invalid/">A remote reference</fb:a></fb:p>
+                        <other:p>Wrong namespace</other:p>
+                    </fb:section>
+                </fb:section></fb:body>
+                <fb:body name="notes"><fb:section id="ghi-chu">
+                    <fb:p>The tide was low. <fb:a xlink:href="#ref">Return</fb:a></fb:p>
+                </fb:section></fb:body>
+                <fb:binary id="unused">aW1hZ2U=</fb:binary>
+            </fb:FictionBook>"##;
+        let book = fb2_document(input, "Untitled").unwrap();
+        assert_eq!(book.title, "Field & Shore");
+        assert!(book.xhtml.contains("name=\"author\" content=\"Linh Trần\""));
+        assert!(book.xhtml.contains("<h2>The shore</h2>"));
+        assert!(book.xhtml.contains("<h3>Watching the tide</h3>"));
+        assert!(!book.xhtml.contains("Wrong namespace"));
+        assert!(!book.xhtml.contains("aW1hZ2U="));
+        let source = Source::parse(&book.xhtml).unwrap();
+        assert_eq!(
+            source
+                .blocks
+                .iter()
+                .map(|block| block.text.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "The shore",
+                "Watching the tide",
+                "At the shore.[1]",
+                "A remote reference",
+                "Notes",
+                "The tide was low. Return",
+            ],
+        );
+        assert!(source.fragments.contains_key("shore"));
+        assert!(source.fragments.contains_key("tide"));
+        assert!(source.fragments.contains_key("ref"));
+        assert!(source.fragments.contains_key("ghi-chu"));
+        assert_eq!(book.toc.len(), 2);
+        for (entry, (label, id, depth)) in book
+            .toc
+            .iter()
+            .zip([("The shore", "shore", 0), ("Watching the tide", "tide", 1)])
+        {
+            let destination = entry.destination.as_ref().unwrap();
+            assert_eq!(entry.label, label);
+            assert_eq!(entry.depth, depth);
+            assert_eq!(destination.path, CHAPTER_PATH);
+            assert_eq!(destination.fragment.as_deref(), Some(id));
+            assert!(source.fragments.contains_key(id));
+        }
+        assert_eq!(source.blocks[2].links[0].href, "#ghi%2Dchu");
+        assert!(source.blocks[3].links.is_empty());
+        assert_eq!(source.blocks[5].links[0].href, "#ref");
+    }
+
+    #[test]
+    fn fictionbook_import_rejects_wrong_namespace_and_excessive_nesting() {
+        assert!(fb2_document("<FictionBook><body/></FictionBook>", "Untitled").is_err());
+        let depth = MAX_FB2_DEPTH + 1;
+        let input = format!(
+            "<FictionBook xmlns=\"{FB2_NS}\"><body>{}<p>text</p>{}</body></FictionBook>",
+            "<section>".repeat(depth),
+            "</section>".repeat(depth),
+        );
+        assert!(fb2_document(&input, "Untitled").is_err());
+    }
+
+    #[test]
+    fn format_detection_matches_only_supported_extensions() {
+        assert_eq!(Format::for_path(Path::new("Notes.TXT")), Some(Format::Text));
+        for name in [
+            "document.htm",
+            "document.HTML",
+            "document.xhtml",
+            "document.xht",
+        ] {
+            assert_eq!(Format::for_path(Path::new(name)), Some(Format::Html));
+        }
+        assert_eq!(
+            Format::for_path(Path::new("document.md")),
+            Some(Format::Markdown)
+        );
+        assert_eq!(Format::for_path(Path::new("book.azw")), Some(Format::Mobi));
+        assert_eq!(Format::for_path(Path::new("book.azw3")), None);
+        assert_eq!(Format::for_path(Path::new("book.FB2")), Some(Format::Fb2));
+    }
+}
