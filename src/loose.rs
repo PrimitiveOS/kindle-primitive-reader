@@ -42,6 +42,7 @@ pub(crate) enum Format {
     Html,
     Markdown,
     Mobi,
+    Rtf,
     Fb2,
 }
 
@@ -53,6 +54,7 @@ impl Format {
             "htm" | "html" | "xht" | "xhtml" => Some(Self::Html),
             "md" | "markdown" => Some(Self::Markdown),
             "mobi" | "prc" | "azw" | "pdb" => Some(Self::Mobi),
+            "rtf" => Some(Self::Rtf),
             "fb2" | "fbz" => Some(Self::Fb2),
             "gz" | "zip"
                 if path
@@ -82,6 +84,7 @@ impl Document {
         let limit = match format {
             Format::Fb2 => MAX_FB2_INPUT,
             Format::Mobi => crate::mobi::MAX_MOBI_BYTES,
+            Format::Rtf => crate::rtf::MAX_INPUT,
             _ => MAX_INPUT,
         };
         if !metadata.is_file() || metadata.len() > limit as u64 {
@@ -125,6 +128,9 @@ impl Document {
                 resources: BTreeMap::new(),
             });
         }
+        if format == Format::Rtf {
+            return html_document(&crate::rtf::decode(&bytes)?, fallback_title);
+        }
         let input = decode_document(&bytes, format)?;
         let input = input.trim_start_matches('\u{feff}');
         match format {
@@ -138,7 +144,7 @@ impl Document {
             Format::Html => html_document(input, fallback_title),
             Format::Markdown => markdown_document(input, fallback_title),
             Format::Fb2 => fb2_document(input, fallback_title),
-            Format::Mobi => unreachable!(),
+            Format::Mobi | Format::Rtf => unreachable!(),
         }
     }
 }
@@ -254,7 +260,7 @@ fn read_fb2_zip(file: File, length: u64) -> Result<Vec<u8>> {
     read_bounded(entry, MAX_FB2_INPUT)
 }
 
-fn text_as_xhtml(input: &str) -> Result<String> {
+pub(crate) fn text_as_xhtml(input: &str) -> Result<String> {
     if input.trim().is_empty() {
         return Err("The text file is empty".into());
     }

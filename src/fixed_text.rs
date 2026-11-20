@@ -26,19 +26,46 @@ pub struct PdfTextRect {
     pub y1: f32,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct PdfTextSpan {
     /// A UTF-8 byte range in [`PdfPageText::text`].
     pub bytes: Range<usize>,
     pub bounds: PdfTextRect,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct PdfPageText {
     pub text: String,
     pub lines: Vec<PdfTextSpan>,
     pub words: Vec<PdfTextSpan>,
     pub truncated: bool,
+}
+
+#[cfg(feature = "kindle")]
+impl PdfPageText {
+    pub(crate) fn valid_ocr_cache(&self) -> bool {
+        let valid = |spans: &[PdfTextSpan]| {
+            spans.iter().all(|span| {
+                let rect = span.bounds;
+                span.bytes.start < span.bytes.end
+                    && self.text.is_char_boundary(span.bytes.start)
+                    && self.text.is_char_boundary(span.bytes.end)
+                    && rect.x0 >= 0.0
+                    && rect.y0 >= 0.0
+                    && rect.x0 < rect.x1
+                    && rect.y0 < rect.y1
+                    && rect.x1 <= 1.0
+                    && rect.y1 <= 1.0
+            }) && spans
+                .windows(2)
+                .all(|pair| pair[0].bytes.end <= pair[1].bytes.start)
+        };
+        self.text.len() <= MAX_TEXT_BYTES
+            && self.words.len() <= MAX_GLYPHS
+            && self.lines.len() <= MAX_GLYPHS
+            && valid(&self.words)
+            && valid(&self.lines)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

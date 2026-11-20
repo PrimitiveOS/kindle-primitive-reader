@@ -20,9 +20,11 @@ use crate::library::{
     BackupImport, BookPreferences, Bookmark, FixedPreferences, Highlight, Library, LibraryBook,
     MAX_BACKUP_BYTES, PdfHighlight, ReadingPosition,
 };
+use crate::ocr_job::{OcrAssets, OcrJob};
 use crate::search::{MAX_SEARCH_HITS, PdfSearch, PdfSearchHit, Search, SearchHit};
 use crate::selection::TextSelection;
 use crate::session::{BookConfig, DONE, PAGE_HEIGHT, Reading};
+use crate::text_flow::TextFlow;
 use crate::{Engine, Result, Settings, TextAlignment};
 
 const ROW_HEIGHT: i32 = 116;
@@ -44,6 +46,8 @@ const LIBRARY_CONTROL: Rect = Rect::new(20, 15, 160, 62);
 const LOCATION_CONTROL: Rect = Rect::new(570, 15, 245, 62);
 const BOOKMARK_CONTROL: Rect = Rect::new(829, 15, 205, 62);
 const EXIT_CONTROL: Rect = Rect::new(1048, 15, 196, 62);
+const CANCEL_OCR: Rect = Rect::new(624, PAGE_HEIGHT as i32 + 5, 200, 60);
+const OCR_POLL: Duration = Duration::from_millis(120);
 const AUTO_CROP: Rect = Rect::new(674, PAGE_HEIGHT as i32 + 5, 182, 60);
 const RESET_CROP: Rect = Rect::new(868, PAGE_HEIGHT as i32 + 5, 172, 60);
 const CANCEL_CROP: Rect = Rect::new(1052, PAGE_HEIGHT as i32 + 5, 192, 60);
@@ -53,6 +57,7 @@ enum Screen {
     Library,
     LibraryFind,
     ReadingData,
+    ClearOcr,
     RestoreBackup,
     ImportAnnotations,
     Book,
@@ -61,6 +66,7 @@ enum Screen {
     FixedBookmarks,
     FixedContents,
     FixedCrop,
+    ReadFixedText,
     PdfPassword,
     GoToPage,
     BookTools,
@@ -84,10 +90,12 @@ impl Screen {
             Self::Library => "Reader",
             Self::LibraryFind => "Find a document",
             Self::ReadingData => "Reading data",
+            Self::ClearOcr => "Clear recognized text?",
             Self::RestoreBackup => "Preview restore",
             Self::ImportAnnotations => "KOReader annotations",
             Self::Book | Self::Fixed | Self::BookTools | Self::FixedTools | Self::FixedCrop => "",
             Self::GoToPage => "Go to page",
+            Self::ReadFixedText => "",
             Self::PdfPassword => "Unlock PDF",
             Self::Contents | Self::FixedContents => "Contents",
             Self::Links => "Links on this page",
@@ -110,6 +118,7 @@ enum Action {
     Continue,
     ClearLibraryFilter,
     ExportBackup,
+    ClearOcr,
     PreviewBackup,
     MergeBackup,
     PreviewKoReader,
@@ -135,6 +144,8 @@ enum Action {
     RotatePage,
     ReversePageDirection,
     CropPage,
+    RecognizeText,
+    ReadFixedText,
 }
 
 struct Item {
@@ -189,6 +200,10 @@ pub struct Reader {
     fonts: Vec<PathBuf>,
     active: Option<ActiveBook>,
     fixed: Option<ActiveFixed>,
+    ocr_assets: Option<OcrAssets>,
+    ocr_root: PathBuf,
+    ocr: Option<(usize, OcrJob, Instant)>,
+    text_flow: Option<TextFlow>,
     locked: Option<LibraryBook>,
     crop_dialog: Option<(FixedPreferences, Option<(f32, f32)>)>,
     screen: Screen,
@@ -221,6 +236,8 @@ impl Reader {
             library.scan()?;
             Ok(library)
         })?;
+        let data = state.parent().unwrap_or(documents);
+        let ocr_assets = with_storage(|| Ok(data.parent().and_then(OcrAssets::discover)))?;
         Ok(Self {
             library,
             library_query: String::new(),
@@ -233,6 +250,10 @@ impl Reader {
             fonts,
             active: None,
             fixed: None,
+            ocr_assets,
+            ocr_root: data.join("ocr-cache"),
+            ocr: None,
+            text_flow: None,
             locked: None,
             crop_dialog: None,
             screen: Screen::Library,
@@ -307,10 +328,12 @@ impl Reader {
             result => result?,
         };
         self.locked = None;
+        self.ocr = None;
         self.hits.clear();
         self.pdf_hits.clear();
         self.result_selection = None;
-        if let Some(reading) = fixed {
+        if let Some(mut reading) = fixed {
+            reading.set_ocr_path(self.ocr_root.join(format!("{id:016x}")));
             if let Some(title) = reading.title() {
                 entry.title = title.into();
             }
@@ -352,6 +375,9 @@ impl Reader {
     }
 
     fn show(&mut self, screen: Screen) {
+        if screen != Screen::ReadFixedText {
+            self.text_flow = None;
+        }
         if screen != Screen::ImportAnnotations {
             self.annotation_import = None;
         }
@@ -441,6 +467,14 @@ impl Reader {
                     .detail("Saves progress, bookmarks, highlights, and preferences to exports"),
                 Item::new("Restore a backup", Action::PreviewBackup)
                     .detail("Copy a backup to reader/data/reader-import.json"),
+                Item::new("Clear recognized text", Action::Show(Screen::ClearOcr))
+                    .detail("Clear saved OCR text from document pages"),
+            ];
+        }
+        if self.screen == Screen::ClearOcr {
+            return vec![
+                Item::new("Clear OCR cache", Action::ClearOcr),
+                Item::new("Keep OCR cache", Action::Show(Screen::ReadingData)),
             ];
         }
         if self.screen == Screen::RestoreBackup
@@ -635,6 +669,7 @@ impl Reader {
             }
             if fixed.reading.supports_text() {
                 tools.push(Item::new("Find", Action::Show(Screen::Find)));
+                tools.push(Item::new("Read text", Action::ReadFixedText));
                 tools.push(Item::new("Highlights", Action::Show(Screen::Highlights)));
                 if !self.pdf_hits.is_empty() {
                     tools.push(Item::new("Matches", Action::Show(Screen::Matches)));
@@ -650,6 +685,9 @@ impl Reader {
             }
             if fixed.reading.supports_crop() {
                 tools.push(Item::new("Crop", Action::CropPage));
+                if self.ocr_assets.is_some() && self.ocr.is_none() {
+                    tools.push(Item::new("OCR", Action::RecognizeText));
+                }
             }
             return tools;
         }
@@ -674,10 +712,12 @@ impl Reader {
 
     fn draw_reading_tools(&self, canvas: &mut Canvas) {
         let width = WIDTH as i32;
-        let lower = HEIGHT as i32 - BOTTOM_BAR_HEIGHT;
+        let tools = self.reading_tools();
+        let height = bottom_bar_height(tools.len());
+        let lower = HEIGHT as i32 - height;
         canvas.fill(Rect::new(0, 0, width, TOP_BAR_HEIGHT), 255);
         canvas.fill(Rect::new(0, TOP_BAR_HEIGHT - 1, width, 1), 166);
-        canvas.fill(Rect::new(0, lower, width, BOTTOM_BAR_HEIGHT), 255);
+        canvas.fill(Rect::new(0, lower, width, height), 255);
         canvas.fill(Rect::new(0, lower, width, 1), 166);
         draw_toolbar_button(canvas, LIBRARY_CONTROL, "Library");
         draw_toolbar_button(canvas, BOOKMARK_CONTROL, "Bookmark +");
@@ -703,9 +743,16 @@ impl Reader {
             self.notice.as_deref().unwrap_or(title),
             BODY,
         );
-        let tools = self.reading_tools();
         for (index, tool) in tools.iter().enumerate() {
             draw_toolbar_button(canvas, reading_tool_rect(index, tools.len()), &tool.title);
+        }
+    }
+
+    fn reading_area(&self) -> Range<u32> {
+        if matches!(self.screen, Screen::BookTools | Screen::FixedTools) {
+            TOP_BAR_HEIGHT as u32..(HEIGHT - bottom_bar_height(self.reading_tools().len()) as u32)
+        } else {
+            0..PAGE_HEIGHT
         }
     }
 
@@ -717,6 +764,8 @@ impl Reader {
         };
         match input {
             Input::Tap(x, y) => {
+                let tools = self.reading_tools();
+                let count = tools.len();
                 let action = if EXIT_CONTROL.contains(x, y) {
                     return self.exit();
                 } else if LIBRARY_CONTROL.contains(x, y) {
@@ -726,8 +775,6 @@ impl Reader {
                 } else if LOCATION_CONTROL.contains(x, y) && !self.back.is_empty() {
                     Some(Action::ReturnToLocation)
                 } else {
-                    let tools = self.reading_tools();
-                    let count = tools.len();
                     tools
                         .into_iter()
                         .enumerate()
@@ -740,7 +787,7 @@ impl Reader {
                         Err(error) => self.report(error),
                     },
                     None if y >= TOP_BAR_HEIGHT as f32
-                        && y < (HEIGHT as i32 - BOTTOM_BAR_HEIGHT) as f32 =>
+                        && y < (HEIGHT as i32 - bottom_bar_height(count)) as f32 =>
                     {
                         self.show(reading_screen);
                         Change::Partial
@@ -774,6 +821,15 @@ impl Reader {
                 self.show(Screen::Library);
             }
             Action::ExportBackup => self.export_backup()?,
+            Action::ClearOcr => {
+                with_storage(|| match fs::remove_dir_all(&self.ocr_root) {
+                    Ok(()) => Ok(()),
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+                    Err(error) => Err(error),
+                })?;
+                self.show(Screen::ReadingData);
+                self.notice = Some("OCR cache cleared".into());
+            }
             Action::PreviewBackup => self.preview_backup()?,
             Action::MergeBackup => self.restore_backup()?,
             Action::PreviewKoReader => self.preview_koreader()?,
@@ -782,6 +838,7 @@ impl Reader {
                 self.save()?;
                 self.active = None;
                 self.fixed = None;
+                self.ocr = None;
                 self.selection = None;
                 self.back.clear();
                 self.show(Screen::Library);
@@ -827,6 +884,8 @@ impl Reader {
                 self.crop_dialog = Some((fixed.reading.start_crop()?, None));
                 self.show(Screen::FixedCrop);
             }
+            Action::RecognizeText => self.start_ocr()?,
+            Action::ReadFixedText => self.read_fixed_text()?,
             Action::FixedPage(page) => {
                 self.follow_fixed(page, None)?;
             }
@@ -1484,6 +1543,11 @@ impl Reader {
             };
         }
         if let Input::Tap(x, y) = input {
+            if self.ocr.is_some() && self.pdf_selection.is_none() && CANCEL_OCR.contains(x, y) {
+                self.ocr = None;
+                self.notice = Some("Text recognition cancelled".into());
+                return Change::Partial;
+            }
             if let Some(selection) = &mut self.pdf_selection {
                 if CANCEL_MARK.contains(x, y) {
                     self.pdf_selection = None;
@@ -1544,6 +1608,66 @@ impl Reader {
             Ok(false) => Change::None,
             Err(error) => self.report(error),
         }
+    }
+
+    fn read_fixed_text(&mut self) -> Result<()> {
+        let fixed = self.fixed.as_ref().ok_or("Open a document first")?;
+        let page = fixed.reading.page();
+        let text = fixed.reading.page_text(page)?;
+        if text.text.trim().is_empty() {
+            return Err("This page has no text. Use OCR to recognize a scan.".into());
+        }
+        let text_flow = TextFlow::open(
+            page,
+            &fixed.entry.title,
+            &text.text,
+            &self.fonts,
+            device_settings(),
+        )?;
+        self.show(Screen::ReadFixedText);
+        self.text_flow = Some(text_flow);
+        Ok(())
+    }
+
+    fn start_ocr(&mut self) -> Result<()> {
+        let assets = self
+            .ocr_assets
+            .as_ref()
+            .ok_or("OCR requires the installed language pack")?;
+        let fixed = self.fixed.as_ref().ok_or("Open a PDF or DjVu first")?;
+        let page = fixed.reading.page();
+        let raster = fixed.reading.ocr_raster()?;
+        let job = OcrJob::start(assets, &raster.pixels, raster.width, raster.height)?;
+        self.show(Screen::Fixed);
+        self.ocr = Some((page, job, Instant::now() + OCR_POLL));
+        self.notice = Some(format!("Recognizing text on page {}", page + 1));
+        Ok(())
+    }
+
+    fn poll_ocr(&mut self, now: Instant) -> Result<Change> {
+        let Some((page, job, deadline)) = &mut self.ocr else {
+            return Ok(Change::None);
+        };
+        if now < *deadline {
+            return Ok(Change::None);
+        }
+        let Some(text) = job.poll()? else {
+            *deadline = now + OCR_POLL;
+            return Ok(Change::None);
+        };
+        let page = *page;
+        self.ocr = None;
+        if text.text.trim().is_empty() {
+            self.notice = Some(format!("Page {} has no recognized text", page + 1));
+            return Ok(Change::Partial);
+        }
+        let fixed = self
+            .fixed
+            .as_mut()
+            .ok_or("The document closed during OCR")?;
+        fixed.reading.remember_ocr(page, text)?;
+        self.notice = Some(format!("Text recognized on page {}", page + 1));
+        Ok(Change::Partial)
     }
 
     fn crop_input(&mut self, input: Input) -> Change {
@@ -1998,6 +2122,10 @@ impl Reader {
 
 impl App for Reader {
     fn draw(&self, canvas: &mut Canvas) {
+        if let Some(flow) = &self.text_flow {
+            flow.draw(canvas, self.notice.as_deref());
+            return;
+        }
         if self.screen == Screen::FixedCrop
             && let Some(fixed) = &self.fixed
         {
@@ -2058,13 +2186,15 @@ impl App for Reader {
                 self.notice.as_deref(),
                 &marks,
                 &selection,
-                reading_area(self.screen),
+                self.reading_area(),
             );
             if !selection.is_empty() {
                 draw_selection_footer(canvas, self.notice.as_deref());
             }
             if self.screen == Screen::FixedTools {
                 self.draw_reading_tools(canvas);
+            } else if self.ocr.is_some() && selection.is_empty() {
+                canvas.button(CANCEL_OCR, "Cancel OCR", false, false);
             }
             return;
         }
@@ -2092,7 +2222,7 @@ impl App for Reader {
                 self.notice.as_deref(),
                 &highlights,
                 &selection,
-                reading_area(self.screen),
+                self.reading_area(),
             );
             if self.selection.is_some() {
                 draw_selection_footer(canvas, self.notice.as_deref());
@@ -2225,6 +2355,9 @@ impl App for Reader {
     }
 
     fn input(&mut self, input: Input) -> Change {
+        if matches!(input, Input::Sleep) && self.ocr.take().is_some() {
+            self.notice = None;
+        }
         if matches!(input, Input::Sleep | Input::Wake) {
             if let Some(active) = &mut self.active {
                 active.reading.input(input);
@@ -2232,7 +2365,23 @@ impl App for Reader {
             if let Some(fixed) = &mut self.fixed {
                 fixed.reading.pause();
             }
+            if let Some(flow) = &mut self.text_flow {
+                flow.pause();
+            }
             return Change::None;
+        }
+        if self.screen == Screen::ReadFixedText {
+            if matches!(input, Input::Tap(x, y) if DONE.contains(x, y)) {
+                self.show(Screen::Fixed);
+                return Change::Partial;
+            }
+            if let Some(flow) = &mut self.text_flow {
+                return match flow.input(input) {
+                    Ok(true) => Change::Partial,
+                    Ok(false) => Change::None,
+                    Err(error) => self.report(error),
+                };
+            }
         }
         if self.screen == Screen::Book {
             return self.handle_book(input);
@@ -2277,6 +2426,7 @@ impl App for Reader {
                 match self.screen {
                     Screen::Library => return self.exit(),
                     Screen::ReadingData => self.show(Screen::Library),
+                    Screen::ClearOcr => self.show(Screen::ReadingData),
                     Screen::RestoreBackup => {
                         self.backup_import = None;
                         self.show(Screen::ReadingData);
@@ -2341,6 +2491,8 @@ impl App for Reader {
                     .as_ref()
                     .and_then(|import| import.deadline),
             )
+            .chain(self.ocr.as_ref().map(|(_, _, deadline)| *deadline))
+            .chain(self.text_flow.as_ref().and_then(TextFlow::deadline))
             .min()
     }
 
@@ -2367,6 +2519,20 @@ impl App for Reader {
                 }
             };
         }
+        if self
+            .ocr
+            .as_ref()
+            .is_some_and(|(_, _, deadline)| *deadline <= now)
+        {
+            match self.poll_ocr(now) {
+                Ok(Change::None) => {}
+                Ok(change) => return change,
+                Err(error) => {
+                    self.ocr = None;
+                    return self.report(error);
+                }
+            }
+        }
         if self.search_at.is_some_and(|at| at <= now) {
             return match self.step_search(now) {
                 Ok(change) => change,
@@ -2374,6 +2540,13 @@ impl App for Reader {
                     self.search_at = None;
                     self.report(error)
                 }
+            };
+        }
+        if let Some(flow) = &mut self.text_flow {
+            return match flow.tick(now) {
+                Ok(true) => Change::Partial,
+                Ok(false) => Change::None,
+                Err(error) => self.report(error),
             };
         }
         if self.screen == Screen::Book
@@ -2485,22 +2658,19 @@ fn reading_tools_gesture(x: f32, y: f32) -> bool {
         && (0.0..PAGE_HEIGHT as f32 * 0.55).contains(&y)
 }
 
-fn reading_tool_rect(index: usize, count: usize) -> Rect {
-    let step = (WIDTH as i32 - 26) / count as i32;
-    Rect::new(
-        18 + index as i32 * step,
-        HEIGHT as i32 - BOTTOM_BAR_HEIGHT + 16,
-        step - 10,
-        64,
-    )
+fn bottom_bar_height(count: usize) -> i32 {
+    if count > 8 { 150 } else { BOTTOM_BAR_HEIGHT }
 }
 
-fn reading_area(screen: Screen) -> Range<u32> {
-    if matches!(screen, Screen::BookTools | Screen::FixedTools) {
-        TOP_BAR_HEIGHT as u32..(HEIGHT - BOTTOM_BAR_HEIGHT as u32)
-    } else {
-        0..PAGE_HEIGHT
-    }
+fn reading_tool_rect(index: usize, count: usize) -> Rect {
+    let columns = if count > 8 { count.div_ceil(2) } else { count };
+    let step = (WIDTH as i32 - 26) / columns as i32;
+    Rect::new(
+        18 + (index % columns) as i32 * step,
+        HEIGHT as i32 - bottom_bar_height(count) + 16 + (index / columns) as i32 * 61,
+        step - 10,
+        60,
+    )
 }
 
 fn draw_toolbar_button(canvas: &mut Canvas, rect: Rect, title: &str) {
@@ -2958,6 +3128,14 @@ mod tests {
         assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 1);
         app.activate(Action::ReturnToLocation).unwrap();
         assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 0);
+        app.activate(Action::ReadFixedText).unwrap();
+        assert_eq!(app.screen, Screen::ReadFixedText);
+        assert!(app.text_flow.is_some());
+        assert_eq!(
+            app.input(Input::Tap((DONE.x + 10) as f32, (DONE.y + 10) as f32)),
+            Change::Partial
+        );
+        assert_eq!(app.screen, Screen::Fixed);
         app.activate(Action::RotatePage).unwrap();
         let reading = &app.fixed.as_ref().unwrap().reading;
         let text = reading.page_text(0).unwrap();
@@ -3031,6 +3209,40 @@ mod tests {
         app.open_with_password(entry, Some("reader-test")).unwrap();
         assert_eq!(app.screen, Screen::Fixed);
         assert!(app.locked.is_none());
+        let recognized = crate::fixed_text::PdfPageText {
+            text: "Recognized words".into(),
+            words: vec![crate::fixed_text::PdfTextSpan {
+                bytes: 0..10,
+                bounds: PdfTextRect {
+                    x0: 0.1,
+                    y0: 0.1,
+                    x1: 0.3,
+                    y1: 0.2,
+                },
+            }],
+            ..Default::default()
+        };
+        app.fixed
+            .as_mut()
+            .unwrap()
+            .reading
+            .remember_ocr(0, recognized)
+            .unwrap();
+        let mut reopened = fixture.app();
+        let entry = reopened.library.resolve(&locked).unwrap();
+        reopened
+            .open_with_password(entry, Some("reader-test"))
+            .unwrap();
+        let text = reopened
+            .fixed
+            .as_ref()
+            .unwrap()
+            .reading
+            .page_text(0)
+            .unwrap();
+        assert_eq!(text.text, "Recognized words");
+        reopened.activate(Action::ReadFixedText).unwrap();
+        assert_eq!(reopened.screen, Screen::ReadFixedText);
         app.save().unwrap();
         assert!(
             !fs::read_to_string(&fixture.state)

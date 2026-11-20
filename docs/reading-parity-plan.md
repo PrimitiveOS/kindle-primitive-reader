@@ -10,11 +10,12 @@ Compare against the installed KOReader release for hardware measurements. Record
 | --- | --- | --- |
 | EPUB reading | Library and resume, page and continuous scroll modes, direct reading bars, navigation and footnotes, per-book text settings, find, bookmarks, editable highlights and notes | Extended publication fidelity, accessibility controls and the final device suite |
 | PDF | Fixed-page viewport, outlines and internal links, passwords, page jumps, manual and automatic crop, text search and local annotations | Annotated-PDF export, broader password and outline variants, and sustained large-scan tests |
-| Other offline reading | Fixed-layout XHTML EPUB, DjVu pages and embedded text, TXT and HTML, Markdown, FB2 with local images, legacy MOBI and PalmDOC, CBZ, JPEG, PNG, and compressed StarDict | Wider format variants, scan reflow and OCR generation |
+| Other offline reading | Fixed-layout XHTML EPUB, DjVu pages, TXT and HTML, Markdown, FB2 with local images, legacy MOBI and PalmDOC, RTF, CBZ, JPEG, PNG, and compressed StarDict | Wider format variants and the final device suite |
+| Scanned documents | Embedded-text reading and page-level text reflow. English OCR worker tested on desktop and cross-built for ARMHF. | OCR in the Kindle runtime, further languages, column segmentation and scanned image reflow |
 | Reading data | Local backup and restore with preview, plus KOReader JSON annotation import by exact unique quotation | KOReader reading positions and sidecar migration, validation across representative exports and editions, and the final device suite |
 | Kindle verification | EPUB engine timing, probe page buttons, sleep and USB resume, and a temporary preview's contents jump and reopen passed on Oasis 3 | Deploy the completed core reader and run the consolidated automatic hardware workflow |
 
-The desktop checkpoint passed 84 Reader tests and 16 Files tests. Reader
+The desktop checkpoint passed 96 Reader tests and 16 Files tests. Reader
 rendered three public-domain DjVu samples in the desktop app. The licensed
 ARMHF development package and the standalone ARMHF test bundle built
 successfully. The recent interface and document-format changes have desktop
@@ -107,7 +108,8 @@ The DjVu development path uses the pinned Rust decoder and reads embedded text.
 Desktop proof includes rotated text selection and rendering real public-domain
 scans. Reader caps the vendored BZZ decoder's expanded output at 8 MiB and
 checks the declared IW44 coefficient allocation before rendering.
-Large-file memory on the Kindle, OCR and scanned-page reflow remain open.
+Large-file memory in the Kindle runtime, additional OCR languages and scanned
+image reflow remain open. [Offline OCR build](ocr-build.md)
 [DjVu codec source](https://github.com/matyushkin/djvu-rs/tree/c8e86c93214f9f10093c2c696945cfef0c9e500d)
 
 ## Evidence and release checkpoints

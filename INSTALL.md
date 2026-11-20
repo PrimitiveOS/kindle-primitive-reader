@@ -41,3 +41,6 @@ python3 ../doannt-kindle-build/scripts/package.py \
 
 Cargo and the staging script both use `CARGO_TARGET_DIR` when set. The last
 command writes the ARMHF archive and its checksum into `build/dist/`.
+
+Use the [OCR build instructions](docs/ocr-build.md) to include the
+English recognition engine and model in the stage passed to the packager.

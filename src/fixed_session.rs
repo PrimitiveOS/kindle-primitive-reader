@@ -1,4 +1,4 @@
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{self, Read};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -19,6 +19,9 @@ use crate::session::{DONE, PAGE_HEIGHT, PAGE_REFRESH_GAP, PageTurns, draw_page_p
 const SMALLER: Rect = Rect::new(840, PAGE_HEIGHT as i32 + 5, 120, 60);
 const LARGER: Rect = Rect::new(974, PAGE_HEIGHT as i32 + 5, 120, 60);
 const ZOOM: [f32; 5] = [1.0, 1.25, 1.5, 2.0, 3.0];
+const MAX_OCR_RASTER_SIDE: f32 = 1800.0;
+const MAX_OCR_CACHE_BYTES: u64 = 512 * 1024;
+const MAX_OCR_CACHE_PAGES: usize = 32;
 
 pub(crate) struct FixedReading {
     source: FixedDocument,
@@ -27,6 +30,8 @@ pub(crate) struct FixedReading {
     frame: GrayImage,
     turns: PageTurns,
     outline: Vec<PdfOutlineItem>,
+    ocr_path: Option<PathBuf>,
+    last_ocr: Option<(usize, PdfPageText)>,
 }
 
 pub(crate) struct PdfSelection {
@@ -125,6 +130,8 @@ impl FixedReading {
             frame,
             turns: PageTurns::new(Instant::now()),
             outline,
+            ocr_path: None,
+            last_ocr: None,
         }))
     }
 
@@ -231,11 +238,100 @@ impl FixedReading {
     }
 
     pub(crate) fn page_text(&self, page: usize) -> Result<PdfPageText> {
-        match &self.source {
-            FixedDocument::Pdf(pdf) => Ok(pdf.page_text(page)?),
-            FixedDocument::Djvu(book) => Ok(book.page_text(page)?),
+        let extracted = match &self.source {
+            FixedDocument::Pdf(pdf) => pdf.page_text(page).map_err(Into::into),
+            FixedDocument::Djvu(book) => book.page_text(page).map_err(Into::into),
             _ => Err("This format has no embedded text layer".into()),
+        };
+        if extracted
+            .as_ref()
+            .is_ok_and(|text| !text.text.trim().is_empty())
+        {
+            return extracted;
         }
+        self.cached_ocr(page).map_or(extracted, Ok)
+    }
+
+    pub(crate) fn set_ocr_path(&mut self, path: PathBuf) {
+        self.ocr_path = Some(path);
+    }
+
+    fn cached_ocr(&self, page: usize) -> Option<PdfPageText> {
+        if let Some((index, text)) = &self.last_ocr
+            && *index == page
+        {
+            return Some(text.clone());
+        }
+        let path = self.ocr_path.as_ref()?.join(format!("{page}.json"));
+        with_storage(|| {
+            let meta = fs::symlink_metadata(&path)?;
+            if !meta.is_file() || meta.len() > MAX_OCR_CACHE_BYTES {
+                return Err(io::Error::other("Reader OCR cache is invalid"));
+            }
+            let mut bytes = Vec::new();
+            File::open(path)?
+                .take(MAX_OCR_CACHE_BYTES + 1)
+                .read_to_end(&mut bytes)?;
+            let text: PdfPageText = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+            if bytes.len() as u64 > MAX_OCR_CACHE_BYTES || !text.valid_ocr_cache() {
+                return Err(io::Error::other("Reader OCR cache is invalid"));
+            }
+            Ok(text)
+        })
+        .ok()
+    }
+
+    pub(crate) fn remember_ocr(&mut self, page: usize, text: PdfPageText) -> Result<()> {
+        if !text.valid_ocr_cache() {
+            return Err("OCR returned invalid text positions".into());
+        }
+        self.last_ocr = Some((page, text));
+        let Some(directory) = &self.ocr_path else {
+            return Ok(());
+        };
+        let path = directory.join(format!("{page}.json"));
+        let bytes = serde_json::to_vec(&self.last_ocr.as_ref().unwrap().1)?;
+        if bytes.len() as u64 > MAX_OCR_CACHE_BYTES {
+            return Ok(());
+        }
+        let save = with_storage(|| {
+            fs::create_dir_all(directory)?;
+            Ok(path.is_file()
+                || fs::read_dir(directory)?.take(MAX_OCR_CACHE_PAGES).count() < MAX_OCR_CACHE_PAGES)
+        })?;
+        if save {
+            primitive_app::save(&path, &bytes)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn ocr_raster(&self) -> Result<GrayImage> {
+        let size = match &self.source {
+            FixedDocument::Pdf(pdf) => pdf.page_size(self.page)?,
+            FixedDocument::Djvu(book) => book.page_size(self.page)?,
+            _ => return Err("OCR is available for PDF and DjVu".into()),
+        };
+        let scale = MAX_OCR_RASTER_SIDE / size.0.max(size.1);
+        let width = (size.0 * scale).round().max(1.0) as u32;
+        let height = (size.1 * scale).round().max(1.0) as u32;
+        let request = RenderRequest {
+            width,
+            height,
+            scale,
+            x: 0.0,
+            y: 0.0,
+            turns: 0,
+        };
+        let pixels = match &self.source {
+            FixedDocument::Pdf(pdf) => pdf.render(self.page, request)?,
+            FixedDocument::Djvu(book) => book.render(self.page, request)?,
+            _ => unreachable!(),
+        };
+        Ok(GrayImage {
+            width,
+            height,
+            pixels,
+        })
     }
 
     pub(crate) fn select_word(&self, x: f32, y: f32) -> Result<Option<PdfSelection>> {

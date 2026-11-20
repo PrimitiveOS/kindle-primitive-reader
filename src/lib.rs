@@ -16,12 +16,18 @@ pub mod koreader_import;
 pub mod library;
 mod loose;
 pub mod mobi;
+pub mod ocr;
+#[cfg(feature = "kindle")]
+mod ocr_job;
 mod parley_layout;
+mod rtf;
 pub mod search;
 pub mod selection;
 #[cfg(feature = "kindle")]
 mod session;
 mod source;
+#[cfg(feature = "kindle")]
+mod text_flow;
 
 use std::error::Error;
 use std::fs;
@@ -224,7 +230,34 @@ impl Probe {
         chapter: usize,
     ) -> Result<Self> {
         settings.validate()?;
-        let mut book = Book::open(path).map_err(|e| e.to_string())?;
+        let book = Book::open(path).map_err(|e| e.to_string())?;
+        Self::from_book(book, engine, fonts, settings, chapter)
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn from_text(
+        title: String,
+        text: &str,
+        fonts: &[PathBuf],
+        settings: Settings,
+    ) -> Result<Self> {
+        settings.validate()?;
+        Self::from_book(
+            Book::from_text(title, text)?,
+            Engine::Parley,
+            fonts,
+            settings,
+            0,
+        )
+    }
+
+    fn from_book(
+        mut book: Book,
+        engine: Engine,
+        fonts: &[PathBuf],
+        settings: Settings,
+        chapter: usize,
+    ) -> Result<Self> {
         if book.is_fixed_layout() {
             return Err("Open this fixed-layout EPUB in Reader".into());
         }

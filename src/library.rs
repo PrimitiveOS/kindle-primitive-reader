@@ -47,6 +47,7 @@ pub enum DocumentFormat {
     Markdown,
     Fb2,
     Mobi,
+    Rtf,
     Pdf,
     Djvu,
     Cbz,
@@ -63,6 +64,7 @@ impl DocumentFormat {
                 Format::Markdown => Self::Markdown,
                 Format::Fb2 => Self::Fb2,
                 Format::Mobi => Self::Mobi,
+                Format::Rtf => Self::Rtf,
             });
         }
         match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
@@ -82,6 +84,7 @@ impl DocumentFormat {
             Self::Text | Self::Html | Self::Markdown => MAX_INPUT as u64,
             Self::Fb2 => MAX_FB2_INPUT as u64,
             Self::Mobi => MAX_MOBI_BYTES as u64,
+            Self::Rtf => crate::rtf::MAX_INPUT as u64,
             Self::Pdf => MAX_PDF_BYTES as u64,
             Self::Djvu => MAX_DJVU_BYTES as u64,
             Self::Cbz => MAX_COMIC_BYTES,
@@ -97,6 +100,7 @@ impl DocumentFormat {
             Self::Markdown => b"reader-markdown\0",
             Self::Fb2 => b"reader-fb2\0",
             Self::Mobi => b"reader-mobi\0",
+            Self::Rtf => b"reader-rtf\0",
             Self::Pdf => b"reader-pdf\0",
             Self::Djvu => b"reader-djvu\0",
             Self::Cbz => b"reader-cbz\0",
@@ -470,6 +474,7 @@ impl Library {
                 | DocumentFormat::Markdown
                 | DocumentFormat::Fb2
                 | DocumentFormat::Mobi
+                | DocumentFormat::Rtf
         ) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,

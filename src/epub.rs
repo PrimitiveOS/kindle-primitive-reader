@@ -65,22 +65,7 @@ struct Item {
 impl Book {
     pub fn open(path: &Path) -> Result<Self> {
         if loose::Format::for_path(path).is_some() {
-            let document = loose::Document::open(path)?;
-            return Ok(Self {
-                revision: crate::revision(&document.xhtml),
-                fixed_layout: false,
-                chapters: vec![Chapter {
-                    href: loose::CHAPTER_PATH.to_owned(),
-                    label: document.title.clone(),
-                }],
-                title: document.title,
-                author: document.author,
-                toc: document.toc,
-                content: Content::Loose {
-                    xhtml: document.xhtml,
-                    resources: document.resources,
-                },
-            });
+            return Ok(Self::from_loose(loose::Document::open(path)?));
         }
         let file = File::open(path)?;
         let metadata = file.metadata()?;
@@ -241,6 +226,35 @@ impl Book {
 
     pub(crate) fn revision(&self) -> u64 {
         self.revision
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn from_text(title: String, text: &str) -> Result<Self> {
+        Ok(Self::from_loose(loose::Document {
+            title,
+            author: None,
+            xhtml: loose::text_as_xhtml(text)?,
+            toc: Vec::new(),
+            resources: BTreeMap::new(),
+        }))
+    }
+
+    fn from_loose(document: loose::Document) -> Self {
+        Self {
+            revision: crate::revision(&document.xhtml),
+            fixed_layout: false,
+            chapters: vec![Chapter {
+                href: loose::CHAPTER_PATH.to_owned(),
+                label: document.title.clone(),
+            }],
+            title: document.title,
+            author: document.author,
+            toc: document.toc,
+            content: Content::Loose {
+                xhtml: document.xhtml,
+                resources: document.resources,
+            },
+        }
     }
 
     pub fn is_fixed_layout(&self) -> bool {

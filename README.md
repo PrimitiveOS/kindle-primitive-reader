@@ -33,14 +33,17 @@ These captures use Reader's Kindle interface in the desktop simulator.
 | EPUB 2 and EPUB 3 reflow | Publisher navigation, local links, saved text positions, per-book typography, bookmarks, search and notes |
 | Fixed-layout EPUB 3 | Static XHTML pages, contents, zoom and rotation |
 | PDF | Fixed pages, local outlines and links, bookmarks, passwords, page jumps, fit page or width, manual and automatic crop, zoom, pan and rotation. Embedded text supports search, selection, highlights and notes. |
-| DjVu | Fixed pages, crop, and existing embedded text with search and annotations |
+| DjVu | Fixed pages, crop, and embedded text with search and annotations |
 | CBZ, JPEG and PNG | Natural comic page order, selectable reading direction for comics, and the fixed-page reading controls |
 | TXT, HTML/XHTML, Markdown and FB2 | Shared text search and reading positions. FB2 preserves section navigation and supported embedded images, including ZIP and gzip packages. Markdown builds a contents list from headings. |
 | Legacy MOBI and PalmDOC | Unencrypted text and metadata from supported legacy files |
+| RTF | Paragraphs, basic character styling and text in supported code pages |
 | StarDict | Local dictionaries in `reader/data/dictionaries/`, including gzip indexes and indexed dictzip data |
 
 In Library, open Reading data to export or preview and restore a local backup
 of progress, settings, bookmarks and annotations.
+PDF and DjVu pages can open in a reflowed text view. The English OCR build can
+also recognize scans without an embedded text layer. [Offline OCR build](docs/ocr-build.md)
 Highlights can also import KOReader JSON annotations for the open reflowable
 book. Reader previews uniquely matched quotations and reports unresolved
 entries before applying the import. [KOReader JSON exporter](https://github.com/koreader/koreader/blob/042d9b39d4835408121970229cc37624e4f794bc/plugins/exporter.koplugin/target/json.lua)
