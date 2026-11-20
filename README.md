@@ -7,9 +7,9 @@ Kindle. [EPUB feasibility results](docs/epub-probe-results.md)
 
 ## Preview
 
-| Reading | Reading bars | Dictionary |
-| --- | --- | --- |
-| <img src="docs/screenshots/reading.png" width="260" alt="Reader displaying an EPUB with a compact Done control"> | <img src="docs/screenshots/reading-controls.png" width="260" alt="The same book with Library and Exit at the top and reading tools along the bottom"> | <img src="docs/screenshots/dictionary.png" width="260" alt="A compact dictionary definition displayed over the reading page"> |
+| Documents | Reading | Reading bars | Dictionary |
+| --- | --- | --- | --- |
+| <img src="docs/screenshots/documents.png" width="210" alt="Reader showing folders, file types, sizes, and unsupported files"> | <img src="docs/screenshots/reading.png" width="210" alt="Reader displaying an EPUB with a compact Done control"> | <img src="docs/screenshots/reading-controls.png" width="210" alt="The same book with Library and Exit at the top and reading tools along the bottom"> | <img src="docs/screenshots/dictionary.png" width="210" alt="A compact dictionary definition displayed over the reading page"> |
 
 These captures use Reader's Kindle interface in the desktop simulator.
 
@@ -18,8 +18,10 @@ These captures use Reader's Kindle interface in the desktop simulator.
 Install Reader from PrimitiveOS Store or follow the manual install guide.
 [Release downloads](https://github.com/PrimitiveOS/kindle-primitive-reader/releases) · [Install guide](INSTALL.md)
 
-- Open a document from Reader's library or use Continue Reading to return to
-  the saved passage.
+- Browse Documents one folder at a time. Rows show a folder or file icon and
+  each file's type and size. Files Reader cannot open are labelled and disabled.
+  Use **Up** to return to the parent folder, or **Find** to search all Documents.
+  **Continue reading** on the Documents screen returns to your saved passage.
 - Tap near the upper center of a page to reveal the reading bars. The bottom
   bar opens Contents, Bookmarks, Highlights, Find, Text and Go to. The top
   bar opens Library, saves a bookmark, or exits Reader. Tap the page to hide
@@ -46,7 +48,7 @@ Install Reader from PrimitiveOS Store or follow the manual install guide.
 - Search with or without case matching. Title and filename search also covers
   authors cached as books are opened.
 - Hold a book in Library to set its reading status, add it to Favorites, or
-  organize it into collections. Create collections from Organize library.
+  organize it into collections. Create collections from **Organize**.
   Book details shows available EPUB series information, the cover preview, and
   local time spent on the reading screen.
 - Open Controls on the reading bar to invert page colors, mirror touch zones,

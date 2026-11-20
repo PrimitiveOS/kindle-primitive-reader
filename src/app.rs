@@ -1,4 +1,6 @@
 //! The daily reader interface and foreground lifecycle.
+mod library_view;
+
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::io::{self, Read};
@@ -38,6 +40,8 @@ use crate::session::{
 };
 use crate::text_flow::TextFlow;
 use crate::{Engine, Probe, Result, Settings, TextAlignment};
+
+use self::library_view::{FileBrowser, file_type};
 
 const ROW_HEIGHT: i32 = 116;
 const LIST_X: i32 = 40;
@@ -182,6 +186,7 @@ impl Screen {
 enum Action {
     Open(LibraryBook),
     OpenTracked(u64),
+    Browse(PathBuf),
     Continue,
     ClearLibraryFilter,
     ListBooks(BookList),
@@ -289,6 +294,7 @@ struct Item {
     title: String,
     detail: Option<String>,
     action: Action,
+    folder: bool,
 }
 
 impl Item {
@@ -297,6 +303,7 @@ impl Item {
             title: title.into(),
             detail: None,
             action,
+            folder: false,
         }
     }
 
@@ -343,6 +350,7 @@ struct PositionImport {
 
 pub struct Reader {
     library: Library,
+    browser: FileBrowser,
     library_query: String,
     book_list: Option<BookList>,
     book_details: Option<BookDetails>,
@@ -407,10 +415,11 @@ pub struct Reader {
 
 impl Reader {
     pub fn open(documents: &Path, state: &Path, fonts: Vec<PathBuf>) -> io::Result<Self> {
-        let library = with_storage(|| {
+        let (library, browser) = with_storage(|| {
             let mut library = Library::open(documents, state)?;
             library.scan()?;
-            Ok(library)
+            let browser = FileBrowser::new(library.browse(Path::new(""))?);
+            Ok((library, browser))
         })?;
         let data = state.parent().unwrap_or(documents);
         let controls_path = data.join("reading-controls.json");
@@ -427,6 +436,7 @@ impl Reader {
         let ocr_assets = with_storage(|| Ok(data.parent().and_then(OcrAssets::discover)))?;
         Ok(Self {
             library,
+            browser,
             library_query: String::new(),
             book_list: None,
             book_details: None,
@@ -734,36 +744,7 @@ impl Reader {
 
     fn items(&self) -> Vec<Item> {
         if self.screen == Screen::Library {
-            let mut items = Vec::new();
-            if let Some(recent) = self.library.recently_read().next() {
-                items.push(Item::new("Continue reading", Action::Continue).detail(&recent.title));
-            }
-            let find = Item::new("Find a document", Action::Show(Screen::LibraryFind));
-            if self.library_query.is_empty() {
-                items.push(find);
-            } else {
-                items.push(find.detail(&self.library_query));
-                items.push(Item::new(
-                    "Clear library search",
-                    Action::ClearLibraryFilter,
-                ));
-            }
-            items.push(Item::new(
-                "Reading controls",
-                Action::Show(Screen::ReadingControls),
-            ));
-            items.push(Item::new("Reading data", Action::Show(Screen::ReadingData)));
-            items.push(Item::new(
-                "Organize library",
-                Action::Show(Screen::OrganizeLibrary),
-            ));
-            items.extend(
-                self.library
-                    .matching(&self.library_query)
-                    .cloned()
-                    .map(library_book_item),
-            );
-            return items;
+            return self.library_items().collect();
         }
         if let Some(items) = self.organization_items() {
             return items;
@@ -1647,6 +1628,7 @@ impl Reader {
     fn activate(&mut self, action: Action) -> Result<()> {
         match action {
             Action::Open(entry) => self.open_book(entry)?,
+            Action::Browse(directory) => self.browse_to(directory)?,
             Action::OpenTracked(id) => {
                 let entry = self.locate_tracked(id)?;
                 self.open_book(entry)?;
@@ -1662,6 +1644,7 @@ impl Reader {
             }
             Action::ClearLibraryFilter => {
                 self.library_query.clear();
+                self.browser.first_page();
                 self.show(Screen::Library);
             }
             Action::ListBooks(list) => {
@@ -2504,6 +2487,7 @@ impl Reader {
             let query = self.editor.string();
             if self.screen == Screen::LibraryFind {
                 self.library_query = query.trim().to_owned();
+                self.browser.first_page();
                 self.show(Screen::Library);
                 return Change::Partial;
             }
@@ -4394,6 +4378,10 @@ impl App for Reader {
             }
             return;
         }
+        if self.screen == Screen::Library {
+            self.draw_library(canvas);
+            return;
+        }
         let title = match (self.screen, self.book_list.as_ref()) {
             (Screen::BookList, Some(BookList::Favorites)) => "Favorites",
             (Screen::BookList, Some(BookList::Recent)) => "Recently read",
@@ -4405,15 +4393,7 @@ impl App for Reader {
             (Screen::BookList, Some(BookList::Collection(name))) => name,
             _ => self.screen.title(),
         };
-        header(
-            canvas,
-            title,
-            if self.screen == Screen::Library {
-                "Done"
-            } else {
-                "Back"
-            },
-        );
+        header(canvas, title, "Back");
         if self.screen == Screen::PageOverview {
             self.draw_overview(canvas);
             return;
@@ -4523,7 +4503,6 @@ impl App for Reader {
         .draw(canvas, None);
         if rows.is_empty() {
             let empty = match self.screen {
-                Screen::Library => "Copy a book or document to Documents to start reading",
                 Screen::Bookmarks | Screen::FixedBookmarks => "No bookmarks in this book",
                 Screen::Highlights => "No highlights or notes in this book",
                 Screen::Matches if self.search_at.is_some() && self.fixed.is_some() => {
@@ -4683,6 +4662,9 @@ impl App for Reader {
         ) {
             return self.handle_find(input);
         }
+        if self.screen == Screen::Library {
+            return self.library_input(input);
+        }
         let mut items = self.items();
         let count = items.len();
         let direction = match input {
@@ -4697,7 +4679,6 @@ impl App for Reader {
             }
             Input::Tap(x, y) if primitive_ui::back_button(WIDTH as i32).contains(x, y) => {
                 match self.screen {
-                    Screen::Library => return self.exit(),
                     Screen::OrganizeLibrary => self.show(Screen::Library),
                     Screen::BookList if matches!(self.book_list, Some(BookList::Author(_))) => {
                         self.book_list = Some(BookList::Authors);
@@ -4748,7 +4729,7 @@ impl App for Reader {
             }
             Input::Tap(x, y) if PREV.contains(x, y) => -1,
             Input::Tap(x, y) if NEXT.contains(x, y) => 1,
-            Input::LongTap(x, y) if matches!(self.screen, Screen::Library | Screen::BookList) => {
+            Input::LongTap(x, y) if self.screen == Screen::BookList => {
                 let Some(index) = list_item_at(self.list_page, count, x, y) else {
                     return Change::None;
                 };
@@ -4935,11 +4916,7 @@ impl App for Reader {
         }
         self.save()?;
         with_storage(|| self.library.scan())?;
-        if self.screen == Screen::Library {
-            self.list_page = self
-                .list_page
-                .min(self.items().len().saturating_sub(1) / ROWS_PER_PAGE);
-        }
+        self.refresh_browser()?;
         Ok(())
     }
 }
@@ -5069,12 +5046,14 @@ fn tracked_book_item(book: &BookState) -> Item {
 
 fn library_book_item(entry: LibraryBook) -> Item {
     let title = entry.title.clone();
-    let detail = entry.author.clone();
-    Item {
-        title,
-        detail,
-        action: Action::Open(entry),
+    let mut detail = file_type(&entry.path);
+    if let Some(author) = &entry.author {
+        detail.push_str(" · ");
+        detail.push_str(author);
     }
+    detail.push_str(" · ");
+    detail.push_str(&entry.path.to_string_lossy());
+    Item::new(title, Action::Open(entry)).detail(detail)
 }
 
 fn reading_time(seconds: u64) -> String {
@@ -5409,6 +5388,54 @@ mod tests {
     }
 
     #[test]
+    fn library_browses_folders_and_distinguishes_openable_documents() {
+        let fixture = Fixture::new();
+        let folder = fixture.root.join("A Reference.pdf");
+        fs::create_dir(&folder).unwrap();
+        let nested = folder.join("Volume 1");
+        fs::create_dir(&nested).unwrap();
+        fs::write(nested.join("Archive.zip"), b"archive").unwrap();
+        fs::write(nested.join("Essay.TXT"), b"A readable essay.").unwrap();
+        let mut app = fixture.app();
+        let tap_row = |index| Input::Tap(
+            150.0,
+            (library_view::LIBRARY_LIST_Y + ROW_HEIGHT * index + 30) as f32,
+        );
+
+        let first = &app.items()[0];
+        assert_eq!(first.title, "A Reference.pdf");
+        assert!(first.folder);
+        assert_eq!(first.detail.as_deref(), Some("Folder"));
+        assert_eq!(app.input(tap_row(0)), Change::Partial);
+        assert_eq!(app.items()[0].title, "Volume 1");
+        assert_eq!(app.input(tap_row(0)), Change::Partial);
+
+        let files = app.items();
+        assert_eq!(files[0].title, "Archive.zip");
+        assert_eq!(files[0].detail.as_deref(), Some("ZIP · 7 B · Not supported in Reader"));
+        assert_eq!(app.input(tap_row(0)), Change::None);
+        assert_eq!(app.items()[1].detail.as_deref(), Some("TXT · 17 B"));
+        assert_eq!(app.input(tap_row(1)), Change::Partial);
+        assert_eq!(app.screen, Screen::Book);
+        app.activate(Action::Show(Screen::Library)).unwrap();
+        assert_eq!(app.items()[0].title, "Archive.zip");
+
+        app.library_query = "Essay".into();
+        let results = app.items();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].detail.as_deref(), Some("TXT · A Reference.pdf/Volume 1/Essay.TXT"));
+        assert_eq!(app.input(Input::Tap(100.0, 170.0)), Change::Partial);
+        assert_eq!(app.items()[0].title, "Archive.zip");
+        assert_eq!(app.input(Input::PageBack), Change::Partial);
+        assert_eq!(app.items()[0].title, "Volume 1");
+
+        fs::remove_dir_all(&folder).unwrap();
+        app.storage_returned().unwrap();
+        assert!(app.items().iter().all(|item| item.title != "Volume 1"));
+        assert_eq!(app.screen, Screen::Library);
+    }
+
+    #[test]
     fn organizes_an_unopened_book_and_preserves_library_collections() {
         let fixture = Fixture::new();
         let mut app = fixture.app();
@@ -5425,7 +5452,7 @@ mod tests {
         assert_eq!(
             app.input(Input::LongTap(
                 85.0,
-                (LIST_Y + ROW_HEIGHT * index as i32 + 33) as f32
+                (library_view::LIBRARY_LIST_Y + ROW_HEIGHT * index as i32 + 33) as f32
             )),
             Change::Partial
         );
@@ -6200,7 +6227,7 @@ mod tests {
         assert_eq!(
             app.input(Input::Tap(
                 85.0,
-                (LIST_Y + ROW_HEIGHT * index as i32 + 33) as f32
+                (library_view::LIBRARY_LIST_Y + ROW_HEIGHT * index as i32 + 33) as f32
             )),
             Change::Partial
         );

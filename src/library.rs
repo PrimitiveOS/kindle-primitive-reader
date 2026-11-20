@@ -26,6 +26,7 @@ use crate::{Anchor, Settings, TextAlignment};
 const MAX_PATH_DEPTH: usize = 9;
 const MAX_SCAN_ENTRIES: usize = 20_000;
 const MAX_BOOKS: usize = 4_096;
+const MAX_BROWSE_ENTRIES: usize = 4_096;
 const MAX_RELOCATION_CHECKS: usize = 64;
 const MAX_RELOCATION_READ_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_STATE_BYTES: u64 = 4 * 1024 * 1024;
@@ -190,6 +191,26 @@ pub struct LibraryBook {
     pub size: u64,
     pub format: DocumentFormat,
     searchable: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct BrowseList {
+    pub entries: Vec<BrowseEntry>,
+    pub truncated: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct BrowseEntry {
+    pub path: PathBuf,
+    pub name: String,
+    pub kind: BrowseKind,
+}
+
+#[derive(Clone, Debug)]
+pub enum BrowseKind {
+    Folder,
+    Readable(LibraryBook),
+    Unavailable { size: u64, too_large: bool },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -596,12 +617,7 @@ impl Library {
         let mut seen = 0;
         let mut books = Vec::new();
         let mut truncated = false;
-        let known_metadata = self
-            .recent
-            .iter()
-            .rev()
-            .map(|state| (state.path.as_path(), state))
-            .collect::<HashMap<_, _>>();
+        let known_metadata = self.known_metadata();
         while let Some((relative, entries)) = dirs.last_mut() {
             let Some(entry) = entries.next() else {
                 dirs.pop();
@@ -647,6 +663,124 @@ impl Library {
         self.books = books;
         self.truncated = truncated;
         Ok(())
+    }
+
+    /// List one folder at a time. An empty Documents-relative path selects the library root.
+    pub fn browse(&self, folder: &Path) -> io::Result<BrowseList> {
+        let directory = fs::read_dir(self.browse_folder(folder)?)?;
+        let known_metadata = self.known_metadata();
+        let mut entries = Vec::new();
+        let mut truncated = false;
+        for (index, entry) in directory.enumerate() {
+            if index == MAX_SCAN_ENTRIES {
+                truncated = true;
+                break;
+            }
+            let Ok(entry) = entry else { continue };
+            let filename = entry.file_name();
+            let Some(name) = filename
+                .to_str()
+                .filter(|name| !name.chars().any(char::is_control))
+            else {
+                continue;
+            };
+            let path = folder.join(&filename);
+            if !safe_path(&path) {
+                continue;
+            }
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            let kind = if file_type.is_dir() && !has_extension(&path, "sdr") {
+                if path.components().count() == MAX_PATH_DEPTH {
+                    truncated = true;
+                    continue;
+                }
+                BrowseKind::Folder
+            } else if file_type.is_file() && !has_extension(&path, "sh") {
+                let Ok(metadata) = entry.metadata() else {
+                    continue;
+                };
+                if !metadata.is_file() {
+                    continue;
+                }
+                let size = metadata.len();
+                match DocumentFormat::for_path(&path) {
+                    Some(format) if size <= format.max_bytes() => {
+                        let saved = known_metadata
+                            .get(path.as_path())
+                            .filter(|state| state.size == size);
+                        BrowseKind::Readable(library_book(
+                            path.clone(),
+                            size,
+                            format,
+                            saved.copied(),
+                        ))
+                    }
+                    format => BrowseKind::Unavailable {
+                        size,
+                        too_large: format.is_some(),
+                    },
+                }
+            } else {
+                continue;
+            };
+            if entries.len() == MAX_BROWSE_ENTRIES {
+                truncated = true;
+                break;
+            }
+            entries.push(BrowseEntry {
+                path,
+                name: name.to_owned(),
+                kind,
+            });
+        }
+        entries.sort_by(|left, right| {
+            let folder = |entry: &BrowseEntry| matches!(entry.kind, BrowseKind::Folder);
+            folder(right)
+                .cmp(&folder(left))
+                .then_with(|| natural_cmp(&left.name, &right.name))
+        });
+        Ok(BrowseList { entries, truncated })
+    }
+
+    fn browse_folder(&self, relative: &Path) -> io::Result<PathBuf> {
+        let denied = || {
+            io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "Choose a folder from the library",
+            )
+        };
+        if (!relative.as_os_str().is_empty()
+            && (!safe_path(relative) || relative.components().count() >= MAX_PATH_DEPTH))
+            || !fs::symlink_metadata(&self.root)?.is_dir()
+        {
+            return Err(denied());
+        }
+        let mut absolute = self.root.clone();
+        for component in relative.components() {
+            let part = Path::new(component.as_os_str());
+            if has_extension(part, "sdr") || part.to_string_lossy().chars().any(char::is_control) {
+                return Err(denied());
+            }
+            absolute.push(part);
+            if !fs::symlink_metadata(&absolute)?.is_dir() {
+                return Err(denied());
+            }
+        }
+        let verified = absolute.canonicalize()?;
+        if !verified.starts_with(&self.root) {
+            return Err(denied());
+        }
+        Ok(verified)
+    }
+
+    fn known_metadata(&self) -> HashMap<&Path, &BookState> {
+        self.recent
+            .iter()
+            .rev()
+            .map(|state| (state.path.as_path(), state))
+            .collect()
     }
 
     pub fn entries(&self) -> &[LibraryBook] {
@@ -1492,6 +1626,12 @@ fn safe_path(path: &Path) -> bool {
         && path.components().all(|component| matches!(component, Component::Normal(name) if name.to_str().is_some_and(|name| !name.starts_with('.'))))
 }
 
+fn has_extension(path: &Path, extension: &str) -> bool {
+    path.extension()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case(extension))
+}
+
 fn denied() -> io::Error {
     io::Error::new(
         io::ErrorKind::PermissionDenied,
@@ -1527,6 +1667,129 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn browses_one_folder_with_known_metadata_and_unavailable_files() {
+        let scratch = Scratch::new();
+        let root = scratch.0.join("documents");
+        for folder in ["Zines", "Books/Series", "Field Notes.epub.SDR", ".hidden"] {
+            fs::create_dir_all(root.join(folder)).unwrap();
+        }
+        fs::write(root.join("Books/Series/Volume 10.txt"), b"ten").unwrap();
+        fs::write(root.join("Books/Series/volume 2.txt"), b"two").unwrap();
+        fs::write(root.join("A document.xps"), b"xps").unwrap();
+        fs::write(root.join("Notes.txt"), b"notes").unwrap();
+        fs::write(root.join("Launcher.SH"), b"scriptlet").unwrap();
+        fs::write(root.join(".private.txt"), b"hidden").unwrap();
+        File::create(root.join("Too big.TXT"))
+            .unwrap()
+            .set_len(MAX_INPUT as u64 + 1)
+            .unwrap();
+
+        let mut library = Library::open(&root, &scratch.0.join("reader.json")).unwrap();
+        let book = library.resolve(Path::new("Notes.txt")).unwrap();
+        let saved = library.remember(&book, 1, "Field notes");
+        saved.author = Some("Author".into());
+
+        let browse = library.browse(Path::new("")).unwrap();
+        assert!(!browse.truncated);
+        assert_eq!(
+            browse
+                .entries
+                .iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "Books",
+                "Zines",
+                "A document.xps",
+                "Notes.txt",
+                "Too big.TXT"
+            ],
+        );
+        assert_eq!(browse.entries[0].path, Path::new("Books"));
+        assert!(matches!(browse.entries[0].kind, BrowseKind::Folder));
+        assert!(matches!(
+            browse.entries[2].kind,
+            BrowseKind::Unavailable {
+                size: 3,
+                too_large: false
+            },
+        ));
+        let BrowseKind::Readable(book) = &browse.entries[3].kind else {
+            panic!("Text file is missing from the picker");
+        };
+        assert_eq!(book.title, "Field notes");
+        assert_eq!(book.author.as_deref(), Some("Author"));
+        assert!(matches!(
+            browse.entries[4].kind,
+            BrowseKind::Unavailable { size, too_large: true } if size == MAX_INPUT as u64 + 1
+        ));
+
+        let books = library.browse(Path::new("Books")).unwrap();
+        assert_eq!(books.entries.len(), 1);
+        assert_eq!(books.entries[0].path, Path::new("Books/Series"));
+        let series = library.browse(&books.entries[0].path).unwrap();
+        assert_eq!(series.entries.len(), 2);
+        assert_eq!(series.entries[0].name, "volume 2.txt");
+        assert_eq!(series.entries[1].name, "Volume 10.txt");
+        assert!(library.entries().is_empty());
+        library.scan().unwrap();
+        assert_eq!(library.matching("volume").count(), 2);
+    }
+
+    #[test]
+    fn rejects_hidden_and_escaping_browse_folders() {
+        let scratch = Scratch::new();
+        let root = scratch.0.join("documents");
+        let outside = scratch.0.join("outside");
+        fs::create_dir(&outside).unwrap();
+        fs::create_dir_all(root.join("Books")).unwrap();
+        fs::create_dir(root.join(".private")).unwrap();
+        fs::create_dir(root.join("Notes.epub.sdr")).unwrap();
+        fs::write(root.join("Notes.txt"), b"notes").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            symlink(&outside, root.join("outside")).unwrap();
+            symlink(root.join("Books"), root.join("alias")).unwrap();
+            symlink(root.join("Notes.txt"), root.join("alias.txt")).unwrap();
+        }
+        let library = Library::open(&root, &scratch.0.join("reader.json")).unwrap();
+        let browse = library.browse(Path::new("")).unwrap();
+        assert_eq!(browse.entries.len(), 2);
+        for path in [
+            ".private",
+            "../outside",
+            "Notes.epub.sdr",
+            "Notes.txt",
+            "Books/../Books",
+        ] {
+            let error = library.browse(Path::new(path)).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::PermissionDenied, "{path}");
+        }
+        assert!(library.browse(&outside).is_err());
+        #[cfg(unix)]
+        for path in ["outside", "alias", "alias.txt"] {
+            let error = library.browse(Path::new(path)).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::PermissionDenied, "{path}");
+        }
+    }
+
+    #[test]
+    fn folder_browse_reports_truncation_at_the_depth_limit() {
+        let scratch = Scratch::new();
+        let root = scratch.0.join("documents");
+        let folder = PathBuf::from_iter(std::iter::repeat_n("folder", MAX_PATH_DEPTH - 1));
+        fs::create_dir_all(root.join(&folder).join("deeper")).unwrap();
+        fs::write(root.join(&folder).join("Notes.txt"), b"notes").unwrap();
+        let library = Library::open(&root, &scratch.0.join("reader.json")).unwrap();
+        let browse = library.browse(&folder).unwrap();
+        assert!(browse.truncated);
+        assert_eq!(browse.entries.len(), 1);
+        assert_eq!(browse.entries[0].name, "Notes.txt");
+        assert!(library.browse(&folder.join("deeper")).is_err());
     }
 
     #[test]
