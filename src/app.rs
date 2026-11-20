@@ -340,6 +340,7 @@ pub struct Reader {
     rename_collection: Option<String>,
     controls_path: PathBuf,
     controls: ReadingControls,
+    pages_since_refresh: u8,
     touch_locked: bool,
     stats: ReadingStats,
     stats_path: PathBuf,
@@ -422,6 +423,7 @@ impl Reader {
             rename_collection: None,
             controls_path,
             controls,
+            pages_since_refresh: 0,
             touch_locked: false,
             stats,
             stats_path,
@@ -540,6 +542,7 @@ impl Reader {
             }
             entry.author = reading.author();
             self.active = None;
+            self.pages_since_refresh = 0;
             self.fixed = Some(ActiveFixed {
                 entry,
                 id,
@@ -583,6 +586,7 @@ impl Reader {
             Reading::open(config)?
         };
         entry.author.clone_from(&reading.probe.author);
+        self.pages_since_refresh = 0;
         self.active = Some(ActiveBook { entry, id, reading });
         self.fixed = None;
         self.back.clear();
@@ -821,6 +825,14 @@ impl Reader {
                 } else {
                     "Compact labels and controls"
                 }),
+                Item::new(
+                    "Full screen refresh",
+                    Action::SetReadingControls(ReadingControls {
+                        page_refresh: current.page_refresh.next(),
+                        ..current
+                    }),
+                )
+                .detail(format!("{} · paged reading", current.page_refresh.label())),
                 Item::new("Preferred dictionary", Action::ShowDictionaries).detail(
                     self.preferred_dictionary
                         .as_deref()
@@ -1121,7 +1133,18 @@ impl Reader {
                 .collect(),
             Screen::Bookmarks => self.bookmark_items(active.id),
             Screen::Typography => {
-                let mut items = text_items(reading.config.settings, reading.config.scroll);
+                let settings = reading.config.settings;
+                let mut items = text_items(settings, reading.config.scroll);
+                if reading.probe.is_vertical() {
+                    items.retain(|item| match item.action {
+                        Action::ReadingMode(_) => false,
+                        Action::Text(next) => {
+                            next.alignment == settings.alignment
+                                && next.disable_soft_hyphens == settings.disable_soft_hyphens
+                        }
+                        _ => true,
+                    });
+                }
                 let current = self
                     .library
                     .state(active.id)
@@ -1664,6 +1687,9 @@ impl Reader {
             }
             Action::SetReadingControls(controls) => {
                 controls.save(&self.controls_path)?;
+                if controls.page_refresh != self.controls.page_refresh {
+                    self.pages_since_refresh = 0;
+                }
                 self.controls = controls;
             }
             Action::LockTouch => {
@@ -1836,6 +1862,7 @@ impl Reader {
                 preferences.alignment = settings.alignment;
                 preferences.bold_text = settings.bold_text;
                 preferences.override_fonts = settings.override_fonts;
+                preferences.disable_soft_hyphens = settings.disable_soft_hyphens;
                 self.show(Screen::Book);
                 self.record_position();
             }
@@ -2064,6 +2091,7 @@ impl Reader {
             alignment: settings.alignment,
             bold_text: settings.bold_text,
             override_fonts: settings.override_fonts,
+            disable_soft_hyphens: settings.disable_soft_hyphens,
             font_file,
         };
         let mut profiles = self.profiles.clone();
@@ -2916,13 +2944,33 @@ impl Reader {
         let Some(input) = self.controls.page_input(input) else {
             return Change::None;
         };
+        let previous = (active.reading.chapter, active.reading.page);
         let change = active.reading.input(input);
-        if change == Change::Partial {
-            self.notice = None;
-            self.clear_stale_selection();
-            self.record_position();
+        self.finish_book_update(change, previous)
+    }
+
+    fn finish_book_update(&mut self, change: Change, previous: (usize, usize)) -> Change {
+        if change != Change::Partial {
+            return change;
         }
-        change
+        let page_changed = self.active.as_ref().is_some_and(|active| {
+            active.reading.paged_frame_ready()
+                && (active.reading.chapter, active.reading.page) != previous
+        });
+        self.notice = None;
+        self.clear_stale_selection();
+        self.record_position();
+        self.reading_update(page_changed)
+    }
+
+    fn reading_update(&mut self, page_changed: bool) -> Change {
+        if page_changed {
+            self.controls
+                .page_refresh
+                .after_page(&mut self.pages_since_refresh)
+        } else {
+            Change::Partial
+        }
     }
 
     fn inspect_illustration(&mut self, x: f32, y: f32) -> Result<bool> {
@@ -3030,16 +3078,27 @@ impl Reader {
         let Some(input) = self.controls.page_input(input) else {
             return Change::None;
         };
-        match fixed.reading.input(input) {
+        let result = fixed.reading.input(input);
+        self.finish_fixed_update(result, page)
+    }
+
+    fn finish_fixed_update(&mut self, result: Result<bool>, previous: usize) -> Change {
+        match result {
             Ok(true) => {
+                let (changed, continuous) = self.fixed.as_ref().map_or((false, false), |fixed| {
+                    (
+                        fixed.reading.page() != previous,
+                        fixed.reading.is_continuous(),
+                    )
+                });
                 self.notice = None;
-                if fixed.reading.page() != page || fixed.reading.is_continuous() {
+                if changed || continuous {
                     self.search_result = None;
                     self.pdf_selection = None;
                     self.pdf_result_region = None;
                 }
                 self.record_position();
-                Change::Partial
+                self.reading_update(changed && !continuous)
             }
             Ok(false) => Change::None,
             Err(error) => self.report(error),
@@ -4384,6 +4443,7 @@ impl App for Reader {
         }
         if matches!(input, Input::Sleep | Input::Wake) {
             self.stats_awake = input == Input::Wake;
+            self.pages_since_refresh = 0;
             if with_storage(|| Ok(())).is_ok() {
                 self.update_stats_activity(Instant::now());
             } else {
@@ -4679,29 +4739,16 @@ impl App for Reader {
         if self.screen == Screen::Book
             && let Some(active) = &mut self.active
         {
+            let previous = (active.reading.chapter, active.reading.page);
             let change = active.reading.tick(now);
-            if change == Change::Partial {
-                self.notice = None;
-                self.clear_stale_selection();
-                self.record_position();
-            }
-            return change;
+            return self.finish_book_update(change, previous);
         }
         if self.screen == Screen::Fixed
             && let Some(fixed) = &mut self.fixed
         {
-            return match fixed.reading.tick(now) {
-                Ok(true) => {
-                    self.notice = None;
-                    self.search_result = None;
-                    self.pdf_selection = None;
-                    self.pdf_result_region = None;
-                    self.record_position();
-                    Change::Partial
-                }
-                Ok(false) => Change::None,
-                Err(error) => self.report(error),
-            };
+            let previous = fixed.reading.page();
+            let result = fixed.reading.tick(now);
+            return self.finish_fixed_update(result, previous);
         }
         Change::None
     }
@@ -4714,6 +4761,7 @@ impl App for Reader {
     }
 
     fn storage_returned(&mut self) -> io::Result<()> {
+        self.pages_since_refresh = 0;
         self.stats.discard_active();
         self.update_stats_activity(Instant::now());
         self.ocr_assets = self
@@ -5091,6 +5139,17 @@ fn text_items(settings: Settings, scroll: bool) -> Vec<Item> {
         )
         .detail(alignment),
         Item::new(
+            if settings.disable_soft_hyphens {
+                "Allow publisher hyphenation"
+            } else {
+                "Disable publisher hyphenation"
+            },
+            Action::Text(Settings {
+                disable_soft_hyphens: !settings.disable_soft_hyphens,
+                ..settings
+            }),
+        ),
+        Item::new(
             if settings.bold_text {
                 "Use regular body text"
             } else {
@@ -5341,6 +5400,43 @@ mod tests {
     }
 
     #[test]
+    fn full_refresh_counts_coalesced_page_frames_and_persists_the_interval() {
+        use crate::reading_controls::PageRefresh;
+
+        let fixture = Fixture::new();
+        let long = fixture.root.join("Long Chapter.epub");
+        fs::write(&long, include_bytes!("../tests/fixtures/long-chapter.epub")).unwrap();
+        let mut app = fixture.app();
+        app.activate(Action::SetReadingControls(ReadingControls {
+            page_refresh: PageRefresh::EveryFivePages,
+            ..app.controls
+        }))
+        .unwrap();
+        let mut app = fixture.app();
+        assert_eq!(app.controls.page_refresh, PageRefresh::EveryFivePages);
+        app.open_path(&long).unwrap();
+
+        let deadline = |app: &Reader| app.active.as_ref().unwrap().reading.deadline().unwrap();
+        assert_eq!(app.input(Input::PageForward), Change::None);
+        assert_eq!(app.input(Input::PageBack), Change::None);
+        assert_eq!(app.tick(deadline(&app)), Change::None);
+        assert_eq!(app.pages_since_refresh, 0);
+
+        for frame in 1..=5 {
+            assert_eq!(app.input(Input::PageForward), Change::None);
+            assert_eq!(app.input(Input::PageForward), Change::None);
+            let expected = if frame == 5 {
+                Change::Full
+            } else {
+                Change::Partial
+            };
+            assert_eq!(app.tick(deadline(&app)), expected);
+            assert_eq!(app.active.as_ref().unwrap().reading.page, frame * 2);
+        }
+        assert_eq!(app.pages_since_refresh, 0);
+    }
+
+    #[test]
     fn touch_lock_preserves_page_buttons_unlock_and_exit() {
         let fixture = Fixture::new();
         let long = fixture.root.join("Long Chapter.epub");
@@ -5434,6 +5530,7 @@ mod tests {
         app.open_path(&fixture.book).unwrap();
         app.activate(Action::Text(Settings {
             font_size: 58.0,
+            disable_soft_hyphens: true,
             ..device_settings()
         }))
         .unwrap();
@@ -5444,6 +5541,7 @@ mod tests {
         app.activate(Action::ResetText).unwrap();
         let reset = &app.active.as_ref().unwrap().reading;
         assert_eq!(reset.config.settings.font_size, device_settings().font_size);
+        assert!(!reset.config.settings.disable_soft_hyphens);
         assert!(!reset.config.scroll);
         assert_eq!(position(reset).anchor, original.anchor);
         app.save().unwrap();
@@ -5453,6 +5551,7 @@ mod tests {
         reopened.activate(Action::ApplyProfile(0)).unwrap();
         let reading = &reopened.active.as_ref().unwrap().reading;
         assert_eq!(reading.config.settings.font_size, 58.0);
+        assert!(reading.config.settings.disable_soft_hyphens);
         assert!(reading.config.scroll);
         assert_eq!(position(reading).anchor, original.anchor);
         reopened.activate(Action::RemoveProfile(0)).unwrap();

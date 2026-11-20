@@ -22,7 +22,10 @@ These captures use Reader's Kindle interface in the desktop simulator.
   bar opens Library, saves a bookmark, or exits Reader. Tap the page to hide
   the bars. Done is also available from the reading view.
 - Use the Kindle's page buttons, tap the outer thirds of the page, or swipe.
-  Text settings switch between paged and continuous reading.
+  Text settings switch between paged and continuous reading in horizontal EPUBs.
+  Supported `vertical-rl` chapters use right-to-left columns and page turns.
+- Controls offers a full E Ink refresh every page, every five pages, or every
+  ten pages in paged reading. Default uses the normal refresh behavior.
 - Tap Pages on the reading bar to browse thumbnails across EPUB chapters or
   a fixed-page document. Open a preview and return with Previous location.
 - At the end of a comic, Next comic opens the following archive in the same

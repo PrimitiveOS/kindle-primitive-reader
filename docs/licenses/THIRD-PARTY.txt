@@ -498,7 +498,7 @@ parlance 0.1.1 (Apache-2.0 OR MIT)
 https://static.crates.io/crates/parlance/parlance-0.1.1.crate
 
 parley 0.12.0 (Apache-2.0 OR MIT)
-https://static.crates.io/crates/parley/parley-0.12.0.crate
+https://github.com/linebender/parley/tree/6e1143dda817360dd3a2a64f9133c6e5dfabd881/parley
 
 parley_data 0.12.0 (Apache-2.0 OR MIT)
 https://static.crates.io/crates/parley_data/parley_data-0.12.0.crate

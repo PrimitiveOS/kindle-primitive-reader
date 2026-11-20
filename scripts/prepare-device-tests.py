@@ -45,7 +45,8 @@ for font in "$@"; do
 done
 profile() {
     book=$1
-    shift
+    chapter=$2
+    shift 2
     # Rebuild the option vector without word splitting font filenames.
     remaining=$#
     while [ "$remaining" -gt 0 ]; do
@@ -57,12 +58,13 @@ profile() {
     iteration=0
     while [ "$iteration" -lt 5 ]; do
         ./reader-probe parley "$book" "$@" --width 1264 --height 1606 \
-            --size 42 --margin 54 --line-height 1.35 --turns 30
+            --size 42 --margin 54 --line-height 1.35 --chapter "$chapter" --turns 30
         iteration=$((iteration + 1))
     done
 }
-profile fixtures/field-notes-epub3.epub "$@"
-profile fixtures/long-chapter.epub "$@"
+profile fixtures/field-notes-epub3.epub 1 "$@"
+profile fixtures/long-chapter.epub 1 "$@"
+profile fixtures/vertical-chapters.epub 2 "$@"
 """
 
 

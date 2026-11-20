@@ -8,15 +8,16 @@ Compare against the installed KOReader release for hardware measurements. Record
 
 | Area | Development coverage | Remaining work |
 | --- | --- | --- |
-| EPUB reading | Saved positions, page and scroll modes, reading bars, printed page references, whole-book percentage jumps, publisher CSS, local fonts and illustrations, bounded static SVG, horizontal ruby, inherited language, writing direction, and publisher line-breaking rules. Fixed pages include publisher-defined spreads. Find, bookmarks, highlights and notes share source locations. | Broader ruby and stylesheet fidelity, discretionary hyphens, dictionary-based hyphenation, vertical writing, and the final device suite |
+| EPUB reading | Saved positions, page and scroll modes, reading bars, printed page references, whole-book percentage jumps, publisher CSS, local fonts and illustrations, bounded static SVG, ruby, authored soft hyphens, inherited language, horizontal writing direction, and publisher line-breaking rules. Supported vertical chapters use right-to-left columns and the same text anchors. Fixed pages include publisher-defined spreads and the XHTML viewport directives. | More advanced stylesheet cases, automatic dictionary-based hyphenation, mixed writing modes in one chapter, and the final device suite |
 | PDF | Fixed pages and continuous scroll, printed labels, page thumbnails, outlines and links, passwords, page, width and height fit, crop, contrast, text search and local annotations. Visible embedded highlights import and annotated-copy export for intact unencrypted PDFs up to 16 MiB. | Broader password, outline and annotation types, and sustained large-scan tests |
 | Other offline reading | Fixed-layout EPUB, DjVu, TXT, HTML, single-document HTMLZ, Markdown, FB2, supported MOBI/PalmDOC and KF8, DOCX, CHM, RTF, TCR, CBZ, uncompressed USTAR CBT, selected CBR, JPEG, PNG, BMP, GIF first frame, portable anymaps, static SVG, selected WebP and TIFF, and compressed StarDict with synonyms | Wider format variants and the final device suite |
 | Scanned documents | Embedded and recognized text reflow across readable source pages. Original word-image reflow for scans with complete horizontal left-to-right OCR and a column view for clear two-column scans. English and Vietnamese recognized by the worker on desktop. The ARMHF package bundles English and accepts local additional models. | OCR in the Kindle runtime, broader layout and language cases, and sustained tests with real scans |
-| Library and controls | Favorites, reading status, collections, author and recent views, EPUB cover previews and series, reading time, reusable text profiles, night pages, adjustable toolbar sizes, mirrored or disabled tap turns, touch lock, chapter-spanning page thumbnails and location history | More configurable gestures, broader accessibility, and the final device suite |
+| Library and controls | Favorites, reading status, collections, author and recent views, EPUB cover previews and series, reading time, reusable text profiles, night pages, adjustable toolbar sizes, mirrored or disabled tap turns, touch lock, optional E Ink full refresh intervals, chapter-spanning page thumbnails and location history | More configurable gestures, broader accessibility, and the final device suite |
 | Reading data | Backup and restore with preview, text/Markdown/HTML annotation exports, KOReader JSON annotations by unique quotation, and sampled-fingerprint checks for fixed-page sidecar progress and a subset of reflowable EPUB CFIs | Legacy CREngine pointers, broader CFI and sidecar variants, and the final device suite |
 | Kindle verification | EPUB engine timing, probe page buttons, sleep and USB resume, and a temporary preview's contents jump and reopen passed on Oasis 3 | Deploy the completed core reader and run the consolidated automatic hardware workflow |
 
-The desktop checkpoint passed 229 Reader tests and 16 Files tests. Reader
+The desktop checkpoint passed 240 Reader tests, six vendored Parley tests, and
+16 Files tests. Reader
 rendered three public-domain DjVu samples and 12 narrative chapters from the
 Standard Ebooks edition of *Alice’s Adventures in Wonderland*. The licensed
 ARMHF development archive passed its checksum and package-content checks. The
@@ -133,11 +134,28 @@ the tracked decoder workspace to 32 MiB, the RAR5 dictionary to 16 MiB,
 and each encoded or packed image page to 16 MiB or the format's smaller
 limit. [Pinned RAR decoder](https://docs.rs/rars/0.12.3/rars/)
 
-The pinned Parley shaper handles horizontal runs. True vertical EPUB needs a
-vertical glyph shaping and painting path with source-aware pagination. Blitz
-can transpose CSS box geometry. Manual soft hyphens need a line breaker that
-counts and paints the glyph at the chosen break while preserving the source
-offset. Dictionary hyphenation builds on the same capability.
+The patched horizontal line breaker counts and paints an authored hyphen only
+when its line break is selected and the glyph fits. It honors `hyphens: none`
+and `hyphens: manual`, with a per-book switch in Text settings. `auto` currently
+uses the same authored opportunities.
+Find and dictionary lookup skip soft hyphens while bookmarks and annotations
+retain the original UTF-8 positions. [Parley patch](../vendor/parley/PRIMITIVEOS-PATCH.md)
+
+Eligible `vertical-rl` chapters shape upright glyphs with HarfRust and paint
+sideways Latin from horizontal glyphs rotated clockwise. Supported ruby
+pronunciations sit next to their base character or phrase. Anchored links,
+selections and chapter positions use the original source. Vertical chapters
+use pages and preserve the book's scroll preference for horizontal chapters.
+Mixed writing modes, tables, artwork and unavailable vertical font coverage
+use the horizontal rendering path.
+[CSS Writing Modes](https://www.w3.org/TR/css-writing-modes-3/#block-flow)
+
+Reader rendered all seven pages at the expected dimensions across four W3C
+fixed-layout publications covering device dimensions, unit suffixes, repeated
+dimensions, and multiple viewport declarations.
+[EPUB 3.3 fixed-layout requirements](https://www.w3.org/TR/epub-rs-33/#sec-fxl-icb)
+· [W3C EPUB 3.3 test suite](https://w3c.github.io/epub-tests/epub33/)
+
 [Parley shaping](https://github.com/linebender/parley/blob/6e1143dda817360dd3a2a64f9133c6e5dfabd881/parley_engine/src/shape/shaper.rs)
 · [Parley line breaking](https://github.com/linebender/parley/blob/6e1143dda817360dd3a2a64f9133c6e5dfabd881/parley/src/layout/line_break.rs)
 · [Blitz writing modes](https://github.com/dioxuslabs/blitz/blob/92b11f1bd8ab7975411328b0406a95a09445b4e7/packages/blitz-dom/src/layout/writing_mode.rs)

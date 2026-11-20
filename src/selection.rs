@@ -34,11 +34,10 @@ impl Probe {
     }
 
     pub(crate) fn word_in(&self, range: Range<f32>, x: f32, y: f32) -> Option<TextSelection> {
-        let point = self.selection_point(range, x, y)?;
-        let Renderer::Parley(renderer) = &self.renderer else {
-            return None;
-        };
-        let (key, offset) = renderer.source_at(point.x, point.y)?;
+        if !self.is_vertical() {
+            self.selection_point(range.clone(), x, y)?;
+        }
+        let (key, offset) = self.source_at(range, x, y)?;
         let block = &self.source.blocks[self.selection_block(key)?];
         let word = word_range(&block.text, offset)?;
         let start = self.anchor(key, word.start);
@@ -48,7 +47,12 @@ impl Probe {
 
     /// Find the caret nearest the point within a visible paragraph.
     pub fn text_position_at(&self, page: usize, x: f32, y: f32) -> Option<Anchor> {
-        let point = self.selection_point(self.pages.range(page)?, x, y)?;
+        let range = self.pages.range(page)?;
+        if let Renderer::Vertical(renderer) = &self.renderer {
+            let (key, offset) = renderer.caret_at(range, x, y)?;
+            return Some(self.anchor(key, offset));
+        }
+        let point = self.selection_point(range, x, y)?;
         let Renderer::Parley(renderer) = &self.renderer else {
             return None;
         };
@@ -106,10 +110,22 @@ impl Probe {
         page: Range<f32>,
         selection: &TextSelection,
     ) -> Vec<HighlightRect> {
-        let Renderer::Parley(renderer) = &self.renderer else {
+        let Some(spans) = self.selection_spans(&selection.start, &selection.end) else {
             return Vec::new();
         };
-        let Some(spans) = self.selection_spans(&selection.start, &selection.end) else {
+        if let Renderer::Vertical(renderer) = &self.renderer {
+            return (spans.first..=spans.last)
+                .flat_map(|index| {
+                    let block = &self.source.blocks[index];
+                    spans
+                        .in_block(index, block.text.len())
+                        .map_or_else(Vec::new, |bytes| {
+                            renderer.selection_rects(page.clone(), block.key, bytes)
+                        })
+                })
+                .collect();
+        }
+        let Renderer::Parley(renderer) = &self.renderer else {
             return Vec::new();
         };
         let mut rects = Vec::new();

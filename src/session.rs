@@ -52,12 +52,12 @@ impl PagePaint {
     }
 }
 
-pub(crate) struct PageTurns {
-    pub(crate) pending: Vec<isize>,
+pub(crate) struct PageTurns<T = isize> {
+    pub(crate) pending: Vec<T>,
     pub(crate) next_refresh: Instant,
 }
 
-impl PageTurns {
+impl<T> PageTurns<T> {
     pub(crate) fn new(now: Instant) -> Self {
         Self {
             pending: Vec::new(),
@@ -69,12 +69,17 @@ impl PageTurns {
         (!self.pending.is_empty()).then_some(self.next_refresh)
     }
 
-    pub(crate) fn take_due(&mut self, now: Instant) -> Vec<isize> {
+    pub(crate) fn take_due(&mut self, now: Instant) -> Vec<T> {
         if now < self.next_refresh {
             return Vec::new();
         }
         std::mem::take(&mut self.pending)
     }
+}
+
+enum ReadingMotion {
+    Page(isize),
+    Pixels(f32),
 }
 
 #[derive(Clone)]
@@ -114,7 +119,7 @@ pub(crate) struct Reading {
     error: Option<String>,
     adjacent: Vec<(usize, GrayImage)>,
     prefetch: Option<Instant>,
-    turns: PageTurns,
+    turns: PageTurns<ReadingMotion>,
 }
 
 impl Reading {
@@ -133,7 +138,7 @@ impl Reading {
         let page = anchor
             .and_then(|anchor| probe.page_for(anchor))
             .unwrap_or(fallback_page.min(probe.page_count() - 1));
-        let scroll_top = config.scroll.then(|| {
+        let scroll_top = (config.scroll && !probe.is_vertical()).then(|| {
             anchor
                 .and_then(|anchor| probe.anchor_top(anchor))
                 .unwrap_or_else(|| probe.page_range(page).start)
@@ -186,17 +191,8 @@ impl Reading {
             .checked_add_signed(direction)
             .filter(|chapter| *chapter < self.probe.chapter_count())
         {
-            let mut probe = self.config.chapter(chapter)?;
-            let page = if direction < 0 {
-                probe.page_count() - 1
-            } else {
-                0
-            };
-            self.frame = capture(&mut probe, chapter, page, None)?;
-            self.probe = probe;
-            self.chapter = chapter;
-            self.page = page;
-            self.adjacent.clear();
+            let probe = self.config.chapter(chapter)?;
+            self.land_at_chapter_edge(probe, chapter, direction)?;
             crossed_chapter = true;
         } else {
             return Ok(Change::None);
@@ -217,11 +213,15 @@ impl Reading {
         let count = pending.len();
         let previous = (self.chapter, self.page, self.scroll_top);
         let mut change = Change::None;
-        for direction in pending {
-            let result = if let Some(top) = self.scroll_top {
-                self.scroll(top, direction as f32)
-            } else {
-                self.turn(direction)
+        for motion in pending {
+            let result = match (motion, self.scroll_top) {
+                (ReadingMotion::Page(direction), Some(top)) => {
+                    let distance = (self.config.settings.text_height() as f32 - 90.0).max(1.0);
+                    self.scroll(top, direction as f32 * distance)
+                }
+                (ReadingMotion::Page(direction), None) => self.turn(direction),
+                (ReadingMotion::Pixels(distance), Some(top)) => self.scroll(top, distance),
+                (ReadingMotion::Pixels(_), None) => continue,
             };
             match result {
                 Ok(Change::Partial) => change = Change::Partial,
@@ -265,11 +265,18 @@ impl Reading {
     }
 
     pub(crate) fn set_scroll(&mut self, scroll: bool) -> Result<()> {
+        if scroll && self.probe.is_vertical() {
+            return Err("Vertical EPUB chapters use page turns".into());
+        }
         let anchor = self.anchor();
         let mut config = self.config.clone();
         config.scroll = scroll;
         *self = Self::restore(config, self.chapter, self.page, anchor.as_ref())?;
         Ok(())
+    }
+
+    pub(crate) fn paged_frame_ready(&self) -> bool {
+        self.scroll_top.is_none() && self.error.is_none()
     }
 
     pub(crate) fn go_to_page(&mut self, chapter: usize, page: usize) -> Result<()> {
@@ -322,6 +329,9 @@ impl Reading {
     }
 
     fn scroll(&mut self, top: f32, distance: f32) -> Result<Change> {
+        if distance == 0.0 {
+            return Ok(Change::None);
+        }
         let next = (top + distance).clamp(0.0, self.probe.scroll_end());
         if next != top {
             let page = self.probe.page_at(next);
@@ -337,21 +347,39 @@ impl Reading {
             else {
                 return Ok(Change::None);
             };
-            let mut probe = self.config.chapter(chapter)?;
-            let next = if direction < 0 {
-                probe.scroll_end()
-            } else {
-                0.0
-            };
-            let page = probe.page_at(next);
-            self.frame = capture(&mut probe, chapter, page, Some(next))?;
-            self.probe = probe;
-            self.chapter = chapter;
-            self.page = page;
-            self.scroll_top = Some(next);
+            let probe = self.config.chapter(chapter)?;
+            self.land_at_chapter_edge(probe, chapter, direction)?;
         }
         self.error = None;
         Ok(Change::Partial)
+    }
+
+    fn land_at_chapter_edge(
+        &mut self,
+        mut probe: Probe,
+        chapter: usize,
+        direction: isize,
+    ) -> Result<()> {
+        let page = if direction < 0 {
+            probe.page_count() - 1
+        } else {
+            0
+        };
+        let top = (self.config.scroll && !probe.is_vertical()).then(|| {
+            if direction < 0 {
+                probe.scroll_end()
+            } else {
+                0.0
+            }
+        });
+        let page = top.map_or(page, |top| probe.page_at(top));
+        self.frame = capture(&mut probe, chapter, page, top)?;
+        self.probe = probe;
+        self.chapter = chapter;
+        self.page = page;
+        self.scroll_top = top;
+        self.adjacent.clear();
+        Ok(())
     }
 
     pub(crate) fn jump(&mut self, chapter: usize, fragment: Option<&str>) -> Result<()> {
@@ -398,7 +426,7 @@ impl Reading {
         let page = anchor
             .and_then(|anchor| candidate.page_for(anchor))
             .unwrap_or(fallback_page);
-        let top = self.config.scroll.then(|| {
+        let top = (self.config.scroll && !candidate.is_vertical()).then(|| {
             anchor
                 .and_then(|anchor| candidate.anchor_top(anchor))
                 .unwrap_or_else(|| candidate.page_range(page).start)
@@ -470,7 +498,7 @@ impl Reading {
             }
         }
         let full = paint.is_full();
-        if !full {
+        if !full && !self.probe.is_vertical() {
             self.clear_lines_cut_by_tools(&mut page, &paint.visible);
         }
         draw_page_picture(canvas, page, paint);
@@ -526,6 +554,7 @@ impl App for Reading {
     }
 
     fn input(&mut self, input: Input) -> Change {
+        let advance = if self.probe.is_vertical() { -1 } else { 1 };
         let direction = match input {
             Input::Sleep => {
                 self.turns.pending.clear();
@@ -540,28 +569,23 @@ impl App for Reading {
             Input::Tap(x, y) if DONE.contains(x, y) => return Change::Exit,
             Input::PageForward => 1,
             Input::PageBack => -1,
-            Input::Swipe { dx, dy, .. } if self.config.scroll && dy.abs() >= dx.abs() => {
-                self.turns.pending.push((-dy).round() as isize);
+            Input::Swipe { dx, dy, .. } if self.scroll_top.is_some() && dy.abs() >= dx.abs() => {
+                self.turns.pending.push(ReadingMotion::Pixels(-dy));
                 return self.present_page_turns(Instant::now());
             }
             Input::Swipe { dx, dy, .. } if dx.abs() > dy.abs() => {
                 if dx < 0.0 {
-                    1
+                    advance
                 } else {
-                    -1
+                    -advance
                 }
             }
-            Input::Tap(x, y) if y < PAGE_HEIGHT as f32 && x < WIDTH as f32 / 3.0 => -1,
-            Input::Tap(x, y) if y < PAGE_HEIGHT as f32 && x > WIDTH as f32 * 2.0 / 3.0 => 1,
+            Input::Tap(x, y) if y < PAGE_HEIGHT as f32 && x < WIDTH as f32 / 3.0 => -advance,
+            Input::Tap(x, y) if y < PAGE_HEIGHT as f32 && x > WIDTH as f32 * 2.0 / 3.0 => advance,
             _ => return Change::None,
         };
         self.prefetch = None;
-        let direction = if self.config.scroll {
-            direction * (self.config.settings.text_height() as isize - 90)
-        } else {
-            direction
-        };
-        self.turns.pending.push(direction);
+        self.turns.pending.push(ReadingMotion::Page(direction));
         self.present_page_turns(Instant::now())
     }
 
@@ -642,5 +666,43 @@ mod tests {
         assert_eq!(turns.deadline(), Some(now + PAGE_REFRESH_GAP));
         assert_eq!(turns.take_due(now + PAGE_REFRESH_GAP), [1, 1, -1, 1]);
         assert_eq!(turns.deadline(), None);
+    }
+
+    #[test]
+    fn enters_and_leaves_vertical_chapters_with_scroll_preference_preserved() {
+        let mut reading = Reading::open(BookConfig {
+            engine: Engine::Parley,
+            book: crate::test_fixture("vertical-chapters.epub"),
+            fonts: vec![crate::test_fixture("fonts/Silkscreen-Regular.ttf")],
+            settings: Settings {
+                width: WIDTH,
+                height: PAGE_HEIGHT,
+                ..Settings::default()
+            },
+            scroll: true,
+        })
+        .unwrap();
+        assert!(reading.scroll_top.is_some());
+        reading.input(Input::PageForward);
+        reading.tick(reading.deadline().unwrap());
+        assert_eq!(reading.chapter, 1);
+        assert!(reading.probe.is_vertical());
+        assert!(reading.scroll_top.is_none());
+        assert!(reading.set_scroll(true).is_err());
+
+        reading.input(Input::Tap(12.0, 350.0));
+        reading.tick(reading.deadline().unwrap());
+        assert_eq!(reading.page, 1);
+        reading.input(Input::PageBack);
+        reading.tick(reading.deadline().unwrap());
+        assert_eq!(reading.page, 0);
+
+        let last_page = reading.probe.page_count() - 1;
+        reading.go_to_page(1, last_page).unwrap();
+        reading.input(Input::PageForward);
+        reading.tick(reading.deadline().unwrap());
+        assert_eq!(reading.chapter, 2);
+        assert_eq!(reading.scroll_top, Some(0.0));
+        assert!(reading.config.scroll);
     }
 }

@@ -97,6 +97,8 @@ def collect():
             source = "https://github.com/matyushkin/djvu-rs/tree/c8e86c93214f9f10093c2c696945cfef0c9e500d/crates/djvu-bzz"
         if not source and name == "libchm":
             source = "https://github.com/trypsynth/libchm/tree/54164731f2defd92856a63eab8e7cee9a2df2896"
+        if not source and name == "parley":
+            source = "https://github.com/linebender/parley/tree/6e1143dda817360dd3a2a64f9133c6e5dfabd881/parley"
         if source.startswith("registry+"):
             source = f"https://static.crates.io/crates/{name}/{name}-{version}.crate"
         elif source.startswith("git+"):

@@ -53,6 +53,7 @@ mod tcr;
 #[cfg(feature = "kindle")]
 mod text_flow;
 mod tiff_image;
+mod vertical_layout;
 
 use std::error::Error;
 use std::fs;
@@ -114,6 +115,7 @@ pub struct Settings {
     pub alignment: TextAlignment,
     pub bold_text: bool,
     pub override_fonts: bool,
+    pub disable_soft_hyphens: bool,
 }
 
 impl Default for Settings {
@@ -127,6 +129,7 @@ impl Default for Settings {
             alignment: TextAlignment::Publisher,
             bold_text: false,
             override_fonts: false,
+            disable_soft_hyphens: false,
         }
     }
 }
@@ -174,6 +177,18 @@ struct Pagination {
 }
 
 impl Pagination {
+    fn fixed_stride(height: f32, extent: f32) -> Result<Self> {
+        if !extent.is_finite() || !(0.0..=2_000_000.0).contains(&extent) {
+            return Err("The chapter exceeds the layout height limit".into());
+        }
+        let pages = (extent / height).ceil().max(1.0) as usize;
+        let mut bounds = (0..pages)
+            .map(|page| page as f32 * height)
+            .collect::<Vec<_>>();
+        bounds.push(extent);
+        Ok(Self { bounds })
+    }
+
     fn new(lines: &[Line], height: f32, mut content_height: f32) -> Result<Self> {
         let mut intervals: Vec<Range<f32>> = Vec::new();
         for line in lines {
@@ -229,6 +244,7 @@ impl Pagination {
 enum Renderer {
     Blitz(Box<blitz::BlitzChapter>),
     Parley(parley_layout::ParleyChapter),
+    Vertical(Box<vertical_layout::VerticalChapter>),
 }
 
 /// One bounded chapter layout. The renderer and cache are replaced at a chapter turn.
@@ -304,7 +320,7 @@ impl Probe {
         let printed_pages = book.printed_pages().to_vec();
         let xhtml = book.chapter(chapter).map_err(|e| e.to_string())?;
         let source = Source::parse(&xhtml)?;
-        let fonts = font_context(fonts)?;
+        let mut fonts = font_context(fonts)?;
         let (renderer, mut lines, content_height) = match engine {
             Engine::Blitz => {
                 let (layout, lines, extent) =
@@ -312,13 +328,50 @@ impl Probe {
                 (Renderer::Blitz(Box::new(layout)), lines, extent)
             }
             Engine::Parley => {
-                let (layout, lines, extent) =
-                    parley_layout::ParleyChapter::new(&mut book, &href, &source, fonts, settings)?;
-                (Renderer::Parley(layout), lines, extent)
+                let styles =
+                    book_style::BookStyle::load(&mut book, &href, &source.stylesheets, &mut fonts)
+                        .compute(&source.elements);
+                let mut text = source
+                    .blocks
+                    .iter()
+                    .filter(|block| !block.text.is_empty())
+                    .peekable();
+                let vertical = text.peek().is_some()
+                    && source.blocks.iter().all(|block| block.images.is_empty())
+                    && !source.elements.iter().any(|element| element.tag == "table")
+                    && text.all(|block| {
+                        styles[block.element].writing_mode == book_style::WritingMode::VerticalRl
+                            && block.styled_text.iter().all(|run| {
+                                styles[run.element].writing_mode
+                                    == book_style::WritingMode::VerticalRl
+                            })
+                    });
+                let vertical = vertical.then(|| {
+                    vertical_layout::VerticalChapter::new(&source, &styles, fonts.clone(), settings)
+                });
+                match vertical {
+                    Some(Ok((layout, lines, extent))) => {
+                        (Renderer::Vertical(Box::new(layout)), lines, extent)
+                    }
+                    fallback => {
+                        if let Some(Err(error)) = fallback {
+                            eprintln!("reader vertical layout unavailable: {error}");
+                        }
+                        let (layout, lines, extent) = parley_layout::ParleyChapter::new(
+                            &mut book, &href, &source, fonts, settings, &styles,
+                        )?;
+                        (Renderer::Parley(layout), lines, extent)
+                    }
+                }
             }
         };
         lines.sort_by(|a, b| a.top.total_cmp(&b.top));
-        let pages = Pagination::new(&lines, settings.text_height() as f32, content_height)?;
+        let height = settings.text_height() as f32;
+        let pages = if matches!(&renderer, Renderer::Vertical(_)) {
+            Pagination::fixed_stride(height, content_height)?
+        } else {
+            Pagination::new(&lines, height, content_height)?
+        };
         Ok(Self {
             title,
             author,
@@ -339,6 +392,10 @@ impl Probe {
 
     pub fn page_count(&self) -> usize {
         self.pages.len()
+    }
+
+    pub(crate) fn is_vertical(&self) -> bool {
+        matches!(&self.renderer, Renderer::Vertical(_))
     }
 
     pub fn chapter_count(&self) -> usize {
@@ -410,20 +467,28 @@ impl Probe {
     }
 
     pub(crate) fn link_in(&self, range: Range<f32>, x: f32, y: f32) -> Option<Destination> {
-        let y = y - self.settings.margin as f32 + range.start;
-        if !range.contains(&y) {
-            return None;
-        }
-        let Renderer::Parley(renderer) = &self.renderer else {
-            return None;
-        };
-        let (key, offset) = renderer.source_at(x - self.settings.margin as f32, y)?;
+        let (key, offset) = self.source_at(range, x, y)?;
         let block = self.source.blocks.iter().find(|block| block.key == key)?;
         let link = block
             .links
             .iter()
             .find(|link| link.bytes.contains(&offset))?;
         Book::resolve_link(&self.chapter, &link.href).ok()
+    }
+
+    fn source_at(&self, range: Range<f32>, x: f32, y: f32) -> Option<(usize, usize)> {
+        match &self.renderer {
+            Renderer::Vertical(renderer) => renderer.source_at(range, x, y),
+            Renderer::Parley(renderer) => {
+                let margin = self.settings.margin as f32;
+                let y = y - margin + range.start;
+                if !range.contains(&y) {
+                    return None;
+                }
+                renderer.source_at(x - margin, y)
+            }
+            Renderer::Blitz(_) => None,
+        }
     }
 
     pub fn links_on_page(&self, page: usize) -> Vec<(String, Destination)> {
@@ -594,6 +659,7 @@ impl Probe {
         match &mut self.renderer {
             Renderer::Blitz(layout) => layout.capture(range, self.settings),
             Renderer::Parley(layout) => layout.capture(range, self.settings),
+            Renderer::Vertical(layout) => layout.capture(range, self.settings),
         }
     }
 

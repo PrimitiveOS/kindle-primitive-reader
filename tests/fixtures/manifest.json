@@ -172,6 +172,24 @@
       }
     },
     {
+      "file": "vertical-chapters.epub",
+      "sha256": "4a86b19b53380b434f163b86e37c39c7b19f32641cfb586737173d94d3154d30",
+      "size_bytes": 6739,
+      "expected": {
+        "opens": true,
+        "epub_version": "3.0",
+        "spine_count": 3,
+        "writing_modes": [
+          "horizontal-tb",
+          "vertical-rl",
+          "horizontal-tb"
+        ],
+        "anchors": {
+          "EPUB/chapters/vertical.xhtml#entry-24": "Before the tide rose"
+        }
+      }
+    },
+    {
       "file": "missing-image.epub",
       "sha256": "505199483cbe343c5b79b1a50626557b60a4ddf6bdb33de1ca78cf0debaacba5",
       "size_bytes": 4996,

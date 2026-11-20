@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use crate::book_style::{BookStyle, Style};
+use crate::book_style::Style;
 use crate::comic::ImagePage;
 use crate::epub::Book;
 use crate::gray_glyph::GlyphCache;
@@ -11,7 +11,7 @@ use image::{DynamicImage, GrayImage, Luma, imageops::FilterType};
 use parley::{
     Affinity, Alignment, AlignmentOptions, BoundingBox, Cursor, FontContext, FontFamily,
     FontWeight, GenericFamily, Language, Layout, LayoutContext, LineBreak, LineHeight,
-    OverflowWrap, PositionedLayoutItem, Selection, StyleProperty,
+    OverflowWrap, PositionedLayoutItem, Selection, SoftHyphenAction, StyleProperty, WordBreak,
 };
 
 const MAX_TEXT_BYTES: usize = 512 * 1024;
@@ -66,6 +66,7 @@ impl ParleyChapter {
         source: &Source,
         mut fonts: FontContext,
         settings: Settings,
+        styles: &[Style],
     ) -> Result<(Self, Vec<Line>, f32)> {
         if source
             .blocks
@@ -83,8 +84,6 @@ impl ParleyChapter {
             glyphs: GlyphCache::default(),
         };
         let mut context = LayoutContext::new();
-        let styles =
-            BookStyle::load(book, href, &source.stylesheets, &mut fonts).compute(&source.elements);
         let mut lines = Vec::new();
         let mut y = 0.0_f32;
         let mut image_budget = MAX_IMAGE_PIXELS;
@@ -94,7 +93,7 @@ impl ParleyChapter {
             if !block.text.is_empty() {
                 let style = &styles[block.element];
                 let (layout, ruby) =
-                    layout_paragraph(&mut context, &mut fonts, block, width, settings, &styles);
+                    layout_paragraph(&mut context, &mut fonts, block, width, settings, styles);
                 if lines.len() + layout.len() > MAX_LINES {
                     return Err("The chapter exceeds the Parley line limit".into());
                 }
@@ -469,6 +468,27 @@ fn make_paragraph(
     let style = &styles[block.element];
     let language = block.language;
     let mut builder = context.ranged_builder(fonts, &block.text, 1.0, true);
+    let soft_hyphen = |offset| {
+        let index = block
+            .styled_text
+            .partition_point(|text| text.bytes.end <= offset);
+        let style = block
+            .styled_text
+            .get(index)
+            .filter(|text| text.bytes.contains(&offset))
+            .map_or(style, |text| &styles[text.element]);
+        if style.word_break == WordBreak::BreakAll || style.line_break == Some(LineBreak::Anywhere)
+        {
+            SoftHyphenAction::LeaveBoundary
+        } else if style.soft_hyphens && !settings.disable_soft_hyphens {
+            SoftHyphenAction::Draw
+        } else {
+            SoftHyphenAction::Suppress
+        }
+    };
+    if block.text.contains('\u{ad}') {
+        builder.set_soft_hyphen_policy(Some(&soft_hyphen));
+    }
     let family: FontFamily<'_> = if settings.override_fonts {
         GenericFamily::Serif.into()
     } else {
@@ -649,6 +669,69 @@ impl Illustration {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::book_style::BookStyle;
+
+    #[test]
+    fn publisher_soft_hyphens_respect_inherited_and_inline_policy() {
+        use skrifa::{FontRef, MetadataProvider as _};
+
+        let source = Source::parse(
+            r#"<html><head><style>.disabled { hyphens: none; }</style></head><body>
+                <p>Lead interna&#173;tional travel.</p>
+                <section class="disabled">
+                <p>Lead interna&#173;tional travel.</p>
+                <p>Lead <span style="hyphens: manual">interna&#173;tional</span> travel.</p>
+                </section></body></html>"#,
+        )
+        .unwrap();
+        let mut book = Book::open(&crate::test_fixture("field-notes-epub3.epub")).unwrap();
+        let href = book.chapters[0].href.clone();
+        let fonts = [crate::test_fixture("fonts/Silkscreen-Regular.ttf")];
+        let mut fonts = crate::font_context(&fonts).unwrap();
+        let styles = BookStyle::load(&mut book, &href, &source.stylesheets, &mut fonts)
+            .compute(&source.elements);
+        let mut context = LayoutContext::new();
+        let settings = Settings {
+            font_size: 24.0,
+            ..Settings::default()
+        };
+        let mut first_line_hyphen = |index: usize, width, disable_soft_hyphens| {
+            let block = &source.blocks[index];
+            let settings = Settings {
+                disable_soft_hyphens,
+                ..settings
+            };
+            let (layout, _) =
+                layout_paragraph(&mut context, &mut fonts, block, width, settings, &styles);
+            let line = layout.get(0).unwrap();
+            let end = line.text_range().end;
+            let painted = line.items().any(|item| {
+                let PositionedLayoutItem::GlyphRun(run) = item else {
+                    return false;
+                };
+                let font = run.run().font();
+                let face = FontRef::from_index(font.data.data(), font.index).unwrap();
+                let hyphen = face
+                    .charmap()
+                    .map('\u{2010}')
+                    .or_else(|| face.charmap().map('-'))
+                    .unwrap();
+                run.positioned_glyphs()
+                    .any(|glyph| glyph.id == hyphen.to_u32())
+            });
+            (end, painted)
+        };
+        let expected = ("Lead interna\u{ad}".len(), true);
+        assert!((60..275).any(|width| {
+            first_line_hyphen(0, width, false) == expected
+                && !first_line_hyphen(1, width, false).1
+                && first_line_hyphen(2, width, false) == expected
+                && !first_line_hyphen(0, width, true).1
+        }));
+        for block in source.blocks {
+            assert_eq!(block.text, "Lead interna\u{ad}tional travel.");
+        }
+    }
     use crate::{Engine, Probe, Renderer};
     use std::fs::{self, File, OpenOptions};
     use std::io::{Read, Write};
@@ -1072,7 +1155,10 @@ mod tests {
         let mut book = Book::open(&crate::test_fixture("field-notes-epub3.epub")).unwrap();
         let path = book.chapters[0].href.clone();
         let fonts = [crate::test_fixture("fonts/Silkscreen-Regular.ttf")];
-        let fonts = crate::font_context(&fonts).unwrap();
+        let mut fonts = crate::font_context(&fonts).unwrap();
+        let styles =
+            crate::book_style::BookStyle::load(&mut book, &path, &source.stylesheets, &mut fonts)
+                .compute(&source.elements);
         let (block, anchor) = source.fragments["anchor"];
         let text = &source.blocks[0].text;
         assert_eq!(block, source.blocks[0].key);
@@ -1087,7 +1173,8 @@ mod tests {
                 ..Settings::default()
             };
             let (mut chapter, source_lines, height) =
-                ParleyChapter::new(&mut book, &path, &source, fonts.clone(), settings).unwrap();
+                ParleyChapter::new(&mut book, &path, &source, fonts.clone(), settings, &styles)
+                    .unwrap();
             let glyph_runs: Vec<_> = chapter.paragraphs[0]
                 .layout
                 .lines()

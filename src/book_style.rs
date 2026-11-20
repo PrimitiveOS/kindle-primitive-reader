@@ -45,6 +45,13 @@ impl Family {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WritingMode {
+    Horizontal,
+    VerticalRl,
+    VerticalLr,
+}
+
 #[derive(Clone)]
 pub(crate) struct Style {
     pub font_family: Family,
@@ -56,6 +63,8 @@ pub(crate) struct Style {
     pub alignment: Option<Alignment>,
     pub line_break: Option<LineBreak>,
     pub word_break: WordBreak,
+    pub soft_hyphens: bool,
+    pub writing_mode: WritingMode,
 }
 
 impl Default for Style {
@@ -70,6 +79,8 @@ impl Default for Style {
             alignment: None,
             line_break: None,
             word_break: WordBreak::Normal,
+            soft_hyphens: true,
+            writing_mode: WritingMode::Horizontal,
         }
     }
 }
@@ -154,7 +165,7 @@ impl BookStyle {
                 .as_deref()
                 .filter(|text| text.len() <= MAX_INLINE_BYTES)
                 .map_or_else(Vec::new, |text| declarations(&mut Parser::new(text)));
-            let mut winners: Winners<'_> = [None; 9];
+            let mut winners = Winners::default();
             for rule in &self.rules {
                 if let Some(specificity) = rule
                     .selectors
@@ -201,6 +212,8 @@ impl BookStyle {
                     Property::Slant(slant) => style.font_style = *slant,
                     Property::LineBreak(breaking) => style.line_break = *breaking,
                     Property::WordBreak(breaking) => style.word_break = *breaking,
+                    Property::SoftHyphens(enabled) => style.soft_hyphens = *enabled,
+                    Property::WritingMode(mode) => style.writing_mode = *mode,
                     Property::FontSource(_) => {}
                 }
             }
@@ -485,7 +498,7 @@ fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
 }
 
 type Priority = (bool, bool, Specificity);
-type Winners<'a> = [Option<(Priority, &'a Property)>; 9];
+type Winners<'a> = [Option<(Priority, &'a Property)>; 11];
 
 fn choose<'a>(
     winners: &mut Winners<'a>,
@@ -504,6 +517,8 @@ fn choose<'a>(
             Property::Slant(_) => 6,
             Property::LineBreak(_) => 7,
             Property::WordBreak(_) => 8,
+            Property::SoftHyphens(_) => 9,
+            Property::WritingMode(_) => 10,
             Property::FontSource(_) => continue,
         };
         let priority = (declaration.important, inline, specificity);
@@ -554,6 +569,8 @@ enum Property {
     Slant(FontStyle),
     LineBreak(Option<LineBreak>),
     WordBreak(WordBreak),
+    SoftHyphens(bool),
+    WritingMode(WritingMode),
 }
 
 struct Properties;
@@ -674,6 +691,26 @@ impl<'i> DeclarationParser<'i> for Properties {
                         "keep-all" => WordBreak::KeepAll,
                         _ => return Err(ParseError::unexpected_token()),
                     })
+                }
+                "hyphens" | "-webkit-hyphens" => {
+                    Property::SoftHyphens(
+                        match input.expect_ident()?.to_ascii_lowercase().as_str() {
+                            "none" => false,
+                            // Authored discretionary points also apply when no automatic dictionary is available.
+                            "manual" | "auto" => true,
+                            _ => return Err(ParseError::unexpected_token()),
+                        },
+                    )
+                }
+                "writing-mode" | "-epub-writing-mode" | "-webkit-writing-mode" => {
+                    Property::WritingMode(
+                        match input.expect_ident()?.to_ascii_lowercase().as_str() {
+                            "horizontal-tb" => WritingMode::Horizontal,
+                            "vertical-rl" => WritingMode::VerticalRl,
+                            "vertical-lr" => WritingMode::VerticalLr,
+                            _ => return Err(ParseError::unexpected_token()),
+                        },
+                    )
                 }
                 _ => return Err(ParseError::unexpected_token()),
             };

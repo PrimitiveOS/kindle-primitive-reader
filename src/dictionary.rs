@@ -83,7 +83,12 @@ pub(crate) fn lookup_preferred(
     preferred: Option<&Path>,
 ) -> io::Result<Vec<Definition>> {
     let word = word.trim();
-    if word.is_empty() || word.len() > MAX_WORD_BYTES {
+    if word.len() > MAX_WORD_BYTES {
+        return Ok(Vec::new());
+    }
+    let unwrapped = crate::search::without_soft_hyphens(word);
+    let term = unwrapped.trim();
+    if term.is_empty() {
         return Ok(Vec::new());
     }
     let Some(root) = dictionary_root(root)? else {
@@ -97,7 +102,7 @@ pub(crate) fn lookup_preferred(
     {
         files[..=index].rotate_right(1);
     }
-    let folded = CaseMapper::new().fold_string(word);
+    let folded = CaseMapper::new().fold_string(term);
     let query = Query {
         word,
         folded: &folded,
@@ -343,7 +348,8 @@ impl Query<'_> {
         if headword.is_ascii() {
             headword.eq_ignore_ascii_case(self.folded)
         } else {
-            mapper.fold_string(headword) == self.folded
+            let unwrapped = crate::search::without_soft_hyphens(headword);
+            mapper.fold_string(&unwrapped) == self.folded
         }
     }
 }
@@ -1016,6 +1022,29 @@ mod tests {
             index.extend_from_slice(&ordinal.to_be_bytes());
         }
         fs::write(root.join(format!("{name}.syn")), index).unwrap();
+    }
+
+    #[test]
+    fn accepts_soft_hyphens_on_either_side_and_keeps_literal_headword_priority() {
+        let root = TestDirectory::new();
+        write_dictionary(
+            &root.0,
+            "Terms",
+            "sametypesequence=m\n",
+            &[
+                ("international", b"Ordinary"),
+                ("interna\u{ad}tional", b"Literal"),
+            ],
+        );
+        write_synonyms(&root.0, "Terms", &[("over\u{ad}seas", 0)]);
+        let answers = lookup(&root.0, "interna\u{ad}tional").unwrap();
+        assert_eq!(answers[0].word, "interna\u{ad}tional");
+        let answers = lookup(&root.0, "international").unwrap();
+        assert_eq!(answers[0].word, "international");
+        let answers = lookup(&root.0, "INTERNA\u{ad}TIONAL").unwrap();
+        assert_eq!(answers.len(), 2);
+        let answers = lookup(&root.0, "OVERSEAS").unwrap();
+        assert_eq!(answers[0].word, "international");
     }
 
     fn gzip(bytes: &[u8]) -> Vec<u8> {

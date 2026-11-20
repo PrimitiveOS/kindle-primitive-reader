@@ -1,5 +1,6 @@
 //! Offline search over the same normalized text and anchors used by the reader.
 
+use std::borrow::Cow;
 use std::ops::Range;
 
 use icu_casemap::{CaseMapper, CaseMapperBorrowed};
@@ -15,6 +16,15 @@ pub const MAX_SEARCH_HITS: usize = 100;
 const MAX_QUERY_BYTES: usize = 256;
 const CONTEXT_CHARACTERS: usize = 28;
 const CASE_MAPPER: CaseMapperBorrowed<'static> = CaseMapper::new();
+const SOFT_HYPHEN: char = '\u{ad}';
+
+pub(crate) fn without_soft_hyphens(text: &str) -> Cow<'_, str> {
+    if text.contains(SOFT_HYPHEN) {
+        Cow::Owned(text.replace(SOFT_HYPHEN, ""))
+    } else {
+        Cow::Borrowed(text)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SearchHit {
@@ -150,26 +160,31 @@ struct Query {
 impl Query {
     fn new(text: &str, match_case: bool) -> Result<Self> {
         let text = text.trim();
-        if text.is_empty() || text.len() > MAX_QUERY_BYTES {
+        if text.len() > MAX_QUERY_BYTES {
+            return Err("Enter a search term of up to 256 UTF-8 bytes".into());
+        }
+        let unwrapped = without_soft_hyphens(text);
+        let term = unwrapped.trim();
+        if term.is_empty() {
             return Err("Enter a search term of up to 256 UTF-8 bytes".into());
         }
         let text = if match_case {
-            text.to_owned()
+            term.to_owned()
         } else {
-            CASE_MAPPER.fold_string(text).into_owned()
+            CASE_MAPPER.fold_string(term).into_owned()
         };
         Ok(Self { text, match_case })
     }
 
     fn matches(&self, source: &str, limit: usize) -> Vec<Range<usize>> {
-        if self.match_case {
+        if self.match_case && !source.contains(SOFT_HYPHEN) {
             source
                 .match_indices(&self.text)
                 .take(limit)
                 .map(|(start, found)| start..start + found.len())
                 .collect()
         } else {
-            FoldedText::new(source)
+            FoldedText::new(source, self.match_case)
                 .matches(&self.text)
                 .take(limit)
                 .collect()
@@ -186,6 +201,25 @@ fn match_case_preserves_original_utf8_offsets() {
     assert_eq!(&source[exact[0].clone()], "Straße");
     let insensitive = Query::new("Straße", false).unwrap().matches(source, 10);
     assert_eq!(insensitive.len(), 3);
+}
+
+#[cfg(test)]
+#[test]
+fn soft_hyphens_are_invisible_to_search_and_preserved_in_match_offsets() {
+    let source = "\u{ad}Über\u{ad}\u{ad}gang Straße\u{ad}n";
+    for (query, match_case, expected) in [
+        ("Übergang", true, "Über\u{ad}\u{ad}gang"),
+        ("ÜBERGANG", false, "Über\u{ad}\u{ad}gang"),
+        ("Über", true, "Über"),
+        ("gang", true, "gang"),
+        ("STRASSE", false, "Straße"),
+        ("n", true, "n"),
+        ("Über\u{ad}gang", true, "Über\u{ad}\u{ad}gang"),
+    ] {
+        let matches = Query::new(query, match_case).unwrap().matches(source, 1);
+        assert_eq!(&source[matches[0].clone()], expected);
+    }
+    assert!(Query::new("\u{ad}", false).is_err());
 }
 
 #[cfg(feature = "kindle")]
@@ -248,7 +282,7 @@ impl PdfSearch {
     }
 }
 
-/// Byte positions where full case folding changes a source scalar's extent.
+/// Byte positions changed by full case folding or removed soft hyphens.
 /// Between edits, offsets differ by a constant and need no per-byte index.
 struct OffsetEdit {
     source_end: usize,
@@ -262,7 +296,7 @@ struct FoldedText {
 }
 
 impl FoldedText {
-    fn new(original: &str) -> Self {
+    fn new(original: &str, match_case: bool) -> Self {
         if original.is_ascii() {
             return Self {
                 text: original.to_ascii_lowercase(),
@@ -273,11 +307,19 @@ impl FoldedText {
         let mut edits = Vec::new();
         let mut scalar = [0; 4];
         for (source_start, ch) in original.char_indices() {
-            if ch.is_ascii() {
-                text.push(ch.to_ascii_lowercase());
+            if ch.is_ascii() || (match_case && ch != SOFT_HYPHEN) {
+                text.push(if match_case {
+                    ch
+                } else {
+                    ch.to_ascii_lowercase()
+                });
                 continue;
             }
-            let folded = CASE_MAPPER.fold_string(ch.encode_utf8(&mut scalar));
+            let folded = if ch == SOFT_HYPHEN {
+                Cow::Borrowed("")
+            } else {
+                CASE_MAPPER.fold_string(ch.encode_utf8(&mut scalar))
+            };
             let folded_start = text.len();
             text.push_str(&folded);
             if folded.len() != ch.len_utf8() || folded.chars().nth(1).is_some() {
@@ -291,10 +333,11 @@ impl FoldedText {
         Self { text, edits }
     }
 
-    fn source_offset(&self, boundary: usize) -> Option<usize> {
-        let preceding = self
-            .edits
-            .partition_point(|edit| edit.folded_end <= boundary);
+    fn source_offset(&self, boundary: usize, match_start: bool) -> Option<usize> {
+        let preceding = self.edits.partition_point(|edit| {
+            edit.folded_end < boundary
+                || (edit.folded_end == boundary && (match_start || edit.folded_start < boundary))
+        });
         if self
             .edits
             .get(preceding)
@@ -320,8 +363,8 @@ impl FoldedText {
                 let folded_start = cursor + self.text.get(cursor..)?.find(query)?;
                 let folded_end = folded_start + query.len();
                 if let (Some(start), Some(end)) = (
-                    self.source_offset(folded_start),
-                    self.source_offset(folded_end),
+                    self.source_offset(folded_start, true),
+                    self.source_offset(folded_end, false),
                 ) {
                     cursor = folded_end;
                     return Some(start..end);
@@ -368,7 +411,7 @@ mod tests {
     #[test]
     fn locates_original_utf8_spans_for_full_case_folds() {
         let text = "Café Straße ς İ ﬃ ßßs";
-        let folded = FoldedText::new(text);
+        let folded = FoldedText::new(text, false);
         for (needle, expected) in [
             ("CAFÉ", "Café"),
             ("STRASSE", "Straße"),
@@ -384,7 +427,7 @@ mod tests {
                 .collect::<Vec<_>>();
             assert_eq!(found, [expected]);
         }
-        assert_eq!(FoldedText::new("ß").matches("s").count(), 0);
+        assert_eq!(FoldedText::new("ß", false).matches("s").count(), 0);
     }
 
     #[test]

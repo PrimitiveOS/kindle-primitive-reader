@@ -27,6 +27,16 @@ struct FaceKey {
     variations: Vec<i16>,
     skew: u32,
     bold: bool,
+    clockwise: bool,
+}
+
+struct GlyphStyle<'a> {
+    font: &'a FontData,
+    size: f32,
+    variations: Vec<i16>,
+    skew: f32,
+    bold: bool,
+    clockwise: bool,
 }
 
 #[derive(Default)]
@@ -56,12 +66,58 @@ impl GlyphCache {
         glyphs: &GlyphRun<'_, ()>,
     ) {
         let run = glyphs.run();
+        let synthesis = run.synthesis();
+        let style = GlyphStyle {
+            font: run.font(),
+            size: run.font_size(),
+            variations: run
+                .normalized_coords()
+                .iter()
+                .map(|coord| coord.to_bits())
+                .collect(),
+            skew: synthesis.skew().unwrap_or(0.0),
+            bold: synthesis.embolden(),
+            clockwise: false,
+        };
+        let positions = glyphs
+            .positioned_glyphs()
+            .map(|glyph| (glyph.id, origin.0 + glyph.x, origin.1 + glyph.y));
+        self.draw_positioned(page, stride, margin, style, positions);
+    }
+
+    pub(crate) fn draw_vertical(
+        &mut self,
+        page: &mut [u8],
+        stride: usize,
+        margin: usize,
+        glyph: crate::vertical_layout::PaintGlyph<'_>,
+    ) {
+        let style = GlyphStyle {
+            font: glyph.font,
+            size: glyph.size,
+            variations: Vec::new(),
+            skew: 0.0,
+            bold: false,
+            clockwise: glyph.clockwise,
+        };
+        let position = (glyph.id, glyph.x - margin as f32, glyph.y);
+        self.draw_positioned(page, stride, margin, style, std::iter::once(position));
+    }
+
+    fn draw_positioned(
+        &mut self,
+        page: &mut [u8],
+        stride: usize,
+        margin: usize,
+        style: GlyphStyle<'_>,
+        glyphs: impl Iterator<Item = (u32, f32, f32)>,
+    ) {
         if stride == 0
             || stride > MAX_VIEWPORT_EDGE
             || page.len() / stride > MAX_VIEWPORT_EDGE
             || margin > stride / 2
-            || run.normalized_coords().len() > MAX_AXES
-            || !(1.0..=MAX_EDGE as f32).contains(&run.font_size())
+            || style.variations.len() > MAX_AXES
+            || !(1.0..=MAX_EDGE as f32).contains(&style.size)
         {
             return;
         }
@@ -71,23 +127,14 @@ impl GlyphCache {
             self.full = false;
         }
 
-        let font = run.font();
-        let size = run.font_size();
-        let synthesis = run.synthesis();
-        let skew = synthesis.skew().unwrap_or(0.0);
-        let bold = synthesis.embolden();
-        let variations = run
-            .normalized_coords()
-            .iter()
-            .map(|coord| coord.to_bits())
-            .collect::<Vec<_>>();
         let key = FaceKey {
-            font: font.data.id(),
-            index: font.index,
-            size: size.to_bits(),
-            variations,
-            skew: skew.to_bits(),
-            bold,
+            font: style.font.data.id(),
+            index: style.font.index,
+            size: style.size.to_bits(),
+            variations: style.variations.clone(),
+            skew: style.skew.to_bits(),
+            bold: style.bold,
+            clockwise: style.clockwise,
         };
 
         let face = self.faces.entry(key).or_default();
@@ -95,9 +142,7 @@ impl GlyphCache {
         let reach = MAX_OUTLINE_OFFSET + MAX_EDGE as f32;
         let x_bounds = -reach..=stride as f32 + reach;
         let y_bounds = -reach..=(page.len() / stride) as f32 + reach;
-        for glyph in glyphs.positioned_glyphs() {
-            let x = origin.0 + glyph.x;
-            let baseline = origin.1 + glyph.y;
+        for (glyph, x, baseline) in glyphs {
             if !x_bounds.contains(&x) || !y_bounds.contains(&baseline) {
                 continue;
             }
@@ -105,17 +150,17 @@ impl GlyphCache {
             let phase = x.rem_euclid(X_PHASES) as u8;
             let x = x.div_euclid(X_PHASES);
             let baseline = baseline.round() as i32;
-            match face.entry((glyph.id, phase)) {
+            match face.entry((glyph, phase)) {
                 Entry::Occupied(entry) => entry.get().blend(page, stride, margin, x, baseline),
                 Entry::Vacant(entry) => {
                     let variations = scaled_variations.get_or_insert_with(|| {
-                        run.normalized_coords()
+                        style
+                            .variations
                             .iter()
-                            .map(|coord| NormalizedCoord::from_bits(coord.to_bits()))
+                            .map(|&coord| NormalizedCoord::from_bits(coord))
                             .collect::<Vec<_>>()
                     });
-                    let mask = rasterize(font, glyph.id, size, phase, skew, bold, variations)
-                        .unwrap_or_default();
+                    let mask = rasterize(&style, glyph, phase, variations).unwrap_or_default();
                     mask.blend(page, stride, margin, x, baseline);
                     let cost = mask.alpha.len() + ENTRY_OVERHEAD;
                     if self.bytes + cost <= CACHE_BYTES {
@@ -175,13 +220,18 @@ struct Outline {
     max: Point,
     skew: f32,
     phase: f32,
+    clockwise: bool,
     invalid: bool,
 }
 
 impl Outline {
     fn coordinate(&mut self, x: f32, y: f32) -> Point {
-        let x = x + y * self.skew + self.phase;
-        let y = -y;
+        let horizontal_x = x + y * self.skew;
+        let (x, y) = if self.clockwise {
+            (y + self.phase, horizontal_x)
+        } else {
+            (horizontal_x + self.phase, -y)
+        };
         let permitted = -MAX_OUTLINE_OFFSET..=MAX_OUTLINE_OFFSET;
         if !permitted.contains(&x) || !permitted.contains(&y) {
             self.invalid = true;
@@ -230,14 +280,13 @@ impl OutlinePen for Outline {
 }
 
 fn rasterize(
-    font: &FontData,
+    style: &GlyphStyle<'_>,
     glyph: u32,
-    size: f32,
     phase: u8,
-    skew: f32,
-    bold: bool,
     variations: &[NormalizedCoord],
 ) -> Option<Mask> {
+    let font = style.font;
+    let size = style.size;
     let face = FontRef::from_index(font.data.data(), font.index).ok()?;
     let glyphs = face.outline_glyphs();
     let glyph = glyphs.get(GlyphId::new(glyph))?;
@@ -245,8 +294,9 @@ fn rasterize(
         segments: Vec::new(),
         min: point(f32::INFINITY, f32::INFINITY),
         max: point(f32::NEG_INFINITY, f32::NEG_INFINITY),
-        skew: skew.to_radians().tan(),
+        skew: style.skew.to_radians().tan(),
         phase: f32::from(phase) / X_PHASES as f32,
+        clockwise: style.clockwise,
         invalid: false,
     };
     let settings = DrawSettings::unhinted(Size::new(size), variations);
@@ -257,7 +307,7 @@ fn rasterize(
 
     let left = outline.min.x.floor();
     let top = outline.min.y.floor();
-    let extra = if bold {
+    let extra = if style.bold {
         (size * 0.022).round().max(1.0) as usize
     } else {
         0

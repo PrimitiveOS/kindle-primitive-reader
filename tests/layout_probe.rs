@@ -136,3 +136,64 @@ fn long_chapter_pages_reach_the_end_without_losing_source_text() {
         assert!(probe.capture(last + 1).is_err());
     }
 }
+
+#[test]
+fn vertical_pages_keep_links_selection_and_source_anchors() {
+    let font = fixture("fonts/Silkscreen-Regular.ttf");
+    let book = fixture("vertical-chapters.epub");
+    let settings = Settings {
+        width: 650,
+        height: 760,
+        font_size: 26.0,
+        margin: 25,
+        ..Settings::default()
+    };
+    let fonts = std::slice::from_ref(&font);
+    let mut probe = Probe::open(&book, Engine::Parley, fonts, settings, 1).unwrap();
+    let (covered, total) = probe.coverage();
+    assert_eq!(covered, total);
+    let word = probe.matches("office").remove(0);
+    let end = Anchor {
+        offset: word.offset + "office".len(),
+        ..word.clone()
+    };
+    let selection = probe.select_range(&word, &end).unwrap();
+    let page = probe.page_for(&word).unwrap();
+    let bounds = probe.selection_rects(page, &selection);
+    let rect = bounds.first().unwrap();
+    assert!(rect.height > rect.width);
+    let x = rect.x as f32 + rect.width as f32 / 2.0;
+    let y = rect.y as f32 + rect.height as f32 / 2.0;
+    assert_eq!(probe.word_at(page, x, y), Some(selection));
+    assert_eq!(
+        probe.link_at(page, x, y),
+        Some(reader::epub::Destination {
+            path: "EPUB/chapters/home.xhtml".into(),
+            fragment: Some("landing".into()),
+        })
+    );
+
+    let last = probe.fragment("entry-24").unwrap();
+    let later_page = probe.page_for(&last).unwrap();
+    assert!(later_page > page);
+    assert!(
+        probe
+            .capture(later_page)
+            .unwrap()
+            .iter()
+            .any(|&pixel| pixel < 200)
+    );
+    let reflowed = Probe::open(
+        &book,
+        Engine::Parley,
+        fonts,
+        Settings {
+            font_size: 38.0,
+            ..settings
+        },
+        1,
+    )
+    .unwrap();
+    assert_eq!(reflowed.fragment("entry-24"), Some(last.clone()));
+    assert!(reflowed.page_for(&last).is_some());
+}

@@ -1,0 +1,13 @@
+[package]
+name = "primitiveos-parley-tests"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+parley = { path = "..", default-features = false, features = ["std"] }
+skrifa = "=0.44.0"
+
+[[test]]
+name = "soft_hyphen"
+path = "soft_hyphen.rs"

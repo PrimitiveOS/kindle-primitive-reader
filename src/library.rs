@@ -210,6 +210,7 @@ pub struct BookPreferences {
     pub alignment: TextAlignment,
     pub bold_text: bool,
     pub override_fonts: bool,
+    pub disable_soft_hyphens: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub font_file: Option<String>,
 }
@@ -223,6 +224,7 @@ impl BookPreferences {
             alignment: self.alignment,
             bold_text: self.bold_text,
             override_fonts: self.override_fonts,
+            disable_soft_hyphens: self.disable_soft_hyphens,
             ..settings
         };
         if adjusted.validate().is_ok() {

@@ -287,6 +287,23 @@ def field_expectations(version):
     }
 
 
+def vertical_chapters():
+    title = "Across the Harbor"
+    first = ('<p>Passages from a quiet harbor.</p>'
+             '<p>Inter&#173;national travel depends on good weather.</p>')
+    verse = "Before the tide rose, the fishermen brought their boats back to the harbor."
+    vertical = '<h1 id="start">Harbor at dusk</h1>\n<p>At the <a href="home.xhtml#landing">office</a>, we wrote a letter.</p>'
+    vertical += "\n".join(f'<p id="entry-{index}">{verse}</p>' for index in range(1, 31))
+    vertical = xhtml("Harbor at dusk", vertical, True, "../styles/vertical.css")
+    chapters = [
+        ("EPUB/chapters/start.xhtml", "At the harbor", xhtml("At the harbor", first, True)),
+        ("EPUB/chapters/vertical.xhtml", "Harbor at dusk", vertical),
+        ("EPUB/chapters/home.xhtml", "The landing", xhtml("The landing", '<p id="landing">We returned to the landing.</p>', True)),
+    ]
+    css = ("EPUB/styles/vertical.css", "text/css", "body { writing-mode: vertical-rl; }\n")
+    return publication(title, "vertical-chapters", 3, chapters, [css])
+
+
 def outputs():
     epub2 = archive(field_notes(2))
     epub3 = archive(field_notes(3))
@@ -303,6 +320,11 @@ def outputs():
         ("many-chapters.epub", archive(many_chapters()), {
             "opens": True, "epub_version": "3.0", "spine_count": 48, "toc_count": 48,
             "first_chapter": "EPUB/chapters/day-01.xhtml", "last_chapter": "EPUB/chapters/day-48.xhtml",
+        }),
+        ("vertical-chapters.epub", archive(vertical_chapters()), {
+            "opens": True, "epub_version": "3.0", "spine_count": 3,
+            "writing_modes": ["horizontal-tb", "vertical-rl", "horizontal-tb"],
+            "anchors": {"EPUB/chapters/vertical.xhtml#entry-24": "Before the tide rose"},
         }),
         ("missing-image.epub", archive(field_notes(2, missing_image=True)), {
             "missing_resource": IMAGE_PATH, "recovery": "Keep reading with image fallback or show an actionable error.",

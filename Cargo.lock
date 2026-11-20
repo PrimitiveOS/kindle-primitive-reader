@@ -1700,14 +1700,13 @@ dependencies = [
 [[package]]
 name = "parley"
 version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61bd0c0c1737f0b3d3726dc06b225083af213b61913e4fbae1670613a106c6ce"
 dependencies = [
  "fontique",
  "hashbrown",
  "linebender_resource_handle",
  "parlance",
  "parley_engine",
+ "skrifa 0.44.0",
  "smallvec",
 ]
 
@@ -2154,10 +2153,12 @@ dependencies = [
  "encoding_rs",
  "flate2",
  "gif",
+ "harfrust",
  "hayro",
  "html5ever",
  "icu_casemap",
  "icu_normalizer",
+ "icu_properties",
  "icu_segmenter",
  "image",
  "libchm",

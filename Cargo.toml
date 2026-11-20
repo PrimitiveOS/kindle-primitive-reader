@@ -21,10 +21,12 @@ djvu-rs = { version = "=0.46.0", default-features = false, features = ["std"] }
 encoding_rs = "=0.8.44"
 flate2 = "=1.1.11"
 gif = { version = "=0.14.2", default-features = false, features = ["std", "raii_no_panic"] }
+harfrust = "=0.12.0"
 hayro = "=0.9.0"
 html5ever = "=0.40.1"
 icu_casemap = "=2.4.0"
 icu_normalizer = { version = "=2.4.0", default-features = false, features = ["compiled_data"] }
+icu_properties = "=2.4.0"
 icu_segmenter = "=2.4.0"
 image = { version = "=0.25.10", default-features = false, features = ["bmp", "jpeg", "png", "pnm", "webp"] }
 libchm = { path = "vendor/libchm", version = "=0.3.0" }
@@ -55,6 +57,7 @@ required-features = ["kindle"]
 
 [patch.crates-io]
 djvu-bzz = { path = "vendor/djvu-bzz" }
+parley = { path = "vendor/parley" }
 
 [profile.release]
 codegen-units = 4

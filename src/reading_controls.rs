@@ -2,7 +2,7 @@ use std::fs;
 use std::io::{self, Read};
 use std::path::Path;
 
-use primitive_app::{WIDTH, with_storage};
+use primitive_app::{Change, WIDTH, with_storage};
 use primitive_ui::Input;
 use serde::{Deserialize, Serialize};
 
@@ -17,6 +17,53 @@ pub(crate) struct ReadingControls {
     pub left_touch: bool,
     pub large_toolbar: bool,
     pub disable_page_taps: bool,
+    pub page_refresh: PageRefresh,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PageRefresh {
+    #[default]
+    Default,
+    EveryPage,
+    EveryFivePages,
+    EveryTenPages,
+}
+
+impl PageRefresh {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Default => Self::EveryPage,
+            Self::EveryPage => Self::EveryFivePages,
+            Self::EveryFivePages => Self::EveryTenPages,
+            Self::EveryTenPages => Self::Default,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Default => "Default",
+            Self::EveryPage => "Every page",
+            Self::EveryFivePages => "Every 5 pages",
+            Self::EveryTenPages => "Every 10 pages",
+        }
+    }
+
+    pub fn after_page(self, since_last: &mut u8) -> Change {
+        let interval = match self {
+            Self::Default => return Change::Partial,
+            Self::EveryPage => 1,
+            Self::EveryFivePages => 5,
+            Self::EveryTenPages => 10,
+        };
+        *since_last += 1;
+        if *since_last >= interval {
+            *since_last = 0;
+            Change::Full
+        } else {
+            Change::Partial
+        }
+    }
 }
 
 impl ReadingControls {
@@ -47,5 +94,23 @@ impl ReadingControls {
             }
             _ => Some(input),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_settings_keep_the_default_partial_page_refresh() {
+        let controls: ReadingControls = serde_json::from_str(r#"{"night_pages":true}"#).unwrap();
+        assert!(controls.night_pages);
+        assert_eq!(controls.page_refresh, PageRefresh::Default);
+        let mut since_last = 0;
+        assert_eq!(
+            controls.page_refresh.after_page(&mut since_last),
+            Change::Partial
+        );
+        assert_eq!(since_last, 0);
     }
 }

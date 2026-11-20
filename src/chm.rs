@@ -165,6 +165,7 @@ impl Chm {
         read_topic(&input, path, &self.members)
     }
 
+    #[cfg(feature = "kindle")]
     pub(crate) fn chapter_length(&self, path: &str) -> Result<u64> {
         self.members
             .get(path)
