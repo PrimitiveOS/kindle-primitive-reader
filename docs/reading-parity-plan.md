@@ -8,15 +8,15 @@ Compare against the installed KOReader release for hardware measurements. Record
 
 | Area | Development coverage | Remaining work |
 | --- | --- | --- |
-| EPUB reading | Saved positions, page and scroll modes, reading bars, printed page references, whole-book percentage jumps, publisher CSS, local fonts and illustrations, bounded static SVG, ruby, authored soft hyphens, inherited language, horizontal writing direction, and publisher line-breaking rules. Supported vertical chapters use right-to-left columns and the same text anchors. Fixed pages include publisher-defined spreads and the XHTML viewport directives. | More advanced stylesheet cases, automatic dictionary-based hyphenation, mixed writing modes in one chapter, and the final device suite |
+| EPUB reading | Saved positions, page and scroll modes, reading bars, printed page references, whole-book percentage jumps, generated contents from headings or chapter starts, publisher CSS, local fonts and illustrations, bounded static SVG, ruby, authored soft hyphens, inherited language, horizontal writing direction, and publisher line-breaking rules. Supported vertical chapters use right-to-left columns and the same text anchors. Fixed pages include publisher-defined spreads and the XHTML viewport directives. | More advanced stylesheet cases, automatic dictionary-based hyphenation, mixed writing modes in one chapter, and the final device suite |
 | PDF | Fixed pages and continuous scroll, printed labels, page thumbnails, outlines and links, passwords, page, width and height fit, crop, contrast, text search and local annotations. Visible embedded highlights import and annotated-copy export for intact unencrypted PDFs up to 16 MiB. | Broader password, outline and annotation types, and sustained large-scan tests |
 | Other offline reading | Fixed-layout EPUB, DjVu, TXT, HTML, single-document HTMLZ, Markdown, FB2, supported MOBI/PalmDOC and KF8, DOCX, CHM, RTF, TCR, CBZ, uncompressed USTAR CBT, selected CBR, JPEG, PNG, BMP, GIF first frame, portable anymaps, static SVG, selected WebP and TIFF, and compressed StarDict with synonyms | Wider format variants and the final device suite |
 | Scanned documents | Embedded and recognized text reflow across readable source pages. Original word-image reflow for scans with complete horizontal left-to-right OCR and a column view for clear two-column scans. English and Vietnamese recognized by the worker on desktop. The ARMHF package bundles English and accepts local additional models. | OCR in the Kindle runtime, broader layout and language cases, and sustained tests with real scans |
-| Library and controls | Favorites, reading status, collections, author and recent views, EPUB cover previews and series, reading time, reusable text profiles, night pages, adjustable toolbar sizes, mirrored or disabled tap turns, touch lock, optional E Ink full refresh intervals, chapter-spanning page thumbnails and location history | More configurable gestures, broader accessibility, and the final device suite |
+| Library and controls | Favorites, reading status, collections, author and recent views, EPUB cover previews and series, reading time, reusable text profiles, night pages, adjustable toolbar sizes, mirrored or disabled tap turns, touch lock, optional E Ink full refresh intervals, chapter-spanning page thumbnails, location history and zoom for framed comic panels in single-page views | More configurable gestures, broader accessibility, manually created contents and excluded sections, irregular comic panels, and the final device suite |
 | Reading data | Backup and restore with preview, text/Markdown/HTML annotation exports, KOReader JSON annotations by unique quotation, and sampled-fingerprint checks for fixed-page sidecar progress and a subset of reflowable EPUB CFIs | Legacy CREngine pointers, broader CFI and sidecar variants, and the final device suite |
 | Kindle verification | EPUB engine timing, probe page buttons, sleep and USB resume, and a temporary preview's contents jump and reopen passed on Oasis 3 | Deploy the completed core reader and run the consolidated automatic hardware workflow |
 
-The desktop checkpoint passed 240 Reader tests, six vendored Parley tests, and
+The desktop checkpoint passed 249 Reader tests, six vendored Parley tests, and
 16 Files tests. Reader
 rendered three public-domain DjVu samples and 12 narrative chapters from the
 Standard Ebooks edition of *Alice’s Adventures in Wonderland*. The licensed
@@ -138,8 +138,8 @@ The patched horizontal line breaker counts and paints an authored hyphen only
 when its line break is selected and the glyph fits. It honors `hyphens: none`
 and `hyphens: manual`, with a per-book switch in Text settings. `auto` currently
 uses the same authored opportunities.
-Find and dictionary lookup skip soft hyphens while bookmarks and annotations
-retain the original UTF-8 positions. [Parley patch](../vendor/parley/PRIMITIVEOS-PATCH.md)
+Find, dictionary lookup and quoted annotations imported from KOReader ignore
+soft hyphens while retaining the original UTF-8 positions. [Parley patch](../vendor/parley/PRIMITIVEOS-PATCH.md)
 
 Eligible `vertical-rl` chapters shape upright glyphs with HarfRust and paint
 sideways Latin from horizontal glyphs rotated clockwise. Supported ruby
@@ -148,6 +148,8 @@ selections and chapter positions use the original source. Vertical chapters
 use pages and preserve the book's scroll preference for horizontal chapters.
 Mixed writing modes, tables, artwork and unavailable vertical font coverage
 use the horizontal rendering path.
+One Japanese title showed placeholder glyphs in the desktop toolbar while the
+book text rendered correctly. Verify shared UI font fallback on Kindle.
 [CSS Writing Modes](https://www.w3.org/TR/css-writing-modes-3/#block-flow)
 
 Reader rendered all seven pages at the expected dimensions across four W3C
@@ -155,6 +157,12 @@ fixed-layout publications covering device dimensions, unit suffixes, repeated
 dimensions, and multiple viewport declarations.
 [EPUB 3.3 fixed-layout requirements](https://www.w3.org/TR/epub-rs-33/#sec-fxl-icb)
 · [W3C EPUB 3.3 test suite](https://w3c.github.io/epub-tests/epub33/)
+
+The EPUB outline scans one bounded spine item at a time. Its heading links use
+the same anchors as bookmarks and include a chapter-start fallback. Comic panel
+zoom checks a small grayscale sample for enclosed panels and opens a separate
+view so dismissal restores the prior view exactly. [KOReader contents tools](https://koreader.rocks/user_guide/#table-of-contents-tools)
+· [KOReader panel zoom](https://koreader.rocks/user_guide/#panel-zoom)
 
 [Parley shaping](https://github.com/linebender/parley/blob/6e1143dda817360dd3a2a64f9133c6e5dfabd881/parley_engine/src/shape/shaper.rs)
 · [Parley line breaking](https://github.com/linebender/parley/blob/6e1143dda817360dd3a2a64f9133c6e5dfabd881/parley/src/layout/line_break.rs)

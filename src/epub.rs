@@ -236,22 +236,58 @@ impl Book {
         }
         let cover = package_cover(metadata, &manifest);
         let spine = child(root, "spine")?;
-        let (toc, mut printed_pages) =
-            if let Some(nav) = manifest.values().find(|item| item.navigation) {
-                let xml = xml_entry(&mut archive, &nav.path)?;
+        let navigation = manifest.values().find(|item| item.navigation);
+        let ncx = spine.attribute("toc").and_then(|id| manifest.get(id));
+        // Optional navigation can be missing or malformed even when the spine is readable.
+        let (mut toc, mut printed_pages) = navigation
+            .and_then(|nav| {
+                let xml = xml_entry(&mut archive, &nav.path).ok()?;
                 let xml = loose::without_plain_html_doctype(&xml);
-                let doc = parse_xml(&xml)?;
-                (
+                let doc = parse_xml(&xml).ok()?;
+                Some((
                     xhtml_nav(&doc, &nav.path, "toc"),
                     xhtml_nav(&doc, &nav.path, "page-list"),
-                )
-            } else if let Some(ncx) = spine.attribute("toc").and_then(|id| manifest.get(id)) {
-                let xml = xml_entry(&mut archive, &ncx.path)?;
-                let doc = parse_xml(&xml)?;
-                (ncx_toc(&doc, &ncx.path), ncx_pages(&doc, &ncx.path))
-            } else {
-                (Vec::new(), Vec::new())
+                ))
+            })
+            .unwrap_or_default();
+        if let Some(ncx) = ncx {
+            let mut paths = BTreeMap::new();
+            for item in spine
+                .children()
+                .filter(|node| node.has_tag_name("itemref"))
+                .filter_map(|node| manifest.get(node.attribute("idref")?))
+            {
+                *paths.entry(item.path.as_str()).or_insert(0usize) += 1;
+            }
+            let has_target = |entries: &[TocEntry], print: bool| {
+                entries.iter().any(|entry| {
+                    entry.destination.as_ref().is_some_and(|destination| {
+                        paths.get(destination.path.as_str()).is_some_and(|count| {
+                            !print || (*count == 1 && entry.label.len() <= 256)
+                        })
+                    })
+                })
             };
+            let needs_toc = !has_target(&toc, false);
+            let needs_print = !has_target(&printed_pages, true);
+            if (needs_toc || needs_print)
+                && let Ok(xml) = xml_entry(&mut archive, &ncx.path)
+                && let Ok(doc) = parse_xml(&xml)
+            {
+                if needs_toc {
+                    let fallback = ncx_toc(&doc, &ncx.path);
+                    if has_target(&fallback, false) {
+                        toc = fallback;
+                    }
+                }
+                if needs_print {
+                    let fallback = ncx_pages(&doc, &ncx.path);
+                    if has_target(&fallback, true) {
+                        printed_pages = fallback;
+                    }
+                }
+            }
+        }
         let mut labels = BTreeMap::new();
         for entry in &toc {
             if let Some(destination) = &entry.destination {

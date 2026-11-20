@@ -17,6 +17,8 @@ pub mod fixed_epub;
 #[cfg(feature = "kindle")]
 mod fixed_session;
 pub mod fixed_text;
+#[cfg(feature = "kindle")]
+mod generated_contents;
 mod gray_glyph;
 mod kf8;
 pub mod koreader_import;

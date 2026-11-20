@@ -17,6 +17,7 @@ use crate::epub::{Book, Destination};
 use crate::fixed::{PdfError, PdfLinkTarget};
 use crate::fixed_session::{FixedReading, PdfSelection};
 use crate::fixed_text::PdfTextRect;
+use crate::generated_contents::{GeneratedContents, OutlineTarget};
 use crate::koreader_import::{self, ExportEntry, QuoteMatch, QuoteResolver};
 use crate::koreader_sidecar::{self, SidecarProgress};
 use crate::library::{
@@ -106,6 +107,7 @@ enum Screen {
     LocationHistory,
     BookTools,
     Contents,
+    GeneratedContents,
     Links,
     Bookmarks,
     Typography,
@@ -156,6 +158,7 @@ impl Screen {
             Self::PdfPassword => "Unlock PDF",
             Self::ScanColumns => "",
             Self::Contents | Self::FixedContents => "Contents",
+            Self::GeneratedContents => "Generated outline",
             Self::Links => "Links on this page",
             Self::Bookmarks | Self::FixedBookmarks => "Bookmarks",
             Self::Typography => "Text settings",
@@ -204,6 +207,8 @@ enum Action {
     ExportAnnotatedPdf,
     Show(Screen),
     Jump(Destination),
+    ShowGeneratedContents,
+    GeneratedEntry(usize),
     Bookmark(usize),
     AddBookmark,
     ReturnToLocation,
@@ -265,6 +270,12 @@ struct PageOverview {
     chapter: Option<usize>,
     preview: Option<Box<Probe>>,
     tiles: Vec<Option<GrayImage>>,
+}
+
+struct OutlineScan {
+    contents: GeneratedContents,
+    deadline: Option<Instant>,
+    next_refresh: Instant,
 }
 
 struct ScanReading {
@@ -336,6 +347,7 @@ pub struct Reader {
     book_list: Option<BookList>,
     book_details: Option<BookDetails>,
     overview: Option<PageOverview>,
+    outline: Option<OutlineScan>,
     scan_columns: Option<ScanReading>,
     rename_collection: Option<String>,
     controls_path: PathBuf,
@@ -419,6 +431,7 @@ impl Reader {
             book_list: None,
             book_details: None,
             overview: None,
+            outline: None,
             scan_columns: None,
             rename_collection: None,
             controls_path,
@@ -625,6 +638,9 @@ impl Reader {
         if screen != Screen::PageOverview {
             self.overview = None;
         }
+        if screen != Screen::GeneratedContents {
+            self.outline = None;
+        }
         if screen == Screen::Find && self.screen != Screen::Matches {
             self.editor = Editor::new(64);
         }
@@ -694,9 +710,11 @@ impl Reader {
     fn update_stats_activity(&mut self, now: Instant) {
         let book = match self.screen {
             Screen::Book if self.stats_awake => self.active.as_ref().map(|book| book.id),
-            Screen::Illustration if self.stats_awake && self.book_details.is_none() => {
-                self.active.as_ref().map(|book| book.id)
-            }
+            Screen::Illustration if self.stats_awake && self.book_details.is_none() => self
+                .active
+                .as_ref()
+                .map(|book| book.id)
+                .or_else(|| self.fixed.as_ref().map(|book| book.id)),
             Screen::Fixed | Screen::ReadFixedText | Screen::ScanColumns if self.stats_awake => {
                 self.fixed.as_ref().map(|book| book.id)
             }
@@ -1098,34 +1116,51 @@ impl Reader {
         };
         let reading = &active.reading;
         match self.screen {
-            Screen::Contents if reading.probe.toc.is_empty() => reading
-                .probe
-                .chapter_entries()
-                .iter()
-                .map(|chapter| {
-                    Item::new(
-                        &chapter.label,
-                        Action::Jump(Destination {
-                            path: chapter.href.clone(),
-                            fragment: None,
-                        }),
-                    )
-                })
-                .collect(),
-            Screen::Contents => reading
-                .probe
-                .toc
-                .iter()
-                .map(|entry| {
-                    Item::new(
-                        format!("{}{}", "  ".repeat(entry.depth.min(4)), entry.label),
-                        entry
-                            .destination
-                            .clone()
-                            .map_or(Action::Heading, Action::Jump),
-                    )
-                })
-                .collect(),
+            Screen::Contents => {
+                let mut items = Vec::new();
+                if active.entry.format == DocumentFormat::Epub {
+                    items.push(
+                        Item::new("Generated outline", Action::ShowGeneratedContents)
+                            .detail("Build from headings in the book"),
+                    );
+                }
+                if reading.probe.toc.is_empty() {
+                    items.extend(reading.probe.chapter_entries().iter().map(|chapter| {
+                        Item::new(
+                            &chapter.label,
+                            Action::Jump(Destination {
+                                path: chapter.href.clone(),
+                                fragment: None,
+                            }),
+                        )
+                    }));
+                } else {
+                    items.extend(reading.probe.toc.iter().map(|entry| {
+                        Item::new(
+                            format!("{}{}", "  ".repeat(entry.depth.min(4)), entry.label),
+                            entry
+                                .destination
+                                .clone()
+                                .map_or(Action::Heading, Action::Jump),
+                        )
+                    }));
+                }
+                items
+            }
+            Screen::GeneratedContents => self.outline.as_ref().map_or_else(Vec::new, |outline| {
+                outline
+                    .contents
+                    .entries
+                    .iter()
+                    .enumerate()
+                    .map(|(index, entry)| {
+                        Item::new(
+                            format!("{}{}", "  ".repeat(entry.depth.min(4)), entry.title),
+                            Action::GeneratedEntry(index),
+                        )
+                    })
+                    .collect()
+            }),
             Screen::Links => reading
                 .links()
                 .into_iter()
@@ -1733,6 +1768,8 @@ impl Reader {
             }
             Action::Show(screen) => self.show(screen),
             Action::Jump(target) => self.follow(target)?,
+            Action::ShowGeneratedContents => self.start_generated_contents()?,
+            Action::GeneratedEntry(index) => self.follow_generated_entry(index)?,
             Action::ReturnToLocation => {
                 self.return_to_location(self.back.len().saturating_sub(1))?;
             }
@@ -2248,12 +2285,86 @@ impl Reader {
             .chapter_index(&target.path)
             .ok_or("That link is outside the reading order")?;
         active.reading.jump(chapter, target.fragment.as_deref())?;
+        self.finish_link_jump(previous);
+        Ok(())
+    }
+
+    fn finish_link_jump(&mut self, previous: ReadingPosition) {
         self.push_history(previous);
         self.selection = None;
         self.result_selection = None;
         self.search_result = None;
         self.show(Screen::Book);
         self.record_position();
+    }
+
+    fn start_generated_contents(&mut self) -> Result<()> {
+        if self
+            .active
+            .as_ref()
+            .is_none_or(|active| active.entry.format != DocumentFormat::Epub)
+        {
+            return Err("Open an EPUB book to build an outline".into());
+        }
+        let now = Instant::now();
+        self.show(Screen::GeneratedContents);
+        self.outline = Some(OutlineScan {
+            contents: GeneratedContents::default(),
+            deadline: Some(now + SEARCH_DELAY),
+            next_refresh: now,
+        });
+        Ok(())
+    }
+
+    fn step_generated_contents(&mut self, now: Instant) -> Result<Change> {
+        let outline = self
+            .outline
+            .as_mut()
+            .ok_or("There is no outline to build")?;
+        let active = self.active.as_ref().ok_or("No open book")?;
+        let previous = outline.contents.entries.len();
+        let finished = with_storage(|| {
+            let mut book = Book::open(&active.reading.config.book).map_err(io::Error::other)?;
+            outline.contents.step(&mut book).map_err(io::Error::other)
+        })?;
+        if finished {
+            outline.deadline = None;
+            self.notice = if outline.contents.truncated {
+                Some("Reached the outline size limit".into())
+            } else if outline.contents.skipped > 0 {
+                Some("Some chapters could not be scanned".into())
+            } else {
+                None
+            };
+            return Ok(Change::Partial);
+        }
+        let now = now.max(Instant::now());
+        outline.deadline = Some(now + SEARCH_DELAY);
+        if outline.contents.entries.len() != previous && now >= outline.next_refresh {
+            outline.next_refresh = now + SEARCH_REFRESH;
+            Ok(Change::Partial)
+        } else {
+            Ok(Change::None)
+        }
+    }
+
+    fn follow_generated_entry(&mut self, index: usize) -> Result<()> {
+        let target = self
+            .outline
+            .as_ref()
+            .and_then(|outline| outline.contents.entries.get(index))
+            .ok_or("That outline entry is unavailable")?
+            .target
+            .clone();
+        let active = self.active.as_mut().ok_or("No open book")?;
+        let previous = position(&active.reading);
+        match target {
+            OutlineTarget::Chapter(chapter) => active.reading.jump(chapter, None)?,
+            OutlineTarget::Heading(chapter, anchor) => {
+                active.reading.jump_to_anchor(chapter, &anchor)?
+            }
+        }
+        self.finish_link_jump(previous);
         Ok(())
     }
 
@@ -2995,6 +3106,21 @@ impl Reader {
     }
 
     fn handle_fixed(&mut self, input: Input) -> Change {
+        if let Input::LongTap(x, y) = input
+            && let Some(fixed) = &mut self.fixed
+            && fixed.entry.format.is_comic()
+        {
+            return match fixed.reading.inspect_comic_panel(x, y) {
+                Ok(Some(panel)) => {
+                    fixed.reading.pause();
+                    self.show(Screen::Illustration);
+                    self.illustration = Some(panel);
+                    Change::Partial
+                }
+                Ok(None) => Change::None,
+                Err(error) => self.report(error),
+            };
+        }
         if let Input::LongTap(x, y) = input
             && let Some(fixed) = &self.fixed
             && fixed.reading.supports_text()
@@ -4126,6 +4252,8 @@ impl App for Reader {
         if let Some(illustration) = &self.illustration {
             let title = if self.book_details.is_some() {
                 "Book cover"
+            } else if self.fixed.is_some() {
+                "Comic panel"
             } else {
                 "Illustration"
             };
@@ -4403,6 +4531,15 @@ impl App for Reader {
                 }
                 Screen::Matches if self.search_at.is_some() => "Searching chapters",
                 Screen::Matches => "No matches",
+                Screen::GeneratedContents
+                    if self
+                        .outline
+                        .as_ref()
+                        .is_some_and(|outline| outline.deadline.is_some()) =>
+                {
+                    "Building the outline"
+                }
+                Screen::GeneratedContents => "No readable chapters found",
                 _ => "No entries",
             };
             canvas.text(
@@ -4498,6 +4635,8 @@ impl App for Reader {
             if matches!(input, Input::Tap(x, y) if DONE.contains(x, y)) {
                 self.show(if self.book_details.is_some() {
                     Screen::BookDetails
+                } else if self.fixed.is_some() {
+                    Screen::Fixed
                 } else {
                     Screen::Book
                 });
@@ -4597,6 +4736,7 @@ impl App for Reader {
                         self.show(Screen::FixedTools)
                     }
                     Screen::Matches => self.show(Screen::Find),
+                    Screen::GeneratedContents => self.show(Screen::Contents),
                     Screen::Annotation | Screen::ImportAnnotations => self.show(Screen::Highlights),
                     Screen::ImportPosition => self.show(Screen::ReadingControls),
                     Screen::ImportPdfAnnotations => self.show(Screen::Highlights),
@@ -4660,6 +4800,7 @@ impl App for Reader {
             .chain(fixed_page)
             .chain(self.save_at)
             .chain(self.search_at)
+            .chain(self.outline.as_ref().and_then(|outline| outline.deadline))
             .chain(
                 self.annotation_import
                     .as_ref()
@@ -4732,6 +4873,20 @@ impl App for Reader {
                 }
             };
         }
+        if self
+            .outline
+            .as_ref()
+            .and_then(|outline| outline.deadline)
+            .is_some_and(|at| at <= now)
+        {
+            return match self.step_generated_contents(now) {
+                Ok(change) => change,
+                Err(error) => {
+                    self.show(Screen::Contents);
+                    self.report(error)
+                }
+            };
+        }
         if let (Some(flow), Some(fixed)) = (&mut self.text_flow, &self.fixed) {
             let result = flow.tick(now, &fixed.reading);
             return self.finish_text_flow_update(result);
@@ -4762,6 +4917,9 @@ impl App for Reader {
 
     fn storage_returned(&mut self) -> io::Result<()> {
         self.pages_since_refresh = 0;
+        if self.screen == Screen::GeneratedContents {
+            self.show(Screen::Contents);
+        }
         self.stats.discard_active();
         self.update_stats_activity(Instant::now());
         self.ocr_assets = self
@@ -6085,6 +6243,158 @@ mod tests {
     }
 
     #[test]
+    fn generated_outline_opens_without_publisher_navigation_and_survives_repagination() {
+        let fixture = Fixture::new();
+        write_outline_fixture(&fixture.book, None, None);
+        let mut app = fixture.app();
+        app.open_path(&fixture.book).unwrap();
+        assert!(app.outline.is_none());
+
+        let mut first_landing = None;
+        for font_size in [42.0, 68.0] {
+            app.activate(Action::Text(Settings {
+                font_size,
+                ..device_settings()
+            }))
+            .unwrap();
+            app.activate(Action::Show(Screen::Contents)).unwrap();
+            assert!(matches!(
+                app.items()[0].action,
+                Action::ShowGeneratedContents
+            ));
+            let row = |index: usize| {
+                Input::Tap(
+                    (LIST_X + 30) as f32,
+                    (LIST_Y + index as i32 * ROW_HEIGHT + 40) as f32,
+                )
+            };
+            assert_eq!(app.input(row(0)), Change::Partial);
+            assert_eq!(app.screen, Screen::GeneratedContents);
+            assert!(app.outline.as_ref().unwrap().contents.entries.is_empty());
+
+            let deadline = |app: &Reader| app.outline.as_ref().unwrap().deadline.unwrap();
+            assert_eq!(app.tick(deadline(&app)), Change::Partial);
+            assert_eq!(app.items().len(), 14);
+            assert_eq!(app.tick(deadline(&app)), Change::Partial);
+            assert_eq!(app.items().len(), 15);
+            assert_eq!(app.items()[14].title, "Chapter 2");
+            assert_eq!(app.input(Input::PageForward), Change::Partial);
+            assert_eq!(app.list_page, 1);
+            assert_eq!(app.input(Input::PageBack), Change::Partial);
+            assert_eq!(app.list_page, 0);
+            assert_eq!(app.input(Input::PageForward), Change::Partial);
+
+            let target = app.outline.as_ref().unwrap().contents.entries[12]
+                .target
+                .clone();
+            let OutlineTarget::Heading(0, anchor) = target else {
+                panic!("Expected an anchored heading without an element ID")
+            };
+            assert_eq!(app.input(row(12 - ROWS_PER_PAGE)), Change::Partial);
+            assert_eq!(app.screen, Screen::Book);
+            let reading = &app.active.as_ref().unwrap().reading;
+            assert_eq!(reading.probe.page_for(&anchor), Some(reading.page));
+            if let Some((original_anchor, original_page)) = first_landing {
+                assert_eq!(anchor, original_anchor);
+                assert_ne!(reading.page, original_page);
+            }
+            first_landing = Some((anchor, reading.page));
+        }
+    }
+
+    #[test]
+    fn generated_outline_recovers_from_broken_optional_navigation_and_can_be_canceled() {
+        let fixture = Fixture::new();
+        for nav in [b"<malformed".as_slice(), br#"<html><body><nav type="toc"><ol><li><a href="missing.xhtml">Broken link</a></li></ol></nav></body></html>"#] {
+            write_outline_fixture(&fixture.book, Some(nav), None);
+            let mut app = fixture.app();
+            app.open_path(&fixture.book).unwrap();
+            assert!(app.outline.is_none());
+            app.activate(Action::Show(Screen::Contents)).unwrap();
+            app.activate(Action::ShowGeneratedContents).unwrap();
+            let pending = app.outline.as_ref().unwrap().deadline.unwrap();
+            let back = primitive_ui::back_button(WIDTH as i32);
+            assert_eq!(app.input(Input::Tap((back.x + 20) as f32, (back.y + 20) as f32)), Change::Partial);
+            assert_eq!(app.screen, Screen::Contents);
+            assert_eq!(app.tick(pending), Change::None);
+            assert!(app.outline.is_none());
+            app.activate(Action::ShowGeneratedContents).unwrap();
+            let pending = app.outline.as_ref().unwrap().deadline.unwrap();
+            assert_eq!(app.tick(pending), Change::Partial);
+            assert_eq!(app.items()[0].title, "Passage 1");
+            assert_eq!(app.tick(app.outline.as_ref().unwrap().deadline.unwrap()), Change::Partial);
+            app.activate(Action::GeneratedEntry(14)).unwrap();
+            let reading = &app.active.as_ref().unwrap().reading;
+            assert_eq!((reading.chapter, reading.page), (1, 0));
+        }
+    }
+
+    #[test]
+    fn generated_outline_falls_back_to_ncx_for_missing_navigation_sections() {
+        let fixture = Fixture::new();
+        let ncx = br#"<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/">
+          <navMap><navPoint><navLabel><text>NCX contents</text></navLabel><content src="first.xhtml"/></navPoint></navMap>
+          <pageList><pageTarget><navLabel><text>7</text></navLabel><content src="second.xhtml"/></pageTarget></pageList>
+          </ncx>"#;
+        let print_nav = br#"<html><body>
+          <nav type="toc"><ol><li><a href="missing.xhtml">Broken link</a></li></ol></nav>
+          <nav type="page-list"><ol><li><a href="second.xhtml">v</a></li></ol></nav>
+          </body></html>"#;
+        write_outline_fixture(&fixture.book, Some(print_nav), Some(ncx));
+        let first = Book::open(&fixture.book).unwrap();
+        assert_eq!(first.toc[0].label, "NCX contents");
+        assert_eq!(first.printed_pages()[0].label, "v");
+        drop(first);
+
+        let toc_nav = br#"<html><body><nav type="toc"><ol><li><a href="first.xhtml">XHTML contents</a></li></ol></nav></body></html>"#;
+        write_outline_fixture(&fixture.book, Some(toc_nav), Some(ncx));
+        let second = Book::open(&fixture.book).unwrap();
+        assert_eq!(second.toc[0].label, "XHTML contents");
+        assert_eq!(second.printed_pages()[0].label, "7");
+    }
+
+    fn write_outline_fixture(path: &Path, nav: Option<&[u8]>, ncx: Option<&[u8]>) {
+        let mut zip = zip::ZipWriter::new(fs::File::create(path).unwrap());
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        let container = br#"<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0"><rootfiles><rootfile full-path="EPUB/book.opf" media-type="application/oebps-package+xml"/></rootfiles></container>"#;
+        let nav_item = nav.map_or("", |_| r#"<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>"#);
+        let ncx_item = ncx.map_or(
+            "",
+            |_| r#"<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>"#,
+        );
+        let spine_toc = ncx.map_or("", |_| r#" toc="ncx""#);
+        let package = format!(
+            r#"<package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Outline sample</dc:title></metadata><manifest><item id="first" href="first.xhtml" media-type="application/xhtml+xml"/><item id="second" href="second.xhtml" media-type="application/xhtml+xml"/>{nav_item}{ncx_item}</manifest><spine{spine_toc}><itemref idref="first"/><itemref idref="second"/></spine></package>"#
+        );
+        let lyric = "Beyond the shore the morning gathering stirred in the wind. ".repeat(38);
+        let mut first = String::from(
+            r#"<html xmlns="http://www.w3.org/1999/xhtml"><body><h1 hidden="hidden">Omit this heading</h1>"#,
+        );
+        for index in 1..=14 {
+            use std::fmt::Write as _;
+            write!(first, "<h1>Passage {index}</h1><p>{lyric}</p>").unwrap();
+        }
+        first.push_str("</body></html>");
+        let second = br#"<html xmlns="http://www.w3.org/1999/xhtml"><body><p>There are no headings here.</p></body></html>"#;
+        for (name, bytes) in [
+            ("mimetype", b"application/epub+zip".as_slice()),
+            ("META-INF/container.xml", container.as_slice()),
+            ("EPUB/book.opf", package.as_bytes()),
+            ("EPUB/first.xhtml", first.as_bytes()),
+            ("EPUB/second.xhtml", second.as_slice()),
+        ]
+        .into_iter()
+        .chain(nav.map(|xml| ("EPUB/nav.xhtml", xml)))
+        .chain(ncx.map(|xml| ("EPUB/toc.ncx", xml)))
+        {
+            zip.start_file(name, options).unwrap();
+            zip.write_all(bytes).unwrap();
+        }
+        zip.finish().unwrap();
+    }
+
+    #[test]
     fn finds_repeated_text_then_returns_from_a_result_to_the_original_location() {
         let fixture = Fixture::new();
         let mut app = fixture.app();
@@ -6204,8 +6514,16 @@ mod tests {
     }
 
     fn write_cbz(comic: &Path, pages: &[&str]) {
+        write_cbz_image(
+            comic,
+            pages,
+            image::GrayImage::from_pixel(8, 12, image::Luma([32])),
+        );
+    }
+
+    fn write_cbz_image(comic: &Path, pages: &[&str], image: image::GrayImage) {
         let mut png = Cursor::new(Vec::new());
-        image::DynamicImage::ImageLuma8(image::GrayImage::from_pixel(8, 12, image::Luma([32])))
+        image::DynamicImage::ImageLuma8(image)
             .write_to(&mut png, image::ImageFormat::Png)
             .unwrap();
         let mut zip = zip::ZipWriter::new(fs::File::create(comic).unwrap());
@@ -6215,6 +6533,43 @@ mod tests {
             zip.write_all(png.get_ref()).unwrap();
         }
         zip.finish().unwrap();
+    }
+
+    #[test]
+    fn opens_a_comic_panel_without_changing_the_underlying_page_or_fit() {
+        let fixture = Fixture::new();
+        let comic = fixture.root.join("Panels.cbz");
+        let mut image = image::GrayImage::from_pixel(300, 400, image::Luma([255]));
+        for (left, top, shade) in [
+            (12, 12, 197),
+            (158, 12, 131),
+            (12, 208, 95),
+            (158, 208, 220),
+        ] {
+            for y in top..top + 180 {
+                for x in left..left + 130 {
+                    let border = x < left + 4 || x >= left + 126 || y < top + 4 || y >= top + 176;
+                    image.put_pixel(x, y, image::Luma([if border { 24 } else { shade }]));
+                }
+            }
+        }
+        write_cbz_image(&comic, &["page1.png", "page2.png"], image);
+        let mut app = fixture.app();
+        app.open_path(&comic).unwrap();
+        let fixed = &mut app.fixed.as_mut().unwrap().reading;
+        fixed.jump(1).unwrap();
+        let view = fixed.preferences();
+        assert_eq!(app.input(Input::LongTap(300.0, 300.0)), Change::Partial);
+        assert_eq!(app.screen, Screen::Illustration);
+        assert!(app.illustration.is_some());
+        assert_eq!(
+            app.input(Input::Tap((DONE.x + 15) as f32, (DONE.y + 15) as f32)),
+            Change::Partial
+        );
+        assert_eq!(app.screen, Screen::Fixed);
+        let fixed = &app.fixed.as_ref().unwrap().reading;
+        assert_eq!(fixed.page(), 1);
+        assert_eq!(fixed.preferences(), view);
     }
 
     #[test]

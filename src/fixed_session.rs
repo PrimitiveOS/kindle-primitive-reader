@@ -18,6 +18,9 @@ use crate::session::{
     DONE, PAGE_HEIGHT, PAGE_REFRESH_GAP, PagePaint, PageTurns, draw_page_picture,
 };
 
+#[path = "comic_panel.rs"]
+mod comic_panel;
+
 const SMALLER: Rect = Rect::new(840, PAGE_HEIGHT as i32 + 5, 120, 60);
 const LARGER: Rect = Rect::new(974, PAGE_HEIGHT as i32 + 5, 120, 60);
 const ZOOM: [f32; 5] = [1.0, 1.25, 1.5, 2.0, 3.0];
@@ -156,6 +159,40 @@ impl FixedReading {
 
     pub(crate) fn inspect_image(image: ImagePage) -> Result<Self> {
         Self::with_source(FixedDocument::Image(image), 0, View::default())
+    }
+
+    /// Fit the touched panel in a separate viewer, leaving this reading view intact.
+    pub(crate) fn inspect_comic_panel(&self, x: f32, y: f32) -> Result<Option<Self>> {
+        let FixedDocument::Comic(comic) = &self.source else {
+            return Ok(None);
+        };
+        if self.is_spread()
+            || !(0.0..WIDTH as f32).contains(&x)
+            || !(0.0..PAGE_HEIGHT as f32).contains(&y)
+        {
+            return Ok(None);
+        }
+        let panel = {
+            let image = with_storage(|| comic.decode_page(self.page).map_err(io::Error::other))?;
+            let size = image.page_size();
+            let mut view = self.view;
+            let request = viewport(size, &mut view);
+            let point = request.page_to_viewport(size)?.inverse()
+                * hayro::kurbo::Point::new(f64::from(x), f64::from(y));
+            comic_panel::panel_at(&image, point.x as f32, point.y as f32)?
+        };
+        panel
+            .map(|image| {
+                Self::with_source(
+                    FixedDocument::Image(image),
+                    0,
+                    View {
+                        turns: self.view.turns,
+                        ..View::default()
+                    },
+                )
+            })
+            .transpose()
     }
 
     fn with_source(source: FixedDocument, page: usize, preferences: View) -> Result<Self> {
@@ -989,7 +1026,7 @@ impl FixedReading {
             CAPTION,
         );
         if !self.is_spread() {
-            canvas.button(SMALLER, "−", false, false);
+            canvas.button(SMALLER, "-", false, false);
             canvas.button(LARGER, "+", false, false);
         }
         canvas.button(DONE, "Done", false, false);
@@ -1411,6 +1448,28 @@ mod tests {
     struct ComicFixture(PathBuf);
 
     impl ComicFixture {
+        fn panels() -> Self {
+            use comic_panel::tests::{HEIGHT, WIDTH, grid};
+
+            let fixture = Self(
+                std::env::temp_dir().join(format!("reader-panel-test-{}.cbz", std::process::id(),)),
+            );
+            let mut archive = zip::ZipWriter::new(File::create(&fixture.0).unwrap());
+            let pixels = grid();
+            for index in 0..2 {
+                archive
+                    .start_file(
+                        format!("{index}.pgm"),
+                        zip::write::SimpleFileOptions::default(),
+                    )
+                    .unwrap();
+                write!(archive, "P5\n{WIDTH} {HEIGHT}\n255\n").unwrap();
+                archive.write_all(&pixels).unwrap();
+            }
+            archive.finish().unwrap();
+            fixture
+        }
+
         fn striped() -> Self {
             let fixture = Self(
                 std::env::temp_dir().join(format!("reader-spread-test-{}.cbz", std::process::id())),
@@ -1435,6 +1494,50 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_file(&self.0);
         }
+    }
+
+    #[test]
+    fn panel_zoom_maps_a_rotated_and_panned_touch_without_changing_the_comic_pose() {
+        use comic_panel::tests::{HEIGHT as SOURCE_HEIGHT, WIDTH as SOURCE_WIDTH};
+
+        let fixture = ComicFixture::panels();
+        let comic = Comic::open(&fixture.0).unwrap();
+        let original = FixedReading::with_source(
+            FixedDocument::Comic(comic),
+            1,
+            View {
+                zoom: 1,
+                turns: 1,
+                offset_x: 85.0,
+                ..View::default()
+            },
+        )
+        .unwrap();
+        let size = (SOURCE_WIDTH as f32, SOURCE_HEIGHT as f32);
+        let mut preferences = original.preferences();
+        let transform = viewport(size, &mut preferences)
+            .page_to_viewport(size)
+            .unwrap();
+        let touch = transform * hayro::kurbo::Point::new(90.0, 106.0);
+        let before = original.frame.pixels.clone();
+        let panel = original
+            .inspect_comic_panel(touch.x as f32, touch.y as f32)
+            .unwrap()
+            .unwrap();
+        let gray = panel.frame.pixels[((PAGE_HEIGHT / 2) * WIDTH + WIDTH / 2) as usize];
+        assert_eq!(gray, 197);
+        assert_eq!(panel.preferences().turns, 1);
+        assert_eq!(original.page(), 1);
+        assert_eq!(original.preferences(), preferences);
+        assert_eq!(original.frame.pixels, before);
+
+        let gutter = transform * hayro::kurbo::Point::new(160.0, 220.0);
+        assert!(
+            original
+                .inspect_comic_panel(gutter.x as f32, gutter.y as f32)
+                .unwrap()
+                .is_none()
+        );
     }
 
     struct EpubFixture(PathBuf);

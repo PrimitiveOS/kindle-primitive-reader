@@ -395,6 +395,14 @@ impl Reading {
         self.use_chapter(candidate, chapter, anchor.as_ref(), 0)
     }
 
+    pub(crate) fn jump_to_anchor(&mut self, chapter: usize, anchor: &Anchor) -> Result<()> {
+        let candidate = self.config.chapter(chapter)?;
+        if candidate.page_for(anchor).is_none() {
+            return Err("That location is unavailable".into());
+        }
+        self.use_chapter(candidate, chapter, Some(anchor), 0)
+    }
+
     pub(crate) fn jump_progress(&mut self, fraction: f64) -> Result<()> {
         let (chapter, in_chapter, probe) = with_storage(|| {
             let mut book = Book::open(&self.config.book).map_err(io::Error::other)?;

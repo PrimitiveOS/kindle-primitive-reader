@@ -28,6 +28,10 @@ These captures use Reader's Kindle interface in the desktop simulator.
   ten pages in paged reading. Default uses the normal refresh behavior.
 - Tap Pages on the reading bar to browse thumbnails across EPUB chapters or
   a fixed-page document. Open a preview and return with Previous location.
+- Open Contents and choose Generated outline to browse EPUB headings or chapter
+  starts when the publisher's contents are missing or incomplete.
+- Long-press a framed panel in a single-page comic view to inspect it at a
+  larger size. Done returns to the same page and zoom.
 - At the end of a comic, Next comic opens the following archive in the same
   folder in natural filename order.
 - Hold a word to select it, then tap another word to extend the selection.
