@@ -185,13 +185,20 @@ impl ParleyChapter {
         Ok((chapter, lines, extent))
     }
 
-    pub(crate) fn source_at(&self, x: f32, y: f32) -> Option<(usize, usize)> {
+    pub(crate) fn source_at(&self, x: f32, y: f32, visible: &Range<f32>) -> Option<(usize, usize)> {
         let paragraph = self.paragraphs.get(
             self.paragraphs
                 .partition_point(|paragraph| paragraph.bottom <= y),
         )?;
         let (cluster, _) =
             parley::Cluster::from_point_exact(&paragraph.layout, x, y - paragraph.y)?;
+        let line = cluster.line();
+        let metrics = line.metrics();
+        if paragraph.y + metrics.content_block_max_coord <= visible.start
+            || paragraph.y + metrics.content_block_min_coord >= visible.end
+        {
+            return None;
+        }
         Some((paragraph.key, cluster.text_range().start))
     }
 

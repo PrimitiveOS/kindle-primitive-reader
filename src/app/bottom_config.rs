@@ -156,7 +156,31 @@ impl Reader {
                     return rows;
                 }
                 BarPanel::TextLayout => {
-                    return vec![
+                    let mut rows = Vec::new();
+                    if !vertical && !active.reading.config.scroll {
+                        let facing_pages = active.reading.config.facing_pages;
+                        let title = if facing_pages && !active.reading.uses_facing_pages() {
+                            "Pages · single view here"
+                        } else {
+                            "Pages"
+                        };
+                        rows.push(ConfigRow::new(
+                            title,
+                            [
+                                Choice::option(
+                                    "One page",
+                                    Action::FacingPages(false),
+                                    !facing_pages,
+                                ),
+                                Choice::option(
+                                    "Two pages",
+                                    Action::FacingPages(true),
+                                    facing_pages,
+                                ),
+                            ],
+                        ));
+                    }
+                    rows.extend([
                         margin_row("Side margins", settings.side_margin(), |value| Settings {
                             margin_sides: Some(value),
                             ..settings
@@ -190,7 +214,8 @@ impl Reader {
                                 ),
                             ],
                         ),
-                    ];
+                    ]);
+                    return rows;
                 }
                 BarPanel::TextSpacing if !vertical => {
                     return vec![

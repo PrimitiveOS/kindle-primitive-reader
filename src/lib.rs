@@ -173,8 +173,8 @@ impl Settings {
             || !(160..=4096).contains(&self.height)
             || self.margin > margin_limit
             || self.side_margin() > margin_limit
-            || self.top_margin() > margin_limit
-            || self.bottom_margin() > margin_limit
+            || self.top_margin() > self.height / 4
+            || self.bottom_margin() > self.height / 4
             || !(12.0..=144.0).contains(&self.font_size)
             || !(1.0..=3.0).contains(&self.line_height)
             || !(-2.0..=12.0).contains(&self.word_spacing)
@@ -265,12 +265,13 @@ impl Pagination {
             }
             let origin = *bounds.last().unwrap();
             if interval.end > origin + height && interval.start > origin {
-                while interval.start > *bounds.last().unwrap() + height {
+                // Keep any full blank views from intentional large gaps. A short
+                // remainder before the next line belongs to the preceding view's
+                // trailing whitespace, rather than a separate empty page.
+                while interval.start >= *bounds.last().unwrap() + 2.0 * height {
                     bounds.push(bounds.last().unwrap() + height);
                 }
-                if interval.start > *bounds.last().unwrap() {
-                    bounds.push(interval.start);
-                }
+                bounds.push(interval.start);
             }
         }
         while content_height > *bounds.last().unwrap() + height {
@@ -551,12 +552,15 @@ impl Probe {
             Renderer::Vertical(renderer) => renderer.source_at(range, x, y),
             Renderer::Parley(renderer) => {
                 let sides = self.settings.side_margin() as f32;
-                let y = y - self.settings.top_margin() as f32 + range.start;
-                if !range.contains(&y) || !(sides..self.settings.width as f32 - sides).contains(&x)
+                let local_y = y - self.settings.top_margin() as f32;
+                let y = range.start + local_y;
+                if !(0.0..self.settings.text_height() as f32).contains(&local_y)
+                    || !range.contains(&y)
+                    || !(sides..self.settings.width as f32 - sides).contains(&x)
                 {
                     return None;
                 }
-                renderer.source_at(x - sides, y)
+                renderer.source_at(x - sides, y, &range)
             }
             Renderer::Blitz(_) => None,
         }

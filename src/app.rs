@@ -249,6 +249,7 @@ enum Action {
     RemoveProfile(usize),
     ResetText,
     ReadingMode(bool),
+    FacingPages(bool),
     SearchHit(usize),
     PdfSearchHit(usize),
     PdfHighlight(usize),
@@ -581,10 +582,12 @@ impl Reader {
         })?;
         let mut settings = device_settings();
         let mut scroll = false;
+        let mut facing_pages = false;
         let mut fixed_preferences = FixedPreferences::default();
         let position = self.library.state(id).and_then(|state| {
             settings = state.preferences.apply_to(settings);
             scroll = state.preferences.scroll;
+            facing_pages = state.preferences.facing_pages;
             fixed_preferences = state.fixed_preferences;
             state.position.clone()
         });
@@ -658,6 +661,7 @@ impl Reader {
             fonts,
             settings,
             scroll,
+            facing_pages,
         };
         let reading = if let Some(position) = position {
             Reading::restore(
@@ -1942,6 +1946,16 @@ impl Reader {
                 self.show(Screen::Book);
                 self.record_position();
             }
+            Action::FacingPages(facing_pages) => {
+                let active = self.active.as_mut().ok_or("No open book")?;
+                active.reading.set_facing_pages(facing_pages)?;
+                self.library
+                    .remember(&active.entry, active.id, &active.reading.probe.title)
+                    .preferences
+                    .facing_pages = facing_pages;
+                self.show(Screen::Book);
+                self.record_position();
+            }
             Action::SearchHit(index) => {
                 let hit = self.hits.get(index).ok_or("That result is unavailable")?;
                 let end = hit.end.clone();
@@ -2072,6 +2086,7 @@ impl Reader {
         let mut config = active.reading.config.clone();
         config.settings = preferences.apply_to(device_settings());
         config.scroll = preferences.scroll;
+        config.facing_pages = preferences.facing_pages;
         config.fonts = fonts;
         active.reading = Reading::restore(
             config,
@@ -2105,6 +2120,7 @@ impl Reader {
             word_spacing: settings.word_spacing,
             letter_spacing: settings.letter_spacing,
             scroll: config.scroll,
+            facing_pages: config.facing_pages,
             alignment: settings.alignment,
             bold_text: settings.bold_text,
             text_contrast: settings.text_contrast,
@@ -2548,7 +2564,7 @@ impl Reader {
                 }
                 let reading = &self.active.as_ref()?.reading;
                 let count = reading.probe.page_count().max(1);
-                let progress = (reading.page + 1) * 100 / count;
+                let progress = (reading.last_visible_page() + 1) * 100 / count;
                 Some(format!(
                     "{} · {progress}% of chapter",
                     reading.probe.chapter_label
@@ -5803,6 +5819,7 @@ pub fn run_probe(engine: Engine, book: PathBuf, fonts: Vec<PathBuf>, home: &Path
         fonts,
         settings: device_settings(),
         scroll: false,
+        facing_pages: false,
     })?;
     primitive_app::run(reading, home).map_err(Into::into)
 }
@@ -7217,6 +7234,48 @@ mod tests {
         assert!(app.page_is_bookmarked());
         app.activate(Action::ToggleBookmark).unwrap();
         assert!(!app.page_is_bookmarked());
+    }
+
+    #[test]
+    fn epub_layout_applies_and_remembers_facing_pages_from_the_bottom_bar() {
+        let fixture = Fixture::new();
+        let book = fixture.root.join("Facing pages.epub");
+        fs::write(&book, include_bytes!("../tests/fixtures/long-chapter.epub")).unwrap();
+        let mut app = fixture.app();
+        app.open_path(&book).unwrap();
+        app.follow_reflow_page(0, 2).unwrap();
+        let before = app.active.as_ref().unwrap().reading.anchor();
+
+        let footer = Input::Tap(WIDTH as f32 / 2.0, (PAGE_HEIGHT + 38) as f32);
+        assert_eq!(app.input(footer), Change::Partial);
+        assert_eq!(tap_reading_control(&mut app, "Layout"), Change::Partial);
+        assert_eq!(tap_reading_control(&mut app, "Two pages"), Change::Partial);
+        assert_eq!(app.screen, Screen::BookTools);
+        assert_eq!(app.reading_panel, Some(BarPanel::TextLayout));
+        let reading = &app.active.as_ref().unwrap().reading;
+        assert!(reading.config.facing_pages);
+        assert!(reading.probe.settings.width < WIDTH);
+        assert_eq!(reading.anchor(), before);
+        app.save().unwrap();
+
+        let mut reopened = fixture.app();
+        reopened.activate(Action::Continue).unwrap();
+        let reading = &reopened.active.as_ref().unwrap().reading;
+        assert!(reading.config.facing_pages);
+        assert_eq!(reading.anchor(), before);
+        assert_eq!(reopened.input(footer), Change::Partial);
+        assert_eq!(
+            tap_reading_control(&mut reopened, "Layout"),
+            Change::Partial
+        );
+        assert_eq!(
+            tap_reading_control(&mut reopened, "One page"),
+            Change::Partial
+        );
+        let reading = &reopened.active.as_ref().unwrap().reading;
+        assert!(!reading.config.facing_pages);
+        assert_eq!(reading.probe.settings.width, WIDTH);
+        assert_eq!(reading.anchor(), before);
     }
 
     #[test]

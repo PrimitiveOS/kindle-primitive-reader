@@ -157,12 +157,14 @@ impl Probe {
         if !(sides..self.settings.width as f32 - sides).contains(&x) {
             return None;
         }
-        let y = y - self.settings.top_margin() as f32 + page.start;
-        page.contains(&y).then_some(PagePoint {
-            page,
-            x: x - sides,
-            y,
-        })
+        let local_y = y - self.settings.top_margin() as f32;
+        let y = local_y + page.start;
+        ((0.0..self.settings.text_height() as f32).contains(&local_y) && page.contains(&y))
+            .then_some(PagePoint {
+                page,
+                x: x - sides,
+                y,
+            })
     }
 
     fn selection_block(&self, key: usize) -> Option<usize> {

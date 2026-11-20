@@ -236,6 +236,7 @@ pub struct BookPreferences {
     pub word_spacing: f32,
     pub letter_spacing: f32,
     pub scroll: bool,
+    pub facing_pages: bool,
     pub alignment: TextAlignment,
     pub bold_text: bool,
     pub text_contrast: bool,
