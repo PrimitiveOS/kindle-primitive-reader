@@ -1,0 +1,36 @@
+[package]
+name = "reader"
+version = "0.0.1"
+edition = "2024"
+license = "PolyForm-Noncommercial-1.0.0"
+description = "PrimitiveOS Reader EPUB feasibility probes"
+
+[features]
+kindle = ["dep:primitive-app", "dep:primitive-ui"]
+
+[dependencies]
+ab_glyph_rasterizer = "=0.1.10"
+anyrender_vello_cpu = "=0.18.0"
+blitz-dom = { version = "=0.3.0-beta.4", default-features = false }
+blitz-html = "=0.3.0-beta.4"
+blitz-paint = { version = "=0.3.0-beta.4", default-features = false }
+blitz-traits = "=0.3.0-beta.4"
+cssparser = "=0.38.0"
+image = { version = "=0.25.10", default-features = false, features = ["jpeg", "png"] }
+parley = { version = "=0.12.0", default-features = false, features = ["std"] }
+png = "=0.17.16"
+primitive-app = { path = "../doannt-kindle-tools/crates/primitive-app", optional = true }
+primitive-ui = { path = "../doannt-kindle-tools/crates/primitive-ui", optional = true }
+roxmltree = "=0.21.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+skrifa = { version = "=0.44.0", default-features = false, features = ["std"] }
+zip = { version = "=2.6.1", default-features = false, features = ["deflate"] }
+
+[[bin]]
+name = "reader-kindle"
+path = "src/bin/kindle.rs"
+required-features = ["kindle"]
+
+[profile.release]
+codegen-units = 4

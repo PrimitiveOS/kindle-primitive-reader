@@ -1,0 +1,202 @@
+{
+  "schema": 1,
+  "generator": "scripts/generate-fixtures.py",
+  "original_content_license": "CC-BY-NC-SA-4.0",
+  "third_party": [
+    {
+      "name": "Silkscreen Regular",
+      "license": "OFL-1.1",
+      "source": "https://github.com/google/fonts/tree/7e8d490955e9d2629cd3095e8dadd6fafe3c16b8/ofl/silkscreen",
+      "source_file": "fonts/Silkscreen-Regular.ttf",
+      "sha256": "c845473330b94c2079ce9af01c51ac8ba2d99c24f4d14c039843bbb8e642ebd8",
+      "notice_file": "fonts/OFL-Silkscreen.txt",
+      "notice_sha256": "86c5e9c9382cdcc5948704fdfe60f2aa164a719746931219a42736ecd9cefbd3",
+      "included_in": [
+        "field-notes-epub3.epub"
+      ],
+      "archive_notice": "META-INF/OFL-Silkscreen.txt"
+    }
+  ],
+  "fixtures": [
+    {
+      "file": "field-notes-epub2.epub",
+      "sha256": "a0094be27b9598a2fbdcfc99b198ecbd656663584df1aed033e18fb4f75c255f",
+      "size_bytes": 19096,
+      "expected": {
+        "opens": true,
+        "epub_version": "2.0",
+        "navigation": "ncx",
+        "spine": [
+          "EPUB/chapters/shore.xhtml",
+          "EPUB/chapters/dusk.xhtml"
+        ],
+        "toc": [
+          "Reading the Shore",
+          "Returning at Dusk"
+        ],
+        "anchors": {
+          "EPUB/chapters/shore.xhtml#tide-a": "The tide keeps its own time.",
+          "EPUB/chapters/shore.xhtml#tide-b": "The tide keeps its own time.",
+          "EPUB/chapters/shore.xhtml#lantern": "The copper lantern stood beside the door.",
+          "EPUB/chapters/dusk.xhtml#door": "At dusk the door was still open."
+        },
+        "links": [
+          {
+            "chapter": "EPUB/chapters/shore.xhtml",
+            "href": "#tide-note",
+            "target": "EPUB/chapters/shore.xhtml#tide-note"
+          },
+          {
+            "chapter": "EPUB/chapters/shore.xhtml",
+            "href": "#note-ref",
+            "target": "EPUB/chapters/shore.xhtml#note-ref"
+          },
+          {
+            "chapter": "EPUB/chapters/shore.xhtml",
+            "href": "dusk.xhtml#door",
+            "target": "EPUB/chapters/dusk.xhtml#door"
+          },
+          {
+            "chapter": "EPUB/chapters/dusk.xhtml",
+            "href": "shore.xhtml#tide-b",
+            "target": "EPUB/chapters/shore.xhtml#tide-b"
+          }
+        ],
+        "resources": [
+          "EPUB/styles/reader.css",
+          "EPUB/images/shore.png"
+        ],
+        "image": {
+          "path": "EPUB/images/shore.png",
+          "width": 144,
+          "height": 96,
+          "alt": "Grayscale shore marker with a hill and a dark pillar"
+        },
+        "embedded_font_sample": null,
+        "text_samples": {
+          "vi": "Mặt trời vừa lên, những con thuyền nhỏ rời bến.",
+          "ar": "عاد الصياد إلى الميناء عند الغروب.",
+          "ja": "夕暮れに小さな船が港へ戻った。"
+        }
+      }
+    },
+    {
+      "file": "field-notes-epub3.epub",
+      "sha256": "63ecc0c1353cf10e600e3cc617cff29bb48d0fb219125fbb166401cee76865db",
+      "size_bytes": 56092,
+      "expected": {
+        "opens": true,
+        "epub_version": "3.0",
+        "navigation": "xhtml",
+        "spine": [
+          "EPUB/chapters/shore.xhtml",
+          "EPUB/chapters/dusk.xhtml"
+        ],
+        "toc": [
+          "Reading the Shore",
+          "Returning at Dusk"
+        ],
+        "anchors": {
+          "EPUB/chapters/shore.xhtml#tide-a": "The tide keeps its own time.",
+          "EPUB/chapters/shore.xhtml#tide-b": "The tide keeps its own time.",
+          "EPUB/chapters/shore.xhtml#lantern": "The copper lantern stood beside the door.",
+          "EPUB/chapters/dusk.xhtml#door": "At dusk the door was still open."
+        },
+        "links": [
+          {
+            "chapter": "EPUB/chapters/shore.xhtml",
+            "href": "#tide-note",
+            "target": "EPUB/chapters/shore.xhtml#tide-note"
+          },
+          {
+            "chapter": "EPUB/chapters/shore.xhtml",
+            "href": "#note-ref",
+            "target": "EPUB/chapters/shore.xhtml#note-ref"
+          },
+          {
+            "chapter": "EPUB/chapters/shore.xhtml",
+            "href": "dusk.xhtml#door",
+            "target": "EPUB/chapters/dusk.xhtml#door"
+          },
+          {
+            "chapter": "EPUB/chapters/dusk.xhtml",
+            "href": "shore.xhtml#tide-b",
+            "target": "EPUB/chapters/shore.xhtml#tide-b"
+          }
+        ],
+        "resources": [
+          "EPUB/styles/reader.css",
+          "EPUB/images/shore.png",
+          "EPUB/fonts/Silkscreen-Regular.ttf"
+        ],
+        "image": {
+          "path": "EPUB/images/shore.png",
+          "width": 144,
+          "height": 96,
+          "alt": "Grayscale shore marker with a hill and a dark pillar"
+        },
+        "embedded_font_sample": "INK SAMPLE",
+        "text_samples": {
+          "vi": "Mặt trời vừa lên, những con thuyền nhỏ rời bến.",
+          "ar": "عاد الصياد إلى الميناء عند الغروب.",
+          "ja": "夕暮れに小さな船が港へ戻った。"
+        }
+      }
+    },
+    {
+      "file": "long-chapter.epub",
+      "sha256": "f87cb3327cdb5602b9ea92e6a8aa4bc90cdd2e7917aebf5da514c4f6a96cb3cc",
+      "size_bytes": 51901,
+      "expected": {
+        "opens": true,
+        "epub_version": "3.0",
+        "spine_count": 1,
+        "observation_count": 240,
+        "anchors": {
+          "EPUB/chapters/walk.xhtml#station-137": "Observation 137.",
+          "EPUB/chapters/walk.xhtml#end": "End of the shore walk."
+        }
+      }
+    },
+    {
+      "file": "many-chapters.epub",
+      "sha256": "f68a610e9ffe441b348248f4bb25c43d04638ad59e3560edaa4e2fe175364bee",
+      "size_bytes": 38320,
+      "expected": {
+        "opens": true,
+        "epub_version": "3.0",
+        "spine_count": 48,
+        "toc_count": 48,
+        "first_chapter": "EPUB/chapters/day-01.xhtml",
+        "last_chapter": "EPUB/chapters/day-48.xhtml"
+      }
+    },
+    {
+      "file": "missing-image.epub",
+      "sha256": "505199483cbe343c5b79b1a50626557b60a4ddf6bdb33de1ca78cf0debaacba5",
+      "size_bytes": 4996,
+      "expected": {
+        "missing_resource": "EPUB/images/shore.png",
+        "recovery": "Keep reading with image fallback or show an actionable error."
+      }
+    },
+    {
+      "file": "malformed-container.epub",
+      "sha256": "102c2e478eb7acfad1d720dbc7c59c6c327dc136bb4a435b71d77cf70490c08f",
+      "size_bytes": 19083,
+      "expected": {
+        "opens": false,
+        "error": "Malformed EPUB container XML."
+      }
+    },
+    {
+      "file": "truncated.epub",
+      "sha256": "103767a619621615ccfbb30faa329e4560a654617e9e35a247b98dd488a5005c",
+      "size_bytes": 19074,
+      "expected": {
+        "opens": false,
+        "error": "ZIP is missing the end of central directory record."
+      }
+    }
+  ]
+}

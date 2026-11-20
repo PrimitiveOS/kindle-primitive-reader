@@ -3,9 +3,11 @@
 Reader is a standalone, offline-first Rust app for PrimitiveOS. The first hardware
 target is the ARMHF Kindle Oasis 3 running firmware 5.18.2. The desktop simulator
 and the Kindle build will exercise the same document, layout, and reading-state
-logic. Engine selection is open until the feasibility measurements in the
-[execution plan](execution-plan.md) are recorded. The [requirements](requirements.md)
-define the Kindle workflows this architecture must support.
+logic. The [Oasis 3 measurements](epub-probe-results.md) selected Parley with
+direct grayscale drawing as the EPUB engine. The optional Blitz probe
+provides a comparison for publisher styling and rendering quality. The
+[requirements](requirements.md) define the Kindle workflows this architecture
+must support.
 
 ## Application and platform
 

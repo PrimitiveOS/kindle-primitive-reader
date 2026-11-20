@@ -8,7 +8,8 @@ reading workflows, and performance on the same device.
 The first milestone is an EPUB feasibility check in the desktop simulator and on
 the Kindle Oasis 3. The check will determine which rendering approach can show
 real books, turn pages promptly, and restore the same passage after repagination.
-This repository currently contains the design and test plan.
+The feasibility code and corpus support initial rendering and device
+benchmarks. The reading app follows after the P0 acceptance checks.
 
 ## Design documents
 
@@ -17,6 +18,8 @@ This repository currently contains the design and test plan.
 | [System architecture](docs/architecture.md) | Rendering, document positions, persistence, and Kindle integration |
 | [Requirements and KOReader parity](docs/requirements.md) | Kindle workflows, parity scope, and acceptance criteria |
 | [Execution plan](docs/execution-plan.md) | EPUB feasibility experiments, device verification, and release milestones |
+| [EPUB probe](docs/epub-probe.md) | Commands for comparing the two renderers on desktop and Kindle |
+| [EPUB feasibility results](docs/epub-probe-results.md) | Oasis 3 measurements, current engine choice, and remaining validation |
 
 ## Licence
 

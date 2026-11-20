@@ -6,6 +6,9 @@ decision before building the full reading interface. Requirement IDs refer to
 the [KOReader parity matrix](requirements.md). Component boundaries are defined
 in the [architecture](architecture.md).
 
+The [EPUB feasibility results](epub-probe-results.md) record the completed
+desktop and Oasis 3 experiments and the remaining acceptance checks.
+
 | Stage | Work | Exit evidence |
 |---|---|---|
 | P0 · EPUB feasibility | Test package loading, layout, text positions, and a minimal book view on desktop and Oasis 3. K01–K05. | Corpus results, ARMHF build, device measurements, and a documented engine decision |

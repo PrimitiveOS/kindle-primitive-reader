@@ -1,0 +1,89 @@
+# EPUB feasibility results
+
+**Use Parley with direct grayscale glyph rendering for Reader's EPUB
+engine.** Blitz renders a broader set of publisher styles and provides a
+reference for layout comparisons. Its uncached raster time on the Oasis 3
+exceeded the proposed budget. The Parley prototype keeps the shared EPUB
+positions and supports the heading styles, paragraph background, embedded
+font, and bitmap illustration in the Field Notes fixture.
+
+## Oasis 3 software measurements
+
+The device ran firmware 5.18.2. Both probes used a 1264 × 1606 reading viewport,
+42-pixel Noto Sans, 54-pixel margins, and a 1.35 default line-height multiplier.
+Each row summarizes five fresh processes and 30 additional rasterizations per
+process. The p95 column is the median of the five per-process p95 results.
+RSS is the median of each process's high-water mark.
+
+| Fixture | Engine and renderer | First frame | Warm p95 | Peak RSS |
+|---|---|---:|---:|---:|
+| Field Notes | KOReader CREngine 2026.07.1 | 222 ms | 10 ms | 7.4 MiB |
+| Field Notes | Blitz with Vello | 373 ms | 240 ms | 17.8 MiB |
+| Field Notes | Parley with Vello | 201 ms | 161 ms | 12.2 MiB |
+| Field Notes | Parley with direct grayscale | 65 ms | 9.1 ms | 6.1 MiB |
+| Long Chapter | KOReader CREngine 2026.07.1 | 267 ms | 13 ms | 7.3 MiB |
+| Long Chapter | Blitz with Vello | 707 ms | 441 ms | 21.5 MiB |
+| Long Chapter | Parley with Vello | 542 ms | 265 ms | 17.3 MiB |
+| Long Chapter | Parley with direct grayscale | 276 ms | 13.5 ms | 9.4 MiB |
+
+CREngine laid out the entire book through the installed KOReader libraries,
+with an empty engine cache for each process. Reader laid out the selected
+chapter. Page counts vary with engine spacing and pagination. Each run used
+the ordinary filesystem cache state. These measurements end when a frame is
+ready in memory. They exclude the physical E Ink refresh, and single-page
+chapters can include redraws of the same page in the warm sequence.
+
+Direct grayscale and tuning reduced Parley's long-chapter p95 from 265 to
+13.5 ms. Both fixtures met the proposed first-frame budget of 1.5× and warm
+p95 budget of 1.25× against CREngine. An experiment that varied the Blitz
+raster height by page made its warm performance less consistent on Kindle.
+The comparison implementation uses the fixed-height viewport again.
+
+## Desktop and interactive verification
+
+- The reproducible corpus includes valid EPUB 2 and 3, long and many-chapter
+  books, a missing-image case, malformed XML, and a truncated ZIP. EPUBCheck
+  passed the four valid fixtures and reported the expected issue in each
+  negative fixture. The seven Rust tests passed, including the rapid
+  page-input pacing test.
+- Both engines produced grayscale pages and mapped all extracted source
+  text in the tested chapters. Saved positions distinguished both repeats
+  of a quote after font, margin, line spacing, and viewport changes.
+  Tests resolved and laid out the fixture's footnote and its backlink.
+  With the named fallback fonts, the Vietnamese, Arabic, and Japanese
+  fixture rendered with zero missing glyphs on desktop and in the Parley
+  Kindle render. The Kindle probe restored the same passage after a
+  fresh process changed the viewport and font. Both engines also rendered
+  chapter I of the Standard Ebooks edition of *The Time Machine* assembled
+  from its source locally.
+  [Fixture provenance](../tests/fixtures/README.md) ·
+  [The Time Machine source](https://github.com/standardebooks/h-g-wells_the-time-machine)
+- The owner opened the Blitz display probe from Launcher and verified
+  forward and back physical page turns, return to the same page after
+  sleep and wake, and **Done** returning to a responsive Launcher.
+  Its logged first frame was ready in 605 ms. Cached turns had a median
+  software time of 0.89 ms across 19 samples. The 22 cache misses had a
+  median of 372 ms. Those timings end before drawing the Launcher canvas
+  and updating the screen.
+- The owner also confirmed legible Parley text, both physical page buttons,
+  and return to Launcher. Rapid repeated presses caused a flash over the
+  right side. The log showed successive partial AUTO submissions for a large
+  changed rectangle. The Reader probe now applies queued directions in order
+  and submits at most one page refresh per 450 ms during a burst. Ordinary
+  page presses can draw immediately after that interval. The owner repeated
+  the fast forward and back presses and confirmed the flash was gone and all
+  presses counted. The device log recorded batches of up to three presses.
+- Rust 1.100.0 and Zig 0.17.1 produced static ARMHF executables. The
+  locked build also succeeded in a separate workspace using a clean
+  PrimitiveOS Tools checkout at revision `9f7e331`. The project licences
+  and bundled Silkscreen OFL notice are in the repo. Before a Store release,
+  review and package the precise dependency notices, including the
+  MPL-2.0 CSS components and the selected dual-licence terms for Tools.
+
+## Remaining P0 validation
+
+Verify the USB storage export and eject lifecycle, interactive footnote and
+return navigation, and physical display timing against KOReader. Expand
+coverage of longer books and publisher styles within
+the declared EPUB subset. The [execution plan](execution-plan.md) defines the
+gates for the daily-reader build and publication.
