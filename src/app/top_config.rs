@@ -76,7 +76,7 @@ impl Reader {
             Item::new("Go to page", Action::Show(Screen::GoToPage)),
             Item::new("Book map", Action::Show(Screen::BookMap)),
             Item::new("Page browser", Action::Overview).detail("Thumbnails and skim"),
-            Item::new("Automatic page turns", Action::Show(Screen::AutoTurn)).detail(
+            Item::new("Auto turn", Action::Show(Screen::AutoTurn)).detail(
                 self.auto_turn.interval().map_or_else(
                     || "Off".to_owned(),
                     |interval| format!("Every {} seconds", interval.as_secs()),

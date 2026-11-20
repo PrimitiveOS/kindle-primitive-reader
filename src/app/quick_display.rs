@@ -90,7 +90,7 @@ impl Reader {
         let current = self.controls;
         let mut items = vec![
             Item::new(
-                "Screen palette",
+                "Interface palette",
                 Action::SetReadingControls(crate::reading_controls::ReadingControls {
                     palette: current.palette.next(),
                     ..current

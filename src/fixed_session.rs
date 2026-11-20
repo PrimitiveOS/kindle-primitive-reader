@@ -13,7 +13,10 @@ use crate::djvu::{Djvu, MAX_DJVU_BYTES};
 use crate::fixed::{MAX_PDF_BYTES, Pdf, PdfLinkTarget, PdfOutlineItem, RenderRequest};
 use crate::fixed_epub::{FixedEpub, SpreadPlan};
 use crate::fixed_text::{PdfPageText, PdfTextRect};
-use crate::library::{DocumentFormat, FixedPreferences as View};
+use crate::library::{
+    DocumentFormat, FixedPreferences as View, MAX_CONTINUOUS_GAP, MAX_SCAN_WHITE_LEVEL,
+    MIN_SCAN_WHITE_LEVEL,
+};
 use crate::session::{
     DONE, PAGE_HEIGHT, PAGE_REFRESH_GAP, PagePaint, PageTurns, draw_page_picture,
 };
@@ -363,6 +366,30 @@ impl FixedReading {
         Ok(())
     }
 
+    pub(crate) fn set_continuous_gap(&mut self, gap: u16) -> Result<()> {
+        if !self.supports_continuous() {
+            return Err("Page spacing is available in continuous PDF reading".into());
+        }
+        if gap > MAX_CONTINUOUS_GAP {
+            return Err("This page gap exceeds Reader's limit".into());
+        }
+        if self.view.continuous_gap != gap {
+            if self.is_continuous() {
+                self.present(
+                    self.page,
+                    View {
+                        continuous_gap: gap,
+                        ..self.view
+                    },
+                )?;
+                self.pause();
+            } else {
+                self.view.continuous_gap = gap;
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn outline(&self) -> &[PdfOutlineItem] {
         &self.outline
     }
@@ -384,6 +411,23 @@ impl FixedReading {
             return Err("Contrast adjustment is available for PDF, DjVu, and comics".into());
         }
         self.view.scan_contrast = higher;
+        Ok(())
+    }
+
+    pub(crate) fn set_dither(&mut self, enabled: bool) {
+        self.view.dither = enabled;
+    }
+
+    pub(crate) fn set_scan_white_level(&mut self, level: Option<u8>) -> Result<()> {
+        if level
+            .is_some_and(|level| !(MIN_SCAN_WHITE_LEVEL..=MAX_SCAN_WHITE_LEVEL).contains(&level))
+        {
+            return Err("This scan white level exceeds Reader's limits".into());
+        }
+        if level.is_some() && !self.supports_scan_contrast() {
+            return Err("Scan white level is available for PDF, DjVu, and comics".into());
+        }
+        self.view.scan_white_level = level;
         Ok(())
     }
 
@@ -469,6 +513,9 @@ impl FixedReading {
             View {
                 turns: original.turns,
                 scan_contrast: original.scan_contrast,
+                dither: original.dither,
+                continuous_gap: original.continuous_gap,
+                scan_white_level: original.scan_white_level,
                 ..View::default()
             },
         )?;
@@ -792,6 +839,9 @@ impl FixedReading {
                 continuous: width_fit && self.view.continuous,
                 spread: self.view.spread,
                 scan_contrast: self.view.scan_contrast,
+                dither: self.view.dither,
+                continuous_gap: self.view.continuous_gap,
+                scan_white_level: self.view.scan_white_level,
                 offset_y: if width_fit && !self.is_continuous() {
                     f32::MAX
                 } else {
@@ -951,8 +1001,18 @@ impl FixedReading {
             && let FixedDocument::Pdf(pdf) = &self.source
         {
             let size = pdf.page_size(self.page)?;
-            view.offset_y *=
-                view_metrics(size, &view).height / view_metrics(size, &self.view).height;
+            let old_height = view_metrics(size, &self.view).height;
+            let new_height = view_metrics(size, &view).height;
+            let old_boundary = old_height.round().max(1.0);
+            if self.view.continuous_gap != 0
+                && -view.offset_y >= old_boundary
+                && self.page + 1 < self.count()
+            {
+                // The gap is measured in display pixels and does not scale with the document.
+                view.offset_y += old_boundary - new_height.round().max(1.0);
+            } else {
+                view.offset_y *= new_height / old_height;
+            }
         }
         self.present(self.page, view)?;
         Ok(true)
@@ -981,12 +1041,30 @@ impl FixedReading {
 
     fn display_frame(&self, rows: Range<u32>) -> GrayImage {
         let mut frame = self.frame.clone();
-        if self.scan_contrast()
-            && let Some(contrast) = scan_contrast_table(&self.frame.pixels)
-        {
-            let pixels = (rows.start * WIDTH) as usize..(rows.end * WIDTH) as usize;
-            for pixel in &mut frame.pixels[pixels] {
-                *pixel = contrast[usize::from(*pixel)];
+        let contrast = self
+            .scan_contrast()
+            .then(|| scan_contrast_table(&self.frame.pixels))
+            .flatten();
+        let white_level = self.view.scan_white_level;
+        if contrast.is_none() && white_level.is_none() && !self.view.dither {
+            return frame;
+        }
+        let tones: [u8; 256] = std::array::from_fn(|gray| {
+            let gray = contrast.as_ref().map_or(gray as u8, |table| table[gray]);
+            white_level.map_or(gray, |white| scale_scan_white(gray, white))
+        });
+        let width = WIDTH as usize;
+        let start = rows.start as usize;
+        let pixels = &mut frame.pixels[start * width..rows.end as usize * width];
+        if self.view.dither {
+            for (y, row) in pixels.chunks_exact_mut(width).enumerate() {
+                for (x, pixel) in row.iter_mut().enumerate() {
+                    *pixel = ordered_gray(tones[usize::from(*pixel)], x, start + y);
+                }
+            }
+        } else {
+            for pixel in pixels {
+                *pixel = tones[usize::from(*pixel)];
             }
         }
         frame
@@ -1111,7 +1189,10 @@ impl FixedDocument {
         } else {
             view.spread &= self.supports_comic_spreads();
         }
-        view.scan_contrast &= self.supports_scan_contrast();
+        if !self.supports_scan_contrast() {
+            view.scan_contrast = false;
+            view.scan_white_level = None;
+        }
         if view.continuous
             && view.width_fit
             && let Self::Pdf(pdf) = self
@@ -1171,6 +1252,19 @@ impl FixedDocument {
             pixels,
         })
     }
+}
+
+fn scale_scan_white(gray: u8, white: u8) -> u8 {
+    let white = u16::from(white);
+    ((u16::from(gray) * 255 + white / 2) / white).min(255) as u8
+}
+
+fn ordered_gray(gray: u8, x: usize, y: usize) -> u8 {
+    const BAYER4: [[u16; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
+    let level = gray / 17;
+    let residual = u16::from(gray % 17) * 32;
+    let threshold = (BAYER4[y % 4][x % 4] * 2 + 1) * 17;
+    (level + u8::from(residual > threshold)) * 17
 }
 
 fn scan_contrast_table(pixels: &[u8]) -> Option<[u8; 256]> {
@@ -1284,12 +1378,17 @@ fn continuous_frame(
     let mut pixels = vec![255; (WIDTH * PAGE_HEIGHT) as usize];
     let mut visible = Vec::new();
     let mut top = view.offset_y as i32;
-    for index in page..pdf.page_count() {
+    let last = pdf.page_count() - 1;
+    for index in page..=last {
         if top >= PAGE_HEIGHT as i32 || visible.len() == MAX_VISIBLE_PDF_PAGES {
             break;
         }
         let (size, metrics, height) = continuous_metrics(pdf, index, &view)?;
         let bottom = top + height;
+        if bottom <= 0 {
+            top = bottom + continuous_gap_after(index, last, &view);
+            continue;
+        }
         let rows = top.max(0) as u32..bottom.min(PAGE_HEIGHT as i32) as u32;
         let offset = clamp_offset(view.offset_x, metrics.width, WIDTH as f32);
         let request = RenderRequest {
@@ -1313,7 +1412,7 @@ fn continuous_frame(
             rows,
             request,
         });
-        top = bottom;
+        top = bottom + continuous_gap_after(index, last, &view);
     }
     let image = GrayImage {
         width: WIDTH,
@@ -1325,38 +1424,49 @@ fn continuous_frame(
 
 fn continuous_position(pdf: &Pdf, mut page: usize, mut view: View) -> Result<(usize, View)> {
     let last = pdf.page_count() - 1;
+    let length = |index| -> Result<i32> {
+        let (_, _, height) = continuous_metrics(pdf, index, &view)?;
+        Ok(height + continuous_gap_after(index, last, &view))
+    };
     let mut offset = (-view.offset_y.round()) as i32;
     while offset < 0 && page > 0 {
         page -= 1;
-        let (_, _, height) = continuous_metrics(pdf, page, &view)?;
-        offset += height;
+        offset += length(page)?;
     }
-    let mut height = continuous_metrics(pdf, page, &view)?.2;
-    while page < last && offset >= height {
-        offset -= height;
+    let mut span = length(page)?;
+    while page < last && offset >= span {
+        offset -= span;
         page += 1;
-        height = continuous_metrics(pdf, page, &view)?.2;
+        span = length(page)?;
     }
-    offset = offset.clamp(0, height);
+    offset = offset.clamp(0, span);
 
     // Keep the last page flush with the bottom when a full viewport remains.
-    let mut available = height - offset;
+    let mut available = span - offset;
     for index in page + 1..=last {
         if available >= PAGE_HEIGHT as i32 {
             break;
         }
-        available += continuous_metrics(pdf, index, &view)?.2;
+        available += length(index)?;
     }
     let mut deficit = (PAGE_HEIGHT as i32 - available).max(0);
     while deficit > offset && page > 0 {
         deficit -= offset;
         page -= 1;
-        offset = continuous_metrics(pdf, page, &view)?.2;
+        offset = length(page)?;
     }
     let (_, metrics, _) = continuous_metrics(pdf, page, &view)?;
     view.offset_y = -((offset - deficit).max(0) as f32);
     view.offset_x = clamp_offset(view.offset_x, metrics.width, WIDTH as f32);
     Ok((page, view))
+}
+
+fn continuous_gap_after(page: usize, last: usize, view: &View) -> i32 {
+    if page < last {
+        i32::from(view.continuous_gap)
+    } else {
+        0
+    }
 }
 
 fn continuous_metrics(
@@ -1772,6 +1882,75 @@ mod tests {
     }
 
     #[test]
+    fn continuous_page_gap_preserves_transformed_selection_and_empty_hits() {
+        let mut reader = reading(
+            striped_pdf(4),
+            View {
+                width_fit: true,
+                continuous: true,
+                ..View::default()
+            },
+        );
+        let divider = reader.visible[0].rows.end;
+        let text = reader.page_text(1).unwrap();
+        let bounds = text.words[0].bounds;
+        let word_before = reader.visible_rectangle(1, bounds).unwrap().center();
+
+        reader.set_continuous_gap(48).unwrap();
+        assert_eq!(reader.page(), 0);
+        assert_eq!(reader.visible[0].rows.end, divider);
+        assert_eq!(reader.visible[1].rows.start, divider + 48);
+        let gap = (divider * WIDTH) as usize..((divider + 48) * WIDTH) as usize;
+        assert!(reader.frame.pixels[gap].iter().all(|&tone| tone == 255));
+        assert_eq!(reader.page_at((divider + 12) as f32), None);
+        assert!(
+            reader
+                .link_at(word_before.x as f32, (divider + 12) as f32)
+                .is_none()
+        );
+        assert!(
+            reader
+                .select_word(word_before.x as f32, (divider + 12) as f32)
+                .unwrap()
+                .is_none()
+        );
+        let word = reader.visible_rectangle(1, bounds).unwrap().center();
+        assert_eq!(word.x, word_before.x);
+        assert_eq!(word.y - word_before.y, 48.0);
+        let chosen = reader
+            .select_word(word.x as f32, word.y as f32)
+            .unwrap()
+            .unwrap();
+        assert_eq!(chosen.text(), "Second");
+        assert_eq!(
+            reader.link_at(word.x as f32, word.y as f32),
+            Some(PdfLinkTarget::Page(0))
+        );
+
+        // A viewport whose origin falls inside a gap starts the next page below it.
+        let in_gap = View {
+            offset_y: -((divider + 12) as f32),
+            ..reader.preferences()
+        };
+        reader.present(0, in_gap).unwrap();
+        assert_eq!(reader.page(), 0);
+        assert_eq!(reader.visible[0].rows.start, 36);
+        assert_eq!(reader.page_at(35.0), None);
+        assert_eq!(reader.page_at(36.0), Some(1));
+        reader.set_zoom(1).unwrap();
+        assert_eq!(reader.visible[0].rows.start, 36);
+        assert_eq!(reader.page_at(36.0), Some(1));
+
+        reader.jump(reader.count() - 1).unwrap();
+        assert_eq!(reader.visible.last().unwrap().rows.end, PAGE_HEIGHT);
+        assert!(reader.set_continuous_gap(MAX_CONTINUOUS_GAP + 1).is_err());
+        assert_eq!(reader.preferences().continuous_gap, 48);
+        reader.set_continuous(false).unwrap();
+        reader.set_continuous(true).unwrap();
+        assert_eq!(reader.preferences().continuous_gap, 48);
+    }
+
+    #[test]
     fn continuous_clamps_document_bottom_and_toggles_back_to_paged_with_crop() {
         let pdf = striped_pdf(3);
         let crop = PdfTextRect {
@@ -1881,6 +2060,75 @@ mod tests {
         assert!(reader.preferences().height_fit);
         reader.set_continuous(true).unwrap();
         assert!(reader.is_continuous() && !reader.preferences().height_fit);
+    }
+
+    #[test]
+    fn ordered_dither_quantizes_every_tone_and_preserves_its_tile_average() {
+        for gray in 0..=255 {
+            let values = (0..4)
+                .flat_map(|y| (0..4).map(move |x| ordered_gray(gray, x, y)))
+                .collect::<Vec<_>>();
+            assert!(values.iter().all(|tone| tone % 17 == 0));
+            let total = values.iter().map(|&tone| i32::from(tone)).sum::<i32>();
+            assert!((total - 16 * i32::from(gray)).abs() <= 8);
+            assert_eq!(ordered_gray(gray, 0, 0), ordered_gray(gray, 4, 8));
+        }
+    }
+
+    #[test]
+    fn dither_and_scan_white_only_adjust_displayed_rows_without_changing_geometry() {
+        let mut reader = reading(striped_pdf(2), View::default());
+        let page = reader.page();
+        let source = reader.frame.pixels.clone();
+        let original_viewport = reader.page_viewport().unwrap();
+        assert_eq!(scale_scan_white(0, 220), 0);
+        assert_eq!(scale_scan_white(220, 220), 255);
+        assert_eq!(scale_scan_white(255, 220), 255);
+        assert!(scale_scan_white(155, 220) > 155);
+        assert!(reader.set_scan_white_level(Some(191)).is_err());
+
+        reader.set_scan_white_level(Some(220)).unwrap();
+        let lighter = reader.display_frame(0..PAGE_HEIGHT).pixels;
+        assert!(
+            lighter
+                .iter()
+                .zip(&source)
+                .any(|(&pixel, &original)| pixel > original)
+        );
+        assert!(
+            lighter
+                .iter()
+                .zip(&source)
+                .all(|(&pixel, &original)| pixel >= original)
+        );
+        reader.set_dither(true);
+        let row = PAGE_HEIGHT / 2 + 1;
+        let range = (row * WIDTH) as usize..((row + 1) * WIDTH) as usize;
+        let partial = reader.display_frame(row..row + 1).pixels;
+        let full = reader.display_frame(0..PAGE_HEIGHT).pixels;
+        assert_ne!(&full[range.clone()], &lighter[range.clone()]);
+        assert!(full[range.clone()].iter().all(|tone| tone % 17 == 0));
+        assert_eq!(&partial[range.clone()], &full[range.clone()]);
+        assert_eq!(&partial[..range.start], &source[..range.start]);
+        assert_eq!(&partial[range.end..], &source[range.end..]);
+        assert_eq!(reader.page(), page);
+        let viewport = reader.page_viewport().unwrap();
+        assert_eq!(viewport.0, original_viewport.0);
+        assert_eq!(viewport.1.y, original_viewport.1.y);
+        assert_eq!(viewport.1.scale, original_viewport.1.scale);
+        assert_eq!(reader.frame.pixels, source);
+
+        reader.fit(true).unwrap();
+        let saved: View =
+            serde_json::from_slice(&serde_json::to_vec(&reader.preferences()).unwrap()).unwrap();
+        assert!(saved.dither);
+        assert_eq!(saved.scan_white_level, Some(220));
+        reader.set_dither(false);
+        reader.set_scan_white_level(None).unwrap();
+        assert_eq!(
+            reader.display_frame(0..PAGE_HEIGHT).pixels,
+            reader.frame.pixels
+        );
     }
 
     #[test]

@@ -62,6 +62,12 @@ fn main() -> Result<()> {
         HEIGHT,
         &frame(&app, &mut canvas, false),
     )?;
+    write_png(
+        &output.join("navigation-dark.png"),
+        WIDTH,
+        HEIGHT,
+        &frame(&app, &mut canvas, true),
+    )?;
     app.swipe(
         Input::Swipe {
             dx: 0.0,

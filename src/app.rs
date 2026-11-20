@@ -1,4 +1,5 @@
 //! The daily reader interface and foreground lifecycle.
+mod bar_icons;
 mod library_view;
 mod lookup_history;
 mod quick_display;
@@ -265,6 +266,9 @@ enum Action {
     FixedScroll(bool),
     ComicSpread(bool),
     ScanContrast(bool),
+    FixedDither(bool),
+    FixedGap(u16),
+    ScanWhiteLevel(Option<u8>),
     ScanColumns,
     Overview,
     FixedPage(usize),
@@ -1791,6 +1795,30 @@ impl Reader {
                     .into(),
                 );
             }
+            Action::FixedDither(enabled) => {
+                let fixed = self
+                    .fixed
+                    .as_mut()
+                    .ok_or("Open a fixed-page document first")?;
+                fixed.reading.set_dither(enabled);
+                self.record_position();
+            }
+            Action::FixedGap(gap) => {
+                let fixed = self
+                    .fixed
+                    .as_mut()
+                    .ok_or("Open a fixed-page document first")?;
+                fixed.reading.set_continuous_gap(gap)?;
+                self.record_position();
+            }
+            Action::ScanWhiteLevel(level) => {
+                let fixed = self
+                    .fixed
+                    .as_mut()
+                    .ok_or("Open a fixed-page document first")?;
+                fixed.reading.set_scan_white_level(level)?;
+                self.record_position();
+            }
             Action::ScanColumns => self.open_scan_columns()?,
             Action::Overview => {
                 let (chapter, current) = if let Some(fixed) = &self.fixed {
@@ -2549,7 +2577,7 @@ impl Reader {
     }
 
     fn uses_night_pages(&self) -> bool {
-        self.controls.night_pages && self.controls.palette.inverted() != Some(true)
+        self.controls.night_pages
     }
 
     fn status_caption(&self) -> Option<String> {
@@ -3781,6 +3809,9 @@ impl Reader {
                         continuous: original.continuous,
                         height_fit: original.height_fit,
                         scan_contrast: original.scan_contrast,
+                        dither: original.dither,
+                        scan_white_level: original.scan_white_level,
+                        continuous_gap: original.continuous_gap,
                         ..FixedPreferences::default()
                     },
                     true,
@@ -5526,6 +5557,9 @@ fn column_view(original: FixedPreferences, bounds: PdfTextRect) -> FixedPreferen
         width_fit: true,
         crop: Some(bounds),
         scan_contrast: original.scan_contrast,
+        dither: original.dither,
+        scan_white_level: original.scan_white_level,
+        continuous_gap: original.continuous_gap,
         ..FixedPreferences::default()
     }
 }
@@ -7291,7 +7325,7 @@ mod tests {
         assert_eq!(app.input(open), Change::Partial);
         assert_eq!(reading(&app), before);
         let plain = app.page_paint().visible;
-        assert!(plain.start <= 165 && HEIGHT - plain.end <= 104);
+        assert!(plain.start <= 224 && HEIGHT - plain.end <= 112);
 
         assert_eq!(tap_reading_control(&mut app, "Pages"), Change::Partial);
         assert_eq!(app.reading_panel, Some(BarPanel::Pages));

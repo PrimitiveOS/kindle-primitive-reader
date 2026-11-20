@@ -95,7 +95,7 @@ impl Reader {
                     }),
                 ),
                 ConfigRow::new(
-                    "Screen theme",
+                    "Interface palette",
                     [
                         ScreenPalette::FollowLauncher,
                         ScreenPalette::Light,
@@ -109,6 +109,19 @@ impl Reader {
                                 ..controls
                             }),
                             controls.palette == palette,
+                        )
+                    }),
+                ),
+                ConfigRow::new(
+                    "Page colors",
+                    [("Original", false), ("Inverted", true)].map(|(title, night_pages)| {
+                        Choice::option(
+                            title,
+                            Action::SetReadingControls(crate::reading_controls::ReadingControls {
+                                night_pages,
+                                ..controls
+                            }),
+                            controls.night_pages == night_pages,
                         )
                     }),
                 ),
@@ -448,6 +461,16 @@ impl Reader {
                             "Reading mode",
                             mode_choices(reading.is_continuous(), Action::FixedScroll),
                         ));
+                        rows.push(ConfigRow::new(
+                            "Page gap",
+                            [0, 12, 24, 48].map(|gap| {
+                                Choice::option(
+                                    format!("{gap} px"),
+                                    Action::FixedGap(gap),
+                                    prefs.continuous_gap == gap,
+                                )
+                            }),
+                        ));
                     }
                     if reading.supports_spreads() {
                         rows.push(ConfigRow::new(
@@ -478,6 +501,16 @@ impl Reader {
                 }
                 BarPanel::Scan => {
                     let mut rows = Vec::new();
+                    rows.push(ConfigRow::new(
+                        "Image dithering",
+                        [("Off", false), ("On", true)].map(|(title, enabled)| {
+                            Choice::option(
+                                title,
+                                Action::FixedDither(enabled),
+                                prefs.dither == enabled,
+                            )
+                        }),
+                    ));
                     if reading.supports_scan_contrast() {
                         rows.push(ConfigRow::new(
                             "Contrast",
@@ -490,6 +523,22 @@ impl Reader {
                                     },
                                     Action::ScanContrast(higher),
                                     reading.scan_contrast() == higher,
+                                )
+                            }),
+                        ));
+                        rows.push(ConfigRow::new(
+                            "Scan white level",
+                            [
+                                ("Original", None),
+                                ("Low", Some(248)),
+                                ("Medium", Some(235)),
+                                ("High", Some(220)),
+                            ]
+                            .map(|(title, level)| {
+                                Choice::option(
+                                    title,
+                                    Action::ScanWhiteLevel(level),
+                                    prefs.scan_white_level == level,
                                 )
                             }),
                         ));

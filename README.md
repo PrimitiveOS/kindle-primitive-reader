@@ -30,7 +30,7 @@ Install Reader from PrimitiveOS Store or follow the manual install guide.
   queries, a typed dictionary lookup, and saved vocabulary.
 - Swipe up from the bottom edge to reopen the last formatting panel for the
   current format. Text controls include font size, line and word spacing,
-  independent margins, weight, screen settings, and font profiles. Fixed-page
+  independent margins, facing pages, weight, screen settings, and font profiles. Fixed-page
   controls include fit, zoom, rotation, scroll mode, and available scan tools.
   Make adjustments with the page visible. Tap the upper center to show both
   bars. Tap the page to dismiss them. **Done** exits from the reading page.
@@ -61,7 +61,7 @@ Install Reader from PrimitiveOS Store or follow the manual install guide.
   organize it into collections. Create collections from **Organize**.
   Book details shows available EPUB series information, the cover preview, and
   local time spent on the reading screen.
-- Open **Settings** on the top bar to change the screen palette and portrait
+- Open **Settings** on the top bar to change the interface palette and portrait
   orientation, adjust supported frontlight and warmth, refresh the screen,
   switch the status display, or configure touch. Swipe horizontally over a
   light control or tap its + and − buttons to adjust it. Locking touch keeps

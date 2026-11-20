@@ -6,9 +6,10 @@ mod bottom_config;
 use std::time::Instant;
 
 use primitive_app::{App, Change, HEIGHT, WIDTH};
-use primitive_ui::{CAPTION, Canvas, Input, Rect, TextStyle};
+use primitive_ui::{CAPTION, Canvas, HAIRLINE, Icon, Input, Rect, TextStyle};
 
 use self::bottom_config::{ConfigRow, SINGLE_VIEW_SECTIONS, TEXT_SECTIONS, VIEW_SECTIONS};
+use super::bar_icons::{EXIT, action_icon, group_icon, panel_icon};
 use super::top_config::TopGroup;
 use super::{Action, Item, Reader, Screen};
 use crate::session::{PAGE_HEIGHT, PagePaint};
@@ -52,12 +53,104 @@ enum Target {
     Current,
 }
 
+impl Target {
+    fn icon(&self) -> Option<Icon> {
+        match self {
+            Self::Invoke(action) | Self::Apply(action) => Some(action_icon(action)),
+            Self::Toggle(panel) | Self::BottomSection(panel) => Some(panel_icon(*panel)),
+            Self::TopSection(group) => Some(group_icon(*group)),
+            Self::Exit => Some(EXIT),
+            Self::Current => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Visual {
+    Value,
+    Shortcut(Icon),
+    Tile(Icon),
+}
+
 struct Button {
     rect: Rect,
     label: String,
     detail: Option<String>,
     selected: bool,
     target: Target,
+    visual: Visual,
+}
+
+impl Button {
+    fn draw(self, canvas: &mut Canvas, size: i32) {
+        let rect = self.rect;
+        let size = if rect.w < 170 { size.min(28) } else { size };
+        let pressed = canvas.control_pressed(rect, false);
+        match self.visual {
+            Visual::Tile(icon) => {
+                // Browser's four-column cards use a left-aligned icon, title and optional value.
+                let active = pressed || self.selected;
+                if active {
+                    canvas.panel(rect, 22, 2, 0);
+                } else {
+                    canvas.card(rect);
+                }
+                let ink = if active { 255 } else { 0 };
+                canvas.icon(Rect::new(rect.x + 18, rect.y + 12, 40, 40), icon, ink);
+                canvas.text(
+                    Rect::new(rect.x + 18, rect.y + 57, rect.w - 36, 68),
+                    &self.label,
+                    TextStyle::new(size).bold().ink(ink).lines(2),
+                );
+                if let Some(detail) = self.detail {
+                    canvas.text(
+                        Rect::new(rect.x + 18, rect.y + 125, rect.w - 36, rect.h - 127),
+                        &detail,
+                        TextStyle::new(24).ink(if active { 255 } else { 85 }),
+                    );
+                }
+            }
+            Visual::Shortcut(icon) => {
+                let ink = if pressed { 255 } else { 0 };
+                if pressed {
+                    canvas.panel(rect.inset(4), 16, 2, 0);
+                }
+                canvas.icon(
+                    Rect::new(rect.x + (rect.w - 40) / 2, rect.y + 9, 40, 40),
+                    icon,
+                    ink,
+                );
+                canvas.text(
+                    Rect::new(rect.x + 4, rect.y + 54, rect.w - 8, size + 10),
+                    &self.label,
+                    TextStyle::new(size).bold().center().ink(ink),
+                );
+                self.draw_selected(canvas, ink);
+            }
+            Visual::Value => {
+                if pressed {
+                    canvas.panel(rect.inset(4), 16, 2, 0);
+                }
+                let ink = if pressed { 255 } else { 0 };
+                canvas.text(
+                    Rect::new(rect.x, rect.y + (rect.h - size) / 2, rect.w, size + 10),
+                    &self.label,
+                    TextStyle::new(size).bold().center().ink(ink),
+                );
+                self.draw_selected(canvas, ink);
+            }
+        }
+    }
+
+    fn draw_selected(&self, canvas: &mut Canvas, ink: u8) {
+        if self.selected {
+            let rect = self.rect;
+            canvas.fill(
+                Rect::new(rect.x + 12, rect.bottom() - 4, rect.w - 24, 3),
+                ink,
+            );
+        }
+    }
 }
 
 #[derive(Default)]
@@ -77,6 +170,19 @@ impl Bars {
             detail: None,
             selected,
             target,
+            visual: Visual::Value,
+        });
+    }
+
+    fn shortcut(&mut self, rect: Rect, label: &str, target: Target, selected: bool) {
+        let visual = target.icon().map_or(Visual::Value, Visual::Shortcut);
+        self.buttons.push(Button {
+            rect,
+            label: label.to_owned(),
+            detail: None,
+            selected,
+            target,
+            visual,
         });
     }
 
@@ -84,16 +190,11 @@ impl Bars {
         if items.is_empty() {
             return;
         }
-        let columns = items.len().min(4);
-        let rows = items.len().div_ceil(columns);
-        let has_details = items.iter().any(|item| item.detail.is_some());
-        let row_height = match (large, has_details) {
-            (true, true) => 98,
-            (false, true) => 88,
-            (true, false) => 78,
-            (false, false) => 68,
-        };
-        let height = rows as i32 * row_height + 8;
+        let count = items.len();
+        let columns = count.min(4);
+        let rows = count.div_ceil(columns);
+        let row_height = if large { 180 } else { 170 };
+        let height = rows as i32 * row_height + 20;
         let y = if at_top { above } else { above - height };
         let panel = Rect::new(0, y, WIDTH as i32, height);
         if at_top {
@@ -103,12 +204,14 @@ impl Bars {
         }
         for (index, item) in items.into_iter().enumerate() {
             let row = Rect::new(
-                8,
-                y + 4 + index as i32 / columns as i32 * row_height,
-                panel.w - 16,
+                32,
+                y + 10 + index as i32 / columns as i32 * row_height,
+                panel.w - 64,
                 row_height,
             );
-            let rect = cell(row, index % columns, columns);
+            let row_columns = (count - (index / columns) * columns).min(columns);
+            let rect = cell(row, index % columns, row_columns).inset(4);
+            let visual = Visual::Tile(action_icon(&item.action));
             self.buttons.push(Button {
                 rect,
                 label: item.title,
@@ -119,6 +222,7 @@ impl Bars {
                 } else {
                     Target::Invoke(item.action)
                 },
+                visual,
             });
         }
     }
@@ -134,13 +238,13 @@ impl Bars {
         if rows.is_empty() {
             return;
         }
-        let row_height = if large { 76 } else { 64 };
+        let row_height = if large { 116 } else { 104 };
         let section_height = if sections.is_empty() {
             0
         } else if large {
-            56
+            116
         } else {
-            52
+            104
         };
         let height = rows.len() as i32 * row_height + section_height + 8;
         let width = WIDTH as i32;
@@ -149,7 +253,7 @@ impl Bars {
         if !sections.is_empty() {
             let row = Rect::new(32, panel.y + 2, width - 64, section_height);
             for (index, &(section, label)) in sections.iter().enumerate() {
-                self.push(
+                self.shortcut(
                     cell(row, index, sections.len()),
                     label,
                     Target::BottomSection(section),
@@ -174,12 +278,12 @@ impl Bars {
                 } else {
                     Target::Invoke(choice.action)
                 };
-                self.push(
-                    cell(options, index, count),
-                    choice.title,
-                    target,
-                    choice.selected,
-                );
+                let rect = cell(options, index, count);
+                if !choice.live && !choice.selected {
+                    self.shortcut(rect, &choice.title, target, false);
+                } else {
+                    self.push(rect, choice.title, target, choice.selected);
+                }
             }
         }
     }
@@ -248,14 +352,14 @@ impl Reader {
         let has_scan = self.supports_scan_panel();
 
         if self.reading_top {
-            let height = if large { 98 } else { 80 };
+            let height = if large { 112 } else { 100 };
             bars.top.push(Rect::new(0, 0, width, height));
-            bars.title = Some(Rect::new(171, 21, width - 690, height - 27));
-            let top = |x, w| Rect::new(x, 5, w, height - 10);
+            bars.title = Some(Rect::new(190, 36, width - 709, height - 41));
+            let top = |x, w| Rect::new(x, 0, w, height);
             for (rect, label, target) in [
                 (
-                    top(12, 148),
-                    "Library",
+                    top(12, 168),
+                    "Documents",
                     Target::Invoke(Action::Show(Screen::Library)),
                 ),
                 (
@@ -272,12 +376,12 @@ impl Reader {
             ] {
                 let selected =
                     matches!(target, Target::Toggle(panel) if self.reading_panel == Some(panel));
-                bars.push(rect, label, target, selected);
+                bars.shortcut(rect, label, target, selected);
             }
-            let tabs = Rect::new(0, height, width, if large { 65 } else { 56 });
+            let tabs = Rect::new(0, height, width, if large { 112 } else { 104 });
             bars.top.push(tabs);
             for (index, group) in TopGroup::ALL.into_iter().enumerate() {
-                bars.push(
+                bars.shortcut(
                     cell(tabs, index, TopGroup::ALL.len()),
                     group.label(),
                     Target::TopSection(group),
@@ -290,7 +394,7 @@ impl Reader {
         }
 
         if self.reading_bottom {
-            let height = if large { 104 } else { 86 };
+            let height = if large { 112 } else { 104 };
             let bottom = Rect::new(0, HEIGHT as i32 - height, width, height);
             bars.bottom.push(bottom);
             let fixed_book = fixed.is_some();
@@ -332,11 +436,11 @@ impl Reader {
             for (index, tab) in tabs.into_iter().enumerate() {
                 if let Some((label, target)) = tab {
                     let selected = matches!(target, Target::Toggle(panel) if self.reading_panel.map(BarPanel::tab) == Some(panel));
-                    bars.push(cell(bottom, index, columns), label, target, selected);
+                    bars.shortcut(cell(bottom, index, columns), label, target, selected);
                 }
             }
             if !self.reading_top {
-                bars.push(
+                bars.shortcut(
                     cell(bottom, document_tabs, columns),
                     "Exit",
                     Target::Exit,
@@ -400,7 +504,7 @@ impl Reader {
             for rect in regions {
                 canvas.fill(*rect, 255);
                 let y = if edge_top { rect.bottom() - 2 } else { rect.y };
-                canvas.fill(Rect::new(rect.x, y, rect.w, 2), 166);
+                canvas.fill(Rect::new(rect.x, y, rect.w, 2), HAIRLINE);
             }
         }
 
@@ -412,50 +516,17 @@ impl Reader {
                 .map(|book| book.reading.probe.title.as_str())
                 .or_else(|| self.fixed.as_ref().map(|book| book.entry.title.as_str()))
                 .unwrap_or("Reader");
-            canvas.text(
-                title_rect,
-                self.notice.as_deref().unwrap_or(title),
-                CAPTION.ink(70),
-            );
+            canvas.text(title_rect, self.notice.as_deref().unwrap_or(title), CAPTION);
         }
         for (rect, label) in bars.row_labels {
             canvas.text(
-                Rect::new(rect.x, rect.y + (rect.h - size) / 2, rect.w, size + 10),
+                Rect::new(rect.x, rect.y + (rect.h - 62) / 2, rect.w, 62),
                 &label,
-                CAPTION.ink(70),
+                CAPTION.lines(2),
             );
         }
         for button in bars.buttons {
-            let rect = button.rect;
-            let size = if rect.w < 170 { size.min(30) } else { size };
-            if canvas.control_pressed(rect, false) {
-                canvas.fill(rect, 218);
-            }
-            if button.selected {
-                canvas.fill(Rect::new(rect.x + 12, rect.bottom() - 3, rect.w - 24, 3), 0);
-            }
-            let y = if button.detail.is_some() {
-                rect.y + 4
-            } else {
-                rect.y + (rect.h - size) / 2
-            };
-            canvas.text(
-                Rect::new(rect.x, y, rect.w, size + 10),
-                &button.label,
-                TextStyle::new(size).bold().center(),
-            );
-            if let Some(detail) = button.detail {
-                canvas.text(
-                    Rect::new(
-                        rect.x + 4,
-                        y + size + 10,
-                        rect.w - 8,
-                        rect.bottom() - y - size - 10,
-                    ),
-                    &detail,
-                    CAPTION.center(),
-                );
-            }
+            button.draw(canvas, size);
         }
     }
 

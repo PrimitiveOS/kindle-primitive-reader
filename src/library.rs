@@ -37,6 +37,9 @@ const MAX_HIGHLIGHT_TEXT_BYTES: usize = 8192;
 const MAX_NOTE_BYTES: usize = 4096;
 const MAX_FIXED_ZOOM: usize = 4;
 const MAX_FIXED_OFFSET: f32 = 32_768.0;
+pub const MAX_CONTINUOUS_GAP: u16 = 128;
+pub const MIN_SCAN_WHITE_LEVEL: u8 = 192;
+pub const MAX_SCAN_WHITE_LEVEL: u8 = 254;
 const MIN_CROP_SIZE: f32 = 0.025;
 const BACKUP_VERSION: u32 = 1;
 const MAX_BACKUP_BOOKS: usize = 16_384;
@@ -307,6 +310,10 @@ pub struct FixedPreferences {
     pub continuous: bool,
     pub spread: bool,
     pub scan_contrast: bool,
+    pub dither: bool,
+    pub continuous_gap: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scan_white_level: Option<u8>,
     pub offset_x: f32,
     pub offset_y: f32,
     pub right_to_left: bool,
@@ -328,6 +335,8 @@ impl FixedPreferences {
             zoom: self.zoom.min(MAX_FIXED_ZOOM),
             turns: self.turns % 4,
             height_fit: self.height_fit && !self.width_fit,
+            continuous_gap: self.continuous_gap.min(MAX_CONTINUOUS_GAP),
+            scan_white_level: self.scan_white_level.filter(valid_white_level),
             offset_x: normalized_offset(f64::from(self.offset_x)),
             offset_y: normalized_offset(f64::from(self.offset_y)),
             crop: self.crop.filter(valid_crop),
@@ -365,6 +374,11 @@ impl<'de> Deserialize<'de> for FixedPreferences {
             continuous: switch("continuous"),
             spread: switch("spread"),
             scan_contrast: switch("scan_contrast"),
+            dither: switch("dither"),
+            continuous_gap: integer("continuous_gap").min(u64::from(MAX_CONTINUOUS_GAP)) as u16,
+            scan_white_level: u8::try_from(integer("scan_white_level"))
+                .ok()
+                .filter(valid_white_level),
             offset_x: offset("offset_x"),
             offset_y: offset("offset_y"),
             right_to_left: switch("right_to_left"),
@@ -376,6 +390,10 @@ impl<'de> Deserialize<'de> for FixedPreferences {
                 .filter(valid_crop),
         })
     }
+}
+
+fn valid_white_level(level: &u8) -> bool {
+    (MIN_SCAN_WHITE_LEVEL..=MAX_SCAN_WHITE_LEVEL).contains(level)
 }
 
 fn normalized_offset(value: f64) -> f32 {
@@ -2272,6 +2290,39 @@ mod tests {
     }
 
     #[test]
+    fn fixed_display_options_default_for_old_books_and_validate_independently() {
+        let legacy: FixedPreferences = serde_json::from_str(r#"{"width_fit":true}"#).unwrap();
+        assert!(legacy.width_fit);
+        assert!(!legacy.dither);
+        assert_eq!(legacy.continuous_gap, 0);
+        assert_eq!(legacy.scan_white_level, None);
+
+        let options: FixedPreferences = serde_json::from_str(
+            r#"{"dither":true,"scan_white_level":900,"continuous_gap":999999}"#,
+        )
+        .unwrap();
+        assert!(options.dither);
+        assert_eq!(options.continuous_gap, MAX_CONTINUOUS_GAP);
+        assert_eq!(options.scan_white_level, None);
+        let saved = FixedPreferences {
+            scan_white_level: Some(235),
+            ..options
+        };
+        let reopened: FixedPreferences =
+            serde_json::from_slice(&serde_json::to_vec(&saved).unwrap()).unwrap();
+        assert_eq!(reopened, saved);
+        assert_eq!(
+            FixedPreferences {
+                scan_white_level: Some(120),
+                ..saved
+            }
+            .normalized()
+            .scan_white_level,
+            None
+        );
+    }
+
+    #[test]
     fn fixed_view_recovers_unusable_fields_and_preserves_progress() {
         let state: BookState = serde_json::from_str(
             r#"{
@@ -2293,6 +2344,9 @@ mod tests {
                 continuous: false,
                 spread: false,
                 scan_contrast: false,
+                dither: false,
+                continuous_gap: 0,
+                scan_white_level: None,
                 offset_x: MAX_FIXED_OFFSET,
                 offset_y: 0.0,
                 right_to_left: true,

@@ -4,6 +4,19 @@ Reference release is KOReader **v2026.07.1**, commit `9192014d8bd82a91dc1012473b
 
 **Released** means present in published Reader 0.1.1 at `40f1f3fc3a8978039239dc5a449e1eeeeb03567e`. **In progress** means visible in the next worktree changes and awaiting integrated validation. **Open** means the equivalent still needs implementation or provider work. Publication and hardware validation are recorded separately. [Reader 0.1.1 release](https://github.com/PrimitiveOS/kindle-primitive-reader/releases/tag/v0.1.1)
 
+## Implemented in Reader 0.1.2
+
+| Area | Reader controls |
+| --- | --- |
+| Menu layout and gestures | Primitive Browser-style icon cards with four columns, persistent category labels, grouped top actions and a separate format panel. Top gestures select Navigation, the last visited group or Library by start position. The bottom gesture recalls the last format panel. Settings expose tap and swipe activation and the option to open both bars. |
+| Navigation and browsing | Contents, bookmark toggle and search, forward and backward location history, previous document, a chapter and page-range map with annotation counts, thumbnail skimming that preserves the current position until a destination is chosen, and optional timed page turns. |
+| Typography | Font choice, presets, type size, line spacing, independent side, top and bottom margins, actual two-page reflow, word and letter spacing, contrast and weight, alignment and hyphens, publisher CSS, kerning and hinting. Scrolling and vertical EPUB use one page. |
+| Fixed-page and scan view | Fit, zoom, quarter-turn document rotation, page or continuous mode, continuous gaps, supported facing pages and reading direction, manual and auto crop, scan contrast and white level, ordered image dithering, columns, available OCR languages and bounded text reflow. |
+| Screen and status | Portrait override, interface palette, explicit page-color inversion, available hardware frontlight and warmth, touch settings, full refresh and reading status options. |
+| Lookup and annotations | In-book search with recent queries, typed and selected-text dictionary lookup, result source selection, lookups and vocabulary, and existing highlights and notes. |
+
+The remaining rows below compare the 0.1.1 baseline with the tagged reference. Provider-specific gaps include physical landscape, explicit right-to-left reflow spreads, arbitrary PDF deskew with remapped annotations, and deeper scanned layout recovery. The full KOReader map, gesture assignment system, and remote translation and Wikipedia lookups have separate acceptance work.
+
 ## Evidence from the Oasis 3
 
 The reference captures use KOReader on a Kindle Oasis 3, with a reflowable book open and Vietnamese interface labels. They are local visual evidence in the ignored `build/picker-011-release/` directory. The captures show the current page and progress footer still visible behind the top overlays. The Navigation panel shows Contents, Bookmarks, a navigation settings submenu, Book Map, Page Browser, Go to, Skim, automatic page turn and disabled history actions when there are no recorded locations. The Main panel has history, previous document, favorites, collections, book status and information, and an exit submenu. The separate bottom captures show a tab strip below the controls and immediate choices such as font size. The dictionary result shows its dictionary chooser, result count, add-to-vocabulary action and close button over the page. The captures verify panel placement and reachability on the reference device. EPUB option breadth and PDF behavior below come from the tagged implementation. [KOReader reading screen and menu guide](https://koreader.rocks/user_guide/#learning-the-user-interface)
