@@ -11,6 +11,8 @@ stage=${2:-build/stage}
 binary=${CARGO_TARGET_DIR:-target}/$target/release/reader-kindle
 ocr=${READER_OCR_BUILD_DIR:-}
 [ -x "$binary" ] || { echo "Build $binary before staging." >&2; exit 1; }
+[ -r assets/reader-icon.png ] || { echo "Missing the Reader icon." >&2; exit 1; }
+icon="# Icon: data:image/png;base64,$(base64 < assets/reader-icon.png | tr -d '\n')"
 set -- "$binary"
 if [ -n "$ocr" ]; then
     ocr_engine=$ocr/build-tesseract-linux41/bin/tesseract
@@ -35,7 +37,8 @@ PY
 
 install -d "$stage/reader/bin" "$stage/reader/licenses" "$stage/documents"
 install -m 755 "$binary" "$stage/reader/bin/reader-kindle"
-install -m 755 deploy/Reader.sh "$stage/documents/Reader.sh"
+awk -v icon="$icon" '{ print } /^# Author:/ { print icon }' deploy/Reader.sh > "$stage/documents/Reader.sh"
+chmod 755 "$stage/documents/Reader.sh"
 install -m 644 docs/licenses/README.md docs/licenses/THIRD-PARTY.txt "$stage/reader/licenses/"
 cp -R docs/licenses/pdf docs/licenses/runtime "$stage/reader/licenses/"
 if [ -n "$ocr" ]; then
