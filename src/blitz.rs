@@ -180,7 +180,7 @@ impl BlitzChapter {
             "html, body {{ padding: 0; }} body {{ margin: 0 {}px; font: {}px/{} serif; }}
              img {{ max-width: 100%; max-height: {}px; object-fit: contain; }}
              iframe, frame, embed, object {{ display: none !important; }}",
-            settings.margin,
+            settings.side_margin(),
             settings.font_size,
             settings.line_height,
             settings.text_height(),
@@ -295,7 +295,7 @@ impl BlitzChapter {
         let visible = (range.end - range.start.floor())
             .floor()
             .clamp(0.0, height as f32) as usize;
-        let start = (settings.margin * settings.width) as usize;
+        let start = (settings.top_margin() * settings.width) as usize;
         let count = visible * settings.width as usize;
         gray[start..start + count]
             .iter_mut()

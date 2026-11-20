@@ -47,5 +47,34 @@ fn main() -> Result<()> {
         HEIGHT,
         &frame(&app, &mut canvas, false),
     )?;
+    app.open_path(&book)?;
+    app.swipe(
+        Input::Swipe {
+            dx: 0.0,
+            dy: 280.0,
+            start_y: 28.0,
+        },
+        45.0,
+    );
+    write_png(
+        &output.join("navigation.png"),
+        WIDTH,
+        HEIGHT,
+        &frame(&app, &mut canvas, false),
+    )?;
+    app.swipe(
+        Input::Swipe {
+            dx: 0.0,
+            dy: -280.0,
+            start_y: HEIGHT as f32 - 28.0,
+        },
+        WIDTH as f32 / 2.0,
+    );
+    write_png(
+        &output.join("page-settings.png"),
+        WIDTH,
+        HEIGHT,
+        &frame(&app, &mut canvas, false),
+    )?;
     Ok(())
 }

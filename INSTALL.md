@@ -1,18 +1,18 @@
 # Install Reader
 
-Reader 0.1.1 targets the Kindle Oasis 3 on firmware 5.18.2 with an existing
+Reader 0.1.2 targets the Kindle Oasis 3 on firmware 5.18.2 with an existing
 PrimitiveOS Launcher. It adds a Documents browser with folder icons, file
 types, file sizes, and labels for files Reader cannot open. Reading controls
 are grouped in compact bars and contextual panels over the current page.
 
 Use Reader in PrimitiveOS Store, or follow the manual install steps below.
-[Reader 0.1.1 release](https://github.com/PrimitiveOS/kindle-primitive-reader/releases/tag/v0.1.1)
+[Reader 0.1.2 release](https://github.com/PrimitiveOS/kindle-primitive-reader/releases/tag/v0.1.2)
 
-1. Obtain `primitive-reader-0.1.1-armhf.zip` and its `.sha256` file from the
+1. Obtain `primitive-reader-0.1.2-armhf.zip` and its `.sha256` file from the
    same build. Verify the archive from the directory containing both files
-   with `shasum -a 256 -c primitive-reader-0.1.1-armhf.zip.sha256` on macOS or
-   `sha256sum -c primitive-reader-0.1.1-armhf.zip.sha256` on Linux.
-2. Extract the ZIP and open the `primitive-reader-0.1.1/` folder. Connect your
+   with `shasum -a 256 -c primitive-reader-0.1.2-armhf.zip.sha256` on macOS or
+   `sha256sum -c primitive-reader-0.1.2-armhf.zip.sha256` on Linux.
+2. Extract the ZIP and open the `primitive-reader-0.1.2/` folder. Connect your
    Kindle over USB. Copy the `reader/` folder to the root of the Kindle drive and copy
    `documents/Reader.sh` into the existing `documents/` folder. When upgrading,
    copy the new package files into the existing `reader/` folder and keep
@@ -35,7 +35,7 @@ cargo zigbuild --locked --release --target armv7-unknown-linux-musleabihf \
   --features kindle --bin reader-kindle
 sh scripts/stage.sh armhf
 python3 ../doannt-kindle-build/scripts/package.py \
-  --id primitive-reader --dir reader --version 0.1.1 --arch armhf \
+  --id primitive-reader --dir reader --version 0.1.2 --arch armhf \
   --firmware-min 5.18.2 --stage build/stage --license LICENSE \
   --docs-license LICENSE-DOCS --install INSTALL.md --out build/dist
 ```

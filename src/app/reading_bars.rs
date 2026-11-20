@@ -1,80 +1,181 @@
-//! Compact controls layered over the current page without changing its layout.
+//! Independent navigation and configuration overlays for the reading viewport.
+
+#[path = "bottom_config.rs"]
+mod bottom_config;
+
+use std::time::Instant;
 
 use primitive_app::{App, Change, HEIGHT, WIDTH};
 use primitive_ui::{CAPTION, Canvas, Input, Rect, TextStyle};
 
-use super::{Action, Item, Reader, Screen, text_size_items};
+use self::bottom_config::{ConfigRow, SINGLE_VIEW_SECTIONS, TEXT_SECTIONS, VIEW_SECTIONS};
+use super::top_config::TopGroup;
+use super::{Action, Item, Reader, Screen};
 use crate::session::{PAGE_HEIGHT, PagePaint};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum BarPanel {
     Pages,
     Text,
+    TextLayout,
+    TextStyle,
+    TextScreen,
+    TextSpacing,
     View,
+    ViewLayout,
+    ViewScreen,
     Scan,
+}
+
+impl BarPanel {
+    fn tab(self) -> Self {
+        match self {
+            Self::TextLayout | Self::TextStyle | Self::TextSpacing | Self::TextScreen => Self::Text,
+            Self::ViewLayout | Self::ViewScreen => Self::View,
+            _ => self,
+        }
+    }
 }
 
 enum Target {
     Invoke(Action),
+    Apply(Action),
     Toggle(BarPanel),
+    BottomSection(BarPanel),
+    TopSection(TopGroup),
     Exit,
+    Current,
 }
 
 struct Button {
     rect: Rect,
     label: String,
+    detail: Option<String>,
+    selected: bool,
     target: Target,
 }
 
+#[derive(Default)]
 struct Bars {
-    top: Rect,
-    bottom: Rect,
-    panel: Option<Rect>,
-    title: Rect,
+    top: Vec<Rect>,
+    bottom: Vec<Rect>,
+    title: Option<Rect>,
+    row_labels: Vec<(Rect, String)>,
     buttons: Vec<Button>,
 }
 
 impl Bars {
-    fn new(large: bool) -> Self {
-        let width = WIDTH as i32;
-        let top_height = if large { 98 } else { 80 };
-        let bottom_height = if large { 104 } else { 86 };
-        Self {
-            top: Rect::new(0, 0, width, top_height),
-            bottom: Rect::new(0, HEIGHT as i32 - bottom_height, width, bottom_height),
-            panel: None,
-            title: Rect::new(171, 6, width - 690, top_height - 12),
-            buttons: Vec::new(),
-        }
-    }
-
-    fn push(&mut self, rect: Rect, label: impl Into<String>, target: Target) {
+    fn push(&mut self, rect: Rect, label: impl Into<String>, target: Target, selected: bool) {
         self.buttons.push(Button {
             rect,
             label: label.into(),
+            detail: None,
+            selected,
             target,
         });
     }
 
-    fn group(&mut self, items: Vec<Item>, large: bool) {
+    fn group(&mut self, above: i32, items: Vec<Item>, large: bool, at_top: bool) {
         if items.is_empty() {
             return;
         }
         let columns = items.len().min(4);
         let rows = items.len().div_ceil(columns);
-        let row_height = if large { 78 } else { 68 };
-        let height = rows as i32 * row_height + 14;
-        let panel = Rect::new(0, self.bottom.y - height, WIDTH as i32, height);
-        self.panel = Some(panel);
-        let step = (panel.w - 16) / columns as i32;
+        let has_details = items.iter().any(|item| item.detail.is_some());
+        let row_height = match (large, has_details) {
+            (true, true) => 98,
+            (false, true) => 88,
+            (true, false) => 78,
+            (false, false) => 68,
+        };
+        let height = rows as i32 * row_height + 8;
+        let y = if at_top { above } else { above - height };
+        let panel = Rect::new(0, y, WIDTH as i32, height);
+        if at_top {
+            self.top.push(panel);
+        } else {
+            self.bottom.push(panel);
+        }
         for (index, item) in items.into_iter().enumerate() {
-            let x = panel.x + 8 + index as i32 % columns as i32 * step;
-            let y = panel.y + 7 + (index / columns) as i32 * row_height;
-            self.push(
-                Rect::new(x, y, step, row_height),
-                item.title,
-                Target::Invoke(item.action),
+            let row = Rect::new(
+                8,
+                y + 4 + index as i32 / columns as i32 * row_height,
+                panel.w - 16,
+                row_height,
             );
+            let rect = cell(row, index % columns, columns);
+            self.buttons.push(Button {
+                rect,
+                label: item.title,
+                detail: item.detail,
+                selected: false,
+                target: if matches!(item.action, Action::SetReadingControls(_)) {
+                    Target::Apply(item.action)
+                } else {
+                    Target::Invoke(item.action)
+                },
+            });
+        }
+    }
+
+    fn configure(
+        &mut self,
+        above: i32,
+        large: bool,
+        current: BarPanel,
+        sections: &[(BarPanel, &str)],
+        rows: Vec<ConfigRow>,
+    ) {
+        if rows.is_empty() {
+            return;
+        }
+        let row_height = if large { 76 } else { 64 };
+        let section_height = if sections.is_empty() {
+            0
+        } else if large {
+            56
+        } else {
+            52
+        };
+        let height = rows.len() as i32 * row_height + section_height + 8;
+        let width = WIDTH as i32;
+        let panel = Rect::new(0, above - height, width, height);
+        self.bottom.push(panel);
+        if !sections.is_empty() {
+            let row = Rect::new(32, panel.y + 2, width - 64, section_height);
+            for (index, &(section, label)) in sections.iter().enumerate() {
+                self.push(
+                    cell(row, index, sections.len()),
+                    label,
+                    Target::BottomSection(section),
+                    section == current,
+                );
+            }
+        }
+        for (index, row) in rows.into_iter().enumerate() {
+            let y = panel.y + section_height + 4 + index as i32 * row_height;
+            let label_width = if row.label.is_empty() { 0 } else { 272 };
+            if label_width != 0 {
+                self.row_labels
+                    .push((Rect::new(34, y, label_width - 18, row_height), row.label));
+            }
+            let options = Rect::new(16 + label_width, y, width - 32 - label_width, row_height);
+            let count = row.choices.len();
+            for (index, choice) in row.choices.into_iter().enumerate() {
+                let target = if choice.selected {
+                    Target::Current
+                } else if choice.live {
+                    Target::Apply(choice.action)
+                } else {
+                    Target::Invoke(choice.action)
+                };
+                self.push(
+                    cell(options, index, count),
+                    choice.title,
+                    target,
+                    choice.selected,
+                );
+            }
         }
     }
 
@@ -85,302 +186,428 @@ impl Bars {
             .position(|button| button.rect.contains(x, y))?;
         Some(self.buttons.swap_remove(index).target)
     }
+
+    fn contains(&self, x: f32, y: f32) -> bool {
+        self.top
+            .iter()
+            .chain(&self.bottom)
+            .any(|rect| rect.contains(x, y))
+    }
+
+    fn visible(&self) -> std::ops::Range<u32> {
+        let top = self.top.last().map_or(0, |rect| rect.bottom() as u32);
+        let bottom = self.bottom.last().map_or(PAGE_HEIGHT, |rect| rect.y as u32);
+        top..bottom.max(top)
+    }
+}
+
+fn cell(row: Rect, index: usize, count: usize) -> Rect {
+    let x = row.x + row.w * index as i32 / count as i32;
+    let right = row.x + row.w * (index as i32 + 1) / count as i32;
+    Rect::new(x + 3, row.y + 2, right - x - 6, row.h - 4)
 }
 
 impl Reader {
+    pub(super) fn swipe_display_control(&mut self, input: Input, start_x: f32) -> Option<Change> {
+        let Input::Swipe { dx, dy, start_y } = input else {
+            return None;
+        };
+        if self.touch_locked
+            || self.top_group != Some(TopGroup::Settings)
+            || dx.abs() < 48.0
+            || dx.abs() <= dy.abs() * 1.5
+        {
+            return None;
+        }
+        let control = self.reading_bars().buttons.into_iter().find_map(|button| {
+            if !button.rect.contains(start_x, start_y) {
+                return None;
+            }
+            match button.target {
+                Target::Invoke(Action::SetDisplayLevel(control, _))
+                | Target::Apply(Action::SetDisplayLevel(control, _)) => Some(control),
+                _ => None,
+            }
+        })?;
+        Some(match self.quick_display.swipe(control, dx) {
+            Ok(()) => self.applied_change(),
+            Err(error) => self.report(error),
+        })
+    }
+
     fn reading_bars(&self) -> Bars {
+        let mut bars = Bars::default();
         let large = self.controls.large_toolbar;
-        let mut bars = Bars::new(large);
         let width = WIDTH as i32;
-        let top = |x, w| Rect::new(x, 5, w, bars.top.h - 10);
-        let top_buttons = [
-            (
-                top(12, 148),
-                "Library",
-                Target::Invoke(Action::Show(Screen::Library)),
-            ),
-            (
-                top(width - 500, 145),
-                "Pages",
-                Target::Toggle(BarPanel::Pages),
-            ),
-            (
-                top(width - 355, 189),
-                "Controls",
-                Target::Invoke(Action::Show(Screen::ReadingControls)),
-            ),
-            (top(width - 166, 154), "Exit", Target::Exit),
-        ];
-        for (rect, label, target) in top_buttons {
-            bars.push(rect, label, target);
+        let fixed = self.fixed.as_ref().map(|document| &document.reading);
+        let has_scan = self.supports_scan_panel();
+
+        if self.reading_top {
+            let height = if large { 98 } else { 80 };
+            bars.top.push(Rect::new(0, 0, width, height));
+            bars.title = Some(Rect::new(171, 21, width - 690, height - 27));
+            let top = |x, w| Rect::new(x, 5, w, height - 10);
+            for (rect, label, target) in [
+                (
+                    top(12, 148),
+                    "Library",
+                    Target::Invoke(Action::Show(Screen::Library)),
+                ),
+                (
+                    top(width - 500, 145),
+                    "Pages",
+                    Target::Toggle(BarPanel::Pages),
+                ),
+                (
+                    top(width - 355, 189),
+                    "Controls",
+                    Target::Invoke(Action::Show(Screen::ReadingControls)),
+                ),
+                (top(width - 166, 154), "Exit", Target::Exit),
+            ] {
+                let selected =
+                    matches!(target, Target::Toggle(panel) if self.reading_panel == Some(panel));
+                bars.push(rect, label, target, selected);
+            }
+            let tabs = Rect::new(0, height, width, if large { 65 } else { 56 });
+            bars.top.push(tabs);
+            for (index, group) in TopGroup::ALL.into_iter().enumerate() {
+                bars.push(
+                    cell(tabs, index, TopGroup::ALL.len()),
+                    group.label(),
+                    Target::TopSection(group),
+                    self.top_group == Some(group),
+                );
+            }
+            if let Some(group) = self.top_group {
+                bars.group(tabs.bottom(), self.top_config_items(group), large, true);
+            }
         }
 
-        let fixed = self.fixed.as_ref().map(|document| &document.reading);
-        let has_scan = fixed.is_some_and(|reading| {
-            reading.supports_crop() || reading.supports_text() || reading.supports_scan_contrast()
-        });
-        let fixed_book = fixed.is_some();
-        let supports_text = fixed.is_none_or(|reading| reading.supports_text());
-        let tabs = [
-            fixed
-                .is_none_or(|reading| !reading.outline().is_empty())
-                .then_some((
-                    "Contents",
+        if self.reading_bottom {
+            let height = if large { 104 } else { 86 };
+            let bottom = Rect::new(0, HEIGHT as i32 - height, width, height);
+            bars.bottom.push(bottom);
+            let fixed_book = fixed.is_some();
+            let supports_text = fixed.is_none_or(|reading| reading.supports_text());
+            let tabs = [
+                fixed
+                    .is_none_or(|reading| !reading.outline().is_empty())
+                    .then_some((
+                        "Contents",
+                        Target::Invoke(Action::Show(if fixed_book {
+                            Screen::FixedContents
+                        } else {
+                            Screen::Contents
+                        })),
+                    )),
+                Some((
+                    "Bookmarks",
                     Target::Invoke(Action::Show(if fixed_book {
-                        Screen::FixedContents
+                        Screen::FixedBookmarks
                     } else {
-                        Screen::Contents
+                        Screen::Bookmarks
                     })),
                 )),
-            Some((
-                "Bookmarks",
-                Target::Invoke(Action::Show(if fixed_book {
-                    Screen::FixedBookmarks
+                supports_text.then_some((
+                    "Highlights",
+                    Target::Invoke(Action::Show(Screen::Highlights)),
+                )),
+                supports_text.then_some(("Find", Target::Invoke(Action::Show(Screen::Find)))),
+                Some(("Go to", Target::Invoke(Action::Show(Screen::GoToPage)))),
+                Some(if fixed_book {
+                    ("View", Target::Toggle(BarPanel::View))
                 } else {
-                    Screen::Bookmarks
-                })),
-            )),
-            supports_text.then_some((
-                "Highlights",
-                Target::Invoke(Action::Show(Screen::Highlights)),
-            )),
-            supports_text.then_some(("Find", Target::Invoke(Action::Show(Screen::Find)))),
-            Some(("Go to", Target::Invoke(Action::Show(Screen::GoToPage)))),
-            Some(if fixed_book {
-                ("View", Target::Toggle(BarPanel::View))
-            } else {
-                ("Text", Target::Toggle(BarPanel::Text))
-            }),
-            has_scan.then_some(("Scan", Target::Toggle(BarPanel::Scan))),
-        ];
-        let columns = if has_scan { 7 } else { 6 };
-        for (index, tab) in tabs.into_iter().enumerate() {
-            if let Some((label, target)) = tab {
-                let x = index as i32 * width / columns;
-                let right = (index as i32 + 1) * width / columns;
+                    ("Text", Target::Toggle(BarPanel::Text))
+                }),
+                has_scan.then_some(("Scan", Target::Toggle(BarPanel::Scan))),
+            ];
+            let document_tabs = if has_scan { 7 } else { 6 };
+            let columns = document_tabs + usize::from(!self.reading_top);
+            for (index, tab) in tabs.into_iter().enumerate() {
+                if let Some((label, target)) = tab {
+                    let selected = matches!(target, Target::Toggle(panel) if self.reading_panel.map(BarPanel::tab) == Some(panel));
+                    bars.push(cell(bottom, index, columns), label, target, selected);
+                }
+            }
+            if !self.reading_top {
                 bars.push(
-                    Rect::new(x + 3, bars.bottom.y + 5, right - x - 6, bars.bottom.h - 10),
-                    label,
-                    target,
+                    cell(bottom, document_tabs, columns),
+                    "Exit",
+                    Target::Exit,
+                    false,
                 );
             }
         }
+
         if let Some(panel) = self.reading_panel {
-            bars.group(self.reading_bar_items(panel), large);
+            let above = bars
+                .bottom
+                .first()
+                .map_or(PAGE_HEIGHT as i32, |rect| rect.y);
+            if panel == BarPanel::Pages {
+                bars.group(above, self.page_actions(), large, false);
+            } else if self.reading_bottom {
+                let sections: &[(BarPanel, &str)] = match panel.tab() {
+                    BarPanel::Text if self.supports_word_spacing() => &TEXT_SECTIONS,
+                    BarPanel::Text => &TEXT_SECTIONS[..4],
+                    BarPanel::View if self.supports_view_layout() => &VIEW_SECTIONS,
+                    BarPanel::View => &SINGLE_VIEW_SECTIONS,
+                    _ => &[],
+                };
+                bars.configure(
+                    above,
+                    large,
+                    panel,
+                    sections,
+                    self.bottom_config_rows(panel),
+                );
+            }
         }
         bars
     }
 
-    fn reading_bar_items(&self, panel: BarPanel) -> Vec<Item> {
-        let mut items = Vec::new();
-        match panel {
-            BarPanel::Pages => {
-                items.push(Item::new("Thumbnails", Action::Overview));
-                items.push(Item::new("Add bookmark", Action::AddBookmark));
-                if self
-                    .active
-                    .as_ref()
-                    .is_some_and(|active| !active.reading.links().is_empty())
-                {
-                    items.push(Item::new("Links", Action::Show(Screen::Links)));
-                }
-                if !self.back.is_empty() {
-                    items.push(Item::new("History", Action::Show(Screen::LocationHistory)));
-                    items.push(Item::new("Previous location", Action::ReturnToLocation));
-                }
-                if !self.hits.is_empty() || !self.pdf_hits.is_empty() {
-                    items.push(Item::new("Matches", Action::Show(Screen::Matches)));
-                }
-            }
-            BarPanel::Text => {
-                if let Some(active) = &self.active {
-                    let scroll = active.reading.config.scroll;
-                    items.extend(text_size_items(active.reading.config.settings));
-                    if !active.reading.probe.is_vertical() {
-                        items.push(Item::new(
-                            if scroll { "Page turns" } else { "Scroll" },
-                            Action::ReadingMode(!scroll),
-                        ));
-                    }
-                    items.push(Item::new("Text settings", Action::Show(Screen::Typography)));
-                }
-            }
-            BarPanel::View => {
-                if let Some(fixed) = &self.fixed {
-                    let reading = &fixed.reading;
-                    if !reading.is_spread() {
-                        items.extend([
-                            Item::new("Fit page", Action::FitPage(false)),
-                            Item::new("Fit width", Action::FitPage(true)),
-                            Item::new("Fit height", Action::FitHeight),
-                        ]);
-                    }
-                    items.push(Item::new("Rotate", Action::RotatePage));
-                    if reading.supports_spreads() {
-                        let spread = reading.is_spread();
-                        items.push(Item::new(
-                            if spread { "One page" } else { "Two pages" },
-                            Action::ComicSpread(!spread),
-                        ));
-                    }
-                    if reading.supports_continuous() {
-                        let scroll = reading.is_continuous();
-                        items.push(Item::new(
-                            if scroll { "Page turns" } else { "Scroll" },
-                            Action::FixedScroll(!scroll),
-                        ));
-                    }
-                    if reading.supports_rtl() {
-                        let rtl = reading.preferences().right_to_left;
-                        items.push(Item::new(
-                            if rtl {
-                                "Left to right"
-                            } else {
-                                "Right to left"
-                            },
-                            Action::ReversePageDirection,
-                        ));
-                    }
-                }
-            }
-            BarPanel::Scan => {
-                if let Some(fixed) = &self.fixed {
-                    let reading = &fixed.reading;
-                    if reading.supports_scan_contrast() {
-                        let higher = reading.scan_contrast();
-                        items.push(Item::new(
-                            if higher {
-                                "Normal contrast"
-                            } else {
-                                "Higher contrast"
-                            },
-                            Action::ScanContrast(!higher),
-                        ));
-                    }
-                    if reading.supports_crop() {
-                        items.push(Item::new("Crop", Action::CropPage));
-                        items.push(Item::new("Columns", Action::ScanColumns));
-                        if self.ocr_assets.is_some() && self.ocr.is_none() {
-                            items.push(Item::new("OCR", Action::RecognizeText));
-                        }
-                    }
-                    if reading.supports_text() {
-                        items.push(Item::new("Read text", Action::ReadFixedText));
-                        items.push(Item::new("Reflow scan", Action::ReflowScan));
-                    }
-                }
-            }
+    fn page_actions(&self) -> Vec<Item> {
+        let mut items = vec![
+            Item::new("Thumbnails", Action::Overview),
+            Item::new("Add bookmark", Action::AddBookmark),
+        ];
+        if self
+            .active
+            .as_ref()
+            .is_some_and(|active| !active.reading.links().is_empty())
+        {
+            items.push(Item::new("Links", Action::Show(Screen::Links)));
+        }
+        if !self.back.is_empty() {
+            items.push(Item::new("History", Action::Show(Screen::LocationHistory)));
+            items.push(Item::new("Previous location", Action::ReturnToLocation));
+        }
+        if !self.hits.is_empty() || !self.pdf_hits.is_empty() {
+            items.push(Item::new("Matches", Action::Show(Screen::Matches)));
         }
         items
     }
 
     pub(super) fn draw_reading_tools(&self, canvas: &mut Canvas) {
         let bars = self.reading_bars();
-        for rect in [Some(bars.top), Some(bars.bottom), bars.panel]
-            .into_iter()
-            .flatten()
-        {
-            canvas.fill(rect, 255);
-            let edge = if rect.y == 0 { rect.h - 2 } else { rect.y };
-            canvas.fill(Rect::new(rect.x, edge, rect.w, 2), 166);
+        for (edge_top, regions) in [(true, &bars.top), (false, &bars.bottom)] {
+            for rect in regions {
+                canvas.fill(*rect, 255);
+                let y = if edge_top { rect.bottom() - 2 } else { rect.y };
+                canvas.fill(Rect::new(rect.x, y, rect.w, 2), 166);
+            }
         }
 
         let size = if self.controls.large_toolbar { 34 } else { 28 };
-        let title = self
-            .active
-            .as_ref()
-            .map(|book| book.reading.probe.title.as_str())
-            .or_else(|| self.fixed.as_ref().map(|book| book.entry.title.as_str()))
-            .unwrap_or("Reader");
-        canvas.text(
-            Rect::new(
-                bars.title.x,
-                bars.title.y + 15,
-                bars.title.w,
-                bars.title.h - 15,
-            ),
-            self.notice.as_deref().unwrap_or(title),
-            CAPTION.ink(70),
-        );
+        if let Some(title_rect) = bars.title {
+            let title = self
+                .active
+                .as_ref()
+                .map(|book| book.reading.probe.title.as_str())
+                .or_else(|| self.fixed.as_ref().map(|book| book.entry.title.as_str()))
+                .unwrap_or("Reader");
+            canvas.text(
+                title_rect,
+                self.notice.as_deref().unwrap_or(title),
+                CAPTION.ink(70),
+            );
+        }
+        for (rect, label) in bars.row_labels {
+            canvas.text(
+                Rect::new(rect.x, rect.y + (rect.h - size) / 2, rect.w, size + 10),
+                &label,
+                CAPTION.ink(70),
+            );
+        }
         for button in bars.buttons {
-            let selected =
-                matches!(button.target, Target::Toggle(panel) if Some(panel) == self.reading_panel);
             let rect = button.rect;
+            let size = if rect.w < 170 { size.min(30) } else { size };
             if canvas.control_pressed(rect, false) {
                 canvas.fill(rect, 218);
             }
-            if selected {
-                canvas.fill(
-                    Rect::new(rect.x + 14, rect.y + rect.h - 3, rect.w - 28, 3),
-                    0,
-                );
+            if button.selected {
+                canvas.fill(Rect::new(rect.x + 12, rect.bottom() - 3, rect.w - 24, 3), 0);
             }
+            let y = if button.detail.is_some() {
+                rect.y + 4
+            } else {
+                rect.y + (rect.h - size) / 2
+            };
             canvas.text(
-                Rect::new(rect.x, rect.y + (rect.h - size) / 2, rect.w, size + 12),
+                Rect::new(rect.x, y, rect.w, size + 10),
                 &button.label,
                 TextStyle::new(size).bold().center(),
             );
+            if let Some(detail) = button.detail {
+                canvas.text(
+                    Rect::new(
+                        rect.x + 4,
+                        y + size + 10,
+                        rect.w - 8,
+                        rect.bottom() - y - size - 10,
+                    ),
+                    &detail,
+                    CAPTION.center(),
+                );
+            }
         }
     }
 
     pub(super) fn page_paint(&self) -> PagePaint {
-        let inverted = self.controls.night_pages;
+        let inverted = self.uses_night_pages();
         if !matches!(self.screen, Screen::BookTools | Screen::FixedTools) {
             return PagePaint::full(inverted);
         }
-        let bars = self.reading_bars();
         PagePaint {
-            // Keep text fragments at the panel edges from peeking behind the controls.
-            visible: bars.top.h as u32..bars.panel.unwrap_or(bars.bottom).y as u32,
+            visible: self.reading_bars().visible(),
             inverted,
         }
     }
 
-    pub(super) fn reveal_reading_tools(&mut self, x: f32, y: f32, screen: Screen) -> bool {
-        let middle = WIDTH as f32 / 2.0;
-        let panel =
-            if (x - middle).abs() <= 150.0 && (PAGE_HEIGHT as f32..HEIGHT as f32).contains(&y) {
-                Some(if screen == Screen::FixedTools {
-                    BarPanel::View
-                } else {
-                    BarPanel::Text
-                })
-            } else if (WIDTH as f32 / 3.0..=WIDTH as f32 * 2.0 / 3.0).contains(&x)
-                && (0.0..PAGE_HEIGHT as f32 * 0.55).contains(&y)
-            {
-                None
-            } else {
-                return false;
-            };
-        self.show(screen);
-        self.reading_panel = panel;
-        true
+    fn tools_screen(&self) -> Screen {
+        if self.fixed.is_some() {
+            Screen::FixedTools
+        } else {
+            Screen::BookTools
+        }
     }
 
-    pub(super) fn reading_tools_input(&mut self, input: Input) -> Change {
-        let reading_screen = if self.screen == Screen::FixedTools {
+    fn surface_screen(&self) -> Screen {
+        if self.fixed.is_some() {
             Screen::Fixed
         } else {
             Screen::Book
-        };
+        }
+    }
+
+    fn last_bottom_panel(&self) -> BarPanel {
+        if self.fixed.is_some() {
+            match self.last_fixed_panel {
+                BarPanel::Scan if !self.supports_scan_panel() => BarPanel::View,
+                BarPanel::ViewLayout if !self.supports_view_layout() => BarPanel::View,
+                panel => panel,
+            }
+        } else if self.last_text_panel == BarPanel::TextSpacing && !self.supports_word_spacing() {
+            BarPanel::Text
+        } else {
+            self.last_text_panel
+        }
+    }
+
+    fn remember_bottom_panel(&mut self, panel: BarPanel) {
+        match panel.tab() {
+            BarPanel::Text => self.last_text_panel = panel,
+            BarPanel::View | BarPanel::Scan => self.last_fixed_panel = panel,
+            _ => {}
+        }
+    }
+
+    pub(super) fn open_reading_edge(&mut self, from_top: bool, x: f32) -> Change {
+        let width = WIDTH as f32;
+        self.show(self.tools_screen());
+        self.reading_top = from_top;
+        self.reading_bottom = !from_top || self.controls.both_toolbars;
+        if from_top {
+            let group = if x < width / 3.0 {
+                TopGroup::ALL[0]
+            } else if x > width * 2.0 / 3.0 {
+                TopGroup::ALL[TopGroup::ALL.len() - 1]
+            } else {
+                self.last_top_group
+            };
+            self.top_group = Some(group);
+            self.last_top_group = group;
+        }
+        if self.reading_bottom {
+            self.reading_panel = Some(self.last_bottom_panel());
+        }
+        Change::Partial
+    }
+
+    pub(super) fn reveal_reading_tools(&mut self, x: f32, y: f32, screen: Screen) -> bool {
+        if self.controls.menu_activation == crate::reading_controls::MenuActivation::Swipe {
+            return false;
+        }
+        let middle = WIDTH as f32 / 2.0;
+        if (x - middle).abs() <= 150.0 && (PAGE_HEIGHT as f32..HEIGHT as f32).contains(&y) {
+            // The legacy footer shortcut reveals controls while keeping the pinned Exit available.
+            self.show(screen);
+            self.reading_panel = Some(self.last_bottom_panel());
+            true
+        } else if (WIDTH as f32 / 3.0..=WIDTH as f32 * 2.0 / 3.0).contains(&x)
+            && (0.0..PAGE_HEIGHT as f32 * 0.55).contains(&y)
+        {
+            self.show(screen);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn apply_overlay_action(&mut self, action: Action) -> Change {
+        let (screen, top, bottom, panel, group) = (
+            self.screen,
+            self.reading_top,
+            self.reading_bottom,
+            self.reading_panel,
+            self.top_group,
+        );
+        match self.activate(action) {
+            Ok(()) => {
+                if self.screen == self.surface_screen() {
+                    self.screen = screen;
+                    self.reading_top = top;
+                    self.reading_bottom = bottom;
+                    self.reading_panel = panel;
+                    self.top_group = group;
+                    let now = Instant::now();
+                    self.update_stats_activity(now);
+                    self.sync_auto_turn(now);
+                }
+                self.applied_change()
+            }
+            Err(error) => self.report(error),
+        }
+    }
+
+    pub(super) fn reading_tools_input(&mut self, input: Input) -> Change {
+        let reading_screen = self.surface_screen();
         match input {
             Input::Tap(x, y) => {
                 let mut bars = self.reading_bars();
                 match bars.button_at(x, y) {
                     Some(Target::Exit) => self.exit(),
                     Some(Target::Toggle(panel)) => {
-                        self.reading_panel = (self.reading_panel != Some(panel)).then_some(panel);
+                        self.top_group = None;
+                        self.reading_panel =
+                            (self.reading_panel.map(BarPanel::tab) != Some(panel)).then_some(panel);
+                        if let Some(panel) = self.reading_panel {
+                            self.remember_bottom_panel(panel);
+                        }
                         Change::Partial
                     }
+                    Some(Target::TopSection(group)) => {
+                        self.reading_panel = None;
+                        self.top_group = (self.top_group != Some(group)).then_some(group);
+                        self.last_top_group = group;
+                        Change::Partial
+                    }
+                    Some(Target::BottomSection(panel)) => {
+                        self.reading_panel = Some(panel);
+                        self.remember_bottom_panel(panel);
+                        Change::Partial
+                    }
+                    Some(Target::Apply(action)) => self.apply_overlay_action(action),
                     Some(Target::Invoke(action)) => match self.activate(action) {
-                        Ok(()) => Change::Partial,
+                        Ok(()) => self.applied_change(),
                         Err(error) => self.report(error),
                     },
-                    None if !bars.top.contains(x, y)
-                        && !bars.bottom.contains(x, y)
-                        && !bars.panel.is_some_and(|panel| panel.contains(x, y)) =>
-                    {
-                        if self.reading_panel.take().is_none() {
+                    Some(Target::Current) => Change::None,
+                    None if !bars.contains(x, y) => {
+                        let bottom_was_open = self.reading_panel.take().is_some();
+                        let top_was_open = self.top_group.take().is_some();
+                        if !bottom_was_open && !top_was_open {
                             self.show(reading_screen);
                         }
                         Change::Partial
@@ -407,5 +634,82 @@ impl Reader {
             .find(|button| button.label == label)
             .unwrap_or_else(|| panic!("Missing reading control {label}"))
             .rect
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::{fs, path::PathBuf};
+
+    struct Scratch(PathBuf);
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn tap(app: &mut Reader, label: &str) -> Change {
+        let rect = app.reading_button(label);
+        app.input(Input::Tap(
+            (rect.x + rect.w / 2) as f32,
+            (rect.y + rect.h / 2) as f32,
+        ))
+    }
+
+    #[test]
+    fn live_text_spacing_keeps_its_panel_open_and_reopens_with_saved_preferences() {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let root = Scratch(std::env::temp_dir().join(format!(
+            "reader-controls-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed),
+        )));
+        let documents = root.0.join("documents");
+        fs::create_dir_all(&documents).unwrap();
+        let book = documents.join("Field Notes.epub");
+        fs::copy(crate::test_fixture("field-notes-epub3.epub"), &book).unwrap();
+        let state = root.0.join("reading.json");
+        let fonts = vec![crate::test_fixture("fonts/Silkscreen-Regular.ttf")];
+        let mut app = Reader::open(&documents, &state, fonts.clone()).unwrap();
+        app.open_path(&book).unwrap();
+
+        assert_eq!(app.open_reading_edge(false, 500.0), Change::Partial);
+        assert!(!app.reading_top && app.reading_bottom);
+        assert_eq!(tap(&mut app, "Spacing"), Change::Partial);
+        assert_eq!(app.reading_panel, Some(BarPanel::TextSpacing));
+        assert_eq!(tap(&mut app, "Wide"), Change::Partial);
+        assert_eq!(app.screen, Screen::BookTools);
+        assert_eq!(app.reading_panel, Some(BarPanel::TextSpacing));
+        assert!(!app.reading_top && app.reading_bottom);
+        assert_eq!(
+            app.active
+                .as_ref()
+                .unwrap()
+                .reading
+                .config
+                .settings
+                .word_spacing,
+            4.0
+        );
+
+        app.open_reading_edge(false, 500.0);
+        assert_eq!(app.reading_panel, Some(BarPanel::TextSpacing));
+        app.save().unwrap();
+        let mut restored = Reader::open(&documents, &state, fonts).unwrap();
+        restored.open_path(&book).unwrap();
+        assert_eq!(
+            restored
+                .active
+                .as_ref()
+                .unwrap()
+                .reading
+                .config
+                .settings
+                .word_spacing,
+            4.0
+        );
     }
 }

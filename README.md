@@ -12,7 +12,7 @@ Kindle. [EPUB feasibility results](docs/epub-probe-results.md)
 | <img src="docs/screenshots/documents.png" width="210" alt="Reader showing folders, file types, sizes, and unsupported files"> | <img src="docs/screenshots/reading.png" width="210" alt="Reader displaying an EPUB with a compact Done control"> | <img src="docs/screenshots/reading-controls.png" width="210" alt="Reader’s compact navigation and document tool bars over an EPUB"> | <img src="docs/screenshots/dictionary.png" width="210" alt="A compact dictionary definition displayed over the reading page"> |
 
 These captures use Reader's Kindle interface in the desktop simulator.
-[Selection popup](docs/screenshots/selection.png)
+[Top navigation](docs/screenshots/navigation.png) · [Bottom page settings](docs/screenshots/page-settings.png) · [Selection popup](docs/screenshots/selection.png)
 
 ## Reading on Kindle
 
@@ -23,13 +23,17 @@ Install Reader from PrimitiveOS Store or follow the manual install guide.
   each file's type and size. Files Reader cannot open are labelled and disabled.
   Use **Up** to return to the parent folder, or **Find** to search all Documents.
   **Continue reading** on the Documents screen returns to your saved passage.
-- Tap near the upper center of a page to reveal both reading bars. The top
-  bar offers **Library**, **Pages**, **Controls**, and **Exit**. Use **Pages**
-  for thumbnails, a quick bookmark, available links, and previous locations.
-  The lower bar keeps Contents, Bookmarks, Highlights, Find, and Go to in
-  consistent positions. Choose Text, View, or Scan for the current format's
-  adjustments. Tap the center of the footer to open Text or View directly.
-  Tap the page to hide the bars. **Done** is available while the bars are closed.
+- Swipe down from the top edge for the upper menu. Start at the left, center,
+  or right to open Navigation, the last-used tab, or Library. Navigation has
+  contents, bookmarks, location history, a book map, page previews, and
+  automatic page turns. Search has full-text and bookmark search, recent
+  queries, a typed dictionary lookup, and saved vocabulary.
+- Swipe up from the bottom edge to reopen the last formatting panel for the
+  current format. Text controls include font size, line and word spacing,
+  independent margins, weight, screen settings, and font profiles. Fixed-page
+  controls include fit, zoom, rotation, scroll mode, and available scan tools.
+  Make adjustments with the page visible. Tap the upper center to show both
+  bars. Tap the page to dismiss them. **Done** exits from the reading page.
 - Use the Kindle's page buttons, tap the outer thirds of the page, or swipe.
   Text settings switch between paged and continuous reading in horizontal EPUBs.
   Supported `vertical-rl` chapters use right-to-left columns and page turns.
@@ -57,14 +61,20 @@ Install Reader from PrimitiveOS Store or follow the manual install guide.
   organize it into collections. Create collections from **Organize**.
   Book details shows available EPUB series information, the cover preview, and
   local time spent on the reading screen.
-- Open Controls on the reading bar to invert page colors, mirror touch zones,
-  enlarge the toolbar, or lock page touch while keeping physical buttons and Done.
+- Open **Settings** on the top bar to change the screen palette and portrait
+  orientation, adjust supported frontlight and warmth, refresh the screen,
+  switch the status display, or configure touch. Swipe horizontally over a
+  light control or tap its + and − buttons to adjust it. Locking touch keeps
+  physical page buttons and Done available.
 - Copy a TTF or OTF of up to 12 MB to `reader/data/fonts/`. Pick it from Text ›
   Reading font. Use the font override in Text settings to apply the reading font
   when the book specifies its own fonts.
 - Save a named preset in Text › Reading profiles and apply it to another book.
 
 ## Development status
+
+The [KOReader controls checklist](docs/koreader-controls-parity.md) traces
+Reader's controls to the KOReader v2026.07.1 source and the Oasis captures.
 
 Reader 0.1.0 passed 249 ARMHF tests on a Kindle Oasis 3 running firmware 5.18.2.
 An automated session opened Markdown and DOCX from Files 0.1.2, checked page

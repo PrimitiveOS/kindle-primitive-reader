@@ -87,7 +87,7 @@ impl ParleyChapter {
         let mut lines = Vec::new();
         let mut y = 0.0_f32;
         let mut image_budget = MAX_IMAGE_PIXELS;
-        let width = settings.width - 2 * settings.margin;
+        let width = settings.text_width();
         let gap = settings.font_size * 0.32;
         for block in &source.blocks {
             if !block.text.is_empty() {
@@ -200,7 +200,7 @@ impl ParleyChapter {
         x: f32,
         y: f32,
     ) -> Option<&str> {
-        let content_y = y - settings.margin as f32;
+        let content_y = y - settings.top_margin() as f32;
         if !(0.0..visible_rows(&range, settings) as f32).contains(&content_y) {
             return None;
         }
@@ -209,7 +209,7 @@ impl ParleyChapter {
             let (left, top) = illustration.origin(
                 range.start,
                 settings.width as usize,
-                settings.margin as usize,
+                settings.side_margin() as usize,
             );
             let (left, top) = (left as f32, top as f32);
             let right = left + illustration.pixels.width() as f32;
@@ -241,8 +241,9 @@ impl ParleyChapter {
         let visible_height = visible_rows(&range, settings);
         let mut frame = vec![255; (settings.width * settings.height) as usize];
         let stride = settings.width as usize;
-        let margin = settings.margin as usize;
-        let page = &mut frame[margin * stride..(margin + visible_height) * stride];
+        let margin = settings.side_margin() as usize;
+        let top = settings.top_margin() as usize;
+        let page = &mut frame[top * stride..(top + visible_height) * stride];
 
         let index = self
             .paragraphs
@@ -274,6 +275,7 @@ impl ParleyChapter {
                             margin,
                             (0.0, paragraph.y - range.start),
                             &run,
+                            settings.text_contrast,
                         );
                         if run.style().underline.is_some() {
                             let y =
@@ -306,6 +308,7 @@ impl ParleyChapter {
                             margin,
                             (overlay.x, paragraph.y + overlay.y - range.start),
                             &run,
+                            settings.text_contrast,
                         );
                     }
                 }
@@ -513,6 +516,12 @@ fn make_paragraph(
     builder.push_default(StyleProperty::LineHeight(line_height(style)));
     builder.push_default(StyleProperty::OverflowWrap(OverflowWrap::Anywhere));
     builder.push_default(StyleProperty::FontSize(font_size(style)));
+    if settings.word_spacing != 0.0 {
+        builder.push_default(StyleProperty::WordSpacing(settings.word_spacing));
+    }
+    if settings.letter_spacing != 0.0 {
+        builder.push_default(StyleProperty::LetterSpacing(settings.letter_spacing));
+    }
     builder.push_default(StyleProperty::FontWeight(weight(style)));
     builder.push_default(StyleProperty::FontStyle(style.font_style));
     builder.push_default(StyleProperty::Locale(language));
@@ -670,6 +679,73 @@ impl Illustration {
 mod tests {
     use super::*;
     use crate::book_style::BookStyle;
+
+    #[test]
+    fn text_contrast_darkens_glyphs_without_reflowing_the_page() {
+        let book = crate::test_fixture("long-chapter.epub");
+        let fonts = [crate::test_fixture("fonts/Silkscreen-Regular.ttf")];
+        let settings = Settings::default();
+        let mut normal =
+            crate::Probe::open(&book, crate::Engine::Parley, &fonts, settings, 0).unwrap();
+        let mut darker = crate::Probe::open(
+            &book,
+            crate::Engine::Parley,
+            &fonts,
+            Settings {
+                text_contrast: true,
+                ..settings
+            },
+            0,
+        )
+        .unwrap();
+        assert_eq!(normal.page_count(), darker.page_count());
+        assert_eq!(normal.page_anchor(0), darker.page_anchor(0));
+        let normal = normal.capture(0).unwrap();
+        let darker = darker.capture(0).unwrap();
+        assert!(darker.iter().zip(&normal).all(|(new, old)| new <= old));
+        assert!(darker.iter().zip(&normal).any(|(new, old)| new < old));
+    }
+
+    #[test]
+    fn new_spacing_presets_change_text_advances_with_the_same_source_offsets() {
+        let source =
+            Source::parse("<html><body><p>Two words for spacing.</p></body></html>").unwrap();
+        let mut book = Book::open(&crate::test_fixture("field-notes-epub3.epub")).unwrap();
+        let href = book.chapters[0].href.clone();
+        let mut fonts =
+            crate::font_context(&[crate::test_fixture("fonts/Silkscreen-Regular.ttf")]).unwrap();
+        let styles = BookStyle::load(&mut book, &href, &source.stylesheets, &mut fonts)
+            .compute(&source.elements);
+        let mut context = LayoutContext::new();
+        let mut sample = |settings| {
+            let (layout, _) = layout_paragraph(
+                &mut context,
+                &mut fonts,
+                &source.blocks[0],
+                1100,
+                settings,
+                &styles,
+            );
+            let line = layout.get(0).unwrap();
+            (line.metrics().advance, line.text_range())
+        };
+        let settings = Settings::default();
+        let (normal, source_bytes) = sample(settings);
+        for wider in [
+            Settings {
+                word_spacing: 8.0,
+                ..settings
+            },
+            Settings {
+                letter_spacing: 2.0,
+                ..settings
+            },
+        ] {
+            let (advance, bytes) = sample(wider);
+            assert!(advance > normal);
+            assert_eq!(bytes, source_bytes);
+        }
+    }
 
     #[test]
     fn publisher_soft_hyphens_respect_inherited_and_inline_policy() {

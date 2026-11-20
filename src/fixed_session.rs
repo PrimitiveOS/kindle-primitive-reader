@@ -809,10 +809,14 @@ impl FixedReading {
     }
 
     pub(crate) fn rotate(&mut self) -> Result<()> {
+        self.set_rotation((self.view.turns + 1) % 4)
+    }
+
+    pub(crate) fn set_rotation(&mut self, turns: u8) -> Result<()> {
         self.present(
             self.page,
             View {
-                turns: (self.view.turns + 1) % 4,
+                turns: turns % 4,
                 offset_x: 0.0,
                 offset_y: 0.0,
                 ..self.view
@@ -927,16 +931,20 @@ impl FixedReading {
     }
 
     fn zoom(&mut self, delta: isize) -> Result<bool> {
-        if self.is_spread() {
+        self.set_zoom(
+            self.view
+                .zoom
+                .saturating_add_signed(delta)
+                .min(ZOOM.len() - 1),
+        )
+    }
+
+    pub(crate) fn set_zoom(&mut self, zoom: usize) -> Result<bool> {
+        if self.is_spread() || zoom == self.view.zoom {
             return Ok(false);
         }
-        let zoom = self
-            .view
-            .zoom
-            .saturating_add_signed(delta)
-            .min(ZOOM.len() - 1);
-        if zoom == self.view.zoom {
-            return Ok(false);
+        if zoom >= ZOOM.len() {
+            return Err("That zoom level is unavailable".into());
         }
         let mut view = View { zoom, ..self.view };
         if self.is_continuous()

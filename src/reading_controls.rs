@@ -18,6 +18,127 @@ pub(crate) struct ReadingControls {
     pub large_toolbar: bool,
     pub disable_page_taps: bool,
     pub page_refresh: PageRefresh,
+    pub both_toolbars: bool,
+    pub orientation: ReadingOrientation,
+    pub palette: ScreenPalette,
+    pub status_bar: StatusBar,
+    pub menu_activation: MenuActivation,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum MenuActivation {
+    #[default]
+    TapAndSwipe,
+    Tap,
+    Swipe,
+}
+
+impl MenuActivation {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::TapAndSwipe => "Tap and swipe",
+            Self::Tap => "Tap",
+            Self::Swipe => "Swipe",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::TapAndSwipe => Self::Tap,
+            Self::Tap => Self::Swipe,
+            Self::Swipe => Self::TapAndSwipe,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum StatusBar {
+    #[default]
+    PageNumbers,
+    Progress,
+    Minimal,
+}
+
+impl StatusBar {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::PageNumbers => "Page numbers",
+            Self::Progress => "Progress",
+            Self::Minimal => "Minimal",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::PageNumbers => Self::Progress,
+            Self::Progress => Self::Minimal,
+            Self::Minimal => Self::PageNumbers,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ReadingOrientation {
+    #[default]
+    FollowLauncher,
+    Upright,
+    UpsideDown,
+}
+
+impl ReadingOrientation {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::FollowLauncher => "Follow Launcher",
+            Self::Upright => "Upright",
+            Self::UpsideDown => "Upside down",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::FollowLauncher => Self::Upright,
+            Self::Upright => Self::UpsideDown,
+            Self::UpsideDown => Self::FollowLauncher,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ScreenPalette {
+    #[default]
+    FollowLauncher,
+    Light,
+    Dark,
+}
+
+impl ScreenPalette {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::FollowLauncher => "Follow Launcher",
+            Self::Light => "Light",
+            Self::Dark => "Dark",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::FollowLauncher => Self::Light,
+            Self::Light => Self::Dark,
+            Self::Dark => Self::FollowLauncher,
+        }
+    }
+
+    pub fn inverted(self) -> Option<bool> {
+        match self {
+            Self::FollowLauncher => None,
+            Self::Light => Some(false),
+            Self::Dark => Some(true),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]

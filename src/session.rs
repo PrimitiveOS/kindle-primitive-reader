@@ -531,7 +531,7 @@ impl Reading {
     }
 
     fn clear_lines_cut_by_tools(&self, page: &mut GrayImage, visible: &Range<u32>) {
-        let offset = self.config.settings.margin as f32 - self.visible_range().start;
+        let offset = self.config.settings.top_margin() as f32 - self.visible_range().start;
         let (mut start, mut end) = (visible.start, visible.end);
         // Hide fragments of lines divided by the bars while keeping complete lines in place.
         for line in self.probe.lines.iter() {

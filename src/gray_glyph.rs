@@ -64,6 +64,7 @@ impl GlyphCache {
         margin: usize,
         origin: (f32, f32),
         glyphs: &GlyphRun<'_, ()>,
+        contrast: bool,
     ) {
         let run = glyphs.run();
         let synthesis = run.synthesis();
@@ -82,7 +83,7 @@ impl GlyphCache {
         let positions = glyphs
             .positioned_glyphs()
             .map(|glyph| (glyph.id, origin.0 + glyph.x, origin.1 + glyph.y));
-        self.draw_positioned(page, stride, margin, style, positions);
+        self.draw_positioned(page, stride, margin, style, positions, contrast);
     }
 
     pub(crate) fn draw_vertical(
@@ -91,6 +92,7 @@ impl GlyphCache {
         stride: usize,
         margin: usize,
         glyph: crate::vertical_layout::PaintGlyph<'_>,
+        contrast: bool,
     ) {
         let style = GlyphStyle {
             font: glyph.font,
@@ -101,7 +103,14 @@ impl GlyphCache {
             clockwise: glyph.clockwise,
         };
         let position = (glyph.id, glyph.x - margin as f32, glyph.y);
-        self.draw_positioned(page, stride, margin, style, std::iter::once(position));
+        self.draw_positioned(
+            page,
+            stride,
+            margin,
+            style,
+            std::iter::once(position),
+            contrast,
+        );
     }
 
     fn draw_positioned(
@@ -111,6 +120,7 @@ impl GlyphCache {
         margin: usize,
         style: GlyphStyle<'_>,
         glyphs: impl Iterator<Item = (u32, f32, f32)>,
+        contrast: bool,
     ) {
         if stride == 0
             || stride > MAX_VIEWPORT_EDGE
@@ -151,7 +161,9 @@ impl GlyphCache {
             let x = x.div_euclid(X_PHASES);
             let baseline = baseline.round() as i32;
             match face.entry((glyph, phase)) {
-                Entry::Occupied(entry) => entry.get().blend(page, stride, margin, x, baseline),
+                Entry::Occupied(entry) => entry
+                    .get()
+                    .blend(page, stride, margin, x, baseline, contrast),
                 Entry::Vacant(entry) => {
                     let variations = scaled_variations.get_or_insert_with(|| {
                         style
@@ -161,7 +173,7 @@ impl GlyphCache {
                             .collect::<Vec<_>>()
                     });
                     let mask = rasterize(&style, glyph, phase, variations).unwrap_or_default();
-                    mask.blend(page, stride, margin, x, baseline);
+                    mask.blend(page, stride, margin, x, baseline, contrast);
                     let cost = mask.alpha.len() + ENTRY_OVERHEAD;
                     if self.bytes + cost <= CACHE_BYTES {
                         self.bytes += cost;
@@ -176,7 +188,7 @@ impl GlyphCache {
 }
 
 impl Mask {
-    fn blend(&self, page: &mut [u8], stride: usize, margin: usize, x: i32, y: i32) {
+    fn blend(&self, page: &mut [u8], stride: usize, margin: usize, x: i32, y: i32, contrast: bool) {
         if self.alpha.is_empty() {
             return;
         }
@@ -196,6 +208,11 @@ impl Mask {
             let src = (row - y) as usize * self.width + (visible_left - x) as usize;
             let mask = &self.alpha[src..src + width];
             for (pixel, &alpha) in page[dst..dst + width].iter_mut().zip(mask) {
+                let alpha = if contrast {
+                    alpha.saturating_add(alpha / 2)
+                } else {
+                    alpha
+                };
                 if *pixel == 255 {
                     *pixel = 255 - alpha;
                 } else if alpha != 0 {

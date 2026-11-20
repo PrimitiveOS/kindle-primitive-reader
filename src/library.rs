@@ -226,10 +226,19 @@ pub struct BookMetadata {
 pub struct BookPreferences {
     pub font_size: Option<f32>,
     pub margin: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub margin_sides: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub margin_top: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub margin_bottom: Option<u32>,
     pub line_height: Option<f32>,
+    pub word_spacing: f32,
+    pub letter_spacing: f32,
     pub scroll: bool,
     pub alignment: TextAlignment,
     pub bold_text: bool,
+    pub text_contrast: bool,
     pub override_fonts: bool,
     pub disable_soft_hyphens: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -238,12 +247,36 @@ pub struct BookPreferences {
 
 impl BookPreferences {
     pub fn apply_to(&self, settings: Settings) -> Settings {
+        let permitted_margin = |margin: &u32| *margin <= settings.width.min(settings.height) / 4;
         let adjusted = Settings {
             font_size: self.font_size.unwrap_or(settings.font_size),
             margin: self.margin.unwrap_or(settings.margin),
+            margin_sides: self
+                .margin_sides
+                .filter(permitted_margin)
+                .or(settings.margin_sides),
+            margin_top: self
+                .margin_top
+                .filter(permitted_margin)
+                .or(settings.margin_top),
+            margin_bottom: self
+                .margin_bottom
+                .filter(permitted_margin)
+                .or(settings.margin_bottom),
             line_height: self.line_height.unwrap_or(settings.line_height),
+            word_spacing: if (-2.0..=12.0).contains(&self.word_spacing) {
+                self.word_spacing
+            } else {
+                settings.word_spacing
+            },
+            letter_spacing: if (-1.0..=4.0).contains(&self.letter_spacing) {
+                self.letter_spacing
+            } else {
+                settings.letter_spacing
+            },
             alignment: self.alignment,
             bold_text: self.bold_text,
+            text_contrast: self.text_contrast,
             override_fonts: self.override_fonts,
             disable_soft_hyphens: self.disable_soft_hyphens,
             ..settings
@@ -1667,6 +1700,37 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn old_margin_values_and_new_overrides_decode_independently() {
+        let original: BookPreferences = serde_json::from_str(r#"{"margin":40}"#).unwrap();
+        let legacy = original.apply_to(Settings::default());
+        assert_eq!(
+            (
+                legacy.side_margin(),
+                legacy.top_margin(),
+                legacy.bottom_margin()
+            ),
+            (40, 40, 40)
+        );
+        let separate = BookPreferences {
+            margin_sides: Some(100),
+            margin_top: Some(12),
+            margin_bottom: Some(75),
+            ..original
+        };
+        let bytes = serde_json::to_vec(&separate).unwrap();
+        let restored: BookPreferences = serde_json::from_slice(&bytes).unwrap();
+        let settings = restored.apply_to(Settings::default());
+        assert_eq!(
+            (
+                settings.side_margin(),
+                settings.top_margin(),
+                settings.bottom_margin()
+            ),
+            (100, 12, 75)
+        );
     }
 
     #[test]

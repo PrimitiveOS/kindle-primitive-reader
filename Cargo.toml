@@ -1,6 +1,6 @@
 [package]
 name = "reader"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 license = "PolyForm-Noncommercial-1.0.0"
 description = "Offline book reader for PrimitiveOS on Kindle"
@@ -34,8 +34,8 @@ lopdf = { version = "=0.47.0", default-features = false }
 md5 = "=0.8.0"
 parley = { version = "=0.12.0", default-features = false, features = ["std"] }
 png = "=0.17.16"
-primitive-app = { git = "https://github.com/PrimitiveOS/kindle-primtitive-tools.git", rev = "398679696d19e0334a164775a3740cc700ffc9de", optional = true }
-primitive-ui = { git = "https://github.com/PrimitiveOS/kindle-primtitive-tools.git", rev = "398679696d19e0334a164775a3740cc700ffc9de", optional = true }
+primitive-app = { git = "https://github.com/PrimitiveOS/kindle-primtitive-tools.git", rev = "d510fe9e4074f2523930a9ea09d7a0feb7b47809", optional = true }
+primitive-ui = { git = "https://github.com/PrimitiveOS/kindle-primtitive-tools.git", rev = "d510fe9e4074f2523930a9ea09d7a0feb7b47809", optional = true }
 pulldown-cmark = { version = "=0.13.0", default-features = false, features = ["html"] }
 rars = { version = "=0.12.3", default-features = false }
 resvg = { version = "=0.50.0", default-features = false }

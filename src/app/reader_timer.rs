@@ -1,0 +1,107 @@
+//! Fixed-interval page turns scheduled from reading inactivity.
+
+use std::time::{Duration, Instant};
+
+#[derive(Default)]
+pub(super) struct AutoTurn {
+    interval: Option<Duration>,
+    deadline: Option<Instant>,
+}
+
+impl AutoTurn {
+    pub(super) fn configure(&mut self, interval: Option<Duration>, now: Instant) {
+        self.interval = interval.filter(|interval| !interval.is_zero());
+        self.deadline = self.after(now);
+    }
+
+    pub(super) fn interval(&self) -> Option<Duration> {
+        self.interval
+    }
+
+    pub(super) fn pause(&mut self) {
+        self.deadline = None;
+    }
+
+    pub(super) fn resume(&mut self, now: Instant) {
+        if self.deadline.is_none() {
+            self.deadline = self.after(now);
+        }
+    }
+
+    pub(super) fn activity(&mut self, now: Instant) {
+        if self.deadline.is_some() {
+            self.deadline = self.after(now);
+        }
+    }
+
+    pub(super) fn deadline(&self) -> Option<Instant> {
+        self.deadline
+    }
+
+    pub(super) fn take_due(&mut self, now: Instant) -> bool {
+        if !self.deadline.is_some_and(|deadline| now >= deadline) {
+            return false;
+        }
+        self.activity(now);
+        true
+    }
+
+    fn after(&self, now: Instant) -> Option<Instant> {
+        self.interval.and_then(|interval| now.checked_add(interval))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const INTERVAL: Duration = Duration::from_secs(10);
+
+    #[test]
+    fn emits_one_turn_after_a_late_tick() {
+        let now = Instant::now();
+        let mut timer = AutoTurn::default();
+        timer.configure(Some(INTERVAL), now);
+        assert_eq!(timer.deadline(), Some(now + INTERVAL));
+        assert!(!timer.take_due(now));
+        let delayed = now + INTERVAL * 4;
+        assert!(timer.take_due(delayed));
+        assert!(!timer.take_due(delayed));
+        assert_eq!(timer.deadline(), Some(delayed + INTERVAL));
+    }
+
+    #[test]
+    fn activity_restarts_an_active_interval_and_leaves_a_paused_timer_paused() {
+        let now = Instant::now();
+        let mut timer = AutoTurn::default();
+        timer.configure(Some(INTERVAL), now);
+        let input = now + Duration::from_secs(3);
+        timer.activity(input);
+        timer.resume(now + Duration::from_secs(4));
+        assert_eq!(timer.deadline(), Some(input + INTERVAL));
+        assert!(!timer.take_due(now + INTERVAL));
+        timer.pause();
+        let resumed = now + INTERVAL * 2;
+        timer.activity(resumed);
+        assert_eq!(timer.interval(), Some(INTERVAL));
+        assert_eq!(timer.deadline(), None);
+        assert!(!timer.take_due(resumed));
+        timer.resume(resumed);
+        assert!(!timer.take_due(resumed));
+        assert!(timer.take_due(resumed + INTERVAL));
+    }
+
+    #[test]
+    fn disabling_the_timer_cancels_the_deadline_and_prevents_restart() {
+        let now = Instant::now();
+        let mut timer = AutoTurn::default();
+        timer.configure(Some(INTERVAL), now);
+        timer.configure(None, now);
+        assert_eq!(timer.interval(), None);
+        timer.resume(now + INTERVAL);
+        assert_eq!(timer.deadline(), None);
+        assert!(!timer.take_due(now + INTERVAL * 2));
+        timer.configure(Some(Duration::ZERO), now);
+        assert_eq!(timer.interval(), None);
+    }
+}

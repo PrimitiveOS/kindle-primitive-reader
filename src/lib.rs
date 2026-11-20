@@ -113,9 +113,15 @@ pub struct Settings {
     pub height: u32,
     pub font_size: f32,
     pub margin: u32,
+    pub margin_sides: Option<u32>,
+    pub margin_top: Option<u32>,
+    pub margin_bottom: Option<u32>,
     pub line_height: f32,
+    pub word_spacing: f32,
+    pub letter_spacing: f32,
     pub alignment: TextAlignment,
     pub bold_text: bool,
+    pub text_contrast: bool,
     pub override_fonts: bool,
     pub disable_soft_hyphens: bool,
 }
@@ -127,9 +133,15 @@ impl Default for Settings {
             height: 1680,
             font_size: 42.0,
             margin: 54,
+            margin_sides: None,
+            margin_top: None,
+            margin_bottom: None,
             line_height: 1.35,
+            word_spacing: 0.0,
+            letter_spacing: 0.0,
             alignment: TextAlignment::Publisher,
             bold_text: false,
+            text_contrast: false,
             override_fonts: false,
             disable_soft_hyphens: false,
         }
@@ -138,11 +150,17 @@ impl Default for Settings {
 
 impl Settings {
     fn validate(self) -> Result<()> {
+        let margin_limit = self.width.min(self.height) / 4;
         if !(160..=4096).contains(&self.width)
             || !(160..=4096).contains(&self.height)
-            || self.margin > self.width.min(self.height) / 4
+            || self.margin > margin_limit
+            || self.side_margin() > margin_limit
+            || self.top_margin() > margin_limit
+            || self.bottom_margin() > margin_limit
             || !(12.0..=144.0).contains(&self.font_size)
             || !(1.0..=3.0).contains(&self.line_height)
+            || !(-2.0..=12.0).contains(&self.word_spacing)
+            || !(-1.0..=4.0).contains(&self.letter_spacing)
             || self.text_height() as f32 <= self.font_size * self.line_height * 2.0
         {
             return Err("Reading layout settings are out of range".into());
@@ -150,8 +168,24 @@ impl Settings {
         Ok(())
     }
 
+    fn side_margin(self) -> u32 {
+        self.margin_sides.unwrap_or(self.margin)
+    }
+
+    fn top_margin(self) -> u32 {
+        self.margin_top.unwrap_or(self.margin)
+    }
+
+    fn bottom_margin(self) -> u32 {
+        self.margin_bottom.unwrap_or(self.margin)
+    }
+
+    fn text_width(self) -> u32 {
+        self.width - 2 * self.side_margin()
+    }
+
     fn text_height(self) -> u32 {
-        self.height - 2 * self.margin
+        self.height - self.top_margin() - self.bottom_margin()
     }
 }
 
@@ -482,12 +516,13 @@ impl Probe {
         match &self.renderer {
             Renderer::Vertical(renderer) => renderer.source_at(range, x, y),
             Renderer::Parley(renderer) => {
-                let margin = self.settings.margin as f32;
-                let y = y - margin + range.start;
-                if !range.contains(&y) {
+                let sides = self.settings.side_margin() as f32;
+                let y = y - self.settings.top_margin() as f32 + range.start;
+                if !range.contains(&y) || !(sides..self.settings.width as f32 - sides).contains(&x)
+                {
                     return None;
                 }
-                renderer.source_at(x - margin, y)
+                renderer.source_at(x - sides, y)
             }
             Renderer::Blitz(_) => None,
         }

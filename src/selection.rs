@@ -153,14 +153,14 @@ impl Probe {
     }
 
     fn selection_point(&self, page: Range<f32>, x: f32, y: f32) -> Option<PagePoint> {
-        let margin = self.settings.margin as f32;
-        if !(margin..self.settings.width as f32 - margin).contains(&x) {
+        let sides = self.settings.side_margin() as f32;
+        if !(sides..self.settings.width as f32 - sides).contains(&x) {
             return None;
         }
-        let y = y - margin + page.start;
+        let y = y - self.settings.top_margin() as f32 + page.start;
         page.contains(&y).then_some(PagePoint {
             page,
-            x: x - margin,
+            x: x - sides,
             y,
         })
     }
@@ -266,19 +266,20 @@ fn page_rect(
     {
         return None;
     }
-    let margin = f64::from(settings.margin);
-    let right = f64::from(settings.width) - margin;
-    let bottom = margin
+    let sides = f64::from(settings.side_margin());
+    let top_margin = f64::from(settings.top_margin());
+    let right = f64::from(settings.width) - sides;
+    let bottom = top_margin
         + f64::from(
             (page.end - page.start)
                 .ceil()
                 .min(settings.text_height() as f32),
         );
-    let y = margin + f64::from(origin - page.start);
-    let left = (rect.x0 + margin).floor().clamp(margin, right) as i32;
-    let top = (rect.y0 + y).floor().clamp(margin, bottom) as i32;
-    let right = (rect.x1 + margin).ceil().clamp(margin, right) as i32;
-    let bottom = (rect.y1 + y).ceil().clamp(margin, bottom) as i32;
+    let y = top_margin + f64::from(origin - page.start);
+    let left = (rect.x0 + sides).floor().clamp(sides, right) as i32;
+    let top = (rect.y0 + y).floor().clamp(top_margin, bottom) as i32;
+    let right = (rect.x1 + sides).ceil().clamp(sides, right) as i32;
+    let bottom = (rect.y1 + y).ceil().clamp(top_margin, bottom) as i32;
     (right > left && bottom > top).then_some(HighlightRect {
         x: left,
         y: top,
@@ -303,6 +304,44 @@ mod tests {
             assert_eq!(&text[word], expected);
         }
         assert!(word_range(text, text.find(',').unwrap()).is_none());
+    }
+
+    #[test]
+    fn independent_margins_keep_words_and_highlights_in_the_painted_viewport() {
+        let fonts = [crate::test_fixture("fonts/Silkscreen-Regular.ttf")];
+        let book = crate::test_fixture("field-notes-epub3.epub");
+        let settings = Settings {
+            width: 460,
+            height: 700,
+            margin_sides: Some(68),
+            margin_top: Some(86),
+            margin_bottom: Some(33),
+            ..Settings::default()
+        };
+        let mut probe = Probe::open(&book, Engine::Parley, &fonts, settings, 0).unwrap();
+        let start = probe.matches("The tide keeps its own time.")[0].clone();
+        let mut end = start.clone();
+        end.offset += "The".len();
+        let selection = probe.select_range(&start, &end).unwrap();
+        let page = probe.page_for(&start).unwrap();
+        let rect = probe.selection_rects(page, &selection)[0];
+        assert!(rect.x >= 68 && rect.x + rect.width <= 392);
+        assert!(rect.y >= 86 && rect.y + rect.height <= 667);
+        assert_eq!(
+            probe
+                .word_at(
+                    page,
+                    rect.x as f32 + 5.0,
+                    rect.y as f32 + rect.height as f32 / 2.0
+                )
+                .unwrap()
+                .text,
+            "The",
+        );
+        let pixels = probe.capture(page).unwrap();
+        let stride = settings.width as usize;
+        assert!(pixels[..86 * stride].iter().all(|&pixel| pixel == 255));
+        assert!(pixels[667 * stride..].iter().all(|&pixel| pixel == 255));
     }
 
     #[test]

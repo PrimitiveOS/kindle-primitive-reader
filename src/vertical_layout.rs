@@ -171,7 +171,7 @@ impl VerticalChapter {
         if source.blocks.iter().any(|block| !block.images.is_empty()) {
             return Err("Vertical reading currently supports text without illustrations".into());
         }
-        let width = (settings.width - 2 * settings.margin) as f32;
+        let width = settings.text_width() as f32;
         let ruby_gutter = if source.blocks.iter().any(|block| !block.ruby.is_empty()) {
             settings.font_size * MAX_SCALE * (RUBY_SCALE + 0.20)
         } else {
@@ -246,12 +246,13 @@ impl VerticalChapter {
             let logical_pitch = self.page_span / self.columns_per_page as f32;
             let logical_end = ((page + 1) as f32 * self.page_span)
                 .min(logical_top + (slot + 1) as f32 * logical_pitch);
-            let left =
-                settings.width as f32 - settings.margin as f32 - (slot + 1) as f32 * self.pitch;
+            let left = settings.width as f32
+                - settings.side_margin() as f32
+                - (slot + 1) as f32 * self.pitch;
             let base_width = self.pitch - self.ruby_gutter;
             let center = left + base_width / 2.0;
             let right = left + base_width;
-            let mut y = settings.margin as f32;
+            let mut y = settings.top_margin() as f32;
             let mut positions = Vec::with_capacity(end - start);
             let first_glyph = self.glyphs.len();
             for cluster in &shaped.clusters[start..end] {
@@ -407,13 +408,16 @@ impl VerticalChapter {
 
     pub(crate) fn capture(&mut self, range: Range<f32>, settings: Settings) -> Result<Vec<u8>> {
         let stride = settings.width as usize;
-        let margin = settings.margin as usize;
+        let margin = settings.side_margin() as usize;
+        let top = settings.top_margin() as usize;
+        let bottom = (settings.height - settings.bottom_margin()) as usize;
         let mut frame = vec![255; stride * settings.height as usize];
+        let page = &mut frame[top * stride..bottom * stride];
         let columns = self.column_range(range);
         for column in &self.columns[columns] {
             for glyph in &self.glyphs[column.glyphs.clone()] {
                 self.cache.draw_vertical(
-                    &mut frame,
+                    page,
                     stride,
                     margin,
                     PaintGlyph {
@@ -421,9 +425,10 @@ impl VerticalChapter {
                         id: glyph.id,
                         size: glyph.size,
                         x: glyph.x,
-                        y: glyph.y,
+                        y: glyph.y - top as f32,
                         clockwise: glyph.clockwise,
                     },
+                    settings.text_contrast,
                 );
             }
         }
