@@ -21,6 +21,7 @@ pub(super) enum BarPanel {
     TextStyle,
     TextScreen,
     TextSpacing,
+    TextRendering,
     View,
     ViewLayout,
     ViewScreen,
@@ -30,7 +31,11 @@ pub(super) enum BarPanel {
 impl BarPanel {
     fn tab(self) -> Self {
         match self {
-            Self::TextLayout | Self::TextStyle | Self::TextSpacing | Self::TextScreen => Self::Text,
+            Self::TextLayout
+            | Self::TextStyle
+            | Self::TextSpacing
+            | Self::TextScreen
+            | Self::TextRendering => Self::Text,
             Self::ViewLayout | Self::ViewScreen => Self::View,
             _ => self,
         }
@@ -350,7 +355,7 @@ impl Reader {
             } else if self.reading_bottom {
                 let sections: &[(BarPanel, &str)] = match panel.tab() {
                     BarPanel::Text if self.supports_word_spacing() => &TEXT_SECTIONS,
-                    BarPanel::Text => &TEXT_SECTIONS[..4],
+                    BarPanel::Text => &TEXT_SECTIONS[..TEXT_SECTIONS.len() - 1],
                     BarPanel::View if self.supports_view_layout() => &VIEW_SECTIONS,
                     BarPanel::View => &SINGLE_VIEW_SECTIONS,
                     _ => &[],

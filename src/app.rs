@@ -449,6 +449,8 @@ pub struct Reader {
     bookmark_query: String,
     definition_word: String,
     definitions: Vec<(String, String)>,
+    definition_sources: Vec<(String, usize)>,
+    definition_source_page: Option<usize>,
     definition_expanded: bool,
 }
 
@@ -555,6 +557,8 @@ impl Reader {
             bookmark_query: String::new(),
             definition_word: String::new(),
             definitions: Vec::new(),
+            definition_sources: Vec::new(),
+            definition_source_page: None,
             definition_expanded: false,
         })
     }
@@ -729,6 +733,7 @@ impl Reader {
         }
         if screen == Screen::Definition {
             self.definition_expanded = false;
+            self.definition_source_page = None;
         }
         if screen == Screen::LibraryFind {
             self.editor = Editor::new(96);
@@ -1865,6 +1870,9 @@ impl Reader {
                 preferences.alignment = settings.alignment;
                 preferences.bold_text = settings.bold_text;
                 preferences.text_contrast = settings.text_contrast;
+                preferences.publisher_styles = Some(settings.publisher_styles);
+                preferences.font_kerning = Some(settings.font_kerning);
+                preferences.font_hinting = settings.font_hinting;
                 preferences.override_fonts = settings.override_fonts;
                 preferences.disable_soft_hyphens = settings.disable_soft_hyphens;
                 self.show(Screen::Book);
@@ -2100,6 +2108,9 @@ impl Reader {
             alignment: settings.alignment,
             bold_text: settings.bold_text,
             text_contrast: settings.text_contrast,
+            publisher_styles: Some(settings.publisher_styles),
+            font_kerning: Some(settings.font_kerning),
+            font_hinting: settings.font_hinting,
             override_fonts: settings.override_fonts,
             disable_soft_hyphens: settings.disable_soft_hyphens,
             font_file,
@@ -4116,9 +4127,20 @@ impl Reader {
         self.update_lookup_history(|history| history.lookup(word))?;
         self.definition_word = word.to_owned();
         self.definitions.clear();
+        self.definition_sources.clear();
         for definition in definitions {
             let title = format!("{} · {}", definition.word, definition.dictionary);
             let mut text = definition.text.trim();
+            if !text.is_empty()
+                && self.definitions.len() < 80
+                && !self
+                    .definition_sources
+                    .iter()
+                    .any(|(source, _)| source == &definition.dictionary)
+            {
+                self.definition_sources
+                    .push((definition.dictionary.clone(), self.definitions.len()));
+            }
             while !text.is_empty() && self.definitions.len() < 80 {
                 let limit = text
                     .char_indices()
@@ -4144,6 +4166,16 @@ impl Reader {
     fn definition_input(&mut self, input: Input) -> Change {
         let (popup, done, _) = self.definition_layout();
         let [popup_previous, expand, popup_next] = definition_actions(popup);
+        if let Some(source_page) = self.definition_source_page {
+            return self.definition_source_input(input, popup, source_page);
+        }
+        if !self.definition_expanded
+            && self.definition_sources.len() > 1
+            && matches!(input, Input::Tap(x, y) if definition_sources_button(popup).contains(x, y))
+        {
+            self.definition_source_page = Some(0);
+            return Change::Partial;
+        }
         let (previous, next) = if self.definition_expanded {
             (PREV, NEXT)
         } else {
@@ -4212,6 +4244,11 @@ impl Reader {
                 .sum::<usize>()
                 .clamp(1, 7)
         });
+        let lines = if self.definition_source_page.is_some() {
+            5
+        } else {
+            lines
+        };
         let height = 267 + lines as i32 * 48;
         let popup = definition_bounds(height, self.selection_bounds());
         (
@@ -4226,15 +4263,36 @@ impl Reader {
         let [previous, expand, next] = definition_actions(popup);
         canvas.popup(popup);
         canvas.button(done, "Done", false, false);
+        if self.definition_sources.len() > 1 {
+            canvas.button(
+                definition_sources_button(popup),
+                "Sources",
+                self.definition_source_page.is_some(),
+                false,
+            );
+        }
+        let title_end = if self.definition_sources.len() > 1 {
+            definition_sources_button(popup).x
+        } else {
+            done.x
+        };
         let (title, text) = self.definitions.get(self.list_page).map_or(
             ("Dictionary", "No matches in installed dictionaries"),
             |(title, text)| (title.as_str(), text.as_str()),
         );
         canvas.text(
-            Rect::new(96, popup.y + 20, done.x - 112, 60),
-            title,
+            Rect::new(96, popup.y + 20, title_end - 112, 60),
+            if self.definition_source_page.is_some() {
+                &self.definition_word
+            } else {
+                title
+            },
             BODY.bold(),
         );
+        if let Some(page) = self.definition_source_page {
+            self.draw_definition_sources(canvas, popup, page);
+            return;
+        }
         canvas.text(
             Rect::new(
                 96,
@@ -4255,6 +4313,66 @@ impl Reader {
             canvas.button(expand, "Expand", false, false);
         }
         self.draw_vocabulary_action(canvas, definition_vocabulary(popup));
+    }
+
+    fn draw_definition_sources(&self, canvas: &mut Canvas, popup: Rect, page: usize) {
+        let first = page * DEFINITION_SOURCES_PER_PAGE;
+        for (row, (source, first_definition)) in self
+            .definition_sources
+            .iter()
+            .skip(first)
+            .take(DEFINITION_SOURCES_PER_PAGE)
+            .enumerate()
+        {
+            let is_selected = *first_definition <= self.list_page
+                && self
+                    .definition_sources
+                    .get(first + row + 1)
+                    .is_none_or(|(_, next)| self.list_page < *next);
+            canvas.button(
+                definition_source_row(popup, row),
+                source,
+                is_selected,
+                false,
+            );
+        }
+        let [previous, _, next] = definition_actions(popup);
+        if page > 0 {
+            canvas.button(previous, "Previous", false, false);
+        }
+        if first + DEFINITION_SOURCES_PER_PAGE < self.definition_sources.len() {
+            canvas.button(next, "Next", false, false);
+        }
+    }
+
+    fn definition_source_input(&mut self, input: Input, popup: Rect, page: usize) -> Change {
+        let [previous, _, next] = definition_actions(popup);
+        let direction = match input {
+            Input::PageBack => -1,
+            Input::PageForward => 1,
+            Input::Tap(x, y) if previous.contains(x, y) => -1,
+            Input::Tap(x, y) if next.contains(x, y) => 1,
+            Input::Tap(x, y) => {
+                let first = page * DEFINITION_SOURCES_PER_PAGE;
+                if let Some(row) = (0..DEFINITION_SOURCES_PER_PAGE)
+                    .find(|row| definition_source_row(popup, *row).contains(x, y))
+                    && let Some((_, index)) = self.definition_sources.get(first + row)
+                {
+                    self.list_page = *index;
+                }
+                self.definition_source_page = None;
+                return Change::Partial;
+            }
+            _ => return Change::None,
+        };
+        if let Some(page) = page
+            .checked_add_signed(direction)
+            .filter(|page| page * DEFINITION_SOURCES_PER_PAGE < self.definition_sources.len())
+        {
+            self.definition_source_page = Some(page);
+            return Change::Partial;
+        }
+        Change::None
     }
 
     fn vocabulary_available(&self) -> bool {
@@ -5360,6 +5478,21 @@ fn definition_vocabulary(popup: Rect) -> Rect {
 
 fn definition_vocabulary_full() -> Rect {
     Rect::new(WIDTH as i32 / 2 - 212, HEIGHT as i32 - 104, 424, 72)
+}
+
+const DEFINITION_SOURCES_PER_PAGE: usize = 5;
+
+fn definition_sources_button(popup: Rect) -> Rect {
+    Rect::new(WIDTH as i32 - 434, popup.y + 18, 172, 64)
+}
+
+fn definition_source_row(popup: Rect, row: usize) -> Rect {
+    Rect::new(
+        popup.x + 30,
+        popup.y + 100 + row as i32 * 60,
+        popup.w - 60,
+        54,
+    )
 }
 
 fn same_pdf_highlight(left: &PdfHighlight, right: &PdfHighlight) -> bool {

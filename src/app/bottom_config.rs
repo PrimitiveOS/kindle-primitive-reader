@@ -1,7 +1,7 @@
 //! Reading adjustments that can be applied without leaving the visible page.
 use super::{Action, BarPanel, Reader, Screen};
 use crate::reading_controls::{ReadingOrientation, ScreenPalette};
-use crate::{Settings, TextAlignment};
+use crate::{FontHinting, Settings, TextAlignment};
 
 pub(super) struct Choice {
     pub(super) title: String,
@@ -53,11 +53,12 @@ impl ConfigRow {
     }
 }
 
-pub(super) const TEXT_SECTIONS: [(BarPanel, &str); 5] = [
+pub(super) const TEXT_SECTIONS: [(BarPanel, &str); 6] = [
     (BarPanel::Text, "Type"),
     (BarPanel::TextLayout, "Layout"),
     (BarPanel::TextStyle, "Style"),
     (BarPanel::TextScreen, "Screen"),
+    (BarPanel::TextRendering, "Rendering"),
     (BarPanel::TextSpacing, "Spacing"),
 ];
 
@@ -228,6 +229,54 @@ impl Reader {
                                         ..settings
                                     }),
                                     settings.letter_spacing == letter_spacing,
+                                )
+                            }),
+                        ),
+                    ];
+                }
+                BarPanel::TextRendering => {
+                    return vec![
+                        ConfigRow::new(
+                            "Publisher CSS",
+                            [("Off", false), ("On", true)].map(|(title, publisher_styles)| {
+                                Choice::option(
+                                    title,
+                                    Action::Text(Settings {
+                                        publisher_styles,
+                                        ..settings
+                                    }),
+                                    settings.publisher_styles == publisher_styles,
+                                )
+                            }),
+                        ),
+                        ConfigRow::new(
+                            "Font kerning",
+                            [("Off", false), ("On", true)].map(|(title, font_kerning)| {
+                                Choice::option(
+                                    title,
+                                    Action::Text(Settings {
+                                        font_kerning,
+                                        ..settings
+                                    }),
+                                    settings.font_kerning == font_kerning,
+                                )
+                            }),
+                        ),
+                        ConfigRow::new(
+                            "Font hinting",
+                            [
+                                ("Off", FontHinting::Off),
+                                ("Native", FontHinting::Native),
+                                ("Auto", FontHinting::Auto),
+                            ]
+                            .map(|(title, font_hinting)| {
+                                Choice::option(
+                                    title,
+                                    Action::Text(Settings {
+                                        font_hinting,
+                                        ..settings
+                                    }),
+                                    settings.font_hinting == font_hinting,
                                 )
                             }),
                         ),

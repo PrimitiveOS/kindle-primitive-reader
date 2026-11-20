@@ -239,6 +239,11 @@ pub struct BookPreferences {
     pub alignment: TextAlignment,
     pub bold_text: bool,
     pub text_contrast: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub publisher_styles: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_kerning: Option<bool>,
+    pub font_hinting: crate::FontHinting,
     pub override_fonts: bool,
     pub disable_soft_hyphens: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -277,6 +282,9 @@ impl BookPreferences {
             alignment: self.alignment,
             bold_text: self.bold_text,
             text_contrast: self.text_contrast,
+            publisher_styles: self.publisher_styles.unwrap_or(settings.publisher_styles),
+            font_kerning: self.font_kerning.unwrap_or(settings.font_kerning),
+            font_hinting: self.font_hinting,
             override_fonts: self.override_fonts,
             disable_soft_hyphens: self.disable_soft_hyphens,
             ..settings
