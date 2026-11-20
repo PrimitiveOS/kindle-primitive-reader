@@ -26,6 +26,27 @@ pub(crate) fn without_soft_hyphens(text: &str) -> Cow<'_, str> {
     }
 }
 
+/// Locate an exact quote and report a second match, including overlapping ones.
+/// The caller supplies text with the same whitespace normalization on both sides.
+pub(crate) fn find_quote(source: &str, quote: &str) -> Option<(Range<usize>, bool)> {
+    let normalized = source
+        .contains(SOFT_HYPHEN)
+        .then(|| FoldedText::new(source, true));
+    let text = normalized
+        .as_ref()
+        .map_or(source, |text| text.text.as_str());
+    let start = text.find(quote)?;
+    let end = start + quote.len();
+    let next = start + quote.chars().next()?.len_utf8();
+    let repeated = text[next..].contains(quote);
+    let span = if let Some(normalized) = normalized {
+        normalized.source_offset(start, true)?..normalized.source_offset(end, false)?
+    } else {
+        start..end
+    };
+    Some((span, repeated))
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SearchHit {
     /// Zero-based index in the book's spine.

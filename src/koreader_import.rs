@@ -240,7 +240,7 @@ fn validate_field(text: &str, limit: usize) -> Result<(), ImportError> {
 }
 
 /// Match one quotation a chapter at a time so a caller can cancel between reads.
-/// Match text literally after folding runs of whitespace to single spaces.
+/// Match text after folding whitespace and ignoring discretionary soft hyphens.
 pub struct QuoteResolver {
     quote: String,
     book: Option<(u64, usize)>,
@@ -257,7 +257,8 @@ impl QuoteResolver {
         if quote.len() > MAX_QUOTE_BYTES {
             return Err(ImportError::QuoteTooLarge);
         }
-        let quote = canonical_text(quote.split_whitespace());
+        let plain = crate::search::without_soft_hyphens(quote);
+        let quote = canonical_text(plain.split_whitespace());
         if quote.is_empty() {
             return Err(ImportError::EmptyQuote);
         }
@@ -320,18 +321,15 @@ impl QuoteResolver {
 
     fn scan(&mut self, source: &Source, book: u64, chapter: &str) {
         let text = canonical_text(words(source).map(|(_, _, word)| word));
-        let Some(start) = text.find(&self.quote) else {
+        let Some((span, repeated)) = crate::search::find_quote(&text, &self.quote) else {
             return;
         };
-        let end = start + self.quote.len();
-        // Move one scalar past the first start so overlapping matches count.
-        let next = start + self.quote.chars().next().unwrap().len_utf8();
-        if self.seen_match || text[next..].contains(&self.quote) {
+        if self.seen_match || repeated {
             self.outcome = Some(QuoteMatch::Ambiguous);
             return;
         }
         self.seen_match = true;
-        self.first = match selection(source, book, chapter, start..end) {
+        self.first = match selection(source, book, chapter, span) {
             Some(mark) => Some(mark),
             None => {
                 self.incomplete = true;
@@ -377,11 +375,15 @@ fn canonical_text<'a>(words: impl Iterator<Item = &'a str>) -> String {
 fn words(source: &Source) -> impl Iterator<Item = (usize, usize, &str)> {
     source.blocks.iter().enumerate().flat_map(|(index, block)| {
         let mut offset = 0;
-        block.text.split_whitespace().map(move |word| {
-            let start = offset + block.text[offset..].find(word).unwrap();
-            offset = start + word.len();
-            (index, start, word)
-        })
+        block
+            .text
+            .split_whitespace()
+            .map(move |word| {
+                let start = offset + block.text[offset..].find(word).unwrap();
+                offset = start + word.len();
+                (index, start, word)
+            })
+            .filter(|(_, _, word)| word.chars().any(|ch| ch != '\u{ad}'))
     })
 }
 
@@ -570,6 +572,27 @@ mod tests {
         let mut ambiguous = QuoteResolver::new("aaa").unwrap();
         ambiguous.scan(&overlap, 55, "overlap.xhtml");
         assert_eq!(ambiguous.outcome, Some(QuoteMatch::Ambiguous));
+    }
+
+    #[test]
+    fn imports_soft_hyphen_quotes_with_original_positions_and_detects_ambiguity() {
+        let source =
+            Source::parse("<html><body><p>Near Über&#173;gang</p><p>at dusk.</p></body></html>")
+                .unwrap();
+        let mut scan = QuoteResolver::new("Übergang at dusk").unwrap();
+        scan.scan(&source, 712, "shore.xhtml");
+        let QuoteMatch::Unique(mark) = scan.finish() else {
+            panic!("expected one quote match")
+        };
+        assert_eq!(mark.start.offset, "Near ".len());
+        assert_eq!(mark.end.offset, "at dusk".len());
+        assert_eq!(mark.text, "Über\u{ad}gang\nat dusk");
+
+        let source =
+            Source::parse("<html><body><p>Über&#173;gang Übergang</p></body></html>").unwrap();
+        let mut scan = QuoteResolver::new("Über\u{ad}gang").unwrap();
+        scan.scan(&source, 712, "shore.xhtml");
+        assert_eq!(scan.outcome, Some(QuoteMatch::Ambiguous));
     }
 
     #[test]
