@@ -1,11 +1,12 @@
-# Package the Reader development build
+# Install Reader
 
 Reader 0.1.0 targets the Kindle Oasis 3 on firmware 5.18.2 with an existing
 PrimitiveOS Launcher. The instructions apply to the locally built ARMHF
 archive or a corresponding published release.
 
-Reader is under active development. The consolidated Kindle installation and
-verification follow completion of the core reading workflows.
+Reader 0.1.0 passed the native app checks on an Oasis 3 running firmware 5.18.2.
+Use Reader in PrimitiveOS Store, or follow the manual install steps below.
+[Reader 0.1.0 release](https://github.com/PrimitiveOS/kindle-primitive-reader/releases/tag/v0.1.0)
 
 1. Obtain `primitive-reader-0.1.0-armhf.zip` and its `.sha256` file from the
    same build. Verify the archive from the directory containing both files

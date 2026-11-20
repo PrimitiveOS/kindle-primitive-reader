@@ -8,22 +8,30 @@ Compare against the installed KOReader release for hardware measurements. Record
 
 | Area | Development coverage | Remaining work |
 | --- | --- | --- |
-| EPUB reading | Saved positions, page and scroll modes, reading bars, printed page references, whole-book percentage jumps, generated contents from headings or chapter starts, publisher CSS, local fonts and illustrations, bounded static SVG, ruby, authored soft hyphens, inherited language, horizontal writing direction, and publisher line-breaking rules. Supported vertical chapters use right-to-left columns and the same text anchors. Fixed pages include publisher-defined spreads and the XHTML viewport directives. | More advanced stylesheet cases, automatic dictionary-based hyphenation, mixed writing modes in one chapter, and the final device suite |
+| EPUB reading | Saved positions, page and scroll modes, reading bars, printed page references, whole-book percentage jumps, generated contents from headings or chapter starts, publisher CSS, local fonts and illustrations, bounded static SVG, ruby, authored soft hyphens, inherited language, horizontal writing direction, and publisher line-breaking rules. Supported vertical chapters use right-to-left columns and the same text anchors. Fixed pages include publisher-defined spreads and the XHTML viewport directives. | More advanced stylesheet cases, automatic dictionary-based hyphenation, mixed writing modes in one chapter, and broader live typography checks |
 | PDF | Fixed pages and continuous scroll, printed labels, page thumbnails, outlines and links, passwords, page, width and height fit, crop, contrast, text search and local annotations. Visible embedded highlights import and annotated-copy export for intact unencrypted PDFs up to 16 MiB. | Broader password, outline and annotation types, and sustained large-scan tests |
-| Other offline reading | Fixed-layout EPUB, DjVu, TXT, HTML, single-document HTMLZ, Markdown, FB2, supported MOBI/PalmDOC and KF8, DOCX, CHM, RTF, TCR, CBZ, uncompressed USTAR CBT, selected CBR, JPEG, PNG, BMP, GIF first frame, portable anymaps, static SVG, selected WebP and TIFF, and compressed StarDict with synonyms | Wider format variants and the final device suite |
-| Scanned documents | Embedded and recognized text reflow across readable source pages. Original word-image reflow for scans with complete horizontal left-to-right OCR and a column view for clear two-column scans. English and Vietnamese recognized by the worker on desktop. The ARMHF package bundles English and accepts local additional models. | OCR in the Kindle runtime, broader layout and language cases, and sustained tests with real scans |
-| Library and controls | Favorites, reading status, collections, author and recent views, EPUB cover previews and series, reading time, reusable text profiles, night pages, adjustable toolbar sizes, mirrored or disabled tap turns, touch lock, optional E Ink full refresh intervals, chapter-spanning page thumbnails, location history and zoom for framed comic panels in single-page views | More configurable gestures, broader accessibility, manually created contents and excluded sections, irregular comic panels, and the final device suite |
-| Reading data | Backup and restore with preview, text/Markdown/HTML annotation exports, KOReader JSON annotations by unique quotation, and sampled-fingerprint checks for fixed-page sidecar progress and a subset of reflowable EPUB CFIs | Legacy CREngine pointers, broader CFI and sidecar variants, and the final device suite |
-| Kindle verification | EPUB engine timing, probe page buttons, sleep and USB resume, and a temporary preview's contents jump and reopen passed on Oasis 3 | Deploy the completed core reader and run the consolidated automatic hardware workflow |
+| Other offline reading | Fixed-layout EPUB, DjVu, TXT, HTML, single-document HTMLZ, Markdown, FB2, supported MOBI/PalmDOC and KF8, DOCX, CHM, RTF, TCR, CBZ, uncompressed USTAR CBT, selected CBR, JPEG, PNG, BMP, GIF first frame, portable anymaps, static SVG, selected WebP and TIFF, and compressed StarDict with synonyms | Wider format variants and larger live document samples |
+| Scanned documents | Embedded and recognized text reflow across readable source pages. Original word-image reflow for scans with complete horizontal left-to-right OCR and a column view for clear two-column scans. English and Vietnamese recognized by the worker on desktop. The ARMHF package's English OCR worker produced word boxes on Oasis 3. | Broader layout and language cases, and sustained tests with real scans |
+| Library and controls | Favorites, reading status, collections, author and recent views, EPUB cover previews and series, reading time, reusable text profiles, night pages, adjustable toolbar sizes, mirrored or disabled tap turns, touch lock, optional E Ink full refresh intervals, chapter-spanning page thumbnails, location history and zoom for framed comic panels in single-page views | More configurable gestures, broader accessibility, manually created contents and excluded sections, and irregular comic panels |
+| Reading data | Backup and restore with preview, text/Markdown/HTML annotation exports, KOReader JSON annotations by unique quotation, and sampled-fingerprint checks for fixed-page sidecar progress and a subset of reflowable EPUB CFIs | Legacy CREngine pointers, broader CFI and sidecar variants, and migration measurements with larger libraries |
+| Kindle verification | Reader 0.1.0 and Files 0.1.2 passed checksum checks, the 249-test ARMHF Reader suite, EPUB profiling, OCR, and a live Files-to-Reader session on Oasis 3 with firmware 5.18.2. | Physical waveform observation and a suspend and USB retest on the release build |
 
-The desktop checkpoint passed 249 Reader tests, six vendored Parley tests, and
-16 Files tests. Reader
-rendered three public-domain DjVu samples and 12 narrative chapters from the
-Standard Ebooks edition of *Alice’s Adventures in Wonderland*. The licensed
-ARMHF development archive passed its checksum and package-content checks. The
-native test bundle includes three test executables and the automated EPUB
-profiling tool. The current device evidence comes from earlier probes and
-previews.
+On desktop, 249 Reader tests, six vendored Parley tests, and 16 Files tests passed.
+Reader rendered three public-domain DjVu samples and 12 narrative chapters from
+the Standard Ebooks edition of *Alice’s Adventures in Wonderland*.
+
+The Oasis 3 session opened Markdown and DOCX from Files, sent forward and back
+events through the Kindle's page button input, reopened at the exact saved page,
+and used both Done and Exit Reader to return to Launcher. The installed OCR
+worker recognised 46 structured rows from a grayscale PGM using the bundled
+English model. The verification session used the Kindle's sleep override.
+
+Each EPUB profile ran five times, with 30 warm rasterizations per run. The
+median first frame took 75.4 ms on Field Notes, 300.0 ms on Long Chapter, and
+75.7 ms on the vertical chapter. The median warm p95 was 10.2, 13.1, and 16.0 ms
+respectively. A separate Field Notes run using the device's normal Reader
+fallback fonts covered all 401 source characters with zero missing glyphs.
+These measurements end when the grayscale frame is ready in memory.
 
 ## P0 · Close the feasibility gate
 

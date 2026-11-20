@@ -15,6 +15,9 @@ These captures use Reader's Kindle interface in the desktop simulator.
 
 ## Reading on Kindle
 
+Install Reader from PrimitiveOS Store or follow the manual install guide.
+[Release downloads](https://github.com/PrimitiveOS/kindle-primitive-reader/releases) · [Install guide](INSTALL.md)
+
 - Open a document from Reader's library or use Continue Reading to return to
   the saved passage.
 - Tap near the upper center of a page to reveal the reading bars. The bottom
@@ -54,6 +57,12 @@ These captures use Reader's Kindle interface in the desktop simulator.
 - Save a named preset in Text › Reading profiles and apply it to another book.
 
 ## Development status
+
+Reader 0.1.0 passed 249 ARMHF tests on a Kindle Oasis 3 running firmware 5.18.2.
+An automated session opened Markdown and DOCX from Files 0.1.2, checked page
+turns and resume, and returned to Launcher using both exit controls. The
+bundled English OCR worker also recognised a grayscale test passage on the
+device. [Reading parity and device results](docs/reading-parity-plan.md)
 
 | Format | Current implementation |
 | --- | --- |
