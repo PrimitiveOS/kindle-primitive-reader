@@ -1,4 +1,4 @@
-# PrimitiveOS soft-hyphen patch
+# PrimitiveOS discretionary hyphens
 
 This directory contains Parley 0.12.0, from the published Rust crate and
 [upstream revision 6e1143dda817360dd3a2a64f9133c6e5dfabd881](https://github.com/linebender/parley/tree/6e1143dda817360dd3a2a64f9133c6e5dfabd881/parley).
@@ -11,14 +11,17 @@ if the selected face's hyphen advance fits. The committed line paints that
 glyph at the original cluster and includes its advance in caret geometry.
 The callback can suppress the discretionary opportunity or keep Parley's
 ordinary break decision without drawing a hyphen.
-Other Parley builders retain the upstream behavior.
+The same builder accepts sorted byte offsets for dictionary breaks. At a complete
+one-character LTR shaping atom, the chosen break appends a measured hyphen
+after the original glyphs. Line, run, cluster and positioned-glyph advances
+include the same decoration. Other builders retain the upstream behavior.
 
 Manual hyphenation covers opportunities represented by standalone zero-advance
 clusters, with U+2010 or U+002D in the original face. Each layout considers at
 most 4096 authored markers. It retains the full shaped paragraph for bidi
 and joining context. Language-specific spelling changes, fallback to a
-different face, splitting ligatures and automatic dictionaries remain future
-work. The callback is used for line layout at a supplied width. Intrinsic
+different face, splitting ligatures and RTL dictionary decoration remain future
+work. Reader supplies bounded English dictionary offsets. [Language coverage](../../docs/english-hyphenation.md) The callback is used for line layout at a supplied width. Intrinsic
 minimum-width measurement still follows upstream Parley.
 
 Run the regression suite with

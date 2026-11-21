@@ -18,6 +18,7 @@ const USAGE: &str = "+Usage: reader-probe <blitz|parley> <book.epub> --font <fon
   --size <pixels>        Set the body font size.
   --margin <pixels>      Set the page margin.
   --line-height <ratio>  Set the line-height multiplier.
+  --hyphenation <mode>   Choose automatic, authored, or off.
   --output <path>        Write a grayscale PNG.
   --turns <count>        Time additional rasterizations within the chapter.
 ";
@@ -66,6 +67,14 @@ fn run() -> Result<()> {
             "--size" => settings.font_size = string()?.parse()?,
             "--margin" => settings.margin = string()?.parse()?,
             "--line-height" => settings.line_height = string()?.parse()?,
+            "--hyphenation" => {
+                let mode = string()?;
+                if !matches!(mode, "automatic" | "authored" | "off") {
+                    return Err("Choose automatic, authored, or off for hyphenation".into());
+                }
+                settings.automatic_hyphenation = mode == "automatic";
+                settings.disable_soft_hyphens = mode == "off";
+            }
             "--output" => png = Some(PathBuf::from(value)),
             "--turns" => turns = string()?.parse()?,
             _ => return Err(format!("Unknown option {name}").into()),

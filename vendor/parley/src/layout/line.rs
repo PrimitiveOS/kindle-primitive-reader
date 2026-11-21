@@ -401,18 +401,24 @@ impl<'a> AtomIter<'a> {
     /// matching what [`Run::glyphs_in`] yields for the atom's clusters.
     #[inline]
     fn measure(&self, atom: &Atom<'a>) -> (usize, f32) {
-        if let Some(hyphen) = self
+        let hyphen = self
             .soft_hyphen
-            .filter(|hyphen| atom.shaped_clusters_range().contains(&hyphen.cluster))
-        {
-            return (1, hyphen.glyph.advance + self.spacing.gaps(atom).total());
-        }
-        let glyph_count: usize = atom
+            .filter(|hyphen| atom.shaped_clusters_range().contains(&hyphen.cluster));
+        let mut glyph_count: usize = atom
             .shaped_clusters()
             .iter()
             .map(|cluster| usize::from(cluster.glyph_len()))
             .sum();
         let mut advance = atom.advance();
+        if let Some(hyphen) = hyphen {
+            if hyphen.append {
+                glyph_count += 1;
+                advance += hyphen.glyph.advance;
+            } else {
+                glyph_count = 1;
+                advance = hyphen.glyph.advance;
+            }
+        }
         if glyph_count != 0 && !self.spacing.is_zero() {
             advance += self.spacing.gaps(atom).total();
         }

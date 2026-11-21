@@ -732,6 +732,7 @@ fn layout_with_images(
     images: &[parley::InlineBox],
     hanging: u32,
 ) -> (Layout<()>, Vec<RubyOverlay>) {
+    let automatic = crate::hyphenation::opportunities(block, styles, settings);
     let mut layout = make_paragraph(
         context,
         fonts,
@@ -743,6 +744,7 @@ fn layout_with_images(
         images,
         false,
         hanging,
+        &automatic,
     );
     // Some embedded fonts have ascenders and descenders taller than the publisher's
     // line advance. A long paragraph can then have no page break between full lines.
@@ -760,6 +762,7 @@ fn layout_with_images(
             images,
             true,
             hanging,
+            &automatic,
         );
     }
     let mut candidates = Vec::new();
@@ -825,6 +828,7 @@ fn layout_with_images(
         images,
         fit_font_metrics,
         hanging,
+        &automatic,
     );
     let mut overlays = Vec::new();
     for candidate in candidates {
@@ -1029,10 +1033,12 @@ fn make_paragraph(
     images: &[parley::InlineBox],
     fit_font_metrics: bool,
     hanging: u32,
+    automatic: &[usize],
 ) -> Layout<()> {
     let style = &styles[block.element];
     let language = block.language;
     let mut builder = context.ranged_builder(fonts, &block.text, 1.0, true);
+    builder.set_automatic_hyphens(automatic);
     if !settings.font_kerning {
         builder.push_default(StyleProperty::FontFeatures((&DISABLE_KERNING).into()));
     }
@@ -1048,7 +1054,9 @@ fn make_paragraph(
         if style.word_break == WordBreak::BreakAll || style.line_break == Some(LineBreak::Anywhere)
         {
             SoftHyphenAction::LeaveBoundary
-        } else if style.soft_hyphens && !settings.disable_soft_hyphens {
+        } else if style.hyphens != crate::book_style::Hyphens::None
+            && !settings.disable_soft_hyphens
+        {
             SoftHyphenAction::Draw
         } else {
             SoftHyphenAction::Suppress
@@ -1736,6 +1744,107 @@ mod tests {
             let (advance, bytes) = sample(wider);
             assert!(advance > normal);
             assert_eq!(bytes, source_bytes);
+        }
+    }
+
+    #[test]
+    fn dictionary_break_paints_both_the_last_letter_and_hyphen_and_preserves_anchors() {
+        use skrifa::{FontRef, MetadataProvider as _};
+
+        let book = crate::test_fixture("english-hyphenation.epub");
+        let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let open = |automatic_hyphenation, width| {
+            Probe::open(
+                &book,
+                Engine::Parley,
+                &fonts,
+                Settings {
+                    width,
+                    height: 480,
+                    margin: 15,
+                    font_size: 26.0,
+                    automatic_hyphenation,
+                    ..Settings::default()
+                },
+                0,
+            )
+            .unwrap()
+        };
+        let inspect = |probe: &Probe, word: &crate::Anchor| {
+            let Renderer::Parley(engine) = &probe.renderer else {
+                unreachable!()
+            };
+            let paragraph = engine
+                .paragraphs
+                .iter()
+                .find(|p| p.key == word.block)
+                .unwrap();
+            let mut spans = Vec::new();
+            for line in paragraph.layout.lines() {
+                let end = line.text_range().end;
+                let mut glyphs = Vec::new();
+                for item in line.items() {
+                    let PositionedLayoutItem::GlyphRun(run) = item else {
+                        continue;
+                    };
+                    let font = run.run().font();
+                    let face = FontRef::from_index(font.data.data(), font.index).unwrap();
+                    let map = face.charmap();
+                    let hyphen = map.map('‐').or_else(|| map.map('-')).unwrap().to_u32();
+                    let preceding = match end.checked_sub(word.offset) {
+                        Some(2) => 'y',
+                        Some(7) => 'a',
+                        _ => 'n',
+                    };
+                    let expected = map.map(preceding).unwrap().to_u32();
+                    glyphs.extend(
+                        run.positioned_glyphs()
+                            .map(|g| (g.id == expected, g.id == hyphen)),
+                    );
+                }
+                if [word.offset + 2, word.offset + 6, word.offset + 7].contains(&end) {
+                    assert!(line.metrics().advance <= probe.settings.text_width() as f32 + 0.1);
+                    assert!(
+                        glyphs.len() >= 2 && glyphs[glyphs.len() - 2].0 && glyphs.last().unwrap().1
+                    );
+                    spans.push(end);
+                }
+            }
+            spans
+        };
+        let mut auto = open(true, 234);
+        let mut authored = open(false, 234);
+        let start = auto.matches("hyphenation").remove(0);
+        let end = crate::Anchor {
+            offset: start.offset + "hyphenation".len(),
+            ..start.clone()
+        };
+        assert!(!inspect(&auto, &start).is_empty());
+        assert!(inspect(&authored, &start).is_empty());
+        assert_ne!(auto.capture(0).unwrap(), authored.capture(0).unwrap());
+        let wide = open(true, 720);
+        assert!(inspect(&wide, &start).is_empty());
+        let saved = serde_json::to_vec(&start).unwrap();
+        for probe in [&auto, &authored, &wide] {
+            assert_eq!(probe.coverage().0, probe.coverage().1);
+            assert_eq!(probe.matches("hyphenation")[0], start);
+            let page = probe
+                .page_for(&serde_json::from_slice(&saved).unwrap())
+                .unwrap();
+            let selection = probe.select_range(&start, &end).unwrap();
+            assert_eq!(selection.text, "hyphenation");
+            let rects = probe.selection_rects(page, &selection);
+            assert!(!rects.is_empty());
+            for rect in rects {
+                let hit = probe
+                    .word_at(
+                        page,
+                        (rect.x + rect.width / 2) as f32,
+                        (rect.y + rect.height / 2) as f32,
+                    )
+                    .unwrap();
+                assert_eq!(hit, selection);
+            }
         }
     }
 

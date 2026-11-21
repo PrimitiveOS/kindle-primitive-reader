@@ -234,6 +234,15 @@ def field_notes(version, missing_image=False):
     return entries
 
 
+def english_hyphenation():
+    title = "Line breaks"
+    body = """<p>Look for hyphenation in this paragraph. An international expedition depends on careful communication and patient observation.</p>
+<p>Clara recorded the temperature and described the atmosphere above the reservoir. Her illustrations accompanied the measurements.</p>"""
+    # Exercise the EPUB package language when the XHTML has no language of its own.
+    chapter = xhtml(title, body, True).replace(' xml:lang="en"', '')
+    return publication(title, "english-hyphenation", 3, [("EPUB/chapters/lines.xhtml", title, chapter)])
+
+
 def long_chapter():
     title = "A Long Walk by the Shore"
     path = "EPUB/chapters/walk.xhtml"
@@ -466,6 +475,10 @@ def outputs():
         ("tilted-scan.pdf", tilted_scan(), {
             "opens": True, "page_count": 2, "display_baseline_degrees": [-8, 8],
             "internal_link_pages": [1, 2],
+        }),
+        ("english-hyphenation.epub", archive(english_hyphenation()), {
+            "opens": True, "spine_count": 1, "package_language": "en",
+            "xhtml_language": None, "authored_soft_hyphens": 0,
         }),
         ("long-chapter.epub", archive(long_chapter()), {
             "opens": True, "epub_version": "3.0", "spine_count": 1, "observation_count": 240,

@@ -525,9 +525,52 @@ pub(crate) fn collect_soft_hyphens<B: Brush>(
                 }
             };
             data.soft_hyphens.push(SoftHyphenOpportunity {
+                append: false,
                 cluster: clusters.start,
                 glyph: alternative,
             });
+        }
+    }
+    data.soft_hyphens
+        .sort_unstable_by_key(|hyphen| hyphen.cluster);
+}
+
+/// Attach dictionary boundaries to shaped text without inserting source bytes.
+pub(crate) fn collect_automatic_hyphens<B: Brush>(layout: &mut Layout<B>, offsets: &[usize]) {
+    use crate::layout::data::SoftHyphenOpportunity;
+    if offsets.len() > 4096 || !offsets.windows(2).all(|pair| pair[0] < pair[1]) {
+        return;
+    }
+    let data = &mut layout.data;
+    let shaped = &data.shaped_text;
+    for (index, run) in shaped.runs().iter().enumerate() {
+        let first = offsets.partition_point(|&offset| offset <= run.range.byte_range.start);
+        let last = offsets.partition_point(|&offset| offset <= run.range.byte_range.end);
+        if first == last || run.bidi_level.is_rtl() {
+            continue;
+        }
+        let Some(glyph) = hyphen_glyph(shaped, run) else {
+            continue;
+        };
+        let slice = shaped.run_slice(index as u32);
+        let mut wanted = offsets[first..last].iter().copied().peekable();
+        for atom in slice.atoms_start() {
+            let end = slice.text_byte_range(atom.char_range()).end;
+            while wanted.next_if(|&offset| offset < end).is_some() {}
+            if wanted.peek().is_none() {
+                break;
+            }
+            if wanted.next_if_eq(&end).is_some()
+                && atom.char_range().len() == 1
+                && atom.shaped_clusters_range().len() == 1
+                && atom.advance() > 0.0
+            {
+                data.soft_hyphens.push(SoftHyphenOpportunity {
+                    append: true,
+                    cluster: atom.shaped_clusters_range().start,
+                    glyph: Some(glyph),
+                });
+            }
         }
     }
     data.soft_hyphens

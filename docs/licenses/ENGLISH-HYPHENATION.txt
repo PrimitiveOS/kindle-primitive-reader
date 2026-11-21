@@ -1,0 +1,23 @@
+Hyphenation patterns for American English
+Copyright (C) 1990, 2004, 2005 Gerard D.C. Kuiken
+
+Copying and distribution of this file, with or without modification,
+are permitted in any medium without royalty provided the copyright
+notice and this notice are preserved.
+
+Reader compiles the original patterns and exception list in hyph-en-us.tex
+from the hyphenation/tex-hyphen project at commit
+5684c0f51c0b81133db2efbe60a408b4155a3ff5.
+https://github.com/hyphenation/tex-hyphen/blob/5684c0f51c0b81133db2efbe60a408b4155a3ff5/hyph-utf8/tex/generic/hyph-utf8/patterns/tex/hyph-en-us.tex
+
+Source SHA-256: f4ffcd96c5cbc886bdad23f95dcae8edc3cd3620eae62f7946eceda97c4e68f8
+
+Hyphenation exceptions for US English
+Copyright 2021 TeX Users Group.
+You may freely use, modify and/or distribute this file.
+
+Reader also compiles the TUGboat editors’ original English hyphenation
+exceptions from ushyphex.tex, CTAN hyphenex 2021-01-10.
+https://ctan.org/pkg/hyphenex
+https://mirrors.ctan.org/info/digests/tugboat/hyphenex/ushyphex.tex
+Source SHA-256: 9392bd6e14b2f34ebc31d2ba4eddb7d1266bf563bfd89c6161f63cfd7f00ef5c

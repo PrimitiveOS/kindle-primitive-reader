@@ -35,6 +35,7 @@ pub(crate) struct BuilderOptions<'a> {
     quantize: bool,
     base_direction: BaseDirection,
     line_break_override: Option<&'a LineBreakOverrideFn>,
+    automatic_hyphens: &'a [usize],
     soft_hyphen_policy: Option<&'a (dyn Fn(usize) -> SoftHyphenAction + Send + Sync)>,
 }
 
@@ -46,6 +47,7 @@ impl BuilderOptions<'_> {
             base_direction: BaseDirection::Auto,
             line_break_override: None,
             soft_hyphen_policy: None,
+            automatic_hyphens: &[],
         }
     }
 }
@@ -114,6 +116,12 @@ impl<'b, B: Brush> RangedBuilder<'b, B> {
         policy: Option<&'b (dyn Fn(usize) -> SoftHyphenAction + Send + Sync)>,
     ) {
         self.options.soft_hyphen_policy = policy;
+    }
+
+    /// Set sorted UTF-8 source boundaries where a visible hyphen may be appended
+    /// if the line ends there. A break can only follow a complete LTR shaping atom.
+    pub fn set_automatic_hyphens(&mut self, boundaries: &'b [usize]) {
+        self.options.automatic_hyphens = boundaries;
     }
 
     pub fn build_into(self, layout: &mut Layout<B>, text: impl AsRef<str>) {
@@ -437,6 +445,10 @@ fn build_into_layout<B: Brush>(
 
     if let Some(policy) = options.soft_hyphen_policy {
         super::shape::collect_soft_hyphens(text, layout, policy);
+    }
+
+    if !options.automatic_hyphens.is_empty() {
+        super::shape::collect_automatic_hyphens(layout, options.automatic_hyphens);
     }
 
     // After shaping, so that the metrics of fonts used for shaping can be reused.

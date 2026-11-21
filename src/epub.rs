@@ -70,6 +70,7 @@ pub struct BookCover {
 }
 
 pub struct Book {
+    pub(crate) language: Option<parley::Language>,
     pub title: String,
     pub author: Option<String>,
     pub chapters: Vec<Chapter>,
@@ -179,6 +180,13 @@ impl Book {
             return Err("The EPUB package version is unsupported".into());
         }
         let metadata = child(root, "metadata")?;
+        let language = metadata
+            .children()
+            .filter(|n| n.has_tag_name(("http://purl.org/dc/elements/1.1/", "language")))
+            .filter_map(|n| n.text().map(str::trim))
+            .find(|tag| !tag.is_empty())
+            .filter(|tag| tag.len() <= crate::source::MAX_LANGUAGE_BYTES)
+            .and_then(|tag| parley::Language::parse(tag).ok());
         let default_layout = package_layout(metadata)?;
         let default_spread = package_spread(metadata);
         let series = package_series(metadata);
@@ -355,6 +363,7 @@ impl Book {
             toc,
             printed_pages,
             revision,
+            language,
             spine_rtl: spine.attribute("page-progression-direction") == Some("rtl"),
             fixed_placements: fixed_layout.unwrap_or(false).then_some(placements),
             series,
@@ -398,6 +407,7 @@ impl Book {
         let chapter_path = document.chapter_path;
         Self {
             revision: crate::revision(&document.xhtml),
+            language: None,
             spine_rtl: false,
             fixed_placements: None,
             series: Vec::new(),
@@ -488,6 +498,7 @@ impl Book {
             toc,
             printed_pages: Vec::new(),
             revision,
+            language: None,
             spine_rtl: false,
             fixed_placements: None,
             series: Vec::new(),
@@ -520,6 +531,7 @@ impl Book {
             toc: chm.toc.clone(),
             printed_pages: Vec::new(),
             revision,
+            language: None,
             spine_rtl: false,
             fixed_placements: None,
             series: Vec::new(),

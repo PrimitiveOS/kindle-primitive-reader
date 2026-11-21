@@ -8,7 +8,7 @@ Compare against the installed KOReader release for hardware measurements. Record
 
 | Area | Development coverage | Remaining work |
 | --- | --- | --- |
-| EPUB reading | Saved positions, page and scroll modes, reading bars, printed page references, whole-book percentage jumps, generated contents from headings or chapter starts, publisher CSS, local fonts and illustrations, numbered and nested lists, supported tables with column widths and merged cells, footnote previews, bounded static SVG, ruby, authored soft hyphens, inherited language, horizontal writing direction, and publisher line-breaking rules. Supported vertical chapters use right-to-left columns and the same text anchors. Fixed pages include publisher-defined spreads and the XHTML viewport directives. | More advanced stylesheet cases, automatic dictionary-based hyphenation, mixed writing modes in one chapter, and broader live typography checks |
+| EPUB reading | Saved positions, page and scroll modes, reading bars, printed page references, whole-book percentage jumps, generated contents from headings or chapter starts, publisher CSS, local fonts and illustrations, numbered and nested lists, supported tables with column widths and merged cells, footnote previews, bounded static SVG, ruby, authored soft hyphens, automatic US English hyphenation, inherited language, horizontal writing direction, and publisher line-breaking rules. Supported vertical chapters use right-to-left columns and the same text anchors. Fixed pages include publisher-defined spreads and the XHTML viewport directives. | More advanced stylesheet cases, other hyphenation dictionaries and user exceptions, mixed writing modes in one chapter, and broader live typography checks |
 | PDF | Fixed pages and continuous scroll, printed labels, page thumbnails, outlines and links, passwords, page, width and height fit, crop, contrast, text search and local annotations. Visible embedded highlights import and annotated-copy export for intact unencrypted PDFs up to 16 MiB. | Broader password, outline and annotation types, and sustained large-scan tests |
 | Other offline reading | Fixed-layout EPUB, DjVu, TXT, HTML, single-document HTMLZ, Markdown, FB2, supported MOBI/PalmDOC and KF8, DOCX, CHM, RTF, TCR, CBZ, uncompressed USTAR CBT, selected CBR, JPEG, PNG, BMP, GIF first frame, portable anymaps, static SVG, selected WebP and TIFF, and compressed StarDict with synonyms | Wider format variants and larger live document samples |
 | Scanned documents | Embedded and recognized text reflow across readable source pages. Original word-image reflow for scans with complete horizontal left-to-right OCR and a column view for clear two-column scans. English and Vietnamese recognized by the worker on desktop. The ARMHF package's English OCR worker produced word boxes on Oasis 3. | Broader layout and language cases, and sustained tests with real scans |
@@ -186,12 +186,11 @@ the tracked decoder workspace to 32 MiB, the RAR5 dictionary to 16 MiB,
 and each encoded or packed image page to 16 MiB or the format's smaller
 limit. [Pinned RAR decoder](https://docs.rs/rars/0.12.3/rars/)
 
-The patched horizontal line breaker counts and paints an authored hyphen only
-when its line break is selected and the glyph fits. It honors `hyphens: none`
-and `hyphens: manual`, with a per-book switch in Text settings. `auto` currently
-uses the same authored opportunities.
-Find, dictionary lookup and quoted annotations imported from KOReader ignore
-soft hyphens while retaining the original UTF-8 positions. [Parley patch](../vendor/parley/PRIMITIVEOS-PATCH.md)
+The horizontal line breaker supports automatic US English and authored soft
+hyphens. The Text panel saves Automatic, Authored or Off per book. A chosen
+hyphen must fit in the original font. Search, tap selection and bookmarks use
+the same UTF-8 positions across all three settings. A side-by-side fixture
+and the actual-book measurements are available in the [hyphenation comparison](english-hyphenation.md).
 
 Eligible `vertical-rl` chapters shape upright glyphs with HarfRust and paint
 sideways Latin from horizontal glyphs rotated clockwise. Supported ruby

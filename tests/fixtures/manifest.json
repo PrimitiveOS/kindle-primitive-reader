@@ -179,6 +179,18 @@
       }
     },
     {
+      "file": "english-hyphenation.epub",
+      "sha256": "f5c0ca6ba0ea8d30747f5415f04796fef12189f4fe177b45c6e4fbe602468cee",
+      "size_bytes": 2484,
+      "expected": {
+        "opens": true,
+        "spine_count": 1,
+        "package_language": "en",
+        "xhtml_language": null,
+        "authored_soft_hyphens": 0
+      }
+    },
+    {
       "file": "long-chapter.epub",
       "sha256": "f87cb3327cdb5602b9ea92e6a8aa4bc90cdd2e7917aebf5da514c4f6a96cb3cc",
       "size_bytes": 51901,

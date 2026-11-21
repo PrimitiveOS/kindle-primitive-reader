@@ -79,9 +79,10 @@ pub enum BreakReason {
     Emergency,
 }
 
-/// The alternative glyph for an existing soft-hyphen source cluster.
+/// The chosen line-end glyph at an original source cluster.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct SoftHyphen {
+    pub(crate) append: bool,
     pub(crate) cluster: u32,
     pub(crate) glyph: Glyph,
 }
@@ -89,6 +90,7 @@ pub(crate) struct SoftHyphen {
 /// An opt-in candidate. A missing glyph suppresses the authored opportunity.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct SoftHyphenOpportunity {
+    pub(crate) append: bool,
     pub(crate) cluster: u32,
     pub(crate) glyph: Option<Glyph>,
 }

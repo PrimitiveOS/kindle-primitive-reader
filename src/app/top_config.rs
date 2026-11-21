@@ -139,7 +139,7 @@ impl Reader {
                 Action::ReadingMode(_) => false,
                 Action::Text(next) => {
                     next.alignment == settings.alignment
-                        && next.disable_soft_hyphens == settings.disable_soft_hyphens
+                        && next.hyphenation_mode() == settings.hyphenation_mode()
                 }
                 _ => true,
             });

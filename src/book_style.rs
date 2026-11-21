@@ -71,6 +71,13 @@ impl ImageLength {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Hyphens {
+    None,
+    Manual,
+    Auto,
+}
+
 #[derive(Clone)]
 pub(crate) struct Style {
     pub font_family: Family,
@@ -86,7 +93,7 @@ pub(crate) struct Style {
     pub alignment: Option<Alignment>,
     pub line_break: Option<LineBreak>,
     pub word_break: WordBreak,
-    pub soft_hyphens: bool,
+    pub hyphens: Hyphens,
     pub writing_mode: WritingMode,
 }
 
@@ -106,7 +113,7 @@ impl Default for Style {
             alignment: None,
             line_break: None,
             word_break: WordBreak::Normal,
-            soft_hyphens: true,
+            hyphens: Hyphens::Auto,
             writing_mode: WritingMode::Horizontal,
         }
     }
@@ -250,7 +257,7 @@ impl BookStyle {
                     Property::Slant(slant) => style.font_style = *slant,
                     Property::LineBreak(breaking) => style.line_break = *breaking,
                     Property::WordBreak(breaking) => style.word_break = *breaking,
-                    Property::SoftHyphens(enabled) => style.soft_hyphens = *enabled,
+                    Property::Hyphens(mode) => style.hyphens = *mode,
                     Property::WritingMode(mode) => style.writing_mode = *mode,
                     Property::Width(value) => style.image_width = Some(*value),
                     Property::Height(value) => style.image_height = Some(*value),
@@ -558,7 +565,7 @@ fn choose<'a>(
             Property::Slant(_) => 6,
             Property::LineBreak(_) => 7,
             Property::WordBreak(_) => 8,
-            Property::SoftHyphens(_) => 9,
+            Property::Hyphens(_) => 9,
             Property::WritingMode(_) => 10,
             Property::Width(_) => 11,
             Property::Height(_) => 12,
@@ -615,7 +622,7 @@ enum Property {
     Slant(FontStyle),
     LineBreak(Option<LineBreak>),
     WordBreak(WordBreak),
-    SoftHyphens(bool),
+    Hyphens(Hyphens),
     WritingMode(WritingMode),
     Width(ImageLength),
     Height(ImageLength),
@@ -801,15 +808,13 @@ impl<'i> DeclarationParser<'i> for Properties {
                         _ => return Err(ParseError::unexpected_token()),
                     })
                 }
-                "hyphens" | "-webkit-hyphens" => {
-                    Property::SoftHyphens(
-                        match input.expect_ident()?.to_ascii_lowercase().as_str() {
-                            "none" => false,
-                            // Authored discretionary points also apply when no automatic dictionary is available.
-                            "manual" | "auto" => true,
-                            _ => return Err(ParseError::unexpected_token()),
-                        },
-                    )
+                "hyphens" | "-webkit-hyphens" | "-epub-hyphens" | "adobe-hyphenate" => {
+                    Property::Hyphens(match input.expect_ident()?.to_ascii_lowercase().as_str() {
+                        "none" => Hyphens::None,
+                        "manual" => Hyphens::Manual,
+                        "auto" => Hyphens::Auto,
+                        _ => return Err(ParseError::unexpected_token()),
+                    })
                 }
                 "writing-mode" | "-epub-writing-mode" | "-webkit-writing-mode" => {
                     Property::WritingMode(

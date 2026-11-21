@@ -10,7 +10,7 @@ pub(crate) const SOURCE_ATTRIBUTE: &str = "data-primos-source";
 const RUBY_TEXT_MODEL: u64 = 0xe026_92a4_3415_b12f;
 const MAX_RUBY_GROUPS: usize = 1_024;
 const MAX_RUBY_ANNOTATION_BYTES: usize = 192;
-const MAX_LANGUAGE_BYTES: usize = 128;
+pub(crate) const MAX_LANGUAGE_BYTES: usize = 128;
 const XML_NAMESPACE: &str = "http://www.w3.org/XML/1998/namespace";
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -260,13 +260,21 @@ fn simple_ruby(node: Node<'_, '_>, limit: usize) -> Option<(Vec<RubyDraft>, Vec<
 
 impl Source {
     pub fn parse(xhtml: &str) -> Result<Self> {
-        Self::parse_document(xhtml, crate::revision(xhtml), true)
+        Self::parse_with_language(xhtml, None)
+    }
+
+    pub(crate) fn parse_with_language(
+        xhtml: &str,
+        publication_language: Option<Language>,
+    ) -> Result<Self> {
+        Self::parse_document(xhtml, crate::revision(xhtml), true, publication_language)
     }
 
     fn parse_document(
         xhtml: &str,
         original_revision: u64,
         allow_normalization: bool,
+        publication_language: Option<Language>,
     ) -> Result<Self> {
         let options = || ParsingOptions {
             nodes_limit: 100_000,
@@ -339,7 +347,12 @@ impl Source {
                 continue;
             }
             element_ids.insert(node.id(), elements.len());
-            languages.push(content_language(node, parent.and_then(|id| languages[id])));
+            let inherited = if node == root {
+                publication_language
+            } else {
+                parent.and_then(|id| languages[id])
+            };
+            languages.push(content_language(node, inherited));
             elements.push(Element {
                 tag: node.tag_name().name().to_owned(),
                 list_kind: crate::list_marker::MarkerKind::html(node),
@@ -602,7 +615,12 @@ impl Source {
                     .any(|parent| selected.contains(&parent.range().start))
         }) {
             if allow_normalization && let Some(normalized) = wrap_inline_runs(xhtml, body) {
-                let mut parsed = Self::parse_document(&normalized, original_revision, false)?;
+                let mut parsed = Self::parse_document(
+                    &normalized,
+                    original_revision,
+                    false,
+                    publication_language,
+                )?;
                 parsed.normalized_xhtml = Some(normalized);
                 return Ok(parsed);
             }

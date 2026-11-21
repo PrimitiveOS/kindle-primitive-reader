@@ -155,6 +155,7 @@ impl<'a, B: Brush> Run<'a, B> {
         let index = data.lines.get(self.line_index as usize)?.soft_hyphen?.get() as usize - 1;
         let hyphen = data.soft_hyphens.get(index)?;
         clusters.contains(&hyphen.cluster).then_some(SoftHyphen {
+            append: hyphen.append,
             cluster: hyphen.cluster,
             glyph: hyphen.glyph?,
         })
@@ -340,7 +341,7 @@ impl Iterator for Glyphs<'_> {
     #[inline]
     fn next(&mut self) -> Option<Glyph> {
         loop {
-            if let Some(mut glyph) = self.substitution.take().or_else(|| self.glyphs.next()) {
+            if let Some(mut glyph) = self.glyphs.next().or_else(|| self.substitution.take()) {
                 if self.spacing.is_some() {
                     if self.atom_glyph == 0 {
                         glyph.x += self.gaps.before;
@@ -361,7 +362,11 @@ impl Iterator for Glyphs<'_> {
             };
             if let Some(cluster) = cluster {
                 if let Some(hyphen) = self.soft_hyphen.filter(|hyphen| hyphen.cluster == cluster) {
-                    self.glyphs = ShapedClusterGlyphs::empty();
+                    self.glyphs = if hyphen.append {
+                        self.slice.shaped_cluster_glyphs(cluster)
+                    } else {
+                        ShapedClusterGlyphs::empty()
+                    };
                     self.substitution = Some(hyphen.glyph);
                 } else {
                     self.glyphs = self.slice.shaped_cluster_glyphs(cluster);
@@ -380,16 +385,19 @@ impl Iterator for Glyphs<'_> {
             self.shaped_clusters = atom.shaped_clusters_range();
             self.gaps = spacing.gaps(&atom);
             self.atom_glyph = 0;
-            self.atom_glyph_count = if self
-                .soft_hyphen
-                .is_some_and(|hyphen| self.shaped_clusters.contains(&hyphen.cluster))
-            {
-                1
-            } else {
+            let original_count = || {
                 atom.shaped_clusters()
                     .iter()
                     .map(|cluster| usize::from(cluster.glyph_len()))
-                    .sum()
+                    .sum::<usize>()
+            };
+            self.atom_glyph_count = match self
+                .soft_hyphen
+                .filter(|hyphen| self.shaped_clusters.contains(&hyphen.cluster))
+            {
+                Some(hyphen) if hyphen.append => original_count() + 1,
+                Some(_) => 1,
+                None => original_count(),
             };
         }
     }

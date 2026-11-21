@@ -906,7 +906,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         }
     }
 
-    /// Return the opt-in authored opportunity after the current line's last text cluster.
+    /// Return the discretionary opportunity after the current line's last text cluster.
     fn soft_hyphen_at_boundary(
         &self,
         next_cluster: u32,

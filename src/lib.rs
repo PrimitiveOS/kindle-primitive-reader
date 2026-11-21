@@ -28,6 +28,7 @@ mod generated_contents;
 mod gray_glyph;
 #[cfg(feature = "kindle")]
 mod footnotes;
+mod hyphenation;
 mod jpeg2000;
 mod kf8;
 mod kindle_sections;
@@ -150,6 +151,7 @@ pub struct Settings {
     pub text_contrast: bool,
     pub override_fonts: bool,
     pub disable_soft_hyphens: bool,
+    pub automatic_hyphenation: bool,
     /// Load author stylesheets and apply inline CSS during native reflow.
     pub publisher_styles: bool,
     /// Use each font's normal OpenType kerning when shaping text.
@@ -177,6 +179,7 @@ impl Default for Settings {
             text_contrast: false,
             override_fonts: false,
             disable_soft_hyphens: false,
+            automatic_hyphenation: true,
             publisher_styles: true,
             font_kerning: true,
             font_hinting: FontHinting::Off,
@@ -186,7 +189,51 @@ impl Default for Settings {
     }
 }
 
+#[cfg(feature = "kindle")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HyphenationMode {
+    Automatic,
+    Authored,
+    Off,
+}
+
+#[cfg(feature = "kindle")]
+impl HyphenationMode {
+    const ALL: [Self; 3] = [Self::Automatic, Self::Authored, Self::Off];
+    fn label(self) -> &'static str {
+        match self {
+            Self::Automatic => "Automatic",
+            Self::Authored => "Authored",
+            Self::Off => "Off",
+        }
+    }
+    fn next(self) -> Self {
+        match self {
+            Self::Automatic => Self::Authored,
+            Self::Authored => Self::Off,
+            Self::Off => Self::Automatic,
+        }
+    }
+}
 impl Settings {
+    #[cfg(feature = "kindle")]
+    fn hyphenation_mode(self) -> HyphenationMode {
+        if self.disable_soft_hyphens {
+            HyphenationMode::Off
+        } else if self.automatic_hyphenation {
+            HyphenationMode::Automatic
+        } else {
+            HyphenationMode::Authored
+        }
+    }
+    #[cfg(feature = "kindle")]
+    fn with_hyphenation(self, mode: HyphenationMode) -> Self {
+        Self {
+            disable_soft_hyphens: mode == HyphenationMode::Off,
+            automatic_hyphenation: mode == HyphenationMode::Automatic,
+            ..self
+        }
+    }
     fn validate(self) -> Result<()> {
         let margin_limit = self.width.min(self.height) / 4;
         if !(160..=4096).contains(&self.width)
@@ -435,7 +482,7 @@ impl Probe {
             Some(value) => value,
             None => book.chapter(chapter).map_err(|e| e.to_string())?,
         };
-        let mut source = Source::parse(&xhtml)?;
+        let mut source = Source::parse_with_language(&xhtml, book.language)?;
         let mut fonts = font_context(fonts)?;
         let (renderer, mut lines, content_height) = match engine {
             Engine::Blitz => {

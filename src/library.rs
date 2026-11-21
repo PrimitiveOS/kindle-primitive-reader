@@ -269,6 +269,8 @@ pub struct BookPreferences {
     pub override_fonts: bool,
     pub disable_soft_hyphens: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub automatic_hyphenation: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub font_file: Option<String>,
 }
 
@@ -311,6 +313,9 @@ impl BookPreferences {
             invert_night_images: self.invert_night_images,
             override_fonts: self.override_fonts,
             disable_soft_hyphens: self.disable_soft_hyphens,
+            automatic_hyphenation: self
+                .automatic_hyphenation
+                .unwrap_or(settings.automatic_hyphenation),
             ..settings
         };
         if adjusted.validate().is_ok() {

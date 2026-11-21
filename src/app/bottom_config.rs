@@ -408,18 +408,11 @@ impl Reader {
                         ));
                         rows.push(ConfigRow::new(
                             "Hyphenation",
-                            [false, true].map(|disable_soft_hyphens| {
+                            crate::HyphenationMode::ALL.map(|mode| {
                                 Choice::option(
-                                    if disable_soft_hyphens {
-                                        "Off"
-                                    } else {
-                                        "Publisher"
-                                    },
-                                    Action::Text(Settings {
-                                        disable_soft_hyphens,
-                                        ..settings
-                                    }),
-                                    settings.disable_soft_hyphens == disable_soft_hyphens,
+                                    mode.label(),
+                                    Action::Text(settings.with_hyphenation(mode)),
+                                    settings.hyphenation_mode() == mode,
                                 )
                             }),
                         ));

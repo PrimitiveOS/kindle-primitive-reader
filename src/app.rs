@@ -1349,7 +1349,7 @@ impl Reader {
                         Action::ReadingMode(_) => false,
                         Action::Text(next) => {
                             next.alignment == settings.alignment
-                                && next.disable_soft_hyphens == settings.disable_soft_hyphens
+                                && next.hyphenation_mode() == settings.hyphenation_mode()
                         }
                         _ => true,
                     });
@@ -2067,6 +2067,7 @@ impl Reader {
                 preferences.invert_night_images = settings.invert_night_images;
                 preferences.override_fonts = settings.override_fonts;
                 preferences.disable_soft_hyphens = settings.disable_soft_hyphens;
+                preferences.automatic_hyphenation = Some(settings.automatic_hyphenation);
                 self.show(Screen::Book);
                 self.record_position();
             }
@@ -2322,6 +2323,7 @@ impl Reader {
             invert_night_images: settings.invert_night_images,
             override_fonts: settings.override_fonts,
             disable_soft_hyphens: settings.disable_soft_hyphens,
+            automatic_hyphenation: Some(settings.automatic_hyphenation),
             font_file,
         };
         let mut profiles = self.profiles.clone();
@@ -5818,16 +5820,10 @@ fn text_items(settings: Settings, scroll: bool) -> Vec<Item> {
         )
         .detail(alignment),
         Item::new(
-            if settings.disable_soft_hyphens {
-                "Allow publisher hyphenation"
-            } else {
-                "Disable publisher hyphenation"
-            },
-            Action::Text(Settings {
-                disable_soft_hyphens: !settings.disable_soft_hyphens,
-                ..settings
-            }),
-        ),
+            "Hyphenation",
+            Action::Text(settings.with_hyphenation(settings.hyphenation_mode().next())),
+        )
+        .detail(settings.hyphenation_mode().label()),
         Item::new(
             if settings.bold_text {
                 "Use regular body text"
@@ -6310,7 +6306,7 @@ mod tests {
         app.open_path(&fixture.book).unwrap();
         app.activate(Action::Text(Settings {
             font_size: 58.0,
-            disable_soft_hyphens: true,
+            automatic_hyphenation: false,
             ..device_settings()
         }))
         .unwrap();
@@ -6321,7 +6317,10 @@ mod tests {
         app.activate(Action::ResetText).unwrap();
         let reset = &app.active.as_ref().unwrap().reading;
         assert_eq!(reset.config.settings.font_size, device_settings().font_size);
-        assert!(!reset.config.settings.disable_soft_hyphens);
+        assert_eq!(
+            reset.config.settings.hyphenation_mode(),
+            crate::HyphenationMode::Automatic
+        );
         assert!(!reset.config.scroll);
         assert_eq!(position(reset).anchor, original.anchor);
         app.save().unwrap();
@@ -6331,7 +6330,10 @@ mod tests {
         reopened.activate(Action::ApplyProfile(0)).unwrap();
         let reading = &reopened.active.as_ref().unwrap().reading;
         assert_eq!(reading.config.settings.font_size, 58.0);
-        assert!(reading.config.settings.disable_soft_hyphens);
+        assert_eq!(
+            reading.config.settings.hyphenation_mode(),
+            crate::HyphenationMode::Authored
+        );
         assert!(reading.config.scroll);
         assert_eq!(position(reading).anchor, original.anchor);
         reopened.activate(Action::RemoveProfile(0)).unwrap();
