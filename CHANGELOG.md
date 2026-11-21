@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5
+
+- The package declares firmware 5.18.2 (the firmware the Reader is tested on), so the Store lists it with the same range.
+
 ## 0.1.4
 
 - The release workflow names the package (`reader`), so the Kindle binary is packaged. The 0.1.3 run failed on that step and published nothing.
