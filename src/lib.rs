@@ -69,6 +69,8 @@ pub mod selection;
 #[cfg(feature = "kindle")]
 mod session;
 mod source;
+#[cfg(feature = "kindle")]
+mod synthetic_pages;
 mod table_layout;
 mod svg_image;
 mod tcr;

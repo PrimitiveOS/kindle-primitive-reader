@@ -13,11 +13,21 @@ view:setFontFace("Noto Sans")
 view:setFontSize(42)
 assert(view:loadDocument(document, false))
 view:renderDocument()
+local stride = arg[3] and assert(tonumber(arg[3]))
+if stride then
+    assert(stride == math.floor(stride) and stride >= 500 and stride <= 3000)
+    view:buildSyntheticPageMap(stride)
+end
 local pages = view:getPageMap() or {}
-for _, item in ipairs(pages) do
+for index, item in ipairs(pages) do
     assert(item.page > 0 and item.xpointer and item.label)
-    local label = item.label:gsub(".", function(c) return string.format("%02x", string.byte(c)) end)
-    print("label " .. label)
+    if stride then
+        assert(tonumber(item.label) == index and not item.xpointer:find("[\r\n]"))
+        print("point " .. item.xpointer)
+    else
+        local label = item.label:gsub(".", function(c) return string.format("%02x", string.byte(c)) end)
+        print("label " .. label)
+    end
 end
 print("count " .. #pages)
 view:close()

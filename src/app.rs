@@ -4,6 +4,7 @@ mod bar_icons;
 mod custom_contents;
 mod contents_position;
 pub(crate) mod publisher_pages;
+mod character_page_settings;
 mod dictionary_panel;
 mod dictionary_sources;
 use dictionary_sources::{SourceAction, SourcePreferences};
@@ -142,6 +143,8 @@ enum Screen {
     PdfPassword,
     GoToPage,
     PublisherPages,
+    PageNumbering,
+    CharacterStride,
     PageOverview,
     BookMap,
     AutoTurn,
@@ -212,6 +215,8 @@ impl Screen {
             | Self::FixedCrop
             | Self::Illustration => "",
             Self::GoToPage => "Go to page",
+            Self::PageNumbering => "Page numbering",
+            Self::CharacterStride => "Characters per page",
             Self::PublisherPages => "Stable page number list",
             Self::PageOverview => "Pages",
             Self::BookMap => "Book map",
@@ -295,6 +300,8 @@ enum Action {
     ExportAnnotatedPdf,
     Show(Screen),
     Jump(Destination),
+    SetCharacterPages(Option<u16>),
+    CharacterPage(usize),
     TogglePublisherFooter,
     TogglePublisherMargins,
     ShowGeneratedContents,
@@ -423,6 +430,7 @@ struct ActiveBook {
     entry: LibraryBook,
     id: u64,
     reading: Reading,
+    numbering: Option<crate::synthetic_pages::CharacterPages>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -483,6 +491,8 @@ pub struct Reader {
     book_details: Option<BookDetails>,
     overview: Option<PageOverview>,
     outline: Option<OutlineScan>,
+    numbering_scan: Option<character_page_settings::Scan>,
+    numbering_directory: PathBuf,
     chapter_draft: Option<custom_contents::Draft>,
     scan_columns: Option<ScanReading>,
     rename_collection: Option<String>,
@@ -609,6 +619,8 @@ impl Reader {
             book_details: None,
             overview: None,
             outline: None,
+            numbering_scan: None,
+            numbering_directory: data.join("character-pages"),
             chapter_draft: None,
             scan_columns: None,
             rename_collection: None,
@@ -772,6 +784,7 @@ impl Reader {
             result => result?,
         };
         self.locked = None;
+        self.numbering_scan = None;
         self.touch_locked = false;
         self.ocr = None;
         self.hits.clear();
@@ -845,7 +858,8 @@ impl Reader {
         self.pages_since_refresh = 0;
         self.range_edit = None;
         self.saved_popup = None;
-        self.active = Some(ActiveBook { entry, id, reading });
+        self.active = Some(ActiveBook { entry, id, reading, numbering: None });
+        self.restore_character_pages();
         self.fixed = None;
         self.back.clear();
         self.forward.clear();
@@ -929,6 +943,9 @@ impl Reader {
             self.editor = Editor::new(96);
             self.editor.text = self.library_query.chars().take(96).collect();
             self.editor.caret = self.editor.text.len();
+        }
+        if screen == Screen::CharacterStride {
+            self.editor = Editor::new(4);
         }
         if screen == Screen::GoToPage {
             self.editor = Editor::new(96);
@@ -1416,6 +1433,7 @@ impl Reader {
                 }
                 items
             }
+            Screen::PageNumbering => self.numbering_items(),
             Screen::PublisherPages => self.publisher_page_window(0, usize::MAX).1,
             Screen::GeneratedContents => self.outline.as_ref().map_or_else(Vec::new, |outline| {
                 outline
@@ -1922,6 +1940,7 @@ impl Reader {
             Action::Show(Screen::Library) => {
                 self.save()?;
                 self.active = None;
+                self.numbering_scan = None;
                 self.fixed = None;
                 self.touch_locked = false;
                 self.ocr = None;
@@ -1934,6 +1953,8 @@ impl Reader {
             Action::Show(screen) => self.show(screen),
             Action::Jump(target) => self.follow(target)?,
             Action::Custom(action) => self.custom_action(action)?,
+            Action::SetCharacterPages(stride) => self.set_character_pages(stride)?,
+            Action::CharacterPage(row) => self.follow_character_page(row)?,
             Action::TogglePublisherFooter => self.toggle_publisher_labels(false)?,
             Action::TogglePublisherMargins => self.toggle_publisher_labels(true)?,
             Action::ShowGeneratedContents => self.start_generated_contents()?,
@@ -3101,7 +3122,9 @@ impl Reader {
         if matches!(input, Input::PageBack)
             || matches!(input, Input::Tap(x, y) if primitive_ui::back_button(WIDTH as i32).contains(x, y))
         {
-            self.show(if self.fixed.is_some() {
+            self.show(if self.screen == Screen::CharacterStride {
+                Screen::PageNumbering
+            } else if self.fixed.is_some() {
                 Screen::FixedTools
             } else {
                 Screen::BookTools
@@ -3112,10 +3135,18 @@ impl Reader {
             return Change::None;
         };
         let layout = Layout::new(WIDTH, HEIGHT, 4, 5);
-        let Some(key) = keyboard_key(&layout, &self.editor, "Go", x, y) else {
+        let action = if self.screen == Screen::CharacterStride { "Set" } else { "Go" };
+        let Some(key) = keyboard_key(&layout, &self.editor, action, x, y) else {
             return Change::None;
         };
         if matches!(self.editor.press(key), Press::Go) {
+            if self.screen == Screen::CharacterStride {
+                let stride = self.editor.string().trim().parse::<u16>().ok().filter(|v| (500..=3000).contains(v));
+                return match stride.ok_or_else(|| "Enter 500 to 3,000 characters".into()).and_then(|n| self.set_character_pages(Some(n))) {
+                    Ok(()) => Change::Partial,
+                    Err(error) => self.report(error),
+                };
+            }
             if self.fixed.is_none() {
                 return match self.jump_reflow_number() {
                     Ok(()) => Change::Partial,
@@ -3191,6 +3222,11 @@ impl Reader {
         }
         let active = self.active.as_ref().ok_or("No open book")?;
         if let Some(label) = input.strip_prefix("label ") {
+            if let Some(map) = &active.numbering {
+                let row = label.trim().parse::<usize>().ok().and_then(|n| n.checked_sub(1))
+                    .filter(|row| *row < map.count).ok_or("Enter a stable page number from the list")?;
+                return self.follow_character_page(row);
+            }
             let mut matches = active
                 .reading
                 .probe
@@ -5022,6 +5058,7 @@ impl App for Reader {
                 | Screen::Note
                 | Screen::EditNote
                 | Screen::GoToPage
+                | Screen::CharacterStride
                 | Screen::PdfPassword
         ) {
             let (hint, action) = match self.screen {
@@ -5032,13 +5069,14 @@ impl App for Reader {
                 Screen::CollectionName => ("Collection name", "Save"),
                 Screen::ProfileName => ("Profile name", "Save"),
                 Screen::PdfPassword => ("PDF password", "Open"),
+                Screen::CharacterStride => ("500 to 3,000 characters per page", "Set"),
                 Screen::GoToPage if self.fixed.is_none() => {
                     let hint = if self
                         .active
                         .as_ref()
-                        .is_some_and(|book| !book.reading.probe.printed_pages.is_empty())
+                        .is_some_and(|book| book.numbering.is_some() || !book.reading.probe.printed_pages.is_empty())
                     {
-                        "Page, chapter:page, book %, or label followed by a printed page"
+                        "Page, chapter:page, book %, or label followed by a stable page"
                     } else {
                         "Page, chapter:page, or book percentage"
                     };
@@ -5088,7 +5126,11 @@ impl App for Reader {
             .and_then(|row| row.checked_sub(self.list_page * ROWS_PER_PAGE))
             .and_then(|row| items.get_mut(row))
         {
-            let context = if self.screen == Screen::PublisherPages { "Current printed page" } else { "Current section" };
+            let context = match self.screen {
+                Screen::PublisherPages if self.active.as_ref().is_some_and(|book| book.numbering.is_some()) => "Current stable page",
+                Screen::PublisherPages => "Current printed page",
+                _ => "Current section",
+            };
             current.detail = Some(match current.detail.take() {
                 Some(detail) => format!("{context} · {detail}"),
                 None => context.into(),
@@ -5371,7 +5413,7 @@ impl App for Reader {
         if self.screen == Screen::Definition {
             return self.definition_input(input);
         }
-        if self.screen == Screen::GoToPage {
+        if matches!(self.screen, Screen::GoToPage | Screen::CharacterStride) {
             return self.handle_page_number(input);
         }
         if self.screen == Screen::BookMap && self.fixed.is_some() {
@@ -5565,6 +5607,7 @@ impl App for Reader {
             .chain(self.search_at)
             .chain(self.nearby.deadline())
             .chain(self.outline.as_ref().and_then(|outline| outline.deadline))
+            .chain(self.numbering_scan.as_ref().map(|scan| scan.deadline))
             .chain(
                 self.annotation_import
                     .as_ref()
@@ -5673,6 +5716,12 @@ impl App for Reader {
                     self.show(Screen::Contents);
                     self.report(error)
                 }
+            };
+        }
+        if self.numbering_scan.as_ref().is_some_and(|scan| scan.deadline <= now) {
+            return match self.step_character_pages(now) {
+                Ok(change) => change,
+                Err(error) => { self.numbering_scan = None; self.report(error) }
             };
         }
         if let (Some(flow), Some(fixed)) = (&mut self.text_flow, &self.fixed) {
@@ -7460,6 +7509,105 @@ mod tests {
         let mut persisted = fixture.app();
         persisted.activate(Action::Continue).unwrap();
         assert!(!persisted.publisher_footer_enabled());
+    }
+
+    fn finish_character_numbering(app: &mut Reader) {
+        let limit = app.active.as_ref().unwrap().reading.probe.chapter_count() + 1;
+        for _ in 0..limit {
+            let Some(scan) = &app.numbering_scan else { return };
+            app.step_character_pages(scan.deadline).unwrap();
+        }
+        assert!(app.numbering_scan.is_none());
+    }
+
+    #[test]
+    fn character_numbering_reflows_resumes_and_restores_the_publisher_choice() {
+        let f = Fixture::new();
+        let nav = br#"<html><body><nav type="page-list"><ol><li><a href="first.xhtml#passage2">iii</a></li></ol></nav></body></html>"#;
+        write_outline_fixture(&f.book, Some(nav), None);
+        let fonts = simulation_fonts();
+        let mut app = Reader::open(&f.root, &f.state, fonts.clone()).unwrap();
+        app.open_path(&f.book).unwrap();
+        app.open_reading_edge(true, 520.);
+        tap_reading_control(&mut app, "Page numbering");
+        assert_eq!(app.items()[0].title, "Publisher page numbers");
+        assert!(app.set_character_pages(Some(499)).is_err());
+        app.activate(Action::SetCharacterPages(Some(500))).unwrap();
+        assert_eq!(app.screen, Screen::PageNumbering);
+        finish_character_numbering(&mut app);
+        assert_eq!(app.screen, Screen::PublisherPages);
+        let count = app.list_window().0;
+        assert!(count > 14);
+        app.activate(Action::TogglePublisherFooter).unwrap();
+        app.activate(Action::TogglePublisherMargins).unwrap();
+        let current = 12;
+        app.show(Screen::PublisherPages);
+        let action = app.publisher_page_window(current, 1).1.remove(0).action;
+        app.activate(action).unwrap();
+        assert!(app.status_caption().unwrap().starts_with("Stable page "));
+        app.show(Screen::PublisherPages);
+        assert!(app.current_contents_row.unwrap() >= current);
+        capture_test_screen(&app, &fonts, "READER_CHARACTER_PAGE_LIST", false);
+        let id = app.active.as_ref().unwrap().id;
+        let before = app.active.as_ref().unwrap().numbering.as_ref().unwrap().locate(current);
+        app.show(Screen::Book);
+        let settings = Settings { font_size: 48., ..app.active.as_ref().unwrap().reading.config.settings };
+        app.activate(Action::Text(settings)).unwrap();
+        app.activate(Action::CharacterPage(current)).unwrap();
+        app.save().unwrap();
+        let mut resumed = Reader::open(&f.root, &f.state, fonts.clone()).unwrap();
+        resumed.activate(Action::Continue).unwrap();
+        assert!(resumed.numbering_scan.is_none());
+        assert_eq!(resumed.active.as_ref().unwrap().numbering.as_ref().unwrap().locate(current), before);
+        resumed.show(Screen::GoToPage);
+        resumed.editor.text = (format!("label {}", current + 1)).chars().collect();
+        resumed.jump_reflow_number().unwrap();
+        assert!(resumed.current_publisher_page().unwrap() >= current);
+        fs::write(resumed.numbering_path(id), b"{truncated").unwrap();
+        let mut restored = Reader::open(&f.root, &f.state, fonts).unwrap();
+        restored.activate(Action::Continue).unwrap();
+        assert!(restored.numbering_scan.is_some());
+        finish_character_numbering(&mut restored);
+        assert_eq!(restored.active.as_ref().unwrap().numbering.as_ref().unwrap().count, count);
+        restored.activate(Action::SetCharacterPages(None)).unwrap();
+        assert_eq!(restored.status_caption().as_deref(), Some("Printed page iii"));
+        assert!(restored.library.state(id).unwrap().character_page_stride.is_none());
+        restored.activate(Action::SetCharacterPages(Some(3000))).unwrap();
+        restored.activate(Action::SetCharacterPages(None)).unwrap();
+        assert!(restored.numbering_scan.is_none());
+    }
+
+    #[test]
+    #[ignore = "requires an original EPUB and its installed CREngine comparison"]
+    fn follows_character_pages_in_an_original_document() {
+        let path = PathBuf::from(std::env::var_os("READER_SYNTHETIC_BOOK").unwrap());
+        let stride: u16 = std::env::var("READER_SYNTHETIC_STRIDE").unwrap().parse().unwrap();
+        let expected: Vec<String> = serde_json::from_slice(&fs::read(std::env::var_os("READER_SYNTHETIC_REFERENCE").unwrap()).unwrap()).unwrap();
+        let f = Fixture::new();
+        let mut app = Reader::open(path.parent().unwrap(), &f.state, simulation_fonts()).unwrap();
+        app.open_path(&path).unwrap();
+        app.activate(Action::SetCharacterPages(Some(stride))).unwrap();
+        finish_character_numbering(&mut app);
+        assert_eq!(app.list_window().0, expected.len());
+        let previous = app.active.as_ref().unwrap().reading.anchor();
+        for row in [0, expected.len()/2, expected.len()-1] {
+            let action = app.publisher_page_window(row, 1).1.remove(0).action;
+            app.activate(action).unwrap();
+            let active = app.active.as_ref().unwrap();
+            let map = active.numbering.as_ref().unwrap();
+            let (chapter, point) = map.locate(row).unwrap();
+            assert_eq!(chapter, active.reading.chapter);
+            if let Some(point) = point {
+                let anchor = map.anchor(chapter, point, &active.reading.probe.chapter).unwrap();
+                assert_eq!(active.reading.probe.page_for(&anchor), Some(active.reading.page));
+            } else {
+                assert_eq!(active.reading.page, 0);
+            }
+            assert!(app.current_publisher_page().is_some_and(|active_row| active_row >= row));
+            app.activate(Action::ReturnToLocation).unwrap();
+            assert_eq!(app.active.as_ref().unwrap().reading.anchor(), previous);
+        }
+        println!("Followed 3 stable pages and returned exactly across {} stock labels", expected.len());
     }
 
     #[test]

@@ -214,7 +214,8 @@ impl Reader {
         let printed = || {
             let active = self.active.as_ref()?;
             self.publisher_footer_enabled().then(|| self.current_publisher_page()).flatten()
-                .map(|row| format!("Printed page {}", super::publisher_pages::compact_label(&active.reading.probe.printed_pages[row].label)))
+                .and_then(|row| active.page_label(row))
+                .map(|label| format!("{} page {}", if active.numbering.is_some() { "Stable" } else { "Printed" }, super::publisher_pages::compact_label(&label)))
         };
         if !self.controls.footer_all_at_once && mode == StatusBar::PageNumbers {
             return printed();

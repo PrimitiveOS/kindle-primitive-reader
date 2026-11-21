@@ -72,12 +72,17 @@ impl Reader {
                 ),
             ),
         ]);
-        if let Some(pages) = self.active.as_ref().map(|b| &b.reading.probe.printed_pages).filter(|pages| !pages.is_empty()) {
+        if let Some(book) = self.active.as_ref().filter(|book| book.entry.format == crate::library::DocumentFormat::Epub) {
+            let mode = book.numbering.as_ref().map_or_else(|| if book.reading.probe.printed_pages.is_empty() { "Screen pages".into() } else { "Publisher labels".into() }, |map| format!("{} characters per page", map.stride));
+            items.push(Item::new("Page numbering", Action::Show(Screen::PageNumbering)).detail(mode));
+        }
+        if let Some(book) = self.active.as_ref().filter(|book| book.page_labels() > 0) {
+            let label = if book.numbering.is_some() { "Stable" } else { "Printed" };
             items.push(Item::new("Stable page number list", Action::Show(Screen::PublisherPages))
-                .detail(format!("{} publisher labels", pages.len())));
-            items.push(Item::new("Printed pages in footer", Action::TogglePublisherFooter)
+                .detail(format!("{} {} pages", book.page_labels(), label.to_lowercase())));
+            items.push(Item::new(format!("{label} pages in footer"), Action::TogglePublisherFooter)
                 .detail(if self.publisher_footer_enabled() { "On" } else { "Off" }));
-            items.push(Item::new("Printed pages in margin", Action::TogglePublisherMargins)
+            items.push(Item::new(format!("{label} pages in margin"), Action::TogglePublisherMargins)
                 .detail(if self.publisher_margins_enabled() { "On" } else { "Off" }));
         }
         if self

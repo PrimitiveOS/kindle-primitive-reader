@@ -14,8 +14,49 @@ pub(crate) struct PublisherPositions {
 }
 
 impl Probe {
-    fn publisher_positions(&self) -> &PublisherPositions {
+    fn publisher_positions(
+        &self,
+        map: Option<&crate::synthetic_pages::CharacterPages>,
+    ) -> &PublisherPositions {
         self.publisher_positions.get_or_init(|| {
+            if let Some(map) = map {
+                let mut chapters = Vec::with_capacity(map.count);
+                let mut visible = Vec::new();
+                let mut screen_pages = HashMap::new();
+                let mut preceding = None;
+                for (chapter, (source, numbered)) in
+                    self.chapter_entries().iter().zip(&map.chapters).enumerate()
+                {
+                    chapters.extend(std::iter::repeat_n(
+                        Some(chapter + 1),
+                        numbered.points.len(),
+                    ));
+                    if source.href != self.chapter {
+                        continue;
+                    }
+                    preceding = numbered.first.checked_sub(1);
+                    for (local, point) in numbered.points.iter().enumerate() {
+                        let row = numbered.first + local;
+                        let top = match point {
+                            None => Some(0.0),
+                            Some(p) => map
+                                .anchor(chapter, *p, &source.href)
+                                .and_then(|a| self.anchor_top(&a)),
+                        };
+                        if let Some(y) = top {
+                            visible.push((y, row));
+                            screen_pages.insert(row, self.page_at(y) + 1);
+                        }
+                    }
+                }
+                visible.sort_by(|(a, i), (b, j)| a.total_cmp(b).then(i.cmp(j)));
+                return PublisherPositions {
+                    chapters,
+                    screen_pages,
+                    preceding,
+                    visible,
+                };
+            }
             let order: HashMap<_, _> = self
                 .chapter_entries()
                 .iter()
@@ -63,8 +104,9 @@ impl Probe {
 
 impl Reader {
     pub(super) fn visible_publisher_page(&self) -> Option<usize> {
-        let reading = &self.active.as_ref()?.reading;
-        let positions = reading.probe.publisher_positions();
+        let book = self.active.as_ref()?;
+        let reading = &book.reading;
+        let positions = reading.probe.publisher_positions(book.numbering.as_ref());
         let end = reading.visible_end();
         let next = positions.visible.partition_point(|(top, _)| *top < end);
         next.checked_sub(1)
@@ -74,9 +116,8 @@ impl Reader {
 
     pub(super) fn current_publisher_page(&self) -> Option<usize> {
         // CREngine labels even the front matter before the first print boundary.
-        self.visible_publisher_page().or_else(|| {
-            (!self.active.as_ref()?.reading.probe.printed_pages.is_empty()).then_some(0)
-        })
+        self.visible_publisher_page()
+            .or_else(|| (self.active.as_ref()?.page_labels() > 0).then_some(0))
     }
 
     pub(super) fn publisher_page_window(&self, first: usize, limit: usize) -> (usize, Vec<Item>) {
@@ -84,23 +125,27 @@ impl Reader {
             return (0, Vec::new());
         };
         let probe = &book.reading.probe;
-        let geometry = probe.publisher_positions();
-        let count = probe.printed_pages.len() + usize::from(probe.printed_source.is_some());
+        let geometry = probe.publisher_positions(book.numbering.as_ref());
+        let count = book.page_labels()
+            + usize::from(book.numbering.is_none() && probe.printed_source.is_some());
         let rows = (first..count.min(first.saturating_add(limit)))
             .filter_map(|row| {
-                let Some(entry) = probe.printed_pages.get(row) else {
+                let item = if book.numbering.is_some() {
+                    Item::new((row + 1).to_string(), Action::CharacterPage(row))
+                } else if let Some(entry) = probe.printed_pages.get(row) {
+                    Item::new(
+                        &entry.label,
+                        entry
+                            .destination
+                            .clone()
+                            .map_or(Action::Heading, Action::Jump),
+                    )
+                } else {
                     return Some(
                         Item::new("Print edition source", Action::Heading)
                             .detail(probe.printed_source.as_ref()?),
                     );
                 };
-                let item = Item::new(
-                    &entry.label,
-                    entry
-                        .destination
-                        .clone()
-                        .map_or(Action::Heading, Action::Jump),
-                );
                 Some(match geometry.chapters[row] {
                     Some(chapter) => item.detail(match geometry.screen_pages.get(&row) {
                         Some(page) => format!("Chapter {chapter} · Screen page {page}"),
@@ -131,8 +176,8 @@ impl Reader {
         let book = self
             .active
             .as_ref()
-            .filter(|book| !book.reading.probe.printed_pages.is_empty())
-            .ok_or("This book has no publisher page labels")?;
+            .filter(|book| book.page_labels() > 0)
+            .ok_or("This book has no stable page labels")?;
         let id = book.id;
         let state = self
             .library
@@ -164,9 +209,10 @@ impl Reader {
         if !self.publisher_margins_enabled() {
             return;
         }
-        let reading = &self.active.as_ref().unwrap().reading;
+        let book = self.active.as_ref().unwrap();
+        let reading = &book.reading;
         let probe = &reading.probe;
-        let positions = &probe.publisher_positions().visible;
+        let positions = &probe.publisher_positions(book.numbering.as_ref()).visible;
         if positions.is_empty() {
             return;
         }
@@ -210,7 +256,10 @@ impl Reader {
                 }
                 minimum_y = y + LINE;
                 tile.begin();
-                let label = compact_label(&probe.printed_pages[row].label);
+                let Some(label) = book.page_label(row) else {
+                    continue;
+                };
+                let label = compact_label(&label);
                 let style = TextStyle::new((18 * WIDTH / TILE_WIDTH) as i32);
                 tile.text(
                     Rect::new(1, 0, width as i32 - 2, LINE as i32),

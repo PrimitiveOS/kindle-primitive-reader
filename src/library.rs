@@ -597,6 +597,8 @@ pub struct BookState {
     pub(crate) publisher_page_footer: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub(crate) publisher_page_margins: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) character_page_stride: Option<u16>,
     #[serde(default)]
     pub preferences: BookPreferences,
     #[serde(default)]
@@ -650,6 +652,7 @@ impl BookState {
             favorite: false,
             publisher_page_footer: false,
             publisher_page_margins: false,
+            character_page_stride: None,
             preferences: BookPreferences::default(),
             fixed_preferences: FixedPreferences::default(),
             preferred_dictionaries: Vec::new(),
