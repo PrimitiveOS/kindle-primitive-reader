@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.13
+
+- Tap a saved highlight to read its note on the page. Choose between overlapping marks, page through long notes and return to the same location.
+- Find the next or previous occurrence from the current passage in a reflowable book, including matches beyond the first 100 results.
+- Look up words using the StarDict dictionaries already installed with KOReader. Direct entries and synonyms can appear together. XDXF entries show the pronunciation in brackets. Reader also searches its own dictionary folder and remembers the preferred dictionary.
+
 ## 0.1.12
 
 - Preview and import page bookmarks, exact highlights and their notes from KOReader metadata beside an EPUB. Repeating the import keeps one copy of each mark.

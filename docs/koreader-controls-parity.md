@@ -7,6 +7,20 @@ records results through the Kindle Documents picker separately from simulator te
 
 Reference release is KOReader **v2026.07.1**, commit `9192014d8bd82a91dc1012473be0f238dedfdb54`. The inventory follows the tagged Lua source through menu construction, gesture dispatch, document configuration and rendering. The acceptance tests extend the [reading parity plan](reading-parity-plan.md) and [requirements](requirements.md). [Tagged release](https://github.com/koreader/koreader/releases/tag/v2026.07.1) · [KOReader user guide](https://koreader.rocks/user_guide/)
 
+## Current reading workflows
+
+| In KOReader | PrimitiveOS Reader | Evidence and remaining work |
+| --- | --- | --- |
+| Open a book, turn pages and resume | The Documents picker distinguishes folders, file types and Library-only entries. Reflow and fixed-page positions survive reopening. | On the Oasis, 117 of 130 original entries opened and resumed. Three protected AZW and ten KFX entries led to Kindle Library. The test collection includes a damaged EPUB with recoverable chapters. [Results by format](real-document-verification.md) |
+| Top and bottom bars | The upper groups provide navigation, appearance, settings, tools and lookup. The lower tabs change with reflowable or fixed pages. An upper-center tap reveals the bars over the page. | The seven captured Oasis states identify which controls belong on a bar, a selection or a floating lookup panel. [Controls and source handlers](reading-control-evidence.md) |
+| Contents, maps and saved passages | Both contents lists open around the current chapter. The fixed-page book map accepts touch and page buttons. Bookmarks, notes and highlighted text share a searchable list. A saved passage can open in place and overlapping marks can be selected individually. | Linked text retains navigation priority over an annotation or a corner gesture. [Navigation and annotation checks](reading-control-evidence.md) |
+| Reflow, PDF and scan settings | Reader supports publisher indents, regional English hyphenation, page spreads, PDF fit and zoom, crop, deskew and supported OCR reading modes. | Source-anchored layout, image quality and scan time require separate comparisons. Mixed-language paragraphs and full KOPT layout equivalence remain open. [Publisher typography](paragraph-indentation.md) · [Hyphenation](english-hyphenation.md) · [Scanned pages](scan-controls.md) |
+| Find from a passage | Previous and next matches start at the current passage in reflowable books. PDF search joins words across lines in the same column and displays the matched boxes. | The original books exercise occurrences past the 100-item result list and printed phrase searches in four PDFs. [Reflow search](reflow-search.md) · [PDF verification](real-document-verification.md) |
+| Sidecar data | Reader previews saved locations and supported adjacent EPUB marks before importing. Matching editions, anchor pairs and excerpt text guard against importing into the wrong edition. | Six real EPUB locations, the saved PDF page and three files with EPUB annotations have independent KOReader comparisons. Other historical DOM versions and edited quotes require further checks. [Import checks](real-document-verification.md) |
+| Word selection and lookup | The selection popup offers local dictionaries, highlighting, notes and online lookup. The dictionary result opens over the reading page. Reader can use its own StarDict files and the two standard KOReader dictionary folders. | Morphology, dictionary presets and per-language configuration still need comparison. [Dictionary controls](reading-control-evidence.md) · [Online lookup scope](online-lookups.md) |
+
+## Historical comparison at Reader 0.1.1
+
 **Released** means present in published Reader 0.1.1 at `40f1f3fc3a8978039239dc5a449e1eeeeb03567e`. **In progress** means visible in the next worktree changes and awaiting integrated validation. **Open** means the equivalent still needs implementation or provider work. Publication and hardware validation are recorded separately. [Reader 0.1.1 release](https://github.com/PrimitiveOS/kindle-primitive-reader/releases/tag/v0.1.1)
 
 ## Implemented in Reader 0.1.2

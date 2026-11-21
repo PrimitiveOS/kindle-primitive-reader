@@ -9458,7 +9458,7 @@ mod tests {
             book: PathBuf,
             chapter: usize,
             word: String,
-            // Dictionary title, returned headword and optional digest of plain text.
+            // Dictionary title, returned headword and optional digest of visible definition text.
             results: Vec<(String, String, Option<String>)>,
         }
         let reference: Reference = serde_json::from_slice(&fs::read(
@@ -9492,14 +9492,18 @@ mod tests {
             assert_eq!(app.screen, Screen::Definition);
             assert!(app.definition_over_book());
             assert_eq!(app.definitions.len(), case.results.len(), "dictionary result count for case {looked_up}");
-            for (dictionary, word, plain_digest) in case.results {
-                let entry = app.definitions.iter().find(|e| e.dictionary == dictionary && e.word == word)
-                    .expect("Same dictionary and headword as KOReader");
-                assert!(!entry.text.trim().is_empty());
-                if let Some(digest) = plain_digest {
-                    let normalized = entry.text.split_whitespace().collect::<Vec<_>>().join(" ");
-                    assert_eq!(format!("{:x}", md5::compute(normalized)), digest, "definition text for case {looked_up}");
-                }
+            let mut remaining: Vec<_> = app.definitions.iter().collect();
+            for (dictionary, word, visible_digest) in case.results {
+                let index = remaining.iter().position(|entry| {
+                    if entry.dictionary != dictionary || entry.word != word || entry.text.trim().is_empty() {
+                        return false;
+                    }
+                    visible_digest.as_ref().is_none_or(|digest| {
+                        let normalized = entry.text.split_whitespace().collect::<Vec<_>>().join(" ");
+                        format!("{:x}", md5::compute(normalized)) == *digest
+                    })
+                }).expect("Same dictionary, headword and visible definition as the stock result");
+                remaining.remove(index);
             }
             eprintln!("Dictionary check {} took {} ms", looked_up + 1, start.elapsed().as_millis());
             let (x, y) = rectangle_center(app.definition_layout().1);

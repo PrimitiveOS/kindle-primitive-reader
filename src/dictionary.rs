@@ -160,7 +160,7 @@ impl DictionarySources {
         }
         let folded = CaseMapper::new().fold_string(term);
         let query = Query {
-            word,
+            word: term,
             folded: &folded,
         };
         let mut hits = Hits::new();
@@ -168,23 +168,19 @@ impl DictionarySources {
             index_bytes: MAX_TOTAL_INDEX_BYTES,
             dictzip_bytes: MAX_DZ_LOOKUP_BYTES,
         };
-        let mut valid = Vec::new();
+        let mut read_any = false;
         let mut first_error = None;
         for DictionaryFile { root, path, .. } in files {
             let result = (|| {
                 let info = Info::load(open_dictionary_file(&root, &path)?)?;
-                let found = lookup_dictionary(
-                    &root,
-                    &path,
-                    &info,
-                    IndexQuery::Headwords(query),
-                    &mut budget,
-                )?;
-                Ok((info, found))
+                // A missing or malformed synonym table leaves the base dictionary usable.
+                let aliases = synonym_targets(&root, &path, &info, query, &mut budget)
+                    .unwrap_or_else(|_| Hits::new());
+                lookup_dictionary(&root, &path, &info, IndexQuery { headword: query, aliases }, &mut budget)
             })();
             match result {
-                Ok((info, found)) => {
-                    valid.push((root, path, info));
+                Ok(found) => {
+                    read_any = true;
                     hits.extend(found);
                 }
                 Err(error) => {
@@ -195,39 +191,16 @@ impl DictionarySources {
                 break;
             }
         }
-        if valid.is_empty()
+        if !read_any
             && let Some(error) = first_error
         {
             return Err(error);
-        }
-        if hits.is_empty() {
-            for (root, path, info) in valid {
-                let Ok(targets) = synonym_targets(&root, &path, &info, query, &mut budget) else {
-                    // A malformed optional sidecar does not invalidate the base dictionary.
-                    continue;
-                };
-                if !targets.is_empty()
-                    && let Ok(found) = lookup_dictionary(
-                        &root,
-                        &path,
-                        &info,
-                        IndexQuery::Synonyms(targets),
-                        &mut budget,
-                    )
-                {
-                    hits.extend(found);
-                }
-                if hits.exact.len() == MAX_RESULTS || budget.index_bytes == 0 {
-                    break;
-                }
-            }
         }
         Ok(hits.into_best())
     }
 }
 
-/// Find exact and Unicode caseless headwords, then try optional synonym indexes
-/// if there is no headword definition. Close all files before returning.
+/// Find exact and Unicode caseless headwords and synonyms. Close all files before returning.
 pub fn lookup(root: &Path, word: &str) -> io::Result<Vec<Definition>> {
     lookup_preferred(root, word, None)
 }
@@ -388,10 +361,6 @@ impl<T> Hits<T> {
         }
     }
 
-    fn is_empty(&self) -> bool {
-        self.exact.is_empty() && self.fallback.is_empty()
-    }
-
     fn extend(&mut self, found: Self) {
         self.exact
             .extend(found.exact.into_iter().take(MAX_RESULTS - self.exact.len()));
@@ -429,9 +398,9 @@ impl Query<'_> {
     }
 }
 
-enum IndexQuery<'a> {
-    Headwords(Query<'a>),
-    Synonyms(Hits<usize>),
+struct IndexQuery<'a> {
+    headword: Query<'a>,
+    aliases: Hits<usize>,
 }
 
 struct IndexMatch {
@@ -863,18 +832,9 @@ fn scan_index(
         if size == 0 || size as usize > MAX_ENTRY_BYTES {
             continue;
         }
-        let (exact, fallback) = match &query {
-            IndexQuery::Headwords(query) => {
-                let exact = headword == query.word;
-                let fallback =
-                    !exact && hits.fallback.len() < MAX_RESULTS && query.caseless(headword, mapper);
-                (exact, fallback)
-            }
-            IndexQuery::Synonyms(targets) => (
-                targets.exact.binary_search(&ordinal).is_ok(),
-                targets.fallback.binary_search(&ordinal).is_ok(),
-            ),
-        };
+        let exact = headword == query.headword.word || query.aliases.exact.binary_search(&ordinal).is_ok();
+        let fallback = !exact && hits.fallback.len() < MAX_RESULTS
+            && (query.aliases.fallback.binary_search(&ordinal).is_ok() || query.headword.caseless(headword, mapper));
         let matches = if exact {
             &mut hits.exact
         } else if fallback {
@@ -933,7 +893,7 @@ fn definition(mut data: &[u8], sequence: Option<&[u8]>) -> Option<String> {
         }
         let value = std::str::from_utf8(value).ok()?.trim_end_matches('\0');
         let value = if matches!(kind, b'h' | b'g' | b'x' | b'k') {
-            markup_text(value)
+            markup_text(value, kind == b'x')
         } else {
             display_text(value)
         };
@@ -969,6 +929,8 @@ fn display_text(text: &str) -> String {
 
 #[derive(Default)]
 struct PlainText {
+    xdxf: bool,
+    headword_start: Cell<Option<usize>>,
     text: RefCell<String>,
     hidden: Cell<Option<&'static str>>,
 }
@@ -997,6 +959,28 @@ impl TokenSink for PlainText {
                         return TokenSinkResult::RawData(RawKind::Rawtext);
                     }
                 }
+                if self.xdxf && self.hidden.get().is_none() {
+                    match (name, tag.kind) {
+                        ("k", TagKind::StartTag) if !tag.self_closing => {
+                            self.headword_start.set(Some(self.text.borrow().len()));
+                            return TokenSinkResult::Continue;
+                        }
+                        ("k", TagKind::EndTag) => {
+                            if let Some(start) = self.headword_start.take() {
+                                self.text.borrow_mut().truncate(start);
+                            }
+                            return TokenSinkResult::Continue;
+                        }
+                        ("tr", _) => {
+                            if !tag.self_closing {
+                                let bracket = if tag.kind == TagKind::StartTag { '[' } else { ']' };
+                                self.text.borrow_mut().push(bracket);
+                            }
+                            return TokenSinkResult::Continue;
+                        }
+                        _ => {}
+                    }
+                }
                 if self.hidden.get().is_none()
                     && matches!(
                         name,
@@ -1022,10 +1006,10 @@ impl TokenSink for PlainText {
     }
 }
 
-fn markup_text(text: &str) -> String {
+fn markup_text(text: &str, xdxf: bool) -> String {
     let queue = BufferQueue::default();
     queue.push_back(StrTendril::from_slice(text));
-    let tokenizer = Tokenizer::new(PlainText::default(), Default::default());
+    let tokenizer = Tokenizer::new(PlainText { xdxf, ..Default::default() }, Default::default());
     let _ = tokenizer.feed(&queue);
     tokenizer.end();
     display_text(&tokenizer.sink.text.into_inner())
@@ -1311,6 +1295,14 @@ pub(crate) mod tests {
         assert_eq!(fallback[0].dictionary, "Harbor");
     }
 
+    #[test]
+    fn xdxf_headwords_are_shown_once_and_transcriptions_are_bracketed() {
+        let entry = b"<k>Quay</k>\n<tr>ki:</tr> A dock &amp; landing.";
+        assert_eq!(definition(entry, Some(b"x")).as_deref(), Some("[ki:] A dock & landing."));
+        assert_eq!(definition(b"<tr><td>First</td></tr>", Some(b"h")).as_deref(), Some("First"));
+        assert_eq!(definition(b"<k>Unclosed headword", Some(b"x")).as_deref(), Some("Unclosed headword"));
+    }
+
     #[cfg(feature = "kindle")]
     #[test]
     fn search_reader_and_existing_koreader_dictionaries_in_preference_order() {
@@ -1422,7 +1414,7 @@ pub(crate) mod tests {
         );
         assert_eq!(
             names(lookup_preferred(&temp.0, "firelight", Some(Path::new("Shore.ifo"))).unwrap()),
-            vec![third, first, second.clone()]
+            vec![third.clone(), first, second.clone()]
         );
         assert_eq!(
             names(lookup(&temp.0, "STRASSE").unwrap()),
@@ -1431,7 +1423,7 @@ pub(crate) mod tests {
         for query in ["lantern", "LANTERN"] {
             assert_eq!(
                 names(lookup_preferred(&temp.0, query, Some(Path::new("Shore.ifo"))).unwrap()),
-                vec![second.clone()]
+                vec![third.clone(), second.clone()]
             );
         }
     }

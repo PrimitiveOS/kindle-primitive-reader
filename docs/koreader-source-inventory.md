@@ -1,5 +1,7 @@
 # KOReader source inventory for Kindle reading
 
+The [current workflow comparison](koreader-controls-parity.md#current-reading-workflows) summarizes what works in original publications and where comparison is still needed.
+
 The [reading controls audit](reading-control-evidence.md) ties seven distinct Oasis
 screen states to Rust and Lua handlers and identifies the next acceptance tests.
 

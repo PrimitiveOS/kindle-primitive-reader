@@ -40,6 +40,8 @@ Preview a saved KOReader position before applying it, or extend a saved passage 
 
 Tap a PDF web link to inspect its address over the current page. **Copy** makes it available in Reader’s search and note fields for this session. **QR code** lets you scan it with another device. [Address preview](docs/screenshots/pdf-link-address.png) · [QR display](docs/screenshots/pdf-link-code.png)
 
+Tap a saved passage to read its note. When marks overlap, Reader shows the matching passages so you can choose one. In **Find**, the arrows start at your current passage. [Overlapping highlights](docs/screenshots/overlapping-highlights.png) · [Note on the page](docs/screenshots/tapped-note.png) · [Find from this passage](docs/screenshots/nearby-find.png)
+
 ## Reading on Kindle
 
 Install Reader from PrimitiveOS Store or follow the manual install guide.
@@ -153,7 +155,7 @@ device. [Reading parity and device results](docs/reading-parity-plan.md)
 | DOCX | Macro-free Strict and Transitional Word documents. Text, headings, basic emphasis, table reading order, and title and author metadata. |
 | CHM | Static help topics in single archives, with nested contents, headings, links and local JPEG or PNG illustrations. |
 | RTF and TCR | RTF preserves paragraphs and basic character styling. TCR opens bounded 8-bit dictionary-compressed text in the reflow reader. |
-| StarDict | Reader discovers existing dictionaries in `koreader/data/dict/` and `koreader/data/dict_ext/` alongside `reader/data/dictionaries/`. Select a word to see its offline definitions. Choose a preferred dictionary in reading settings. Gzip indexes, indexed dictzip data and synonym entries are supported. |
+| StarDict | Reader discovers existing dictionaries in `koreader/data/dict/` and `koreader/data/dict_ext/` alongside `reader/data/dictionaries/`. Select a word to see its offline definitions. Choose a preferred dictionary in reading settings. Gzip indexes, indexed dictzip data and synonym entries are supported. [Offline dictionaries](docs/shared-dictionaries.md) |
 
 In Library, open Reading data to export or preview and restore a local backup
 of progress, per-book settings, bookmarks and annotations.
