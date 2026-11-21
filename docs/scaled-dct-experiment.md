@@ -42,6 +42,8 @@ At fit page three cover images qualified for reduced decoding. In the reverse-or
 
 Two pixels in the right photograph changed by two shades after quantization to sixteen gray levels. All other pixels in both photograph regions changed by at most one shade. In the authored scan, reduction retained all 10 fit-page and 17 enlarged text lines that full decoding reproduced with at least 90% character agreement. At 150%, seventeen pixels across the authored text and registration regions changed by two shades. The desktop three-sample guard returned to full decoding at this zoom for these inputs and rendered the same cover pixels as the two-sample guard at fit page.
 
+These full-size captures show the same independently authored chart at fit page on the Oasis. [Reader full decoding](screenshots/oasis-print-chart-full.png) · [Reader reduced decoding](screenshots/oasis-print-chart-reduced.png) · [Installed KOReader](screenshots/oasis-print-chart-koreader.png)
+
 The standard Reader package continues to use full decoding. The experiment demonstrates a fit-page speed and memory benefit for this print PDF. Assessing the three-sample guard on more independently sourced CMYK and YCCK scans would give a broader picture of fine text and photographic detail before choosing a release default.
 
 ## Reproduction
