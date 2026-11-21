@@ -1,13 +1,16 @@
 //! Column positions for simple reflowable XHTML tables. Text stays in its original
 //! source block, so a cell's links, selection and saved locations still use book offsets.
 use roxmltree::{Node, NodeId};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 const MAX_COLUMNS: usize = 32;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct Cell {
-    pub row: NodeId,
+    table: NodeId,
+    pub row: usize,
+    after_row: usize,
+    fractions: Option<(u16, u16)>,
     pub column: u8,
     pub span: u8,
     pub columns: u8,
@@ -59,39 +62,56 @@ fn table_cells(
         .ancestors()
         .find_map(|node| node.attribute("dir"))
         .is_some_and(|dir| dir.eq_ignore_ascii_case("rtl"));
-    for row in table
+    let rows: Vec<_> = table
         .descendants()
         .filter(|node| node.has_tag_name("tr") && visible.contains_key(&node.id()))
-    {
+        .collect();
+    let mut occupied_until = [0usize; MAX_COLUMNS];
+    let mut group_end = 0;
+    for (index, row) in rows.iter().enumerate() {
+        if index == group_end {
+            group_end = index
+                + rows[index..]
+                    .iter()
+                    .take_while(|other| other.parent() == row.parent())
+                    .count();
+        }
         let mut column = 0;
         for cell in row.children().filter(|node| {
             visible.contains_key(&node.id()) && matches!(node.tag_name().name(), "td" | "th")
         }) {
-            // A vertically merged cell needs coordinated row heights. Keep such a
-            // table in source reading order until it can be laid out as a complete grid.
-            if cell
-                .attribute("rowspan")
-                .is_some_and(|value| value.trim().parse::<usize>().ok() != Some(1))
+            let span = span_attribute(cell, "colspan").max(1);
+            if span > MAX_COLUMNS {
+                return None;
+            }
+            // Reserve all spanned columns, including slots occupied by preceding rows.
+            while column + span <= MAX_COLUMNS
+                && occupied_until[column..column + span]
+                    .iter()
+                    .any(|&end| end > index)
             {
+                column += 1;
+            }
+            if column + span > MAX_COLUMNS {
                 return None;
             }
-            let span = cell
-                .attribute("colspan")
-                .unwrap_or("1")
-                .trim()
-                .parse::<usize>()
-                .unwrap_or(1)
-                .max(1);
-            if span > MAX_COLUMNS - column {
-                return None;
-            }
+            let rows_high = span_attribute(cell, "rowspan");
+            let after_row = if rows_high == 0 {
+                group_end
+            } else {
+                index + rows_high.min(group_end - index)
+            };
+            occupied_until[column..column + span].fill(after_row);
             cells.push((
                 cell.id(),
                 Cell {
-                    row: row.id(),
+                    table: table.id(),
+                    row: index,
+                    after_row,
                     column: column as u8,
                     span: span as u8,
                     columns: 0,
+                    fractions: None,
                     rtl,
                 },
             ));
@@ -102,22 +122,106 @@ fn table_cells(
     if columns < 2 {
         return None;
     }
+    let edges = column_edges(table, columns);
     for (_, cell) in &mut cells {
         cell.columns = columns as u8;
+        let start = usize::from(cell.column);
+        cell.fractions = edges
+            .as_ref()
+            .map(|edges| (edges[start], edges[start + usize::from(cell.span)]));
     }
     Some(cells)
 }
 
+fn span_attribute(node: Node<'_, '_>, key: &str) -> usize {
+    node.attribute(key)
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(1)
+}
+
+const SCALE: u16 = 10000;
+
+fn percent(width: &str) -> Option<f32> {
+    let n = width.trim().strip_suffix('%')?.trim().parse::<f32>().ok()?;
+    (n.is_finite() && n > 0.0 && n <= 100.0).then_some(n)
+}
+
+fn column_width(node: Node<'_, '_>) -> Option<f32> {
+    let style = node.attribute("style").unwrap_or_default();
+    style
+        .split(';')
+        .filter_map(|d| d.split_once(':'))
+        .filter(|(name, _)| name.trim().eq_ignore_ascii_case("width"))
+        .filter_map(|(_, v)| percent(v))
+        .last()
+        .or_else(|| node.attribute("width").and_then(percent))
+}
+
+fn column_edges(table: Node<'_, '_>, count: usize) -> Option<Vec<u16>> {
+    let mut hinted = Vec::with_capacity(count);
+    for node in table.children().filter(Node::is_element) {
+        if node.has_tag_name("col") {
+            add_column(&mut hinted, node, None, count);
+        } else if node.has_tag_name("colgroup") {
+            let mut children = node.children().filter(|n| n.has_tag_name("col")).peekable();
+            if children.peek().is_none() {
+                add_column(&mut hinted, node, None, count);
+            } else {
+                for child in children {
+                    add_column(&mut hinted, child, column_width(node), count);
+                }
+            }
+        }
+    }
+    if hinted.iter().all(Option::is_none) {
+        return None;
+    }
+    hinted.resize(count, None);
+    let explicit: f32 = hinted.iter().flatten().sum();
+    let unspecified = hinted.iter().filter(|v| v.is_none()).count();
+    let default = ((100.0 - explicit) / unspecified.max(1) as f32).max(1.0);
+    let total = explicit + default * unspecified as f32;
+    let mut edges = vec![0];
+    let mut sum = 0.0;
+    for width in hinted {
+        sum += width.unwrap_or(default);
+        edges.push((sum / total * f32::from(SCALE)).round() as u16);
+    }
+    edges[count] = SCALE;
+    Some(edges)
+}
+
+fn add_column(
+    out: &mut Vec<Option<f32>>,
+    node: Node<'_, '_>,
+    inherited: Option<f32>,
+    count: usize,
+) {
+    let fill = span_attribute(node, "span").max(1).min(count - out.len());
+    out.resize(out.len() + fill, column_width(node).or(inherited));
+}
+
 impl Cell {
     pub fn bounds(self, width: u32, padding: u32) -> (u32, u32) {
-        let n = u32::from(self.columns);
-        let start = u32::from(if self.rtl {
-            self.columns - self.column - self.span
-        } else {
-            self.column
-        });
-        let left = width * start / n;
-        let right = width * (start + u32::from(self.span)) / n;
+        let (left, right) = match self.fractions {
+            Some((mut left, mut right)) => {
+                if self.rtl {
+                    (left, right) = (SCALE - right, SCALE - left);
+                }
+                let edge =
+                    |p: u16| (width * u32::from(p) + u32::from(SCALE) / 2) / u32::from(SCALE);
+                (edge(left), edge(right))
+            }
+            None => {
+                let start = if self.rtl {
+                    self.columns - self.column - self.span
+                } else {
+                    self.column
+                };
+                let edge = |i: u8| width * u32::from(i) / u32::from(self.columns);
+                (edge(start), edge(start + self.span))
+            }
+        };
         let inset = padding.min((right - left).saturating_sub(1) / 2);
         (
             left + inset,
@@ -129,6 +233,44 @@ impl Cell {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn merged_cells_keep_their_columns_until_they_end_and_honor_publisher_widths() {
+        let doc=roxmltree::Document::parse("<table><colgroup><col style='width: 20%'/><col width='50%'/><col/></colgroup><tbody><tr><th id='label' rowspan='0'>Period</th><td id='name'>Morning</td><td>4.2</td></tr><tr><td id='name2'>Sunday</td><td>4.9</td></tr></tbody><tbody><tr><td id='footer' colspan='3'>End</td></tr></tbody></table>").unwrap();
+        let root = doc.root_element();
+        let visible = root
+            .descendants()
+            .filter(Node::is_element)
+            .enumerate()
+            .map(|(i, n)| (n.id(), i))
+            .collect();
+        let cells = TableCells::read(root, &visible);
+        let named = |id| {
+            cells
+                .containing(
+                    root.descendants()
+                        .find(|n| n.attribute("id") == Some(id))
+                        .unwrap(),
+                )
+                .unwrap()
+        };
+        let (label, first, second, footer) = (
+            named("label"),
+            named("name"),
+            named("name2"),
+            named("footer"),
+        );
+        assert_eq!(label.bounds(1000, 0), (0, 200));
+        assert_eq!(first.bounds(1000, 0), (200, 500));
+        assert_eq!(second.bounds(1000, 0), (200, 500));
+        assert_eq!(footer.bounds(1000, 0), (0, 1000));
+        let mut flow = RowFlow::default();
+        assert_eq!(flow.enter(Some(label), 100.0), 100.0);
+        assert_eq!(flow.enter(Some(first), 400.0), 100.0);
+        assert_eq!(flow.enter(Some(second), 175.0), 175.0);
+        assert_eq!(flow.enter(Some(footer), 225.0), 400.0);
+        assert_eq!(flow.enter(None, 460.0), 460.0);
+    }
+
     #[test]
     fn headers_form_a_row_and_each_cell_keeps_its_own_touch_target() {
         let path = crate::test_fixture("field-notes-epub3.epub");
@@ -213,20 +355,35 @@ mod tests {
 /// cells begin together, and subsequent prose follows the tallest cell.
 #[derive(Default)]
 pub(crate) struct RowFlow {
-    cell: Option<(NodeId, u8)>,
+    cell: Option<Cell>,
+    row_ends: BTreeMap<usize, f32>,
     top: f32,
     bottom: f32,
 }
 
 impl RowFlow {
     pub fn enter(&mut self, next: Option<Cell>, end: f32) -> f32 {
-        let next = next.map(|c| (c.row, c.column));
         self.bottom = self.bottom.max(end);
         if self.cell == next {
             return end;
         }
-        if self.cell.map(|(row, _)| row) != next.map(|(row, _)| row) {
+        if let Some(previous) = self.cell {
+            let required = self.row_ends.entry(previous.after_row).or_insert(self.top);
+            *required = required.max(end);
+        }
+        if self.cell.map(|c| c.table) != next.map(|c| c.table) {
             self.top = self.bottom;
+            self.row_ends.clear();
+        } else if let Some(cell) = next {
+            while self
+                .row_ends
+                .first_key_value()
+                .is_some_and(|(&after, _)| after <= cell.row)
+            {
+                if let Some((_, bottom)) = self.row_ends.pop_first() {
+                    self.top = self.top.max(bottom);
+                }
+            }
         }
         self.cell = next;
         self.top
