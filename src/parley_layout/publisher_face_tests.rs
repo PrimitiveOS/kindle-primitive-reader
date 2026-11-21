@@ -405,3 +405,164 @@ fn kf8_font_from_css_changes_real_page_and_invalid_face_falls_back() {
         }
     }
 }
+
+#[test]
+fn idpf_embedded_faces_restore_original_reading_pixels_and_exclude_nonfonts() {
+    use std::io::{Read, Write};
+    const KEY: [u8; 20] = [
+        222, 234, 161, 42, 141, 244, 104, 153, 6, 135, 177, 51, 57, 123, 171, 78, 195, 119, 87, 104,
+    ];
+    let fixture = crate::test_fixture("publisher-faces.epub");
+    let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let mut original =
+        Probe::open(&fixture, Engine::Parley, &fonts, Settings::default(), 0).unwrap();
+    let pixels = original.capture(0).unwrap();
+    let anchor = original.fragment("display").unwrap();
+    let font = "EPUB/fonts/Silkscreen-Regular.ttf";
+    let css = "EPUB/styles/reader.css";
+    for variant in ["idpf", "unknown", "missing", "duplicate"] {
+        let path =
+            std::env::temp_dir().join(format!("reader-idpf-{}-{variant}.epub", std::process::id()));
+        let out = fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        let mut dst = zip::ZipWriter::new(out);
+        let mut src = zip::ZipArchive::new(fs::File::open(&fixture).unwrap()).unwrap();
+        for i in 0..src.len() {
+            let mut member = src.by_index(i).unwrap();
+            if member.name() == font || member.name().ends_with(".opf") {
+                let name = member.name().to_owned();
+                let mut data = Vec::new();
+                member.read_to_end(&mut data).unwrap();
+                if name == font {
+                    for (i, byte) in data.iter_mut().take(1040).enumerate() {
+                        *byte ^= KEY[i % KEY.len()];
+                    }
+                } else {
+                    let xml = String::from_utf8(data).unwrap().replace(
+                        "urn:primitiveos:reader:fixture:publisher-faces",
+                        "urn:primitiveos:reader:\n  fixture:publisher-faces",
+                    );
+                    data = (if variant == "missing" {
+                        xml.replace(
+                            "unique-identifier=\"book-id\"",
+                            "unique-identifier=\"absent\"",
+                        )
+                    } else {
+                        xml
+                    })
+                    .into_bytes();
+                }
+                dst.start_file(name, zip::write::SimpleFileOptions::default())
+                    .unwrap();
+                dst.write_all(&data).unwrap();
+            } else {
+                dst.raw_copy_file(member).unwrap();
+            }
+        }
+        let method = if variant == "unknown" {
+            "urn:unknown-method"
+        } else {
+            "http://www.idpf.org/2008/embedding"
+        };
+        let entry = |name: &str| {
+            format!(
+                "<e:EncryptedData><e:EncryptionMethod Algorithm='{method}'/><e:CipherData><e:CipherReference URI='{name}'/></e:CipherData></e:EncryptedData>"
+            )
+        };
+        let repeated = if variant == "duplicate" {
+            entry(font)
+        } else {
+            String::new()
+        };
+        let map = format!(
+            "<encryption xmlns='urn:oasis:names:tc:opendocument:xmlns:container' xmlns:e='http://www.w3.org/2001/04/xmlenc#'>{}{}{repeated}</encryption>",
+            entry(font),
+            entry(css)
+        );
+        dst.start_file(
+            "META-INF/encryption.xml",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        dst.write_all(map.as_bytes()).unwrap();
+        drop(dst.finish().unwrap());
+        let mut book = Book::open(&path).unwrap();
+        assert_eq!(
+            book.resource(css).unwrap(),
+            book.local_font(css, 16384).unwrap()
+        );
+        let raw = book.resource(font).unwrap();
+        let for_layout = book.local_font(font, 2 * 1024 * 1024).unwrap();
+        assert_eq!(raw != for_layout, variant == "idpf");
+        assert_eq!(raw[1040..], for_layout[1040..]);
+        let mut probe = Probe::open(&path, Engine::Parley, &fonts, Settings::default(), 0).unwrap();
+        fs::remove_file(&path).unwrap();
+        let restored = probe.fragment("display").unwrap();
+        // Each modified OPF identifies its own edition. Its source chapter is identical.
+        assert_eq!(
+            restored,
+            crate::Anchor {
+                book: restored.book,
+                ..anchor.clone()
+            }
+        );
+        assert_eq!(probe.page_for(&restored), Some(0));
+        assert_eq!(probe.capture(0).unwrap() == pixels, variant == "idpf");
+    }
+}
+
+#[test]
+fn original_idpf_fonts_match_independent_assets_and_painted_text() {
+    let Some(path) = std::env::var_os("READER_TEST_IDPF_BOOK").map(PathBuf::from) else {
+        return;
+    };
+    let info: BTreeMap<String, u64> = serde_json::from_slice(
+        &fs::read(std::env::var_os("READER_TEST_IDPF_REFERENCE").unwrap()).unwrap(),
+    )
+    .unwrap();
+    let mut book = Book::open(&path).unwrap();
+    for (resource, &expected) in &info {
+        let bytes = book.local_font(resource, 2 * 1024 * 1024).unwrap();
+        assert_eq!(crate::revision_bytes(&bytes), expected);
+        assert_ne!(bytes, book.resource(resource).unwrap());
+    }
+    let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let mut seen = std::collections::BTreeSet::new();
+    let mut clusters = 0usize;
+    let mut ink_pages = 0;
+    for index in 0..book.chapters.len() {
+        let mut probe =
+            Probe::open(&path, Engine::Parley, &fonts, Settings::default(), index).unwrap();
+        let Renderer::Parley(layout) = &probe.renderer else {
+            continue;
+        };
+        let mut by_id = HashMap::new();
+        for para in &layout.paragraphs {
+            for run in para.layout.lines().flat_map(|l| l.runs()) {
+                let fingerprint = *by_id
+                    .entry(run.font().data.id())
+                    .or_insert_with(|| crate::revision_bytes(run.font().data.data()));
+                if info.values().any(|h| *h == fingerprint) {
+                    seen.insert(fingerprint);
+                    clusters += run.clusters().count();
+                }
+            }
+        }
+        let anchor = probe.page_anchor(0).unwrap();
+        assert_eq!(probe.page_for(&anchor), Some(0));
+        if probe.capture(0).unwrap().iter().any(|&p| p < 180) {
+            ink_pages += 1;
+        }
+    }
+    println!(
+        "idpf_font_reference assets={} active={} clusters={} painted_chapters={}",
+        info.len(),
+        seen.len(),
+        clusters,
+        ink_pages
+    );
+    assert!(!seen.is_empty() && clusters > 0 && ink_pages > 0);
+}

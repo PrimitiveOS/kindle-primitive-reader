@@ -491,7 +491,7 @@ impl FontAssets {
         }
         let limit = MAX_FONT_BYTES.min(MAX_TOTAL_FONT_BYTES - self.bytes);
         let data = match path {
-            FontPath::Local(path) => book.resource_limited(path, limit),
+            FontPath::Local(path) => book.local_font(path, limit),
             FontPath::Kindle(number) => book.kindle_font(*number, limit),
         }
         .ok()

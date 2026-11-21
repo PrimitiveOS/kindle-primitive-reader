@@ -2196,6 +2196,7 @@ dependencies = [
  "qrcodegen",
  "rars",
  "resvg",
+ "ring",
  "roxmltree",
  "serde",
  "serde_json",

@@ -16,6 +16,7 @@ mod docx;
 pub mod cre_pointer;
 pub mod epub;
 pub mod epub_cfi;
+mod epub_font;
 mod epub_members;
 mod epub_xml;
 mod epub_zip;

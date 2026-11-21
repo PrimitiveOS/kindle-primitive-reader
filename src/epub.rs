@@ -97,6 +97,7 @@ enum Content {
     Archive {
         archive: Archive,
         package_path: String,
+        fonts: Option<crate::epub_font::EmbeddedFonts>,
     },
     Loose {
         xhtml: BTreeMap<String, String>,
@@ -245,6 +246,11 @@ impl Book {
                 return Err("The EPUB manifest contains duplicate IDs".into());
             }
         }
+        let fonts = crate::epub_font::EmbeddedFonts::read(
+            &mut archive,
+            root,
+            manifest.values().map(|item| (item.path.as_str(), item.media.as_str())),
+        );
         let cover = package_cover(metadata, &manifest);
         let spine = child(root, "spine")?;
         let navigation = manifest.values().find(|item| item.navigation);
@@ -397,6 +403,7 @@ impl Book {
             content: Content::Archive {
                 archive,
                 package_path,
+                fonts,
             },
         })
     }
@@ -410,6 +417,7 @@ impl Book {
             Content::Archive {
                 archive,
                 package_path,
+                ..
             } => xml_entry(archive, package_path),
             Content::Loose { .. } | Content::Chm(_) => {
                 Err("EPUB CFI positions require an EPUB publication".into())
@@ -703,6 +711,14 @@ impl Book {
             offsets.push(total);
         }
         Ok(offsets)
+    }
+
+    pub(crate) fn local_font(&mut self, path: &str, cap: usize) -> Result<Vec<u8>> {
+        let mut bytes = self.resource_limited(path, cap)?;
+        if let Content::Archive { fonts: Some(fonts), .. } = &self.content {
+            fonts.apply(path, &mut bytes);
+        }
+        Ok(bytes)
     }
 
     pub(crate) fn kindle_font(&mut self, number: usize, cap: usize) -> Result<Vec<u8>> {
