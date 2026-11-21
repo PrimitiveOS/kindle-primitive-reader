@@ -21,3 +21,13 @@ The Kindle accepts patterns up to 256 UTF-8 bytes, 24 group levels and a maximum
 The automated tests cover overlapping lookaround context, alternation, Unicode case, an accented Vietnamese expression, backreferences, whole-paragraph anchors, authored soft hyphens, empty results, malformed patterns, a work-limit error and cancellation. The simulator test entered a pattern, stepped forward and back through three matches, reopened the pattern from history, cancelled the background list search and verified that a PDF kept its ordinary search. Both screenshots use a project-authored text.
 
 On the Mac, four anonymous original EPUBs were searched with word-alternative, Vietnamese, numbered and lookbehind patterns. The verifier checked all 100 selected source ranges per original and the preceding and following occurrences at a midpoint. [Reader comparison](../examples/verify_pattern_search.rs) · [Installed KOReader comparison](../scripts/koreader-pattern-check.lua)
+
+An independent ECMAScript implementation also evaluated the original EPUB spine text. Its hit counts, character totals and checksums over UTF-8 quotes in document order agreed with Reader in five comparisons. Four reached the 100-result list limit. A fifth query for four-digit years in an English EPUB found all five occurrences. No private source text was required in either report.
+
+The branch's staged ARMHF ZIP contained 25 files, including the original SRELL notice and the libc++, libc++abi and libunwind notices. The package checker verified that all four notices matched the source files byte for byte and that the vendored SRELL header matched the KOReader pin. [Package verifier](../scripts/verify-pattern-package.py)
+
+## Oasis 3 comparison
+
+Installed KOReader and native Reader searched two original EPUBs offscreen. In original 033, both returned 100 Vietnamese matches totaling 243 characters. In 035, both returned all five four-digit years totaling 20 characters. Both ordered UTF-8 checksums agreed. Reader also verified every selected quote in its layout and matched both directional neighbors at the midpoint in each book.
+
+The native verification process, including reopening the source chapters, laying out each referenced passage and checking the ranges, took 3.88 seconds and peaked at 23,020 KiB for 033. For 035 it took 2.34 seconds and peaked at 11,796 KiB. The figures cover the entire verification process. Four native functional tests passed, including invalid syntax, cancellation, Unicode selection and the keyboard-to-result interaction. SHA-256 checks confirmed the two original books, the installed Reader binary, library, reading statistics and Browser session were preserved. The Documents inventory matched and temporary files were removed.
