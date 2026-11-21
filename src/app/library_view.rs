@@ -135,7 +135,7 @@ impl Reader {
     }
 
     pub(super) fn draw_library(&self, canvas: &mut Canvas) {
-        header(canvas, "Reader", "Done");
+        header(canvas, "Reader", "Exit");
         let path = if !self.library_query.is_empty() {
             format!("Search results · {}", self.library_query)
         } else {

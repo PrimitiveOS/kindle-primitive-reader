@@ -4820,7 +4820,7 @@ impl App for Reader {
             let status_caption = self.status_caption();
             reading.draw_page(
                 canvas,
-                self.selection.is_none().then_some("Done"),
+                self.selection.is_none().then_some("Exit"),
                 self.notice
                     .as_deref()
                     .or(search_caption.as_deref())
@@ -5680,7 +5680,7 @@ fn draw_locked_footer(canvas: &mut Canvas, notice: Option<&str>) {
         CAPTION,
     );
     canvas.button(UNLOCK_TOUCH, "Unlock touch", true, false);
-    canvas.button(DONE, "Done", false, false);
+    canvas.button(DONE, "Exit", false, false);
 }
 
 fn draw_toolbar_button(canvas: &mut Canvas, rect: Rect, title: &str) {

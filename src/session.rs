@@ -667,7 +667,7 @@ pub(crate) fn draw_page_picture(canvas: &mut Canvas, page: GrayImage, paint: Pag
 
 impl App for Reading {
     fn draw(&self, canvas: &mut Canvas) {
-        self.draw_page(canvas, Some("Done"), None, &[], &[], PagePaint::full(false));
+        self.draw_page(canvas, Some("Exit"), None, &[], &[], PagePaint::full(false));
     }
 
     fn input(&mut self, input: Input) -> Change {

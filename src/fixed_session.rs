@@ -1134,7 +1134,7 @@ impl FixedReading {
             canvas.button(SMALLER, "-", false, false);
             canvas.button(LARGER, "+", false, false);
         }
-        canvas.button(DONE, "Done", false, false);
+        canvas.button(DONE, "Exit", false, false);
     }
 }
 
