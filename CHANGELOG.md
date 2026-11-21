@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.14
+
+- Choose which offline dictionaries to use and their order. A book can keep its own preferred sources, including one disabled by default.
+- Find text in reflowable books with regular expressions. Navigate matches from the current passage and recover the source text across authored soft hyphens.
+- Set a word’s preferred line breaks from its selection. Rules follow the language across books and can be changed, disabled or removed.
+
 ## 0.1.13
 
 - Tap a saved highlight to read its note on the page. Choose between overlapping marks, page through long notes and return to the same location.
