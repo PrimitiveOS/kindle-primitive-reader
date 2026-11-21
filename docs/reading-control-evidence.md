@@ -117,3 +117,9 @@ On the Mac and the Oasis, 432 tests passed. Separate real-book runs held a word,
 An original EPUB and a 1,066-page PDF exercised overlapping highlights, multi-page notes and page turns outside the popup. Two original EPUBs exercised Previous and Next matches beyond the first 100 results, including Unicode source offsets. [Directional search](reflow-search.md)
 
 The full Mac chapter sweep used the actual Kindle publications. SHA-256 grouped 49 EPUB, AZW3 and MOBI file entries into 48 distinct editions. All 1,509 sections completed, with 27,643 painted pages and 27,638 exact page-anchor returns. The previously reported 130-entry device sweep remains a separate open-and-resume test.
+
+## Reader 0.1.14 on the Oasis 3
+
+The final Mac and ARM suites each passed 446 tests. Separate device tests exercised four installed dictionaries with global and per-book ordering on two original EPUBs, language-specific word breaks in a third, literal punctuation search, and regular expressions against installed KOReader. The original files and existing reading profiles were retained. [Dictionary controls](shared-dictionaries.md) · [Search comparisons](reflow-search.md)
+
+The Mac rendered 27,652 pages in 1,509 sections across 48 distinct EPUB, AZW3 and MOBI editions. The remaining 31 illustration placeholders point to unavailable resources in one damaged EPUB. All 80 referenced GIF placements in three other books rendered. Both Reader and the installed KOReader GIF inspector produced the independent reference pixels for all 82 packaged GIFs, including two out-of-spine assets. [Illustration comparison](epub-gif-illustrations.md)
