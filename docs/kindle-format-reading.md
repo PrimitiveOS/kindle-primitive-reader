@@ -28,7 +28,7 @@ A second Mac pass checked the entire import structure and selected interior page
 | Local references across the full book | All 3,639 local links resolved across 501 sections. The books contained 716 image placements, 406 distinct image resources counted per book, and 72 local CSS resources. All resources passed decoding or loading checks. Adobe XPGT page templates appeared in 61 references and were counted separately from CSS. |
 | Interior rendering | Reader rendered 195 selected pages in 83 sections. All 194 pages that supplied a source anchor mapped it back to the same page. All 707 sampled fragment destinations mapped to a page. |
 | Artwork inspection | Reader opened all 88 sampled placed illustrations in its original-image viewer. Four links pointed directly to image resources. Both visible link targets opened in the viewer. The other two links occurred inside publisher-hidden list entries. |
-| Text coverage | Layout covered all 1,142,259 non-whitespace source characters in the sampled sections. The single desktop Noto Sans test font produced 142 missing-glyph occurrences. Glyph coverage with the Kindle's additional fallback fonts needs its own measurement. |
+| Text coverage | Layout covered all 1,142,259 non-whitespace source characters in the sampled sections. The single desktop Noto Sans test font produced 142 missing-glyph occurrences. The full-section Mac check below uses the Oasis reading stack. |
 
 The aggregate verifier prints counts and numeric section indices. It accepts additional reading fonts as trailing arguments.
 
@@ -40,6 +40,10 @@ cargo run --locked --example verify_kindle_sections -- book.azw3 path/to/reading
 
 A further Mac run used the four fonts configured in Reader 0.1.7 on the Oasis. It visited **all 501 sections** of the 16 AZW3 books and one MOBI and painted their first, middle and last pages where distinct. All 8,964,009 non-whitespace characters mapped to text lines, all 716 illustration placements decoded, and all 12,487 fragment anchors resolved. Of 1,281 painted pages, 1,279 contained ink. All 1,279 page anchors supplied by these views returned to the same page. One book contained 134 missing-glyph occurrences in its publisher's private-use symbol range. Text coverage and glyph coverage are measured separately.
 
+The 134 occurrences comprise eight private-use characters in the legacy symbol-font range across 58 text nodes. The two-section AZW3 provides no stylesheet, inherited font-family or face attribute on those nodes, or identifiable embedded font record. Its intended glyph shapes depend on a private mapping absent from the publication. On the Mac, the four-font stack and the additional Code2000 firmware fallback each mapped all 80,710 non-whitespace source characters and reported the same 134 missing glyphs.
+
+Seven fresh Mac processes per configuration opened and painted this AZW3's first page. The test alternated the old and new configurations after a warm-up pair. The original stack had a median first-paint time of 633 ms and median peak resident memory of 33.03 MiB. With the new file-backed firmware stack those medians were 629 ms and 29.53 MiB. [Firmware font coverage](real-document-verification.md#oasis-firmware-font-coverage)
+
 ## Oasis 3 device verification
 
 The physical Oasis 3 batch used the installed Documents collection and a fresh scratch profile for each file. All 16 AZW3 books and both legacy MOBI files opened from the picker, changed frame after a hardware page-key input event, and restored the saved page after a Reader restart. The extra MOBI was part of the device collection.
@@ -50,6 +54,19 @@ The physical Oasis 3 batch used the installed Documents collection and a fresh s
 | Two legacy MOBI books | 1,189 ms and 2,986 ms | Up to 50,160 KiB |
 
 Elapsed times cover Reader startup through a software-rendered first frame. The device harness sent page-key events to Reader and compared saved and resumed reading pixels. Physical e-ink panel timing requires a separate measurement.
+
+### Reader 0.1.7 and 0.1.8 firmware glyph comparison
+
+The same Oasis checked the exact 0.1.7 release binary and 0.1.8 candidate from commit `d655e20`, each in a fresh process and private profile. Both builds opened the two original books from the picker, turned the page, resumed at the same reading position and checked every section. The EPUB contained 357,788 mapped characters across 12 sections. The AZW3 contained 80,710 across two. Both builds mapped every source character.
+
+| Original | Reader | Missing glyph occurrences | First software frame | Peak process RSS |
+| --- | --- | ---: | ---: | ---: |
+| 033 EPUB, standard symbols | 0.1.7 | 63 | 3,081 ms | 76,136 KiB |
+| 033 EPUB, standard symbols | 0.1.8 | 0 | 3,069 ms | 72,748 KiB |
+| 002 AZW3, private-use symbols | 0.1.7 | 134 | 2,697 ms | 31,268 KiB |
+| 002 AZW3, private-use symbols | 0.1.8 | 134 | 2,865 ms | 27,736 KiB |
+
+The 130-document inventory was running throughout these four measurements. Each row is one offscreen run. First-frame time covers opening the library and painting the selected document. The kernel's peak resident memory measurement includes the restart and spine check. The added fallback supplied the EPUB's standard symbols. The AZW3's missing private glyphs remain visible in the diagnostic count. Reader uses font files already installed by the Kindle firmware. The package carries no copies of them. [On-device comparison script](../scripts/compare-kindle-readers.sh)
 
 ## How KOReader opens these formats
 
