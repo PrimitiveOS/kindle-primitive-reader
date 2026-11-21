@@ -76,6 +76,19 @@ struct EpubSpreads {
     right_to_left: bool,
 }
 
+pub(crate) enum FixedJump {
+    /// Upright source points for PDF XYZ links and scan viewport history.
+    LinkPoint(Point),
+    /// Source word rectangles in reading order, normalized to the upright page.
+    Regions(Vec<PdfTextRect>),
+}
+
+impl FixedJump {
+    pub(crate) fn regions(bounds: &[PdfTextRect]) -> Option<Self> {
+        (!bounds.is_empty()).then(|| Self::Regions(bounds.to_vec()))
+    }
+}
+
 enum Fit {
     Page,
     Width,
@@ -910,11 +923,9 @@ impl FixedReading {
             .map(|p| (p.size, p.request))
     }
 
-    /// The upper-left viewport position in upright PDF coordinates, including any page margin.
+    /// The upper-left viewport position in upright scan coordinates, including any page margin.
     pub(crate) fn history_point(&self) -> Option<Point> {
-        if !matches!(self.source, FixedDocument::Pdf(_)) {
-            return None;
-        }
+        ScanPage::from_document(&self.source)?;
         let visible = self.visible.iter().find(|entry| entry.index == self.page)?;
         let transform = visible.request.page_to_viewport(visible.size).ok()? * visible.correction;
         let point = transform.inverse() * Point::ORIGIN;
@@ -922,31 +933,65 @@ impl FixedReading {
     }
 
     pub(crate) fn jump(&mut self, page: usize) -> Result<()> {
-        self.jump_to_point(page, None)
+        self.jump_to(page, None)
     }
 
-    /// Position a local XYZ link in the current viewport, retaining fit, zoom and crop.
-    pub(crate) fn jump_to_point(&mut self, page: usize, point: Option<Point>) -> Result<()> {
+    pub(crate) fn jump_to(&mut self, page: usize, target: Option<&FixedJump>) -> Result<()> {
+        if self.page == page
+            && let Some(FixedJump::Regions(regions)) = target
+            && regions.iter().all(|&region| {
+                self.projected_region(page, region)
+                    .is_some_and(|(quad, visible)| quad.bounds() == visible)
+            })
+        {
+            return Ok(());
+        }
         let mut view = View {
             offset_x: 0.0,
             offset_y: 0.0,
             ..self.view
         };
-        if let (Some(point), FixedDocument::Pdf(pdf)) = (point, &self.source) {
-            let size = pdf.page_size(page)?;
+        if let (Some(target), Some(scan)) = (target, ScanPage::from_document(&self.source)) {
+            let size = scan.page_size(page)?;
+            let metrics = view_metrics(size, &view);
             let mut request = viewport(size, &mut view);
             if self.is_continuous() {
-                // Continuous offset zero places the target page at the top of the screen.
-                request.y = -view_metrics(size, &view).top;
+                request.y = -metrics.top;
             }
-            let correction =
-                ScanPage::Pdf(pdf).correction(page, size, &view, &mut self.deskew_cache)?;
-            let projected = request.page_to_viewport(size)? * correction * point;
-            view.offset_x = -projected.x as f32;
-            view.offset_y = -projected.y as f32;
+            let correction = scan.correction(page, size, &view, &mut self.deskew_cache)?;
+            let transform = request.page_to_viewport(size)? * correction;
+            let offset = match target {
+                FixedJump::LinkPoint(point) => Point::ORIGIN - transform * *point,
+                FixedJump::Regions(bounds) => {
+                    let crop = source_rect(size, view.crop.unwrap_or(FULL_PAGE));
+                    let mut visible = bounds.iter().filter_map(|&r| {
+                        let clipped = source_rect(size, r).intersect(crop);
+                        (!clipped.is_zero_area()).then(|| transform.transform_rect_bbox(clipped))
+                    });
+                    let first = visible.next().ok_or(
+                        "This passage is outside the current crop. Reset the crop to view it.",
+                    )?;
+                    let all = visible.fold(first, |all, rect| all.union(rect));
+                    // A long or multi-column passage can exceed the viewport on one axis.
+                    let center = Point::new(
+                        if all.width() <= f64::from(WIDTH) {
+                            all.center().x
+                        } else {
+                            first.center().x
+                        },
+                        if all.height() <= f64::from(PAGE_HEIGHT) {
+                            all.center().y
+                        } else {
+                            first.center().y
+                        },
+                    );
+                    Point::new(f64::from(WIDTH) * 0.5, f64::from(PAGE_HEIGHT) * 0.5) - center
+                }
+            };
+            view.offset_x = offset.x as f32;
+            view.offset_y = offset.y as f32;
             if self.is_continuous() {
-                // An authored point outside the user's crop still belongs to this page.
-                let last_pixel = (view_metrics(size, &view).height.round() - 1.0).max(0.0);
+                let last_pixel = (metrics.height.round() - 1.0).max(0.0);
                 view.offset_y = view.offset_y.clamp(-last_pixel, 0.0);
             }
         } else if view.width_fit && !self.is_continuous() {
@@ -2051,6 +2096,77 @@ mod tests {
     }
 
     #[test]
+    fn passage_navigation_keeps_visible_words_and_reveals_cropped_rotated_regions() {
+        let first = PdfTextRect {
+            x0: 0.10,
+            y0: 0.20,
+            x1: 0.15,
+            y1: 0.25,
+        };
+        let second = PdfTextRect {
+            x0: 0.16,
+            y0: 0.20,
+            x1: 0.21,
+            y1: 0.25,
+        };
+        let crop = PdfTextRect {
+            x0: 0.08,
+            y0: 0.10,
+            x1: 0.93,
+            y1: 0.90,
+        };
+        let target = FixedJump::regions(&[first, second]).unwrap();
+        for (continuous, turns) in [(false, 0), (false, 1), (true, 0), (true, 3)] {
+            let view = View {
+                zoom: 4,
+                continuous,
+                width_fit: continuous,
+                turns,
+                crop: Some(crop),
+                ..View::default()
+            };
+            let mut reader =
+                FixedReading::with_source(FixedDocument::Pdf(striped_pdf(4)), 0, view).unwrap();
+            reader.jump_to(1, Some(&target)).unwrap();
+            assert_eq!(reader.page(), 1);
+            assert_eq!(reader.preferences().crop, Some(crop));
+            assert_eq!(reader.preferences().zoom, 4);
+            for region in [first, second] {
+                let (quad, clipped) = reader.projected_region(1, region).unwrap();
+                assert_eq!(quad.bounds(), clipped);
+            }
+            let before = reader.preferences();
+            reader.jump_to(1, Some(&target)).unwrap();
+            assert_eq!(reader.preferences(), before);
+            let outside = PdfTextRect {
+                x0: 0.0,
+                y0: 0.02,
+                x1: 0.03,
+                y1: 0.04,
+            };
+            assert!(
+                reader
+                    .jump_to(2, FixedJump::regions(&[outside]).as_ref())
+                    .is_err()
+            );
+            assert_eq!(reader.page(), 1);
+            assert_eq!(reader.preferences(), before);
+            // The first word remains the anchor when the full passage is wider than the viewport.
+            let distant = PdfTextRect {
+                x0: 0.83,
+                y0: 0.75,
+                x1: 0.90,
+                y1: 0.84,
+            };
+            reader
+                .jump_to(2, FixedJump::regions(&[first, distant]).as_ref())
+                .unwrap();
+            let (quad, clipped) = reader.projected_region(2, first).unwrap();
+            assert_eq!(quad.bounds(), clipped);
+        }
+    }
+
+    #[test]
     fn following_an_xyz_link_positions_the_painted_target_in_paged_and_scrolling_views() {
         let content = "0 g 174 586 12 12 re f";
         let objects = [
@@ -2084,7 +2200,9 @@ mod tests {
             };
             let mut reader =
                 FixedReading::with_source(FixedDocument::Pdf(pdf), 0, preferences).unwrap();
-            reader.jump_to_point(1, link.destination_point).unwrap();
+            reader
+                .jump_to(1, link.destination_point.map(FixedJump::LinkPoint).as_ref())
+                .unwrap();
             assert_eq!(reader.page(), 1);
             assert_eq!(reader.preferences().zoom, 4);
             assert_eq!(reader.preferences().crop, Some(crop));

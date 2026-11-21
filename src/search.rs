@@ -316,7 +316,7 @@ pub(crate) struct PdfSearch {
 pub(crate) struct PdfSearchHit {
     pub(crate) page: usize,
     pub(crate) snippet: String,
-    pub(crate) region: Option<PdfTextRect>,
+    pub(crate) bounds: Vec<PdfTextRect>,
 }
 
 #[cfg(feature = "kindle")]
@@ -352,21 +352,16 @@ impl PdfSearch {
             .matches(&text.text, limit)
             .into_iter()
             .map(|range| {
-                let region = text
+                let bounds = text
                     .words
                     .iter()
                     .filter(|word| word.bytes.start < range.end && word.bytes.end > range.start)
                     .map(|word| word.bounds)
-                    .reduce(|a, b| PdfTextRect {
-                        x0: a.x0.min(b.x0),
-                        y0: a.y0.min(b.y0),
-                        x1: a.x1.max(b.x1),
-                        y1: a.y1.max(b.y1),
-                    });
+                    .collect();
                 PdfSearchHit {
                     page,
                     snippet: snippet(&text.text, range).0,
-                    region,
+                    bounds,
                 }
             })
             .collect()

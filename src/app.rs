@@ -33,7 +33,7 @@ use crate::annotation_export;
 use crate::dictionary::{self, InstalledDictionary};
 use crate::epub::{Book, Destination};
 use crate::fixed::{PdfError, PdfLinkTarget};
-use crate::fixed_session::{FixedReading, PdfSelection};
+use crate::fixed_session::{FixedJump, FixedReading, PdfSelection};
 use crate::fixed_text::PdfTextRect;
 use crate::generated_contents::{GeneratedContents, OutlineTarget};
 use crate::koreader_import::{self, ExportEntry, QuoteMatch, QuoteResolver};
@@ -395,23 +395,17 @@ struct ActiveBook {
     reading: Reading,
 }
 
-#[derive(Clone, Copy)]
-enum FixedJump {
-    Region(PdfTextRect),
-    LinkPoint(hayro::kurbo::Point),
-}
-
 #[derive(Clone, Debug, PartialEq)]
 struct HistoryLocation {
     position: ReadingPosition,
-    pdf_point: Option<hayro::kurbo::Point>,
+    scan_point: Option<hayro::kurbo::Point>,
 }
 
 impl From<ReadingPosition> for HistoryLocation {
     fn from(position: ReadingPosition) -> Self {
         Self {
             position,
-            pdf_point: None,
+            scan_point: None,
         }
     }
 }
@@ -513,7 +507,7 @@ pub struct Reader {
     search_result: Option<usize>,
     pdf_search: Option<PdfSearch>,
     pdf_hits: Vec<PdfSearchHit>,
-    pdf_result_region: Option<(usize, PdfTextRect)>,
+    pdf_result_regions: Vec<(usize, PdfTextRect)>,
     pdf_selection: Option<PdfSelection>,
     hits: Vec<SearchHit>,
     result_selection: Option<TextSelection>,
@@ -629,7 +623,7 @@ impl Reader {
             search_result: None,
             pdf_search: None,
             pdf_hits: Vec::new(),
-            pdf_result_region: None,
+            pdf_result_regions: Vec::new(),
             pdf_selection: None,
             hits: Vec::new(),
             result_selection: None,
@@ -748,7 +742,7 @@ impl Reader {
                 reading,
                 password_supplied: password.is_some_and(|value| !value.is_empty()),
             });
-            self.pdf_result_region = None;
+            self.pdf_result_regions.clear();
             self.pdf_selection = None;
             self.back.clear();
             self.forward.clear();
@@ -2144,9 +2138,9 @@ impl Reader {
                     .pdf_hits
                     .get(index)
                     .ok_or("That result is unavailable")?;
-                let (page, region) = (hit.page, hit.region);
+                let (page, target) = (hit.page, FixedJump::regions(&hit.bounds));
                 let first_result = self.search_result.is_none();
-                let previous = self.jump_fixed(page, region.map(FixedJump::Region))?;
+                let previous = self.jump_fixed(page, target)?;
                 if first_result {
                     self.push_history(previous);
                 }
@@ -2159,10 +2153,7 @@ impl Reader {
                     .state(fixed.id)
                     .and_then(|state| state.pdf_highlights.get(index))
                     .ok_or("That highlight is unavailable")?;
-                self.follow_fixed(
-                    mark.page,
-                    mark.bounds.first().copied().map(FixedJump::Region),
-                )?;
+                self.follow_fixed(mark.page, FixedJump::regions(&mark.bounds))?;
             }
             Action::Highlight(index) => {
                 let active = self.active.as_ref().ok_or("No open book")?;
@@ -2623,10 +2614,10 @@ impl Reader {
     }
 
     fn follow_fixed(&mut self, page: usize, target: Option<FixedJump>) -> Result<()> {
+        let positioned = target.is_some();
         let previous = self.jump_fixed(page, target)?;
         if page != previous.position.page
-            || matches!(target, Some(FixedJump::LinkPoint(_)))
-                && self.current_history_location().as_ref() != Some(&previous)
+            || positioned && self.current_history_location().as_ref() != Some(&previous)
         {
             self.push_history(previous);
         }
@@ -2637,17 +2628,16 @@ impl Reader {
         let fixed = self.fixed.as_mut().ok_or("No open document")?;
         let previous = HistoryLocation {
             position: fixed_position(&fixed.reading),
-            pdf_point: fixed.reading.history_point(),
+            scan_point: fixed.reading.history_point(),
         };
-        let (point, region) = match target {
-            Some(FixedJump::LinkPoint(point)) => (Some(point), None),
-            Some(FixedJump::Region(bounds)) => (None, Some((page, bounds))),
-            None => (None, None),
-        };
-        fixed.reading.jump_to_point(page, point)?;
+        fixed.reading.jump_to(page, target.as_ref())?;
         self.search_result = None;
         self.pdf_selection = None;
-        self.pdf_result_region = region;
+        self.pdf_result_regions.clear();
+        if let Some(FixedJump::Regions(bounds)) = target {
+            self.pdf_result_regions
+                .extend(bounds.into_iter().map(|rect| (page, rect)));
+        }
         self.show(Screen::Fixed);
         self.record_position();
         Ok(previous)
@@ -2672,7 +2662,7 @@ impl Reader {
     fn current_history_location(&self) -> Option<HistoryLocation> {
         Some(HistoryLocation {
             position: self.current_position()?,
-            pdf_point: self
+            scan_point: self
                 .fixed
                 .as_ref()
                 .and_then(|book| book.reading.history_point()),
@@ -2728,7 +2718,7 @@ impl Reader {
         if self.fixed.is_some() {
             self.jump_fixed(
                 target.position.page,
-                target.pdf_point.map(FixedJump::LinkPoint),
+                target.scan_point.map(FixedJump::LinkPoint),
             )?;
         } else {
             self.restore_position(&target.position)?;
@@ -3590,7 +3580,7 @@ impl Reader {
                 Ok(WordAtTouch::Ready(Some(selection))) => {
                     self.cancel_ocr_selection();
                     self.pdf_selection = Some(selection);
-                    self.pdf_result_region = None;
+                    self.pdf_result_regions.clear();
                     self.notice = None;
                     Change::Partial
                 }
@@ -3690,7 +3680,7 @@ impl Reader {
                 if changed || continuous {
                     self.search_result = None;
                     self.pdf_selection = None;
-                    self.pdf_result_region = None;
+                    self.pdf_result_regions.clear();
                 }
                 self.record_position();
                 self.reading_update(changed && !continuous)
@@ -3975,9 +3965,15 @@ impl Reader {
         let requested_word = active.selection_point.filter(|_| self.screen == Screen::Fixed && fixed.reading.visible_pages().any(|p| p == page));
         fixed.reading.remember_ocr(page, &active.language, text)?;
         if let Some(point) = requested_word {
-            self.pdf_selection = fixed.reading.cached_ocr(page).and_then(|words| PdfSelection::at(page, point, words));
-            self.pdf_result_region = None;
-            self.notice = self.pdf_selection.is_none().then(|| "No recognized word at this point".to_owned());
+            self.pdf_selection = fixed
+                .reading
+                .cached_ocr(page)
+                .and_then(|words| PdfSelection::at(page, point, words));
+            self.pdf_result_regions.clear();
+            self.notice = self
+                .pdf_selection
+                .is_none()
+                .then(|| "No recognized word at this point".to_owned());
         } else {
             self.notice = Some(format!("Text recognized on page {}", page + 1));
         }
@@ -4728,7 +4724,7 @@ impl App for Reader {
                 .filter(|mark| fixed.reading.visible_pages().any(|page| page == mark.page))
                 .flat_map(|mark| mark.bounds.iter().map(|&bounds| (mark.page, bounds)))
                 .collect();
-            marks.extend(self.pdf_result_region);
+            marks.extend_from_slice(&self.pdf_result_regions);
             let selection: Vec<_> = self
                 .pdf_selection
                 .as_ref()
@@ -8544,6 +8540,86 @@ mod tests {
     }
 
     #[test]
+    fn search_and_saved_highlights_reveal_the_same_words_with_location_history() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Signal chart.pdf");
+        let content = concat!(
+            "BT /F1 14 Tf 30 775 Td (Harbor light) Tj ET ",
+            "BT /F1 16 Tf 410 180 Td (East pier) Tj ET ",
+            "BT /F1 11 Tf 410 151 Td (The channel turns north) Tj 0 -15 Td (past the outer pier.) Tj ET ",
+            "BT /F1 14 Tf 430 72 Td (Harbor light) Tj ET ",
+            "BT /F1 10 Tf 410 49 Td (Two flashes every ten seconds.) Tj ET"
+        );
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+            "<< /Type /Pages /Count 2 /Kids [3 0 R 4 0 R] /MediaBox [0 0 600 800] >>".to_owned(),
+            "<< /Type /Page /Parent 2 0 R >>".to_owned(),
+            "<< /Type /Page /Parent 2 0 R /Contents 5 0 R /Resources << /Font << /F1 6 0 R >> >> >>".to_owned(),
+            format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned(),
+        ];
+        fs::write(&path, crate::fixed::tests::pdf_objects(&objects)).unwrap();
+        let mut app = fixture.app();
+        app.open_path(&path).unwrap();
+        app.fixed.as_mut().unwrap().reading.set_zoom(4).unwrap();
+        app.start_document_search("Harbor light").unwrap();
+        while app
+            .pdf_search
+            .as_ref()
+            .is_some_and(|search| search.next_page < 2)
+        {
+            app.step_pdf_search(Instant::now()).unwrap();
+        }
+        assert_eq!(app.pdf_hits.len(), 2);
+        app.activate(Action::PdfSearchHit(1)).unwrap();
+        let hit = app.pdf_hits[1].bounds.clone();
+        assert_eq!(hit.len(), 2);
+        assert_eq!(app.pdf_result_regions, vec![(1, hit[0]), (1, hit[1])]);
+        let fixed = app.fixed.as_ref().unwrap();
+        let bottom = fixed.reading.preferences();
+        assert_eq!(fixed.reading.page(), 1);
+        assert!(
+            hit.iter()
+                .all(|&r| fixed.reading.visible_rectangle(1, r).is_some())
+        );
+        capture_test_screen(
+            &app,
+            &[crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+            "READER_PDF_SEARCH_TARGET",
+            false,
+        );
+        let top = app.pdf_hits[0].bounds.clone();
+        app.library
+            .remember(&fixed.entry, fixed.id, "Signal chart")
+            .add_pdf_highlight(PdfHighlight {
+                page: 1,
+                bounds: top.clone(),
+                text: "Harbor light".into(),
+                note: None,
+            })
+            .unwrap();
+        app.activate(Action::PdfHighlight(0)).unwrap();
+        let fixed = app.fixed.as_ref().unwrap();
+        let saved = fixed.reading.preferences();
+        assert_ne!(bottom, saved);
+        assert!(
+            top.iter()
+                .all(|&r| fixed.reading.visible_rectangle(1, r).is_some())
+        );
+        app.activate(Action::ReturnToLocation).unwrap();
+        assert_eq!(app.fixed.as_ref().unwrap().reading.preferences(), bottom);
+        app.next_location().unwrap();
+        assert_eq!(app.fixed.as_ref().unwrap().reading.preferences(), saved);
+        app.save().unwrap();
+        let mut reopened = fixture.app();
+        reopened.open_path(&path).unwrap();
+        assert_eq!(
+            reopened.fixed.as_ref().unwrap().reading.preferences(),
+            saved
+        );
+    }
+
+    #[test]
     fn tapping_a_zoomed_pdf_link_restores_its_destination_on_forward_and_reopen() {
         let fixture = Fixture::new();
         let path = fixture.root.join("Harbor.pdf");
@@ -8797,7 +8873,11 @@ mod tests {
         assert_eq!(tap_selection_action(&mut app, selection_popup::SelectionAction::Find), Change::Partial);
         assert_eq!(app.screen, Screen::Matches);
         app.step_search(Instant::now()).unwrap();
-        assert!(app.pdf_hits.iter().any(|hit| hit.page == 0 && hit.region.is_some()));
+        assert!(
+            app.pdf_hits
+                .iter()
+                .any(|hit| hit.page == 0 && !hit.bounds.is_empty())
+        );
         assert_eq!(app.lookup_history.searches[0].text, expected);
         assert!(app.pdf_selection.is_none());
     }

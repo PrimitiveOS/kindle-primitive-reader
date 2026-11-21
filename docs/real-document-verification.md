@@ -278,3 +278,17 @@ The candidate’s largest error on either axis was below 0.00004 pixels in paged
 Reader 0.1.9 reopened the stored 0.1.8 anchors for eleven original EPUB entries. On the Mac the test restored a painted page at two widths, with automatic and authored word breaks. All 33 restorations kept the publication, chapter and source revision identifiers. A change in displayed page number is expected when line breaks or the available width change.
 
 With the 0.1.9 default layout the same eleven entries produced 9,436 pages across 344 spine positions. All 9,413,128 source characters mapped to layout, 2,163 available illustrations rendered, and all 9,433 available page anchors returned to their page. The two blank leaves and the 31 missing illustrations have the same source explanation recorded above.
+
+## Finding text and saved highlights at high zoom
+
+The Mac verifier opened two original PDFs with 1,066 and 41 pages. For each PDF, an independent decoder identified six words near the edges and center of several pages. The check selected each word through Reader’s search results, then followed its saved highlight after closing and reopening an isolated reading profile.
+
+| Reading mode | Search matches visible before | Search matches visible after | Reopened highlights visible before | Reopened highlights visible after |
+| --- | ---: | ---: | ---: | ---: |
+| Fit page | 12/12 | 12/12 | 12/12 | 12/12 |
+| Paged at 300% | 2/12 | 12/12 | 2/12 | 12/12 |
+| Continuous at 300% | 2/12 | 12/12 | 2/12 | 12/12 |
+
+Reader retains the current zoom and brings the matched words into view. A multi-line result marks the individual words. For a passage larger than the screen, the first word provides the starting position. A saved highlight can be followed and retraced even when both positions are on the same page. Authored tests cover a manual crop, quarter-turn rotations, a passage outside the crop, back and forward navigation, and reopening. [Oasis-size simulator showing a search match at 300%](screenshots/pdf-search-target.png)
+
+KOReader forwards a saved highlight’s position to its page controller. Its PDF search highlights matching boxes and optionally fits the result page to the screen. [KOReader bookmark navigation](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerbookmark.lua#L496-L512) · [KOReader PDF search](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readersearch.lua#L403-L428)
