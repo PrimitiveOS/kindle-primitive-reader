@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.10
+
+- Open Book map to see a fixed document's pages, chapters, bookmarks and highlights. Browse a page group with the Oasis buttons or tap a page to read it. The map and footer follow your choice of publisher or custom chapters.
+- Search bookmarks, highlighted passages and notes together. Filter by annotation type or match case. Open a matching passage from either reading bar.
+- Respect publication language in supported Kindle books and British English in individual language-tagged passages. Search, selections and saved reading positions use the original book text.
+
 ## 0.1.9
 
 - Open Contents at the section you are reading from either reading bar. Return to the same passage after checking your place in a long outline.
