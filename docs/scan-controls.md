@@ -55,7 +55,7 @@ An Oasis 3 rendered the first page of a 96,319,018-byte, 1,041-page PDF. The cov
 
 The complete first-frame PNGs matched byte for byte in both orders. An independent [print-chart fixture](../tests/fixtures/cmyk-print-chart.pdf) also produced identical full PNGs on the Oasis, with first renders of 0.628 s and 0.619 s. Both documents opened and resumed in both builds. The desktop simulator separately compared all 2,029,984 grayscale pixels in each document viewport and found zero differences on both documents.
 
-KOReader’s installed MuPDF engine rendered the same cover directly in grayscale in 8.418 s at 1264 × 1606. That measurement excludes the surrounding application and storage-open time. Reader’s first-page render still takes about 15 s longer on this cover. Measurements here apply to this device and these files.
+KOReader’s installed MuPDF engine opened the same file and rendered its cover directly in grayscale at 1264 × 1606 in 8.418 s. Opening took 0.652 s, leaving 7.766 s for first-page painting. Reader’s first-page render took about 15.6 s longer on this cover. Measurements here apply to this device and these files. [Reference timing boundaries](../scripts/koreader-document-check.lua)
 
 The image decoder can also reuse the CMYK image allocation for its RGB output.
 It converts up to 8,192 pixels at a time using a 24 KiB scratch buffer, then
@@ -66,3 +66,11 @@ allocate working memory. In the Mac verifier, the original cover page and its
 resources used 190,240 KiB peak with Reader 0.1.6 and 153,120 KiB with the
 cache and in-place conversion. The two desktop viewport captures were pixel-identical.
 [Color conversion and tests](../vendor/hayro-interpret/src/color/device_cmyk/repeated_colors.rs)
+
+With the original 96,319,018-byte file on the Oasis, in-place conversion reduced
+peak resident memory from 243,480 KiB with the cache alone to **195,300 KiB**,
+a reduction of 48,180 KiB (47.1 MiB). Reader 0.1.6 used 241,016 KiB in the
+same test. The compacted version spent 23.451 s rendering the cover and 34.350 s
+opening to the first frame with a cold file read. The print chart took 0.481 s
+to render and reached 31,216 KiB peak. Both complete PNG files again matched
+Reader 0.1.6 byte for byte.
