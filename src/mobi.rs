@@ -54,6 +54,7 @@ const XHTML_END: &str = "</body></html>";
 
 #[derive(Debug)]
 pub struct MobiDocument {
+    pub language: Option<parley::Language>,
     pub title: Option<String>,
     pub author: Option<String>,
     pub xhtml: String,
@@ -119,8 +120,14 @@ struct MobiHeader {
     encoding: Encoding,
     extra_data: u16,
     is_plain_text: bool,
-    title: Option<String>,
-    author: Option<String>,
+    labels: Labels,
+}
+
+#[derive(Default)]
+pub(crate) struct Labels {
+    pub title: Option<String>,
+    pub author: Option<String>,
+    pub language: Option<parley::Language>,
 }
 
 /// Decode the first, legacy text section of a database. All returned content is local.
@@ -159,14 +166,11 @@ pub fn decode(bytes: &[u8]) -> Result<MobiDocument, MobiError> {
         html_xhtml(text)?
     };
 
-    let fallback_title = || read_label(&bytes[..32], encoding);
-    let (title, author) = match mobi {
-        Some(mobi) => (mobi.title.or_else(fallback_title), mobi.author),
-        None => (fallback_title(), None),
-    };
+    let labels = mobi.map(|header| header.labels).unwrap_or_default();
     Ok(MobiDocument {
-        title,
-        author,
+        title: labels.title.or_else(|| read_label(&bytes[..32], encoding)),
+        author: labels.author,
+        language: labels.language,
         xhtml,
     })
 }
@@ -262,7 +266,6 @@ fn mobi_header(record: &[u8]) -> Result<MobiHeader, MobiError> {
         65001 => Encoding::Utf8,
         other => return Err(MobiError::UnsupportedEncoding(other)),
     };
-    let (title, author) = mobi_labels(record, header, encoding);
     Ok(MobiHeader {
         encoding,
         extra_data: if version >= 5 {
@@ -271,16 +274,11 @@ fn mobi_header(record: &[u8]) -> Result<MobiHeader, MobiError> {
             0
         },
         is_plain_text: matches!(kind, 3 | 517),
-        title,
-        author,
+        labels: mobi_labels(record, header, encoding),
     })
 }
 
-fn mobi_labels(
-    record: &[u8],
-    header: &[u8],
-    encoding: Encoding,
-) -> (Option<String>, Option<String>) {
+fn mobi_labels(record: &[u8], header: &[u8], encoding: Encoding) -> Labels {
     let end = header.len();
     let full_name = u32_at(header, 84)
         .ok()
@@ -293,33 +291,29 @@ fn mobi_labels(
             }
             read_label(record.get(offset..offset.checked_add(length)?)?, encoding)
         });
-    let (updated_title, author) = exth_labels(&record[end..], encoding);
-    (updated_title.or(full_name), author)
+    let mut labels = exth_labels(&record[end..], encoding);
+    labels.title = labels.title.or(full_name);
+    labels
 }
 
-pub(crate) fn kf8_labels(
-    pdb: &[u8],
-    record: &[u8],
-    header: &[u8],
-) -> (Option<String>, Option<String>) {
-    let (title, author) = mobi_labels(record, header, Encoding::Utf8);
-    (
-        title.or_else(|| read_label(&pdb[..32], Encoding::Utf8)),
-        author,
-    )
+pub(crate) fn kf8_labels(pdb: &[u8], record: &[u8], header: &[u8]) -> Labels {
+    let mut labels = mobi_labels(record, header, Encoding::Utf8);
+    labels.title = labels
+        .title
+        .or_else(|| read_label(&pdb[..32], Encoding::Utf8));
+    labels
 }
 
-fn exth_labels(bytes: &[u8], encoding: Encoding) -> (Option<String>, Option<String>) {
-    let mut title = None;
-    let mut author = None;
+fn exth_labels(bytes: &[u8], encoding: Encoding) -> Labels {
+    let mut labels = Labels::default();
     if bytes.get(..4) != Some(b"EXTH") {
-        return (title, author);
+        return labels;
     }
     let Some(end) = u32_at(bytes, 4)
         .ok()
         .filter(|size| (12..=bytes.len() as u32).contains(size))
     else {
-        return (title, author);
+        return labels;
     };
     let count = u32_at(bytes, 8).unwrap_or(0) as usize;
     let mut bytes = &bytes[12..end as usize];
@@ -333,16 +327,23 @@ fn exth_labels(bytes: &[u8], encoding: Encoding) -> (Option<String>, Option<Stri
         let length = length as usize;
         let value = &bytes[8..length];
         match kind {
-            100 if author.is_none() => author = read_label(value, encoding),
-            503 if title.is_none() => title = read_label(value, encoding),
+            100 if labels.author.is_none() => labels.author = read_label(value, encoding),
+            503 if labels.title.is_none() => labels.title = read_label(value, encoding),
+            524 if labels.language.is_none()
+                && value.len() <= crate::source::MAX_LANGUAGE_BYTES =>
+            {
+                labels.language = std::str::from_utf8(value)
+                    .ok()
+                    .and_then(|tag| parley::Language::parse(tag.trim()).ok());
+            }
             _ => {}
         }
         bytes = &bytes[length..];
-        if title.is_some() && author.is_some() {
+        if labels.title.is_some() && labels.author.is_some() && labels.language.is_some() {
             break;
         }
     }
-    (title, author)
+    labels
 }
 
 fn without_trailers(mut bytes: &[u8], flags: u16) -> Result<&[u8], MobiError> {
@@ -755,6 +756,21 @@ fn safe_tag(name: &str) -> Option<&'static str> {
 }
 
 #[cfg(test)]
+pub(crate) fn test_exth(entries: &[(u32, &[u8])]) -> Vec<u8> {
+    let mut bytes = b"EXTH".to_vec();
+    bytes.extend_from_slice(&[0; 4]);
+    bytes.extend_from_slice(&(entries.len() as u32).to_be_bytes());
+    for &(kind, value) in entries {
+        bytes.extend_from_slice(&kind.to_be_bytes());
+        bytes.extend_from_slice(&((8 + value.len()) as u32).to_be_bytes());
+        bytes.extend_from_slice(value);
+    }
+    let length = bytes.len() as u32;
+    bytes[4..8].copy_from_slice(&length.to_be_bytes());
+    bytes
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -806,6 +822,7 @@ mod tests {
         text.push_str(&"<p>The paper is ready. </p>".repeat(26_100));
         text.push_str("<p id='finish'>Finish</p></body></html>");
         let mut header = mobi_header_for_test(2, text.len(), 65001, 6, 0);
+        header.extend(test_exth(&[(524, b"en-US")]));
         let chunks: Vec<_> = text.as_bytes().chunks(4096).collect();
         header[8..10].copy_from_slice(&(chunks.len() as u16).to_be_bytes());
         // These ASCII bytes are literal tokens in PalmDOC compression.
@@ -819,6 +836,7 @@ mod tests {
         let mut book = crate::epub::Book::open(&path).unwrap();
         std::fs::remove_file(path).unwrap();
         assert!(book.chapters.len() > 4);
+        assert_eq!(book.language, parley::Language::parse("en-US").ok());
         let sections = book.chapters.len();
         let mut paragraphs = 0;
         for i in 0..sections {
@@ -855,6 +873,40 @@ mod tests {
     }
 
     #[test]
+    fn reads_first_valid_bounded_language_and_leaves_the_normalized_markup_intact() {
+        let html = b"<body><p>hyphenation <span lang='vi'>hyphenation</span></p></body>";
+        let base = mobi_header_for_test(1, html.len(), 65001, 6, 0);
+        let old = decode(&pdb(b"BOOKMOBI", &[&base, html])).unwrap();
+        assert!(old.language.is_none());
+        let mut header = base;
+        let oversized = vec![b'a'; crate::source::MAX_LANGUAGE_BYTES + 1];
+        header.extend(test_exth(&[
+            (524, b"invalid lang"),
+            (524, &oversized),
+            (524, &[0xff]),
+            (524, b"EN-us"),
+            (524, b"en-GB"),
+        ]));
+        let bytes = pdb(b"BOOKMOBI", &[&header, html]);
+        let tagged = decode(&bytes).unwrap();
+        assert_eq!(old.xhtml, tagged.xhtml);
+        let path =
+            std::env::temp_dir().join(format!("reader-language-small-{}.mobi", std::process::id()));
+        std::fs::write(&path, bytes).unwrap();
+        let mut book = crate::epub::Book::open(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(book.language, parley::Language::parse("en-US").ok());
+        let xml = book.chapter(0).unwrap();
+        let source = crate::source::Source::parse_with_language(&xml, book.language).unwrap();
+        let runs = &source.blocks[0].styled_text;
+        assert_eq!(runs[0].language, parley::Language::parse("en-US").ok());
+        assert_eq!(
+            runs.last().unwrap().language,
+            parley::Language::parse("vi").ok()
+        );
+    }
+
+    #[test]
     fn expands_overlapping_palmdoc_tokens_within_the_current_record() {
         let record = [b'A', 0x80, 0x0b, 0xc2, 1, 0xe9];
         let header = text_header(2, 11, 2);
@@ -881,20 +933,17 @@ mod tests {
     fn normalizes_legacy_html_and_reads_exth_metadata_with_record_trailers() {
         let html = b"<HEAD><TITLE>Ignore this</TITLE></HEAD><H1>Coast &amp; harbor</H1><p>First<p>Second <a id=\"night\" href='#night'>at night</a><script>discard &amp; instructions</script><a href='https://example.invalid/'>external</a><mbp:pagebreak />";
         let mut header = mobi_header_for_test(1, html.len(), 65001, 6, 3);
-        let mut exth = b"EXTH\0\0\0\0\0\0\0\x02".to_vec();
-        for (kind, value) in [(100u32, "A. Reader"), (503, "Harbor Notes")] {
-            exth.extend(kind.to_be_bytes());
-            exth.extend(((value.len() + 8) as u32).to_be_bytes());
-            exth.extend(value.as_bytes());
-        }
-        let len = exth.len() as u32;
-        exth[4..8].copy_from_slice(&len.to_be_bytes());
-        header.extend(exth);
+        header.extend(test_exth(&[
+            (100, b"A. Reader"),
+            (503, b"Harbor Notes"),
+            (524, b"vi"),
+        ]));
         let mut record = html.to_vec();
         record.extend([0xc3, 1, 0xfa, 0x82]);
         let marked = decode(&pdb(b"BOOKMOBI", &[&header, &record, b"BOUNDARY"])).unwrap();
         assert_eq!(marked.title.as_deref(), Some("Harbor Notes"));
         assert_eq!(marked.author.as_deref(), Some("A. Reader"));
+        assert_eq!(marked.language, parley::Language::parse("vi").ok());
         assert!(
             marked
                 .xhtml

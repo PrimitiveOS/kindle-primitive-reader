@@ -8,6 +8,7 @@ The [manifest](manifest.json) records the expected reading order, locations, lin
 | `field-notes-epub3.epub` | EPUB 3 navigation, semantic footnote and back link, embedded font, and the same reading passages as the EPUB 2 book |
 | `night-landing.epub` | A short and a multi-page endnote in a separate chapter, two inline references, a link back to the passage and an ordinary heading link. Each note has original sample text. |
 | `english-hyphenation.epub` | Compare Automatic and Authored modes on identical English text. The language comes from the OPF. Check both fragments of a split word and restore its source anchor. [Simulator comparison](../../docs/english-hyphenation.md) |
+| `english-regions.xhtml` | Read the same text with explicit US and British declarations. Compare the different line endings in the [simulated page](../../docs/screenshots/english-regions.png). |
 | `long-chapter.epub` | Continuous layout through 240 numbered observations in one chapter. Find observation 137 again after changing the viewport or font size. |
 | `rtl-notebook.epub` | A bilingual harbor notebook with explicit right-to-left EPUB progression. Open in two-page mode, select text and follow links on either leaf, then check the single-leaf final chapter. |
 | `many-chapters.epub` | Open the first, middle, and last of 48 chapters. Check spine and table of contents order. |

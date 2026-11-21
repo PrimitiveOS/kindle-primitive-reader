@@ -38,14 +38,15 @@ Its US dictionary adds the TUGboat correction list to the same 4,938 base patter
 The formatter uses the CSS permission, measured advances and unused line
 space when deciding whether to try a hyphen. [Language table](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp#L61-L66) · [Language selection](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp#L178-L199) · [TeX pattern matching](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/hyphman.cpp#L944-L1034) · [Line fit](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvtextfm.cpp#L5381-L5475)
 
-Reader uses the EPUB package language when the XHTML omits a language.
-A nearer HTML `lang` or `xml:lang` takes precedence. Automatic applies to
-generic or US English, including explicit Latin script. Other regions,
+Reader inherits language from EPUB package metadata or MOBI/KF8 EXTH record
+524 when a reading section omits it. A nearer XHTML `lang` or `xml:lang`
+takes precedence. Automatic applies to generic, US and British English,
+including explicit Latin script. Other English regions,
 unknown languages and explicit empty tags retain authored opportunities.
 Publisher `hyphens: none`, `manual` and `auto` inherit across inline markup.
 A word with an explicit soft hyphen uses its publisher’s breaks.
 
-Reader builds the equivalent 6,708 weighted rules from 4,938 original TeX patterns,
+For American English, Reader builds the equivalent 6,708 weighted rules from 4,938 original TeX patterns,
 14 original exceptions, 1,753 TUGboat corrections and three doubled-consonant
 corrections. A higher matching weight takes precedence. This preserves extra
 base-pattern opportunities where the published dictionary adds a preferred
@@ -59,9 +60,53 @@ Its matcher checks ASCII words of 5–64 letters and supplies up
 to 4,096 offsets per paragraph. The shaper accepts boundaries after complete
 single-character LTR shaping atoms. It measures the face’s U+2010 or U+002D,
 and paints it only when a line actually ends there. The source word remains
-intact for search, selection, annotation and position storage. British English
-patterns, user exceptions, spelling-changing breaks and controls for
+intact for search, selection, annotation and position storage. User exceptions,
+spelling-changing breaks and controls for
 CREngine’s unused-space threshold remain open. [Publisher source and terms](licenses/ENGLISH-HYPHENATION.txt) · [Shaper contract](../vendor/parley/PRIMITIVEOS-PATCH.md)
+
+## British English and Kindle-format books
+
+The original British pattern file contains 8,527 patterns and eight exceptions.
+Reader builds 8,535 weighted rules. The complete normalized table matches the
+pinned CREngine British dictionary byte for byte (SHA-256
+`a0a2a0834a41bc7c0ce001de5c0d654b19a0475814b234d4dc4ed3d838b6499e`).
+The Rust and independent Python tests check all eight corrected spellings.
+A word split across style spans keeps its breaks when the spans agree on
+the dictionary. If their dictionaries differ, only authored breaks apply.
+[British pattern source and terms](licenses/ENGLISH-HYPHENATION.txt) · [CREngine British dictionary](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/cr3gui/data/hyph/English_GB.pattern) · [Reference verifier](../scripts/verify-english-hyphenation.py)
+
+![Reader shows the same passage in two regions. American English breaks reciprocity after reciproc, British English after recipro.](screenshots/english-regions.png)
+
+The two paragraphs in this single page use the same font and width.
+Both regional declarations act inside a document tagged simply English.
+The preview mapped all 127 nonspace characters. [Authored page](../tests/fixtures/english-regions.xhtml)
+
+```sh
+cargo run --locked --bin reader-probe -- parley tests/fixtures/english-regions.xhtml \
+    --font tests/fixtures/fonts/NotoSans-Regular.ttf --width 235 --height 395 \
+    --size 25 --margin 13 --output regional-lines.png
+```
+
+All 16 AZW3 and one legacy MOBI in the private Mac sample carried EXTH 524.
+Ten declared English, five US English and two Chinese. Of the 501 reading
+sections, 292 contained words without a markup language. Publication metadata
+supplied English in 241 and Chinese in 51. One generically English AZW3
+also contained 1,476 British-tagged text nodes in 44 sections. The pinned
+CREngine PDB importer sets its publication language from that same EXTH
+record. Reader accepts the first valid bounded BCP 47 record and preserves
+the normalized XHTML and its source offsets. The pinned engine has no
+Vietnamese dictionary. Reader preserves authored Vietnamese breaks. [CREngine PDB importer](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/pdbfmt.cpp#L897-L906) · [CREngine language table](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp#L61-L122)
+
+In three Mac comparisons the earlier 0.1.9 layout saved the source anchor
+from page two. Each current layout reopened it, with every source character
+covered and zero missing glyphs. The simulator used Noto Sans Regular and
+Bold at 32 px on a 600 × 800 viewport with 24 px margins.
+
+| Section language | Nonspace characters | Previous pages | Automatic pages | Pixels changed at the saved position | Authored-mode pixels changed |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| US English from AZW3 metadata | 15,614 | 35 | 34 | 54,964 | 0 |
+| British English from AZW3 markup | 8,510 | 21 | 21 | 11,626 | 0 |
+| Generic English from legacy MOBI metadata | 58,184 | 160 | 158 | 13,124 | 0 |
 
 ## Tests with existing books
 

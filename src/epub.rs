@@ -443,6 +443,7 @@ impl Book {
                     .clone()
                     .unwrap_or_else(|| fallback_title.into());
                 kf8::Kf8Document {
+                    language: document.language,
                     title: document.title,
                     author: document.author,
                     resources: BTreeMap::new(),
@@ -455,14 +456,16 @@ impl Book {
                 }
             }
             Ok(document) => {
-                return Ok(Self::from_loose(loose::Document {
+                let mut book = Self::from_loose(loose::Document {
                     title: document.title.unwrap_or_else(|| fallback_title.into()),
                     author: document.author,
                     chapter_path: loose::CHAPTER_PATH.to_owned(),
                     xhtml: document.xhtml,
                     toc: Vec::new(),
                     resources: BTreeMap::new(),
-                }));
+                });
+                book.language = document.language;
+                return Ok(book);
             }
             Err(mobi::MobiError::Kf8) => kf8::decode(&bytes)?,
             Err(error) => return Err(error.into()),
@@ -498,7 +501,7 @@ impl Book {
             toc,
             printed_pages: Vec::new(),
             revision,
-            language: None,
+            language: publication.language,
             spine_rtl: false,
             fixed_placements: None,
             series: Vec::new(),

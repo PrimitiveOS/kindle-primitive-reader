@@ -112,8 +112,9 @@ Install Reader from PrimitiveOS Store or follow the manual install guide.
 - Copy a TTF or OTF of up to 12 MB to `reader/data/fonts/`. Pick it from Text ›
   Reading font. Use the font override in Text settings to apply the reading font
   when the book specifies its own fonts.
-- For horizontal English text, Text › Hyphenation offers Automatic, Authored or
-  Off. Search and selection keep the original word even when it spans two lines.
+- Text › Hyphenation offers Automatic, Authored and Off. In horizontal text,
+  Automatic uses the book’s US or British English spelling, including local
+  language changes. Search and selection keep the original word across lines.
   [Compare both page layouts](docs/english-hyphenation.md)
 - Save a named preset in Text › Reading profiles and apply it to another book.
 

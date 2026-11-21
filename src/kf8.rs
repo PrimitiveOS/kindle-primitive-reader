@@ -26,6 +26,7 @@ const MAX_XHTML_BYTES: usize = 16 * 1024 * 1024;
 const MAX_XML_NODES: u32 = 240_000;
 
 pub(crate) struct Kf8Document {
+    pub language: Option<parley::Language>,
     pub title: Option<String>,
     pub author: Option<String>,
     pub chapters: Vec<Kf8Chapter>,
@@ -118,10 +119,11 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Kf8Document> {
         first_nontext,
         &flows,
     )?;
-    let (title, author) = mobi::kf8_labels(bytes, record, header);
+    let labels = mobi::kf8_labels(bytes, record, header);
     Ok(Kf8Document {
-        title,
-        author,
+        title: labels.title,
+        author: labels.author,
+        language: labels.language,
         chapters,
         resources,
     })
@@ -1080,6 +1082,7 @@ pub(crate) mod tests {
             word(&mut header, 0xc4, 2);
             word(&mut header, 0xc0, 7);
         }
+        header.extend(mobi::test_exth(&[(524, b"zh-CN")]));
         let mut text = raw.into_bytes();
         let main = text.len();
         let mut records = vec![
@@ -1167,6 +1170,7 @@ pub(crate) mod tests {
         fs::remove_file(&path).unwrap();
         let mut book = book.unwrap();
         assert!(!book.is_fixed_layout());
+        assert_eq!(book.language, parley::Language::parse("zh-CN").ok());
         assert_eq!(
             book.toc()
                 .iter()

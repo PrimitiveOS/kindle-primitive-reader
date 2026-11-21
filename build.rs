@@ -1,6 +1,10 @@
 // Compile the fixed Liang patterns and explicit exceptions into immutable tables.
 // The Kindle does not parse TeX or allocate a dictionary when it opens a book.
-use std::{collections::BTreeMap, env, fs, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 #[derive(Default)]
 struct Node {
@@ -27,38 +31,46 @@ fn group<'a>(tex: &'a str, command: &str) -> &'a str {
         .0
 }
 
-fn main() {
-    let tex = tex_source("assets/hyphenation/hyph-en-us.tex");
-    let corrections = tex_source("assets/hyphenation/ushyphex.tex");
-    let mut rules: Vec<String> = group(&tex, "\\patterns{")
+fn add_exceptions(rules: &mut Vec<String>, source: &str, whole_word: bool, priority: &str) {
+    for entry in group(source, "\\hyphenation{").split_whitespace() {
+        let word = entry.to_ascii_lowercase();
+        assert!(word.bytes().all(|ch| ch.is_ascii_lowercase() || ch == b'-'));
+        if word.contains('-') {
+            let weighted = word.replace('-', priority);
+            rules.push(if whole_word {
+                format!(".{weighted}.")
+            } else {
+                weighted
+            });
+        } else {
+            let mut pattern = String::from(".");
+            for (index, letter) in word.chars().enumerate() {
+                if index > 0 {
+                    pattern.push('8');
+                }
+                pattern.push(letter);
+            }
+            pattern.push('.');
+            rules.push(pattern);
+        }
+    }
+}
+
+fn base_rules(tex: &str) -> Vec<String> {
+    let mut rules: Vec<_> = group(tex, "\\patterns{")
         .split_whitespace()
         .map(str::to_owned)
         .collect();
+    add_exceptions(&mut rules, tex, false, "5");
+    rules
+}
 
-    for (source, whole_word, priority) in [(&tex, false, "5"), (&corrections, true, "9")] {
-        for entry in group(source, "\\hyphenation{").split_whitespace() {
-            let word = entry.to_ascii_lowercase();
-            assert!(word.bytes().all(|ch| ch.is_ascii_lowercase() || ch == b'-'));
-            if word.contains('-') {
-                let weighted = word.replace('-', priority);
-                rules.push(if whole_word {
-                    format!(".{weighted}.")
-                } else {
-                    weighted
-                });
-            } else {
-                let mut pattern = String::from(".");
-                for (index, letter) in word.chars().enumerate() {
-                    if index > 0 {
-                        pattern.push('8');
-                    }
-                    pattern.push(letter);
-                }
-                pattern.push('.');
-                rules.push(pattern);
-            }
-        }
-    }
+fn main() {
+    let american = tex_source("assets/hyphenation/hyph-en-us.tex");
+    let british = tex_source("assets/hyphenation/hyph-en-gb.tex");
+    let corrections = tex_source("assets/hyphenation/ushyphex.tex");
+    let mut rules = base_rules(&american);
+    add_exceptions(&mut rules, &corrections, true, "9");
     // In the reference dictionary these short past-tense forms give the doubled
     // consonant an even weight. A stronger overlapping rule may still win.
     for word in ["added", "fitted", "mugged"] {
@@ -71,11 +83,21 @@ fn main() {
         rules.push(format!(".{}4{}.", &word[..middle], &word[middle..]));
     }
 
-    rules.sort_unstable();
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
+    let mut output = compile(rules, "AMERICAN", &out_dir.join("english_rules.txt"));
+    output.push_str(&compile(
+        base_rules(&british),
+        "BRITISH",
+        &out_dir.join("british_english_rules.txt"),
+    ));
+    fs::write(out_dir.join("english_patterns.rs"), output).unwrap();
+}
+
+fn compile(mut rules: Vec<String>, name: &str, normalized: &Path) -> String {
+    rules.sort_unstable();
     // A normalized, independently comparable build artifact, excluded from the package.
     let fingerprint_input = rules.join("\n") + "\n";
-    fs::write(out_dir.join("english_rules.txt"), fingerprint_input).unwrap();
+    fs::write(normalized, fingerprint_input).unwrap();
 
     let mut nodes = vec![Node::default()];
     for pattern in rules {
@@ -121,8 +143,7 @@ fn main() {
         );
         weights.extend_from_slice(&node.weights);
     }
-    let output = format!(
-        "const NODES: &[(u16,u8,u16,u8)] = &{records:?};\nconst EDGES: &[(u8,u16)] = &{edges:?};\nconst WEIGHTS: &[u8] = &{weights:?};\n"
-    );
-    fs::write(out_dir.join("english_patterns.rs"), output).unwrap();
+    format!(
+        "const {name}: Patterns = Patterns {{ nodes:&{records:?}, edges:&{edges:?}, weights:&{weights:?} }};\n"
+    )
 }

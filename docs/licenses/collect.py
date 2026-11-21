@@ -89,7 +89,7 @@ def collect():
         "The listed licences apply to their own components. PrimitiveOS Tools is used",
         "under its PolyForm Noncommercial 1.0.0 option. The individual source archives",
         "below provide the source of each MPL-2.0 component used in this package.",
-        "For the compiled US English patterns and TUGboat exceptions, see ENGLISH-HYPHENATION.txt.",
+        "For the compiled US and British English patterns and TUGboat exceptions, see ENGLISH-HYPHENATION.txt.",
         "",
     ]
     fetched = {}
