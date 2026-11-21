@@ -18,6 +18,18 @@ workflow and format, with prerequisites and side-by-side acceptance checks.
 | P2 · Offline parity | Add the fixed-page PDF workflow and the other offline formats and reading tools in scope. K12–K16. | Documents and annotations verified against format-specific fixtures on desktop and Kindle |
 | P3 · Remaining formats, integrations, and import | Deliver the remaining parity requirements by feature, including advanced PDF, library integrations, and KOReader data import. K17–K24. | Each Kindle workflow has an acceptance result. Import reports matched and unmatched records. |
 
+## Verification on existing Kindle documents
+
+Use the original file, the same view and the same input action in both readers when comparing behavior. Separate opening a document, painting a page, navigating to a passage, resuming after exit and retaining an annotation. A successful open alone did not reveal the lost PDF destinations, chapter-end blank pages or missing list markers found in this collection.
+
+| Reading workflow | Observed result | Remaining comparison |
+|---|---|---|
+| Files and resume | The installed 0.1.8 release opened and resumed all 117 readable entries in a 130-entry Oasis collection. Thirteen protected AZW or KFX entries displayed Kindle Library guidance. | Wider file variants. This collection contains no original DjVu or comic to compare. [Original-file results](real-document-verification.md) |
+| Chapter navigation | Both Contents controls showed the current section in three original EPUBs on the Oasis. All six returns reproduced the 1264 × 1680 reading frame. | Reflow chapter metrics when a reader-defined chapter crosses spine files. [Contents and status](reading-control-evidence.md) |
+| PDF links and text destinations | On the 1,066-page source PDF, all 50 valid links showed their target within one pixel at 300% in both reading modes on the Oasis. Zoomed search and reopened annotations have a separate comparison on two original files. | Combine crop, page rotation and annotations in additional editions. [PDF measurements](real-document-verification.md) |
+| Language and typography | The Oasis preserved older bookmarks and mapped all 82,308 tested characters in three original Kindle books after applying the publication and passage language to English word breaks. | Languages and vertical writing outside the tested English rules. [Regional typography results](english-hyphenation.md) |
+| Saved marks and notes | Search covers page marks, highlighted text and note text with independent filters. Browsing and cancelling preserve the current reading position. | Editing selection endpoints across page boundaries and migrating older annotations with unresolved source pointers. [Annotation actions](reading-control-evidence.md) |
+
 ## P0.1 Prepare the corpus
 
 Record each fixture's source, redistribution terms, and checksum. Use original
