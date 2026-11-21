@@ -550,7 +550,13 @@ mod fixed_tests {
             ),
             (
                 "Tidal notes",
-                vec!["Slack water begins before dawn.".into()],
+                vec![
+                    "Slack water begins before dawn.".into(),
+                    "Fine sand covers the sandbar at low water.".into(),
+                    "Quicksand and quicksands shift here.".into(),
+                    "Sand, shells and quicksand gather.".into(),
+                    "A sand-sand boundary marks the inlet.".into(),
+                ],
             ),
             (
                 "Arrival",
@@ -678,6 +684,102 @@ mod fixed_tests {
             let result = serde_json::json!({"visited":visited, "word_boxes":word_boxes,"viewport_restored":true});
             fs::write(file, serde_json::to_vec(&result).unwrap()).unwrap();
         }
+    }
+
+    #[test]
+    fn fixed_word_edges_from_find_and_history_use_the_same_complete_word_boxes() {
+        let fixture = Fixture::new();
+        let external = std::env::var_os("READER_TEST_FIXED_WORD_EDGE_DOCUMENT").map(PathBuf::from);
+        let authored = external.is_none();
+        let path = external.unwrap_or_else(|| {
+            let path = fixture.root.join("Coastal field guide.pdf");
+            fs::write(&path, coastal_guide()).unwrap();
+            path
+        });
+        let term =
+            std::env::var("READER_TEST_FIXED_WORD_EDGE_QUERY").unwrap_or_else(|_| "sand".into());
+        let page: usize = std::env::var("READER_TEST_FIXED_WORD_EDGE_PAGE")
+            .ok()
+            .map_or(4, |page| page.parse().unwrap());
+        let counts = std::env::var("READER_TEST_FIXED_WORD_EDGE_COUNTS")
+            .unwrap_or_else(|_| "7,4,4,1".into());
+        let counts: Vec<usize> = counts.split(',').map(|c| c.parse().unwrap()).collect();
+        assert_eq!(counts.len(), 4);
+        let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+        let root = path.parent().unwrap();
+        let mut app = Reader::open(root, &fixture.state, vec![font.clone()]).unwrap();
+        app.open_path(&path).unwrap();
+        app.fixed.as_mut().unwrap().reading.jump(page - 1).unwrap();
+        let location = app.current_history_location().unwrap();
+        let text = app
+            .fixed
+            .as_ref()
+            .unwrap()
+            .reading
+            .page_text(page - 1)
+            .unwrap();
+        let patterns = [
+            term.clone(),
+            format!(" {term}"),
+            format!("{term} "),
+            format!(" {term} "),
+        ];
+        for (pattern, &expected) in patterns.iter().zip(&counts) {
+            let mut search = PdfSearch::new(pattern, false).unwrap();
+            let listed = search.hits(page - 1, &text, MAX_SEARCH_HITS);
+            assert_eq!(listed.len(), expected);
+            assert!(listed.iter().all(|hit| hit.bounds.len() == 1));
+            app.show(Screen::Find);
+            app.editor.text = pattern.chars().collect();
+            assert_eq!(tap(&mut app, NEXT_HERE), Change::Partial);
+            app.poll_nearby(Instant::now()).unwrap();
+            if expected == 0 {
+                assert!(app.nearby.searching_direction());
+                assert_eq!(tap(&mut app, PREVIOUS), Change::Partial);
+            } else {
+                assert_eq!(app.screen, Screen::Fixed);
+                let highlighted: Vec<_> = app
+                    .pdf_result_regions
+                    .iter()
+                    .map(|(_, rect)| *rect)
+                    .collect();
+                assert_eq!(
+                    highlighted,
+                    listed.iter().map(|hit| hit.bounds[0]).collect::<Vec<_>>()
+                );
+                if authored && pattern == &patterns[3] {
+                    capture_test_screen(
+                        &app,
+                        std::slice::from_ref(&font),
+                        "READER_WORD_EDGE_SCREENSHOT",
+                        false,
+                    );
+                }
+                app.activate(Action::ReturnToLocation).unwrap();
+            }
+            assert_eq!(app.current_history_location(), Some(location.clone()));
+        }
+        drop(app);
+        let mut resumed = Reader::open(root, &fixture.state, vec![font]).unwrap();
+        resumed.open_path(&path).unwrap();
+        let saved = &resumed.lookup_history.searches;
+        assert_eq!(
+            saved.iter().map(|s| &s.text).collect::<Vec<_>>(),
+            patterns.iter().rev().collect::<Vec<_>>()
+        );
+        let whole_word = saved[0].clone();
+        resumed.activate(Action::RepeatSearch(whole_word)).unwrap();
+        if authored {
+            while resumed.search_at.is_some() {
+                resumed.step_pdf_search(Instant::now()).unwrap();
+            }
+            assert_eq!(resumed.pdf_hits.len(), 1);
+            assert_eq!(resumed.pdf_hits[0].page, page - 1);
+        }
+        println!(
+            "fixed_word_edges page={page} boxes={},{},{},{} viewport_restored=true history_restored=true",
+            counts[0], counts[1], counts[2], counts[3]
+        );
     }
 
     #[test]

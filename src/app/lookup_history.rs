@@ -36,11 +36,12 @@ impl LookupHistory {
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_default();
         history.searches.retain(|item| {
-            if item.regular_expression {
-                !item.text.is_empty() && item.text.len() <= crate::search::MAX_QUERY_BYTES
-            } else {
-                valid(&item.text)
-            }
+            item.text.len() <= crate::search::MAX_QUERY_BYTES
+                && if item.regular_expression {
+                    !item.text.is_empty()
+                } else {
+                    !item.text.trim().is_empty()
+                }
         });
         history.dictionary.retain(|word| valid(word));
         history.vocabulary.retain(|word| valid(word));
@@ -66,10 +67,12 @@ impl LookupHistory {
         regular_expression: bool,
     ) {
         let current = SearchQuery {
-            text: if regular_expression {
+            // Literal spaces at either end carry word-box semantics on fixed pages.
+            // Older literal queries also allowed surrounding whitespace outside the byte limit.
+            text: if text.len() <= crate::search::MAX_QUERY_BYTES {
                 text.to_owned()
             } else {
-                text.trim().chars().take(MAX_QUERY_CHARS).collect()
+                text.trim().to_owned()
             },
             match_case,
             ignore_accents,

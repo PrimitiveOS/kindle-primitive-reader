@@ -437,9 +437,85 @@ fn soft_hyphens_are_invisible_to_search_and_preserved_in_match_offsets() {
 #[cfg(feature = "kindle")]
 pub(crate) struct PdfSearch {
     query: Query,
+    word_match: Option<FixedWordMatch>,
     pub(crate) next_page: usize,
     pub(crate) text_pages: usize,
     pub(crate) skipped: usize,
+}
+
+#[cfg(feature = "kindle")]
+struct FixedWordMatch {
+    from_start: bool,
+    from_end: bool,
+}
+
+#[cfg(feature = "kindle")]
+impl FixedWordMatch {
+    fn from_pattern(pattern: &str) -> Option<Self> {
+        let mut words = pattern.split_whitespace();
+        let word = words.next()?;
+        // KOpt splits a CJK-containing token into individual code points. Its
+        // edge switches only apply when the resulting pattern has one token.
+        if words.next().is_some()
+            || (word.chars().nth(1).is_some()
+                && word.chars().any(|c| {
+                    matches!(c as u32, 0x1100..=0x11ff | 0x2e80..=0x9fff | 0xa960..=0xa97f
+                | 0xac00..=0xd7ff | 0xf900..=0xfaff | 0xfe30..=0xfe4f | 0xff00..=0xffef
+                | 0x20000..=0x2a6df | 0x2a700..=0x2ebef | 0x2f800..=0x2fa1f
+                | 0x30000..=0x3134f)
+                }))
+        {
+            return None;
+        }
+        Some(Self {
+            from_start: pattern.starts_with(' '),
+            from_end: pattern.ends_with(' '),
+        })
+    }
+
+    fn range(&self, len: usize, needle: usize) -> Option<Range<usize>> {
+        if len < needle || (self.from_start && self.from_end && len != needle) {
+            return None;
+        }
+        let start = if self.from_start { 0 } else { len - needle };
+        Some(start..start + needle)
+    }
+
+    fn matches(&self, word: &str, query: &Query) -> bool {
+        let needle = query.text.as_str();
+        if !self.from_start && !self.from_end {
+            if word.is_ascii() && needle.is_ascii() {
+                return if query.match_case {
+                    word.contains(needle)
+                } else {
+                    word.as_bytes()
+                        .windows(needle.len())
+                        .any(|part| part.eq_ignore_ascii_case(needle.as_bytes()))
+                };
+            }
+            return !query.matches(word, 1).is_empty();
+        }
+        if word.is_ascii() && needle.is_ascii() {
+            return self.range(word.len(), needle.len()).is_some_and(|range| {
+                let candidate = &word[range];
+                if query.match_case {
+                    candidate == needle
+                } else {
+                    candidate.eq_ignore_ascii_case(needle)
+                }
+            });
+        }
+        let folded = FoldedText::build(word, query.match_case, query.ignore_accents, false, || {
+            false
+        })
+        .expect("an uncancelled fold completes");
+        self.range(folded.text.len(), needle.len())
+            .is_some_and(|range| {
+                folded.text.get(range.clone()) == Some(needle)
+                    && folded.source_offset(range.start, true).is_some()
+                    && folded.source_offset(range.end, false).is_some()
+            })
+    }
 }
 
 #[cfg(feature = "kindle")]
@@ -477,10 +553,15 @@ impl PdfSearch {
         match_case: bool,
         ignore_accents: bool,
     ) -> Result<Self> {
+        if query.len() > MAX_QUERY_BYTES {
+            return Err("Enter a search term of up to 256 UTF-8 bytes".into());
+        }
+        let word_match = FixedWordMatch::from_pattern(query);
         let mut query = Query::with_options(query, match_case, ignore_accents)?;
         query.text = query.text.split_whitespace().collect::<Vec<_>>().join(" ");
         Ok(Self {
             query,
+            word_match,
             next_page: 0,
             text_pages: 0,
             skipped: 0,
@@ -512,6 +593,36 @@ impl PdfSearch {
             .collect()
     }
     fn ranges(&self, text: &PdfPageText, limit: usize) -> Vec<Range<usize>> {
+        if let Some(word_match) = &self.word_match {
+            // Some DjVu text layers contain a transcript without word coordinates.
+            // Keep these matches available in Find all even though they have no overlay.
+            if text.words.is_empty() {
+                let mut offset = 0;
+                return text
+                    .text
+                    .split_inclusive(char::is_whitespace)
+                    .filter_map(|part| {
+                        let start = offset;
+                        offset += part.len();
+                        let word = part.trim_end();
+                        (!word.is_empty() && word_match.matches(word, &self.query))
+                            .then_some(start..start + word.len())
+                    })
+                    .take(limit)
+                    .collect();
+            }
+            return text
+                .words
+                .iter()
+                .filter(|word| {
+                    text.text
+                        .get(word.bytes.clone())
+                        .is_some_and(|s| word_match.matches(s, &self.query))
+                })
+                .take(limit)
+                .map(|word| word.bytes.clone())
+                .collect();
+        }
         let searchable = if self.query.text.contains(' ') {
             phrase_text(text)
         } else {
@@ -935,6 +1046,41 @@ mod tests {
                 .len(),
             0
         );
+    }
+
+    #[cfg(feature = "kindle")]
+    #[test]
+    fn fixed_word_edges_respect_normalized_spelling_and_literal_spaces_only() {
+        let accepts = |pattern: &str, word: &str, case, accents| {
+            let search = PdfSearch::with_options(pattern, case, accents).unwrap();
+            search
+                .word_match
+                .as_ref()
+                .unwrap()
+                .matches(word, &search.query)
+        };
+        assert!(accepts(" cafe ", "Ca\u{301}fé", false, true));
+        assert!(!accepts(" cafe ", "Café,", false, true));
+        assert!(accepts(" é", "Élan", false, false));
+        assert!(!accepts(" é", "Élan", true, false));
+        assert!(accepts("ss ", "Fuß", false, false));
+        assert!(!accepts("s ", "Fuß", false, false));
+        assert!(accepts("ana ", "banana", false, false));
+        assert!(accepts("  foo  ", "foo", false, false));
+        assert!(accepts("\tfoo\t", "beforefooafter", false, false));
+        assert!(accepts(" 潮 ", "潮", true, false));
+        assert!(FixedWordMatch::from_pattern(" 潮汐 ").is_none());
+        assert!(FixedWordMatch::from_pattern(" low tide ").is_none());
+        assert!(PdfSearch::new("  ", false).is_err());
+        let transcript = PdfPageText {
+            text: "  sandbar\nsand,\t sand".into(),
+            ..Default::default()
+        };
+        let exact = PdfSearch::new(" sand ", false)
+            .unwrap()
+            .hits(2, &transcript, 10);
+        assert_eq!(exact.len(), 1);
+        assert!(exact[0].bounds.is_empty());
     }
 
     #[cfg(feature = "kindle")]

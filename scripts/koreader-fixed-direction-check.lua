@@ -20,6 +20,16 @@ function doc:getPageTextBoxes(n)
     p:close()
     return lines
 end
+if arg[4] == "--word-edges" then
+    local counts = {}
+    for _, pattern in ipairs({query, " " .. query, query .. " ", " " .. query .. " "}) do
+        local matches = kopt:findAllMatches(doc, pattern, true, current)
+        counts[#counts+1] = matches and #matches or 0
+    end
+    pdf:close()
+    print(require("json").encode({page=current, word_boxes=counts}))
+    return
+end
 local pos = current
 local pages, boxes = {}, {}
 for _, step in ipairs({{0,0},{1,0},{1,1},{1,1}}) do
