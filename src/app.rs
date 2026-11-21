@@ -7322,6 +7322,26 @@ mod tests {
     }
 
     #[test]
+    fn recovered_publication_excludes_print_labels_in_lost_chapters() {
+        let f = Fixture::new();
+        let nav = br#"<html><body><nav type="page-list"><ol><li><a href="first.xhtml#passage2">1</a></li><li><a href="second.xhtml">2</a></li></ol></nav></body></html>"#;
+        write_outline_fixture(&f.book, Some(nav), None);
+        let mut bytes = fs::read(&f.book).unwrap();
+        let removed = {
+            let mut zip = zip::ZipArchive::new(Cursor::new(&bytes)).unwrap();
+            let file = zip.by_name("EPUB/first.xhtml").unwrap();
+            file.header_start() as usize..(file.data_start() + file.compressed_size()) as usize
+        };
+        bytes.drain(removed);
+        fs::write(&f.book, bytes).unwrap();
+        let book = Book::open(&f.book).unwrap();
+        assert!(book.recovered_placeholder(&book.chapters[0]));
+        assert_eq!(book.chapters.len(), 2);
+        let [label] = book.printed_pages() else { panic!("Expected the surviving publisher boundary") };
+        assert_eq!(label.label, "2");
+    }
+
+    #[test]
     fn publisher_pages_browse_exact_destinations_and_follow_the_visible_passage() {
         let fixture = Fixture::new();
         let mut nav = String::from(r#"<html><body><nav type="page-list"><ol>"#);

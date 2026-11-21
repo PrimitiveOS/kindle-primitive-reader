@@ -267,13 +267,16 @@ impl Book {
                 .filter(|node| node.has_tag_name("itemref"))
                 .filter_map(|node| manifest.get(node.attribute("idref")?))
             {
-                *paths.entry(item.path.as_str()).or_insert(0usize) += 1;
+                let path = paths.entry(item.path.as_str()).or_insert_with(|| {
+                    (0usize, !archive.missing_after_recovery(&item.path))
+                });
+                path.0 += 1;
             }
             let has_target = |entries: &[TocEntry], print: bool| {
                 entries.iter().any(|entry| {
                     entry.destination.as_ref().is_some_and(|destination| {
-                        paths.get(destination.path.as_str()).is_some_and(|count| {
-                            !print || (*count == 1 && entry.label.len() <= 256)
+                        paths.get(destination.path.as_str()).is_some_and(|&(count, available)| {
+                            !print || (available && count == 1 && entry.label.len() <= 256)
                         })
                     })
                 })
@@ -356,7 +359,9 @@ impl Book {
         if !printed_pages.is_empty() || adobe_map.is_some() {
             let mut paths = BTreeMap::new();
             for chapter in &chapters {
-                *paths.entry(chapter.href.as_str()).or_insert(0) += 1;
+                if !archive.missing_after_recovery(&chapter.href) {
+                    *paths.entry(chapter.href.as_str()).or_insert(0) += 1;
+                }
             }
             let valid = |entry: &TocEntry| {
                 entry.label.len() <= 256 && entry.destination.as_ref().is_some_and(|destination| {
