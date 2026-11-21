@@ -420,6 +420,24 @@ impl ColorSpace {
         }
     }
 
+    /// PrimitiveOS change: compact an owned DeviceCMYK image to RGB in its decode buffer.
+    pub(crate) fn image_rgb(&self, mut components: Vec<u8>, pixels: usize) -> Option<Vec<u8>> {
+        #[cfg(feature = "cmyk-cache")]
+        if matches!(self.0.as_ref(), ColorSpaceType::DeviceCmyk(_)) {
+            if components.len() != pixels.checked_mul(4)? {
+                return None;
+            }
+            device_cmyk::compact_image(&mut components)?;
+            return Some(components);
+        }
+        if self.convert_in_place(&mut components).is_some() {
+            return Some(components);
+        }
+        let mut output = vec![0; pixels.checked_mul(3)?];
+        self.convert(&components, &mut output)?;
+        Some(output)
+    }
+
     /// Get the number of components of the color space.
     pub fn num_components(&self) -> u8 {
         match self.0.as_ref() {

@@ -21,6 +21,11 @@ impl ToRgb for DeviceCmyk {
     }
 }
 
+#[cfg(feature = "cmyk-cache")]
+pub(super) fn compact_image(data: &mut Vec<u8>) -> Option<()> {
+    repeated_colors::compact(data, |samples, rgb| CMYK_TRANSFORM.convert(samples, rgb))
+}
+
 static CMYK_TRANSFORM: LazyLock<ICCProfile> = LazyLock::new(|| {
     ICCProfile::new(
         include_bytes!("../../assets/CGATS001Compat-v2-micro.icc"),

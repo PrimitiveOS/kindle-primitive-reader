@@ -43,7 +43,7 @@ To time a large PDF, set `READER_PDF_OPEN_TIMINGS=1` when running the normal app
 
 ## Large print-color PDFs on Kindle
 
-On 32-bit ARM, Reader reuses the RGB result of an ICC conversion when a large DeviceCMYK image repeats exactly the same four ink values. It compares all four components. It retains the original image dimensions, color profile and vector artwork at every zoom. The temporary cache holds at most 2,449,408 bytes of pixel data and lookup entries per image. Images with fewer than 65,536 pixels take the original conversion path. Images with little color repetition switch back to that path after the first 65,536 pixels. [Interpreter change and reproduction commands](../vendor/hayro-interpret/PRIMITIVEOS.md)
+On 32-bit ARM, Reader reuses the RGB result of an ICC conversion when a large DeviceCMYK image repeats exactly the same four ink values. It compares all four components. It retains the original image dimensions, color profile and vector artwork at every zoom. The temporary cache holds at most 2,449,408 bytes of pixel data and lookup entries per image. Images with fewer than 65,536 pixels go directly through the ICC transform. Images with little color repetition switch back to direct conversion after the first 65,536 pixels. [Interpreter change and reproduction commands](../vendor/hayro-interpret/PRIMITIVEOS.md)
 
 An Oasis 3 rendered the first page of a 96,319,018-byte, 1,041-page PDF. The cover contains three print-color JPEGs, including two photographs with over 15 million pixels each. The test opened the original file with the same Reader verifier, viewport and settings for each build. It repeated the comparison in reverse order to reduce the effect of file caching. Each table column shows both timed runs, in the order they were taken for that build.
 
@@ -56,3 +56,13 @@ An Oasis 3 rendered the first page of a 96,319,018-byte, 1,041-page PDF. The cov
 The complete first-frame PNGs matched byte for byte in both orders. An independent [print-chart fixture](../tests/fixtures/cmyk-print-chart.pdf) also produced identical full PNGs on the Oasis, with first renders of 0.628 s and 0.619 s. Both documents opened and resumed in both builds. The desktop simulator separately compared all 2,029,984 grayscale pixels in each document viewport and found zero differences on both documents.
 
 KOReader’s installed MuPDF engine rendered the same cover directly in grayscale in 8.418 s at 1264 × 1606. That measurement excludes the surrounding application and storage-open time. Reader’s first-page render still takes about 15 s longer on this cover. Measurements here apply to this device and these files.
+
+The image decoder can also reuse the CMYK image allocation for its RGB output.
+It converts up to 8,192 pixels at a time using a 24 KiB scratch buffer, then
+copies each RGB block into space occupied by the original CMYK pixels. For a
+16,486,425-pixel photograph, this avoids allocating a second 49,459,275-byte
+pixel buffer. Other stages, including JPEG decoding and resampling, still
+allocate working memory. In the Mac verifier, the original cover page and its
+resources used 190,240 KiB peak with Reader 0.1.6 and 153,120 KiB with the
+cache and in-place conversion. The two desktop viewport captures were pixel-identical.
+[Color conversion and tests](../vendor/hayro-interpret/src/color/device_cmyk/repeated_colors.rs)

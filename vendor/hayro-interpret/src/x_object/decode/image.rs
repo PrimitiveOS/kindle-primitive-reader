@@ -1,6 +1,6 @@
 use super::mask::decode_mask;
 use super::{DecodeContext, decode_context, decode_u8_samples, fix_image_length, unpack_samples};
-use crate::color::{ColorComponents, ToLuma, ToRgb};
+use crate::color::{ColorComponents, ToLuma};
 use crate::interpret::state::ActiveTransferFunction;
 use crate::x_object::image::ImageXObject;
 use crate::{ImageData, LumaData, RgbData};
@@ -157,20 +157,12 @@ impl<'a, 'b> ImageDecoder<'a, 'b> {
         Some(ImageData::Rgb(rgb_data))
     }
 
-    fn convert_to_rgb(&self, mut decoded: Vec<u8>) -> Option<RgbData> {
-        if self
-            .ctx
-            .color_space
-            .convert_in_place(&mut decoded)
-            .is_none()
-        {
-            let mut output = vec![0; self.ctx.width as usize * self.ctx.height as usize * 3];
-            self.ctx.color_space.convert(&decoded, &mut output)?;
-            decoded = output;
-        }
-
+    // PrimitiveOS delegates the owned buffer so ARM DeviceCMYK can compact it in place.
+    fn convert_to_rgb(&self, components: Vec<u8>) -> Option<RgbData> {
+        let pixels = (self.ctx.width as usize).checked_mul(self.ctx.height as usize)?;
+        let data = self.ctx.color_space.image_rgb(components, pixels)?;
         Some(RgbData {
-            data: decoded,
+            data,
             width: self.ctx.width,
             height: self.ctx.height,
             interpolate: self.obj.interpolate,
