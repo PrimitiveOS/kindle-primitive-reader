@@ -101,23 +101,23 @@ impl Reader {
         }
     }
 
-    pub(super) fn tap_saved_mark(&mut self, x: f32, y: f32) -> bool {
+    pub(super) fn tap_saved_mark(&mut self, x: f32, y: f32) -> Option<Change> {
         if !(0.0..PAGE_HEIGHT as f32).contains(&y)
             || self.selection.is_some()
             || self.pdf_selection.is_some()
             || self.footnote.is_some()
         {
-            return false;
+            return None;
         }
         let Some(book) = self.open_book_id().and_then(|id| self.library.state(id)) else {
-            return false;
+            return None;
         };
         // Both engines use the same visible rectangles used to paint each saved mark.
         let hits: Vec<usize> = if self.screen == Screen::Book
             && let Some(active) = &self.active
         {
             if book.highlights.is_empty() {
-                return false;
+                return None;
             }
             let hits = book
                 .highlights
@@ -133,14 +133,14 @@ impl Reader {
                 .map(|(i, _)| i)
                 .collect::<Vec<_>>();
             if !hits.is_empty() && active.reading.link_at(x, y).is_some() {
-                return false;
+                return Some(self.handle_book(Input::Tap(x, y)));
             }
             hits
         } else if self.screen == Screen::Fixed
             && let Some(fixed) = &self.fixed
         {
             if book.pdf_highlights.is_empty() {
-                return false;
+                return None;
             }
             let p = hayro::kurbo::Point::new(x as f64, y as f64);
             let hits = book
@@ -160,14 +160,14 @@ impl Reader {
                 .map(|(i, _)| i)
                 .collect::<Vec<_>>();
             if !hits.is_empty() && fixed.reading.link_at(x, y).is_some() {
-                return false;
+                return Some(self.handle_fixed(Input::Tap(x, y)));
             }
             hits
         } else {
-            return false;
+            return None;
         };
         if hits.is_empty() {
-            return false;
+            return None;
         }
         let view = if hits.len() == 1 {
             self.saved_view(hits[0])
@@ -182,7 +182,7 @@ impl Reader {
             pages: Cell::new(1),
         });
         self.sync_auto_turn(Instant::now());
-        true
+        Some(Change::Partial)
     }
 
     fn saved_view(&self, index: usize) -> View {

@@ -5191,8 +5191,8 @@ impl App for Reader {
         if self.saved_popup_over_book() {
             return self.saved_popup_input(input);
         }
-        if let Input::Tap(x, y) = input && self.tap_saved_mark(x, y) {
-            return Change::Partial;
+        if let Input::Tap(x, y) = input && let Some(change) = self.tap_saved_mark(x, y) {
+            return change;
         }
         if let Some(change) = self.assigned_gesture(input, None) {
             return change;

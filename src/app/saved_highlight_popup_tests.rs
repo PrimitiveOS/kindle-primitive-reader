@@ -381,3 +381,67 @@ fn multiple_boxes_hit_once_and_a_note_can_be_removed_without_removing_the_passag
             && marks[5].note.is_some()
     );
 }
+
+#[test]
+fn an_annotated_pdf_link_in_a_custom_gesture_corner_still_follows_the_destination() {
+    let fixture = Fixture::new();
+    let path = fixture.root.join("Cove map.pdf");
+    let content = "BT /F1 12 Tf 4 480 Td (Cove) Tj ET\n";
+    let stream = format!(
+        "<< /Length {} >>\nstream\n{content}endstream",
+        content.len()
+    );
+    let original = crate::fixed::tests::pdf_objects(&[
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 380 500] /Annots [5 0 R] /Contents 6 0 R /Resources << /Font << /F1 7 0 R >> >> >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 380 500] >>",
+        "<< /Type /Annot /Subtype /Link /Rect [0 445 55 500] /Dest [4 0 R /Fit] >>",
+        &stream,
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]);
+    std::fs::write(&path, original).unwrap();
+    let mut app = Reader::open(
+        &fixture.root,
+        &fixture.state,
+        vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+    )
+    .unwrap();
+    app.open_path(&path).unwrap();
+    let fixed = app.fixed.as_ref().unwrap();
+    let text = fixed.reading.page_text(0).unwrap();
+    let word = &text.words[0];
+    let point = fixed
+        .reading
+        .visible_rectangle(0, word.bounds)
+        .unwrap()
+        .center();
+    assert!(
+        fixed
+            .reading
+            .link_at(point.x as f32, point.y as f32)
+            .is_some()
+    );
+    app.library
+        .remember(&fixed.entry, fixed.id, &fixed.entry.title)
+        .add_pdf_highlight(PdfHighlight {
+            page: 0,
+            bounds: vec![word.bounds],
+            text: text.text[word.bytes.clone()].into(),
+            note: None,
+            continuation: vec![],
+        })
+        .unwrap();
+    app.gestures
+        .set(Gesture::TapTopLeft, Binding::Contents)
+        .unwrap();
+    let hit = Input::Tap(point.x as f32, point.y as f32);
+    assert!(app.assigned_gesture(hit, None).is_some());
+    assert_eq!(app.screen, Screen::FixedContents);
+    app.show(Screen::Fixed);
+    app.input(hit);
+    assert!(app.screen == Screen::Fixed && app.saved_popup.is_none());
+    assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 1);
+    app.activate(Action::ReturnToLocation).unwrap();
+    assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 0);
+}
