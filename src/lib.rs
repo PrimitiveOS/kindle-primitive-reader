@@ -511,7 +511,9 @@ impl Probe {
                     .peekable();
                 let vertical = text.peek().is_some()
                     && source.blocks.iter().all(|block| block.images.is_empty())
-                    && !source.elements.iter().any(|element| element.tag == "table")
+                    && !source.elements.iter().any(|element| {
+                        !element.selector_only && element.tag == "table"
+                    })
                     && text.all(|block| {
                         styles[block.element].writing_mode == book_style::WritingMode::VerticalRl
                             && block.styled_text.iter().all(|run| {

@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ops::Range;
 
 use parley::{BaseDirection, Language};
@@ -103,6 +103,10 @@ pub(crate) struct Element {
     pub id: Option<String>,
     pub inline_style: Option<String>,
     pub parent: Option<usize>,
+    pub previous_sibling: Option<usize>,
+    pub first_of_type: bool,
+    pub selector_only: bool,
+    pub anonymous: bool,
 }
 
 pub(crate) struct StyledText {
@@ -267,13 +271,13 @@ impl Source {
         xhtml: &str,
         publication_language: Option<Language>,
     ) -> Result<Self> {
-        Self::parse_document(xhtml, crate::revision(xhtml), true, publication_language)
+        Self::parse_document(xhtml, crate::revision(xhtml), None, publication_language)
     }
 
     fn parse_document(
         xhtml: &str,
         original_revision: u64,
-        allow_normalization: bool,
+        anonymous_boxes: Option<&[usize]>,
         publication_language: Option<Language>,
     ) -> Result<Self> {
         let options = || ParsingOptions {
@@ -333,19 +337,42 @@ impl Source {
         {
             return Err("The chapter exceeds the nesting limit".into());
         }
-        let mut elements = Vec::new();
+        let mut elements: Vec<Element> = Vec::new();
         let mut element_ids = HashMap::new();
         let mut languages = Vec::new();
-        for node in std::iter::once(root)
-            .chain(body.descendants())
-            .filter(Node::is_element)
-        {
-            let parent = node
+        let structural = !stylesheets.is_empty();
+        let mut selector_only_nodes = Vec::new();
+        let mut seen_types = HashSet::new();
+        let mut last_children = HashMap::new();
+        for node in root.descendants().filter(Node::is_element) {
+            let parent: Option<usize> = node
                 .parent()
-                .and_then(|parent| element_ids.get(&parent.id()).copied());
-            if (node != root && parent.is_none()) || hidden_element(node) {
+                .and_then(|p| element_ids.get(&p.id()).copied());
+            if node != root && parent.is_none_or(|index| elements[index].selector_only) {
                 continue;
             }
+            let anonymous = anonymous_boxes.is_some_and(|starts| starts.binary_search(&node.range().start).is_ok());
+            // A layout box generated for a loose inline run has no counterpart in
+            // the publisher's DOM. Its children keep their original CSS relationships.
+            let parent = parent.and_then(|i| if elements[i].anonymous { elements[i].parent } else { Some(i) });
+            // Hidden elements still participate in sibling selectors. Retain their
+            // identity but never expose their text, IDs, list items or cells to Reader.
+            let selector_only = (parent == Some(0) && node != body) || hidden_element(node);
+            if selector_only {
+                if !structural {
+                    continue;
+                }
+                selector_only_nodes.push(node.id());
+            }
+            let structural_element = structural && !anonymous;
+            let previous_sibling = if structural_element {
+                parent.and_then(|i| last_children.insert(i, elements.len()))
+            } else {
+                None
+            };
+            let tag = node.tag_name();
+            let first_of_type =
+                structural_element && seen_types.insert((parent, tag.namespace(), tag.name()));
             element_ids.insert(node.id(), elements.len());
             let inherited = if node == root {
                 publication_language
@@ -358,9 +385,18 @@ impl Source {
                 list_kind: crate::list_marker::MarkerKind::html(node),
                 classes: node.attribute("class").unwrap_or_default().to_owned(),
                 id: node.attribute("id").map(str::to_owned),
-                inline_style: node.attribute("style").map(str::to_owned),
+                inline_style: if selector_only { None } else { node.attribute("style").map(str::to_owned) },
                 parent,
+                previous_sibling,
+                first_of_type,
+                selector_only,
+                anonymous,
             });
+        }
+        drop(seen_types);
+        drop(last_children);
+        for id in selector_only_nodes {
+            element_ids.remove(&id);
         }
         let mut list_items = crate::list_marker::Items::read(body, &element_ids);
         let tables = crate::table_layout::TableCells::read(body, &element_ids);
@@ -614,11 +650,11 @@ impl Source {
                     .ancestors()
                     .any(|parent| selected.contains(&parent.range().start))
         }) {
-            if allow_normalization && let Some(normalized) = wrap_inline_runs(xhtml, body) {
+            if anonymous_boxes.is_none() && let Some((normalized, starts)) = wrap_inline_runs(xhtml, body) {
                 let mut parsed = Self::parse_document(
                     &normalized,
                     original_revision,
-                    false,
+                    Some(&starts),
                     publication_language,
                 )?;
                 parsed.normalized_xhtml = Some(normalized);
@@ -737,7 +773,7 @@ impl Source {
 // XHTML permits inline runs alongside block children. Give each such run a
 // layout box in place so its text, images and links stay in document order.
 // The same normalized source feeds both layout engines and every anchor.
-fn wrap_inline_runs(xhtml: &str, body: Node<'_, '_>) -> Option<String> {
+fn wrap_inline_runs(xhtml: &str, body: Node<'_, '_>) -> Option<(String, Vec<usize>)> {
     let mut parents = std::collections::HashSet::new();
     for block in body
         .descendants()
@@ -787,16 +823,18 @@ fn wrap_inline_runs(xhtml: &str, body: Node<'_, '_>) -> Option<String> {
     }
     ranges.sort_unstable_by_key(|range| range.start);
     let mut normalized = String::with_capacity(xhtml.len() + 11 * ranges.len());
+    let mut starts = Vec::with_capacity(ranges.len());
     let mut cursor = 0;
     for run in ranges {
         normalized.push_str(&xhtml[cursor..run.start]);
+        starts.push(normalized.len());
         normalized.push_str("<div>");
         normalized.push_str(&xhtml[run.clone()]);
         normalized.push_str("</div>");
         cursor = run.end;
     }
     normalized.push_str(&xhtml[cursor..]);
-    Some(normalized)
+    Some((normalized, starts))
 }
 
 fn is_block(node: Node<'_, '_>) -> bool {

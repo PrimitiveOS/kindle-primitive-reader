@@ -229,6 +229,10 @@ impl BookStyle {
         let defaults = Style::default();
         let mut result: Vec<Style> = Vec::with_capacity(elements.len());
         for (index, element) in elements.iter().enumerate() {
+            if element.selector_only {
+                result.push(Style::default());
+                continue;
+            }
             let parent = element.parent.map_or(&defaults, |parent| &result[parent]);
             let mut style = parent.clone();
             // A parent's background paints its box. It is not a text property.
@@ -440,23 +444,43 @@ struct Selector {
     specificity: Specificity,
 }
 
+#[derive(Clone, Copy, Default)]
+enum Relation {
+    #[default]
+    Descendant,
+    Child,
+    NextSibling,
+}
+
 #[derive(Default)]
 struct Compound {
     tag: Option<String>,
     universal: bool,
     classes: Vec<String>,
     ids: Vec<String>,
+    first_child: bool,
+    first_of_type: bool,
+    relation: Relation,
 }
 
 impl Compound {
     fn is_empty(&self) -> bool {
-        self.tag.is_none() && !self.universal && self.classes.is_empty() && self.ids.is_empty()
+        self.tag.is_none()
+            && !self.universal
+            && self.classes.is_empty()
+            && self.ids.is_empty()
+            && !self.first_child
+            && !self.first_of_type
     }
 
     fn matches(&self, element: &Element) -> bool {
-        self.tag
-            .as_ref()
-            .is_none_or(|tag| tag.eq_ignore_ascii_case(&element.tag))
+        !element.anonymous
+            && (!self.first_child || element.previous_sibling.is_none())
+            && (!self.first_of_type || element.first_of_type)
+            && self
+                .tag
+                .as_ref()
+                .is_none_or(|tag| tag.eq_ignore_ascii_case(&element.tag))
             && self.ids.iter().all(|id| element.id.as_ref() == Some(id))
             && self.classes.iter().all(|class| {
                 element
@@ -479,6 +503,19 @@ impl Selector {
                 separated = !compound.is_empty();
                 continue;
             }
+            if let Token::Delim(combinator @ ('>' | '+')) = token {
+                if compound.is_empty() {
+                    return Err(ParseError::unexpected_token());
+                }
+                steps.push(std::mem::take(&mut compound));
+                compound.relation = if combinator == '>' {
+                    Relation::Child
+                } else {
+                    Relation::NextSibling
+                };
+                separated = false;
+                continue;
+            }
             if separated {
                 steps.push(std::mem::take(&mut compound));
                 separated = false;
@@ -489,6 +526,19 @@ impl Selector {
                     specificity.2 += 1;
                 }
                 Token::Delim('*') if compound.is_empty() => compound.universal = true,
+                Token::Colon => {
+                    let Token::Ident(name) = input.next_including_whitespace()? else {
+                        return Err(ParseError::unexpected_token());
+                    };
+                    if name.eq_ignore_ascii_case("first-of-type") {
+                        compound.first_of_type = true;
+                    } else if name.eq_ignore_ascii_case("first-child") {
+                        compound.first_child = true;
+                    } else {
+                        return Err(ParseError::unexpected_token());
+                    }
+                    specificity.1 = specificity.1.saturating_add(1);
+                }
                 Token::IDHash(id) => {
                     compound.ids.push(id.to_string());
                     specificity.0 = specificity.0.saturating_add(1);
@@ -516,20 +566,45 @@ impl Selector {
     }
 
     fn matches(&self, elements: &[Element], index: usize) -> bool {
-        let (subject, ancestors) = self.steps.split_last().unwrap();
-        if !subject.matches(&elements[index]) {
+        // Check each uninterrupted chain of child/sibling relationships as a unit.
+        // A nearer ancestor that fails the chain must not hide a higher matching
+        // ancestor. Searching outward only between chains bounds work by depth × steps.
+        let Some((mut step, mut node)) = self.chain(self.steps.len() - 1, elements, index) else {
             return false;
-        }
-        let mut parent = elements[index].parent;
-        for step in ancestors.iter().rev() {
-            let Some(matched) = std::iter::successors(parent, |&index| elements[index].parent)
-                .find(|&index| step.matches(&elements[index]))
-            else {
+        };
+        while step > 0 {
+            let mut ancestors =
+                std::iter::successors(elements[node].parent, |&i| elements[i].parent);
+            let Some(matched) = ancestors.find_map(|i| self.chain(step - 1, elements, i)) else {
                 return false;
             };
-            parent = elements[matched].parent;
+            (step, node) = matched;
         }
         true
+    }
+
+    fn chain(
+        &self,
+        mut step: usize,
+        elements: &[Element],
+        mut index: usize,
+    ) -> Option<(usize, usize)> {
+        loop {
+            let compound = &self.steps[step];
+            let element = &elements[index];
+            if !compound.matches(element) {
+                return None;
+            }
+            if step == 0 {
+                return Some((step, index));
+            }
+            index = match compound.relation {
+                Relation::Descendant => return Some((step, index)),
+                Relation::Child => element.parent?,
+                Relation::NextSibling => element.previous_sibling?,
+            };
+            step -= 1;
+        }
     }
 }
 
@@ -1169,6 +1244,64 @@ mod tests {
                 .text_indent
                 .pixels(500, 32.0),
             -32.0
+        );
+    }
+
+    #[test]
+    fn paragraph_openers_match_only_adjacent_elements_and_direct_firsts_of_their_type() {
+        let (source, styles) = computed(include_str!("../tests/fixtures/paragraph-opener.xhtml"));
+        let indents = ["arrival", "walk", "weather", "return"].map(|id| {
+            let i = source
+                .elements
+                .iter()
+                .position(|e| e.id.as_deref() == Some(id))
+                .unwrap();
+            styles[i].text_indent.pixels(600, 32.0)
+        });
+        assert_eq!(indents, [0.0, 48.0, 0.0, 48.0]);
+
+        let markup = r#"<html><head><style>
+            p {text-indent:2em}
+            h2+p, section>p:first-of-type {text-indent:0}
+            .outer > .level .deep { text-indent:3px }
+            .pair:first-child + p {text-indent:4px}
+            h2 + p, p:unknown-primitiveos-pseudo {text-indent:19px !important}
+        </style></head><body>
+            <article><h2 hidden="hidden" id="silent">Hidden title</h2><!-- gap --> <p id="follows">A.</p></article>
+            <article><h2>Title</h2><span hidden="hidden">Silent</span><p id="separated">B.</p></article>
+            <article><h2>Open water</h2>Loose, visible words. <p id="after-text">I.</p></article>
+            <article><h2>Open sky</h2><span>Inline note.</span><p id="after-span">J.</p></article>
+            <section><p hidden="hidden">Silent first</p><p id="later">C.</p></section>
+            <section><aside/><p id="section-start">D.</p><div><p id="nested">E.</p></div></section>
+            <article class="outer"><div class="level"><aside><div class="level"><p id="backtrack" class="deep">F.</p></div></aside></div></article>
+            <article><span class="pair"/> <p id="pair">G.</p></article>
+            <article><span/><span class="pair"/><p id="not-pair">H.</p></article>
+        </body></html>"#;
+        let (src, styles) = computed(markup);
+        for (id, expected) in [
+            ("follows", 0.0),
+            ("separated", 64.0),
+            ("after-text", 0.0),
+            ("after-span", 64.0),
+            ("later", 64.0),
+            ("section-start", 0.0),
+            ("nested", 64.0),
+            ("backtrack", 3.0),
+            ("pair", 4.0),
+            ("not-pair", 64.0),
+        ] {
+            let i = src
+                .elements
+                .iter()
+                .position(|e| e.id.as_deref() == Some(id))
+                .unwrap();
+            assert_eq!(styles[i].text_indent.pixels(600, 32.0), expected, "{id}");
+        }
+        assert!(!src.fragments.contains_key("silent"));
+        assert!(
+            src.blocks
+                .iter()
+                .all(|b| !b.text.contains("Silent") && !b.text.contains("Hidden"))
         );
     }
 
