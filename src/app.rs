@@ -7876,6 +7876,62 @@ mod tests {
     }
 
     #[test]
+    fn djvu_contents_uses_both_reading_bars_and_returns_to_the_same_scan() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Beacon Atlas.djvu");
+        fs::copy(crate::test_fixture("beacon-atlas.djvu"), &path).unwrap();
+        let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        app.open_path(&path).unwrap();
+        app.activate(Action::SetFixedZoom(3)).unwrap();
+        app.input(Input::Swipe { dx: -180.0, dy: -220.0, start_y: 640.0 });
+        let cover = app.current_position().unwrap();
+        let origin = app.fixed.as_ref().unwrap().reading.history_point().unwrap();
+        assert!(origin.x > 0.0 && origin.y > 0.0);
+        assert!(app.fixed.as_ref().unwrap().footer_chapters.iter().all(|(_, title)| title != "Next plate"));
+
+        assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 0);
+        app.input(Input::Tap(630.0, 27.0));
+        if app.top_group != Some(TopGroup::Navigation) {
+            tap_reading_control(&mut app, "Navigation");
+        }
+        tap_reading_control(&mut app, "Contents");
+        assert_eq!(app.screen, Screen::FixedContents);
+        capture_test_screen(&app, &fonts, "READER_DJVU_CONTENTS_SCREENSHOT", false);
+        let items = app.items();
+        assert!(items.iter().any(|item| item.title == "Source website" && matches!(item.action, Action::Heading)));
+        assert!(items.iter().any(|item| item.title == "Unknown plate" && matches!(item.action, Action::Heading)));
+        tap_contents_item(&mut app, "Unknown plate");
+        assert_eq!(app.screen, Screen::FixedContents);
+        assert_eq!(app.current_position(), Some(cover.clone()));
+        tap_contents_item(&mut app, "  Outer reef");
+        let reef = app.current_position().unwrap();
+        assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 2);
+        app.input(Input::Tap(630.0, 1420.0));
+        tap_reading_control(&mut app, "Contents");
+        assert_eq!(app.screen, Screen::FixedContents);
+        assert_eq!(app.items()[app.current_contents_row.unwrap()].title, "  Outer reef");
+        tap_contents_item(&mut app, "  Nearest station");
+        assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 4);
+        app.activate(Action::ReturnToLocation).unwrap();
+        assert_eq!(app.current_position(), Some(reef));
+        app.activate(Action::ReturnToLocation).unwrap();
+        assert_eq!(app.current_position(), Some(cover));
+        let restored = app.fixed.as_ref().unwrap().reading.history_point().unwrap();
+        assert!((origin - restored).hypot() < 1.0);
+        app.save().unwrap();
+        let mut reopened = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+        reopened.activate(Action::Continue).unwrap();
+        assert_eq!(reopened.fixed.as_ref().unwrap().reading.page(), 0);
+        reopened.input(Input::PageForward);
+        reopened.tick(Instant::now() + Duration::from_secs(1));
+        assert_eq!(reopened.fixed.as_ref().unwrap().reading.page(), 1);
+        reopened.input(Input::PageBack);
+        reopened.tick(Instant::now() + Duration::from_secs(2));
+        assert_eq!(reopened.fixed.as_ref().unwrap().reading.page(), 0);
+    }
+
+    #[test]
     fn fixed_contents_uses_publisher_and_custom_page_destinations() {
         let fixture = Fixture::new();
         let path = fixture.root.join("Chart booklet.pdf");

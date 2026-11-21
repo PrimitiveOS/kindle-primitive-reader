@@ -2181,6 +2181,7 @@ dependencies = [
  "lopdf",
  "md5",
  "parley",
+ "percent-encoding",
  "png 0.17.16",
  "primitive-app",
  "primitive-ui",

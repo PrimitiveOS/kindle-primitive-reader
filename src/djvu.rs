@@ -9,6 +9,9 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use crate::fixed::{MAX_VIEWPORT_PIXELS, RenderRequest};
 use crate::fixed_text::{PdfPageText, PdfTextRect, PdfTextSpan};
 
+#[path = "djvu_contents.rs"]
+mod contents;
+
 pub const MAX_DJVU_BYTES: usize = 32 * 1024 * 1024;
 const MAX_DJVU_PAGES: u64 = 10_000;
 const MAX_COMPONENTS: u64 = 12_000;
@@ -25,6 +28,7 @@ const ZONE_BYTES: usize = 17;
 
 pub struct Djvu {
     document: Document,
+    contents: contents::Contents,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -85,7 +89,21 @@ impl Djvu {
         if document.page_count() == 0 {
             return Err(DjvuError::UnsupportedOrDamaged);
         }
-        Ok(Self { document })
+        let contents = contents::Contents::read(&document);
+        Ok(Self { document, contents })
+    }
+
+    /// Publisher contents for the current page, including labels without a local destination.
+    pub fn outline(&self) -> &[crate::fixed::PdfOutlineItem] {
+        &self.contents.rows
+    }
+
+    pub(crate) fn stable_outline_destination(&self, index: usize) -> bool {
+        self.contents.stable(index)
+    }
+
+    pub(crate) fn set_outline_page(&mut self, page: usize) {
+        self.contents.set_page(page, self.document.page_count());
     }
 
     pub fn page_count(&self) -> usize {

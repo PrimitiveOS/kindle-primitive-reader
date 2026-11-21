@@ -139,7 +139,7 @@ device. [Reading parity and device results](docs/reading-parity-plan.md)
 | EPUB 2 and EPUB 3 reflow | Publisher navigation, local links, saved text positions, per-book typography, bookmarks, search and notes. Linked static SVG and short horizontal ruby annotations render within documented limits. |
 | Fixed-layout EPUB 3 | Static XHTML and supported SVG spine pages, contents, zoom and rotation. Publisher page progression and facing-page hints control spreads. |
 | PDF | Page turns or continuous scrolling, printed page labels, local outlines and links, bookmarks, passwords, page, width and height fit, crop, zoom, pan and rotation. Embedded text supports search, selection, highlights and notes. |
-| DjVu | Fixed pages, crop, and embedded text with search and annotations |
+| DjVu | Fixed pages, crop, embedded text with search and annotations, and [publisher contents](docs/djvu-contents.md) with named page destinations |
 | CBZ, CBT, CBR, JPEG, PNG, BMP, GIF and portable anymaps | Natural comic page order, single pages or two-page spreads, and selectable reading direction. CBT accepts standard uncompressed USTAR entries. CBR accepts supported single-volume, non-solid RAR4 and RAR5. Animated GIF shows its first frame. Portable anymaps include PBM, PGM, PPM and PAM. |
 | SVG | Static geometry and local gradients in standalone files, linked EPUB illustrations, and fixed-layout EPUB pages. |
 | JPEG 2000 (.jp2 and .j2k) | Open a grayscale or color still image directly from Library or read it as a comic page. Supports lossless and lossy Part 1 images with up to 16 bits per component. [Simulated Kindle page](docs/screenshots/jpeg2000-beacon.png) |

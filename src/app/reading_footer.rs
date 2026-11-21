@@ -10,8 +10,7 @@ use primitive_ui::{Canvas, Rect};
 
 pub(super) fn fixed_chapters(reading: &FixedReading) -> Vec<(usize, String)> {
     let mut chapters: Vec<_> = reading
-        .outline()
-        .iter()
+        .chapter_outline()
         .filter_map(|item| {
             let page = item.page.filter(|&page| page < reading.count())?;
             Some((page, item.title.clone()))

@@ -142,7 +142,7 @@ Use this table as the initial format inventory. A decoder that opens a file qual
 | DOCX/DOCM, ODT, PPTX, XLSX, XPS and compound files | Native DOCX reading subset for macro-free Strict and Transitional Word files. Supports title and author metadata, heading contents, paragraphs, basic emphasis, and table cell order. Files offers XPS to an installed KOReader. Native XPS would require a fixed-page renderer for OpenXPS resources, font obfuscation, glyph runs and package links. [ECMA-376](https://ecma-international.org/publications-and-standards/standards/ecma-376/) · [KOReader XPS provider](https://github.com/koreader/koreader/blob/v2026.07.1/frontend/document/pdfdocument.lua) | TOC or sheet order, displayed content, text search/selection where available, malformed or unsupported variants, and bounded document processing. |
 | ZIP and TAR as document wrappers | P3 validate book, image and comic payload combinations individually. | Entry recognition, collision and storage limits, format selection, and position after reopening a verified payload. |
 
-The DjVu development path uses the pinned Rust decoder and reads embedded text.
+The DjVu reader uses the pinned Rust decoder for embedded text and NAVM publisher contents. The Mac comparison verified all 391 headings in five DjVuLibre reference books. [DjVu destinations and evidence](djvu-contents.md)
 Desktop proof includes rotated text selection and rendering real public-domain
 scans. Reader caps the vendored BZZ decoder's expanded output at 8 MiB and
 checks the declared IW44 coefficient allocation before rendering.

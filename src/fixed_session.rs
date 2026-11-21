@@ -253,7 +253,7 @@ impl FixedReading {
             .transpose()
     }
 
-    fn with_source(source: FixedDocument, page: usize, preferences: View) -> Result<Self> {
+    fn with_source(mut source: FixedDocument, page: usize, preferences: View) -> Result<Self> {
         let page = page.min(source.count() - 1);
         let outline = match &source {
             FixedDocument::Epub(book) => book.outline(),
@@ -269,6 +269,9 @@ impl FixedReading {
         } else {
             present()
         }?;
+        if let FixedDocument::Djvu(book) = &mut source {
+            book.set_outline_page(page);
+        }
         Ok(Self {
             source,
             page,
@@ -452,8 +455,22 @@ impl FixedReading {
         Ok(())
     }
 
+    pub(crate) fn chapter_outline(&self) -> impl Iterator<Item = &PdfOutlineItem> {
+        self.outline().iter().enumerate().filter_map(|(index, item)| {
+            if let FixedDocument::Djvu(book) = &self.source
+                && !book.stable_outline_destination(index)
+            {
+                return None;
+            }
+            Some(item)
+        })
+    }
+
     pub(crate) fn outline(&self) -> &[PdfOutlineItem] {
-        &self.outline
+        match &self.source {
+            FixedDocument::Djvu(book) => book.outline(),
+            _ => &self.outline,
+        }
     }
 
     pub(crate) fn preferences(&self) -> View {
@@ -1217,6 +1234,9 @@ impl FixedReading {
         }
         self.frame = frame;
         self.visible = visible;
+        if self.page != page && let FixedDocument::Djvu(book) = &mut self.source {
+            book.set_outline_page(page);
+        }
         self.page = page;
         self.view = view;
         self.turns.next_refresh = Instant::now() + PAGE_REFRESH_GAP;

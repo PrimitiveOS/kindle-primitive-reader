@@ -15,6 +15,7 @@ The [manifest](manifest.json) records the expected reading order, locations, lin
 | `missing-image.epub` | A valid ZIP links to a missing image. Check for usable fallback or error handling. |
 | `malformed-container.epub` | A valid ZIP contains incomplete package-location XML. Check that opening fails cleanly. |
 | `truncated.epub` | The ZIP has no end of central directory record. Check that opening fails cleanly. |
+| `beacon-atlas.djvu` | Six original illustrated pages with nested publisher contents, page identifiers, repeated titles, signed displacements, and three inactive headings. [DjVu reference comparison](../../docs/djvu-contents.md) |
 | `tilted-scan.pdf` | Two original pages with opposite 8° baselines, selectable words and an internal link. Compare the upright result with the source and check that the link opens the next page. |
 | `password-required.pdf` | One generated blank page. Verify the password flow rejects a wrong password and accepts `reader-test`. |
 | `field-notes.tcr` | Calibre 9.5.0 TCR output with original Windows-1252 sample text. Verify decompression and non-ASCII punctuation. |
