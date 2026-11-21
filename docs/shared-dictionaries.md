@@ -1,6 +1,6 @@
 # Offline dictionaries on Kindle
 
-Hold a word and tap **Dictionary**. The results panel stays over the passage. Use **Results** to choose a source or another meaning. Closing the panel restores the selection. **Preferred dictionary** in reading settings changes which installed dictionary Reader searches first.
+Hold a word and tap **Dictionary**. The results panel stays over the passage. Use **Results** to choose a source or another meaning. Closing the panel restores the selection. Open **Dictionaries** from reading settings or the lookup tools to change the sources. Tap a dictionary to enable or disable it by default or move it in the default order. **Prefer for this book** puts it ahead of the global list, including when it is disabled by default. Each book can have several preferred dictionaries in its own order. Returning to another book restores that book’s choices. [Dictionary settings](screenshots/dictionary-priorities.png)
 
 | Location on Kindle user storage | Behavior |
 | --- | --- |

@@ -597,6 +597,8 @@ pub struct BookState {
     pub preferences: BookPreferences,
     #[serde(default)]
     pub fixed_preferences: FixedPreferences,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) preferred_dictionaries: Vec<PathBuf>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -644,6 +646,7 @@ impl BookState {
             favorite: false,
             preferences: BookPreferences::default(),
             fixed_preferences: FixedPreferences::default(),
+            preferred_dictionaries: Vec::new(),
             ocr_language: None,
             menus: Default::default(),
             bookmarks: Vec::new(),

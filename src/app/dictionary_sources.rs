@@ -1,0 +1,437 @@
+use super::*;
+
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub(super) struct SourcePreferences {
+    order: Vec<PathBuf>,
+    disabled: Vec<PathBuf>,
+}
+
+impl SourcePreferences {
+    pub(super) fn load(path: &Path) -> Self {
+        let Ok(bytes) = read_import_file(path, 64 * 1024) else {
+            return Self::default();
+        };
+        if let Ok(settings) = serde_json::from_slice::<Self>(&bytes) {
+            return settings;
+        }
+        // Earlier releases persisted either null or one preferred relative path.
+        Self {
+            order: serde_json::from_slice::<Option<PathBuf>>(&bytes)
+                .ok()
+                .flatten()
+                .into_iter()
+                .collect(),
+            disabled: Vec::new(),
+        }
+    }
+}
+
+pub(super) enum SourceAction {
+    Open(usize),
+    Toggle,
+    Earlier,
+    Later,
+    ForBook,
+    EarlierForBook,
+    LaterForBook,
+    ResetOrder,
+}
+
+fn toggle(paths: &mut Vec<PathBuf>, key: &Path) {
+    if paths.iter().any(|path| path == key) {
+        paths.retain(|path| path != key);
+    } else {
+        paths.push(key.to_owned());
+    }
+}
+
+impl Reader {
+    fn book_dictionaries(&self) -> &[PathBuf] {
+        self.open_book_id()
+            .and_then(|id| self.library.state(id))
+            .map_or(&[], |book| book.preferred_dictionaries.as_slice())
+    }
+
+    pub(super) fn lookup_sources(&self, word: &str) -> io::Result<Vec<dictionary::Definition>> {
+        let prefs = &self.dictionary_settings;
+        self.dictionaries.lookup_ordered(
+            word,
+            self.book_dictionaries(),
+            &prefs.order,
+            &prefs.disabled,
+        )
+    }
+
+    fn sort_dictionaries(&mut self) {
+        self.installed_dictionaries.sort_by(|a, b| {
+            let rank = |key: &Path| {
+                self.dictionary_settings
+                    .order
+                    .iter()
+                    .position(|path| path == key)
+                    .unwrap_or(usize::MAX)
+            };
+            rank(&a.path)
+                .cmp(&rank(&b.path))
+                .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
+                .then_with(|| a.path.is_absolute().cmp(&b.path.is_absolute()))
+                .then_with(|| a.path.cmp(&b.path))
+        });
+    }
+
+    pub(super) fn open_sources(&mut self) -> Result<()> {
+        self.installed_dictionaries = with_storage(|| self.dictionaries.installed())?;
+        self.sort_dictionaries();
+        self.dictionary_origin = self.screen;
+        self.show(Screen::Dictionaries);
+        Ok(())
+    }
+
+    pub(super) fn source_rows(&self) -> Vec<Item> {
+        let mut rows: Vec<_> = self
+            .installed_dictionaries
+            .iter()
+            .enumerate()
+            .map(|(i, source)| {
+                let detail = if let Some(rank) = self
+                    .book_dictionaries()
+                    .iter()
+                    .position(|key| key == &source.path)
+                {
+                    format!("Book preference {}", rank + 1)
+                } else if self.dictionary_settings.disabled.contains(&source.path) {
+                    "Disabled".to_owned()
+                } else {
+                    "Enabled".to_owned()
+                };
+                Item::new(
+                    &source.title,
+                    Action::DictionarySource(SourceAction::Open(i)),
+                )
+                .detail(detail)
+            })
+            .collect();
+        if rows.is_empty() {
+            rows.push(
+                Item::new("Add StarDict dictionaries", Action::Heading)
+                    .detail("Copy dictionaries to reader/data/dictionaries"),
+            );
+        } else if !self.dictionary_settings.order.is_empty() {
+            rows.push(Item::new(
+                "Reset dictionary order",
+                Action::DictionarySource(SourceAction::ResetOrder),
+            ));
+        }
+        rows
+    }
+
+    pub(super) fn source_options(&self, i: usize) -> Vec<Item> {
+        let Some(source) = self.installed_dictionaries.get(i) else {
+            return Vec::new();
+        };
+        let mut rows = vec![
+            Item::new(&source.title, Action::Heading),
+            Item::new(
+                if self.dictionary_settings.disabled.contains(&source.path) {
+                    "Enable by default"
+                } else {
+                    "Disable by default"
+                },
+                Action::DictionarySource(SourceAction::Toggle),
+            ),
+        ];
+        if self.open_book_id().is_some() {
+            let preferred = self.book_dictionaries().contains(&source.path);
+            rows.push(
+                Item::new(
+                    if preferred {
+                        "Remove book preference"
+                    } else {
+                        "Prefer for this book"
+                    },
+                    Action::DictionarySource(SourceAction::ForBook),
+                )
+                .detail("Book preferences take priority over the global list"),
+            );
+        }
+        let book_order = self.book_dictionaries();
+        if let Some(rank) = book_order.iter().position(|key| key == &source.path) {
+            if rank > 0 {
+                rows.push(Item::new(
+                    "Earlier for this book",
+                    Action::DictionarySource(SourceAction::EarlierForBook),
+                ));
+            }
+            if rank + 1 < book_order.len() {
+                rows.push(Item::new(
+                    "Later for this book",
+                    Action::DictionarySource(SourceAction::LaterForBook),
+                ));
+            }
+        }
+        if i > 0 {
+            rows.push(Item::new(
+                "Earlier in default order",
+                Action::DictionarySource(SourceAction::Earlier),
+            ));
+        }
+        if i + 1 < self.installed_dictionaries.len() {
+            rows.push(Item::new(
+                "Later in default order",
+                Action::DictionarySource(SourceAction::Later),
+            ));
+        }
+        rows
+    }
+
+    pub(super) fn change_source(&mut self, action: SourceAction) -> Result<()> {
+        if let SourceAction::Open(i) = action {
+            if self.installed_dictionaries.get(i).is_none() {
+                return Err("Dictionary unavailable".into());
+            }
+            self.show(Screen::DictionaryOptions(i));
+            return Ok(());
+        }
+        let mut next = self.dictionary_settings.clone();
+        let mut selected_key = None;
+        if matches!(action, SourceAction::ResetOrder) {
+            next.order.clear();
+        } else {
+            let Screen::DictionaryOptions(i) = self.screen else {
+                return Err("Choose a dictionary first".into());
+            };
+            let key = self
+                .installed_dictionaries
+                .get(i)
+                .ok_or("Dictionary unavailable")?
+                .path
+                .clone();
+            match action {
+                SourceAction::ForBook
+                | SourceAction::EarlierForBook
+                | SourceAction::LaterForBook => {
+                    let id = self.open_book_id().ok_or("Open a book first")?;
+                    let state = self.library.state_mut(id).ok_or("Book unavailable")?;
+                    let book_order = &mut state.preferred_dictionaries;
+                    let previous = book_order.clone();
+                    if matches!(action, SourceAction::ForBook) {
+                        toggle(book_order, &key);
+                    } else {
+                        let rank = book_order
+                            .iter()
+                            .position(|k| *k == key)
+                            .ok_or("Choose a preferred dictionary")?;
+                        let dest = if matches!(action, SourceAction::EarlierForBook) {
+                            rank.checked_sub(1)
+                        } else {
+                            rank.checked_add(1)
+                        };
+                        let dest = dest
+                            .filter(|i| *i < book_order.len())
+                            .ok_or("End of book preferences")?;
+                        book_order.swap(rank, dest);
+                    }
+                    self.mark_dirty();
+                    if let Err(error) = self.save_library() {
+                        self.library.state_mut(id).unwrap().preferred_dictionaries = previous;
+                        return Err(error.into());
+                    }
+                    return Ok(());
+                }
+                SourceAction::Toggle => toggle(&mut next.disabled, &key),
+                SourceAction::Earlier | SourceAction::Later => {
+                    let j = if matches!(action, SourceAction::Earlier) {
+                        i.checked_sub(1)
+                    } else {
+                        i.checked_add(1)
+                    };
+                    let j = j
+                        .filter(|j| *j < self.installed_dictionaries.len())
+                        .ok_or("End of the list")?;
+                    let mut ordered: Vec<_> = self
+                        .installed_dictionaries
+                        .iter()
+                        .map(|row| row.path.clone())
+                        .collect();
+                    ordered.swap(i, j);
+                    // Keep unplugged or temporarily absent dictionaries in the saved order.
+                    for old in next.order.drain(..) {
+                        if !ordered.contains(&old) {
+                            ordered.push(old);
+                        }
+                    }
+                    next.order = ordered;
+                }
+                SourceAction::ResetOrder | SourceAction::Open(_) => unreachable!(),
+            }
+            selected_key = Some(key);
+        }
+        primitive_app::save(&self.dictionary_preference, &serde_json::to_vec(&next)?)?;
+        self.dictionary_settings = next;
+        self.sort_dictionaries();
+        if let Some(key) = selected_key
+            && let Some(index) = self
+                .installed_dictionaries
+                .iter()
+                .position(|r| r.path == key)
+        {
+            self.show(Screen::DictionaryOptions(index));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::tests::Fixture;
+
+    fn row(app: &mut Reader, label: &str) {
+        let index = app
+            .items()
+            .iter()
+            .position(|item| item.title == label)
+            .unwrap();
+        let y = (LIST_Y + (index % ROWS_PER_PAGE) as i32 * ROW_HEIGHT + ROW_HEIGHT / 2) as f32;
+        app.list_page = index / ROWS_PER_PAGE;
+        app.input(Input::Tap(180.0, y));
+    }
+
+    fn back(app: &mut Reader) {
+        let rect = primitive_ui::back_button(WIDTH as i32);
+        app.input(Input::Tap(
+            (rect.x + rect.w / 2) as f32,
+            (rect.y + rect.h / 2) as f32,
+        ));
+    }
+
+    #[test]
+    fn source_order_disable_and_book_preferences_persist_and_stay_with_the_book() {
+        let f = Fixture::new();
+        let dir = f.root.join("dictionaries");
+        fs::create_dir(&dir).unwrap();
+        for name in ["Harbor", "Estuary", "Coast"] {
+            crate::dictionary::tests::write_dictionary(
+                &dir,
+                name,
+                "sametypesequence=m\n",
+                &[("tide", name.as_bytes())],
+            );
+        }
+        let other = f.root.join("Coast.epub");
+        fs::copy(crate::test_fixture("night-landing.epub"), &other).unwrap();
+        fs::write(
+            f.root.join("dictionary-preference.json"),
+            br#""Harbor.ifo""#,
+        )
+        .unwrap();
+        let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+        let open = || Reader::open(&f.root, &f.state, vec![font.clone()]).unwrap();
+        let names = |app: &Reader| {
+            app.lookup_sources("tide")
+                .unwrap()
+                .into_iter()
+                .map(|hit| hit.dictionary)
+                .collect::<Vec<_>>()
+        };
+
+        let mut app = open();
+        app.open_path(&f.book).unwrap();
+        let origin = app.current_history_location();
+        app.activate(Action::ShowDictionaries).unwrap();
+        assert_eq!(app.installed_dictionaries[0].title, "Harbor");
+        assert_eq!(names(&app), ["Harbor", "Coast", "Estuary"]);
+        row(&mut app, "Coast");
+        row(&mut app, "Earlier in default order");
+        assert_eq!(names(&app), ["Coast", "Harbor", "Estuary"]);
+        row(&mut app, "Disable by default");
+        assert_eq!(names(&app), ["Harbor", "Estuary"]);
+        row(&mut app, "Prefer for this book");
+        assert_eq!(names(&app), ["Coast", "Harbor", "Estuary"]);
+        back(&mut app);
+        row(&mut app, "Estuary");
+        row(&mut app, "Prefer for this book");
+        row(&mut app, "Earlier for this book");
+        assert_eq!(names(&app), ["Estuary", "Coast", "Harbor"]);
+        if let Some(path) = std::env::var_os("READER_DICTIONARY_MANAGEMENT_SCREENSHOT") {
+            let mut canvas = Canvas::new(WIDTH, HEIGHT, &[font.display().to_string()]).unwrap();
+            let frame = primitive_app::frame(&app, &mut canvas, false);
+            primitive_app::write_png(Path::new(&path), WIDTH, HEIGHT, &frame).unwrap();
+        }
+        back(&mut app);
+        back(&mut app);
+        assert_eq!(app.screen, Screen::Book);
+        assert!(app.current_history_location() == origin);
+        drop(app);
+
+        let mut app = open();
+        app.open_path(&other).unwrap();
+        assert_eq!(names(&app), ["Harbor", "Estuary"]);
+        app.open_path(&f.book).unwrap();
+        assert_eq!(names(&app), ["Estuary", "Coast", "Harbor"]);
+        app.activate(Action::ShowDictionaries).unwrap();
+        row(&mut app, "Estuary");
+        row(&mut app, "Remove book preference");
+        back(&mut app);
+        row(&mut app, "Coast");
+        row(&mut app, "Remove book preference");
+        back(&mut app);
+        row(&mut app, "Reset dictionary order");
+        assert_eq!(names(&app), ["Estuary", "Harbor"]);
+    }
+    #[test]
+    #[ignore = "Supply two original publications, a lookup word and the installed dictionary root"]
+    fn global_and_per_book_source_preferences_apply_to_original_books() {
+        #[derive(serde::Deserialize)]
+        struct Case {
+            first: PathBuf,
+            second: PathBuf,
+            word: String,
+            dictionary: String,
+            sources: usize,
+        }
+        let case: Case = serde_json::from_slice(
+            &fs::read(std::env::var_os("READER_SOURCE_PREFERENCE_CASE").unwrap()).unwrap(),
+        )
+        .unwrap();
+        let docs = PathBuf::from(std::env::var_os("PRIMITIVE_READER_DOCUMENTS").unwrap());
+        let f = Fixture::new();
+        let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+        let open = || Reader::open(&docs, &f.state, vec![font.clone()]).unwrap();
+        let includes = |app: &Reader| {
+            app.lookup_sources(&case.word)
+                .unwrap()
+                .iter()
+                .any(|d| d.dictionary == case.dictionary)
+        };
+        let first = |app: &Reader| {
+            app.lookup_sources(&case.word)
+                .unwrap()
+                .first()
+                .is_some_and(|d| d.dictionary == case.dictionary)
+        };
+        let mut app = open();
+        app.open_path(&case.first).unwrap();
+        app.activate(Action::ShowDictionaries).unwrap();
+        assert_eq!(app.installed_dictionaries.len(), case.sources);
+        assert!(includes(&app));
+        row(&mut app, &case.dictionary);
+        row(&mut app, "Disable by default");
+        assert!(!includes(&app));
+        row(&mut app, "Prefer for this book");
+        assert!(first(&app));
+        drop(app);
+        let mut app = open();
+        app.open_path(&case.second).unwrap();
+        assert!(!includes(&app));
+        app.open_path(&case.first).unwrap();
+        assert!(first(&app));
+        app.activate(Action::ShowDictionaries).unwrap();
+        row(&mut app, &case.dictionary);
+        row(&mut app, "Remove book preference");
+        assert!(!includes(&app));
+        row(&mut app, "Enable by default");
+        assert!(includes(&app));
+    }
+}

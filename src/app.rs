@@ -4,6 +4,8 @@ mod bar_icons;
 mod custom_contents;
 mod contents_position;
 mod dictionary_panel;
+mod dictionary_sources;
+use dictionary_sources::{SourceAction, SourcePreferences};
 mod fixed_book_map;
 mod gestures;
 mod extend_highlight;
@@ -167,6 +169,7 @@ enum Screen {
     DictionaryHistory,
     Vocabulary,
     Dictionaries,
+    DictionaryOptions(usize),
 }
 
 impl Screen {
@@ -236,7 +239,8 @@ impl Screen {
             Self::ClearOnlineHistory => "Online lookup history",
             Self::DictionaryHistory => "Dictionary history",
             Self::Vocabulary => "Vocabulary",
-            Self::Dictionaries => "Preferred dictionary",
+            Self::Dictionaries => "Dictionaries",
+            Self::DictionaryOptions(_) => "Dictionary settings",
         }
     }
 }
@@ -290,7 +294,7 @@ enum Action {
     Text(Settings),
     ShowFonts,
     ShowDictionaries,
-    UseDictionary(Option<PathBuf>),
+    DictionarySource(SourceAction),
     LookUp(String),
     Wikipedia,
     TranslatePage,
@@ -536,7 +540,8 @@ pub struct Reader {
     exports: PathBuf,
     dictionaries: DictionarySources,
     dictionary_preference: PathBuf,
-    preferred_dictionary: Option<PathBuf>,
+    dictionary_settings: SourcePreferences,
+    dictionary_origin: Screen,
     installed_dictionaries: Vec<InstalledDictionary>,
     lookup_history_path: PathBuf,
     lookup_history: LookupHistory,
@@ -567,10 +572,7 @@ impl Reader {
         let dictionary_preference = data.join("dictionary-preference.json");
         let lookup_history_path = data.join("lookup-history.json");
         let lookup_history = LookupHistory::load(&lookup_history_path);
-        let preferred_dictionary = read_import_file(&dictionary_preference, 4096)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<Option<PathBuf>>(&bytes).ok())
-            .flatten();
+        let dictionary_settings = SourcePreferences::load(&dictionary_preference);
         let ocr_assets = with_storage(|| Ok(data.parent().and_then(OcrAssets::discover)))?;
         Ok(Self {
             library,
@@ -658,7 +660,8 @@ impl Reader {
             exports: state.parent().unwrap_or(documents).join("exports"),
             dictionaries: DictionarySources::for_reader(documents, data),
             dictionary_preference,
-            preferred_dictionary,
+            dictionary_settings,
+            dictionary_origin: Screen::ReadingControls,
             installed_dictionaries: Vec::new(),
             lookup_history_path,
             lookup_history,
@@ -1077,29 +1080,8 @@ impl Reader {
             }
             return items;
         }
-        if self.screen == Screen::Dictionaries {
-            let mut items = vec![Item::new("Default order", Action::UseDictionary(None))];
-            items.extend(self.installed_dictionaries.iter().map(|dictionary| {
-                let selected = self.preferred_dictionary.as_deref() == Some(&dictionary.path);
-                let detail = if selected {
-                    "Preferred"
-                } else {
-                    "Check this dictionary first"
-                };
-                Item::new(
-                    &dictionary.title,
-                    Action::UseDictionary(Some(dictionary.path.clone())),
-                )
-                .detail(detail)
-            }));
-            if self.installed_dictionaries.is_empty() {
-                items.push(
-                    Item::new("Add StarDict dictionaries", Action::Heading)
-                        .detail("Copy dictionaries to reader/data/dictionaries"),
-                );
-            }
-            return items;
-        }
+        if self.screen == Screen::Dictionaries { return self.source_rows(); }
+        if let Screen::DictionaryOptions(i) = self.screen { return self.source_options(i); }
         if self.screen == Screen::ReadingData {
             let mut items = vec![
                 Item::new("Back up reading data", Action::ExportBackup)
@@ -2096,24 +2078,8 @@ impl Reader {
                 self.available_fonts = reading_fonts::available(&self.fonts_directory)?;
                 self.show(Screen::ReadingFonts);
             }
-            Action::ShowDictionaries => {
-                self.installed_dictionaries = with_storage(|| self.dictionaries.installed())?;
-                self.show(Screen::Dictionaries);
-            }
-            Action::UseDictionary(preferred) => {
-                if preferred.as_ref().is_some_and(|path| {
-                    !self
-                        .installed_dictionaries
-                        .iter()
-                        .any(|dictionary| &dictionary.path == path)
-                }) {
-                    return Err("That dictionary is unavailable".into());
-                }
-                let bytes = serde_json::to_vec(&preferred)?;
-                primitive_app::save(&self.dictionary_preference, &bytes)?;
-                self.preferred_dictionary = preferred;
-                self.notice = Some("Dictionary preference saved".into());
-            }
+            Action::ShowDictionaries => self.open_sources()?,
+            Action::DictionarySource(action) => self.change_source(action)?,
             Action::SetFont(font) => {
                 let fonts = self.fonts_for(font.as_deref())?;
                 let active = self.active.as_mut().ok_or("Open a book first")?;
@@ -5365,7 +5331,12 @@ impl App for Reader {
                     }
                     Screen::Gestures => self.show(Screen::ReadingControls),
                     Screen::ReadingFonts => self.show(Screen::Typography),
-                    Screen::Dictionaries | Screen::FooterSettings => {
+                    Screen::DictionaryOptions(i) => {
+                        self.show(Screen::Dictionaries);
+                        self.list_page = i / ROWS_PER_PAGE;
+                    }
+                    Screen::Dictionaries => self.show(self.dictionary_origin),
+                    Screen::FooterSettings => {
                         self.show(Screen::ReadingControls)
                     }
                     Screen::ReadingProfiles => self.show(Screen::Typography),

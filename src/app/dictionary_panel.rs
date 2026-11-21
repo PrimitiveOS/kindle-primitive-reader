@@ -261,7 +261,7 @@ impl Reader {
             return Err("Go back one lookup to open another definition".into());
         }
         let results = with_storage(|| {
-            self.dictionaries.lookup(word, self.preferred_dictionary.as_deref())
+            self.lookup_sources(word)
         })?;
         self.update_lookup_history(|history| history.lookup(word))?;
         if nested {

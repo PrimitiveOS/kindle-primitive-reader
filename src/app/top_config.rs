@@ -1,6 +1,5 @@
 //! Actions available from the reading view's grouped top menu.
 
-use std::path::Path;
 
 use super::{Action, BookList, Item, Reader, Screen, text_items};
 use crate::reading_controls::ReadingControls;
@@ -363,13 +362,7 @@ impl Reader {
     }
 
     pub(super) fn preferred_dictionary_item(&self) -> Item {
-        let current = self
-            .preferred_dictionary
-            .as_deref()
-            .and_then(Path::file_stem)
-            .and_then(|name| name.to_str())
-            .unwrap_or("Default order");
-        Item::new("Preferred dictionary", Action::ShowDictionaries).detail(current)
+        Item::new("Dictionaries", Action::ShowDictionaries).detail("Sources, order and book preferences")
     }
 
     fn document_search_items(&self) -> Vec<Item> {

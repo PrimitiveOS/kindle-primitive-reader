@@ -143,6 +143,12 @@ impl DictionarySources {
         word: &str,
         preferred: Option<&Path>,
     ) -> io::Result<Vec<Definition>> {
+        let first: Vec<_> = preferred.iter().map(|path| path.to_path_buf()).collect();
+        self.lookup_ordered(word, &[], &first, &[])
+    }
+
+    pub(crate) fn lookup_ordered(&self, word: &str, book_order: &[PathBuf], order: &[PathBuf],
+                                 disabled: &[PathBuf]) -> io::Result<Vec<Definition>> {
         let word = word.trim();
         if word.len() > MAX_WORD_BYTES {
             return Ok(Vec::new());
@@ -152,12 +158,19 @@ impl DictionarySources {
         if term.is_empty() {
             return Ok(Vec::new());
         }
-        let mut files = self.files()?;
-        if let Some(preferred) = preferred
-            && let Some(index) = files.iter().position(|file| file.key == preferred)
-        {
-            files[..=index].rotate_right(1);
+        let mut first_error = None;
+        let mut sources = Vec::new();
+        for file in self.files()? {
+            if disabled.contains(&file.key) && !book_order.contains(&file.key) { continue; }
+            match open_dictionary_file(&file.root, &file.path).and_then(Info::load) {
+                Ok(info) => sources.push((file, info)),
+                Err(error) => { first_error.get_or_insert(error); }
+            }
         }
+        sources.sort_by_cached_key(|(file, info)| {
+            let rank = book_order.iter().chain(order).position(|key| key == &file.key).unwrap_or(usize::MAX);
+            (rank, info.title.to_lowercase(), file.key.is_absolute(), file.key.clone())
+        });
         let folded = CaseMapper::new().fold_string(term);
         let query = Query {
             word,
@@ -169,15 +182,10 @@ impl DictionarySources {
             dictzip_bytes: MAX_DZ_LOOKUP_BYTES,
         };
         let mut read_any = false;
-        let mut first_error = None;
-        for DictionaryFile { root, path, .. } in files {
-            let result = (|| {
-                let info = Info::load(open_dictionary_file(&root, &path)?)?;
-                // A missing or malformed synonym table leaves the base dictionary usable.
-                let aliases = synonym_targets(&root, &path, &info, query, &mut budget)
-                    .unwrap_or_else(|_| Hits::new());
-                lookup_dictionary(&root, &path, &info, IndexQuery { headword: query, aliases }, &mut budget)
-            })();
+        for (DictionaryFile { root, path, .. }, info) in sources {
+            let aliases = synonym_targets(&root, &path, &info, query, &mut budget)
+                .unwrap_or_else(|_| Hits::new());
+            let result = lookup_dictionary(&root, &path, &info, IndexQuery { headword: query, aliases }, &mut budget);
             match result {
                 Ok(found) => {
                     read_any = true;
