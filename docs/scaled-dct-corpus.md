@@ -9,7 +9,7 @@ Reader tested a minimum of three decoded samples per display pixel in both axes.
 | ImageSharp v1.0.4 | Direct CMYK, YCCK, four separate baseline component scans, unusual subsampling | Direct CMYK and interleaved YCCK |
 | TwelveMonkeys | 4,256 × 2,832 and 2,707 × 3,804 YCCK photographs with large multisegment JPEG profiles | Both photographs |
 | Skia | 642 × 516 Adobe CMYK decoder fixture | Direct CMYK |
-| PDF.js | Two original PDF image streams, including an 1,800 × 2,330 image with an explicit PDF decode array | Full decoder for both |
+| PDF.js | Two original PDF image streams, including a 1,800 × 2,330 image with an explicit PDF decode array | Full decoder for both |
 | Apache PDFBox | Small CMYK input generated for PDFBOX-6235 | Full decoder |
 | Imageflow and zune-image, through Imazen’s codec corpus | Progressive YCCK logo and small CMYK JPEG | Full decoder for both |
 
@@ -30,6 +30,8 @@ The script assigns the two decoder settings to A and B using the source hash. It
 | Largest decrease in SSIM against MuPDF | 0.00034 | 0.00065 |
 
 One input exposed a material error in the earlier experiment. ImageSharp’s separate-component sequential JPEG lost low-contrast detail, with fit-page SSIM against MuPDF dropping from 0.9412 to 0.1610. Reader now requires a complete interleaved four-component baseline scan and returns to full decoding for that input. Four other baseline images carried 559–1,787 KiB of header metadata. The experimental decoder can now skip up to 256 header segments, with a 16 MiB cap on the entire compressed image. [All measured views](../tests/fixtures/dct/desktop-results.json)
+
+The candidate passed 411 host library and integration tests. Two additional opt-in tests exercised highlight extension on independently checksummed original EPUB and PDF files in temporary reading profiles. The three JPEG header regression tests cover the Adobe marker, baseline precision and components, bounded scanning across large profiles, malformed lengths and the noninterleaved fallback.
 
 ## Reproduction
 
