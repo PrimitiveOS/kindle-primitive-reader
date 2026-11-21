@@ -77,3 +77,10 @@ The Documents picker labels unsupported formats, oversized files and recognized 
 AZW containers. Damage inside an otherwise supported publication can first become
 visible on opening a chapter. An upper swipe opens the upper menu by default and can
 be configured to show both bars. [Reader instructions](../README.md#reading-on-kindle)
+
+
+## Oasis release verification for Reader 0.1.10
+
+All 396 integrated Reader tests passed on both the Mac and the Oasis. On the Kindle, the physical ARM build exercised both reading-bar entries for saved-mark search and opened a note attached to a word from a PDF text layer. In a separate test using the original 1,066-page PDF, Book map opened from Navigation. Browsing the map with the page buttons left the source unchanged. Selecting a page and returning restored the original reading frame. All three tests used isolated reading profiles.
+
+On the Mac, eleven original EPUB entries produced 9,436 pages across 344 sections. All 9,433 available page anchors returned to their source page. The two blank publisher leaves and the missing image members in the damaged publication remain recorded in the [original-document comparison](real-document-verification.md). On the previous installed 0.1.9 package, all 117 readable Documents entries opened and resumed, with 212 interior section checks. The normal foreground test used an original EPUB and confirmed both Contents controls, a physical forward/back turn, and Exit to Launcher. The first sample immediately after loading differed from the settled frame. The settled reading area matched after each return.
