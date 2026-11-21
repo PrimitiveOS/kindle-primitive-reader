@@ -76,8 +76,13 @@ Install Reader from PrimitiveOS Store or follow the manual install guide.
   Use the selection popup to add a highlight or note, or look up a word in an
   installed offline dictionary.
   Definitions open over the current page, away from the selected words when
-  space allows. Expand a longer result to read it at full size.
-  Choose a preferred installed dictionary under Controls.
+  space allows. Tap **Results** to choose a headword and dictionary. Swipe up
+  to read more of an entry or sideways to switch results. **Find** jumps to
+  matching text in the current definition. Hold a word inside a definition
+  for another lookup. **Back** retraces the lookups and **Done** returns to
+  the selected passage. **Wikipedia** previews the current headword before
+  sending a request. Choose a preferred installed dictionary under Controls.
+  [Result chooser](docs/screenshots/dictionary-sources.png) · [Find in a definition](docs/screenshots/dictionary-find.png) · [Nested lookup](docs/screenshots/dictionary-nested.png)
 - **Wikipedia and translation** open over the selected passage. Search also includes
   typed Wikipedia topics, online lookup history and Translate page for selectable
   documents. The sheet previews the text and names the provider. Tap Search or

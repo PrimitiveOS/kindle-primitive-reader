@@ -20,6 +20,11 @@ const CONTEXT_CHARACTERS: usize = 28;
 const CASE_MAPPER: CaseMapperBorrowed<'static> = CaseMapper::new();
 const SOFT_HYPHEN: char = '\u{ad}';
 
+#[cfg(feature = "kindle")]
+pub(crate) fn definition_hits(text: &str, query: &str) -> Result<Vec<Range<usize>>> {
+    Ok(Query::with_options(query, false, false)?.matches(text, MAX_SEARCH_HITS))
+}
+
 pub(crate) fn without_soft_hyphens(text: &str) -> Cow<'_, str> {
     if text.contains(SOFT_HYPHEN) {
         Cow::Owned(text.replace(SOFT_HYPHEN, ""))

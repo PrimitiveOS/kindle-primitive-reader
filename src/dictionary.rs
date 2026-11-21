@@ -961,7 +961,7 @@ fn invalid(message: &str) -> io::Error {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::io::Write;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -990,7 +990,7 @@ mod tests {
         }
     }
 
-    fn write_dictionary(root: &Path, name: &str, sequence: &str, entries: &[(&str, &[u8])]) {
+    pub(crate) fn write_dictionary(root: &Path, name: &str, sequence: &str, entries: &[(&str, &[u8])]) {
         let mut index = Vec::new();
         let mut data = Vec::new();
         for &(word, value) in entries {

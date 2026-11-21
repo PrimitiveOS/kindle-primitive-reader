@@ -179,6 +179,10 @@ impl Reader {
         if text.len() > MAX_TEXT_BYTES {
             return Err("This page is too long. Select a shorter passage.".into());
         }
+        self.prepare_online_text(wiki, &text)
+    }
+
+    pub(super) fn prepare_online_text(&mut self, wiki: bool, text: &str) -> Result<()> {
         let prefs = &self.lookup_history.online_languages;
         let request = Request {
             service: if wiki {
@@ -413,6 +417,9 @@ impl Reader {
         }
         let back = self.online.take().map_or(Screen::Library, |p| p.back);
         self.show(back);
+        if back == Screen::Definition {
+            self.restore_dictionary_online_return();
+        }
     }
 
     pub(super) fn draw_online(&self, canvas: &mut Canvas) {

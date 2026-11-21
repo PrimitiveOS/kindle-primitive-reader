@@ -1,6 +1,7 @@
 //! The daily reader interface and foreground lifecycle.
 mod bar_icons;
 mod custom_contents;
+mod dictionary_panel;
 mod gestures;
 mod library_view;
 mod lookup_history;
@@ -505,10 +506,10 @@ pub struct Reader {
     online: Option<online_panel::Panel>,
     bookmark_query: String,
     definition_word: String,
-    definitions: Vec<(String, String)>,
-    definition_sources: Vec<(String, usize)>,
-    definition_source_page: Option<usize>,
+    definitions: Vec<dictionary::Definition>,
+    definition_results_page: Option<usize>,
     definition_expanded: bool,
+    dictionary_navigation: dictionary_panel::Navigation,
 }
 
 impl Reader {
@@ -620,9 +621,9 @@ impl Reader {
             bookmark_query: String::new(),
             definition_word: String::new(),
             definitions: Vec::new(),
-            definition_sources: Vec::new(),
-            definition_source_page: None,
+            definition_results_page: None,
             definition_expanded: false,
+            dictionary_navigation: Default::default(),
         })
     }
 
@@ -831,10 +832,6 @@ impl Reader {
         }
         if screen == Screen::Find && self.screen != Screen::Matches {
             self.editor = Editor::new(64);
-        }
-        if screen == Screen::Definition {
-            self.definition_expanded = false;
-            self.definition_source_page = None;
         }
         if screen == Screen::LibraryFind {
             self.editor = Editor::new(96);
@@ -4387,291 +4384,6 @@ impl Reader {
         Ok(())
     }
 
-    fn look_up(&mut self, word: &str) -> Result<()> {
-        let word = word.trim();
-        if !lookup_history::valid(word) {
-            return Err("Enter a word or a short phrase".into());
-        }
-        let definitions = with_storage(|| {
-            dictionary::lookup_preferred(
-                &self.dictionaries,
-                word,
-                self.preferred_dictionary.as_deref(),
-            )
-        })?;
-        // Keep the typed query even if no installed dictionary matched.
-        self.update_lookup_history(|history| history.lookup(word))?;
-        self.definition_word = word.to_owned();
-        self.definitions.clear();
-        self.definition_sources.clear();
-        for definition in definitions {
-            let title = format!("{} · {}", definition.word, definition.dictionary);
-            let mut text = definition.text.trim();
-            if !text.is_empty()
-                && self.definitions.len() < 80
-                && !self
-                    .definition_sources
-                    .iter()
-                    .any(|(source, _)| source == &definition.dictionary)
-            {
-                self.definition_sources
-                    .push((definition.dictionary.clone(), self.definitions.len()));
-            }
-            while !text.is_empty() && self.definitions.len() < 80 {
-                let limit = text
-                    .char_indices()
-                    .nth(700)
-                    .map_or(text.len(), |(index, _)| index);
-                let end = if limit == text.len() {
-                    limit
-                } else {
-                    text[..limit]
-                        .rfind(char::is_whitespace)
-                        .filter(|&index| index > 0)
-                        .unwrap_or(limit)
-                };
-                self.definitions
-                    .push((title.clone(), text[..end].to_owned()));
-                text = text[end..].trim_start();
-            }
-        }
-        self.show(Screen::Definition);
-        Ok(())
-    }
-
-    fn definition_input(&mut self, input: Input) -> Change {
-        let (popup, done, _) = self.definition_layout();
-        let [popup_previous, expand, popup_next] = definition_actions(popup);
-        if let Some(source_page) = self.definition_source_page {
-            return self.definition_source_input(input, popup, source_page);
-        }
-        if !self.definition_expanded
-            && self.definition_sources.len() > 1
-            && matches!(input, Input::Tap(x, y) if definition_sources_button(popup).contains(x, y))
-        {
-            self.definition_source_page = Some(0);
-            return Change::Partial;
-        }
-        let (previous, next) = if self.definition_expanded {
-            (PREV, NEXT)
-        } else {
-            (popup_previous, popup_next)
-        };
-        if let Input::Tap(x, y) = input {
-            let vocabulary = if self.definition_expanded {
-                definition_vocabulary_full()
-            } else {
-                definition_vocabulary(popup)
-            };
-            if self.vocabulary_available() && vocabulary.contains(x, y) {
-                let word = self.definition_word.clone();
-                return match self.update_lookup_history(|history| history.save_word(&word)) {
-                    Ok(_) => Change::Partial,
-                    Err(error) => self.report(error),
-                };
-            }
-            if self.definition_expanded {
-                if primitive_ui::back_button(WIDTH as i32).contains(x, y) {
-                    self.definition_expanded = false;
-                    return Change::Partial;
-                }
-            } else {
-                if done.contains(x, y) || !popup.contains(x, y) {
-                    self.show(if self.footnote.is_some() {
-                        Screen::Footnote
-                    } else if self.fixed.is_some() {
-                        Screen::Fixed
-                    } else {
-                        Screen::Book
-                    });
-                    return Change::Partial;
-                }
-                if !self.definitions.is_empty() && expand.contains(x, y) {
-                    self.definition_expanded = true;
-                    return Change::Partial;
-                }
-            }
-        }
-        let direction = match input {
-            Input::PageBack => -1,
-            Input::PageForward => 1,
-            Input::Tap(x, y) if previous.contains(x, y) => -1,
-            Input::Tap(x, y) if next.contains(x, y) => 1,
-            _ => return Change::None,
-        };
-        if let Some(page) = self
-            .list_page
-            .checked_add_signed(direction)
-            .filter(|&page| page < self.definitions.len())
-        {
-            self.list_page = page;
-            Change::Partial
-        } else {
-            Change::None
-        }
-    }
-
-    fn definition_over_book(&self) -> bool {
-        self.screen == Screen::Definition && !self.definition_expanded
-    }
-
-    fn definition_layout(&self) -> (Rect, Rect, usize) {
-        let lines = self.definitions.get(self.list_page).map_or(1, |(_, text)| {
-            text.lines()
-                .map(|line| line.chars().count().max(1).div_ceil(47))
-                .sum::<usize>()
-                .clamp(1, 7)
-        });
-        let lines = if self.definition_source_page.is_some() {
-            5
-        } else {
-            lines
-        };
-        let height = 267 + lines as i32 * 48;
-        let popup = definition_bounds(height, self.selection_bounds());
-        (
-            popup,
-            Rect::new(WIDTH as i32 - 246, popup.y + 18, 154, 64),
-            lines,
-        )
-    }
-
-    fn draw_definition_popup(&self, canvas: &mut Canvas) {
-        let (popup, done, lines) = self.definition_layout();
-        let [previous, expand, next] = definition_actions(popup);
-        canvas.popup(popup);
-        canvas.button(done, "Done", false, false);
-        if self.definition_sources.len() > 1 {
-            canvas.button(
-                definition_sources_button(popup),
-                "Sources",
-                self.definition_source_page.is_some(),
-                false,
-            );
-        }
-        let title_end = if self.definition_sources.len() > 1 {
-            definition_sources_button(popup).x
-        } else {
-            done.x
-        };
-        let (title, text) = self.definitions.get(self.list_page).map_or(
-            ("Dictionary", "No matches in installed dictionaries"),
-            |(title, text)| (title.as_str(), text.as_str()),
-        );
-        canvas.text(
-            Rect::new(96, popup.y + 20, title_end - 112, 60),
-            if self.definition_source_page.is_some() {
-                &self.definition_word
-            } else {
-                title
-            },
-            BODY.bold(),
-        );
-        if let Some(page) = self.definition_source_page {
-            self.draw_definition_sources(canvas, popup, page);
-            return;
-        }
-        canvas.text(
-            Rect::new(
-                96,
-                popup.y + 102,
-                WIDTH as i32 - 192,
-                definition_vocabulary(popup).y - popup.y - 112,
-            ),
-            text,
-            BODY.lines(lines),
-        );
-        if self.list_page > 0 {
-            canvas.button(previous, "Previous", false, false);
-        }
-        if self.list_page + 1 < self.definitions.len() {
-            canvas.button(next, "Next", false, false);
-        }
-        if !self.definitions.is_empty() {
-            canvas.button(expand, "Expand", false, false);
-        }
-        self.draw_vocabulary_action(canvas, definition_vocabulary(popup));
-    }
-
-    fn draw_definition_sources(&self, canvas: &mut Canvas, popup: Rect, page: usize) {
-        let first = page * DEFINITION_SOURCES_PER_PAGE;
-        for (row, (source, first_definition)) in self
-            .definition_sources
-            .iter()
-            .skip(first)
-            .take(DEFINITION_SOURCES_PER_PAGE)
-            .enumerate()
-        {
-            let is_selected = *first_definition <= self.list_page
-                && self
-                    .definition_sources
-                    .get(first + row + 1)
-                    .is_none_or(|(_, next)| self.list_page < *next);
-            canvas.button(
-                definition_source_row(popup, row),
-                source,
-                is_selected,
-                false,
-            );
-        }
-        let [previous, _, next] = definition_actions(popup);
-        if page > 0 {
-            canvas.button(previous, "Previous", false, false);
-        }
-        if first + DEFINITION_SOURCES_PER_PAGE < self.definition_sources.len() {
-            canvas.button(next, "Next", false, false);
-        }
-    }
-
-    fn definition_source_input(&mut self, input: Input, popup: Rect, page: usize) -> Change {
-        let [previous, _, next] = definition_actions(popup);
-        let direction = match input {
-            Input::PageBack => -1,
-            Input::PageForward => 1,
-            Input::Tap(x, y) if previous.contains(x, y) => -1,
-            Input::Tap(x, y) if next.contains(x, y) => 1,
-            Input::Tap(x, y) => {
-                let first = page * DEFINITION_SOURCES_PER_PAGE;
-                if let Some(row) = (0..DEFINITION_SOURCES_PER_PAGE)
-                    .find(|row| definition_source_row(popup, *row).contains(x, y))
-                    && let Some((_, index)) = self.definition_sources.get(first + row)
-                {
-                    self.list_page = *index;
-                }
-                self.definition_source_page = None;
-                return Change::Partial;
-            }
-            _ => return Change::None,
-        };
-        if let Some(page) = page
-            .checked_add_signed(direction)
-            .filter(|page| page * DEFINITION_SOURCES_PER_PAGE < self.definition_sources.len())
-        {
-            self.definition_source_page = Some(page);
-            return Change::Partial;
-        }
-        Change::None
-    }
-
-    fn vocabulary_available(&self) -> bool {
-        !self.definition_word.is_empty()
-    }
-
-    fn draw_vocabulary_action(&self, canvas: &mut Canvas, rect: Rect) {
-        if self.vocabulary_available() {
-            let saved = self
-                .lookup_history
-                .vocabulary
-                .contains(&self.definition_word);
-            let label = if saved {
-                "Remove from vocabulary"
-            } else {
-                "Save to vocabulary"
-            };
-            canvas.button(rect, label, saved, false);
-        }
-    }
-
     fn save_highlight(&mut self, note: Option<String>) -> Result<()> {
         let active = self.active.as_ref().ok_or("No open book")?;
         let selection = self.selection.as_ref().ok_or("Select some text first")?;
@@ -5087,6 +4799,10 @@ impl App for Reader {
             self.draw_library(canvas);
             return;
         }
+        if self.screen == Screen::Definition {
+            self.draw_definition_popup(canvas);
+            return;
+        }
         let title = match (self.screen, self.book_list.as_ref()) {
             (Screen::BookList, Some(BookList::Favorites)) => "Favorites",
             (Screen::BookList, Some(BookList::Recent)) => "Recently read",
@@ -5101,34 +4817,6 @@ impl App for Reader {
         header(canvas, title, "Back");
         if self.screen == Screen::PageOverview {
             self.draw_overview(canvas);
-            return;
-        }
-        if self.screen == Screen::Definition {
-            if let Some((title, text)) = self.definitions.get(self.list_page) {
-                canvas.text(
-                    Rect::new(LIST_X, LIST_Y, WIDTH as i32 - 2 * LIST_X, 68),
-                    title,
-                    BODY.bold(),
-                );
-                canvas.text(
-                    Rect::new(LIST_X, LIST_Y + 87, WIDTH as i32 - 2 * LIST_X, 1240),
-                    text,
-                    BODY.lines(28),
-                );
-            } else {
-                canvas.text(
-                    Rect::new(LIST_X, LIST_Y, WIDTH as i32 - 2 * LIST_X, 110),
-                    "No matches in installed dictionaries",
-                    BODY,
-                );
-            }
-            if self.list_page > 0 {
-                canvas.button(PREV, "Previous", false, false);
-            }
-            if self.list_page + 1 < self.definitions.len() {
-                canvas.button(NEXT, "Next", false, false);
-            }
-            self.draw_vocabulary_action(canvas, definition_vocabulary_full());
             return;
         }
         if matches!(
@@ -5813,29 +5501,6 @@ fn definition_actions(popup: Rect) -> [Rect; 3] {
     ]
 }
 
-fn definition_vocabulary(popup: Rect) -> Rect {
-    Rect::new(94, popup.bottom() - 152, WIDTH as i32 - 188, 58)
-}
-
-fn definition_vocabulary_full() -> Rect {
-    Rect::new(WIDTH as i32 / 2 - 212, HEIGHT as i32 - 104, 424, 72)
-}
-
-const DEFINITION_SOURCES_PER_PAGE: usize = 5;
-
-fn definition_sources_button(popup: Rect) -> Rect {
-    Rect::new(WIDTH as i32 - 434, popup.y + 18, 172, 64)
-}
-
-fn definition_source_row(popup: Rect, row: usize) -> Rect {
-    Rect::new(
-        popup.x + 30,
-        popup.y + 100 + row as i32 * 60,
-        popup.w - 60,
-        54,
-    )
-}
-
 fn same_pdf_highlight(left: &PdfHighlight, right: &PdfHighlight) -> bool {
     left.page == right.page
         && left.bounds.len() == right.bounds.len()
@@ -6164,14 +5829,14 @@ mod tests {
 
     static FIXTURE_ID: AtomicUsize = AtomicUsize::new(0);
 
-    struct Fixture {
-        root: PathBuf,
-        book: PathBuf,
-        state: PathBuf,
+    pub(super) struct Fixture {
+        pub(super) root: PathBuf,
+        pub(super) book: PathBuf,
+        pub(super) state: PathBuf,
     }
 
     impl Fixture {
-        fn new() -> Self {
+        pub(super) fn new() -> Self {
             let suffix = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -6988,10 +6653,9 @@ mod tests {
         let mut app = fixture.app();
         app.open_path(&fixture.book).unwrap();
         let original = position(&app.active.as_ref().unwrap().reading);
-        app.definitions = vec![
-            ("Tide".into(), "The movement of the sea".into()),
-            ("Tide".into(), "A flow of water".into()),
-        ];
+        app.definitions = ["The movement of the sea", "A flow of water"]
+            .map(|text| dictionary::Definition { dictionary: "Sample".into(), word: "Tide".into(), text: text.into() })
+            .into();
         app.show(Screen::Definition);
         assert!(app.definition_over_book());
         assert_eq!(app.input(Input::PageForward), Change::Partial);
@@ -7875,7 +7539,7 @@ mod tests {
         app.start_document_search("shore").unwrap();
         app.look_up("tide").unwrap();
         let (popup, _, _) = app.definition_layout();
-        let button = definition_vocabulary(popup);
+        let button = dictionary_panel::definition_vocabulary(popup);
         assert_eq!(
             app.input(Input::Tap((button.x + 10) as f32, (button.y + 10) as f32)),
             Change::Partial

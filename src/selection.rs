@@ -252,20 +252,25 @@ impl Spans {
     }
 }
 
-fn word_range(text: &str, offset: usize) -> Option<Range<usize>> {
+pub(crate) fn word_ranges(text: &str) -> impl Iterator<Item = Range<usize>> + '_ {
     let words = WordSegmenter::new_auto(WordBreakInvariantOptions::default());
     let mut start = 0;
-    for (end, word_type) in words.segment_str(text).iter_with_word_type() {
-        if offset < end {
-            // The segmenter can classify a word ending in a combining mark
-            // without a word tag. Its boundaries still identify the whole word.
-            let word_like =
-                word_type.is_word_like() || text[start..end].chars().any(char::is_alphanumeric);
-            return word_like.then_some(start..end);
-        }
-        start = end;
-    }
-    None
+    words
+        .segment_str(text)
+        .iter_with_word_type()
+        .filter_map(move |(end, word_type)| {
+            let range = start..end;
+            start = end;
+            // Combining marks can end a word segment that ICU does not tag as word-like.
+            (word_type.is_word_like() || text[range.clone()].chars().any(char::is_alphanumeric))
+                .then_some(range)
+        })
+}
+
+pub(crate) fn word_range(text: &str, offset: usize) -> Option<Range<usize>> {
+    word_ranges(text)
+        .find(|range| range.end > offset)
+        .filter(|range| range.start <= offset)
 }
 
 fn visible_span(
