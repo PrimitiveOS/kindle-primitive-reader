@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.12
+
+- Preview and import page bookmarks, exact highlights and their notes from KOReader metadata beside an EPUB. Repeating the import keeps one copy of each mark.
+- Honor publisher first-line and hanging paragraph indents, including an explicit zero reset. Paragraph wrapping, selection and bookmarks follow the same source text.
+
 ## 0.1.11
 
 - Preview a KOReader reading position saved beside the open book. Select Apply to resume there and use Back to return.
