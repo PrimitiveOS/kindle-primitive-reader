@@ -2142,6 +2142,35 @@ mod tests {
     }
 
     #[test]
+    fn list_column_width_is_part_of_the_shared_image_cache_key() {
+        let artwork = r#"<img src="../images/shore.png" style="width:100%;height:auto"/>"#;
+        let markup = format!(
+            "<html><body><p>{artwork}</p><ol><li>{artwork}</li><li>{artwork}</li></ol></body></html>"
+        );
+        let book = replace_opening("list-image-cache", &markup);
+        let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let probe = Probe::open(&book.0, Engine::Parley, &fonts, Settings::default(), 0).unwrap();
+        let Renderer::Parley(chapter) = &probe.renderer else {
+            unreachable!()
+        };
+        let [outer, first, second] = chapter.illustrations.as_slice() else {
+            panic!()
+        };
+        assert!(outer.display.0 > first.display.0);
+        assert_eq!(first.display, second.display);
+        assert!(Arc::ptr_eq(&first.pixels, &second.pixels));
+        assert!(!Arc::ptr_eq(&outer.pixels, &first.pixels));
+        assert!(first.x.unwrap() > 0);
+        assert_eq!(first.x, second.x);
+        assert!(
+            chapter
+                .illustrations
+                .iter()
+                .all(|image| image.path.is_some())
+        );
+    }
+
+    #[test]
     fn repeated_image_heavy_spine_shares_pixels_and_keeps_text_after_the_graphics_limit() {
         let icon = r#"<img src="../images/shore.png" width="3" height="2"/>"#;
         let markup = format!(
