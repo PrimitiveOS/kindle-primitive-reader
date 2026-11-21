@@ -56,9 +56,10 @@ impl Probe {
         let Renderer::Parley(renderer) = &self.renderer else {
             return None;
         };
-        for (key, left, origin, layout) in renderer.selection_layouts(point.page) {
+        for (key, left, origin, column, layout) in renderer.selection_layouts(point.page) {
             let y = point.y - origin;
-            if (0.0..layout.height()).contains(&y)
+            if column.contains(&point.x)
+                && (0.0..layout.height()).contains(&y)
                 && Cluster::from_point(layout, point.x - left, y).is_some()
             {
                 let cursor = Cursor::from_point(layout, point.x - left, y);
@@ -129,7 +130,7 @@ impl Probe {
             return Vec::new();
         };
         let mut rects = Vec::new();
-        for (key, left, origin, layout) in renderer.selection_layouts(page.clone()) {
+        for (key, left, origin, _, layout) in renderer.selection_layouts(page.clone()) {
             let Some(index) = self.selection_block(key) else {
                 continue;
             };

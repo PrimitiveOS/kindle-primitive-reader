@@ -27,6 +27,8 @@ const MAX_RUBY_BASE_BYTES: usize = 192;
 const DISABLE_KERNING: [FontFeature; 1] = [FontFeature::new(Tag::new(b"kern"), 0)];
 
 struct Paragraph {
+    column: Range<f32>,
+    max_bottom: f32,
     key: usize,
     x: f32,
     y: f32,
@@ -118,6 +120,16 @@ impl ParleyChapter {
         ));
         let group_insets = list_insets(source, styles, settings.font_size);
         let outer_width = settings.text_width();
+        let column_for = |block: &Block| {
+            block.table_cell.filter(|cell| {
+                outer_width as f32 / f32::from(cell.columns) >= 2.5 * settings.font_size
+            })
+        };
+        let bounds_for = |block: &Block| {
+            column_for(block).map_or((0, outer_width), |cell| {
+                cell.bounds(outer_width, (settings.font_size * 0.22).round() as u32)
+            })
+        };
         let gutter_for = |block: &Block| {
             block
                 .list_item
@@ -125,7 +137,7 @@ impl ParleyChapter {
                 .copied()
                 .unwrap_or(0.0)
                 .round()
-                .clamp(0.0, outer_width as f32 * 0.49) as u32
+                .clamp(0.0, bounds_for(block).1 as f32 * 0.49) as u32
         };
         // Share the bounded grayscale cache across distinct renderings. Duplicate icons
         // reuse one preview, while large later illustrations still receive space.
@@ -133,7 +145,7 @@ impl ParleyChapter {
             .blocks
             .iter()
             .flat_map(|block| {
-                let image_width = outer_width - gutter_for(block);
+                let image_width = bounds_for(block).1 - gutter_for(block);
                 block.images.iter().map(move |image| {
                     ImageSizing::new(
                         image,
@@ -151,9 +163,13 @@ impl ParleyChapter {
             .min(MAX_DISTINCT_IMAGE_READS);
         let mut image_cache = HashMap::new();
         let gap = settings.font_size * 0.32;
+        let mut row_flow = crate::table_layout::RowFlow::default();
         for block in &source.blocks {
+            let cell = column_for(block);
+            y = row_flow.enter(cell, y);
+            let (column_x, column_width) = bounds_for(block);
             let gutter = gutter_for(block);
-            let image_width = outer_width - gutter;
+            let image_width = column_width - gutter;
             let marker = block.list_item.filter(|item| item.first).and_then(|item| {
                 let style = &styles[item.element];
                 let size = (settings.font_size * style.size_scale).clamp(12.0, 192.0);
@@ -167,7 +183,7 @@ impl ParleyChapter {
                 )
             });
             let hanging = literal.unwrap_or(0.0).round().clamp(0.0, gutter as f32) as u32;
-            let width = outer_width - gutter + hanging;
+            let width = column_width - gutter + hanging;
             let block_y = y;
             let mut rtl = matches!(block.direction, parley::BaseDirection::Rtl);
             let mut marker_baseline = None;
@@ -245,7 +261,7 @@ impl ParleyChapter {
                     .next()
                     .map_or(0.0, |line| line.metrics().content_block_min_coord.min(0.0));
                 rtl = layout.is_rtl();
-                let x = if rtl { 0.0 } else { (gutter - hanging) as f32 };
+                let x = column_x as f32 + if rtl { 0.0 } else { (gutter - hanging) as f32 };
                 marker_baseline = layout.get(0).map(|line| origin + line.metrics().baseline);
                 let mut bottom = origin + layout.height();
                 let mut overlays = ruby.iter().peekable();
@@ -291,6 +307,8 @@ impl ParleyChapter {
                 y = bottom + gap;
                 chapter.paragraphs.push(Paragraph {
                     key: block.key,
+                    column: column_x as f32..(column_x + column_width) as f32,
+                    max_bottom: bottom,
                     x,
                     y: origin,
                     bottom,
@@ -312,11 +330,10 @@ impl ParleyChapter {
                         missing_glyphs: 0,
                     });
                     image.y = top;
-                    if gutter != 0 {
+                    if gutter != 0 || cell.is_some() {
+                        let inset = if rtl { 0 } else { gutter };
                         image.x = Some(
-                            (if rtl { 0 } else { gutter }
-                                + width.saturating_sub(image.display.0) / 2)
-                                as usize,
+                            (column_x + inset + width.saturating_sub(image.display.0) / 2) as usize,
                         );
                     }
                     y = bottom + gap;
@@ -344,7 +361,7 @@ impl ParleyChapter {
                         limit - diameter
                     };
                     PaintedMarker {
-                        x,
+                        x: column_x as f32 + x,
                         top,
                         bottom: top + diameter,
                         paint: MarkerPaint::Shape(style.marker),
@@ -371,7 +388,7 @@ impl ParleyChapter {
                         limit - layout.width()
                     };
                     PaintedMarker {
-                        x,
+                        x: column_x as f32 + x,
                         top: y + ink.content_block_min_coord,
                         bottom: y + ink.content_block_max_coord,
                         paint: MarkerPaint::Text { y, layout },
@@ -385,7 +402,15 @@ impl ParleyChapter {
             }
         }
 
-        let extent = (y - gap).max(0.0);
+        if source.blocks.iter().any(|b| column_for(b).is_some()) {
+            chapter.paragraphs.sort_by(|a, b| a.y.total_cmp(&b.y));
+        }
+        let mut maximum = 0.0_f32;
+        for p in &mut chapter.paragraphs {
+            maximum = maximum.max(p.bottom);
+            p.max_bottom = maximum;
+        }
+        let extent = (row_flow.end(y) - gap).max(0.0);
         Ok((chapter, lines, extent))
     }
 
@@ -429,10 +454,11 @@ impl ParleyChapter {
     }
 
     pub(crate) fn source_at(&self, x: f32, y: f32, visible: &Range<f32>) -> Option<(usize, usize)> {
-        let paragraph = self.paragraphs.get(
-            self.paragraphs
-                .partition_point(|paragraph| paragraph.bottom <= y),
-        )?;
+        let start = self.paragraphs.partition_point(|p| p.max_bottom <= y);
+        let paragraph = self.paragraphs[start..]
+            .iter()
+            .take_while(|p| p.y <= y)
+            .find(|p| p.bottom > y && p.column.contains(&x))?;
         let (cluster, _) =
             parley::Cluster::from_point_exact(&paragraph.layout, x - paragraph.x, y - paragraph.y)?;
         let line = cluster.line();
@@ -542,14 +568,15 @@ impl ParleyChapter {
     pub(crate) fn selection_layouts(
         &self,
         page: Range<f32>,
-    ) -> impl Iterator<Item = (usize, f32, f32, &Layout<()>)> {
+    ) -> impl Iterator<Item = (usize, f32, f32, Range<f32>, &Layout<()>)> {
         let start = self
             .paragraphs
-            .partition_point(|paragraph| paragraph.bottom <= page.start);
+            .partition_point(|paragraph| paragraph.max_bottom <= page.start);
         self.paragraphs[start..]
             .iter()
             .take_while(move |paragraph| paragraph.y < page.end)
-            .map(|paragraph| (paragraph.key, paragraph.x, paragraph.y, &paragraph.layout))
+            .filter(move |p| p.bottom > page.start)
+            .map(|p| (p.key, p.x, p.y, p.column.clone(), &p.layout))
     }
 
     pub fn capture(&mut self, range: Range<f32>, settings: Settings) -> Result<Vec<u8>> {
@@ -562,16 +589,21 @@ impl ParleyChapter {
 
         let index = self
             .paragraphs
-            .partition_point(|paragraph| paragraph.bottom <= range.start);
+            .partition_point(|paragraph| paragraph.max_bottom <= range.start);
         for paragraph in &self.paragraphs[index..] {
             if paragraph.y >= range.end {
                 break;
+            }
+            if paragraph.bottom <= range.start {
+                continue;
             }
             if let Some(gray) = paragraph.background {
                 let top = (paragraph.y - range.start).floor().max(0.0) as usize;
                 let bottom = ((paragraph.bottom - range.start).ceil() as usize).min(visible_height);
                 for row in top.min(bottom)..bottom {
-                    page[row * stride + margin..(row + 1) * stride - margin].fill(gray);
+                    let left = margin + paragraph.column.start as usize;
+                    let right = margin + paragraph.column.end as usize;
+                    page[row * stride + left..row * stride + right].fill(gray);
                 }
             }
             for line in paragraph.layout.lines() {

@@ -130,6 +130,59 @@ impl Cell {
 mod tests {
     use super::*;
     #[test]
+    fn headers_form_a_row_and_each_cell_keeps_its_own_touch_target() {
+        let path = crate::test_fixture("field-notes-epub3.epub");
+        let html = "<html><body><p>Morning readings</p><table><thead><tr><th id='a'>Station</th><th id='b'>Depth</th><th id='c'>Tide</th></tr></thead><tbody><tr><td><p>Basin</p><p>east</p></td><td>Four fathoms</td><td><a href='#b'>Falling</a></td></tr><tr><td colspan='3'>End of survey</td></tr></tbody></table><p id='post'>Afterward</p></body></html>";
+        let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        for width in [680, 1264] {
+            let settings = crate::Settings {
+                width,
+                height: 920,
+                font_size: 32.0,
+                margin: 24,
+                ..Default::default()
+            };
+            let mut probe = crate::Probe::from_book_content(
+                crate::epub::Book::open(&path).unwrap(),
+                crate::Engine::Parley,
+                &fonts,
+                settings,
+                0,
+                Some(html.to_string()),
+            )
+            .unwrap();
+            let mut headers = Vec::new();
+            for (id, label) in [("a", "Station"), ("b", "Depth"), ("c", "Tide")] {
+                let start = probe.fragment(id).unwrap();
+                let mut end = start.clone();
+                end.offset += label.len();
+                let selected = probe.select_range(&start, &end).unwrap();
+                let page = probe.page_for(&start).unwrap();
+                let rect = probe.selection_rects(page, &selected)[0];
+                let x = (rect.x + rect.width / 2) as f32;
+                let y = (rect.y + rect.height / 2) as f32;
+                assert_eq!(probe.word_at(page, x, y).unwrap().text, label);
+                assert_eq!(
+                    probe.text_position_at(page, x, y).unwrap().block,
+                    start.block
+                );
+                headers.push(rect);
+            }
+            assert_eq!(headers[0].y, headers[1].y);
+            assert_eq!(headers[1].y, headers[2].y);
+            assert!(headers[1].x - headers[0].x > (width / 5) as i32);
+            assert!(headers[2].x - headers[1].x > (width / 5) as i32);
+            let post = probe.fragment("post").unwrap();
+            let mut end = post.clone();
+            end.offset += "Afterward".len();
+            let post_rect = probe.selection_rects(0, &probe.select_range(&post, &end).unwrap())[0];
+            assert!(post_rect.y > headers[0].y + 100);
+            assert_eq!(probe.coverage().0, probe.coverage().1);
+            let frame = probe.capture(0).unwrap();
+            assert!(frame.iter().any(|v| *v < 150));
+        }
+    }
+    #[test]
     fn spanned_headings_nested_blocks_empty_cells_and_rtl_share_column_boundaries() {
         let doc = roxmltree::Document::parse("<table dir='rtl'><thead><tr><th colspan='2'>Pair</th><th>Unit</th></tr></thead><tbody><tr><td/><td><p>Value</p></td><td>kg</td></tr></tbody></table>").unwrap();
         let table = doc.root_element();

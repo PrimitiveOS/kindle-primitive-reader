@@ -435,7 +435,7 @@ impl Probe {
             Some(value) => value,
             None => book.chapter(chapter).map_err(|e| e.to_string())?,
         };
-        let source = Source::parse(&xhtml)?;
+        let mut source = Source::parse(&xhtml)?;
         let mut fonts = font_context(fonts)?;
         let (renderer, mut lines, content_height) = match engine {
             Engine::Blitz => {
@@ -482,9 +482,34 @@ impl Probe {
                         if let Some(Err(error)) = fallback {
                             eprintln!("reader vertical layout unavailable: {error}");
                         }
-                        let (layout, lines, extent) = parley_layout::ParleyChapter::new(
-                            &mut book, &href, &source, fonts, settings, &styles,
-                        )?;
+                        let has_table = source.blocks.iter().any(|b| b.table_cell.is_some());
+                        let mut lay_out = |source: &Source, faces| {
+                            parley_layout::ParleyChapter::new(
+                                &mut book, &href, source, faces, settings, &styles,
+                            )
+                        };
+                        let (layout, lines, extent) = if has_table {
+                            let grid = lay_out(&source, fonts.clone()).and_then(
+                                |(layout, mut lines, extent)| {
+                                    lines.sort_by(|a, b| a.top.total_cmp(&b.top));
+                                    Pagination::new(&lines, settings.text_height() as f32, extent)?;
+                                    Ok((layout, lines, extent))
+                                },
+                            );
+                            match grid {
+                                Ok(result) => result,
+                                Err(_) => {
+                                    // A tall row can have no safe horizontal break across
+                                    // all its cells. Keep the chapter readable in source order.
+                                    for block in &mut source.blocks {
+                                        block.table_cell = None;
+                                    }
+                                    lay_out(&source, fonts)?
+                                }
+                            }
+                        } else {
+                            lay_out(&source, fonts)?
+                        };
                         (Renderer::Parley(layout), lines, extent)
                     }
                 }
@@ -662,10 +687,10 @@ impl Probe {
     }
 
     pub(crate) fn links_in(&self, bounds: Range<f32>) -> Vec<(String, Destination)> {
-        let start = self
-            .lines
-            .partition_point(|line| line.top < bounds.start)
-            .saturating_sub(1);
+        // Several cells may have lines crossing the top of a scrolled view.
+        // A paginated line can extend upward by at most one reading viewport.
+        let earliest = bounds.start - self.settings.text_height() as f32;
+        let start = self.lines.partition_point(|line| line.top < earliest);
         let end = self.lines.partition_point(|line| line.top < bounds.end);
         let visible_lines = &self.lines[start..end];
         let mut links = Vec::new();
