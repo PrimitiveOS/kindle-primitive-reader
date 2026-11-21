@@ -29,7 +29,7 @@ pub struct SidecarProgress {
     pub last_page: Option<u32>,
     pub doc_pages: Option<u32>,
     pub partial_md5_checksum: Option<[u8; 16]>,
-    /// The CREngine pointer is retained for preview and diagnosis.
+    /// A normalized CREngine pointer from a reflowable book.
     pub last_xpointer: Option<String>,
     /// Newer KOReader versions also save an EPUB Canonical Fragment Identifier.
     pub last_epubcfi: Option<String>,
@@ -116,13 +116,26 @@ impl SidecarProgress {
     }
 
     #[cfg(feature = "kindle")]
-    pub(crate) fn reflow_cfi(&self, checksum: [u8; 16]) -> Result<&str, SidecarError> {
+    pub(crate) fn reflow_position(
+        &self,
+        book: &mut crate::epub::Book,
+    ) -> crate::Result<crate::epub::EpubPosition> {
         let cfi = self
             .last_epubcfi
             .as_deref()
-            .ok_or(SidecarError::ReflowablePointer)?;
-        self.check_fingerprint(checksum)?;
-        Ok(cfi)
+            .map(|cfi| crate::epub_cfi::resolve(book, cfi));
+        let pointer = self
+            .last_xpointer
+            .as_deref()
+            .map(|value| crate::cre_pointer::resolve(book, value, self.cre_dom_version));
+        match (cfi, pointer) {
+            (Some(Ok(a)), Some(Ok(b))) if a != b => Err(
+                "The saved CFI and CREngine pointer identify different reading positions".into(),
+            ),
+            (Some(Ok(a)), _) | (_, Some(Ok(a))) => Ok(a),
+            (Some(Err(error)), _) | (_, Some(Err(error))) => Err(error),
+            (None, None) => Err("This sidecar has no EPUB reading position".into()),
+        }
     }
 
     pub(crate) fn check_fingerprint(&self, checksum: [u8; 16]) -> Result<(), SidecarError> {
@@ -839,12 +852,13 @@ return {
         }"#,
         )
         .unwrap();
+        assert_eq!(parsed.check_fingerprint([1; 16]), Ok(()));
         assert_eq!(
-            parsed.reflow_cfi([1; 16]).unwrap(),
+            parsed.last_epubcfi.as_deref().unwrap(),
             "epubcfi(/6/2!/4/2/1:0)"
         );
         assert_eq!(
-            parsed.reflow_cfi([2; 16]),
+            parsed.check_fingerprint([2; 16]),
             Err(SidecarError::ChecksumMismatch)
         );
         assert_eq!(

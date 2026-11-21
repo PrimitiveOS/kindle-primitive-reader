@@ -1,0 +1,496 @@
+//! Import a normalized CREngine EPUB bookmark from the publication's own XHTML.
+
+use roxmltree::{Document, Node, ParsingOptions};
+
+use crate::epub::{Book, EpubPosition};
+use crate::source::Source;
+use crate::{Anchor, Result};
+
+const XHTML: &str = "http://www.w3.org/1999/xhtml";
+const MAX_STEPS: usize = 64;
+const TEXT_SPLIT_SIZE: usize = 8192;
+const MARKER_ID: &str = "reader-cre-position-probe";
+
+struct Step<'a> {
+    name: &'a str,
+    ordinal: Option<usize>,
+}
+
+impl<'a> Step<'a> {
+    fn parse(raw: &'a str) -> Result<Self> {
+        let (name, ordinal) = if let Some((name, index)) = raw.split_once('[') {
+            let index = number(
+                index
+                    .strip_suffix(']')
+                    .ok_or("Unclosed KOReader node index")?,
+            )?;
+            if index == 0 {
+                return Err("KOReader node indices start at one".into());
+            }
+            (name, Some(index))
+        } else {
+            (raw, None)
+        };
+        if name != "text()"
+            && (name.len() > 64
+                || !name.starts_with(|c: char| c.is_ascii_alphabetic())
+                || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'))
+        {
+            return Err("This KOReader node selector is unsupported".into());
+        }
+        Ok(Self { name, ordinal })
+    }
+}
+
+fn number(raw: &str) -> Result<usize> {
+    if raw.is_empty()
+        || raw.len() > 9
+        || !raw.bytes().all(|b| b.is_ascii_digit())
+        || (raw.len() > 1 && raw.starts_with('0'))
+    {
+        return Err("Invalid KOReader position index".into());
+    }
+    Ok(raw.parse()?)
+}
+
+struct Pointer<'a> {
+    fragment: Step<'a>,
+    steps: Vec<Step<'a>>,
+    offset: usize,
+}
+
+impl<'a> Pointer<'a> {
+    fn parse(raw: &'a str) -> Result<Self> {
+        if raw.len() > 8192 {
+            return Err("KOReader position exceeds the import limit".into());
+        }
+        let (path, offset) = match raw.rsplit_once('.') {
+            Some((path, offset)) => (path, number(offset)?),
+            None => (raw, 0),
+        };
+        let mut parts = path
+            .strip_prefix("/body/")
+            .ok_or("Expected a normalized EPUB DocFragment position")?
+            .split('/');
+        let fragment = Step::parse(parts.next().unwrap_or_default())?;
+        if fragment.name != "DocFragment" || parts.next() != Some("body") {
+            return Err("Expected a KOReader DocFragment reading body".into());
+        }
+        let mut steps = Vec::new();
+        for part in parts {
+            if steps.len() == MAX_STEPS {
+                return Err("KOReader position exceeds the nesting limit".into());
+            }
+            steps.push(Step::parse(part)?);
+        }
+        Ok(Self {
+            fragment,
+            steps,
+            offset,
+        })
+    }
+}
+
+fn xml_options<'a>() -> ParsingOptions<'a> {
+    ParsingOptions {
+        nodes_limit: 100_000,
+        ..ParsingOptions::default()
+    }
+}
+
+fn structural_styles(body: Node<'_, '_>) -> bool {
+    body.document().descendants().any(|node| {
+        node.has_tag_name("style")
+            || node.has_tag_name("link")
+                && node.attribute("rel").is_some_and(|r| {
+                    r.split_ascii_whitespace()
+                        .any(|v| v.eq_ignore_ascii_case("stylesheet"))
+                })
+            || node.attribute("style").is_some_and(|s| {
+                let s = s.to_ascii_lowercase();
+                s.contains("white-space") || s.contains("display")
+            })
+    })
+}
+
+fn omitted_initial_space(parent: Node<'_, '_>, child: Node<'_, '_>) -> bool {
+    let previous = child
+        .prev_siblings()
+        .skip(1)
+        .any(|node| node.is_element() || node.is_text());
+    !previous
+        && child
+            .text()
+            .is_some_and(|s| !s.is_empty() && s.chars().all(xml_space))
+        && matches!(
+            parent.tag_name().name(),
+            "body"
+                | "div"
+                | "p"
+                | "section"
+                | "header"
+                | "article"
+                | "aside"
+                | "h1"
+                | "h2"
+                | "h3"
+                | "h4"
+                | "h5"
+                | "h6"
+                | "blockquote"
+                | "li"
+                | "table"
+                | "td"
+                | "th"
+        )
+}
+
+fn xml_space(c: char) -> bool {
+    matches!(c, ' ' | '\t' | '\n' | '\r')
+}
+
+fn child<'a, 'input>(
+    parent: Node<'a, 'input>,
+    step: &Step<'_>,
+    xhtml: &str,
+    styled: bool,
+) -> Result<Node<'a, 'input>> {
+    let mut count = 0;
+    let mut found = None;
+    for node in parent.children() {
+        if step.name == "text()" {
+            if !node.is_text() {
+                continue;
+            }
+            if omitted_initial_space(parent, node) {
+                if styled {
+                    return Err(
+                        "A styled leading space makes this KOReader text index ambiguous".into(),
+                    );
+                }
+                continue;
+            }
+            let raw = &xhtml[node.range()];
+            if raw.chars().take(TEXT_SPLIT_SIZE).count() >= TEXT_SPLIT_SIZE
+                || raw.starts_with("<![CDATA[")
+            {
+                return Err("This text index depends on CREngine text splitting".into());
+            }
+        } else if !node.has_tag_name((XHTML, step.name)) {
+            continue;
+        }
+        count += 1;
+        if step.ordinal == Some(count) {
+            return Ok(node);
+        }
+        if step.ordinal.is_none() && found.replace(node).is_some() {
+            return Err("The KOReader node selector is ambiguous".into());
+        }
+    }
+    found.ok_or_else(|| "The saved KOReader node is absent from this chapter".into())
+}
+
+/// CREngine counts Unicode scalar values in preprocessed text. XML references emit
+/// one character directly. Normal runs of ASCII whitespace emit one space.
+fn text_boundary(raw: &str, requested: usize, styled: bool) -> Result<usize> {
+    let mut cursor = 0;
+    let mut count = 0;
+    let mut space = false;
+    while cursor < raw.len() {
+        if count == requested {
+            return Ok(cursor);
+        }
+        let c = raw[cursor..].chars().next().unwrap();
+        if c == '&' {
+            let end = raw[cursor..]
+                .find(';')
+                .ok_or("Invalid XML text reference")?;
+            cursor += end + 1;
+            count += 1;
+            space = false;
+        } else {
+            cursor += c.len_utf8();
+            if xml_space(c) {
+                if styled && (c != ' ' || space) {
+                    return Err(
+                        "Whitespace in this styled KOReader text offset is ambiguous".into(),
+                    );
+                }
+                if !space {
+                    count += 1;
+                }
+                space = true;
+            } else {
+                count += 1;
+                space = false;
+            }
+        }
+    }
+    if count == requested {
+        Ok(cursor)
+    } else {
+        Err("KOReader text offset is outside this node".into())
+    }
+}
+
+fn anchor_at(xhtml: &str, byte: usize, marker_id: &str) -> Result<(u64, usize, usize)> {
+    // Let the same parser used for ordinary fragment links map the boundary,
+    // including whitespace folding, inline runs and empty anchor elements.
+    // The marker exists only during import and never supplies revision or block keys.
+    let original = Source::parse(xhtml)?;
+    let marker = format!("<span id=\"{marker_id}\"/>");
+    let mut marked = String::with_capacity(xhtml.len() + marker.len());
+    marked.push_str(&xhtml[..byte]);
+    marked.push_str(&marker);
+    marked.push_str(&xhtml[byte..]);
+    let located = Source::parse(&marked)?;
+    let &(key, offset) = located
+        .fragments
+        .get(marker_id)
+        .ok_or("The position has no readable source anchor")?;
+    if original.blocks.len() != located.blocks.len()
+        || !original.blocks.iter().zip(&located.blocks).all(|(a, b)| {
+            (a.key == b.key || a.key + marker.len() == b.key)
+                && a.text == b.text
+                && a.images
+                    .iter()
+                    .map(|i| i.offset)
+                    .eq(b.images.iter().map(|i| i.offset))
+        })
+    {
+        return Err("The position cannot be projected onto the original reading blocks".into());
+    }
+    let index = located
+        .blocks
+        .binary_search_by_key(&key, |b| b.key)
+        .map_err(|_| "The original reading block is missing")?;
+    let block = &original.blocks[index];
+    if block.text.is_empty() || !block.text.is_char_boundary(offset) {
+        return Err("The position is outside the original reading block".into());
+    }
+    Ok((original.revision, block.key, offset))
+}
+
+/// Resolve normalized pointers from the DOM version used by current saved KOReader EPUBs.
+pub fn resolve(book: &mut Book, value: &str, version: Option<u32>) -> Result<EpubPosition> {
+    if version != Some(20240114) {
+        return Err("This KOReader DOM version is unsupported for EPUB position import".into());
+    }
+    if !book.is_reflowable_epub() {
+        return Err("A CREngine EPUB position requires a reflowable book".into());
+    }
+    let ptr = Pointer::parse(value)?;
+    let index = match ptr.fragment.ordinal {
+        Some(index) => index - 1,
+        None if book.chapters.len() == 1 => 0,
+        None => return Err("The KOReader chapter selector is ambiguous".into()),
+    };
+    let chapter = book
+        .chapters
+        .get(index)
+        .ok_or("The saved KOReader chapter is unavailable")?;
+    let path = chapter.href.clone();
+    if book.recovered_placeholder(chapter)
+        || book.chapters.iter().filter(|ch| ch.href == path).count() != 1
+    {
+        return Err("The saved KOReader chapter is missing or ambiguous".into());
+    }
+    let xhtml = book.chapter(index)?;
+    let (revision, block, offset) = locate_in_chapter(&xhtml, &ptr.steps, ptr.offset)?;
+    Ok(EpubPosition {
+        chapter: index,
+        anchor: Anchor {
+            illustration: None,
+            book: book.revision(),
+            chapter: path,
+            revision,
+            block,
+            offset,
+        },
+    })
+}
+
+fn locate_in_chapter(
+    xhtml: &str,
+    steps: &[Step<'_>],
+    offset: usize,
+) -> Result<(u64, usize, usize)> {
+    let xml = crate::epub_xml::without_plain_doctype(xhtml);
+    let document = Document::parse_with_options(&xml, xml_options())?;
+    let root = document.root_element();
+    if !root.has_tag_name((XHTML, "html")) {
+        return Err("Expected an authored XHTML chapter".into());
+    }
+    let body = child(
+        root,
+        &Step {
+            name: "body",
+            ordinal: None,
+        },
+        &xml,
+        false,
+    )?;
+    let styled = structural_styles(body);
+    let mut target = body;
+    for step in steps {
+        if !target.is_element() {
+            return Err("A KOReader text node cannot have children".into());
+        }
+        target = child(target, step, &xml, styled)?;
+    }
+    if target.ancestors().any(|n| {
+        n.is_element()
+            && (n.tag_name().namespace() != Some(XHTML)
+                || n.has_attribute("hidden")
+                || matches!(
+                    n.tag_name().name(),
+                    "pre" | "ruby" | "script" | "style" | "noscript" | "template"
+                ))
+    }) {
+        return Err("The KOReader position addresses unsupported or hidden content".into());
+    }
+    let byte = if target.is_text() {
+        target.range().start + text_boundary(&xml[target.range()], offset, styled)?
+    } else if offset == 0 && target != body {
+        target.range().start
+    } else if offset == 0 {
+        body.first_child()
+            .ok_or("The EPUB body is empty")?
+            .range()
+            .start
+    } else {
+        return Err("Nonzero KOReader element offsets need its rendered child tree".into());
+    };
+    // A publication may itself use the preferred marker as an ID.
+    let marker = if document
+        .descendants()
+        .any(|n| n.attribute("id") == Some(MARKER_ID))
+    {
+        let ids: std::collections::HashSet<_> = document
+            .descendants()
+            .filter_map(|n| n.attribute("id"))
+            .collect();
+        (1..=ids.len() + 1)
+            .map(|i| format!("{MARKER_ID}-{i}"))
+            .find(|id| !ids.contains(id.as_str()))
+            .unwrap()
+    } else {
+        MARKER_ID.to_owned()
+    };
+    drop(document);
+    drop(xml);
+    anchor_at(xhtml, byte, &marker)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn location(markup: &str, suffix: &str) -> Result<(String, usize)> {
+        let xhtml = format!("<html xmlns='{XHTML}'><head/><body>{markup}</body></html>");
+        let raw = format!("/body/DocFragment[1]/body{suffix}");
+        let pointer = Pointer::parse(&raw)?;
+        let (revision, key, offset) = locate_in_chapter(&xhtml, &pointer.steps, pointer.offset)?;
+        let original = Source::parse(&xhtml)?;
+        assert_eq!(revision, original.revision);
+        Ok((
+            original
+                .blocks
+                .into_iter()
+                .find(|b| b.key == key)
+                .unwrap()
+                .text,
+            offset,
+        ))
+    }
+
+    #[test]
+    fn maps_scalar_offsets_and_the_initial_block_space_to_the_original_source() {
+        let xml = "\n <b>Beacon</b><br/>\n<br/>Count   😀 &amp; bright.";
+        let (text, at) = location(xml, "/text()[2].7").unwrap();
+        assert_eq!(&text[..at], "Beacon\n\nCount 😀");
+        assert_eq!(&text[at..], " & bright.");
+        let (text, at) = location(xml, "/text()[2].9").unwrap();
+        assert_eq!(&text[at..], " bright.");
+        assert!(location(xml, "/text()[1].4").is_err());
+    }
+
+    #[test]
+    fn empty_nodes_and_inline_runs_preserve_the_original_reading_order() {
+        let xml =
+            "<h1><span/>Tide pools</h1><p><a/></p><div/>Look at the <b>north</b> inlet.<p>End.</p>";
+        for (suffix, expected) in [
+            ("/h1/span.0", "Tide pools"),
+            ("/p[1].0", "Look at the north inlet."),
+            ("/div.0", "Look at the north inlet."),
+        ] {
+            let (text, at) = location(xml, suffix).unwrap();
+            assert_eq!(&text[at..], expected);
+        }
+        let (text, at) = location(xml, "/b/text().2").unwrap();
+        assert_eq!(&text[at..], "rth inlet.");
+        let (a, i) = location("<p>North.</p><a/>", "/a.0").unwrap();
+        assert_eq!(i, a.len());
+    }
+
+    #[test]
+    fn rejects_ambiguous_unsupported_and_out_of_range_locations() {
+        let xml = "<p>Here</p><p>There</p><p hidden='hidden'>Secret</p>";
+        for path in [
+            "/p/text().0",
+            "/p[1].1",
+            "/p[3]/text().1",
+            "/p[2]/text().88",
+            "/p[0].0",
+            "/p[01].0",
+            "/p[2]/text()[4].0",
+            "/p[2]/text()/span.0",
+        ] {
+            assert!(location(xml, path).is_err(), "{path}");
+        }
+        let mixed = "<p style='white-space:pre'>A  B</p>";
+        assert!(location(mixed, "/p/text().3").is_err());
+        assert!(
+            location(
+                &format!("<p>{}</p>", "a".repeat(TEXT_SPLIT_SIZE)),
+                "/p/text().3"
+            )
+            .is_err()
+        );
+        assert!(location("<p><![CDATA[one]]></p>", "/p/text().1").is_err());
+        assert!(location("<pre>hello</pre>", "/pre/text().2").is_err());
+        assert!(
+            Pointer::parse(&format!("/body/DocFragment[1]/body{}", "/div".repeat(65))).is_err()
+        );
+        let mut book = Book::open(&crate::test_fixture("field-notes-epub3.epub")).unwrap();
+        for (path, version) in [
+            ("/body/DocFragment/body/p[2].0", Some(20240114)),
+            ("/body/DocFragment[99]/body/p[2].0", Some(20240114)),
+            ("/body/DocFragment[1]/body/p[2].0", Some(20191231)),
+            ("/body/DocFragment[1]/body/p[2].0", None),
+        ] {
+            assert!(resolve(&mut book, path, version).is_err());
+        }
+    }
+
+    #[cfg(feature = "kindle")]
+    #[test]
+    fn two_supported_saved_locations_must_agree() {
+        use crate::koreader_sidecar::SidecarProgress;
+        let mut book = Book::open(&crate::test_fixture("field-notes-epub3.epub")).unwrap();
+        let mut sidecar = SidecarProgress {
+            last_xpointer: Some("/body/DocFragment[1]/body/p[9]/text().4".into()),
+            last_epubcfi: Some("epubcfi(/6/2!/4/20[tide-b]/1:4)".into()),
+            cre_dom_version: Some(20240114),
+            ..Default::default()
+        };
+        let verified = sidecar.reflow_position(&mut book).unwrap();
+        assert_eq!(verified.anchor.offset, 4);
+        let source = Source::parse(&book.chapter(0).unwrap()).unwrap();
+        assert_eq!(source.fragments["tide-b"].0, verified.anchor.block);
+        assert_ne!(source.fragments["tide-a"].0, verified.anchor.block);
+        sidecar.last_epubcfi = Some("epubcfi(/6/2!/4/20[tide-b]/1:6)".into());
+        assert!(sidecar.reflow_position(&mut book).is_err());
+        sidecar.last_epubcfi = Some("unsupported".into());
+        assert_eq!(sidecar.reflow_position(&mut book).unwrap(), verified);
+    }
+}

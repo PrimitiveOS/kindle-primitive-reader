@@ -18,6 +18,19 @@ pub(crate) fn prepare(mut xml: String, limit: usize) -> Result<String> {
     Ok(xml)
 }
 
+/// Preserve all source offsets while parsing the EPUB's conventional HTML declaration.
+pub(crate) fn without_plain_doctype(xml: &str) -> std::borrow::Cow<'_, str> {
+    if let Some((start, end, _)) = declaration(xml)
+        && &xml[start..end] == "<!DOCTYPE html>"
+    {
+        let mut masked = xml.to_owned();
+        blank(&mut masked, start, end);
+        masked.into()
+    } else {
+        xml.into()
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct SourceOffsets {
     changes: Vec<(std::ops::Range<usize>, std::ops::Range<usize>)>,

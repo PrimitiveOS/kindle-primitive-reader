@@ -85,9 +85,10 @@ chapters before picking the implementation.
 - Treat KOReader migration as an explicit, read-only import. Resolve exported
   highlights by uniquely matched quotation. Check fixed-page sidecar progress
   using the sampled fingerprint and page count. Reflowable import verifies
-  the fingerprint, walks a supported EPUB CFI against the original EPUB
-  package and XHTML, and uses a revision-bound Reader anchor. Other
-  pointers remain unresolved in the preview.
+  the fingerprint and maps a supported EPUB CFI or normalized CREngine
+  DocFragment pointer to an anchor bound to the original XHTML revision.
+  When both resolve, their source anchors must agree. The preview reports
+  ambiguous nodes and unsupported DOM versions.
   [KOReader position handling](https://github.com/koreader/koreader/blob/master/frontend/apps/reader/modules/readerrolling.lua)
 
 ## Boundaries and dependencies

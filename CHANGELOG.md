@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.11
+
+- Preview a KOReader reading position saved beside the open book. Select Apply to resume there and use Back to return.
+- Extend a saved text highlight across chapters or a fixed-page highlight across pages. Cancel restores the original passage. Applying keeps the note with the extended selection.
+- Browse publisher-provided chapter headings in bundled DjVu books through Contents and Book map.
+
 ## 0.1.10
 
 - Open Book map to see a fixed document's pages, chapters, bookmarks and highlights. Browse a page group with the Oasis buttons or tap a page to read it. The map and footer follow your choice of publisher or custom chapters.

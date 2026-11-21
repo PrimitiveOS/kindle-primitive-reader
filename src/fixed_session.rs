@@ -23,6 +23,9 @@ use crate::session::{
     DONE, PAGE_HEIGHT, PAGE_REFRESH_GAP, PagePaint, PageTurns, draw_page_picture,
 };
 
+#[path = "fixed_selection_range.rs"]
+mod selection_range;
+
 #[path = "comic_panel.rs"]
 mod comic_panel;
 

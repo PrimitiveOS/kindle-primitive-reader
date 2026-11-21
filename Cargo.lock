@@ -2153,7 +2153,7 @@ dependencies = [
 
 [[package]]
 name = "reader"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "ab_glyph_rasterizer",
  "anyrender_vello_cpu",
