@@ -76,3 +76,25 @@ cargo build --locked --example verify_djvu_contents
 python3 scripts/generate-djvu-contents.py --compare target/debug/examples/verify_djvu_contents \
     tests/fixtures/beacon-atlas.djvu
 ```
+
+## Kindle Oasis 3
+
+A separately built ARMHF verifier compared four books on the Oasis with the
+DjVuLibre output. It matched all 275 rows and all 272 local destinations.
+Three deliberately inactive rows belonged to the authored atlas.
+
+| Book | Contents rows | Pages painted offscreen, numbered from one |
+| --- | ---: | --- |
+| Beacon Atlas, authored fixture | 10 | 1, 4, 6 |
+| DjVu 3 specification | 152 | 1, 36, 71 |
+| DjVuLibre Russian manual | 113 | Outline only |
+| Goody Two-Shoes, 1888 scan | 0 | 1, 9, 16 |
+
+The Russian manual has 3,307 × 4,678 source pages. Reading only its contents
+kept the test small while a separate installed-library check ran on the
+device. Five additional native tests exercised the limits, target resolution,
+both reading bars, page buttons and return to the panned, enlarged scan.
+The job exited successfully. SHA-256 checks covered each test book and
+executable before and after reading. The personal Documents file inventory,
+installed Reader binary and checked library state were unchanged. The
+private test directory was subsequently removed.
