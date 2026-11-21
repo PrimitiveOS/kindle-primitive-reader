@@ -8,6 +8,7 @@ use std::borrow::Cow;
 
 const MAX_AREA: u32 = 24_000_000;
 const MAX_COMPRESSED: usize = 16 * 1024 * 1024;
+const MAX_HEADER_SEGMENTS: usize = 256;
 
 // Accept a four-component, eight-bit baseline image carrying Adobe's CMYK or YCCK
 // marker. Missing or ambiguous color metadata stays with the ordinary PDF decoder.
@@ -17,20 +18,29 @@ fn adobe_baseline(bytes: &[u8]) -> bool {
     };
     let mut adobe = false;
     let mut baseline = false;
-    while rest.len() >= 4 && bytes.len() - rest.len() < 256 * 1024 {
-        if rest[0] != 0xff {
+    // Large ICC profiles can occupy several APP2 segments. Skipping a segment
+    // only reads its marker and length. Bound that work and the entire input.
+    for _ in 0..MAX_HEADER_SEGMENTS {
+        if rest.len() < 4 || rest[0] != 0xff {
             return false;
         }
         let marker = rest[1];
-        if marker == 0xda {
-            return baseline && adobe;
-        }
         let len = u16::from_be_bytes([rest[2], rest[3]]) as usize;
         if len < 2 || len + 2 > rest.len() {
             return false;
         }
         let payload = &rest[4..len + 2];
         match marker {
+            // A real sequential, non-interleaved four-scan print PDF control
+            // loses low-contrast detail with reduced decoding. Leave it to the
+            // full decoder. An ordinary baseline scan includes all four planes.
+            0xda => {
+                return baseline
+                    && adobe
+                    && payload.len() == 12
+                    && payload[0] == 4
+                    && payload[9..] == [0, 63, 0];
+            }
             0xee if payload.starts_with(b"Adobe") => {
                 if adobe || !matches!(payload.get(11), Some(0 | 2)) {
                     return false;
@@ -149,8 +159,41 @@ mod tests {
         bytes.extend_from_slice(b"Adobe");
         bytes.extend_from_slice(&[0, 100, 0, 0, 0, 0, transform]);
         bytes.extend_from_slice(&[0xff, frame, 0, 8, precision, 0, 24, 0, 32, components]);
-        bytes.extend_from_slice(&[0xff, 0xda, 0, 2]);
+        bytes.extend_from_slice(&[0xff, 0xda, 0, 14, 4, 1, 0, 2, 0, 3, 0, 4, 0, 0, 63, 0]);
         bytes
+    }
+
+    #[test]
+    fn noninterleaved_and_nonsequential_scans_keep_the_full_decoder() {
+        let mut bytes = header(0xc0, 8, 4, 2);
+        let sos = bytes.len() - 16;
+        bytes.truncate(sos);
+        bytes.extend_from_slice(&[0xff, 0xda, 0, 8, 1, 1, 0, 0, 63, 0]);
+        assert!(!adobe_baseline(&bytes));
+
+        let mut spectral = header(0xc0, 8, 4, 2);
+        *spectral.last_mut().unwrap() = 1;
+        assert!(!adobe_baseline(&spectral));
+    }
+
+    #[test]
+    fn bounds_marker_work_while_skipping_large_profile_segments() {
+        let header = header(0xc0, 8, 4, 2);
+        let mut profile = header[..2].to_vec();
+        for _ in 0..10 {
+            profile.extend_from_slice(&[0xff, 0xe2, 0xff, 0xff]);
+            profile.resize(profile.len() + 65_533, 0);
+        }
+        profile.extend_from_slice(&header[2..]);
+        assert!(adobe_baseline(&profile));
+
+        let mut excessive = header[..2].to_vec();
+        for _ in 0..super::MAX_HEADER_SEGMENTS {
+            excessive.extend_from_slice(&[0xff, 0xe2, 0, 2]);
+        }
+        excessive.extend_from_slice(&header[2..]);
+        assert!(!adobe_baseline(&excessive));
+        assert!(!adobe_baseline(&profile[..128]));
     }
 
     #[test]
