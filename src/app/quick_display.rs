@@ -88,15 +88,21 @@ impl QuickDisplay {
 impl Reader {
     pub(super) fn quick_display_items(&self) -> Vec<Item> {
         let current = self.controls;
-        let mut items = vec![
-            Item::new(
-                "Interface palette",
-                Action::SetReadingControls(crate::reading_controls::ReadingControls {
-                    palette: current.palette.next(),
-                    ..current
-                }),
-            )
-            .detail(current.palette.label()),
+        let mut items = Vec::new();
+        // Under Primitive Launcher the theme is the launcher's: no light or dark switch here.
+        if !self.under_launcher() {
+            items.push(
+                Item::new(
+                    "Interface palette",
+                    Action::SetReadingControls(crate::reading_controls::ReadingControls {
+                        palette: current.palette.next(),
+                        ..current
+                    }),
+                )
+                .detail(current.palette.label()),
+            );
+        }
+        items.extend([
             Item::new(
                 "Screen orientation",
                 Action::SetReadingControls(crate::reading_controls::ReadingControls {
@@ -114,7 +120,7 @@ impl Reader {
                 }),
             )
             .detail(current.status_bar.label()),
-        ];
+        ]);
         for control in [DisplayLevel::FrontLight, DisplayLevel::Warmth] {
             if let Some(level) = self.quick_display.level(control) {
                 let detail = format!("{level} / {LEVEL_MAX}");

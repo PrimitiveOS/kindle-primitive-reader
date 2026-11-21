@@ -1,6 +1,7 @@
+use std::cell::Cell;
 use std::fs;
 use std::io::{self, Read};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use primitive_app::{Change, WIDTH, with_storage};
 use primitive_ui::Input;
@@ -141,6 +142,55 @@ impl ScreenPalette {
     }
 }
 
+/// The theme of Primitive Launcher, the system layer. Opened from the launcher (`PRIMITIVE_LAUNCHER=1`), the whole
+/// Reader follows the launcher's dark mode, its menus and its pages, and has no light or dark switch of its own.
+/// The launcher asks for a redraw (SIGUSR1) when its theme changes; the app kit reads the theme again for the menus,
+/// and Reader reads it again for the pages each time it draws.
+#[derive(Debug)]
+pub(crate) struct SystemTheme {
+    settings: PathBuf,
+    dark: Cell<bool>,
+}
+
+impl SystemTheme {
+    /// The launcher's theme, or `None` when Reader was not opened from the launcher.
+    pub fn from_env() -> Option<Self> {
+        if std::env::var("PRIMITIVE_LAUNCHER").as_deref() != Ok("1") {
+            return None;
+        }
+        let launcher = std::env::var_os("KL_DIR")
+            .map_or_else(|| PathBuf::from("/mnt/us/launcher"), PathBuf::from);
+        let theme = Self::new(launcher.join("settings.txt"));
+        theme.refresh();
+        Some(theme)
+    }
+
+    pub fn new(settings: PathBuf) -> Self {
+        Self {
+            settings,
+            dark: Cell::new(false),
+        }
+    }
+
+    /// Read the launcher's dark mode again.
+    pub fn refresh(&self) {
+        let text = fs::read_to_string(&self.settings).unwrap_or_default();
+        self.dark.set(launcher_dark_mode(&text));
+    }
+
+    pub fn dark(&self) -> bool {
+        self.dark.get()
+    }
+}
+
+/// Whether the launcher's settings turn dark mode on (`dark_mode=on`).
+pub(crate) fn launcher_dark_mode(settings: &str) -> bool {
+    settings.lines().any(|line| {
+        line.split_once('=')
+            .is_some_and(|(key, value)| key.trim() == "dark_mode" && value.trim() == "on")
+    })
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum PageRefresh {
@@ -221,6 +271,26 @@ impl ReadingControls {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_system_theme_is_the_launchers_dark_mode() {
+        assert!(launcher_dark_mode("rotation=upright\ndark_mode=on\n"));
+        assert!(launcher_dark_mode(" dark_mode = on "));
+        assert!(!launcher_dark_mode("dark_mode=off"));
+        assert!(!launcher_dark_mode(""), "no setting is light");
+
+        let path = std::env::temp_dir().join(format!("reader-theme-{}.txt", std::process::id()));
+        let theme = SystemTheme::new(path.clone());
+        fs::write(&path, "dark_mode=on\n").unwrap();
+        theme.refresh();
+        assert!(theme.dark());
+        fs::write(&path, "dark_mode=off\n").unwrap();
+        theme.refresh();
+        assert!(!theme.dark(), "a change is read again");
+        fs::remove_file(&path).unwrap();
+        theme.refresh();
+        assert!(!theme.dark(), "no settings file is light");
+    }
 
     #[test]
     fn old_settings_keep_the_default_partial_page_refresh() {
