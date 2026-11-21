@@ -305,6 +305,28 @@ def vertical_chapters():
     return publication(title, "vertical-chapters", 3, chapters, [css])
 
 
+def night_landing():
+    title = "Night Landing"
+    body = """<h1>Night Landing</h1>
+<p>The tide turned an hour before sundown. The fog still hid the far bank, but the sound of the bell reached us from the landing.</p>
+<p>We waited for the leading light <a id="reference" epub:type="noteref" href="notes.xhtml#signal"><sup>[1]</sup></a> to come into view. Two white points, one above the other, marked the safe channel.</p>
+<p>In the logbook, the keeper had recorded a second bearing <a epub:type="noteref" href="notes.xhtml#bearings"><sup>[2]</sup></a> for boats returning after dark.</p>
+<p>Beyond the last buoy, the fog lifted. We could see the steps and the empty cart where the road came down to the water.</p>
+<p>The <a href="notes.xhtml#appendix">harbor appendix</a> describes the approach at low water.</p>"""
+    entries = "".join(f"<p>Bearing {i}. At slack water, record the direction of the channel marker.</p>" for i in range(1, 45))
+    notes = f"""<h1>Harbor notes</h1>
+<aside id="signal" epub:type="footnote" role="doc-footnote"><p>A <em>leading light</em> is one of a pair of lamps used to mark a safe course. When the two lamps line up, the boat is following the channel.</p>
+<p>The shore lamp stands higher than the lamp nearest the water.</p>
+<p><a role="doc-backlink" href="night.xhtml#reference">Return to the passage</a></p></aside>
+<aside id="bearings" epub:type="footnote">{entries}</aside>
+<h2 id="appendix">The harbor appendix</h2><p>The southern channel is shallow at low water.</p>"""
+    chapters = [
+        ("EPUB/chapters/night.xhtml", title, xhtml(title, body, True)),
+        ("EPUB/chapters/notes.xhtml", "Harbor notes", xhtml("Harbor notes", notes, True)),
+    ]
+    return publication(title, "night-landing", 3, chapters)
+
+
 def signal_guide():
     title = "Along the Waterline"
     intro = """<h1>Along the Waterline</h1>
@@ -420,6 +442,11 @@ def outputs():
             "opens": True, "epub_version": "3.0", "spine_count": 3,
             "writing_modes": ["horizontal-tb", "vertical-rl", "horizontal-tb"],
             "anchors": {"EPUB/chapters/vertical.xhtml#entry-24": "Before the tide rose"},
+        }),
+        ("night-landing.epub", archive(night_landing()), {
+            "opens": True, "spine_count": 2,
+            "footnote_targets": ["EPUB/chapters/notes.xhtml#signal", "EPUB/chapters/notes.xhtml#bearings"],
+            "backlink_target": "EPUB/chapters/night.xhtml#reference",
         }),
         ("signal-guide.epub", archive(signal_guide()), {
             "opens": True, "epub_version": "3.0", "spine_count": 2,

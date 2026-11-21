@@ -207,6 +207,20 @@
       }
     },
     {
+      "file": "night-landing.epub",
+      "sha256": "b0562036e183e7b69b233ee3a09143b3359c7d220b1612d7ac5ba9447a4fbd6e",
+      "size_bytes": 7459,
+      "expected": {
+        "opens": true,
+        "spine_count": 2,
+        "footnote_targets": [
+          "EPUB/chapters/notes.xhtml#signal",
+          "EPUB/chapters/notes.xhtml#bearings"
+        ],
+        "backlink_target": "EPUB/chapters/night.xhtml#reference"
+      }
+    },
+    {
       "file": "signal-guide.epub",
       "sha256": "b046557554020f80ca8d0696c5b0c454d16a9f7147954c5cadab0440e34a2e70",
       "size_bytes": 18455,

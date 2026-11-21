@@ -114,6 +114,8 @@ pub(crate) enum Stylesheet {
 }
 
 pub(crate) struct InlineLink {
+    #[cfg(feature = "kindle")]
+    pub note_reference: crate::footnotes::Reference,
     pub bytes: Range<usize>,
     pub href: String,
 }
@@ -516,6 +518,8 @@ impl Source {
                             links.last_mut().unwrap().bytes.end = text.len();
                         } else {
                             links.push(InlineLink {
+                                #[cfg(feature = "kindle")]
+                                note_reference: crate::footnotes::Reference::from_node(anchor),
                                 bytes: start..text.len(),
                                 href: anchor.attribute("href").unwrap().to_owned(),
                             });

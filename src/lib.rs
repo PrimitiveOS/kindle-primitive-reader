@@ -26,6 +26,8 @@ pub mod fixed_text;
 #[cfg(feature = "kindle")]
 mod generated_contents;
 mod gray_glyph;
+#[cfg(feature = "kindle")]
+mod footnotes;
 mod kf8;
 mod kindle_sections;
 pub mod koreader_import;
@@ -369,11 +371,22 @@ impl Probe {
     }
 
     fn from_book(
+        book: Book,
+        engine: Engine,
+        fonts: &[PathBuf],
+        settings: Settings,
+        chapter: usize,
+    ) -> Result<Self> {
+        Self::from_book_content(book, engine, fonts, settings, chapter, None)
+    }
+
+    fn from_book_content(
         mut book: Book,
         engine: Engine,
         fonts: &[PathBuf],
         settings: Settings,
         chapter: usize,
+        excerpt: Option<String>,
     ) -> Result<Self> {
         if book.is_fixed_layout() {
             return Err("Open this fixed-layout EPUB in Reader".into());
@@ -399,7 +412,10 @@ impl Probe {
         let toc = book.toc.clone();
         #[cfg(feature = "kindle")]
         let printed_pages = book.printed_pages().to_vec();
-        let xhtml = book.chapter(chapter).map_err(|e| e.to_string())?;
+        let xhtml = match excerpt {
+            Some(value) => value,
+            None => book.chapter(chapter).map_err(|e| e.to_string())?,
+        };
         let source = Source::parse(&xhtml)?;
         let mut fonts = font_context(fonts)?;
         let (renderer, mut lines, content_height) = match engine {

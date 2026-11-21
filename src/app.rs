@@ -10,6 +10,7 @@ mod reader_timer;
 mod reading_bars;
 mod reading_footer;
 mod selection_popup;
+mod footnote_popup;
 mod top_config;
 
 use std::collections::{BTreeSet, HashSet};
@@ -89,6 +90,7 @@ const CANCEL_CROP: Rect = Rect::new(1052, PAGE_HEIGHT as i32 + 5, 192, 60);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Screen {
+    Footnote,
     Library,
     LibraryFind,
     OrganizeLibrary,
@@ -161,6 +163,7 @@ enum Screen {
 impl Screen {
     fn title(self) -> &'static str {
         match self {
+            Self::Footnote => "Footnote",
             Self::Library => "Reader",
             Self::LibraryFind => "Find a document",
             Self::OrganizeLibrary => "Library organization",
@@ -490,6 +493,7 @@ pub struct Reader {
     search_at: Option<Instant>,
     next_search_refresh: Instant,
     selection: Option<TextSelection>,
+    footnote: Option<footnote_popup::Footnote>,
     highlight_index: usize,
     exports: PathBuf,
     dictionaries: PathBuf,
@@ -603,6 +607,7 @@ impl Reader {
             search_at: None,
             next_search_refresh: Instant::now(),
             selection: None,
+            footnote: None,
             highlight_index: 0,
             exports: state.parent().unwrap_or(documents).join("exports"),
             dictionaries: state.parent().unwrap_or(documents).join("dictionaries"),
@@ -774,6 +779,9 @@ impl Reader {
     }
 
     fn show(&mut self, screen: Screen) {
+        if !matches!(screen, Screen::Footnote | Screen::Definition) {
+            self.footnote = None;
+        }
         if screen != Screen::CustomTitle { self.chapter_draft = None; }
         if !matches!(screen, Screen::OnlineLookup | Screen::OnlineEdit) {
             self.online = None;
@@ -3449,6 +3457,9 @@ impl Reader {
                 let reading = &active.reading;
                 reading.link_at(x, y)
             }) {
+                if self.open_note_at(target.clone(), x, y) {
+                    return Change::Partial;
+                }
                 return match self.follow(target) {
                     Ok(()) => Change::Partial,
                     Err(error) => self.report(error),
@@ -4432,7 +4443,9 @@ impl Reader {
                 }
             } else {
                 if done.contains(x, y) || !popup.contains(x, y) {
-                    self.show(if self.fixed.is_some() {
+                    self.show(if self.footnote.is_some() {
+                        Screen::Footnote
+                    } else if self.fixed.is_some() {
                         Screen::Fixed
                     } else {
                         Screen::Book
@@ -4976,7 +4989,10 @@ impl App for Reader {
             }
             return;
         }
-        if (matches!(self.screen, Screen::Book | Screen::BookTools | Screen::OnlineLookup) || self.definition_over_book())
+        if (matches!(
+            self.screen,
+            Screen::Footnote | Screen::Book | Screen::BookTools | Screen::OnlineLookup
+        ) || self.definition_over_book())
             && let Some(active) = &self.active
         {
             let reading = &active.reading;
@@ -4987,6 +5003,9 @@ impl App for Reader {
                 .flat_map(|state| &state.highlights)
                 .flat_map(|highlight| reading.highlight_rects(&highlight.selection))
                 .collect();
+            if let Some(reference) = self.footnote.as_ref().and_then(|note| note.reference.as_ref()) {
+                highlights.extend(reading.highlight_rects(reference));
+            }
             if let Some(result) = &self.result_selection {
                 highlights.extend(reading.highlight_rects(result));
             }
@@ -5019,6 +5038,9 @@ impl App for Reader {
                 self.draw_search_steps(canvas);
             }
             if self.screen == Screen::OnlineLookup { self.draw_online(canvas); }
+            if let Some(note) = &self.footnote {
+                note.draw(canvas, self.uses_night_pages());
+            }
             if self.definition_over_book() {
                 self.draw_definition_popup(canvas);
             }
@@ -5347,6 +5369,9 @@ impl App for Reader {
         }
         if self.screen == Screen::CustomTitle { return self.chapter_editor_input(input); }
         if self.screen == Screen::ClearOnlineHistory { return self.clear_online_history_input(input); }
+        if self.screen == Screen::Footnote {
+            return self.footnote_input(input);
+        }
         if self.screen == Screen::OnlineLookup { return self.online_input(input); }
         if self.screen == Screen::OnlineEdit { return self.online_editor_input(input); }
         if self.screen == Screen::Definition {
@@ -7340,6 +7365,163 @@ mod tests {
         let mut reopened = fixture.app();
         reopened.open_path(&fixture.book).unwrap();
         assert_eq!(position(&reopened.active.as_ref().unwrap().reading), start);
+    }
+
+    fn source_link_point(app: &Reader, label: &str) -> (f32, f32) {
+        let reading = &app.active.as_ref().unwrap().reading;
+        let start = reading.probe.matches(label).into_iter().next().unwrap();
+        let mut end = start.clone();
+        end.offset += label.len();
+        let selection = reading.probe.select_range(&start, &end).unwrap();
+        let rect = reading.highlight_rects(&selection)[0];
+        (
+            (rect.x + rect.width / 2) as f32,
+            (rect.y + rect.height / 2) as f32,
+        )
+    }
+
+    fn toggle_footnote_menu(app: &mut Reader) {
+        app.open_reading_edge(true, 100.0);
+        assert_eq!(
+            tap_reading_control(app, "Footnote previews"),
+            Change::Partial
+        );
+        app.show(Screen::Book);
+    }
+
+    #[test]
+    fn footnote_previews_recognize_a_publisher_note_and_an_unmarked_epub2_number() {
+        for file in ["field-notes-epub3.epub", "field-notes-epub2.epub"] {
+            let fixture = Fixture::new();
+            fs::copy(crate::test_fixture(file), &fixture.book).unwrap();
+            let mut app = fixture.app();
+            app.open_path(&fixture.book).unwrap();
+            toggle_footnote_menu(&mut app);
+            let original = position(&app.active.as_ref().unwrap().reading);
+            let (x, y) = source_link_point(&app, "[1]");
+            app.input(Input::Tap(x, y));
+            assert_eq!(app.screen, Screen::Footnote, "{file}");
+            let note = app.footnote.as_ref().unwrap();
+            assert_eq!(note.reference.as_ref().unwrap().text, "[1]");
+            let (wx, wy) = note.test_word("first");
+            app.input(Input::LongTap(wx, wy));
+            assert_eq!(app.definition_word, "first");
+            assert_eq!(position(&app.active.as_ref().unwrap().reading), original);
+            assert!(app.back.is_empty());
+        }
+    }
+
+    #[test]
+    fn cross_chapter_footnote_previews_lookup_return_and_full_page_fallback() {
+        let fixture = Fixture::new();
+        fs::copy(crate::test_fixture("night-landing.epub"), &fixture.book).unwrap();
+        let mut fonts = simulation_fonts();
+        fonts.push(crate::test_fixture("fonts/NotoSans-Regular.ttf"));
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        app.open_path(&fixture.book).unwrap();
+        let original = position(&app.active.as_ref().unwrap().reading);
+        let (x, y) = source_link_point(&app, "[1]");
+        assert!(!app.controls.footnote_popups);
+        assert_eq!(app.input(Input::Tap(x, y)), Change::Partial);
+        assert_eq!(app.active.as_ref().unwrap().reading.chapter, 1);
+        app.activate(Action::ReturnToLocation).unwrap();
+        assert_eq!(position(&app.active.as_ref().unwrap().reading), original);
+
+        toggle_footnote_menu(&mut app);
+        let history = app.back.len();
+        app.input(Input::Tap(x, y));
+        assert_eq!(app.screen, Screen::Footnote);
+        assert_eq!(position(&app.active.as_ref().unwrap().reading), original);
+        assert_eq!(app.back.len(), history);
+        let note = app.footnote.as_ref().unwrap();
+        assert_eq!(note.reference.as_ref().unwrap().text, "[1]");
+        let panel = note.panel();
+        assert!(panel.y >= HEIGHT as i32 * 2 / 3);
+        assert!(panel.bottom() <= HEIGHT as i32);
+        let (wx, wy) = note.test_word("shore");
+        capture_test_screen(&app, &fonts, "READER_FOOTNOTE_SCREENSHOT", false);
+        let font_paths: Vec<_> = fonts.iter().map(|p| p.display().to_string()).collect();
+        let mut canvas = Canvas::new(WIDTH, HEIGHT, &font_paths).unwrap();
+        app.system_theme = None;
+        let paper = ((panel.y + 80) * WIDTH as i32 + panel.x + 18) as usize;
+        assert!(primitive_app::frame(&app, &mut canvas, false)[paper] > 230);
+        app.controls.night_pages = true;
+        assert!(primitive_app::frame(&app, &mut canvas, true)[paper] < 25);
+        app.controls.night_pages = false;
+        app.input(Input::LongTap(wx, wy));
+        assert_eq!(app.screen, Screen::Definition);
+        assert_eq!(app.definition_word, "shore");
+        let close = app.definition_layout().1;
+        app.input(Input::Tap((close.x + 10) as f32, (close.y + 10) as f32));
+        assert_eq!(app.screen, Screen::Footnote);
+        let (lx, ly) = app.footnote.as_ref().unwrap().test_word("stands");
+        app.input(Input::Tap(lx, ly));
+        assert_eq!(
+            app.footnote.as_ref().unwrap().test_selected(),
+            Some("shore lamp stands")
+        );
+        assert!(app.selection.is_none());
+        let (x2, y2) = source_link_point(&app, "[2]");
+        app.input(Input::Tap(x2, y2));
+        let note = app.footnote.as_ref().unwrap();
+        let (_, pages) = note.test_page();
+        assert!(pages > 1);
+        app.input(Input::PageForward);
+        assert_eq!(app.footnote.as_ref().unwrap().test_page().0, 1);
+        app.input(Input::PageBack);
+        assert_eq!(app.footnote.as_ref().unwrap().test_page().0, 0);
+        app.swipe(
+            Input::Swipe {
+                dx: 0.0,
+                dy: 140.0,
+                start_y: 40.0,
+            },
+            800.0,
+        );
+        assert_eq!(app.screen, Screen::Book);
+        app.input(Input::Tap(x, y));
+        app.input(Input::Tap(10.0, 12.0));
+        assert_eq!(app.screen, Screen::Book);
+        assert_eq!(position(&app.active.as_ref().unwrap().reading), original);
+        assert_eq!(app.back.len(), history);
+        app.input(Input::Tap(x, y));
+        let swipe = Input::Swipe {
+            dx: -250.0,
+            dy: 0.0,
+            start_y: (HEIGHT - 55) as f32,
+        };
+        app.swipe(swipe, 400.0);
+        assert_eq!(app.screen, Screen::Book);
+        let reading = &app.active.as_ref().unwrap().reading;
+        assert_eq!(reading.chapter, 1);
+        assert_eq!(
+            Some(reading.page),
+            reading
+                .probe
+                .page_for(&reading.probe.fragment("signal").unwrap())
+        );
+        app.activate(Action::ReturnToLocation).unwrap();
+        assert_eq!(position(&app.active.as_ref().unwrap().reading), original);
+        app.input(Input::Tap(x, y));
+        let open = app.footnote.as_ref().unwrap().follow_button();
+        app.input(Input::Tap((open.x + 12) as f32, (open.y + 12) as f32));
+        assert_eq!(app.active.as_ref().unwrap().reading.chapter, 1);
+        app.activate(Action::ReturnToLocation).unwrap();
+        assert_eq!(position(&app.active.as_ref().unwrap().reading), original);
+        app.input(Input::Tap(x, y));
+        let (bx, by) = app.footnote.as_ref().unwrap().test_word("Return");
+        app.input(Input::Tap(bx, by));
+        assert_eq!(app.screen, Screen::Book);
+        let reading = &app.active.as_ref().unwrap().reading;
+        assert_eq!(reading.chapter, 0);
+        assert_eq!(position(reading).anchor, reading.probe.fragment("reference"));
+        let (ox, oy) = source_link_point(&app, "harbor appendix");
+        app.input(Input::Tap(ox, oy));
+        assert_eq!(app.screen, Screen::Book);
+        assert_eq!(app.active.as_ref().unwrap().reading.chapter, 1);
+        app.save().unwrap();
+        let reopened = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+        assert!(reopened.controls.footnote_popups);
     }
 
     #[test]

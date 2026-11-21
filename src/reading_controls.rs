@@ -15,6 +15,8 @@ const MAX_FILE_BYTES: u64 = 4096;
 #[serde(default)]
 pub(crate) struct ReadingControls {
     pub night_pages: bool,
+    pub footnote_popups: bool,
+    pub prefer_footnotes: bool,
     pub left_touch: bool,
     pub large_toolbar: bool,
     pub disable_page_taps: bool,

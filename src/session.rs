@@ -407,6 +407,36 @@ impl Reading {
             .collect()
     }
 
+    pub(crate) fn note_reference_at(
+        &self,
+        x: f32,
+        y: f32,
+    ) -> Option<(crate::footnotes::ReferenceContext, TextSelection)> {
+        let (range, x) = self.column_at(x)?;
+        let (key, offset) = self.probe.source_at(range, x, y)?;
+        let block = self.probe.source.blocks.iter().find(|b| b.key == key)?;
+        let link = block.links.iter().find(|l| l.bytes.contains(&offset))?;
+        let linked = &block.text[link.bytes.clone()];
+        let label = linked.trim();
+        let first = link.bytes.start + linked.len() - linked.trim_start().len();
+        let selection = self.probe.select_range(
+            &self.probe.anchor(key, first),
+            &self.probe.anchor(key, first + label.len()),
+        )?;
+        Some((
+            crate::footnotes::ReferenceContext {
+                kind: link.note_reference,
+                label: label.chars().take(64).collect(),
+                in_prose: block.text[..link.bytes.start]
+                    .chars()
+                    .chain(block.text[link.bytes.end..].chars())
+                    .any(char::is_alphanumeric),
+                source_block: key,
+            },
+            selection,
+        ))
+    }
+
     pub(crate) fn link_at(&self, x: f32, y: f32) -> Option<Destination> {
         let (range, x) = self.column_at(x)?;
         self.probe.link_in(range, x, y)
@@ -792,7 +822,7 @@ impl App for Reading {
 }
 
 /// Counteract the final page inversion just inside each visible illustration.
-fn preinvert_images(
+pub(crate) fn preinvert_images(
     probe: &Probe,
     range: Range<f32>,
     column: u32,

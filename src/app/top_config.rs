@@ -92,6 +92,38 @@ impl Reader {
                 Action::Show(Screen::LocationHistory),
             ));
         }
+        if self.active.is_some() {
+            items.push(
+                Item::new(
+                    "Footnote previews",
+                    Action::SetReadingControls(ReadingControls {
+                        footnote_popups: !self.controls.footnote_popups,
+                        ..self.controls
+                    }),
+                )
+                .detail(if self.controls.footnote_popups {
+                    "On"
+                } else {
+                    "Off"
+                }),
+            );
+            if self.controls.footnote_popups {
+                items.push(
+                    Item::new(
+                        "Preview more links",
+                        Action::SetReadingControls(ReadingControls {
+                            prefer_footnotes: !self.controls.prefer_footnotes,
+                            ..self.controls
+                        }),
+                    )
+                    .detail(if self.controls.prefer_footnotes {
+                        "On"
+                    } else {
+                        "Off"
+                    }),
+                );
+            }
+        }
         items
     }
 

@@ -180,6 +180,7 @@ for a local ARMHF build.
 
 | Reading task | How it works |
 | --- | --- |
+| Preview an EPUB footnote | In the top Navigation panel, turn on **Footnote previews** and tap a note reference. Hold a word for its definition, close the note to keep reading, or choose **Open in book** and use **Previous location** to return. [Footnote preview](docs/screenshots/footnote-preview.png) |
 | Track progress | Tap the footer to show book or chapter progress. Hold it to skim and return to your place. [Footer screenshot](docs/screenshots/reading-footer.png) |
 | Customize touch | Assign an action to a corner tap, hold or edge swipe in Reading gestures. [Gesture grid](docs/screenshots/reading-gestures.png) |
 | Edit the outline | Add a named entry at a reading location and jump back from Contents. [Custom contents](docs/screenshots/custom-contents.png) |
