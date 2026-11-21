@@ -94,3 +94,10 @@ On the Mac, eleven original EPUB entries produced 9,436 pages across 344 section
 ## Oasis release verification for Reader 0.1.11
 
 The integrated build passed 411 tests on both the Mac and the Oasis. Four additional original-document workflows ran separately in isolated profiles. In six EPUBs, Preview, Apply, save and reopen resolved the twelve surrounding text samples independently recorded by KOReader. In a 1,041-page PDF, Reader found the adjacent metadata, previewed page 32, opened it and returned to the prior view. The books and their original metadata retained their checksums. An EPUB highlight across two chapters and a PDF highlight across two pages each kept one saved note after reopening. Cancelling each edit restored the earlier frame. A separate DjVu comparison used publicly distributed books since the original collection has no DjVu files. [Original-document verification](real-document-verification.md)
+
+
+## Oasis release verification for Reader 0.1.12
+
+All 420 integrated tests passed on both the Mac and the Oasis. In eleven original EPUB entries, the Mac rendered 9,461 pages across 344 sections and returned all 9,458 available page anchors to their source pages. The independent typography checks used the publisher's paragraph and sibling structure. In the three original books with KOReader annotations, preview, repeat import and reopen retained the expected two highlights and one bookmark.
+
+On the Oasis, tapping all sixteen external URI annotations in three original PDFs revealed the addresses independently extracted from the publications. The offline QR dialog and Copy preserved Reader's page and history. A separate four-PDF comparison verified wrapped phrase search and both zoomed reading modes against the installed KOReader. Screenshots in the repository use redistributable authored publications. [Original-document evidence](real-document-verification.md) · [Paragraph measurements](paragraph-indentation.md)
