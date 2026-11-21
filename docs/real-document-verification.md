@@ -77,6 +77,13 @@ images and one chapter were missing or damaged. Reader preserves the original
 chapter numbering, displays a message for that missing chapter and allows the
 next turn. A successful open cannot reconstruct bytes that are absent from the file.
 
+A different EPUB has 42 linear spine entries. Reader rendered all 40 entries
+containing text or artwork. The final two first frames were blank. Inspection of
+their original CRC-checked XHTML entries found two byte-identical 269-byte files,
+each with an empty title and a body containing one whitespace character. Neither
+entry contains an image, stylesheet, script, or any element inside the body.
+The blank frames match those source pages.
+
 The extended picker run also exercised 36 JPEG files, 23 individual XHTML chapters
 and the complete extracted publication. All 60 opened and resumed. In total, 117
 of the 130 entries rendered and restored the same page body; 13 were identified
