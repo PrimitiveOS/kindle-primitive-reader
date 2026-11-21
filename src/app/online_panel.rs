@@ -14,7 +14,7 @@ use crate::Result;
 use crate::online_lookup::{Article, Job, MAX_TEXT_BYTES, Request, Service, language};
 
 const SHEET: Rect = Rect::new(58, 284, WIDTH as i32 - 116, 1122);
-const CLOSE: Rect = Rect::new(986, 318, 180, 102);
+pub(super) const CLOSE: Rect = Rect::new(986, 318, 180, 102);
 const TOPIC: Rect = Rect::new(100, 452, 1064, 110);
 const PROVIDER: Rect = Rect::new(100, 597, 444, 108);
 const FROM: Rect = Rect::new(562, 597, 283, 108);

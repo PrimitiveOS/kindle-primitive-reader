@@ -780,7 +780,7 @@ impl Reader {
     }
 
     fn show(&mut self, screen: Screen) {
-        if !matches!(screen, Screen::Footnote | Screen::Definition) {
+        if !matches!(screen, Screen::Footnote | Screen::Definition | Screen::OnlineLookup | Screen::OnlineEdit) {
             self.footnote = None;
         }
         if screen != Screen::CustomTitle { self.chapter_draft = None; }
@@ -4783,10 +4783,10 @@ impl App for Reader {
             } else if self.screen == Screen::Book && selection.is_empty() {
                 self.draw_search_steps(canvas);
             }
-            if self.screen == Screen::OnlineLookup { self.draw_online(canvas); }
             if let Some(note) = &self.footnote {
                 note.draw(canvas, self.uses_night_pages());
             }
+            if self.screen == Screen::OnlineLookup { self.draw_online(canvas); }
             if self.definition_over_book() {
                 self.draw_definition_popup(canvas);
             }
@@ -7149,6 +7149,14 @@ mod tests {
         app.input(Input::LongTap(wx, wy));
         assert_eq!(app.screen, Screen::Definition);
         assert_eq!(app.definition_word, "shore");
+        let wiki = dictionary_panel::action_row(app.definition_layout().0)[2];
+        let (wx, wy) = rectangle_center(wiki);
+        app.input(Input::Tap(wx, wy));
+        assert_eq!(app.screen, Screen::OnlineLookup);
+        assert!(app.footnote.is_some());
+        let (cx, cy) = rectangle_center(online_panel::CLOSE);
+        app.input(Input::Tap(cx, cy));
+        assert_eq!(app.screen, Screen::Definition);
         let close = app.definition_layout().1;
         app.input(Input::Tap((close.x + 10) as f32, (close.y + 10) as f32));
         assert_eq!(app.screen, Screen::Footnote);

@@ -59,7 +59,7 @@ struct TextLine {
 fn body(popup: Rect) -> Rect {
     Rect::new(popup.x + 32, popup.y + 108, popup.w - 84, popup.h - 273)
 }
-fn action_row(popup: Rect) -> [Rect; 3] {
+pub(super) fn action_row(popup: Rect) -> [Rect; 3] {
     let save = definition_vocabulary(popup);
     [
         save,
