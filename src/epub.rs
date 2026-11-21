@@ -570,17 +570,22 @@ impl Book {
         Ok(Some((cover.kind, bytes)))
     }
 
+    /// The archive directory declared this chapter, but its payload could not be recovered.
+    pub(crate) fn recovered_placeholder(&self, chapter: &Chapter) -> bool {
+        self.fixed_placements.is_none()
+            && matches!(&self.content,
+            Content::Archive { archive, .. } if archive.missing_after_recovery(&chapter.href))
+    }
+
     pub fn chapter(&mut self, index: usize) -> Result<String> {
         let chapter = self
             .chapters
             .get(index)
             .ok_or("That EPUB chapter is unavailable")?;
+        if self.recovered_placeholder(chapter) {
+            return Ok("<html><head><title>Chapter unavailable</title></head><body><h1>Chapter unavailable</h1><p>This chapter is missing from the damaged EPUB. Turn the page to continue.</p></body></html>".to_owned());
+        }
         match &mut self.content {
-            Content::Archive { archive, .. }
-                if self.fixed_placements.is_none() && archive.missing_after_recovery(&chapter.href) =>
-            {
-                Ok("<html><head><title>Chapter unavailable</title></head><body><h1>Chapter unavailable</h1><p>This chapter is missing from the damaged EPUB. Turn the page to continue.</p></body></html>".to_owned())
-            }
             Content::Archive { archive, .. } => xml_entry(archive, &chapter.href),
             Content::Loose { xhtml, .. } => xhtml
                 .get(&chapter.href)

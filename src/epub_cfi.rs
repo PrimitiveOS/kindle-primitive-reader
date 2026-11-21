@@ -109,6 +109,7 @@ pub fn resolve(book: &mut Book, value: &str) -> Result<CfiPosition> {
     Ok(CfiPosition {
         chapter,
         anchor: Anchor {
+            illustration: None,
             book: book.revision(),
             chapter: path,
             revision: source.revision,

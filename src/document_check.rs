@@ -1,6 +1,6 @@
 //! Exercise the normal opener, first frame, page button and durable state without modifying a book.
 use crate::{
-    Engine, Probe, Result, Settings,
+    Result,
     app::Reader,
     library::{BrowseKind, DocumentFormat, Library},
 };
@@ -50,48 +50,8 @@ fn select_in_picker(app: &mut Reader, library: &Library, relative: &Path) -> Res
     Ok(())
 }
 
-/// Exercise later chapters without persisting a page or collecting any book text.
-fn verify_spine(path: &Path, fonts: &[PathBuf], all: bool) -> Result<serde_json::Value> {
-    let package = crate::epub::Book::open(path)?;
-    let count = package.chapters.len();
-    let fixed = package.is_fixed_layout();
-    drop(package);
-    let mut indices = if all {
-        (0..count).collect::<Vec<_>>()
-    } else {
-        vec![0, count / 2, count.saturating_sub(1)]
-    };
-    indices.dedup();
-    let fixed = if fixed {
-        crate::fixed_epub::FixedEpub::open(path, fonts)?
-    } else {
-        None
-    };
-    let settings = Settings {
-        width: WIDTH,
-        height: crate::session::PAGE_HEIGHT,
-        ..Settings::default()
-    };
-    let mut failed = Vec::new();
-    for &index in &indices {
-        let result = (|| -> Result<()> {
-            if let Some(book) = &fixed {
-                book.decode_page(index)?;
-            } else {
-                let mut chapter = Probe::open(path, Engine::Parley, fonts, settings, index)?;
-                chapter.capture(0)?;
-                if chapter.page_count() > 1 {
-                    chapter.capture(chapter.page_count() - 1)?;
-                }
-            }
-            Ok(())
-        })();
-        if result.is_err() {
-            failed.push(index);
-        }
-    }
-    Ok(serde_json::json!({"chapters":count, "checked":indices.len(), "failed_indices":failed}))
-}
+mod spine;
+use spine::verify_spine;
 
 /// Exercise the regular UI in a new scratch profile. The Kindle's framebuffer,
 /// original document and saved reading data are never used for test output.

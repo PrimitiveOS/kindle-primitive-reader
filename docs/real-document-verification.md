@@ -30,9 +30,70 @@ must be new. The caller can remove it after reviewing the result.
 /mnt/us/reader/bin/reader-kindle --check-document "$book_path" "$new_scratch_directory"
 ```
 
-Set `READER_VERIFY_SPINE=sample` to paint the first and last pages of the first,
-middle and final chapter of a reflowable book. Set it to `all` to exercise every
-spine item. Fixed-layout EPUBs use their page decoder for the selected entries.
+Set `READER_VERIFY_SPINE=sample` to check the first, middle and final spine entries
+and paint their first, middle and final pages. Use `READER_VERIFY_SPINE=all` to
+paint every page of every entry. An ordinary open skips these diagnostics.
+Fixed-layout EPUBs count successfully decoded pages and painted frames. The
+reflow audit also reports the following evidence.
+
+| JSON field | Interpretation |
+| --- | --- |
+| `failed_indices` | A spine index failed to open, lay out or paint. Indices start at zero. |
+| `genuine_reflow_sections`, `recovered_placeholder_indices`, `empty_body_indices` | A section contains original text or illustrations, a recovery notice supplied by Reader, or a verified attribute-free and structurally empty source body, respectively. `empty_layout_with_markup_indices` records other empty layouts separately for review. |
+| `mapped_chars` and `source_chars` | Counts of normalized, non-whitespace source characters covered by line byte ranges and total such characters in genuine sections. `missing_glyphs` separately counts shape results without a glyph in the supplied fonts. |
+| `source_graphics`, `decoded_graphics` and `placeholder_graphics` | Image occurrences identified by the reading source model, decoded previews available to the renderer and fallback boxes, respectively. Repeated placements count individually. |
+| `located_fragments` and `source_fragments` | Counts of extracted fragment anchors that resolve to a page and the total extracted from genuine sections. |
+| `exact_page_anchors` and `inspected_page_anchors` | For each tested page with a reading anchor, the checker resolves the anchor back to a page and compares the index. |
+| `painted_pages_with_ink` and `painted_pages` | Page bitmaps with at least one nonwhite pixel and all successfully painted pages, including blank leaves and recovery notices. |
+| `issues` | Per-section counts for missing mappings, artwork, glyphs or page anchors. White pages inside genuine chapters can arise from whitespace. Up to eight zero-based example pages identify each blank-frame or anchor mismatch. |
+
+The JSON contains counts and numeric positions. The scratch profile can contain
+book metadata and stays local. [Audit implementation](../src/document_check/spine.rs)
+
+## Whole-spine verification on Mac
+
+Ten anonymized EPUB entries from Kindle Documents went through the production
+`reader-kindle --check-document` command with `READER_VERIFY_SPINE=all`, 1264-pixel
+width and the Launcher Noto Sans regular and bold fonts. Entries 035 and 065 are
+byte-identical copies at different picker locations. The counts below include
+both. All 315 spine entries opened and every one of the 8,575 pages painted.
+
+| Entry | Original sections / entries | Pages painted | Source characters mapped | Images decoded / referenced | Fragment anchors located | Missing glyph instances |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 031 | 24/24 | 1,134 | 1,222,865 | 15/15 | 599 | 0 |
+| 032 | 11/11 | 1,156 | 1,226,557 | 14/14 | 0 | 0 |
+| 033 | 12/12 | 403 | 357,788 | 31/31 | 149 | 63 |
+| 035 | 33/33 | 411 | 372,040 | 25/25 | 353 | 0 |
+| 046 | 31/31 | 1,207 | 1,184,691 | 79/79 | 24 | 0 |
+| 052 | 21/21 | 366 | 419,252 | 39/39 | 1,193 | 2 |
+| 053 | 48/49 | 1,973 | 2,102,842 | 1,726/1,757 | 3,259 | 555 |
+| 055 | 40/42 | 1,151 | 1,071,808 | 1/1 | 141 | 0 |
+| 061 | 59/59 | 363 | 328,305 | 64/64 | 9,017 | 0 |
+| 065 | 33/33 | 411 | 372,040 | 25/25 | 353 | 0 |
+| **Total** | **312/315** | **8,575** | **8,658,188** | **2,019/2,050** | **15,088** | **620** |
+
+- The checker mapped every normalized non-whitespace character and resolved all
+  15,088 extracted fragments. All 8,571 available page anchors returned to their
+  original pages. Entry 053 previously restored two illustration pages to the
+  first image in the paragraph. Saved anchors now retain the image ordinal.
+- In 033, 052 and 061, valid PNG and JPEG illustrations near the ends of chapters
+  previously showed placeholders. Reader now budgets the retained grayscale
+  previews separately from decoding the full source. Pictures keep their
+  display and touch geometry when their cached resolution is reduced.
+- In 053, index 21 rendered a recovery notice. It contributes zero source
+  characters, illustration references or fragment anchors. Independent ZIP
+  validation found 41 unavailable image members. The surviving chapters
+  reference 31 of those missing images and 1,726 intact image occurrences.
+  The renderer decoded all 1,726.
+- In 055, indices 40 and 41 are two literal empty body elements. Both pages
+  stayed empty. Two further white frames occurred inside genuine chapters at
+  (032, section 2, page 102) and (061, section 11, page 10). The former
+  contains a trailing whitespace line and the latter has no visible line
+  in the final layout region. These are zero-based positions.
+- Character coverage records layout mapping. The 620 missing-glyph instances
+  are a separate font-coverage limitation with the supplied fonts. This Mac
+  pass measures the software renderer and input handlers. Physical display
+  behavior is covered by the separately identified Oasis runs.
 
 ## Reader 0.1.5 on the Oasis
 

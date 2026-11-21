@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -58,6 +58,7 @@ struct Illustration {
     x: Option<usize>,
     y: f32,
     pixels: Arc<GrayImage>,
+    display: (u32, u32),
 }
 
 /// A bounded chapter layout with a limited publisher style cascade and direct
@@ -101,7 +102,27 @@ impl ParleyChapter {
             36,
             Luma([225]),
         ));
-        let mut image_cache: HashMap<_, (Option<String>, Arc<GrayImage>)> = HashMap::new();
+        // Share the bounded grayscale cache across distinct renderings. Duplicate icons
+        // reuse one preview, while large later illustrations still receive space.
+        let image_variants = source
+            .blocks
+            .iter()
+            .flat_map(|block| {
+                block.images.iter().map(move |image| {
+                    ImageSizing::new(
+                        image,
+                        settings,
+                        &styles[image.element],
+                        !block.text.is_empty(),
+                    )
+                    .key(&image.href)
+                })
+            })
+            .take(MAX_IMAGE_BOXES)
+            .collect::<HashSet<_>>()
+            .len()
+            .min(MAX_DISTINCT_IMAGE_READS);
+        let mut image_cache = HashMap::new();
         let width = settings.text_width();
         let gap = settings.font_size * 0.32;
         for block in &source.blocks {
@@ -113,38 +134,37 @@ impl ParleyChapter {
             for image in block.images.iter().take(available) {
                 let inline = !block.text.is_empty();
                 let sizing = ImageSizing::new(image, settings, &styles[image.element], inline);
-                let key = (
-                    &image.href,
-                    sizing.requested_width.map(f64::to_bits),
-                    sizing.requested_height.map(f64::to_bits),
-                    sizing.height,
-                );
-                let (path, pixels) = if let Some(cached) = image_cache.get(&key) {
-                    cached.clone()
-                } else if image_budget > 0 && image_cache.len() < MAX_DISTINCT_IMAGE_READS {
-                    let fitted = load_image(book, href, image, settings, sizing, &mut image_budget);
-                    let result = fitted.map_or_else(
-                        || (None, Arc::clone(&fallback)),
-                        |(path, pixels)| (Some(path), Arc::new(pixels)),
-                    );
+                let key = sizing.key(&image.href);
+                let fallback_preview = || (None, Arc::clone(&fallback), fallback.dimensions());
+                let (path, pixels, display) = if let Some(cached) = image_cache.get(&key) {
+                    Clone::clone(cached)
+                } else if image_cache.len() < image_variants {
+                    let share = image_budget / (image_variants - image_cache.len());
+                    let result = match load_image(book, href, image, settings, sizing, share) {
+                        Some((path, pixels, display)) => {
+                            image_budget -= pixels.as_raw().len();
+                            (Some(path), Arc::new(pixels), display)
+                        }
+                        None => fallback_preview(),
+                    };
                     image_cache.insert(key, result.clone());
                     result
                 } else {
-                    (None, Arc::clone(&fallback))
+                    fallback_preview()
                 };
                 if inline {
                     inline_boxes.push(parley::InlineBox {
                         id: chapter.illustrations.len() as u64,
                         index: image.offset,
                         kind: parley::InlineBoxKind::InFlow,
-                        width: (pixels.width() as f32
+                        width: (display.0 as f32
                             + if image.space_after {
                                 settings.font_size * 0.25
                             } else {
                                 0.0
                             })
                         .min(width as f32),
-                        height: pixels.height() as f32,
+                        height: display.1 as f32,
                         baseline: None,
                         vertical_align: styles[image.element].image_align,
                     });
@@ -156,6 +176,7 @@ impl ParleyChapter {
                     x: None,
                     y: 0.0,
                     pixels,
+                    display,
                 });
             }
             if !block.text.is_empty() {
@@ -183,7 +204,7 @@ impl ParleyChapter {
                         if let PositionedLayoutItem::InlineBox(position) = item {
                             let image = &mut chapter.illustrations[position.id as usize];
                             let after_gap = if layout.is_rtl() {
-                                position.width - image.pixels.width() as f32
+                                position.width - image.display.0 as f32
                             } else {
                                 0.0
                             };
@@ -231,7 +252,7 @@ impl ParleyChapter {
             if block.text.is_empty() {
                 for image in &mut chapter.illustrations[first_image..] {
                     let top = y.ceil();
-                    let bottom = top + image.pixels.height() as f32;
+                    let bottom = top + image.display.1 as f32;
                     lines.push(Line {
                         block: block.key,
                         bytes: 0..0,
@@ -335,17 +356,27 @@ impl ParleyChapter {
                 settings.width as usize,
                 settings.side_margin() as usize,
             );
-            let rows = top.max(0)..(top + illustration.pixels.height() as i32).min(height);
+            let rows = top.max(0)..(top + illustration.display.1 as i32).min(height);
             if rows.is_empty() {
                 return None;
             }
             let margin = settings.top_margin() as usize;
             Some((
                 illustration,
-                left..left + illustration.pixels.width() as usize,
+                left..left + illustration.display.0 as usize,
                 margin + rows.start as usize..margin + rows.end as usize,
             ))
         })
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn illustration_counts(&self) -> (usize, usize) {
+        let decoded = self
+            .illustrations
+            .iter()
+            .filter(|art| art.path.is_some())
+            .count();
+        (decoded, self.illustrations.len() - decoded)
     }
 
     pub(crate) fn has_illustration(&self, path: &str) -> bool {
@@ -801,6 +832,14 @@ struct ImageSizing {
 }
 
 impl ImageSizing {
+    fn key<'a>(&self, path: &'a str) -> (&'a str, Option<u64>, Option<u64>, u32) {
+        (
+            path,
+            self.requested_width.map(f64::to_bits),
+            self.requested_height.map(f64::to_bits),
+            self.height,
+        )
+    }
     fn new(image: &EmbeddedImage, settings: Settings, style: &Style, inline: bool) -> Self {
         let width = settings.text_width();
         // Inline artwork shares its line with a font strut below the baseline.
@@ -838,8 +877,8 @@ fn load_image(
     image: &EmbeddedImage,
     settings: Settings,
     sizing: ImageSizing,
-    budget: &mut usize,
-) -> Option<(String, GrayImage)> {
+    cache_pixels: usize,
+) -> Option<(String, GrayImage, (u32, u32))> {
     let ImageSizing {
         width,
         height,
@@ -859,12 +898,45 @@ fn load_image(
     };
     let styled_size = (requested_width.is_some() || requested_height.is_some())
         .then_some(&target as &dyn Fn(u32, u32) -> (u32, u32));
+    let filter = if settings.smooth_images {
+        FilterType::Triangle
+    } else {
+        FilterType::Nearest
+    };
+    let preview_size = |w: u32, h: u32| {
+        let scale = ((cache_pixels as f64) / (u64::from(w) * u64::from(h)) as f64)
+            .sqrt()
+            .min(1.0);
+        let cw = ((w as f64 * scale) as u32)
+            .clamp(1, w)
+            .min(cache_pixels as u32);
+        let ch = ((h as f64 * scale) as u32)
+            .clamp(1, h)
+            .min((cache_pixels / cw as usize) as u32);
+        (cw, ch)
+    };
+    let cache_vector = |path, pixels: GrayImage| {
+        let display = pixels.dimensions();
+        let (cw, ch) = preview_size(display.0, display.1);
+        let preview = if (cw, ch) == display {
+            pixels
+        } else {
+            image::imageops::resize(&pixels, cw, ch, filter)
+        };
+        Some((path, preview, display))
+    };
     if let Some(xml) = &image.inline_svg {
-        let (art, pixels) =
-            svg_image::render_inline(book, chapter_href, xml, width, height, *budget, styled_size)
-                .ok()?;
-        *budget -= pixels;
-        return Some((image.href.clone(), art));
+        let (art, _) = svg_image::render_inline(
+            book,
+            chapter_href,
+            xml,
+            width,
+            height,
+            MAX_IMAGE_PIXELS,
+            styled_size,
+        )
+        .ok()?;
+        return cache_vector(image.href.clone(), art);
     }
     let image_href = &image.href;
     let path = Book::resolve(chapter_href, image_href).ok()?;
@@ -878,28 +950,24 @@ fn load_image(
         let bytes = book
             .resource_limited(&path, svg_image::MAX_SVG_BYTES)
             .ok()?;
-        let image =
-            svg_image::rasterize_with_size(&bytes, width, height, *budget, styled_size).ok()?;
-        *budget -= image.width() as usize * image.height() as usize;
-        return Some((path, image));
+        let art =
+            svg_image::rasterize_with_size(&bytes, width, height, MAX_IMAGE_PIXELS, styled_size)
+                .ok()?;
+        return cache_vector(path, art);
     }
     let bytes = book.resource(&path).ok()?;
-    let (original_w, original_h) = crate::epub_raster_dimensions(&bytes).ok()?;
-    let (display_w, display_h) = target(original_w, original_h);
-    let remaining = budget.checked_sub(
-        (original_w as usize * original_h as usize).max(display_w as usize * display_h as usize),
-    )?;
-    let mut image = image_reader(&bytes).ok()?.decode().ok()?;
-    *budget = remaining;
-    if (display_w, display_h) != (original_w, original_h) {
-        let filter = if settings.smooth_images {
-            FilterType::Triangle
-        } else {
-            FilterType::Nearest
-        };
-        image = image.resize_exact(display_w, display_h, filter);
+    let (w, h) = crate::epub_raster_dimensions(&bytes).ok()?;
+    // A decode is transient. The cache retains only the display-sized grayscale preview.
+    if u64::from(w) * u64::from(h) > MAX_IMAGE_PIXELS as u64 {
+        return None;
     }
-    Some((path, grayscale_image(image)))
+    let display = target(w, h);
+    let stored = preview_size(display.0, display.1);
+    let mut image = image_reader(&bytes).ok()?.decode().ok()?;
+    if stored != (w, h) {
+        image = image.resize_exact(stored.0, stored.1, filter);
+    }
+    Some((path, grayscale_image(image), display))
 }
 
 pub(crate) fn original_illustration(bytes: &[u8]) -> Result<ImagePage> {
@@ -931,7 +999,7 @@ fn grayscale_image(image: DynamicImage) -> GrayImage {
 
 impl Illustration {
     fn origin(&self, start: f32, stride: usize, margin: usize) -> (usize, i32) {
-        let remaining = stride - 2 * margin - self.pixels.width() as usize;
+        let remaining = stride - 2 * margin - self.display.0 as usize;
         let left = margin + self.x.map_or(remaining / 2, |x| x.min(remaining));
         (left, (self.y - start).round() as i32)
     }
@@ -940,13 +1008,21 @@ impl Illustration {
         let (x, top) = self.origin(range.start, stride, margin);
         let height = (page.len() / stride) as i32;
         let first = (-top).max(0);
-        let last = (height - top).min(self.pixels.height() as i32);
-        let width = self.pixels.width() as usize;
-        let pixels = self.pixels.as_raw();
+        let last = (height - top).min(self.display.1 as i32);
+        let width = self.display.0 as usize;
+        let stored = self.pixels.width() as usize;
         for row in first..last {
-            let source = row as usize * width;
+            let source_row = row as u32 * self.pixels.height() / self.display.1;
+            let source = &self.pixels.as_raw()[source_row as usize * stored..][..stored];
             let start = (top + row) as usize * stride + x;
-            page[start..start + width].copy_from_slice(&pixels[source..source + width]);
+            let dest = &mut page[start..start + width];
+            if width == stored {
+                dest.copy_from_slice(source);
+            } else {
+                for (x, out) in dest.iter_mut().enumerate() {
+                    *out = source[x * stored / width];
+                }
+            }
         }
     }
 }
@@ -1420,6 +1496,74 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn images_in_one_paragraph_have_independent_resume_anchors() {
+        let image = r#"<img src="../images/shore.png" width="700" height="1100"/>"#;
+        let book = replace_opening(
+            "image-anchors",
+            &format!("<html><body><p>{}</p></body></html>", image.repeat(3)),
+        );
+        let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let mut probe =
+            Probe::open(&book.0, Engine::Parley, &fonts, Settings::default(), 0).unwrap();
+        assert_eq!(probe.page_count(), 3);
+        for page in 0..3 {
+            let anchor = probe.page_anchor(page).unwrap();
+            let bytes = serde_json::to_vec(&anchor).unwrap();
+            let restored = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(probe.page_for(&restored), Some(page));
+            assert!(probe.capture(page).unwrap().iter().any(|&v| v < 128));
+            if page == 0 {
+                assert!(!String::from_utf8(bytes).unwrap().contains("illustration"));
+            } else {
+                assert_eq!(anchor.illustration, Some(page));
+            }
+        }
+    }
+
+    #[test]
+    fn a_small_cache_share_keeps_image_geometry_and_visible_pixels() {
+        let path = crate::test_fixture("field-notes-epub3.epub");
+        let mut book = Book::open(&path).unwrap();
+        let href = book.chapters[0].href.clone();
+        let source=Source::parse(r#"<html><body><p><img src="../images/shore.png" width="144" height="96"/></p></body></html>"#).unwrap();
+        let image = &source.blocks[0].images[0];
+        let sizing = ImageSizing {
+            width: 1024,
+            height: 1200,
+            requested_width: Some(144.0),
+            requested_height: Some(96.0),
+        };
+        let (path, preview, display) =
+            load_image(&mut book, &href, image, Settings::default(), sizing, 100).unwrap();
+        assert!(preview.as_raw().len() <= 100);
+        assert_eq!(display, (144, 96));
+        let art = Illustration {
+            path: Some(path),
+            link: None,
+            label: String::new(),
+            x: Some(0),
+            y: 0.0,
+            pixels: Arc::new(preview),
+            display,
+        };
+        let mut page = vec![255; 150 * 100];
+        art.draw(&mut page, &(0.0..100.0), 150, 0);
+        assert!(page.iter().any(|&v| v < 180));
+        for (x, y) in [(0, 0), (52, 72), (143, 95)] {
+            assert_eq!(
+                page[y * 150 + x],
+                art.pixels
+                    .get_pixel(
+                        x as u32 * art.pixels.width() / 144,
+                        y as u32 * art.pixels.height() / 96
+                    )
+                    .0[0]
+            );
+        }
+        assert!(page[96 * 150..].iter().all(|&v| v == 255));
     }
 
     #[test]

@@ -158,6 +158,7 @@ impl Search {
                     chapter,
                     chapter_title: info.label.clone(),
                     anchor: Anchor {
+                        illustration: None,
                         book: publication.0,
                         chapter: info.href.clone(),
                         revision: source.revision,
@@ -165,6 +166,7 @@ impl Search {
                         offset,
                     },
                     end: Anchor {
+                        illustration: None,
                         book: publication.0,
                         chapter: info.href.clone(),
                         revision: source.revision,

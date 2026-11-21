@@ -234,6 +234,9 @@ pub struct Anchor {
     pub revision: u64,
     pub block: usize,
     pub offset: usize,
+    /// Zero-based picture within a text-empty block holding several illustrations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub illustration: Option<usize>,
 }
 
 struct Line {
@@ -706,6 +709,17 @@ impl Probe {
     pub(crate) fn anchor_top(&self, anchor: &Anchor) -> Option<f32> {
         let (index, offset) = self.project_anchor(anchor)?;
         let block = &self.source.blocks[index];
+        if let Some(ordinal) = anchor.illustration {
+            if offset != 0 || !block.text.is_empty() || ordinal >= block.images.len() {
+                return None;
+            }
+            return self
+                .lines
+                .iter()
+                .filter(|line| line.block == block.key && line.bytes.is_empty())
+                .nth(ordinal)
+                .map(|line| line.top);
+        }
         let exact = self
             .lines
             .iter()
@@ -765,7 +779,28 @@ impl Probe {
                             .is_ok_and(|index| self.source.blocks[index].text.is_empty())
                 })
             })
-            .map(|line| self.anchor(line.block, line.bytes.start))
+            .map(|line| {
+                let mut anchor = self.anchor(line.block, line.bytes.start);
+                if line.bytes.is_empty()
+                    && let Ok(index) = self
+                        .source
+                        .blocks
+                        .binary_search_by_key(&line.block, |b| b.key)
+                    && self.source.blocks[index].text.is_empty()
+                    && self.source.blocks[index].images.len() > 1
+                {
+                    let ordinal = self
+                        .lines
+                        .iter()
+                        .take_while(|entry| entry.top < line.top)
+                        .filter(|entry| entry.block == line.block && entry.bytes.is_empty())
+                        .count();
+                    if ordinal > 0 {
+                        anchor.illustration = Some(ordinal);
+                    }
+                }
+                anchor
+            })
     }
 
     #[cfg(feature = "kindle")]
@@ -834,6 +869,7 @@ impl Probe {
 
     fn anchor(&self, block: usize, offset: usize) -> Anchor {
         Anchor {
+            illustration: None,
             book: self.book,
             chapter: self.chapter.clone(),
             revision: self.source.revision,

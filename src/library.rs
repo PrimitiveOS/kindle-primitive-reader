@@ -2233,6 +2233,7 @@ mod tests {
         assert_ne!(id, other_id);
 
         let anchor = Anchor {
+            illustration: None,
             book: 1,
             chapter: "chapter.xhtml".into(),
             revision: 2,
@@ -2679,6 +2680,7 @@ mod tests {
         let id = target.identify(&target_entry).unwrap();
         assert_eq!(id, source.identify(&source_entry).unwrap());
         let anchor = |offset| Anchor {
+            illustration: None,
             book: 1,
             chapter: "chapter.xhtml".into(),
             revision: 1,
