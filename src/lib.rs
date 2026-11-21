@@ -34,6 +34,7 @@ mod kindle_sections;
 pub mod koreader_import;
 pub mod koreader_sidecar;
 pub mod library;
+mod list_marker;
 mod loose;
 pub mod mobi;
 pub mod ocr;

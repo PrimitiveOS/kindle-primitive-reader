@@ -56,12 +56,12 @@ impl Probe {
         let Renderer::Parley(renderer) = &self.renderer else {
             return None;
         };
-        for (key, origin, layout) in renderer.selection_layouts(point.page) {
+        for (key, left, origin, layout) in renderer.selection_layouts(point.page) {
             let y = point.y - origin;
             if (0.0..layout.height()).contains(&y)
-                && Cluster::from_point(layout, point.x, y).is_some()
+                && Cluster::from_point(layout, point.x - left, y).is_some()
             {
-                let cursor = Cursor::from_point(layout, point.x, y);
+                let cursor = Cursor::from_point(layout, point.x - left, y);
                 return Some(self.anchor(key, cursor.index()));
             }
         }
@@ -129,7 +129,7 @@ impl Probe {
             return Vec::new();
         };
         let mut rects = Vec::new();
-        for (key, origin, layout) in renderer.selection_layouts(page.clone()) {
+        for (key, left, origin, layout) in renderer.selection_layouts(page.clone()) {
             let Some(index) = self.selection_block(key) else {
                 continue;
             };
@@ -144,6 +144,8 @@ impl Probe {
                 .map_or(span.end, |cluster| cluster.text_range().end);
             let end = Cursor::from_byte_index(layout, boundary, Affinity::Upstream);
             Selection::new(start, end).geometry_with(layout, |mut rect, row| {
+                rect.x0 += f64::from(left);
+                rect.x1 += f64::from(left);
                 // Parley includes replaced elements at the same caret position
                 // in selection rectangles. Highlight the surrounding text runs.
                 if !self.source.blocks[index].images.is_empty()
@@ -153,8 +155,8 @@ impl Probe {
                         let parley::PositionedLayoutItem::InlineBox(image) = item else {
                             continue;
                         };
-                        let left = f64::from(image.x);
-                        let right = f64::from(image.x + image.width);
+                        let right = f64::from(left + image.x + image.width);
+                        let left = f64::from(left + image.x);
                         if left >= rect.x1 || right <= rect.x0 {
                             continue;
                         }

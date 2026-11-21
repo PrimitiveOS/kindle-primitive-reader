@@ -514,7 +514,7 @@ impl PageLabelRange {
     }
 }
 
-fn roman_page_number(mut value: u32) -> Option<String> {
+pub(crate) fn roman_page_number(mut value: u32) -> Option<String> {
     const DIGITS: [(u32, &str); 13] = [
         (1000, "M"),
         (900, "CM"),

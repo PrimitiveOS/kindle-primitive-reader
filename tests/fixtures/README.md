@@ -71,3 +71,6 @@ decoder on the host and Kindle. Run `cargo test --locked --features kindle --lib
 to check the pixel comparisons and normal Library workflow. Set
 `READER_JPEG2000_SCREENSHOT` to a PNG path to capture the simulated beacon
 page. [OpenJPEG](https://www.openjpeg.org/) · [Reader decoder tests](../../src/jpeg2000.rs)
+
+
+[publisher-lists.xhtml](publisher-lists.xhtml) is an original short publication with a numbered checklist, nested bullets, a reversed alphabetical list, a source-authored ordinal and a list with its markers disabled in CSS. Its text and artwork may be redistributed under the project licence.

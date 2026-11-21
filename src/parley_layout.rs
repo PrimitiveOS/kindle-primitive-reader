@@ -28,6 +28,7 @@ const DISABLE_KERNING: [FontFeature; 1] = [FontFeature::new(Tag::new(b"kern"), 0
 
 struct Paragraph {
     key: usize,
+    x: f32,
     y: f32,
     bottom: f32,
     background: Option<u8>,
@@ -35,6 +36,17 @@ struct Paragraph {
     ruby: Vec<RubyOverlay>,
 }
 
+struct PaintedMarker {
+    x: f32,
+    top: f32,
+    bottom: f32,
+    paint: MarkerPaint,
+}
+
+enum MarkerPaint {
+    Text { y: f32, layout: Layout<()> },
+    Shape(crate::list_marker::MarkerKind),
+}
 struct RubyOverlay {
     line: usize,
     x: f32,
@@ -66,6 +78,7 @@ struct Illustration {
 pub(crate) struct ParleyChapter {
     paragraphs: Vec<Paragraph>,
     illustrations: Vec<Illustration>,
+    markers: Vec<PaintedMarker>,
     glyphs: GlyphCache,
 }
 
@@ -91,6 +104,7 @@ impl ParleyChapter {
         let mut chapter = Self {
             paragraphs: Vec::new(),
             illustrations: Vec::new(),
+            markers: Vec::new(),
             glyphs: GlyphCache::with_hinting(settings.font_hinting),
         };
         let mut context = LayoutContext::new();
@@ -102,18 +116,31 @@ impl ParleyChapter {
             36,
             Luma([225]),
         ));
+        let group_insets = list_insets(source, styles, settings.font_size);
+        let outer_width = settings.text_width();
+        let gutter_for = |block: &Block| {
+            block
+                .list_item
+                .and_then(|item| group_insets.get(&item.group))
+                .copied()
+                .unwrap_or(0.0)
+                .round()
+                .clamp(0.0, outer_width as f32 * 0.49) as u32
+        };
         // Share the bounded grayscale cache across distinct renderings. Duplicate icons
         // reuse one preview, while large later illustrations still receive space.
         let image_variants = source
             .blocks
             .iter()
             .flat_map(|block| {
+                let image_width = outer_width - gutter_for(block);
                 block.images.iter().map(move |image| {
                     ImageSizing::new(
                         image,
                         settings,
                         &styles[image.element],
                         !block.text.is_empty(),
+                        image_width,
                     )
                     .key(&image.href)
                 })
@@ -123,9 +150,27 @@ impl ParleyChapter {
             .len()
             .min(MAX_DISTINCT_IMAGE_READS);
         let mut image_cache = HashMap::new();
-        let width = settings.text_width();
         let gap = settings.font_size * 0.32;
         for block in &source.blocks {
+            let gutter = gutter_for(block);
+            let image_width = outer_width - gutter;
+            let marker = block.list_item.filter(|item| item.first).and_then(|item| {
+                let style = &styles[item.element];
+                let size = (settings.font_size * style.size_scale).clamp(12.0, 192.0);
+                Some((style.marker.label(item.ordinal)?, style, size))
+            });
+            let literal = marker.as_ref().and_then(|(label, style, size)| {
+                let prefix = crate::list_marker::authored_prefix(&block.text, label)?;
+                Some(
+                    marker_layout(&mut context, &mut fonts, prefix, style, settings, *size)
+                        .full_width(),
+                )
+            });
+            let hanging = literal.unwrap_or(0.0).round().clamp(0.0, gutter as f32) as u32;
+            let width = outer_width - gutter + hanging;
+            let block_y = y;
+            let mut rtl = matches!(block.direction, parley::BaseDirection::Rtl);
+            let mut marker_baseline = None;
             let first_image = chapter.illustrations.len();
             let available = MAX_IMAGE_BOXES
                 .saturating_sub(first_image)
@@ -133,7 +178,8 @@ impl ParleyChapter {
             let mut inline_boxes = Vec::with_capacity(available);
             for image in block.images.iter().take(available) {
                 let inline = !block.text.is_empty();
-                let sizing = ImageSizing::new(image, settings, &styles[image.element], inline);
+                let sizing =
+                    ImageSizing::new(image, settings, &styles[image.element], inline, image_width);
                 let key = sizing.key(&image.href);
                 let fallback_preview = || (None, Arc::clone(&fallback), fallback.dimensions());
                 let (path, pixels, display) = if let Some(cached) = image_cache.get(&key) {
@@ -189,6 +235,7 @@ impl ParleyChapter {
                     settings,
                     styles,
                     &inline_boxes,
+                    hanging,
                 );
                 if lines.len() + layout.len() > MAX_LINES {
                     return Err("The chapter exceeds the Parley line limit".into());
@@ -197,6 +244,9 @@ impl ParleyChapter {
                     .lines()
                     .next()
                     .map_or(0.0, |line| line.metrics().content_block_min_coord.min(0.0));
+                rtl = layout.is_rtl();
+                let x = if rtl { 0.0 } else { (gutter - hanging) as f32 };
+                marker_baseline = layout.get(0).map(|line| origin + line.metrics().baseline);
                 let mut bottom = origin + layout.height();
                 let mut overlays = ruby.iter().peekable();
                 for (index, line) in layout.lines().enumerate() {
@@ -208,7 +258,7 @@ impl ParleyChapter {
                             } else {
                                 0.0
                             };
-                            image.x = Some((position.x + after_gap).round().max(0.0) as usize);
+                            image.x = Some((x + position.x + after_gap).round().max(0.0) as usize);
                             image.y = (origin + position.y).round();
                         }
                     }
@@ -241,6 +291,7 @@ impl ParleyChapter {
                 y = bottom + gap;
                 chapter.paragraphs.push(Paragraph {
                     key: block.key,
+                    x,
                     y: origin,
                     bottom,
                     background: style.background,
@@ -261,8 +312,72 @@ impl ParleyChapter {
                         missing_glyphs: 0,
                     });
                     image.y = top;
+                    if gutter != 0 {
+                        image.x = Some(
+                            (if rtl { 0 } else { gutter }
+                                + width.saturating_sub(image.display.0) / 2)
+                                as usize,
+                        );
+                    }
                     y = bottom + gap;
                 }
+            }
+
+            if let Some((label, style, size)) = marker
+                && literal.is_none()
+                && gutter > 0
+            {
+                let separation = (size * 0.25).min(gutter as f32 * 0.2);
+                let limit = gutter as f32 - separation;
+                let baseline = marker_baseline.unwrap_or(block_y + size);
+                let marker = if matches!(
+                    style.marker,
+                    crate::list_marker::MarkerKind::Disc
+                        | crate::list_marker::MarkerKind::Circle
+                        | crate::list_marker::MarkerKind::Square
+                ) {
+                    let diameter = (size * 0.31).round().clamp(1.0, limit.max(1.0));
+                    let top = (baseline - size * 0.35 - diameter / 2.0).round();
+                    let x = if rtl {
+                        width as f32 + separation
+                    } else {
+                        limit - diameter
+                    };
+                    PaintedMarker {
+                        x,
+                        top,
+                        bottom: top + diameter,
+                        paint: MarkerPaint::Shape(style.marker),
+                    }
+                } else {
+                    let mut layout =
+                        marker_layout(&mut context, &mut fonts, &label, style, settings, size);
+                    if layout.width() > limit {
+                        let scaled = size * limit / layout.width();
+                        layout = marker_layout(
+                            &mut context,
+                            &mut fonts,
+                            &label,
+                            style,
+                            settings,
+                            scaled.max(1.0),
+                        );
+                    }
+                    let ink = *layout.get(0).unwrap().metrics();
+                    let y = baseline - ink.baseline;
+                    let x = if rtl {
+                        width as f32 + separation
+                    } else {
+                        limit - layout.width()
+                    };
+                    PaintedMarker {
+                        x,
+                        top: y + ink.content_block_min_coord,
+                        bottom: y + ink.content_block_max_coord,
+                        paint: MarkerPaint::Text { y, layout },
+                    }
+                };
+                chapter.markers.push(marker);
             }
 
             if y > MAX_HEIGHT {
@@ -319,7 +434,7 @@ impl ParleyChapter {
                 .partition_point(|paragraph| paragraph.bottom <= y),
         )?;
         let (cluster, _) =
-            parley::Cluster::from_point_exact(&paragraph.layout, x, y - paragraph.y)?;
+            parley::Cluster::from_point_exact(&paragraph.layout, x - paragraph.x, y - paragraph.y)?;
         let line = cluster.line();
         let metrics = line.metrics();
         if paragraph.y + metrics.content_block_max_coord <= visible.start
@@ -427,14 +542,14 @@ impl ParleyChapter {
     pub(crate) fn selection_layouts(
         &self,
         page: Range<f32>,
-    ) -> impl Iterator<Item = (usize, f32, &Layout<()>)> {
+    ) -> impl Iterator<Item = (usize, f32, f32, &Layout<()>)> {
         let start = self
             .paragraphs
             .partition_point(|paragraph| paragraph.bottom <= page.start);
         self.paragraphs[start..]
             .iter()
             .take_while(move |paragraph| paragraph.y < page.end)
-            .map(|paragraph| (paragraph.key, paragraph.y, &paragraph.layout))
+            .map(|paragraph| (paragraph.key, paragraph.x, paragraph.y, &paragraph.layout))
     }
 
     pub fn capture(&mut self, range: Range<f32>, settings: Settings) -> Result<Vec<u8>> {
@@ -473,7 +588,7 @@ impl ParleyChapter {
                             page,
                             stride,
                             margin,
-                            (0.0, paragraph.y - range.start),
+                            (paragraph.x, paragraph.y - range.start),
                             &run,
                             settings.text_contrast,
                         );
@@ -481,9 +596,11 @@ impl ParleyChapter {
                             let y =
                                 (paragraph.y - range.start + run.baseline() + 3.0).round() as isize;
                             let x0 = margin
-                                + (run.offset().floor().max(0.0) as usize).min(stride - 2 * margin);
+                                + ((paragraph.x + run.offset()).floor().max(0.0) as usize)
+                                    .min(stride - 2 * margin);
                             let x1 = margin
-                                + ((run.offset() + run.advance()).ceil().max(0.0) as usize)
+                                + ((paragraph.x + run.offset() + run.advance()).ceil().max(0.0)
+                                    as usize)
                                     .min(stride - 2 * margin);
                             for row in y.max(0) as usize..(y + 2).max(0) as usize {
                                 if row < visible_height && x0 < x1 {
@@ -506,12 +623,45 @@ impl ParleyChapter {
                             page,
                             stride,
                             margin,
-                            (overlay.x, paragraph.y + overlay.y - range.start),
+                            (
+                                paragraph.x + overlay.x,
+                                paragraph.y + overlay.y - range.start,
+                            ),
                             &run,
                             settings.text_contrast,
                         );
                     }
                 }
+            }
+        }
+
+        for marker in &self.markers {
+            if marker.top >= range.end || marker.bottom <= range.start {
+                continue;
+            }
+            match &marker.paint {
+                MarkerPaint::Text { y, layout } => {
+                    for item in layout.lines().flat_map(|line| line.items()) {
+                        if let PositionedLayoutItem::GlyphRun(run) = item {
+                            self.glyphs.draw_run(
+                                page,
+                                stride,
+                                margin,
+                                (marker.x, *y - range.start),
+                                &run,
+                                settings.text_contrast,
+                            );
+                        }
+                    }
+                }
+                MarkerPaint::Shape(kind) => draw_bullet(
+                    page,
+                    stride,
+                    margin as f32 + marker.x,
+                    marker.top - range.start,
+                    marker.bottom - marker.top,
+                    *kind,
+                ),
             }
         }
 
@@ -537,7 +687,7 @@ fn layout_paragraph(
     settings: Settings,
     styles: &[Style],
 ) -> (Layout<()>, Vec<RubyOverlay>) {
-    layout_with_images(context, fonts, block, width, settings, styles, &[])
+    layout_with_images(context, fonts, block, width, settings, styles, &[], 0)
 }
 
 fn layout_with_images(
@@ -548,9 +698,19 @@ fn layout_with_images(
     settings: Settings,
     styles: &[Style],
     images: &[parley::InlineBox],
+    hanging: u32,
 ) -> (Layout<()>, Vec<RubyOverlay>) {
     let mut layout = make_paragraph(
-        context, fonts, block, width, settings, styles, &[], images, false,
+        context,
+        fonts,
+        block,
+        width,
+        settings,
+        styles,
+        &[],
+        images,
+        false,
+        hanging,
     );
     // Some embedded fonts have ascenders and descenders taller than the publisher's
     // line advance. A long paragraph can then have no page break between full lines.
@@ -558,7 +718,16 @@ fn layout_with_images(
     if fit_font_metrics {
         drop(layout);
         layout = make_paragraph(
-            context, fonts, block, width, settings, styles, &[], images, true,
+            context,
+            fonts,
+            block,
+            width,
+            settings,
+            styles,
+            &[],
+            images,
+            true,
+            hanging,
         );
     }
     let mut candidates = Vec::new();
@@ -623,6 +792,7 @@ fn layout_with_images(
         &candidates,
         images,
         fit_font_metrics,
+        hanging,
     );
     let mut overlays = Vec::new();
     for candidate in candidates {
@@ -667,6 +837,105 @@ fn base_geometry(layout: &Layout<()>, bytes: &Range<usize>) -> Option<(BoundingB
     let line = layout.get(row)?.text_range();
     (!multiple && line.start <= bytes.start && bytes.end <= line.end && bounds.width() > 0.0)
         .then_some((bounds, row))
+}
+
+/// Rasterize typographic bullets geometrically so a book font lacking U+25E6 cannot show tofu.
+fn draw_bullet(
+    page: &mut [u8],
+    stride: usize,
+    left: f32,
+    top: f32,
+    diameter: f32,
+    kind: crate::list_marker::MarkerKind,
+) {
+    use crate::list_marker::MarkerKind;
+    let radius = diameter * 0.5;
+    let inner = (radius - (diameter * 0.16).max(1.0)).max(0.0);
+    for y in
+        top.floor().max(0.0) as usize..((top + diameter).ceil() as usize).min(page.len() / stride)
+    {
+        for x in left.floor().max(0.0) as usize..((left + diameter).ceil() as usize).min(stride) {
+            let mut hits = 0;
+            for dy in [0.25, 0.75] {
+                for dx in [0.25, 0.75] {
+                    let px = x as f32 + dx - left;
+                    let py = y as f32 + dy - top;
+                    let distance = (px - radius).powi(2) + (py - radius).powi(2);
+                    let inside = match kind {
+                        MarkerKind::Square => {
+                            px >= 0.0 && px < diameter && py >= 0.0 && py < diameter
+                        }
+                        MarkerKind::Circle => {
+                            distance <= radius * radius && distance >= inner * inner
+                        }
+                        _ => distance <= radius * radius,
+                    };
+                    hits += u16::from(inside);
+                }
+            }
+            let pixel = &mut page[y * stride + x];
+            *pixel = (u16::from(*pixel) * (4 - hits) / 4) as u8;
+        }
+    }
+}
+
+/// Element indices are in document order, so a nested list can inherit its parent's complete inset.
+fn list_insets(source: &Source, styles: &[Style], font_size: f32) -> HashMap<usize, f32> {
+    let mut groups = std::collections::BTreeMap::new();
+    for block in &source.blocks {
+        if let Some(item) = block.list_item.filter(|item| item.first) {
+            let style = &styles[item.element];
+            let (_, _, width) =
+                groups
+                    .entry(item.group)
+                    .or_insert((item.parent_group, item.depth, 0.0_f32));
+            if let Some(label) = style.marker.label(item.ordinal) {
+                let estimate =
+                    font_size * style.size_scale * (0.76 * label.chars().count() as f32 + 0.46);
+                *width = width.max(estimate);
+            }
+        }
+    }
+    let mut result = HashMap::new();
+    for (group, (parent, depth, width)) in groups {
+        let inherited = parent.map_or(0.0, |id| {
+            result
+                .get(&id)
+                .copied()
+                .unwrap_or(font_size * 1.3 * (depth - 1) as f32)
+        });
+        result.insert(group, inherited + width);
+    }
+    result
+}
+
+fn marker_layout(
+    context: &mut LayoutContext<()>,
+    fonts: &mut FontContext,
+    text: &str,
+    style: &Style,
+    settings: Settings,
+    size: f32,
+) -> Layout<()> {
+    let mut builder = context.ranged_builder(fonts, text, 1.0, true);
+    let family: FontFamily<'_> = if settings.override_fonts {
+        GenericFamily::Serif.into()
+    } else {
+        style.font_family.layout()
+    };
+    builder.push_default(StyleProperty::FontFamily(family));
+    builder.push_default(StyleProperty::FontSize(size));
+    builder.push_default(StyleProperty::FontWeight(
+        if settings.bold_text && style.font_weight < FontWeight::BOLD {
+            FontWeight::BOLD
+        } else {
+            style.font_weight
+        },
+    ));
+    builder.push_default(StyleProperty::FontStyle(style.font_style));
+    let mut layout = builder.build(text);
+    layout.break_all_lines(None);
+    layout
 }
 
 fn make_annotation(
@@ -727,6 +996,7 @@ fn make_paragraph(
     ruby: &[RubyCandidate],
     images: &[parley::InlineBox],
     fit_font_metrics: bool,
+    hanging: u32,
 ) -> Layout<()> {
     let style = &styles[block.element];
     let language = block.language;
@@ -842,6 +1112,15 @@ fn make_paragraph(
         builder.push_inline_box(image.clone());
     }
     let mut layout = builder.build(&block.text);
+    if hanging > 0 {
+        layout.set_text_indent(
+            hanging as f32,
+            parley::IndentOptions {
+                hanging: true,
+                each_line: false,
+            },
+        );
+    }
     layout.break_all_lines(Some(width as f32));
     let alignment = match settings.alignment {
         crate::TextAlignment::Publisher => style.alignment.unwrap_or(Alignment::Start),
@@ -871,16 +1150,23 @@ struct ImageSizing {
 }
 
 impl ImageSizing {
-    fn key<'a>(&self, path: &'a str) -> (&'a str, Option<u64>, Option<u64>, u32) {
+    fn key<'a>(&self, path: &'a str) -> (&'a str, Option<u64>, Option<u64>, u32, u32) {
         (
             path,
             self.requested_width.map(f64::to_bits),
             self.requested_height.map(f64::to_bits),
             self.height,
+            self.width,
         )
     }
-    fn new(image: &EmbeddedImage, settings: Settings, style: &Style, inline: bool) -> Self {
-        let width = settings.text_width();
+
+    fn new(
+        image: &EmbeddedImage,
+        settings: Settings,
+        style: &Style,
+        inline: bool,
+        width: u32,
+    ) -> Self {
         // Inline artwork shares its line with a font strut below the baseline.
         let height = if inline {
             settings
@@ -1070,6 +1356,141 @@ impl Illustration {
 mod tests {
     use super::*;
     use crate::book_style::BookStyle;
+
+    #[test]
+    fn authored_lists_paint_marker_gutters_and_keep_search_selection_and_source_anchors() {
+        let original = include_str!("../tests/fixtures/publisher-lists.xhtml");
+        let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let settings = Settings {
+            width: 610,
+            height: 900,
+            font_size: 29.0,
+            margin: 30,
+            ..Settings::default()
+        };
+        let fixture = crate::test_fixture("field-notes-epub3.epub");
+        let open = |s: &str| {
+            crate::Probe::from_book_content(
+                Book::open(&fixture).unwrap(),
+                crate::Engine::Parley,
+                &fonts,
+                settings,
+                0,
+                Some(s.to_owned()),
+            )
+            .unwrap()
+        };
+        let mut probe = open(original);
+        let altered = original.replace("start=\"8\"", "start=\"7\"");
+        let mut alternate = open(&altered);
+        assert_ne!(probe.capture(0).unwrap(), alternate.capture(0).unwrap());
+        assert_eq!(probe.coverage().0, probe.coverage().1);
+        assert_eq!(probe.matches("13. Record").len(), 1);
+        assert!(probe.matches("8. Carry").is_empty());
+        let crate::Renderer::Parley(engine) = &probe.renderer else {
+            panic!()
+        };
+        // First item, next item, two inner bullets and the two reversed alphabetical items.
+        // Continued paragraph, author-supplied ordinal and CSS-suppressed list are unmarked.
+        assert_eq!(engine.markers.len(), 6);
+        let first = &engine.paragraphs[1];
+        let nested = engine
+            .paragraphs
+            .iter()
+            .find(|p| p.key == probe.matches("Yellow flag")[0].block)
+            .unwrap();
+        assert!(first.x > 25.0 && nested.x > first.x);
+        assert_eq!(engine.paragraphs[2].x, first.x);
+        let start = probe.matches("lantern")[0].clone();
+        let end = crate::Anchor {
+            offset: start.offset + "lantern".len(),
+            ..start.clone()
+        };
+        let selection = probe.select_range(&start, &end).unwrap();
+        let page = probe.page_for(&start).unwrap();
+        let rect = probe.selection_rects(page, &selection)[0];
+        assert_eq!(
+            probe
+                .word_at(
+                    page,
+                    (rect.x + rect.width / 2) as f32,
+                    (rect.y + rect.height / 2) as f32
+                )
+                .unwrap()
+                .text,
+            "lantern"
+        );
+        assert!(
+            probe
+                .word_at(
+                    page,
+                    settings.side_margin() as f32 + first.x / 3.0,
+                    (rect.y + rect.height / 2) as f32
+                )
+                .is_none()
+        );
+        let moved = crate::Probe::from_book_content(
+            Book::open(&fixture).unwrap(),
+            crate::Engine::Parley,
+            &fonts,
+            Settings {
+                font_size: 40.0,
+                ..settings
+            },
+            0,
+            Some(original.to_owned()),
+        )
+        .unwrap();
+        assert!(moved.page_for(&selection.start).is_some());
+        assert_eq!(
+            moved
+                .select_range(&selection.start, &selection.end)
+                .unwrap()
+                .text,
+            selection.text
+        );
+    }
+
+    #[test]
+    fn rtl_list_markers_remain_outside_source_text_and_bullets_survive_missing_font_symbols() {
+        let markup = r#"<html><body><ol dir="rtl"><li>East wind</li></ol><ul><li>North</li></ul></body></html>"#;
+        let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let settings = Settings {
+            width: 580,
+            height: 580,
+            font_size: 30.0,
+            margin: 25,
+            ..Settings::default()
+        };
+        let fixture = crate::test_fixture("field-notes-epub3.epub");
+        let probe = crate::Probe::from_book_content(
+            Book::open(&fixture).unwrap(),
+            crate::Engine::Parley,
+            &fonts,
+            settings,
+            0,
+            Some(markup.to_owned()),
+        )
+        .unwrap();
+        let crate::Renderer::Parley(engine) = &probe.renderer else {
+            panic!()
+        };
+        let text = &engine.paragraphs[0];
+        assert!(text.layout.is_rtl());
+        assert_eq!(text.x, 0.0);
+        assert!(engine.markers[0].x > settings.text_width() as f32 * 0.75);
+        for (kind, center, corner) in [
+            (crate::list_marker::MarkerKind::Disc, 0, 255),
+            (crate::list_marker::MarkerKind::Circle, 255, 255),
+            (crate::list_marker::MarkerKind::Square, 0, 0),
+        ] {
+            let mut image = vec![255; 14 * 14];
+            draw_bullet(&mut image, 14, 2.0, 2.0, 10.0, kind);
+            assert_eq!(image[7 * 14 + 7], center);
+            assert_eq!(image[2 * 14 + 2], corner);
+            assert!(image[2 * 14 + 7] < 128);
+        }
+    }
 
     #[test]
     fn tight_publisher_leading_preserves_long_paragraphs_and_every_page_anchor() {

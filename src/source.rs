@@ -25,6 +25,7 @@ pub(crate) struct Block {
     pub text: String,
     pub element: usize,
     pub styled_text: Vec<StyledText>,
+    pub list_item: Option<crate::list_marker::ListItem>,
     #[cfg(test)]
     pub emphasis: Vec<(Range<usize>, Emphasis)>,
     pub links: Vec<InlineLink>,
@@ -97,6 +98,7 @@ impl LegacyOffsets {
 pub(crate) struct Element {
     pub tag: String,
     pub classes: String,
+    pub list_kind: Option<crate::list_marker::MarkerKind>,
     pub id: Option<String>,
     pub inline_style: Option<String>,
     pub parent: Option<usize>,
@@ -339,12 +341,14 @@ impl Source {
             languages.push(content_language(node, parent.and_then(|id| languages[id])));
             elements.push(Element {
                 tag: node.tag_name().name().to_owned(),
+                list_kind: crate::list_marker::MarkerKind::html(node),
                 classes: node.attribute("class").unwrap_or_default().to_owned(),
                 id: node.attribute("id").map(str::to_owned),
                 inline_style: node.attribute("style").map(str::to_owned),
                 parent,
             });
         }
+        let mut list_items = crate::list_marker::Items::read(body, &element_ids);
         let mut blocks = Vec::new();
         let mut fragments = BTreeMap::new();
         let mut insertions = Vec::new();
@@ -558,6 +562,7 @@ impl Source {
                 text,
                 element: element_ids[&node.id()],
                 styled_text,
+                list_item: list_items.block(node),
                 #[cfg(test)]
                 emphasis,
                 links,

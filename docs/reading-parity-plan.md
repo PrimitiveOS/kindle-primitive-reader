@@ -47,6 +47,16 @@ respectively. A separate Field Notes run using the device's normal Reader
 fallback fonts covered all 401 source characters with zero missing glyphs.
 These measurements end when the grayscale frame is ready in memory.
 
+## Publisher lists in horizontal reflow
+
+The reading engine draws outside list markers from HTML list order, `start`, `reversed`, `li value`, HTML `type` and common publisher `list-style-type` declarations. It supports decimal, leading-zero, Latin alphabetic and Roman numbering, filled discs, rings, squares and suppressed markers. A continued paragraph stays under its item. Nesting adds the width of the parent list gutter. An author-supplied matching number stays selectable and is displayed once. Heading and chapter navigation, selection, search and saved locations use the original publication text. Marker shapes for bullets are independent of font glyph coverage.
+
+<img src="screenshots/publisher-lists.png" width="340" alt="A numbered Kindle checklist with a continued paragraph, nested ring bullets, an author-supplied number and reversed letter markers">
+
+One existing EPUB contained 1,597 ordered items. Of those, 1,581 had no literal ordinal at the start of their text. Before this change, the source page and two controls produced identical 1264 × 1680 frames on the Mac. One control changed the first list start to 81 and the other changed ordered lists to unordered. The corrected renderer produces distinct frames and finds the same source passage in all three variants. Its native layout covered all 201,498 source characters in that section with zero missing glyphs.
+
+The fixture also exercises repagination with larger type and checks selection geometry. The KOReader comparison uses the pinned CREngine implementation for outside marker placement and text indentation. The current horizontal renderer supports outside marker geometry. Custom CSS counter styles, image markers and placement inside a line remain open. [Authored test publication](../tests/fixtures/publisher-lists.xhtml) · [KOReader marker placement](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L8684-L8705)
+
 ## P0 · Close the feasibility gate
 
 Use Parley with direct grayscale glyph rendering as the starting EPUB engine. Keep Blitz as a reference for publisher-style differences. The Oasis 3 software tests measured 65 ms first frame and 9.1 ms warm p95 for Field Notes, and 276 ms first frame and 13.5 ms warm p95 for Long Chapter. The corresponding CREngine warm p95 measurements were 10 ms and 13 ms. Those tests stopped when a frame was ready in memory. Use the device report for the status of interactive links, actual screen timing, and USB artwork verification. [EPUB feasibility results](epub-probe-results.md)

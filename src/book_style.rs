@@ -79,6 +79,7 @@ pub(crate) struct Style {
     pub font_style: FontStyle,
     pub line_height: Option<f32>,
     pub background: Option<u8>,
+    pub marker: crate::list_marker::MarkerKind,
     pub image_width: Option<ImageLength>,
     pub image_height: Option<ImageLength>,
     pub image_align: parley::VerticalAlign,
@@ -98,6 +99,7 @@ impl Default for Style {
             font_style: FontStyle::Normal,
             line_height: None,
             background: None,
+            marker: crate::list_marker::MarkerKind::None,
             image_width: None,
             image_height: None,
             image_align: parley::VerticalAlign::BASELINE,
@@ -178,6 +180,9 @@ impl BookStyle {
             let mut style = parent.clone();
             // A parent's background paints its box. It is not a text property.
             style.background = None;
+            if let Some(kind) = element.list_kind {
+                style.marker = kind;
+            }
             style.image_width = None;
             style.image_height = None;
             style.image_align = parley::VerticalAlign::BASELINE;
@@ -236,6 +241,7 @@ impl BookStyle {
                         };
                     }
                     Property::LineHeight(height) => style.line_height = *height,
+                    Property::Marker(kind) => style.marker = *kind,
                     Property::Background(gray) => style.background = *gray,
                     Property::Alignment(alignment) => style.alignment = Some(*alignment),
                     Property::Weight(weight) => {
@@ -533,7 +539,7 @@ fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
 }
 
 type Priority = (bool, bool, Specificity);
-type Winners<'a> = [Option<(Priority, &'a Property)>; 14];
+type Winners<'a> = [Option<(Priority, &'a Property)>; 15];
 
 fn choose<'a>(
     winners: &mut Winners<'a>,
@@ -557,6 +563,7 @@ fn choose<'a>(
             Property::Width(_) => 11,
             Property::Height(_) => 12,
             Property::VerticalAlign(_) => 13,
+            Property::Marker(_) => 14,
             Property::FontSource(_) => continue,
         };
         let priority = (declaration.important, inline, specificity);
@@ -597,6 +604,7 @@ impl Weight {
 }
 
 enum Property {
+    Marker(crate::list_marker::MarkerKind),
     Family(Vec<Family>),
     FontSource(Vec<String>),
     Size(Size),
@@ -748,6 +756,20 @@ impl<'i> DeclarationParser<'i> for Properties {
                         }
                         Property::LineHeight(Some(height))
                     }
+                }
+                "list-style-type" | "list-style" => {
+                    let mut marker = None;
+                    while !input.is_exhausted() {
+                        let token = input.expect_ident()?.to_ascii_lowercase();
+                        if token == "inside" || token == "outside" {
+                            continue;
+                        }
+                        marker = Some(
+                            crate::list_marker::MarkerKind::css(&token)
+                                .ok_or_else(ParseError::unexpected_token)?,
+                        );
+                    }
+                    Property::Marker(marker.ok_or_else(ParseError::unexpected_token)?)
                 }
                 "background" | "background-color" => Property::Background(background(input)?),
                 "text-align" => {
