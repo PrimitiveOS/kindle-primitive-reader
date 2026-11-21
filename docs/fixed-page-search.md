@@ -22,3 +22,16 @@ For each original, an independent Poppler extraction located an interior page wi
 | 056, 41 pages | 11 | 21 → 22 → 21 → 20 | 7, 6, 7, 5 |
 
 All four returned to the original reading position. A separate authored PDF test restored a zoomed and panned source point to within 0.01 PDF points. The five-page authored coastal guide in the screenshots contains repeated terms, an intervening page without a match and two matching words on the displayed page. A rotated DjVu with compressed embedded text verified that an accent-insensitive search selects its original word rectangle. [Functional tests and authored guide](../src/app/nearby_search.rs) · [Installed KOReader comparison](../scripts/koreader-fixed-direction-check.lua)
+
+## Oasis 3 comparison
+
+The installed KOReader fixed-page matcher and the native Reader agreed on all sixteen page destinations and all sixteen word-box counts in the table. The four Reader runs also opened their final passage with the expected marks and restored the original viewport through the normal history control. The installed KOReader comparison used its own unwrapped-page coordinate conversion, page-direction logic and MuPDF text extraction. Four additional native tests used the authored PDF and DjVu fixtures.
+
+| Original | Complete native UI test | Peak resident memory |
+|---|---:|---:|
+| 030 | 2.09 s | 21,192 KiB |
+| 044 | 43.10 s | 186,612 KiB |
+| 054 | 4.29 s | 36,868 KiB |
+| 056 | 2.72 s | 19,736 KiB |
+
+The elapsed times include opening the book, rendering the target pages, checking the matching regions and returning to the starting position. The low-priority tests ran while another library audit was active. SHA-256 checks before and after each case confirmed the original PDF, Documents inventory, installed Reader, library, reading statistics and Browser session were preserved. All temporary device files were removed.

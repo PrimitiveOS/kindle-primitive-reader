@@ -1,5 +1,5 @@
-//! Directional reflow search. A single worker serializes reads, discards replaced
-//! requests and leaves the reading/keyboard loop free to handle cancellation.
+//! Reflow searches share one cancellable worker. Directional PDF and DjVu searches
+//! reuse the open document and yield between physical pages.
 use super::*;
 use crate::Anchor;
 use crate::search::{ChapterText, NearbySearch, SearchDirection};
