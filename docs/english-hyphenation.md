@@ -90,3 +90,32 @@ Median time through the first painted frame was 3.71 s and 3.66 s,
 respectively. Other desktop build work overlapped part of the measurement. The simulator test also taps
 each fragment of a split word and restores the same serialized anchor after
 repagination. [Authored fixture](../tests/fixtures/english-hyphenation.epub) · [Layout and selection tests](../src/parley_layout.rs)
+
+## Kindle Oasis 3
+
+On the same 13,306-character English chapter, a separate static ARMHF build
+from the Reader 0.1.8 tag saved a page-four bookmark. The candidate restored
+that bookmark in both modes with the five fonts available to the installed
+Reader. Four fresh headless processes ran in Authored, Automatic, Automatic,
+Authored order after the other device tests completed.
+
+| Oasis measurement | Authored | Automatic |
+| --- | ---: | ---: |
+| Source characters mapped across 14 pages | 13,306 / 13,306 | 13,306 / 13,306 |
+| Missing glyphs | 0 | 0 |
+| Lines occupied by the same eight-letter selection | 1 | 2 |
+| Time through setup, selection and first painted frame | 4.50–5.31 s | 4.50–4.94 s |
+| First paint alone | 27–28 ms | 27 ms |
+| Process CPU through first frame, in kernel clock ticks | 429–501 | 432–440 |
+| Peak resident memory | 36,924 KiB | 37,268 KiB |
+
+Both taps on the split word returned its entire original spelling, and chapter
+search returned its original start and end offsets in every run. Both
+automatic renders differed from their control in 165,541 pixels overall and
+160 pixels at the chosen line end. On this chapter the additional peak memory
+was 344 KiB. The timings overlap across the two samples per mode.
+
+The Vietnamese and explicitly undetermined chapters retained identical
+first-page pixels on the Oasis. All three original files had matching SHA-256
+digests before and after the comparison. The job used private scratch storage
+and rendered its frames offscreen. [Reader 0.1.8](https://github.com/PrimitiveOS/kindle-primitive-reader/releases/tag/v0.1.8)
