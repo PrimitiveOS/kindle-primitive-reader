@@ -12,7 +12,7 @@ use primitive_ui::{CAPTION, Canvas, GrayImage, HAIRLINE, Input, Rect};
 use crate::Result;
 use crate::comic::{Comic, ImagePage};
 use crate::djvu::{Djvu, MAX_DJVU_BYTES};
-use crate::fixed::{MAX_PDF_BYTES, Pdf, PdfLinkTarget, PdfOutlineItem, RenderRequest, pdf_open_timing};
+use crate::fixed::{MAX_PDF_BYTES, Pdf, PdfLink, PdfOutlineItem, RenderRequest, pdf_open_timing};
 use crate::fixed_epub::{FixedEpub, SpreadPlan};
 use crate::fixed_text::{PdfPageText, PdfTextRect};
 use crate::library::{
@@ -822,17 +822,16 @@ impl FixedReading {
         }
     }
 
-    pub(crate) fn link_at(&self, x: f32, y: f32) -> Option<PdfLinkTarget> {
+    pub(crate) fn link_at(&self, x: f32, y: f32) -> Option<PdfLink> {
         let FixedDocument::Pdf(pdf) = &self.source else {
             return None;
         };
         let page = self.page_at(y)?;
         let point = self.source_point(page, x, y)?;
-        pdf.page_links(page).ok()?.into_iter().find_map(|link| {
-            source_rect((1.0, 1.0), link.bounds)
-                .contains(point)
-                .then_some(link.target)
-        })
+        pdf.page_links(page)
+            .ok()?
+            .into_iter()
+            .find(|link| source_rect((1.0, 1.0), link.bounds).contains(point))
     }
 
     fn word_at(&self, page: usize, text: &PdfPageText, x: f32, y: f32) -> Option<usize> {
@@ -911,19 +910,49 @@ impl FixedReading {
             .map(|p| (p.size, p.request))
     }
 
+    /// The upper-left viewport position in upright PDF coordinates, including any page margin.
+    pub(crate) fn history_point(&self) -> Option<Point> {
+        if !matches!(self.source, FixedDocument::Pdf(_)) {
+            return None;
+        }
+        let visible = self.visible.iter().find(|entry| entry.index == self.page)?;
+        let transform = visible.request.page_to_viewport(visible.size).ok()? * visible.correction;
+        let point = transform.inverse() * Point::ORIGIN;
+        point.is_finite().then_some(point)
+    }
+
     pub(crate) fn jump(&mut self, page: usize) -> Result<()> {
-        self.present(
-            page,
-            View {
-                offset_x: 0.0,
-                offset_y: if self.view.width_fit && !self.is_continuous() {
-                    f32::MAX
-                } else {
-                    0.0
-                },
-                ..self.view
-            },
-        )
+        self.jump_to_point(page, None)
+    }
+
+    /// Position a local XYZ link in the current viewport, retaining fit, zoom and crop.
+    pub(crate) fn jump_to_point(&mut self, page: usize, point: Option<Point>) -> Result<()> {
+        let mut view = View {
+            offset_x: 0.0,
+            offset_y: 0.0,
+            ..self.view
+        };
+        if let (Some(point), FixedDocument::Pdf(pdf)) = (point, &self.source) {
+            let size = pdf.page_size(page)?;
+            let mut request = viewport(size, &mut view);
+            if self.is_continuous() {
+                // Continuous offset zero places the target page at the top of the screen.
+                request.y = -view_metrics(size, &view).top;
+            }
+            let correction =
+                ScanPage::Pdf(pdf).correction(page, size, &view, &mut self.deskew_cache)?;
+            let projected = request.page_to_viewport(size)? * correction * point;
+            view.offset_x = -projected.x as f32;
+            view.offset_y = -projected.y as f32;
+            if self.is_continuous() {
+                // An authored point outside the user's crop still belongs to this page.
+                let last_pixel = (view_metrics(size, &view).height.round() - 1.0).max(0.0);
+                view.offset_y = view.offset_y.clamp(-last_pixel, 0.0);
+            }
+        } else if view.width_fit && !self.is_continuous() {
+            view.offset_y = f32::MAX;
+        }
+        self.present(page, view)
     }
 
     pub(crate) fn fit(&mut self, width_fit: bool) -> Result<()> {
@@ -1743,6 +1772,7 @@ fn viewport(size: (f32, f32), view: &mut View) -> RenderRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fixed::PdfLinkTarget;
     use std::io::Write;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -2021,6 +2051,55 @@ mod tests {
     }
 
     #[test]
+    fn following_an_xyz_link_positions_the_painted_target_in_paged_and_scrolling_views() {
+        let content = "0 g 174 586 12 12 re f";
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+            "<< /Type /Pages /Count 2 /Kids [3 0 R 4 0 R] >>".to_owned(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 800 400] /Annots [5 0 R] >>".to_owned(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Contents 6 0 R >>".to_owned(),
+            "<< /Subtype /Link /Rect [30 30 70 70] /Dest [4 0 R /XYZ 180 592 null] >>".to_owned(),
+            format!(
+                "<< /Length {} >>\nstream\n{content}\nendstream",
+                content.len()
+            ),
+        ];
+        let crop = PdfTextRect {
+            x0: 0.05,
+            y0: 0.10,
+            x1: 0.95,
+            y1: 0.90,
+        };
+        for (continuous, turns) in [(false, 0), (true, 0), (false, 1), (true, 3)] {
+            let pdf = Pdf::open(crate::fixed::tests::pdf_objects(&objects)).unwrap();
+            let link = pdf.page_links(0).unwrap()[0];
+            assert_eq!(link.target, PdfLinkTarget::Page(1));
+            let preferences = View {
+                zoom: 4,
+                width_fit: continuous,
+                continuous,
+                turns,
+                crop: Some(crop),
+                ..View::default()
+            };
+            let mut reader =
+                FixedReading::with_source(FixedDocument::Pdf(pdf), 0, preferences).unwrap();
+            reader.jump_to_point(1, link.destination_point).unwrap();
+            assert_eq!(reader.page(), 1);
+            assert_eq!(reader.preferences().zoom, 4);
+            assert_eq!(reader.preferences().crop, Some(crop));
+            let visible = &reader.visible[0];
+            let point = visible.request.page_to_viewport(visible.size).unwrap()
+                * link.destination_point.unwrap();
+            assert!((-0.5..f64::from(WIDTH)).contains(&point.x));
+            assert!((-0.5..f64::from(PAGE_HEIGHT)).contains(&point.y));
+            let pixel = point.y.round().max(0.0) as usize * WIDTH as usize
+                + point.x.round().max(0.0) as usize;
+            assert!(reader.frame.pixels[pixel] < 32);
+        }
+    }
+
+    #[test]
     fn straightening_keeps_source_words_links_and_highlights_aligned_in_each_view() {
         let pdf = Pdf::open(include_bytes!("../tests/fixtures/tilted-scan.pdf").to_vec()).unwrap();
         let mut reader = reading(pdf, View::default());
@@ -2064,7 +2143,9 @@ mod tests {
             let (quad, rect) = reader.projected_region(0, link.bounds).unwrap();
             let center = rect.center();
             assert_eq!(
-                reader.link_at(center.x as f32, center.y as f32),
+                reader
+                    .link_at(center.x as f32, center.y as f32)
+                    .map(|link| link.target),
                 Some(PdfLinkTarget::Page(1))
             );
             // A projected box corner is outside this rotated annotation parallelogram.
@@ -2150,7 +2231,9 @@ mod tests {
         assert_eq!(selection.page(), 1);
         assert_eq!(selection.text(), "Second");
         assert_eq!(
-            reader.link_at(word.x as f32, word.y as f32),
+            reader
+                .link_at(word.x as f32, word.y as f32)
+                .map(|link| link.target),
             Some(PdfLinkTarget::Page(0))
         );
 
@@ -2209,7 +2292,9 @@ mod tests {
             .unwrap();
         assert_eq!(chosen.text(), "Second");
         assert_eq!(
-            reader.link_at(word.x as f32, word.y as f32),
+            reader
+                .link_at(word.x as f32, word.y as f32)
+                .map(|link| link.target),
             Some(PdfLinkTarget::Page(0))
         );
 

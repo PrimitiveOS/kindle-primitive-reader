@@ -6,7 +6,7 @@ use hayro::hayro_syntax::object::{
 };
 use hayro::hayro_syntax::xref::XRef;
 use hayro::hayro_syntax::{LoadPdfError, Pdf as Document};
-use hayro::kurbo::{Affine, Rect};
+use hayro::kurbo::{Affine, Point, Rect};
 use hayro::vello_cpu::color::palette::css::WHITE;
 use hayro::vello_cpu::{Pixmap, RasterizerSettings, RenderContext, Resources, TargetInit};
 use hayro::{RenderCache, RenderSettings, render_into};
@@ -77,6 +77,8 @@ pub enum PdfLinkTarget {
 pub struct PdfLink {
     pub bounds: PdfTextRect,
     pub target: PdfLinkTarget,
+    /// An explicit PDF XYZ position, in the target page's upright, cropped point space.
+    pub destination_point: Option<Point>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -632,6 +634,7 @@ fn read_page_links(document: &Document, page: usize, viewport: Rect) -> Vec<PdfL
             if rect.width() <= 0.0 || rect.height() <= 0.0 {
                 return None;
             }
+            let (target, destination_point) = destinations.target(&annotation);
             Some(PdfLink {
                 bounds: PdfTextRect {
                     x0: (rect.x0 / viewport.width()) as f32,
@@ -639,7 +642,8 @@ fn read_page_links(document: &Document, page: usize, viewport: Rect) -> Vec<PdfL
                     x1: (rect.x1 / viewport.width()) as f32,
                     y1: (rect.y1 / viewport.height()) as f32,
                 },
-                target: destinations.target(&annotation),
+                target,
+                destination_point,
             })
         })
         .collect()
@@ -684,7 +688,7 @@ fn read_outline(document: &Document) -> Vec<PdfOutlineItem> {
         else {
             continue;
         };
-        let page = match destinations.target(&item) {
+        let page = match destinations.target(&item).0 {
             PdfLinkTarget::Page(page) => Some(page),
             PdfLinkTarget::External | PdfLinkTarget::Unavailable => None,
         };
@@ -693,12 +697,18 @@ fn read_outline(document: &Document) -> Vec<PdfOutlineItem> {
     rows
 }
 
+#[derive(Clone, Copy)]
+struct PageDestination {
+    page: usize,
+    pdf_point: Option<Point>,
+}
+
 struct DestinationResolver<'a> {
     catalog: Dict<'a>,
     legacy_names: Option<Dict<'a>>,
     document: &'a Document,
     pages: Option<PageReferences>,
-    tree_names: Option<HashMap<Vec<u8>, usize>>,
+    tree_names: Option<HashMap<Vec<u8>, PageDestination>>,
 }
 
 impl<'a> DestinationResolver<'a> {
@@ -712,24 +722,32 @@ impl<'a> DestinationResolver<'a> {
         }
     }
 
-    fn target(&mut self, item: &Dict<'a>) -> PdfLinkTarget {
+    fn target(&mut self, item: &Dict<'a>) -> (PdfLinkTarget, Option<Point>) {
         let destination = if let Some(destination) = item.get(b"Dest") {
             Some(destination)
         } else if let Some(action) = item.get::<Dict<'_>>(b"A") {
             match action.get::<Name<'_>>(b"S").as_deref() {
                 Some(b"GoTo") => action.get(b"D"),
-                Some(b"URI" | b"GoToR" | b"GoToE" | b"Launch") => return PdfLinkTarget::External,
+                Some(b"URI" | b"GoToR" | b"GoToE" | b"Launch") => {
+                    return (PdfLinkTarget::External, None);
+                }
                 _ => None,
             }
         } else {
             None
         };
-        destination
-            .and_then(|destination| self.resolve(&destination))
-            .map_or(PdfLinkTarget::Unavailable, PdfLinkTarget::Page)
+        let Some(target) = destination.and_then(|destination| self.resolve(&destination)) else {
+            return (PdfLinkTarget::Unavailable, None);
+        };
+        let upright = target.pdf_point.and_then(|point| {
+            let page = self.document.pages().get(target.page)?;
+            let point = page.initial_transform(true).to_kurbo() * point;
+            point.is_finite().then_some(point)
+        });
+        (PdfLinkTarget::Page(target.page), upright)
     }
 
-    fn resolve(&mut self, destination: &Object<'a>) -> Option<usize> {
+    fn resolve(&mut self, destination: &Object<'a>) -> Option<PageDestination> {
         let pages = self.pages.get_or_insert_with(|| {
             self.document
                 .pages()
@@ -741,7 +759,7 @@ impl<'a> DestinationResolver<'a> {
         let name = match destination {
             Object::Name(name) => name.as_ref(),
             Object::String(name) => name.as_ref(),
-            _ => return explicit_page(destination, pages),
+            _ => return explicit_destination(destination, pages, self.document.xref()),
         };
         if name.len() > MAX_DESTINATION_NAME {
             return None;
@@ -750,7 +768,7 @@ impl<'a> DestinationResolver<'a> {
             self.legacy_names
                 .as_ref()?
                 .get::<Object<'_>>(name)
-                .and_then(|value| explicit_page(&value, pages))
+                .and_then(|value| explicit_destination(&value, pages, self.document.xref()))
         };
         let mut tree_page = || {
             self.tree_names
@@ -768,7 +786,11 @@ impl<'a> DestinationResolver<'a> {
     }
 }
 
-fn explicit_page(destination: &Object<'_>, pages: &PageReferences) -> Option<usize> {
+fn explicit_destination(
+    destination: &Object<'_>,
+    pages: &PageReferences,
+    xref: &XRef,
+) -> Option<PageDestination> {
     let stored;
     let array = match destination {
         Object::Array(array) => array,
@@ -778,15 +800,28 @@ fn explicit_page(destination: &Object<'_>, pages: &PageReferences) -> Option<usi
         }
         _ => return None,
     };
-    let reference = array.raw_iter().next()?.as_obj_ref()?;
-    pages.get(&reference.into()).copied()
+    let mut values = array.raw_iter();
+    let reference = values.next()?.as_obj_ref()?;
+    let page = *pages.get(&reference.into())?;
+    let mut read = || resolve_object(xref, values.next()?);
+    let pdf_point = (|| {
+        if read()?.into_name()?.as_ref() != b"XYZ" {
+            return None;
+        }
+        let point = Point::new(
+            f64::from(read()?.into_f32()?),
+            f64::from(read()?.into_f32()?),
+        );
+        point.is_finite().then_some(point)
+    })();
+    Some(PageDestination { page, pdf_point })
 }
 
 fn read_named_destinations<'a>(
     catalog: &Dict<'a>,
     xref: &'a XRef,
     pages: &PageReferences,
-) -> HashMap<Vec<u8>, usize> {
+) -> HashMap<Vec<u8>, PageDestination> {
     let Some(root) = catalog
         .get::<Dict<'_>>(b"Names")
         .and_then(|names| names.get::<Dict<'_>>(b"Dests"))
@@ -815,8 +850,8 @@ fn read_named_destinations<'a>(
                 pairs += 1;
                 if let Some(key) = resolve_object(xref, key).and_then(Object::into_string)
                     && key.len() <= MAX_DESTINATION_NAME
-                    && let Some(page) =
-                        resolve_object(xref, value).and_then(|object| explicit_page(&object, pages))
+                    && let Some(page) = resolve_object(xref, value)
+                        .and_then(|object| explicit_destination(&object, pages, xref))
                 {
                     output.entry(key.as_bytes().to_vec()).or_insert(page);
                 }
@@ -1164,6 +1199,33 @@ pub(crate) mod tests {
             )
             .unwrap();
         assert_eq!(clipped, Rect::new(0.0, 0.0, 24.0, 26.0));
+    }
+
+    #[test]
+    fn xyz_links_resolve_points_in_the_target_crop_and_orientation() {
+        let pdf = Pdf::open(pdf_objects(&[
+            "<< /Type /Catalog /Pages 2 0 R /Names << /Dests << /Names [(named) << /D [4 0 R /XYZ 120 500 0] >>] >> >> >>",
+            "<< /Type /Pages /Count 2 /Kids [3 0 R 4 0 R] >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Annots 5 0 R >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 500 800] /CropBox [50 70 450 670] /Rotate 90 >>",
+            "[<< /Subtype /Link /Rect [5 5 10 10] /Dest [4 0 R /XYZ 120 500 null] >>
+              << /Subtype /Link /Rect [15 5 20 10] /A << /S /GoTo /D (named) >> >>
+              << /Subtype /Link /Rect [25 5 30 10] /Dest [null /XYZ 120 500 null] >>
+              << /Subtype /Link /Rect [35 5 40 10] /Dest [4 0 R /XYZ null 500 null] >>
+              << /Subtype /Link /Rect [45 5 50 10] /Dest [4 0 R /Fit] >>]",
+        ])).unwrap();
+        let links = pdf.page_links(0).unwrap();
+        assert_eq!(links.len(), 5);
+        for link in &links[..2] {
+            assert_eq!(link.target, PdfLinkTarget::Page(1));
+            assert_eq!(link.destination_point, Some(Point::new(430.0, 70.0)));
+        }
+        assert_eq!(links[2].target, PdfLinkTarget::Unavailable);
+        assert_eq!(links[2].destination_point, None);
+        for link in &links[3..] {
+            assert_eq!(link.target, PdfLinkTarget::Page(1));
+            assert_eq!(link.destination_point, None);
+        }
     }
 
     #[test]

@@ -393,6 +393,27 @@ struct ActiveBook {
     reading: Reading,
 }
 
+#[derive(Clone, Copy)]
+enum FixedJump {
+    Region(PdfTextRect),
+    LinkPoint(hayro::kurbo::Point),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct HistoryLocation {
+    position: ReadingPosition,
+    pdf_point: Option<hayro::kurbo::Point>,
+}
+
+impl From<ReadingPosition> for HistoryLocation {
+    fn from(position: ReadingPosition) -> Self {
+        Self {
+            position,
+            pdf_point: None,
+        }
+    }
+}
+
 struct ActiveFixed {
     footer_chapters: Vec<(usize, String)>,
     entry: LibraryBook,
@@ -477,8 +498,8 @@ pub struct Reader {
     auto_turn: AutoTurn,
     list_page: usize,
     current_contents_row: Option<usize>,
-    back: Vec<ReadingPosition>,
-    forward: Vec<ReadingPosition>,
+    back: Vec<HistoryLocation>,
+    forward: Vec<HistoryLocation>,
     notice: Option<String>,
     dirty: bool,
     save_at: Option<Instant>,
@@ -993,7 +1014,8 @@ impl Reader {
                 .iter()
                 .enumerate()
                 .rev()
-                .map(|(index, position)| {
+                .map(|(index, location)| {
+                    let position = &location.position;
                     let action = Action::ReturnToHistory(index);
                     if let Some(fixed) = &self.fixed {
                         Item::new(fixed_page_label(&fixed.reading, position.page), action)
@@ -2150,7 +2172,7 @@ impl Reader {
                     .ok_or("That result is unavailable")?;
                 let (page, region) = (hit.page, hit.region);
                 let first_result = self.search_result.is_none();
-                let previous = self.jump_fixed(page, region)?;
+                let previous = self.jump_fixed(page, region.map(FixedJump::Region))?;
                 if first_result {
                     self.push_history(previous);
                 }
@@ -2163,7 +2185,10 @@ impl Reader {
                     .state(fixed.id)
                     .and_then(|state| state.pdf_highlights.get(index))
                     .ok_or("That highlight is unavailable")?;
-                self.follow_fixed(mark.page, mark.bounds.first().copied())?;
+                self.follow_fixed(
+                    mark.page,
+                    mark.bounds.first().copied().map(FixedJump::Region),
+                )?;
             }
             Action::Highlight(index) => {
                 let active = self.active.as_ref().ok_or("No open book")?;
@@ -2622,21 +2647,32 @@ impl Reader {
         Ok(())
     }
 
-    fn follow_fixed(&mut self, page: usize, region: Option<PdfTextRect>) -> Result<()> {
-        let previous = self.jump_fixed(page, region)?;
-        if page != previous.page {
+    fn follow_fixed(&mut self, page: usize, target: Option<FixedJump>) -> Result<()> {
+        let previous = self.jump_fixed(page, target)?;
+        if page != previous.position.page
+            || matches!(target, Some(FixedJump::LinkPoint(_)))
+                && self.current_history_location().as_ref() != Some(&previous)
+        {
             self.push_history(previous);
         }
         Ok(())
     }
 
-    fn jump_fixed(&mut self, page: usize, region: Option<PdfTextRect>) -> Result<ReadingPosition> {
+    fn jump_fixed(&mut self, page: usize, target: Option<FixedJump>) -> Result<HistoryLocation> {
         let fixed = self.fixed.as_mut().ok_or("No open document")?;
-        let previous = fixed_position(&fixed.reading);
-        fixed.reading.jump(page)?;
+        let previous = HistoryLocation {
+            position: fixed_position(&fixed.reading),
+            pdf_point: fixed.reading.history_point(),
+        };
+        let (point, region) = match target {
+            Some(FixedJump::LinkPoint(point)) => (Some(point), None),
+            Some(FixedJump::Region(bounds)) => (None, Some((page, bounds))),
+            None => (None, None),
+        };
+        fixed.reading.jump_to_point(page, point)?;
         self.search_result = None;
         self.pdf_selection = None;
-        self.pdf_result_region = region.map(|bounds| (page, bounds));
+        self.pdf_result_region = region;
         self.show(Screen::Fixed);
         self.record_position();
         Ok(previous)
@@ -2658,12 +2694,22 @@ impl Reader {
         Ok(())
     }
 
-    fn push_history(&mut self, previous: ReadingPosition) {
-        self.forward.clear();
-        Self::remember_location(&mut self.back, previous);
+    fn current_history_location(&self) -> Option<HistoryLocation> {
+        Some(HistoryLocation {
+            position: self.current_position()?,
+            pdf_point: self
+                .fixed
+                .as_ref()
+                .and_then(|book| book.reading.history_point()),
+        })
     }
 
-    fn remember_location(history: &mut Vec<ReadingPosition>, entry: ReadingPosition) {
+    fn push_history(&mut self, previous: impl Into<HistoryLocation>) {
+        self.forward.clear();
+        Self::remember_location(&mut self.back, previous.into());
+    }
+
+    fn remember_location(history: &mut Vec<HistoryLocation>, entry: HistoryLocation) {
         if history.last() == Some(&entry) {
             return;
         }
@@ -2679,7 +2725,9 @@ impl Reader {
             .get(index)
             .cloned()
             .ok_or("No previous location")?;
-        let current = self.current_position().ok_or("Open a document first")?;
+        let current = self
+            .current_history_location()
+            .ok_or("Open a document first")?;
         self.go_to_location(&previous)?;
         Self::remember_location(&mut self.forward, current);
         for location in self.back.drain(index..).rev() {
@@ -2692,18 +2740,23 @@ impl Reader {
 
     fn next_location(&mut self) -> Result<()> {
         let next = self.forward.last().cloned().ok_or("No next location")?;
-        let current = self.current_position().ok_or("Open a document first")?;
+        let current = self
+            .current_history_location()
+            .ok_or("Open a document first")?;
         self.go_to_location(&next)?;
         self.forward.pop();
         Self::remember_location(&mut self.back, current);
         Ok(())
     }
 
-    fn go_to_location(&mut self, target: &ReadingPosition) -> Result<()> {
+    fn go_to_location(&mut self, target: &HistoryLocation) -> Result<()> {
         if self.fixed.is_some() {
-            self.jump_fixed(target.page, None)?;
+            self.jump_fixed(
+                target.position.page,
+                target.pdf_point.map(FixedJump::LinkPoint),
+            )?;
         } else {
-            self.restore_position(target)?;
+            self.restore_position(&target.position)?;
         }
         Ok(())
     }
@@ -3610,13 +3663,15 @@ impl Reader {
                     Err(error) => self.report(error),
                 };
             }
-            if let Some(target) = self
+            if let Some(link) = self
                 .fixed
                 .as_ref()
                 .and_then(|fixed| fixed.reading.link_at(x, y))
             {
-                return match target {
-                    PdfLinkTarget::Page(page) => match self.follow_fixed(page, None) {
+                return match link.target {
+                    PdfLinkTarget::Page(page) => match self
+                        .follow_fixed(page, link.destination_point.map(FixedJump::LinkPoint))
+                    {
                         Ok(()) => Change::Partial,
                         Err(error) => self.report(error),
                     },
@@ -8325,6 +8380,71 @@ mod tests {
         let fixed = &reopened.fixed.as_ref().unwrap().reading;
         assert_eq!(fixed.preferences().straighten_limit, 10);
         assert_eq!(fixed.page(), 0);
+    }
+
+    #[test]
+    fn tapping_a_zoomed_pdf_link_restores_its_destination_on_forward_and_reopen() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Harbor.pdf");
+        let content = concat!(
+            "BT /F1 16 Tf 60 655 Td (Harbor approach) Tj ",
+            "/F1 11 Tf 0 -23 Td (Follow the shore until the first) Tj ",
+            "0 -15 Td (white buoy comes into view.) Tj ",
+            "0 -23 Td (At low tide the sand bank) Tj ",
+            "0 -15 Td (extends past the old pier.) Tj ",
+            "0 -15 Td (Keep the buoy on your left.) Tj ET"
+        );
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+            "<< /Type /Pages /Count 2 /Kids [3 0 R 4 0 R] /MediaBox [0 0 600 800] >>".to_owned(),
+            "<< /Type /Page /Parent 2 0 R /Annots [5 0 R] >>".to_owned(),
+            "<< /Type /Page /Parent 2 0 R /Contents 6 0 R /Annots [8 0 R] /Resources << /Font << /F1 7 0 R >> >> >>".to_owned(),
+            "<< /Subtype /Link /Rect [270 380 330 420] /Dest [4 0 R /XYZ 60 680 null] >>".to_owned(),
+            format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned(),
+            "<< /Subtype /Link /Rect [60 644 150 670] /Dest [4 0 R /XYZ 490 200 null] >>".to_owned(),
+        ];
+        fs::write(&path, crate::fixed::tests::pdf_objects(&objects)).unwrap();
+        let mut app = fixture.app();
+        app.open_path(&path).unwrap();
+        app.fixed.as_mut().unwrap().reading.set_zoom(4).unwrap();
+        let before = app.fixed.as_ref().unwrap().reading.preferences();
+        assert_eq!(
+            app.input(Input::Tap(WIDTH as f32 / 2.0, PAGE_HEIGHT as f32 / 2.0)),
+            Change::Partial
+        );
+        let target = &app.fixed.as_ref().unwrap().reading;
+        assert_eq!(target.page(), 1);
+        let (size, request) = target.page_viewport().unwrap();
+        let pixel = request.page_to_viewport(size).unwrap() * hayro::kurbo::Point::new(60.0, 120.0);
+        assert!(pixel.x.abs() < 1.0 && pixel.y.abs() < 1.0);
+        let after = target.preferences();
+        capture_test_screen(
+            &app,
+            &[crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+            "READER_PDF_LINK_SCREENSHOT",
+            false,
+        );
+        let second_link =
+            request.page_to_viewport(size).unwrap() * hayro::kurbo::Point::new(100.0, 145.0);
+        app.input(Input::Tap(second_link.x as f32, second_link.y as f32));
+        assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 1);
+        assert_ne!(app.fixed.as_ref().unwrap().reading.preferences(), after);
+        app.activate(Action::ReturnToLocation).unwrap();
+        assert_eq!(app.fixed.as_ref().unwrap().reading.preferences(), after);
+        app.activate(Action::ReturnToLocation).unwrap();
+        assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 0);
+        assert_eq!(app.fixed.as_ref().unwrap().reading.preferences(), before);
+        app.next_location().unwrap();
+        assert_eq!(app.fixed.as_ref().unwrap().reading.preferences(), after);
+        app.save().unwrap();
+        let mut reopened = fixture.app();
+        reopened.open_path(&path).unwrap();
+        assert_eq!(reopened.fixed.as_ref().unwrap().reading.page(), 1);
+        assert_eq!(
+            reopened.fixed.as_ref().unwrap().reading.preferences(),
+            after
+        );
     }
 
     #[test]
