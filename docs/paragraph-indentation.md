@@ -36,3 +36,11 @@ To measure the authored fixture locally, run the following command from the Read
 cargo run --locked --example verify_paragraph_indent -- \
   tests/fixtures/paragraph-indents.xhtml 1 1 tests/fixtures/fonts/NotoSans-Regular.ttf
 ```
+
+Two further positive controls covered the other two books with nonzero indentation. A 7% rule placed the first line at x = 62 in a 552 px column with a 24 px margin. A 1em rule placed it at x = 56. Across all 19 measurements in seven books, seven positive, six negative and six explicit-zero cases matched their expected direction or reset. All 323,472 nonspace characters mapped in the 17 distinct chapters. The one-font desktop fixture left two glyphs missing in one additional chapter.
+
+## Oasis 3 verification
+
+Three automated ARM tests passed, covering the stylesheet limit, signed geometry, right-to-left alignment, tap selection, search and saved positions. On two original EPUB files, measured line starts matched the Mac for positive, negative, zero and the later citation rule. Two authored controls matched as well. Reader restored a position written by the 0.1.10 ARM probe in both a genuine EPUB and the authored example. Both page images changed after applying indentation and all text in both test chapters mapped.
+
+The authentic EPUB sample used a peak 4,348 KiB with both builds. The authored sample used 3,356 KiB on the baseline and 3,500 KiB on the candidate. These are two short offscreen probes with one font. The installed-library sweep ran concurrently. Source document hashes, the Documents listing, the installed Reader executable and checked live library files matched before and after the successful run. The temporary device workspace was removed.
