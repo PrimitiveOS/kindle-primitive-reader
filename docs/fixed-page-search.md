@@ -42,9 +42,11 @@ The elapsed times include opening the book, rendering the target pages, checking
 
 ### Single-word boundaries on original pages
 
-An independent Poppler extraction and the Mac Reader agreed on all eight counts below. The check compared **Find all** rectangles with **Find next** overlays on the same page, restored the starting viewport and replayed the original query from a fresh Reader session. When a constrained query had no match on the current page, cancelling the forward search preserved the viewport.
+An independent Poppler extraction, the Mac Reader, the ARM Reader on the Oasis 3 and the installed KOReader KOpt search all agreed on the eight counts below. The check compared **Find all** rectangles with **Find next** overlays on the same page, restored the starting viewport and replayed the original query from a fresh Reader session. When a constrained query had no match on the current page, cancelling the forward search preserved the viewport.
 
 | Physical page | Anywhere | Space before | Space after | Spaces on both sides |
 |---|---:|---:|---:|---:|
 | 521 of 1,041 | 30 | 28 | 27 | 27 |
 | 542 of 1,066 | 1 | 1 | 0 | 0 |
+
+The Oasis check used the two original PDFs in Documents and an isolated Reader profile. The authored tests, both original checksum checks, retrieval of the KOpt counts and the Reader navigation checks completed in 216 seconds. Both source files retained their original checksums. The test removed its temporary state after collecting these results.
