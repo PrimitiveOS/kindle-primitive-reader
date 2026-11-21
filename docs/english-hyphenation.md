@@ -71,8 +71,19 @@ packages and Vietnamese in one. Using Reader’s normal archive member loader,
 11 Vietnamese and 23 an undetermined language. One missing spine member
 produced the existing recovery placeholder. The counts measure declared language tags.
 
-In one 42,733-character English chapter, both modes mapped every nonspace
-character over 49 pages. Six fresh Mac debug processes per mode alternated
+On a US English source chapter, Reader mapped all 13,306 nonspace characters
+over 14 pages with Noto Sans Regular and Bold on the Mac. The audit checked
+the EPUB package and every text run in the sampled source block. A single
+eight-letter source word occupied one line in Authored and two lines in
+Automatic. Tapping either fragment selected the complete word and source
+search returned the same UTF-8 endpoints. The two page images differed in
+165,541 pixels, including 160 in the 24-pixel strip at the chosen line end.
+[Reflow comparison harness](../examples/verify_english_hyphenation.rs)
+
+A Vietnamese chapter provided a negative control. Both modes mapped all
+42,733 nonspace characters over 49 pages and produced identical first-page
+pixels. A second control with an explicitly empty language tag mapped all
+4,682 characters across seven pages and also produced identical first-page pixels. Six fresh Mac debug processes per mode alternated
 run order, using Noto Sans Regular at 43 px on a 1,264 × 1,680 viewport.
 Median layout time was 3.69 s for Authored and 3.64 s for Automatic.
 Median time through the first painted frame was 3.71 s and 3.66 s,
