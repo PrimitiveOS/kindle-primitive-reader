@@ -72,7 +72,7 @@ Install Reader from PrimitiveOS Store or follow the manual install guide.
   larger size. Done returns to the same page and zoom.
 - At the end of a comic, Next comic opens the following archive in the same
   folder in natural filename order.
-- Hold a word to select it, then tap another word to extend the selection.
+- Hold a word to select it, then tap another word to extend the selection. Tap **Find** to search for the selected words throughout the book. A long selection opens an editable search excerpt.
   Use the selection popup to add a highlight or note, or look up a word in an
   installed offline dictionary.
   Definitions open over the current page, away from the selected words when
