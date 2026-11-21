@@ -5,7 +5,6 @@ use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{BufReader, Cursor, Read, Seek, SeekFrom};
-use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -24,7 +23,7 @@ pub const MAX_IMAGE_BYTES: u64 = 16 * 1024 * 1024;
 pub const MAX_WEBP_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_COMIC_MEMBERS: usize = 8192;
 pub(crate) const MAX_IMAGE_SIDE: u32 = 4096;
-const MAX_IMAGE_PIXELS: u64 = 8 * 1024 * 1024;
+pub(crate) const MAX_IMAGE_PIXELS: u64 = 8 * 1024 * 1024;
 const MAX_DECODE_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_WEBP_PIXELS: u64 = 4 * 1024 * 1024;
 const MAX_PROJECTED_SIDE: f32 = 32_768.0;
@@ -632,56 +631,9 @@ impl ImagePage {
         Ok(output)
     }
 
-    fn decode_gif(bytes: &[u8]) -> Result<Self> {
-        let mut options = gif::DecodeOptions::new();
-        options.set_color_output(gif::ColorOutput::Indexed);
-        options.set_memory_limit(gif::MemoryLimit::Bytes(
-            NonZeroU64::new(MAX_IMAGE_PIXELS).unwrap(),
-        ));
-        options.check_frame_consistency(true);
-        let mut decoder = options.read_info(Cursor::new(bytes))?;
-        let (width, height) = (u32::from(decoder.width()), u32::from(decoder.height()));
-        if !image_dimensions_valid(width, height) {
-            return Err("This GIF exceeds Reader's image limits".into());
-        }
-        let global_palette = decoder.global_palette().map(<[u8]>::to_vec);
-        let frame = decoder
-            .read_next_frame()?
-            .ok_or("This GIF has no image frame")?;
-        let palette = frame
-            .palette
-            .as_deref()
-            .or(global_palette.as_deref())
-            .ok_or("This GIF has no color palette")?;
-        let colors: Vec<_> = palette
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .map(|color| image::Rgb(*color).to_luma().0[0])
-            .collect();
-        let (stride, rows) = (width as usize, height as usize);
-        let (left, top) = (usize::from(frame.left), usize::from(frame.top));
-        let (frame_width, frame_height) = (usize::from(frame.width), usize::from(frame.height));
-        if frame_width == 0
-            || frame_height == 0
-            || left + frame_width > stride
-            || top + frame_height > rows
-            || frame.buffer.len() != frame_width * frame_height
-        {
-            return Err("This GIF has an invalid image frame".into());
-        }
-        let mut gray = vec![255; stride * rows];
-        for (row, source) in frame.buffer.chunks_exact(frame_width).enumerate() {
-            let offset = (top + row) * stride + left;
-            for (&index, pixel) in source.iter().zip(&mut gray[offset..offset + frame_width]) {
-                if frame.transparent != Some(index) {
-                    *pixel = *colors
-                        .get(usize::from(index))
-                        .ok_or("This GIF contains an invalid color index")?;
-                }
-            }
-        }
-        Self::from_grayscale(width, height, gray)
+    pub(crate) fn decode_gif(bytes: &[u8]) -> Result<Self> {
+        let gray = crate::gif_image::gray(bytes)?;
+        Self::from_grayscale(gray.width(), gray.height(), gray.into_raw())
     }
 }
 

@@ -1378,9 +1378,8 @@ fn load_image(
         let bytes = book
             .resource_limited(&path, svg_image::MAX_SVG_BYTES)
             .ok()?;
-        let art =
-            svg_image::rasterize_with_size(&bytes, width, height, MAX_IMAGE_PIXELS, styled_size)
-                .ok()?;
+        let (art, _) = svg_image::render_inline(book, &path, std::str::from_utf8(&bytes).ok()?,
+            width, height, MAX_IMAGE_PIXELS, styled_size).ok()?;
         return cache_vector(path, art);
     }
     let bytes = book.resource(&path).ok()?;
@@ -1391,7 +1390,11 @@ fn load_image(
     }
     let display = target(w, h);
     let stored = preview_size(display.0, display.1);
-    let mut image = image_reader(&bytes).ok()?.decode().ok()?;
+    let mut image = if crate::gif_image::has_signature(&bytes) {
+        DynamicImage::ImageLuma8(crate::gif_image::gray(&bytes).ok()?)
+    } else {
+        image_reader(&bytes).ok()?.decode().ok()?
+    };
     if stored != (w, h) {
         image = image.resize_exact(stored.0, stored.1, filter);
     }
@@ -1399,6 +1402,7 @@ fn load_image(
 }
 
 pub(crate) fn original_illustration(bytes: &[u8]) -> Result<ImagePage> {
+    if crate::gif_image::has_signature(bytes) { return ImagePage::decode_gif(bytes); }
     let gray = match image_reader(bytes) {
         Ok(reader) => {
             crate::epub_raster_dimensions(bytes)?;

@@ -27,6 +27,7 @@ pub mod fixed_text;
 #[cfg(feature = "kindle")]
 mod generated_contents;
 mod gray_glyph;
+mod gif_image;
 #[cfg(feature = "kindle")]
 mod footnotes;
 mod hyphenation;
@@ -680,7 +681,7 @@ impl Probe {
 
     fn links_to_image(&self, path: &str) -> bool {
         let supported = path.rsplit_once('.').is_some_and(|(_, ext)| {
-            ["png", "jpg", "jpeg", "svg"].iter().any(|known| ext.eq_ignore_ascii_case(known))
+            ["png", "jpg", "jpeg", "gif", "svg"].iter().any(|known| ext.eq_ignore_ascii_case(known))
         });
         supported && self.source.blocks.iter().any(|block| {
             block.links.iter().map(|link| link.href.as_str())
@@ -706,11 +707,11 @@ impl Probe {
                 svg_image::MAX_SVG_SIDE, 8 * 1024 * 1024, None)?;
             return comic::ImagePage::from_grayscale(gray.width(), gray.height(), gray.into_raw());
         }
-        let bytes = if svg_image::is_package_svg(package_path) {
-            book.resource_limited(package_path, svg_image::MAX_SVG_BYTES)?
-        } else {
-            book.resource(package_path)?
-        };
+        if svg_image::is_package_svg(package_path) {
+            let bytes = book.resource_limited(package_path, svg_image::MAX_SVG_BYTES)?;
+            return svg_image::original_package_image(&mut book, package_path, &bytes);
+        }
+        let bytes = book.resource(package_path)?;
         drop(book);
         parley_layout::original_illustration(&bytes)
     }
@@ -1141,6 +1142,7 @@ fn image_reader(bytes: &[u8]) -> Result<image::ImageReader<std::io::Cursor<&[u8]
 }
 
 fn epub_raster_dimensions(bytes: &[u8]) -> Result<(u32, u32)> {
+    if gif_image::has_signature(bytes) { return gif_image::dimensions(bytes); }
     let (width, height) = image_reader(bytes)?.into_dimensions()?;
     if !comic::image_dimensions_valid(width, height) {
         return Err("The EPUB image exceeds Reader's decoded image limit".into());

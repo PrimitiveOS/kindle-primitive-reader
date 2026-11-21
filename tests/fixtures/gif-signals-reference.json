@@ -1,0 +1,32 @@
+{
+  "assets": {
+    "EPUB/art/flags.gif": {
+      "width": 384,
+      "height": 256,
+      "frames": 1,
+      "md5": "696b685229769f1567488f75ddf6875b"
+    },
+    "EPUB/art/change.gif": {
+      "width": 384,
+      "height": 256,
+      "frames": 2,
+      "md5": "696b685229769f1567488f75ddf6875b"
+    }
+  },
+  "chapters": {
+    "0": [
+      "EPUB/art/flags.gif"
+    ],
+    "1": [
+      "EPUB/art/flags.gif"
+    ],
+    "2": [
+      "EPUB/art/change.gif"
+    ]
+  },
+  "sample": {
+    "area": 98304,
+    "member": "EPUB/art/flags.gif",
+    "xpointer": "/body/DocFragment[1]/body/p[2]/img"
+  }
+}

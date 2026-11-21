@@ -101,6 +101,23 @@ pub(crate) fn inline_source(node: roxmltree::Node<'_, '_>, xhtml: &str) -> Optio
     (xml.len() <= MAX_SVG_BYTES).then_some(xml)
 }
 
+pub(crate) fn original_package_image(
+    book: &mut crate::epub::Book,
+    path: &str,
+    bytes: &[u8],
+) -> Result<crate::comic::ImagePage> {
+    let (gray, _) = render_inline(
+        book,
+        path,
+        std::str::from_utf8(bytes)?,
+        MAX_SVG_SIDE,
+        MAX_SVG_SIDE,
+        8 * 1024 * 1024,
+        None,
+    )?;
+    crate::comic::ImagePage::from_grayscale(gray.width(), gray.height(), gray.into_raw())
+}
+
 pub(crate) fn render_inline(
     book: &mut crate::epub::Book,
     chapter: &str,
@@ -110,7 +127,17 @@ pub(crate) fn render_inline(
     budget: usize,
     css_size: Option<&dyn Fn(u32, u32) -> (u32, u32)>,
 ) -> Result<(GrayImage, usize)> {
-    let doc = Document::parse(xml)?;
+    if xml.len() > MAX_SVG_BYTES || xml.contains("<!DOCTYPE") {
+        return Err("The SVG must be static UTF-8 within 256 KiB".into());
+    }
+    let doc = Document::parse_with_options(
+        xml,
+        ParsingOptions {
+            nodes_limit: MAX_XML_NODES,
+            ..Default::default()
+        },
+    )?;
+    validate(doc.root_element(), true)?;
     let mut images = HashMap::new();
     let mut source_pixels = 0usize;
     let mut source_bytes = 0usize;
@@ -137,15 +164,24 @@ pub(crate) fn render_inline(
         if source_pixels > budget {
             return Err("The inline SVG exceeds its image budget".into());
         }
-        let reader = crate::image_reader(&data)?;
-        let format = reader.format();
-        if reader.into_decoder()?.total_bytes() > 24 * 1024 * 1024 {
-            return Err("The inline SVG image is too large to decode".into());
-        }
-        let kind = match format {
-            Some(image::ImageFormat::Png) => usvg::ImageKind::PNG(Arc::new(data)),
-            Some(image::ImageFormat::Jpeg) => usvg::ImageKind::JPEG(Arc::new(data)),
-            _ => return Err("The inline SVG image needs a PNG or JPEG".into()),
+        let kind = if crate::gif_image::has_signature(&data) {
+            let png = crate::gif_image::transparent_png(&data)?;
+            source_bytes += png.len();
+            if source_bytes > 8 * 1024 * 1024 {
+                return Err("The SVG exceeds its raster resource budget".into());
+            }
+            usvg::ImageKind::PNG(Arc::new(png))
+        } else {
+            let reader = crate::image_reader(&data)?;
+            let format = reader.format();
+            if reader.into_decoder()?.total_bytes() > 24 * 1024 * 1024 {
+                return Err("The inline SVG image is too large to decode".into());
+            }
+            match format {
+                Some(image::ImageFormat::Png) => usvg::ImageKind::PNG(Arc::new(data)),
+                Some(image::ImageFormat::Jpeg) => usvg::ImageKind::JPEG(Arc::new(data)),
+                _ => return Err("The SVG image needs a PNG, JPEG or GIF".into()),
+            }
         };
         images.insert(href.to_owned(), kind);
     }

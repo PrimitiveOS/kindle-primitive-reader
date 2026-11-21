@@ -65,6 +65,7 @@ pub struct BookSeries {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CoverKind {
+    Gif,
     Jpeg,
     Png,
     Svg,
@@ -589,7 +590,7 @@ impl Book {
             return Ok(None);
         };
         let cap = match cover.kind {
-            CoverKind::Jpeg | CoverKind::Png => MAX_RASTER_COVER,
+            CoverKind::Gif | CoverKind::Jpeg | CoverKind::Png => MAX_RASTER_COVER,
             CoverKind::Svg => crate::svg_image::MAX_SVG_BYTES,
         };
         let bytes = self.resource_limited(&cover.path, cap)?;
@@ -783,6 +784,7 @@ fn cover_item(item: &Item) -> Option<BookCover> {
         return None;
     }
     let kind = match item.media.as_str() {
+        "image/gif" => CoverKind::Gif,
         "image/jpeg" => CoverKind::Jpeg,
         "image/png" => CoverKind::Png,
         "image/svg+xml" => CoverKind::Svg,

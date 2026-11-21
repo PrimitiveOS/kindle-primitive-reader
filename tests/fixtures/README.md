@@ -83,3 +83,5 @@ page. [OpenJPEG](https://www.openjpeg.org/) · [Reader decoder tests](../../src/
 `paragraph-opener.xhtml` is an original harbour journal that checks publisher styling for a paragraph after a heading and the first paragraph of a section.
 
 `nearby-search.xhtml` is an original short harbour log with a repeated sentence for directional search and return-to-location checks.
+
+`gif-signals.epub` contains an original semaphore diagram, a transparent GIF in inline and packaged SVG, a GIF cover, a linked full-size illustration and a two-frame GIF. Pillow 12.1 generates the fixture and independently supplies full first-frame pixel digests for comparison. [Fixture generator](../../scripts/generate-gif-epub.py) · [Reference generator](../../scripts/epub-gif-reference.py)

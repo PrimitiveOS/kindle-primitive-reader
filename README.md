@@ -144,7 +144,7 @@ device. [Reading parity and device results](docs/reading-parity-plan.md)
 
 | Format | Current implementation |
 | --- | --- |
-| EPUB 2 and EPUB 3 reflow | Publisher navigation, local links, saved text positions, per-book typography, bookmarks, search and notes. Linked static SVG and short horizontal ruby annotations render within documented limits. |
+| EPUB 2 and EPUB 3 reflow | Publisher navigation, local links, saved text positions, per-book typography, bookmarks, search and notes. Embedded GIF diagrams retain their intrinsic dimensions and open at full size. Linked static SVG and short horizontal ruby annotations render within documented limits. [GIF illustrations and limits](docs/epub-gif-illustrations.md) |
 | Fixed-layout EPUB 3 | Static XHTML and supported SVG spine pages, contents, zoom and rotation. Publisher page progression and facing-page hints control spreads. |
 | PDF | Page turns or continuous scrolling, printed page labels, local outlines and links, bookmarks, passwords, page, width and height fit, crop, zoom, pan and rotation. Embedded text supports search, selection, highlights and notes. |
 | DjVu | Fixed pages, crop, embedded text with search and annotations, and [publisher contents](docs/djvu-contents.md) with named page destinations |

@@ -10,6 +10,8 @@ mod fixed_book_map;
 mod gestures;
 mod extend_highlight;
 mod external_link;
+#[cfg(test)]
+mod epub_gif_tests;
 mod sidecar_marks;
 mod library_view;
 mod lookup_history;
@@ -2379,7 +2381,7 @@ impl Reader {
 
     fn view_cover(&mut self) -> Result<()> {
         let details = self.book_details.as_ref().ok_or("Choose a book first")?;
-        let (_, bytes) = with_storage(|| {
+        let image = with_storage(|| {
             if self.library.identify(&details.entry)? != details.id {
                 return Err(io::Error::other(
                     "The publication changed. Reopen its book details.",
@@ -2387,11 +2389,15 @@ impl Reader {
             }
             let path = self.library.absolute_path(&details.entry.path)?;
             let mut book = Book::open(&path).map_err(io::Error::other)?;
-            book.read_cover()
-                .map_err(io::Error::other)?
-                .ok_or_else(|| io::Error::other("The book has no supported cover"))
+            let cover = book.cover().cloned().ok_or_else(|| io::Error::other("The book has no supported cover"))?;
+            let (_, bytes) = book.read_cover().map_err(io::Error::other)?
+                .ok_or_else(|| io::Error::other("The book has no supported cover"))?;
+            if cover.kind == crate::epub::CoverKind::Svg {
+                return crate::svg_image::original_package_image(&mut book, &cover.path, &bytes)
+                    .map_err(io::Error::other);
+            }
+            crate::parley_layout::original_illustration(&bytes).map_err(io::Error::other)
         })?;
-        let image = crate::parley_layout::original_illustration(&bytes)?;
         let view = FixedReading::inspect_image(image)?;
         self.show(Screen::Illustration);
         self.illustration = Some(view);
