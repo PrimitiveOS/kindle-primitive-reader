@@ -7697,33 +7697,56 @@ mod tests {
     #[test]
     fn contents_opens_at_the_current_section_from_either_reading_bar() {
         let fixture = Fixture::new();
-        let path = fixture.root.join("Daily notebook.epub");
-        fs::copy(crate::test_fixture("many-chapters.epub"), &path).unwrap();
+        let path = fixture.root.join("Document.epub");
+        let external = std::env::var_os("READER_TEST_CONTENTS_EPUB").map(PathBuf::from);
+        fs::copy(
+            external.as_deref().unwrap_or(&crate::test_fixture("many-chapters.epub")),
+            &path,
+        ).unwrap();
         let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+        let mut canvas = Canvas::new(WIDTH, HEIGHT, &[font.display().to_string()]).unwrap();
         let mut app = Reader::open(&fixture.root, &fixture.state, vec![font.clone()]).unwrap();
-        app.open_path(&path).unwrap();
-        app.follow_reflow_page(37, 0).unwrap();
+        // Keep external publication names and rendered pages out of test reports.
+        assert!(app.open_path(&path).is_ok());
+        app.show(Screen::Contents);
+        let items = app.items();
+        let row = if external.is_some() {
+            items.len() / 2
+        } else {
+            items.iter().position(|item| item.title == "Day 38").unwrap()
+        };
+        assert!(row >= ROWS_PER_PAGE);
+        let Action::Jump(destination) = &items[row].action else {
+            panic!("The fixture needs an internal destination at the chosen list row");
+        };
+        assert!(app.follow(destination.clone()).is_ok());
         let before = app.current_position().unwrap();
+        let reading_frame = primitive_app::frame(&app, &mut canvas, false);
         let history_len = app.back.len();
         for upper in [true, false] {
-            app.open_reading_edge(upper, if upper { 100.0 } else { 630.0 });
+            let y = if upper { 27.0 } else { 1420.0 };
+            assert_eq!(app.input(Input::Tap(630.0, y)), Change::Partial);
             if upper && app.top_group != Some(TopGroup::Navigation) {
                 tap_reading_control(&mut app, "Navigation");
             }
             assert_eq!(tap_reading_control(&mut app, "Contents"), Change::Partial);
-            let row = app.current_contents_row.unwrap();
-            assert_eq!(app.items()[row].title, "Day 38");
+            assert_eq!(app.current_contents_row, Some(row));
             assert_eq!(app.list_page, row / ROWS_PER_PAGE);
-            assert!(app.list_page > 0);
-            if upper {
+            let contents_frame = primitive_app::frame(&app, &mut canvas, false);
+            assert!(contents_frame != reading_frame);
+            if upper && external.is_none() {
                 capture_test_screen(&app, std::slice::from_ref(&font), "READER_CURRENT_CONTENTS_SCREENSHOT", false);
             }
             assert_eq!(app.input(Input::PageBack), Change::Partial);
             assert_eq!(app.list_page, row / ROWS_PER_PAGE - 1);
-            assert_eq!(app.current_position(), Some(before.clone()));
-            assert_eq!(app.back.len(), history_len);
-            app.show(Screen::Book);
+            let (x, y) = rectangle_center(primitive_ui::back_button(WIDTH as i32));
+            assert_eq!(app.input(Input::Tap(x, y)), Change::Partial);
+            assert_eq!(app.input(Input::Tap(630.0, 1010.0)), Change::Partial);
+            assert_eq!(app.screen, Screen::Book);
             assert_eq!(app.current_contents_row, None);
+            assert!(app.current_position().as_ref() == Some(&before));
+            assert_eq!(app.back.len(), history_len);
+            assert!(primitive_app::frame(&app, &mut canvas, false) == reading_frame);
         }
     }
 
