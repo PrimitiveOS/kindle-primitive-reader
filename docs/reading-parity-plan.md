@@ -55,6 +55,8 @@ The reading engine draws outside list markers from HTML list order, `start`, `re
 
 One existing EPUB contained 1,597 ordered items. Of those, 1,581 had no literal ordinal at the start of their text. Before this change, the source page and two controls produced identical 1264 × 1680 frames on the Mac. One control changed the first list start to 81 and the other changed ordered lists to unordered. The corrected renderer produces distinct frames and finds the same source passage in all three variants. Its native layout covered all 201,498 source characters in that section with zero missing glyphs.
 
+A second Mac check opened 19 list-bearing sections in five existing EPUB and KF8 files. The layouts covered 485,623 of 485,623 source characters across 667 pages with zero missing glyphs. Two of those files are editions of the same work. Its long numbered section occupies one EPUB spine entry and five KF8 sections. Both cover the same 201,498 characters. These totals count editions separately and measure layout coverage. The screenshot comparison above separately verifies the presence of markers.
+
 The fixture also exercises repagination with larger type and checks selection geometry. The KOReader comparison uses the pinned CREngine implementation for outside marker placement and text indentation. The current horizontal renderer supports outside marker geometry. Custom CSS counter styles, image markers and placement inside a line remain open. [Authored test publication](../tests/fixtures/publisher-lists.xhtml) · [KOReader marker placement](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L8684-L8705)
 
 ## P0 · Close the feasibility gate
