@@ -6,6 +6,22 @@ use crate::{Result, epub::Book, library::DocumentFormat, synthetic_pages::Charac
 use primitive_app::with_storage;
 use std::{borrow::Cow, io, path::PathBuf, time::Instant};
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum NumberField {
+    BookStride,
+    DefaultStride,
+    MarginSize,
+}
+
+impl NumberField {
+    pub(super) fn parent(self) -> Screen {
+        match self {
+            Self::BookStride => Screen::PageNumbering,
+            Self::DefaultStride | Self::MarginSize => Screen::NumberingDefaults,
+        }
+    }
+}
+
 pub(super) struct Scan {
     map: CharacterPages,
     pub(super) deadline: Instant,
@@ -74,10 +90,185 @@ impl Reader {
             .detail(format!("{stride} characters per stable page")),
         );
         items.push(
-            Item::new("Characters per page", Action::Show(Screen::CharacterStride))
-                .detail("Choose a value from 500 to 3,000"),
+            Item::new(
+                "Characters per page",
+                Action::Show(Screen::NumberingValue(NumberField::BookStride)),
+            )
+            .detail("Choose a value from 500 to 3,000"),
         );
+        items.push(Item::new(
+            "Defaults for new books",
+            Action::Show(Screen::NumberingDefaults),
+        ));
         items
+    }
+
+    pub(super) fn numbering_defaults_items(&self) -> Vec<Item> {
+        let d = self.controls.numbering;
+        let settings = |numbering| {
+            Action::SetReadingControls(crate::reading_controls::ReadingControls {
+                numbering,
+                ..self.controls
+            })
+        };
+        let flag = |title: &str, value, changed| {
+            Item::new(title, settings(changed)).detail(if value { "On" } else { "Off" })
+        };
+        use crate::reading_controls::NumberingDefaults;
+        let mut items = vec![
+            Item::new(
+                "Characters per page",
+                Action::Show(Screen::NumberingValue(NumberField::DefaultStride)),
+            )
+            .detail(
+                d.stride
+                    .map_or_else(|| "Off".to_owned(), |size| size.to_string()),
+            ),
+        ];
+        if d.stride.is_some() {
+            items.push(Item::new(
+                "Disable default character count",
+                settings(NumberingDefaults { stride: None, ..d }),
+            ));
+            items.push(flag(
+                "Override publisher page numbers",
+                d.override_publisher,
+                NumberingDefaults {
+                    override_publisher: !d.override_publisher,
+                    ..d
+                },
+            ));
+        }
+        items.extend([
+            flag(
+                "Ask about publisher numbers",
+                d.prompt_publisher,
+                NumberingDefaults {
+                    prompt_publisher: !d.prompt_publisher,
+                    ..d
+                },
+            ),
+            flag(
+                "Stable pages in footer",
+                d.footer,
+                NumberingDefaults {
+                    footer: !d.footer,
+                    ..d
+                },
+            ),
+            flag(
+                "Stable pages in margin",
+                d.margins,
+                NumberingDefaults {
+                    margins: !d.margins,
+                    ..d
+                },
+            ),
+            Item::new(
+                "Margin label size",
+                Action::Show(Screen::NumberingValue(NumberField::MarginSize)),
+            )
+            .detail(d.label_size.clamp(8, 20).to_string()),
+        ]);
+        items
+    }
+
+    pub(super) fn apply_numbering_input(&mut self, field: NumberField) -> Result<()> {
+        let value = self.editor.string();
+        let number = value.trim().parse::<u16>().ok();
+        let mut controls = self.controls;
+        match field {
+            NumberField::MarginSize => {
+                controls.numbering.label_size = number
+                    .filter(|n| (8..=20).contains(n))
+                    .ok_or("Enter a size from 8 to 20")?
+                    as u8;
+                self.publisher_label_canvas.borrow_mut().take();
+            }
+            NumberField::BookStride | NumberField::DefaultStride => {
+                let stride = number
+                    .filter(|n| (500..=3000).contains(n))
+                    .ok_or("Enter 500 to 3,000 characters")?;
+                if field == NumberField::BookStride {
+                    return self.set_character_pages(Some(stride));
+                }
+                controls.numbering.stride = Some(stride);
+            }
+        }
+        controls.save(&self.controls_path)?;
+        self.controls = controls;
+        self.show(field.parent());
+        Ok(())
+    }
+
+    pub(super) fn apply_new_numbering_defaults(&mut self) -> bool {
+        let Some(active) = self.active.as_ref() else {
+            return false;
+        };
+        if active.entry.format != DocumentFormat::Epub
+            || self
+                .library
+                .state(active.id)
+                .is_some_and(|s| s.position.is_some())
+        {
+            return false;
+        }
+        let defaults = self.controls.numbering;
+        let publisher = !active.reading.probe.printed_pages.is_empty();
+        let state = self
+            .library
+            .remember(&active.entry, active.id, &active.reading.probe.title);
+        state.publisher_page_footer = defaults.footer;
+        state.publisher_page_margins = defaults.margins;
+        if !publisher || defaults.override_publisher {
+            state.character_page_stride = defaults.stride.filter(|n| (500..=3000).contains(n));
+        }
+        publisher && defaults.prompt_publisher && state.character_page_stride.is_none()
+    }
+
+    pub(super) fn publisher_offer_items(&self) -> Vec<Item> {
+        let Some(active) = &self.active else {
+            return Vec::new();
+        };
+        let count = active.reading.probe.printed_pages.len();
+        let mut items = vec![Item::new(
+            format!("This edition supplies {count} page numbers"),
+            Action::Heading,
+        )];
+        if let Some(source) = &active.reading.probe.printed_source {
+            items.push(Item::new("Print edition source", Action::Heading).detail(source));
+        }
+        if !self.publisher_footer_enabled() || !self.publisher_margins_enabled() {
+            items.push(Item::new(
+                "Show numbers in footer and margin",
+                Action::AcceptPublisherNumbers,
+            ));
+        }
+        items.push(Item::new("Continue reading", Action::Show(Screen::Book)));
+        items
+    }
+
+    pub(super) fn accept_publisher_numbers(&mut self) -> Result<()> {
+        let id = self
+            .active
+            .as_ref()
+            .filter(|a| !a.reading.probe.printed_pages.is_empty())
+            .ok_or("No publisher page numbers")?
+            .id;
+        let state = self
+            .library
+            .state_mut(id)
+            .ok_or("Reading record unavailable")?;
+        let before = (state.publisher_page_footer, state.publisher_page_margins);
+        (state.publisher_page_footer, state.publisher_page_margins) = (true, true);
+        self.mark_dirty();
+        if let Err(error) = self.save_library() {
+            let state = self.library.state_mut(id).unwrap();
+            (state.publisher_page_footer, state.publisher_page_margins) = before;
+            return Err(error.into());
+        }
+        self.show(Screen::Book);
+        Ok(())
     }
 
     pub(super) fn restore_character_pages(&mut self) {

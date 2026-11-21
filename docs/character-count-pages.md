@@ -4,6 +4,8 @@ In an open EPUB, choose **Navigation › Page numbering › Character-count page
 
 Use **Stable page number list** to jump to a boundary or enter `label 125` in **Go to page**. The list shows the corresponding chapter and the current chapter’s screen pages. Previous location returns to the starting passage. The margin and footer switches work independently. Return to **Page numbering** to choose publisher labels again, or screen pages for an edition without printed labels.
 
+**Defaults for new books** sets the character count, publisher override, optional publisher prompt and initial footer and margin choices. Existing books retain their selections. Margin label size can be changed from 8 to 20 and applies to the current page. [KOReader defaults and margin sizing](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerpagemap.lua#L568-L657)
+
 ![Character-count page list centered on the current passage](screenshots/character-page-list.png)
 
 Reader builds one chapter at a time and stores the completed map in its own data directory. Reopening checks the edition, chapter count and selected stride before restoring the map. An incomplete or damaged cache can be regenerated from the EPUB. Changing the stride replaces that book’s cache after the new map is complete. The map contains source positions and chapter revisions. The limit is 32,768 labels per edition. [Source mapping](../src/synthetic_pages.rs) · [Reading controls](../src/app/character_page_settings.rs)

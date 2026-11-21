@@ -218,9 +218,12 @@ impl Reader {
         }
         let paint = self.page_paint();
         const TILE_WIDTH: u32 = 144;
-        const LINE: u32 = 25;
+        let size = u32::from(self.controls.numbering.label_size.clamp(8, 20));
+        // Keep the installed Reader’s default (14) at its original pixel height.
+        let glyph_height = (18 * size + 7) / 14;
+        let line = (25 * size + 7) / 14;
         let width = probe.settings.side_margin().min(TILE_WIDTH);
-        if width < 16 || paint.visible.len() < LINE as usize {
+        if width < 16 || paint.visible.len() < line as usize {
             return;
         }
         let mut surface = self.publisher_label_canvas.borrow_mut();
@@ -230,7 +233,7 @@ impl Reader {
                 .iter()
                 .map(|p| p.to_string_lossy().into_owned())
                 .collect::<Vec<_>>();
-            *surface = Canvas::new(TILE_WIDTH, LINE, &fonts).ok();
+            *surface = Canvas::new(TILE_WIDTH, line, &fonts).ok();
         }
         let Some(tile) = surface.as_mut() else { return };
         for (range, x) in reading.visible_columns() {
@@ -250,19 +253,19 @@ impl Reader {
                 if y < paint.visible.start || y >= paint.visible.end {
                     continue;
                 }
-                let y = y.min(paint.visible.end - LINE).max(minimum_y);
-                if y + LINE > paint.visible.end {
+                let y = y.min(paint.visible.end - line).max(minimum_y);
+                if y + line > paint.visible.end {
                     break;
                 }
-                minimum_y = y + LINE;
+                minimum_y = y + line;
                 tile.begin();
                 let Some(label) = book.page_label(row) else {
                     continue;
                 };
                 let label = compact_label(&label);
-                let style = TextStyle::new((18 * WIDTH / TILE_WIDTH) as i32);
+                let style = TextStyle::new((glyph_height * WIDTH / TILE_WIDTH) as i32);
                 tile.text(
-                    Rect::new(1, 0, width as i32 - 2, LINE as i32),
+                    Rect::new(1, 0, width as i32 - 2, line as i32),
                     label,
                     if left { style } else { style.right() },
                 );
@@ -276,10 +279,10 @@ impl Reader {
                     })
                     .collect();
                 canvas.picture(
-                    Rect::new(dest_x as i32, y as i32, width as i32, LINE as i32),
+                    Rect::new(dest_x as i32, y as i32, width as i32, line as i32),
                     GrayImage {
                         width,
-                        height: LINE,
+                        height: line,
                         pixels,
                     },
                 );

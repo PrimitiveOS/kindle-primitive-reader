@@ -31,6 +31,31 @@ pub(crate) struct ReadingControls {
     pub footer_tap_locked: bool,
     pub skim_on_footer_hold: bool,
     pub menu_activation: MenuActivation,
+    pub numbering: NumberingDefaults,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default)]
+pub(crate) struct NumberingDefaults {
+    pub stride: Option<u16>,
+    pub override_publisher: bool,
+    pub prompt_publisher: bool,
+    pub footer: bool,
+    pub margins: bool,
+    pub label_size: u8,
+}
+
+impl Default for NumberingDefaults {
+    fn default() -> Self {
+        Self {
+            stride: None,
+            override_publisher: false,
+            prompt_publisher: false,
+            footer: false,
+            margins: false,
+            label_size: 14,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
