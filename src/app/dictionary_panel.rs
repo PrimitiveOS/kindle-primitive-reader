@@ -259,11 +259,7 @@ impl Reader {
             return Err("Go back one lookup to open another definition".into());
         }
         let results = with_storage(|| {
-            dictionary::lookup_preferred(
-                &self.dictionaries,
-                word,
-                self.preferred_dictionary.as_deref(),
-            )
+            self.dictionaries.lookup(word, self.preferred_dictionary.as_deref())
         })?;
         self.update_lookup_history(|history| history.lookup(word))?;
         if nested {

@@ -34,7 +34,7 @@ use primitive_ui::{
 };
 
 use crate::annotation_export;
-use crate::dictionary::{self, InstalledDictionary};
+use crate::dictionary::{self, DictionarySources, InstalledDictionary};
 use crate::epub::{Book, Destination};
 use crate::fixed::{PdfError, PdfLinkTarget};
 use crate::fixed_session::{FixedJump, FixedReading, PdfSelection};
@@ -531,7 +531,7 @@ pub struct Reader {
     copied_address: Option<String>,
     saved_popup: Option<saved_highlight_popup::SavedPopup>,
     exports: PathBuf,
-    dictionaries: PathBuf,
+    dictionaries: DictionarySources,
     dictionary_preference: PathBuf,
     preferred_dictionary: Option<PathBuf>,
     installed_dictionaries: Vec<InstalledDictionary>,
@@ -652,7 +652,7 @@ impl Reader {
             copied_address: None,
             saved_popup: None,
             exports: state.parent().unwrap_or(documents).join("exports"),
-            dictionaries: state.parent().unwrap_or(documents).join("dictionaries"),
+            dictionaries: DictionarySources::for_reader(documents, data),
             dictionary_preference,
             preferred_dictionary,
             installed_dictionaries: Vec::new(),
@@ -2092,9 +2092,7 @@ impl Reader {
                 self.show(Screen::ReadingFonts);
             }
             Action::ShowDictionaries => {
-                with_storage(|| fs::create_dir_all(&self.dictionaries))?;
-                self.installed_dictionaries =
-                    with_storage(|| dictionary::installed(&self.dictionaries))?;
+                self.installed_dictionaries = with_storage(|| self.dictionaries.installed())?;
                 self.show(Screen::Dictionaries);
             }
             Action::UseDictionary(preferred) => {
@@ -9325,6 +9323,76 @@ mod tests {
             reopened.input(Input::Tap((DONE.x + 15) as f32, (DONE.y + 15) as f32)),
             Change::Exit
         );
+    }
+
+    /// Compare selected words in real publications with an independent, exact
+    /// lookup from the stock Kindle KOReader sdcv. The reference file is private.
+    #[test]
+    #[ignore = "Supply READER_DICTIONARY_REFERENCE and an existing documents directory"]
+    fn selected_words_match_installed_koreader_dictionaries() {
+        #[derive(serde::Deserialize)]
+        struct Reference {
+            expected_count: usize,
+            cases: Vec<Lookup>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Lookup {
+            book: PathBuf,
+            chapter: usize,
+            word: String,
+            // Dictionary title, returned headword and optional digest of plain text.
+            results: Vec<(String, String, Option<String>)>,
+        }
+        let reference: Reference = serde_json::from_slice(&fs::read(
+            std::env::var_os("READER_DICTIONARY_REFERENCE").unwrap()
+        ).unwrap()).unwrap();
+        let documents = PathBuf::from(std::env::var_os("PRIMITIVE_READER_DOCUMENTS").unwrap());
+        let fixture = Fixture::new();
+        let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+        let mut app = Reader::open(&documents, &fixture.state, vec![font]).unwrap();
+        app.activate(Action::ShowDictionaries).unwrap();
+        assert_eq!(app.installed_dictionaries.len(), reference.expected_count);
+        let mut looked_up = 0;
+        for case in reference.cases {
+            app.open_path(&case.book).unwrap();
+            let probe = app.active.as_ref().unwrap().reading.config.chapter(case.chapter).unwrap();
+            let passage = probe.source.blocks.iter().find_map(|b| {
+                let range = crate::selection::word_ranges(&b.text)
+                    .find(|range| b.text[range.clone()] == case.word)?;
+                probe.select_range(&probe.anchor(b.key, range.start), &probe.anchor(b.key, range.end))
+            }).expect("Reference word occurs in the specified chapter");
+            app.restore_position(&ReadingPosition {
+                chapter: case.chapter, page: 0, anchor: Some(passage.start.clone())
+            }).unwrap();
+            let origin = app.current_history_location().unwrap();
+            let bounds = app.active.as_ref().unwrap().reading.highlight_rects(&passage)[0];
+            let (x, y) = rectangle_center(Rect::new(bounds.x, bounds.y, bounds.width, bounds.height));
+            app.input(Input::LongTap(x, y));
+            assert!(app.selection.as_ref().is_some_and(|selected| selected.text == case.word));
+            let start = Instant::now();
+            tap_selection_action(&mut app, selection_popup::SelectionAction::Dictionary);
+            assert_eq!(app.screen, Screen::Definition);
+            assert!(app.definition_over_book());
+            assert_eq!(app.definitions.len(), case.results.len(), "dictionary result count for case {looked_up}");
+            for (dictionary, word, plain_digest) in case.results {
+                let entry = app.definitions.iter().find(|e| e.dictionary == dictionary && e.word == word)
+                    .expect("Same dictionary and headword as KOReader");
+                assert!(!entry.text.trim().is_empty());
+                if let Some(digest) = plain_digest {
+                    let normalized = entry.text.split_whitespace().collect::<Vec<_>>().join(" ");
+                    assert_eq!(format!("{:x}", md5::compute(normalized)), digest, "definition text for case {looked_up}");
+                }
+            }
+            eprintln!("Dictionary check {} took {} ms", looked_up + 1, start.elapsed().as_millis());
+            let (x, y) = rectangle_center(app.definition_layout().1);
+            app.input(Input::Tap(x, y));
+            assert_eq!(app.screen, Screen::Book);
+            assert!(app.current_history_location().as_ref() == Some(&origin));
+            assert!(app.selection.as_ref().is_some_and(|selected| selected.text == case.word));
+            app.selection = None;
+            looked_up += 1;
+        }
+        assert!(looked_up > 0);
     }
 
     fn rectangle_center(rect: Rect) -> (f32, f32) {

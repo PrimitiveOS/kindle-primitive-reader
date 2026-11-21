@@ -52,23 +52,178 @@ pub(crate) struct InstalledDictionary {
     pub(crate) title: String,
 }
 
-#[cfg(feature = "kindle")]
-pub(crate) fn installed(root: &Path) -> io::Result<Vec<InstalledDictionary>> {
-    let Some(root) = dictionary_root(root)? else {
-        return Ok(Vec::new());
-    };
-    Ok(dictionary_files(&root)?
-        .into_iter()
-        .filter_map(|path| {
-            let title = Info::load(open_dictionary_file(&root, &path).ok()?)
-                .ok()?
-                .title;
-            Some(InstalledDictionary {
-                path: path.strip_prefix(&root).ok()?.to_owned(),
-                title,
+/// Search a Reader installation and the two standard KOReader dictionary directories.
+pub(crate) struct DictionarySources {
+    local: PathBuf,
+    shared_storage: Option<PathBuf>,
+}
+
+struct DictionaryFile {
+    root: PathBuf,
+    path: PathBuf,
+    // Local preferences retain their original relative paths. External keys are
+    // absolute-looking identifiers only; a stored key is never opened as a path.
+    key: PathBuf,
+}
+
+impl DictionarySources {
+    #[cfg(feature = "kindle")]
+    pub(crate) fn for_reader(documents: &Path, data: &Path) -> Self {
+        Self {
+            local: data.join("dictionaries"),
+            shared_storage: documents
+                .parent()
+                .filter(|_| {
+                    documents
+                        .file_name()
+                        .is_some_and(|name| name == "documents")
+                })
+                .map(Path::to_owned),
+        }
+    }
+
+    fn files(&self) -> io::Result<Vec<DictionaryFile>> {
+        let mut roots = vec![(self.local.clone(), PathBuf::new())];
+        if let Some(storage) = &self.shared_storage {
+            let home = storage.join("koreader");
+            let data = home.join("data");
+            if [&home, &data]
+                .into_iter()
+                .all(|dir| fs::symlink_metadata(dir).is_ok_and(|info| info.is_dir()))
+            {
+                for name in ["dict", "dict_ext"] {
+                    roots.push((data.join(name), Path::new("/koreader/data").join(name)));
+                }
+            }
+        }
+        let mut files = Vec::new();
+        let mut entries = 0;
+        for (directory, prefix) in roots {
+            let found = (|| -> io::Result<()> {
+                let Some(root) = dictionary_root(&directory)? else {
+                    return Ok(());
+                };
+                for path in dictionary_files(&root, &mut entries, MAX_DICTIONARIES - files.len())? {
+                    let key =
+                        prefix.join(path.strip_prefix(&root).expect("discovered beneath root"));
+                    files.push(DictionaryFile {
+                        root: root.clone(),
+                        path,
+                        key,
+                    });
+                }
+                Ok(())
+            })();
+            if prefix.as_os_str().is_empty() {
+                found?;
+            }
+        }
+        Ok(files)
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn installed(&self) -> io::Result<Vec<InstalledDictionary>> {
+        Ok(self
+            .files()?
+            .into_iter()
+            .filter_map(|file| {
+                let title = Info::load(open_dictionary_file(&file.root, &file.path).ok()?)
+                    .ok()?
+                    .title;
+                Some(InstalledDictionary {
+                    path: file.key,
+                    title,
+                })
             })
-        })
-        .collect())
+            .collect())
+    }
+
+    pub(crate) fn lookup(
+        &self,
+        word: &str,
+        preferred: Option<&Path>,
+    ) -> io::Result<Vec<Definition>> {
+        let word = word.trim();
+        if word.len() > MAX_WORD_BYTES {
+            return Ok(Vec::new());
+        }
+        let unwrapped = crate::search::without_soft_hyphens(word);
+        let term = unwrapped.trim();
+        if term.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut files = self.files()?;
+        if let Some(preferred) = preferred
+            && let Some(index) = files.iter().position(|file| file.key == preferred)
+        {
+            files[..=index].rotate_right(1);
+        }
+        let folded = CaseMapper::new().fold_string(term);
+        let query = Query {
+            word,
+            folded: &folded,
+        };
+        let mut hits = Hits::new();
+        let mut budget = LookupBudget {
+            index_bytes: MAX_TOTAL_INDEX_BYTES,
+            dictzip_bytes: MAX_DZ_LOOKUP_BYTES,
+        };
+        let mut valid = Vec::new();
+        let mut first_error = None;
+        for DictionaryFile { root, path, .. } in files {
+            let result = (|| {
+                let info = Info::load(open_dictionary_file(&root, &path)?)?;
+                let found = lookup_dictionary(
+                    &root,
+                    &path,
+                    &info,
+                    IndexQuery::Headwords(query),
+                    &mut budget,
+                )?;
+                Ok((info, found))
+            })();
+            match result {
+                Ok((info, found)) => {
+                    valid.push((root, path, info));
+                    hits.extend(found);
+                }
+                Err(error) => {
+                    first_error.get_or_insert(error);
+                }
+            }
+            if hits.exact.len() == MAX_RESULTS || budget.index_bytes == 0 {
+                break;
+            }
+        }
+        if valid.is_empty()
+            && let Some(error) = first_error
+        {
+            return Err(error);
+        }
+        if hits.is_empty() {
+            for (root, path, info) in valid {
+                let Ok(targets) = synonym_targets(&root, &path, &info, query, &mut budget) else {
+                    // A malformed optional sidecar does not invalidate the base dictionary.
+                    continue;
+                };
+                if !targets.is_empty()
+                    && let Ok(found) = lookup_dictionary(
+                        &root,
+                        &path,
+                        &info,
+                        IndexQuery::Synonyms(targets),
+                        &mut budget,
+                    )
+                {
+                    hits.extend(found);
+                }
+                if hits.exact.len() == MAX_RESULTS || budget.index_bytes == 0 {
+                    break;
+                }
+            }
+        }
+        Ok(hits.into_best())
+    }
 }
 
 /// Find exact and Unicode caseless headwords, then try optional synonym indexes
@@ -77,97 +232,18 @@ pub fn lookup(root: &Path, word: &str) -> io::Result<Vec<Definition>> {
     lookup_preferred(root, word, None)
 }
 
-pub(crate) fn lookup_preferred(
+fn lookup_preferred(
     root: &Path,
     word: &str,
     preferred: Option<&Path>,
 ) -> io::Result<Vec<Definition>> {
-    let word = word.trim();
-    if word.len() > MAX_WORD_BYTES {
-        return Ok(Vec::new());
+    DictionarySources {
+        local: root.to_owned(),
+        shared_storage: None,
     }
-    let unwrapped = crate::search::without_soft_hyphens(word);
-    let term = unwrapped.trim();
-    if term.is_empty() {
-        return Ok(Vec::new());
-    }
-    let Some(root) = dictionary_root(root)? else {
-        return Ok(Vec::new());
-    };
-    let mut files = dictionary_files(&root)?;
-    if let Some(preferred) = preferred
-        && let Some(index) = files
-            .iter()
-            .position(|path| path.strip_prefix(&root).ok() == Some(preferred))
-    {
-        files[..=index].rotate_right(1);
-    }
-    let folded = CaseMapper::new().fold_string(term);
-    let query = Query {
-        word,
-        folded: &folded,
-    };
-    let mut hits = Hits::new();
-    let mut budget = LookupBudget {
-        index_bytes: MAX_TOTAL_INDEX_BYTES,
-        dictzip_bytes: MAX_DZ_LOOKUP_BYTES,
-    };
-    let mut valid = Vec::new();
-    let mut first_error = None;
-    for path in files {
-        let result = (|| {
-            let info = Info::load(open_dictionary_file(&root, &path)?)?;
-            let found = lookup_dictionary(
-                &root,
-                &path,
-                &info,
-                IndexQuery::Headwords(query),
-                &mut budget,
-            )?;
-            Ok((info, found))
-        })();
-        match result {
-            Ok((info, found)) => {
-                valid.push((path, info));
-                hits.extend(found);
-            }
-            Err(error) => {
-                first_error.get_or_insert(error);
-            }
-        }
-        if hits.exact.len() == MAX_RESULTS || budget.index_bytes == 0 {
-            break;
-        }
-    }
-    if valid.is_empty()
-        && let Some(error) = first_error
-    {
-        return Err(error);
-    }
-    if hits.is_empty() {
-        for (path, info) in valid {
-            let Ok(targets) = synonym_targets(&root, &path, &info, query, &mut budget) else {
-                // A malformed optional sidecar does not invalidate the base dictionary.
-                continue;
-            };
-            if !targets.is_empty()
-                && let Ok(found) = lookup_dictionary(
-                    &root,
-                    &path,
-                    &info,
-                    IndexQuery::Synonyms(targets),
-                    &mut budget,
-                )
-            {
-                hits.extend(found);
-            }
-            if hits.exact.len() == MAX_RESULTS || budget.index_bytes == 0 {
-                break;
-            }
-        }
-    }
-    Ok(hits.into_best())
+    .lookup(word, preferred)
 }
+
 
 fn dictionary_root(root: &Path) -> io::Result<Option<PathBuf>> {
     match fs::symlink_metadata(root) {
@@ -178,19 +254,18 @@ fn dictionary_root(root: &Path) -> io::Result<Option<PathBuf>> {
     }
 }
 
-fn dictionary_files(root: &Path) -> io::Result<Vec<PathBuf>> {
+fn dictionary_files(root: &Path, entries: &mut usize, limit: usize) -> io::Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     let mut directories = vec![(0, fs::read_dir(root)?)];
-    let mut entries = 0;
     while let Some((depth, directory)) = directories.last_mut() {
         let Some(entry) = directory.next() else {
             directories.pop();
             continue;
         };
-        if entries == MAX_SCAN_ENTRIES || files.len() == MAX_DICTIONARIES {
+        if *entries == MAX_SCAN_ENTRIES || files.len() == limit {
             break;
         }
-        entries += 1;
+        *entries += 1;
         let Ok(entry) = entry else {
             continue;
         };
@@ -990,7 +1065,12 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) fn write_dictionary(root: &Path, name: &str, sequence: &str, entries: &[(&str, &[u8])]) {
+    pub(crate) fn write_dictionary(
+        root: &Path,
+        name: &str,
+        sequence: &str,
+        entries: &[(&str, &[u8])],
+    ) {
         let mut index = Vec::new();
         let mut data = Vec::new();
         for &(word, value) in entries {
@@ -1229,6 +1309,80 @@ pub(crate) mod tests {
         let fallback =
             lookup_preferred(&temp.0, "word", Some(Path::new("../unavailable.ifo"))).unwrap();
         assert_eq!(fallback[0].dictionary, "Harbor");
+    }
+
+    #[cfg(feature = "kindle")]
+    #[test]
+    fn search_reader_and_existing_koreader_dictionaries_in_preference_order() {
+        let temp = TestDirectory::new();
+        let docs = temp.0.join("documents");
+        let data = temp.0.join("reader/data");
+        let local = data.join("dictionaries");
+        let shared = temp.0.join("koreader/data");
+        for (root, definition) in [
+            (local.clone(), "Reader"),
+            (shared.join("dict"), "KOReader"),
+            (shared.join("dict_ext"), "Extended"),
+        ] {
+            fs::create_dir_all(&root).unwrap();
+            write_dictionary(
+                &root,
+                "Same",
+                "sametypesequence=m\n",
+                &[("word", definition.as_bytes())],
+            );
+        }
+        let sources = DictionarySources::for_reader(&docs, &data);
+        let dictionaries = sources.installed().unwrap();
+        assert_eq!(dictionaries.len(), 3);
+        assert_eq!(dictionaries[0].path, Path::new("Same.ifo"));
+        assert_ne!(dictionaries[1].path, dictionaries[2].path);
+        for (file, first) in dictionaries.iter().zip(["Reader", "KOReader", "Extended"]) {
+            let result = sources.lookup("word", Some(&file.path)).unwrap();
+            assert_eq!(result.len(), 3);
+            assert_eq!(result[0].text, first);
+        }
+        fs::remove_dir_all(&local).unwrap();
+        assert_eq!(sources.lookup("word", None).unwrap()[0].text, "KOReader");
+        assert!(!local.exists());
+        assert!(
+            DictionarySources::for_reader(&temp.0.join("custom"), &data)
+                .installed()
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[cfg(all(unix, feature = "kindle"))]
+    #[test]
+    fn shared_dictionary_discovery_skips_redirected_or_inaccessible_sources() {
+        let temp = TestDirectory::new();
+        let data = temp.0.join("reader/data");
+        let local = data.join("dictionaries");
+        fs::create_dir_all(&local).unwrap();
+        write_dictionary(
+            &local,
+            "Home",
+            "sametypesequence=m\n",
+            &[("word", b"Reader")],
+        );
+        let other = temp.0.join("elsewhere/data/dict");
+        fs::create_dir_all(&other).unwrap();
+        write_dictionary(
+            &other,
+            "Other",
+            "sametypesequence=m\n",
+            &[("word", b"Other")],
+        );
+        std::os::unix::fs::symlink(temp.0.join("elsewhere"), temp.0.join("koreader")).unwrap();
+        let sources = DictionarySources::for_reader(&temp.0.join("documents"), &data);
+        assert_eq!(sources.installed().unwrap().len(), 1);
+        fs::remove_file(temp.0.join("koreader")).unwrap();
+        let shared = temp.0.join("koreader/data");
+        fs::create_dir_all(&shared).unwrap();
+        fs::write(shared.join("dict_ext"), b"unavailable").unwrap();
+        std::os::unix::fs::symlink(&other, shared.join("dict")).unwrap();
+        assert_eq!(sources.lookup("word", None).unwrap().len(), 1);
     }
 
     #[test]

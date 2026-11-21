@@ -153,7 +153,7 @@ device. [Reading parity and device results](docs/reading-parity-plan.md)
 | DOCX | Macro-free Strict and Transitional Word documents. Text, headings, basic emphasis, table reading order, and title and author metadata. |
 | CHM | Static help topics in single archives, with nested contents, headings, links and local JPEG or PNG illustrations. |
 | RTF and TCR | RTF preserves paragraphs and basic character styling. TCR opens bounded 8-bit dictionary-compressed text in the reflow reader. |
-| StarDict | Local dictionaries in `reader/data/dictionaries/`, including gzip indexes, indexed dictzip data and optional synonym entries. |
+| StarDict | Reader discovers existing dictionaries in `koreader/data/dict/` and `koreader/data/dict_ext/` alongside `reader/data/dictionaries/`. Select a word to see its offline definitions. Choose a preferred dictionary in reading settings. Gzip indexes, indexed dictzip data and synonym entries are supported. |
 
 In Library, open Reading data to export or preview and restore a local backup
 of progress, per-book settings, bookmarks and annotations.
