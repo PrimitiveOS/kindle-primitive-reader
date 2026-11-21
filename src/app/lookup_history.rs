@@ -13,6 +13,8 @@ const MAX_QUERY_CHARS: usize = 128;
 pub(super) struct SearchQuery {
     pub text: String,
     pub match_case: bool,
+    #[serde(default)]
+    pub ignore_accents: bool,
 }
 
 #[derive(Clone, Default, Deserialize, Serialize)]
@@ -21,6 +23,8 @@ pub(super) struct LookupHistory {
     pub searches: Vec<SearchQuery>,
     pub dictionary: Vec<String>,
     pub vocabulary: Vec<String>,
+    pub online: Vec<crate::online_lookup::Request>,
+    pub online_languages: super::online_panel::Languages,
 }
 
 impl LookupHistory {
@@ -32,6 +36,9 @@ impl LookupHistory {
         history.searches.retain(|item| valid(&item.text));
         history.dictionary.retain(|word| valid(word));
         history.vocabulary.retain(|word| valid(word));
+        history.online.retain(|item| item.validate().is_ok());
+        history.online.truncate(8);
+        history.online_languages.normalize();
         history.searches.truncate(MAX_QUERY_HISTORY);
         history.dictionary.truncate(MAX_QUERY_HISTORY);
         history.vocabulary.truncate(MAX_VOCABULARY);
@@ -43,16 +50,21 @@ impl LookupHistory {
         primitive_app::save(path, &contents)
     }
 
-    pub fn search(&mut self, text: &str, match_case: bool) {
+    pub fn search(&mut self, text: &str, match_case: bool, ignore_accents: bool) {
         let current = SearchQuery {
             text: text.trim().chars().take(MAX_QUERY_CHARS).collect(),
             match_case,
+            ignore_accents,
         };
         remember(&mut self.searches, current, MAX_QUERY_HISTORY);
     }
 
     pub fn lookup(&mut self, word: &str) {
         remember(&mut self.dictionary, word.to_owned(), MAX_QUERY_HISTORY);
+    }
+
+    pub fn online(&mut self, request: crate::online_lookup::Request) {
+        remember(&mut self.online, request, 8);
     }
 
     pub fn save_word(&mut self, word: &str) -> bool {

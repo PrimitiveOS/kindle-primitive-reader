@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   test:
-    name: Unit tests
+    name: Reader and document tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -19,5 +19,5 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Unit tests
-        run: cargo test --locked --lib --features kindle
+      - name: Reader and document tests
+        run: cargo test --locked --workspace --tests

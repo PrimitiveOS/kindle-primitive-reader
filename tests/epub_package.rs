@@ -77,6 +77,199 @@ fn entry(label: &str, depth: usize, destination: Option<Destination>) -> TocEntr
 }
 
 #[test]
+fn epub2_opens_compressed_reordered_marker_and_public_doctypes_across_the_package() {
+    use reader::{Engine, Probe, Settings};
+    let (book, output) = temporary_document("epub");
+    let mut archive = ZipWriter::new(output);
+    let entries = [
+        (
+            "META-INF/container.xml",
+            r#"<?xml version="1.0"?>
+            <!DOCTYPE container SYSTEM 'container.dtd'>
+            <container><rootfiles><rootfile full-path="book.opf" media-type="application/oebps-package+xml"/></rootfiles></container>"#,
+        ),
+        (
+            "book.opf",
+            r#"<?xml version="1.0"?>
+            <!DOCTYPE package PUBLIC "-//Example//DTD Package//EN" "legacy.opf.dtd">
+            <package xmlns="http://www.idpf.org/2007/opf" version="2.0"><metadata><title>Signal book</title></metadata>
+            <manifest><item id="chapter" href="page.xhtml" media-type="application/xhtml+xml"/>
+            <item id="nav" href="toc.ncx" media-type="application/x-dtbncx+xml"/></manifest>
+            <spine toc="nav"><itemref idref="chapter"/></spine></package>"#,
+        ),
+        ("mimetype", "application/epub+zip"),
+        (
+            "toc.ncx",
+            r#"<!DOCTYPE ncx PUBLIC "-//NISO//DTD ncx 2005-1//EN" "ncx-2005-1.dtd">
+            <ncx><navMap><navPoint><navLabel><text>Signal page</text></navLabel>
+            <content src="page.xhtml#marker"/></navPoint></navMap></ncx>"#,
+        ),
+        (
+            "page.xhtml",
+            r#"<?xml version="1.0"?><!-- an original test -->
+            <!DOCTYPE html PUBLIC '-//W3C//DTD XHTML 1.1//EN'
+            'http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd'>
+            <html xmlns="http://www.w3.org/1999/xhtml"><head><title>Signal</title></head>
+            <body><p id="marker">Meet at the beacon &mdash; before dark.</p></body></html>"#,
+        ),
+    ];
+    for (name, content) in entries {
+        archive
+            .start_file(
+                name,
+                SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
+            )
+            .unwrap();
+        archive.write_all(content.as_bytes()).unwrap();
+    }
+    archive.finish().unwrap();
+    let opened = Book::open(&book.0).unwrap();
+    assert_eq!(opened.title, "Signal book");
+    assert_eq!(
+        opened.toc()[0]
+            .destination
+            .as_ref()
+            .unwrap()
+            .fragment
+            .as_deref(),
+        Some("marker")
+    );
+    let mut probe = Probe::open(
+        &book.0,
+        Engine::Parley,
+        &[fixture("fonts/Silkscreen-Regular.ttf")],
+        Settings::default(),
+        0,
+    )
+    .unwrap();
+    assert_eq!(probe.matches("Meet at the beacon — before dark.").len(), 1);
+    assert!(probe.capture(0).unwrap().iter().any(|&tone| tone < 128));
+}
+
+#[test]
+fn zero_padded_epub_uses_original_library_identity_and_requires_a_bounded_padding_length() {
+    use reader::library::Library;
+    let (file, output) = temporary_document("epub");
+    drop(output);
+    let mut data = fs::read(fixture("field-notes-epub2.epub")).unwrap();
+    data.push(0);
+    fs::write(&file.0, &data).unwrap();
+    let (state, state_file) = temporary_document("json");
+    drop(state_file);
+    fs::remove_file(&state.0).unwrap();
+    let library = Library::open(file.0.parent().unwrap(), &state.0).unwrap();
+    let entry = library.resolve(&file.0).unwrap();
+    let identity = library.identify(&entry).unwrap();
+    assert!(Book::open(&file.0).unwrap().chapter(1).is_ok());
+    assert_eq!(library.identify(&entry).unwrap(), identity);
+    assert_eq!(fs::read(&file.0).unwrap(), data);
+
+    *data.last_mut().unwrap() = 1;
+    fs::write(&file.0, &data).unwrap();
+    assert!(Book::open(&file.0).is_err());
+    assert!(library.identify(&entry).is_err());
+    data.pop();
+    data.resize(data.len() + 513, 0);
+    fs::write(&file.0, data).unwrap();
+    assert!(Book::open(&file.0).is_err());
+}
+
+#[test]
+fn epub_recovers_local_member_offsets_across_a_damaged_image_and_checks_remaining_payloads() {
+    use reader::library::Library;
+    let canonical = File::open(fixture("field-notes-epub2.epub")).unwrap();
+    let mut original = ZipArchive::new(canonical).unwrap();
+    let (file, output) = temporary_document("epub");
+    let mut test_zip = ZipWriter::new(output);
+    let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+    for i in 0..original.len() {
+        test_zip
+            .raw_copy_file(original.by_index(i).unwrap())
+            .unwrap();
+        if i == 1 {
+            test_zip.start_file("damaged.png", stored).unwrap();
+            test_zip.write_all(&[0xA4; 8192]).unwrap();
+            test_zip.start_file("check-crc.bin", stored).unwrap();
+            test_zip.write_all(b"ABCDE").unwrap();
+        }
+    }
+    drop(test_zip.finish().unwrap());
+    let mut archive = ZipArchive::new(File::open(&file.0).unwrap()).unwrap();
+    let damage = archive.by_name("damaged.png").unwrap().data_start() as usize + 20;
+    let check = archive.by_name("check-crc.bin").unwrap().data_start() as usize;
+    drop(archive);
+    let mut bytes = fs::read(&file.0).unwrap();
+    bytes[check] ^= 1;
+    bytes.drain(damage..damage + 1024);
+    fs::write(&file.0, &bytes).unwrap();
+    let mut book = Book::open(&file.0).unwrap();
+    assert_eq!(book.chapters.len(), 2);
+    for i in 0..2 {
+        let mut expected = String::new();
+        original
+            .by_name(&book.chapters[i].href)
+            .unwrap()
+            .read_to_string(&mut expected)
+            .unwrap();
+        assert_eq!(book.chapter(i).unwrap(), expected);
+    }
+    assert!(book.resource("damaged.png").is_err());
+    assert!(
+        book.resource("check-crc.bin")
+            .unwrap_err()
+            .to_string()
+            .to_ascii_lowercase()
+            .contains("checksum")
+    );
+    assert!(book.resource("../mimetype").is_err());
+    let (state, state_file) = temporary_document("json");
+    drop(state_file);
+    fs::remove_file(&state.0).unwrap();
+    let library = Library::open(file.0.parent().unwrap(), &state.0).unwrap();
+    let entry = library.resolve(&file.0).unwrap();
+    assert!(library.identify(&entry).is_ok());
+    assert_eq!(fs::read(&file.0).unwrap(), bytes);
+}
+
+#[test]
+fn recovered_epub_marks_a_missing_chapter_and_keeps_the_following_spine_index() {
+    use reader::{Engine, Probe, Settings};
+    let canonical = fixture("field-notes-epub2.epub");
+    let mut original = Book::open(&canonical).unwrap();
+    let mut bytes = fs::read(&canonical).unwrap();
+    let mut archive = ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
+    let missing = archive.by_name(&original.chapters[0].href).unwrap();
+    let remove = missing.header_start() as usize
+        ..(missing.data_start() + missing.compressed_size()) as usize;
+    drop(missing);
+    drop(archive);
+    bytes.drain(remove);
+    let (file, mut output) = temporary_document("epub");
+    output.write_all(&bytes).unwrap();
+    drop(output);
+    let mut book = Book::open(&file.0).unwrap();
+    assert_eq!(book.chapters.len(), original.chapters.len());
+    assert!(book.resource(&original.chapters[0].href).is_err());
+    assert!(
+        book.chapter(0)
+            .unwrap()
+            .contains("missing from the damaged EPUB")
+    );
+    assert_eq!(book.chapter(1).unwrap(), original.chapter(1).unwrap());
+
+    let mut notice = Probe::open(
+        &file.0,
+        Engine::Parley,
+        &[fixture("fonts/Silkscreen-Regular.ttf")],
+        Settings::default(),
+        0,
+    )
+    .unwrap();
+    assert_eq!(notice.page_count(), 1);
+    assert!(notice.capture(0).unwrap().iter().any(|&tone| tone < 128));
+}
+
+#[test]
 fn epub_navigation_preserves_depth_order_headings_and_fragments() {
     let xhtml = r##"<?xml version="1.0"?>
     <!DOCTYPE html>

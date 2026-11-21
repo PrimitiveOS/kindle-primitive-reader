@@ -52,6 +52,25 @@ pub(crate) enum WritingMode {
     VerticalLr,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum ImageLength {
+    Auto,
+    Pixels(f32),
+    Fraction(f32),
+    Em(f32),
+}
+
+impl ImageLength {
+    pub(crate) fn pixels(self, available: u32, font_size: f32) -> Option<f32> {
+        match self {
+            Self::Auto => None,
+            Self::Pixels(px) => Some(px),
+            Self::Fraction(ratio) => Some(ratio * available as f32),
+            Self::Em(scale) => Some(scale * font_size),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct Style {
     pub font_family: Family,
@@ -60,6 +79,9 @@ pub(crate) struct Style {
     pub font_style: FontStyle,
     pub line_height: Option<f32>,
     pub background: Option<u8>,
+    pub image_width: Option<ImageLength>,
+    pub image_height: Option<ImageLength>,
+    pub image_align: parley::VerticalAlign,
     pub alignment: Option<Alignment>,
     pub line_break: Option<LineBreak>,
     pub word_break: WordBreak,
@@ -76,6 +98,9 @@ impl Default for Style {
             font_style: FontStyle::Normal,
             line_height: None,
             background: None,
+            image_width: None,
+            image_height: None,
+            image_align: parley::VerticalAlign::BASELINE,
             alignment: None,
             line_break: None,
             word_break: WordBreak::Normal,
@@ -153,6 +178,9 @@ impl BookStyle {
             let mut style = parent.clone();
             // A parent's background paints its box. It is not a text property.
             style.background = None;
+            style.image_width = None;
+            style.image_height = None;
+            style.image_align = parley::VerticalAlign::BASELINE;
             match element.tag.as_str() {
                 "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
                     style.size_scale *= 1.4;
@@ -218,6 +246,9 @@ impl BookStyle {
                     Property::WordBreak(breaking) => style.word_break = *breaking,
                     Property::SoftHyphens(enabled) => style.soft_hyphens = *enabled,
                     Property::WritingMode(mode) => style.writing_mode = *mode,
+                    Property::Width(value) => style.image_width = Some(*value),
+                    Property::Height(value) => style.image_height = Some(*value),
+                    Property::VerticalAlign(value) => style.image_align = *value,
                     Property::FontSource(_) => {}
                 }
             }
@@ -502,7 +533,7 @@ fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
 }
 
 type Priority = (bool, bool, Specificity);
-type Winners<'a> = [Option<(Priority, &'a Property)>; 11];
+type Winners<'a> = [Option<(Priority, &'a Property)>; 14];
 
 fn choose<'a>(
     winners: &mut Winners<'a>,
@@ -523,6 +554,9 @@ fn choose<'a>(
             Property::WordBreak(_) => 8,
             Property::SoftHyphens(_) => 9,
             Property::WritingMode(_) => 10,
+            Property::Width(_) => 11,
+            Property::Height(_) => 12,
+            Property::VerticalAlign(_) => 13,
             Property::FontSource(_) => continue,
         };
         let priority = (declaration.important, inline, specificity);
@@ -575,6 +609,9 @@ enum Property {
     WordBreak(WordBreak),
     SoftHyphens(bool),
     WritingMode(WritingMode),
+    Width(ImageLength),
+    Height(ImageLength),
+    VerticalAlign(parley::VerticalAlign),
 }
 
 struct Properties;
@@ -591,6 +628,52 @@ impl<'i> DeclarationParser<'i> for Properties {
     ) -> CssResult<Declaration> {
         let property = input.parse_until_before(Delimiter::Bang, |input| {
             let property = match name.to_ascii_lowercase().as_ref() {
+                "vertical-align" => {
+                    use parley::VerticalAlign;
+                    Property::VerticalAlign(
+                        match input.expect_ident()?.to_ascii_lowercase().as_str() {
+                            "baseline" => VerticalAlign::BASELINE,
+                            "middle" => VerticalAlign::MIDDLE,
+                            "top" => VerticalAlign::TOP,
+                            "bottom" => VerticalAlign::BOTTOM,
+                            "text-top" => VerticalAlign::TEXT_TOP,
+                            "text-bottom" => VerticalAlign::TEXT_BOTTOM,
+                            "super" => VerticalAlign::SUPER,
+                            "sub" => VerticalAlign::SUB,
+                            _ => return Err(ParseError::unexpected_token()),
+                        },
+                    )
+                }
+                "width" | "height" => {
+                    let length = match input.next()?.clone() {
+                        Token::Ident(s) if s.eq_ignore_ascii_case("auto") => ImageLength::Auto,
+                        Token::Percentage { unit_value, .. }
+                            if unit_value.is_finite() && unit_value > 0.0 =>
+                        {
+                            ImageLength::Fraction(unit_value)
+                        }
+                        Token::Dimension { unit, value, .. }
+                            if value.is_finite()
+                                && value > 0.0
+                                && unit.eq_ignore_ascii_case("px") =>
+                        {
+                            ImageLength::Pixels(value)
+                        }
+                        Token::Dimension { unit, value, .. }
+                            if value.is_finite()
+                                && value > 0.0
+                                && unit.eq_ignore_ascii_case("em") =>
+                        {
+                            ImageLength::Em(value)
+                        }
+                        _ => return Err(ParseError::unexpected_token()),
+                    };
+                    if name.eq_ignore_ascii_case("width") {
+                        Property::Width(length)
+                    } else {
+                        Property::Height(length)
+                    }
+                }
                 "font-family" => Property::Family(input.parse_comma_separated(font_family)?),
                 "src" => {
                     Property::FontSource(input.parse_comma_separated_ignoring_errors(font_url))

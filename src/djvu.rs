@@ -167,6 +167,92 @@ impl Djvu {
         Ok(output)
     }
 
+    /// Decode only the source patch needed for each output tile. A rotated crop at high zoom
+    /// can project an entire page to tens of thousands of pixels on either axis.
+    #[cfg(feature = "kindle")]
+    pub(crate) fn render_transformed(
+        &self,
+        page: usize,
+        request: RenderRequest,
+        correction: hayro::kurbo::Affine,
+    ) -> Result<Vec<u8>, DjvuError> {
+        use hayro::kurbo::{Affine, Point, Rect};
+        if correction == Affine::IDENTITY {
+            return self.render(page, request);
+        }
+        let size = self.page_size(page)?;
+        let transform = request
+            .page_to_viewport(size)
+            .map_err(|_| DjvuError::InvalidViewport)?
+            * correction;
+        let scale = transform.determinant().sqrt() as f32;
+        // Measure inverse positions in upright rendered pixels, rather than native page units.
+        let inverse = Affine::scale(f64::from(scale)) * transform.inverse();
+        let source_width = (size.0 * scale).round().max(1.0) as i32;
+        let source_height = (size.1 * scale).round().max(1.0) as i32;
+        let mut result = vec![255; (request.width * request.height) as usize];
+        const TILE: usize = 900;
+        for top in (0..request.height as usize).step_by(TILE) {
+            for left in (0..request.width as usize).step_by(TILE) {
+                let right = (left + TILE).min(request.width as usize);
+                let bottom = (top + TILE).min(request.height as usize);
+                let patch = inverse.transform_rect_bbox(Rect::new(
+                    left as f64,
+                    top as f64,
+                    right as f64,
+                    bottom as f64,
+                ));
+                let x0 = (patch.x0.floor() as i32 - 1).max(0);
+                let y0 = (patch.y0.floor() as i32 - 1).max(0);
+                let x1 = (patch.x1.ceil() as i32 + 1).min(source_width);
+                let y1 = (patch.y1.ceil() as i32 + 1).min(source_height);
+                if x0 >= x1 || y0 >= y1 {
+                    continue;
+                }
+                let w = (x1 - x0) as usize;
+                let h = (y1 - y0) as usize;
+                let pixels = self.render(
+                    page,
+                    RenderRequest {
+                        width: w as u32,
+                        height: h as u32,
+                        x: -(x0 as f32),
+                        y: -(y0 as f32),
+                        scale,
+                        turns: 0,
+                    },
+                )?;
+                let step = inverse.as_coeffs();
+                for y in top..bottom {
+                    let mut point = inverse * Point::new(left as f64 + 0.5, y as f64 + 0.5);
+                    let row = &mut result
+                        [y * request.width as usize + left..y * request.width as usize + right];
+                    for pixel in row {
+                        let x = point.x - f64::from(x0);
+                        let y = point.y - f64::from(y0);
+                        if (0.0..w as f64).contains(&x) && (0.0..h as f64).contains(&y) {
+                            let sx = (x - 0.5).clamp(0.0, (w - 1) as f64);
+                            let sy = (y - 0.5).clamp(0.0, (h - 1) as f64);
+                            let a = sx as usize;
+                            let b = (a + 1).min(w - 1);
+                            let upper = sy as usize * w;
+                            let lower = ((sy as usize + 1).min(h - 1)) * w;
+                            let blend = |i| {
+                                f64::from(pixels[i + a]) * (1.0 - sx.fract())
+                                    + f64::from(pixels[i + b]) * sx.fract()
+                            };
+                            *pixel = (blend(upper) * (1.0 - sy.fract()) + blend(lower) * sy.fract())
+                                .round() as u8;
+                        }
+                        point.x += step[0];
+                        point.y += step[1];
+                    }
+                }
+            }
+        }
+        Ok(result)
+    }
+
     /// Read existing text zones in scan order with normalized display bounds.
     pub fn page_text(&self, index: usize) -> Result<PdfPageText, DjvuError> {
         let page = self.page(index)?;
@@ -442,6 +528,35 @@ mod tests {
         output.extend_from_slice(payload);
         if !payload.len().is_multiple_of(2) {
             output.push(0);
+        }
+    }
+
+    #[cfg(feature = "kindle")]
+    #[test]
+    fn arbitrary_djvu_rotation_places_ink_under_transformed_word() {
+        use hayro::kurbo::{Affine, Point};
+        let book = Djvu::open(document(0, false)).unwrap();
+        let size = book.page_size(0).unwrap();
+        let word = book.page_text(0).unwrap().words[0].bounds;
+        let center = Point::new(
+            f64::from((word.x0 + word.x1) * size.0 / 2.0),
+            f64::from((word.y0 + word.y1) * size.1 / 2.0),
+        );
+        let correction = Affine::translate((32.0, 20.0))
+            * Affine::rotate(13.0_f64.to_radians())
+            * Affine::translate((-32.0, -20.0));
+        for turns in 0..4 {
+            let request = RenderRequest {
+                width: 1050,
+                height: 1070,
+                scale: 14.0,
+                x: 90.0,
+                y: 210.0,
+                turns,
+            };
+            let target = request.page_to_viewport(size).unwrap() * correction * center;
+            let pixels = book.render_transformed(0, request, correction).unwrap();
+            assert!(pixels[target.y as usize * 1050 + target.x as usize] < 64);
         }
     }
 

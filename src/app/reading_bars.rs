@@ -14,20 +14,7 @@ use super::top_config::TopGroup;
 use super::{Action, Item, Reader, Screen};
 use crate::session::{PAGE_HEIGHT, PagePaint};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum BarPanel {
-    Pages,
-    Text,
-    TextLayout,
-    TextStyle,
-    TextScreen,
-    TextSpacing,
-    TextRendering,
-    View,
-    ViewLayout,
-    ViewScreen,
-    Scan,
-}
+pub(super) use crate::book_menus::BarPanel;
 
 impl BarPanel {
     fn tab(self) -> Self {
@@ -400,9 +387,7 @@ impl Reader {
             let fixed_book = fixed.is_some();
             let supports_text = fixed.is_none_or(|reading| reading.supports_text());
             let tabs = [
-                fixed
-                    .is_none_or(|reading| !reading.outline().is_empty())
-                    .then_some((
+                Some((
                         "Contents",
                         Target::Invoke(Action::Show(if fixed_book {
                             Screen::FixedContents
@@ -571,12 +556,52 @@ impl Reader {
         }
     }
 
+    pub(super) fn restore_reading_menus(&mut self, id: u64) {
+        let menu = self
+            .library
+            .state(id)
+            .map(|state| state.menus)
+            .unwrap_or_default();
+        self.last_top_group = menu.top.unwrap_or(TopGroup::Navigation);
+        self.last_text_panel = menu
+            .bottom
+            .filter(|p| p.tab() == BarPanel::Text)
+            .unwrap_or(BarPanel::Text);
+        self.last_fixed_panel = menu
+            .bottom
+            .filter(|p| matches!(p.tab(), BarPanel::View | BarPanel::Scan))
+            .unwrap_or(BarPanel::View);
+    }
+
+    fn remember_menu(&mut self, update: impl FnOnce(&mut crate::book_menus::BookMenus)) {
+        let state = if let Some(fixed) = &self.fixed {
+            self.library
+                .remember(&fixed.entry, fixed.id, &fixed.entry.title)
+        } else if let Some(book) = &self.active {
+            self.library
+                .remember(&book.entry, book.id, &book.reading.probe.title)
+        } else {
+            return;
+        };
+        let before = state.menus;
+        update(&mut state.menus);
+        if state.menus != before {
+            self.mark_dirty();
+        }
+    }
+
+    fn remember_group(&mut self, group: TopGroup) {
+        self.last_top_group = group;
+        self.remember_menu(|menu| menu.top = Some(group));
+    }
+
     fn remember_bottom_panel(&mut self, panel: BarPanel) {
         match panel.tab() {
             BarPanel::Text => self.last_text_panel = panel,
             BarPanel::View | BarPanel::Scan => self.last_fixed_panel = panel,
-            _ => {}
+            _ => return,
         }
+        self.remember_menu(|menu| menu.bottom = Some(panel));
     }
 
     pub(super) fn open_reading_edge(&mut self, from_top: bool, x: f32) -> Change {
@@ -593,7 +618,7 @@ impl Reader {
                 self.last_top_group
             };
             self.top_group = Some(group);
-            self.last_top_group = group;
+            self.remember_group(group);
         }
         if self.reading_bottom {
             self.reading_panel = Some(self.last_bottom_panel());
@@ -606,8 +631,10 @@ impl Reader {
             return false;
         }
         let middle = WIDTH as f32 / 2.0;
-        if (x - middle).abs() <= 150.0 && (PAGE_HEIGHT as f32..HEIGHT as f32).contains(&y) {
-            // The legacy footer shortcut reveals controls while keeping the pinned Exit available.
+        if (x - middle).abs() <= 150.0
+            && (HEIGHT as f32 * 0.8..HEIGHT as f32 * 12.0 / 13.0).contains(&y)
+        {
+            // The lower menu strip stops where the status footer takes over.
             self.show(screen);
             self.reading_panel = Some(self.last_bottom_panel());
             true
@@ -666,7 +693,7 @@ impl Reader {
                     Some(Target::TopSection(group)) => {
                         self.reading_panel = None;
                         self.top_group = (self.top_group != Some(group)).then_some(group);
-                        self.last_top_group = group;
+                        self.remember_group(group);
                         Change::Partial
                     }
                     Some(Target::BottomSection(panel)) => {

@@ -7,16 +7,18 @@ The [manifest](manifest.json) records the expected reading order, locations, lin
 | `field-notes-epub2.epub` | EPUB 2 NCX navigation, chapter order, publisher CSS, grayscale PNG, local and cross-chapter links, and multilingual text |
 | `field-notes-epub3.epub` | EPUB 3 navigation, semantic footnote and back link, embedded font, and the same reading passages as the EPUB 2 book |
 | `long-chapter.epub` | Continuous layout through 240 numbered observations in one chapter. Find observation 137 again after changing the viewport or font size. |
+| `rtl-notebook.epub` | A bilingual harbor notebook with explicit right-to-left EPUB progression. Open in two-page mode, select text and follow links on either leaf, then check the single-leaf final chapter. |
 | `many-chapters.epub` | Open the first, middle, and last of 48 chapters. Check spine and table of contents order. |
 | `missing-image.epub` | A valid ZIP links to a missing image. Check for usable fallback or error handling. |
 | `malformed-container.epub` | A valid ZIP contains incomplete package-location XML. Check that opening fails cleanly. |
 | `truncated.epub` | The ZIP has no end of central directory record. Check that opening fails cleanly. |
+| `tilted-scan.pdf` | Two original pages with opposite 8° baselines, selectable words and an internal link. Compare the upright result with the source and check that the link opens the next page. |
 | `password-required.pdf` | One generated blank page. Verify the password flow rejects a wrong password and accepts `reader-test`. |
 | `field-notes.tcr` | Calibre 9.5.0 TCR output with original Windows-1252 sample text. Verify decompression and non-ASCII punctuation. |
 
 In each of the two valid Field Notes books, `tide-a` and `tide-b` contain the identical sentence `The tide keeps its own time.` Save a location at each occurrence and verify that it resolves correctly after repagination. The chapter also contains Vietnamese, right-to-left Arabic, and Japanese samples. The EPUB 3 `INK SAMPLE` line uses an embedded Silkscreen face. Use available fallback fonts for the other samples, and record their names when comparing glyph coverage.
 
-From the repository root, use Python 3.9 or newer to regenerate or verify the EPUB fixtures.
+From the repository root, use Python 3.9 or newer to regenerate or verify the EPUB fixtures and tilted PDF.
 
 ```sh
 python3 scripts/generate-fixtures.py
@@ -27,9 +29,20 @@ The generator uses fixed timestamps and stores ZIP members without compression. 
 
 [EPUBCheck 5.4.0](https://github.com/w3c/epubcheck/releases/tag/v5.4.0) reported zero errors and warnings for the four valid fixtures. For the three intentionally incomplete fixtures, it reported a missing file (`RSC-001`), invalid container XML (`RSC-016`), and a missing ZIP end header (`PKG-008`), respectively.
 
+EPUBCheck also reported zero errors and warnings for `rtl-notebook.epub`. The Rust system test opens the bottom Layout panel, enables Two pages, follows a link on the left leaf, exits, and continues at the saved location. To reproduce the screenshot, set `READER_RTL_SCREENSHOT` to a PNG path and `READER_TEST_FONTS` to a path list containing Noto Sans and an Arabic fallback. The dark-page image test accepts `READER_NIGHT_IMAGE_SCREENSHOT` and `READER_IMAGE_CONTROLS_SCREENSHOT` and uses Field Notes (EPUB 3). A Japanese fallback also covers the Japanese passage in that fixture.
+
+```sh
+cargo test --locked --features kindle --lib rtl_book_opens_from_documents
+cargo test --locked --features kindle --lib image_controls_follow_night_mode
+```
+
 The password fixture was generated with pypdf 6.1.1, a 120 × 80 point blank page,
 and RC4-128 encryption. Its SHA-256 is
 `3d2ecdcffc6efdb74e58f660cbf017d3162d42fc08279dc4c274974633b11798`.
 
 The TCR fixture has SHA-256
 `a918383808daa49e5cdd101e4f121b6175fcdd2df6ab406b3c33559cb9b67af3`.
+
+The simulated interface uses [Launcher’s Noto Sans Regular](https://github.com/PrimitiveOS/kindle-primitive-launcher/blob/799cd5348d0a82673ea4fc36664ffc084146f238/assets/fonts/NotoSans-Regular.ttf). Its [SIL Open Font License](fonts/OFL-NotoSans.txt) travels with the test bundle.
+
+`signal-guide.epub` contains an original two-chapter field notebook with an inline SVG reference and a percentage-sized PNG sketch. The Parley tests verify CSS sizing, image targets, text geometry and source coverage. The Reader test taps the illustrated link, returns, saves and reopens the book. Reproduce the [simulated page](../../docs/screenshots/epub-inline-illustrations.png) using `reader-probe parley tests/fixtures/signal-guide.epub --font <NotoSans-Regular.ttf> --width 1264 --height 1680 --size 44 --margin 72 --output <page.png>`.

@@ -30,9 +30,21 @@ pub(crate) struct Block {
     pub links: Vec<InlineLink>,
     pub direction: BaseDirection,
     pub language: Option<Language>,
-    pub images: Vec<String>,
+    pub images: Vec<EmbeddedImage>,
     pub ruby: Vec<Ruby>,
     legacy: Option<LegacyOffsets>,
+}
+
+pub(crate) struct EmbeddedImage {
+    pub href: String,
+    pub inline_svg: Option<String>,
+    pub offset: usize,
+    pub space_after: bool,
+    pub element: usize,
+    pub width: Option<f32>,
+    pub height: Option<f32>,
+    pub link: Option<String>,
+    pub label: String,
 }
 
 pub(crate) struct Ruby {
@@ -114,6 +126,7 @@ pub(crate) struct Source {
     pub stylesheets: Vec<Stylesheet>,
     pub elements: Vec<Element>,
     insertions: Vec<(usize, usize)>,
+    normalized_xhtml: Option<String>,
     ruby_exclusions: Vec<Range<usize>>,
     head_end: usize,
 }
@@ -242,6 +255,14 @@ fn simple_ruby(node: Node<'_, '_>, limit: usize) -> Option<(Vec<RubyDraft>, Vec<
 
 impl Source {
     pub fn parse(xhtml: &str) -> Result<Self> {
+        Self::parse_document(xhtml, crate::revision(xhtml), true)
+    }
+
+    fn parse_document(
+        xhtml: &str,
+        original_revision: u64,
+        allow_normalization: bool,
+    ) -> Result<Self> {
         let options = || ParsingOptions {
             nodes_limit: 100_000,
             ..ParsingOptions::default()
@@ -345,7 +366,8 @@ impl Source {
             let mut links: Vec<InlineLink> = Vec::new();
             let mut last_link = None;
             let mut spaces = false;
-            let mut images = Vec::new();
+            let mut images: Vec<EmbeddedImage> = Vec::new();
+            let mut image_after_space: Option<usize> = None;
             let mut ids = Vec::new();
             let (mut ruby, exclusions) = ruby_markup(node, &mut available_ruby);
             let mut legacy = (!ruby.is_empty()).then(LegacyExtraction::default);
@@ -371,6 +393,7 @@ impl Source {
                     ));
                 }
                 if descendant.has_tag_name("br") {
+                    image_after_space = None;
                     if let Some(legacy) = &mut legacy {
                         let at = legacy.text.len();
                         legacy.text.push('\n');
@@ -380,14 +403,56 @@ impl Source {
                     text.push('\n');
                     spaces = false;
                 }
-                if descendant.has_tag_name("img")
-                    && let Some(src) = descendant.attribute("src")
-                {
-                    images.push(src.to_owned());
+                let external = illustration_href(descendant);
+                let inline_svg = (external.is_none()
+                    && descendant.has_tag_name(("http://www.w3.org/2000/svg", "svg")))
+                .then(|| crate::svg_image::inline_source(descendant, xhtml))
+                .flatten();
+                if external.is_some() || inline_svg.is_some() {
+                    let pixels = |name| {
+                        descendant.attribute(name).and_then(|v| {
+                            v.trim()
+                                .parse::<f32>()
+                                .ok()
+                                .filter(|v| v.is_finite() && *v > 0.0)
+                        })
+                    };
+                    image_after_space = (spaces && !text.is_empty() && !text.ends_with('\n'))
+                        .then_some(images.len());
+                    images.push(EmbeddedImage {
+                        href: external.map(str::to_owned).unwrap_or_else(|| {
+                            format!("reader-inline-svg:{}", descendant.range().start)
+                        }),
+                        inline_svg,
+                        space_after: false,
+                        offset: text.len()
+                            + usize::from(spaces && !text.is_empty() && !text.ends_with('\n')),
+                        element: element_ids[&descendant.id()],
+                        width: pixels("width"),
+                        height: pixels("height"),
+                        link: descendant
+                            .ancestors()
+                            .find(|ancestor| ancestor.has_tag_name("a"))
+                            .and_then(|anchor| anchor.attribute("href"))
+                            .map(str::to_owned),
+                        label: descendant
+                            .attribute("alt")
+                            .map(str::trim)
+                            .filter(|label| !label.is_empty())
+                            .unwrap_or("Illustration")
+                            .chars()
+                            .take(128)
+                            .collect(),
+                    });
                 }
                 let Some(content) = descendant.text().filter(|_| descendant.is_text()) else {
                     continue;
                 };
+                if let Some(index) = image_after_space.take() {
+                    // Extracted text collapses whitespace across an illustration.
+                    // The picture still separates the two rendered word spaces.
+                    images[index].space_after = content.starts_with(char::is_whitespace);
+                }
                 let start = text.len();
                 if let Some(legacy) = &mut legacy {
                     for c in content.chars() {
@@ -464,12 +529,15 @@ impl Source {
             if text.is_empty() && images.is_empty() {
                 continue;
             }
+            for image in &mut images {
+                image.offset = image.offset.min(text.len());
+            }
             for (id, offset) in ids {
                 fragments
                     .entry(id.to_owned())
                     .or_insert((key, offset.min(text.len())));
             }
-            if !text.is_empty() {
+            if !text.is_empty() || !images.is_empty() {
                 for parent in node.ancestors().skip(1) {
                     if let Some(id) = parent.attribute("id") {
                         fragments.entry(id.to_owned()).or_insert((key, 0));
@@ -508,15 +576,12 @@ impl Source {
                 }),
             });
         }
-        if blocks.is_empty() {
-            return Err("The chapter has no supported reading content".into());
-        }
         let selected = blocks
             .iter()
             .map(|block| block.key)
             .collect::<BTreeSet<_>>();
         if body.descendants().any(|node| {
-            let visible = node.has_tag_name("img")
+            let visible = may_be_illustration(node)
                 || (node.is_text() && node.text().is_some_and(|text| !text.trim().is_empty()));
             visible
                 && !hidden(node)
@@ -524,9 +589,34 @@ impl Source {
                     .ancestors()
                     .any(|parent| selected.contains(&parent.range().start))
         }) {
-            return Err("The probe cannot paginate text between nested blocks".into());
+            if allow_normalization && let Some(normalized) = wrap_inline_runs(xhtml, body) {
+                let mut parsed = Self::parse_document(&normalized, original_revision, false)?;
+                parsed.normalized_xhtml = Some(normalized);
+                return Ok(parsed);
+            }
+            return Err("The chapter's inline content could not be laid out".into());
         }
-        let original_revision = crate::revision(xhtml);
+        // Some publishers insert an intentionally blank side of a leaf. Preserve
+        // its spine location while continuing to reject unrenderable artwork.
+        if blocks.is_empty()
+            && body.descendants().any(|node| {
+                !hidden(node)
+                    && matches!(
+                        node.tag_name().name(),
+                        "svg"
+                            | "img"
+                            | "object"
+                            | "iframe"
+                            | "canvas"
+                            | "math"
+                            | "video"
+                            | "audio"
+                            | "embed"
+                    )
+            })
+        {
+            return Err("The chapter has no supported reading content".into());
+        }
         let legacy_revision = blocks
             .iter()
             .any(|block| block.legacy.is_some())
@@ -551,6 +641,7 @@ impl Source {
             stylesheets,
             elements,
             insertions,
+            normalized_xhtml: None,
             ruby_exclusions,
             head_end,
         })
@@ -576,6 +667,7 @@ impl Source {
     }
 
     pub fn with_styles(&self, xhtml: &str, stylesheet: &str) -> String {
+        let xhtml = self.normalized_xhtml.as_deref().unwrap_or(xhtml);
         let mut html = String::new();
         html.push_str(&xhtml[..self.head_end]);
         html.push_str("<style>");
@@ -600,6 +692,71 @@ impl Source {
         html.push_str(&xhtml[cursor..]);
         html
     }
+}
+
+// XHTML permits inline runs alongside block children. Give each such run a
+// layout box in place so its text, images and links stay in document order.
+// The same normalized source feeds both layout engines and every anchor.
+fn wrap_inline_runs(xhtml: &str, body: Node<'_, '_>) -> Option<String> {
+    let mut parents = std::collections::HashSet::new();
+    for block in body
+        .descendants()
+        .filter(|node| is_block(*node) && !hidden(*node))
+    {
+        for parent in block.ancestors().skip(1) {
+            if !parents.insert(parent.id()) || parent == body {
+                break;
+            }
+        }
+    }
+    let mut ranges = Vec::new();
+    for parent in body
+        .descendants()
+        .filter(|node| parents.contains(&node.id()))
+    {
+        let mut pending: Option<Range<usize>> = None;
+        let mut visible = false;
+        for child in parent.children() {
+            if is_block(child) || parents.contains(&child.id()) {
+                if let Some(run) = pending.take()
+                    && visible
+                {
+                    ranges.push(run);
+                }
+                visible = false;
+                continue;
+            }
+            let bounds = child.range();
+            pending.get_or_insert(bounds.clone()).end = bounds.end;
+            visible |= child.descendants().any(|node| {
+                !hidden(node)
+                    && (may_be_illustration(node)
+                        || node.has_tag_name("br")
+                        || node.is_text()
+                            && node.text().is_some_and(|text| !text.trim().is_empty()))
+            });
+        }
+        if let Some(run) = pending
+            && visible
+        {
+            ranges.push(run);
+        }
+    }
+    if ranges.is_empty() {
+        return None;
+    }
+    ranges.sort_unstable_by_key(|range| range.start);
+    let mut normalized = String::with_capacity(xhtml.len() + 11 * ranges.len());
+    let mut cursor = 0;
+    for run in ranges {
+        normalized.push_str(&xhtml[cursor..run.start]);
+        normalized.push_str("<div>");
+        normalized.push_str(&xhtml[run.clone()]);
+        normalized.push_str("</div>");
+        cursor = run.end;
+    }
+    normalized.push_str(&xhtml[cursor..]);
+    Some(normalized)
 }
 
 fn is_block(node: Node<'_, '_>) -> bool {
@@ -658,21 +815,127 @@ fn base_direction(node: Node<'_, '_>) -> BaseDirection {
         .unwrap_or_default()
 }
 
+fn may_be_illustration(node: Node<'_, '_>) -> bool {
+    node.has_tag_name("img") && node.has_attribute("src")
+        || node.has_tag_name(("http://www.w3.org/2000/svg", "svg"))
+}
+
+// Common EPUB cover pages fit a single archive image to an SVG viewport. Keep
+// the wrapper atomic so SVG metadata never becomes selectable reading text.
+pub(crate) fn illustration_href<'a>(node: Node<'a, '_>) -> Option<&'a str> {
+    if node.has_tag_name("img") {
+        return node.attribute("src");
+    }
+    if !node.has_tag_name(("http://www.w3.org/2000/svg", "svg")) {
+        return None;
+    }
+    let mut artwork = node.children().filter(|child| {
+        child.is_element() && !child.has_tag_name("title") && !child.has_tag_name("desc")
+    });
+    let image = artwork.next()?;
+    if !image.has_tag_name(("http://www.w3.org/2000/svg", "image"))
+        || artwork.next().is_some()
+        || ["transform", "x", "y", "opacity", "preserveAspectRatio"]
+            .iter()
+            .any(|attr| image.has_attribute(*attr))
+    {
+        return None;
+    }
+    image
+        .attribute("href")
+        .or_else(|| image.attribute(("http://www.w3.org/1999/xlink", "href")))
+}
+
 fn hidden(node: Node<'_, '_>) -> bool {
     node.ancestors().any(hidden_element)
 }
 
 fn hidden_element(node: Node<'_, '_>) -> bool {
-    node.is_element()
-        && (matches!(
-            node.tag_name().name(),
-            "script" | "style" | "noscript" | "template" | "svg"
-        ) || node.has_attribute("hidden"))
+    node.parent_element()
+        .is_some_and(|parent| parent.has_tag_name("svg"))
+        || node.is_element()
+            && (matches!(
+                node.tag_name().name(),
+                "script" | "style" | "noscript" | "template"
+            ) || node.has_attribute("hidden"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normalizes_mixed_text_and_images_without_losing_document_order_or_markup() {
+        let xml = r##"<html><head></head><body><div id="group">Before <a href="#last">jump</a>.
+          <p>Nested paragraph.</p><img src="photo.jpg"/><section><p>Middle.</p>
+          Trailing <em id="last">words.</em></section>End.</div></body></html>"##;
+        let source = Source::parse(xml).unwrap();
+        assert_eq!(
+            source
+                .blocks
+                .iter()
+                .map(|b| b.text.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "Before jump.",
+                "Nested paragraph.",
+                "",
+                "Middle.",
+                "Trailing words.",
+                "End."
+            ]
+        );
+        assert_eq!(source.blocks[2].images[0].href, "photo.jpg");
+        assert_eq!(source.blocks[0].links[0].href, "#last");
+        assert_eq!(source.fragments["group"], (source.blocks[0].key, 0));
+        assert_eq!(
+            source.fragments["last"],
+            (source.blocks[4].key, "Trailing ".len())
+        );
+        assert_eq!(source.revision, crate::revision(xml));
+        let annotated = source.with_styles(xml, "body{color:black}");
+        let dom = Document::parse(&annotated).unwrap();
+        assert_eq!(
+            dom.descendants()
+                .filter(|node| node.has_attribute(SOURCE_ATTRIBUTE))
+                .count(),
+            6
+        );
+        assert!(
+            Source::parse("<html><body><p>Single.</p></body></html>")
+                .unwrap()
+                .normalized_xhtml
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn svg_image_wrappers_support_href_and_xlink_and_preserve_intentional_blank_pages() {
+        for attr in ["href", "xlink:href"] {
+            let xml = format!(
+                r#"<html><body id="outer"><div><svg xmlns="http://www.w3.org/2000/svg"
+                xmlns:xlink="http://www.w3.org/1999/xlink"><title>Cover description</title>
+                <image {attr}="../images/art.jpg"/></svg></div></body></html>"#
+            );
+            let source = Source::parse(&xml).unwrap();
+            assert_eq!(source.blocks.len(), 1);
+            assert!(source.blocks[0].text.is_empty());
+            assert_eq!(source.blocks[0].images[0].href, "../images/art.jpg");
+            assert_eq!(source.fragments["outer"], (source.blocks[0].key, 0));
+        }
+        assert!(
+            Source::parse("<html><body><div><p>  </p></div></body></html>")
+                .unwrap()
+                .blocks
+                .is_empty()
+        );
+        assert!(
+            Source::parse(
+                r#"<html><body><svg xmlns="http://www.w3.org/2000/svg"><foreignObject/></svg></body></html>"#
+            )
+            .is_err()
+        );
+    }
 
     #[test]
     fn inherits_publisher_language_and_direction_with_inline_resets() {

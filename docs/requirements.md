@@ -53,6 +53,11 @@ Add common formats and document tools people can use without a network connectio
 
 PDF, comics, dictionary, and format behavior references are in the [KOReader guide](https://koreader.rocks/user_guide/) and [KOReader format list](https://github.com/koreader/koreader#main-features).
 
+EPUB interoperability includes books with a correctly identified root `mimetype` member written after another ZIP member or compressed by the packager. Reader validates the container, package and spine before opening the document. EPUB 2 PUBLIC and SYSTEM declarations in the container, OPF, NCX and XHTML can be read offline. The parser ignores external declarations, recognizes standard XHTML character names from its built-in table and keeps custom DTD processing disabled. The package test builds an original example, checks its contents link, finds the decoded sentence and renders a page. KOReader’s pinned engine likewise looks up the marker and container by member name. [Upstream EPUB detection](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/epubfmt.cpp#L78-L109) · [Reader package tests](../tests/epub_package.rs)
+
+Reader can open an EPUB with a small zero-filled suffix after its ZIP footer. If the ZIP footer points to a displaced directory and member offsets have shifted, Reader checks the surviving directory against each local header and reconstructs offsets in memory. A missing reflowable chapter displays an explanation and can be turned past. The original spine indexes and progress weights are preserved. Opening a resource still enforces the extraction limit, exact length and CRC. The Library fingerprints the original bytes so repaired books retain reading positions across sessions. KOReader’s engine also retries with local headers when its ordinary archive index fails. [KOReader archive fallback](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstream.cpp#L2626-L2680) · [Reader recovery tests](../tests/epub_package.rs)
+
+
 ## P3 · Remaining formats, integrations and import
 
 Expand advanced reading and migration workflows. Use capability-by-capability verification as the basis for parity claims.

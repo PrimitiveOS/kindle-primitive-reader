@@ -16,13 +16,13 @@ use primitive_app::with_storage;
 
 use crate::Result;
 use crate::fixed_text::PdfPageText;
+use crate::ocr::valid_language_name;
 use crate::ocr::{MAX_OCR_PIXELS, MAX_OCR_SIDE, MAX_TSV_BYTES, OcrError, parse_tsv};
 
 const ENGINE: &str = "tesseract";
 const TESSDATA: &str = "tessdata";
 const MODEL_SUFFIX: &str = ".traineddata";
 const DEFAULT_LANGUAGE: &str = "eng";
-const MAX_LANGUAGE_NAME: usize = 32;
 const MAX_LANGUAGES: usize = 32;
 const MAX_DISCOVERY_ENTRIES: usize = 256;
 const MAX_ENGINE_BYTES: u64 = 16 * 1024 * 1024;
@@ -122,14 +122,6 @@ impl OcrAssets {
         })?;
         Ok(work)
     }
-}
-
-fn valid_language_name(name: &str) -> bool {
-    name.len() <= MAX_LANGUAGE_NAME
-        && name.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
-        && name
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
 }
 
 fn model_path(tessdata: &Path, language: &str) -> PathBuf {

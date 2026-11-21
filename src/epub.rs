@@ -1,19 +1,19 @@
 //! A bounded, local subset of the EPUB 2 and 3 package format.
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::io::{Seek, SeekFrom};
 use std::path::Path;
 
 use roxmltree::{Document, Node, ParsingOptions};
-use zip::{CompressionMethod, ZipArchive};
+#[cfg(test)]
+use zip::CompressionMethod;
 
 use crate::chm::{Chm, MAX_CHM_BYTES};
 use crate::library::{DocumentFormat, fingerprint};
 use crate::{Result, kf8, loose, mobi};
 
 pub(crate) const MAX_ARCHIVE: u64 = 128 * 1024 * 1024;
-const MAX_ENTRIES: usize = 8192;
-const MAX_ZIP_DIRECTORY: u64 = 4 * 1024 * 1024;
+pub(crate) const MAX_ENTRIES: usize = 8192;
 const MAX_XML: usize = 512 * 1024;
 const MAX_RESOURCE: usize = 8 * 1024 * 1024;
 const MAX_RASTER_COVER: usize = 4 * 1024 * 1024;
@@ -24,7 +24,8 @@ const MAX_SERIES_NAME: usize = 256;
 const MAX_SERIES_POSITION: usize = 64;
 const MAX_PAGE_REFERENCES: usize = 8192;
 
-type Archive = ZipArchive<BufReader<File>>;
+use crate::epub_members::Members as Archive;
+pub(crate) use crate::epub_zip::check_zip_directory;
 
 #[derive(Clone, Debug)]
 pub struct Chapter {
@@ -75,7 +76,8 @@ pub struct Book {
     pub toc: Vec<TocEntry>,
     printed_pages: Vec<TocEntry>,
     revision: u64,
-    fixed_spine: Option<FixedSpine>,
+    pub(crate) spine_rtl: bool,
+    fixed_placements: Option<Vec<ItemPlacement>>,
     series: Vec<BookSeries>,
     cover: Option<BookCover>,
     content: Content,
@@ -139,24 +141,15 @@ impl Book {
                 _ => loose::Document::open(path, format).map(Self::from_loose),
             };
         }
-        let file = File::open(path)?;
-        let metadata = file.metadata()?;
-        if !metadata.is_file() || metadata.len() > MAX_ARCHIVE {
-            return Err("The EPUB file exceeds the archive limit or is unavailable".into());
-        }
-        let mut input = BufReader::new(file);
-        let entries = check_zip_directory(&mut input, metadata.len())?;
-        let mut archive = ZipArchive::new(input)?;
-        if archive.len() != entries {
-            return Err("The EPUB archive has ambiguous or duplicate entries".into());
-        }
-        {
-            let marker = archive.by_index(0)?;
-            if marker.name() != "mimetype" || marker.compression() != CompressionMethod::Stored {
-                return Err("The EPUB archive has no stored mimetype marker".into());
-            }
-        }
-        if read_entry(&mut archive, "mimetype", 20)? != b"application/epub+zip" {
+        let mut archive = Archive::open(path)?;
+        // Some reader-compatible publications compress this marker or write another member
+        // first. Its identity and the following OCF/OPF checks identify the publication.
+        let marker = read_entry(&mut archive, "mimetype", 99)?;
+        let value = marker
+            .strip_suffix(b"\r\n")
+            .or_else(|| marker.strip_suffix(b"\n"))
+            .unwrap_or(&marker);
+        if value != b"application/epub+zip" {
             return Err("The package is not an EPUB book".into());
         }
         let container = xml_entry(&mut archive, "META-INF/container.xml")?;
@@ -362,10 +355,8 @@ impl Book {
             toc,
             printed_pages,
             revision,
-            fixed_spine: fixed_layout.filter(|fixed| *fixed).map(|_| FixedSpine {
-                right_to_left: spine.attribute("page-progression-direction") == Some("rtl"),
-                placements,
-            }),
+            spine_rtl: spine.attribute("page-progression-direction") == Some("rtl"),
+            fixed_placements: fixed_layout.unwrap_or(false).then_some(placements),
             series,
             cover,
             content: Content::Archive {
@@ -407,7 +398,8 @@ impl Book {
         let chapter_path = document.chapter_path;
         Self {
             revision: crate::revision(&document.xhtml),
-            fixed_spine: None,
+            spine_rtl: false,
+            fixed_placements: None,
             series: Vec::new(),
             cover: None,
             chapters: vec![Chapter {
@@ -434,7 +426,24 @@ impl Book {
         }
         let bytes = loose::read_bounded(input, mobi::MAX_MOBI_BYTES)?;
         let fallback_title = loose::fallback_title(path);
-        match mobi::decode(&bytes) {
+        let mut publication = match mobi::decode(&bytes) {
+            Ok(document) if document.xhtml.len() > 512 * 1024 => {
+                let label = document
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| fallback_title.into());
+                kf8::Kf8Document {
+                    title: document.title,
+                    author: document.author,
+                    resources: BTreeMap::new(),
+                    chapters: vec![kf8::Kf8Chapter {
+                        continued: false,
+                        path: loose::CHAPTER_PATH.into(),
+                        label,
+                        xhtml: document.xhtml,
+                    }],
+                }
+            }
             Ok(document) => {
                 return Ok(Self::from_loose(loose::Document {
                     title: document.title.unwrap_or_else(|| fallback_title.into()),
@@ -445,23 +454,25 @@ impl Book {
                     resources: BTreeMap::new(),
                 }));
             }
-            Err(mobi::MobiError::Kf8) => {}
+            Err(mobi::MobiError::Kf8) => kf8::decode(&bytes)?,
             Err(error) => return Err(error.into()),
-        }
-        let publication = kf8::decode(&bytes)?;
+        };
+        publication.chapters = crate::kindle_sections::partition(publication.chapters)?;
         let revision = crate::revision_bytes(&bytes);
         let mut chapters = Vec::with_capacity(publication.chapters.len());
         let mut toc = Vec::with_capacity(publication.chapters.len());
         let mut xhtml = BTreeMap::new();
         for chapter in publication.chapters {
-            toc.push(TocEntry {
-                label: chapter.label.clone(),
-                depth: 0,
-                destination: Some(Destination {
-                    path: chapter.path.clone(),
-                    fragment: None,
-                }),
-            });
+            if !chapter.continued {
+                toc.push(TocEntry {
+                    label: chapter.label.clone(),
+                    depth: 0,
+                    destination: Some(Destination {
+                        path: chapter.path.clone(),
+                        fragment: None,
+                    }),
+                });
+            }
             chapters.push(Chapter {
                 href: chapter.path.clone(),
                 label: chapter.label,
@@ -477,7 +488,8 @@ impl Book {
             toc,
             printed_pages: Vec::new(),
             revision,
-            fixed_spine: None,
+            spine_rtl: false,
+            fixed_placements: None,
             series: Vec::new(),
             cover: None,
             content: Content::Loose {
@@ -508,7 +520,8 @@ impl Book {
             toc: chm.toc.clone(),
             printed_pages: Vec::new(),
             revision,
-            fixed_spine: None,
+            spine_rtl: false,
+            fixed_placements: None,
             series: Vec::new(),
             cover: None,
             content: Content::Chm(Box::new(chm)),
@@ -516,11 +529,14 @@ impl Book {
     }
 
     pub fn is_fixed_layout(&self) -> bool {
-        self.fixed_spine.is_some()
+        self.fixed_placements.is_some()
     }
 
-    pub(crate) fn fixed_spine(&self) -> Option<&FixedSpine> {
-        self.fixed_spine.as_ref()
+    pub(crate) fn take_fixed_spine(&mut self) -> Option<FixedSpine> {
+        Some(FixedSpine {
+            right_to_left: self.spine_rtl,
+            placements: self.fixed_placements.take()?,
+        })
     }
 
     /// Return the publication's ordered reading contents.
@@ -560,6 +576,11 @@ impl Book {
             .get(index)
             .ok_or("That EPUB chapter is unavailable")?;
         match &mut self.content {
+            Content::Archive { archive, .. }
+                if self.fixed_placements.is_none() && archive.missing_after_recovery(&chapter.href) =>
+            {
+                Ok("<html><head><title>Chapter unavailable</title></head><body><h1>Chapter unavailable</h1><p>This chapter is missing from the damaged EPUB. Turn the page to continue.</p></body></html>".to_owned())
+            }
             Content::Archive { archive, .. } => xml_entry(archive, &chapter.href),
             Content::Loose { xhtml, .. } => xhtml
                 .get(&chapter.href)
@@ -586,14 +607,28 @@ impl Book {
         if fraction == 1.0 {
             return Ok((self.chapters.len() - 1, 1.0));
         }
-        let mut weights = Vec::with_capacity(self.chapters.len());
+        let offsets = self.chapter_offsets()?;
+        let position = fraction * *offsets.last().unwrap() as f64;
+        let chapter = offsets
+            .partition_point(|&start| start as f64 <= position)
+            .saturating_sub(1)
+            .min(self.chapters.len() - 1);
+        let start = offsets[chapter];
+        Ok((
+            chapter,
+            (position - start as f64) / (offsets[chapter + 1] - start) as f64,
+        ))
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn chapter_offsets(&mut self) -> Result<Vec<u64>> {
+        let mut offsets = Vec::with_capacity(self.chapters.len() + 1);
+        let mut total = 0;
+        offsets.push(total);
         for chapter in &self.chapters {
             let length = match &mut self.content {
                 Content::Archive { archive, .. } => {
-                    let index = archive
-                        .index_for_name(&chapter.href)
-                        .ok_or("A chapter is unavailable")?;
-                    archive.by_index_raw(index)?.size().min(MAX_XML as u64)
+                    archive.size(&chapter.href)?.min(MAX_XML as u64)
                 }
                 Content::Loose { xhtml, .. } => xhtml
                     .get(&chapter.href)
@@ -601,17 +636,10 @@ impl Book {
                     .len() as u64,
                 Content::Chm(chm) => chm.chapter_length(&chapter.href)?,
             };
-            weights.push(length.max(1));
+            total += length.max(1);
+            offsets.push(total);
         }
-        let total: u64 = weights.iter().sum();
-        let mut position = fraction * total as f64;
-        for (index, weight) in weights.into_iter().enumerate() {
-            if position < weight as f64 {
-                return Ok((index, position / weight as f64));
-            }
-            position -= weight as f64;
-        }
-        Ok((self.chapters.len() - 1, 1.0))
+        Ok(offsets)
     }
 
     /// Read a canonical, decoded archive path without extracting it to disk.
@@ -1056,57 +1084,11 @@ fn xml_entry(archive: &mut Archive, path: &str) -> Result<String> {
     if bytes.starts_with(b"\xef\xbb\xbf") {
         bytes.drain(..3);
     }
-    Ok(String::from_utf8(bytes)?)
-}
-
-/// Reject unsupported ZIP64 and implausible directory sizes before ZIP metadata allocation.
-pub(crate) fn check_zip_directory(input: &mut (impl Read + Seek), len: u64) -> Result<usize> {
-    const END_SIZE: usize = 22;
-    let tail_start = len.saturating_sub((END_SIZE + usize::from(u16::MAX)) as u64);
-    let mut tail = vec![0; (len - tail_start) as usize];
-    input.seek(SeekFrom::Start(tail_start))?;
-    input.read_exact(&mut tail)?;
-    let end = tail
-        .windows(END_SIZE)
-        .rposition(|window| window.starts_with(b"PK\x05\x06"))
-        .ok_or("The EPUB archive has no ZIP directory")?;
-    let record = &tail[end..end + END_SIZE];
-    let u16_field = |index| u16::from_le_bytes([record[index], record[index + 1]]);
-    let u32_field = |index| u32::from_le_bytes(record[index..index + 4].try_into().unwrap());
-    let entries = usize::from(u16_field(10));
-    let size = u64::from(u32_field(12));
-    let offset = u64::from(u32_field(16));
-    let comment_size = usize::from(u16_field(20));
-    let zip64 = end
-        .checked_sub(20)
-        .is_some_and(|offset| tail[offset..].starts_with(b"PK\x06\x07"));
-    if end + END_SIZE + comment_size != tail.len()
-        || zip64
-        || u16_field(4) != 0
-        || u16_field(6) != 0
-        || entries != usize::from(u16_field(8))
-        || !(1..=MAX_ENTRIES).contains(&entries)
-        || size < (entries * 46) as u64
-        || size > MAX_ZIP_DIRECTORY
-        || offset + size != tail_start + end as u64
-    {
-        return Err("The EPUB ZIP directory is invalid or exceeds the probe limits".into());
-    }
-    input.rewind()?;
-    Ok(entries)
+    crate::epub_xml::prepare(String::from_utf8(bytes)?, MAX_XML)
 }
 
 fn read_entry(archive: &mut Archive, path: &str, max_bytes: usize) -> Result<Vec<u8>> {
-    let entry = archive.by_name(path)?;
-    if entry.is_dir() || entry.size() > max_bytes as u64 {
-        return Err(format!("The EPUB resource exceeds its size limit: {path}").into());
-    }
-    let mut bytes = Vec::with_capacity(entry.size() as usize);
-    entry.take(max_bytes as u64 + 1).read_to_end(&mut bytes)?;
-    if bytes.len() > max_bytes {
-        return Err(format!("The EPUB resource exceeds its size limit: {path}").into());
-    }
-    Ok(bytes)
+    archive.read(path, max_bytes)
 }
 
 fn parse_xml(xml: &str) -> Result<Document<'_>> {

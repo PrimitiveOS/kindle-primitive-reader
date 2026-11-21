@@ -143,7 +143,37 @@ impl Probe {
             let boundary = Cluster::from_byte_index(layout, span.end - 1)
                 .map_or(span.end, |cluster| cluster.text_range().end);
             let end = Cursor::from_byte_index(layout, boundary, Affinity::Upstream);
-            Selection::new(start, end).geometry_with(layout, |rect, _| {
+            Selection::new(start, end).geometry_with(layout, |mut rect, row| {
+                // Parley includes replaced elements at the same caret position
+                // in selection rectangles. Highlight the surrounding text runs.
+                if !self.source.blocks[index].images.is_empty()
+                    && let Some(line) = layout.get(row)
+                {
+                    for item in line.items() {
+                        let parley::PositionedLayoutItem::InlineBox(image) = item else {
+                            continue;
+                        };
+                        let left = f64::from(image.x);
+                        let right = f64::from(image.x + image.width);
+                        if left >= rect.x1 || right <= rect.x0 {
+                            continue;
+                        }
+                        if rect.x0 < left
+                            && let Some(left_run) = page_rect(
+                                BoundingBox { x1: left, ..rect },
+                                origin,
+                                &page,
+                                self.settings,
+                            )
+                        {
+                            rects.push(left_run);
+                        }
+                        rect.x0 = right;
+                        if rect.x0 >= rect.x1 {
+                            return;
+                        }
+                    }
+                }
                 if let Some(rect) = page_rect(rect, origin, &page, self.settings) {
                     rects.push(rect);
                 }

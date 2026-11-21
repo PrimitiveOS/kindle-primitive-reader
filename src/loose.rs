@@ -138,14 +138,7 @@ impl Document {
         let input = decode_document(&bytes, format)?;
         let input = input.trim_start_matches('\u{feff}');
         match format {
-            Format::Text => Ok(Self {
-                title: fallback_title.to_owned(),
-                author: None,
-                chapter_path: CHAPTER_PATH.to_owned(),
-                xhtml: text_as_xhtml(input)?,
-                toc: Vec::new(),
-                resources: BTreeMap::new(),
-            }),
+            Format::Text => text_document(input, fallback_title),
             Format::Html => html_document(input, fallback_title),
             Format::Markdown => markdown_document(input, fallback_title),
             Format::Fb2 => fb2_document(input, fallback_title),
@@ -531,6 +524,62 @@ fn add_htmlz_contents(document: &mut Document) -> Result<()> {
         document.xhtml = output;
     }
     Ok(())
+}
+
+fn text_document(input: &str, title: &str) -> Result<Document> {
+    let cleaned = strip_terminal_colors(input);
+    let start = cleaned.trim_start();
+    let html_tag = start
+        .get(..5)
+        .is_some_and(|tag| tag.eq_ignore_ascii_case("<html"))
+        && start
+            .as_bytes()
+            .get(5)
+            .is_some_and(|byte| *byte == b'>' || byte.is_ascii_whitespace());
+    let html_doctype = start
+        .get(..15)
+        .is_some_and(|head| head.eq_ignore_ascii_case("<!doctype html>"));
+    if html_tag || html_doctype {
+        // Some reading material distributed as .txt is an HTML export. Preserve well-formed
+        // markup and otherwise use the existing bounded HTML tokenizer for the visible text.
+        if let Ok(document) = html_document(&cleaned, title) {
+            return Ok(document);
+        }
+        return html_document(&crate::mobi::html_xhtml(&cleaned)?, title);
+    }
+    Ok(Document {
+        title: title.to_owned(),
+        author: None,
+        chapter_path: CHAPTER_PATH.to_owned(),
+        xhtml: text_as_xhtml(&cleaned)?,
+        toc: Vec::new(),
+        resources: BTreeMap::new(),
+    })
+}
+
+fn strip_terminal_colors(input: &str) -> Cow<'_, str> {
+    if !input.contains('\x1b') {
+        return Cow::Borrowed(input);
+    }
+    let mut output = String::with_capacity(input.len());
+    let mut rest = input;
+    while let Some((text, sequence)) = rest.split_once('\x1b') {
+        output.push_str(text);
+        if let Some(params) = sequence.strip_prefix('[') {
+            let length = params
+                .bytes()
+                .take_while(|b| b.is_ascii_digit() || matches!(b, b';' | b':'))
+                .count();
+            if let Some(after) = params[length..].strip_prefix('m') {
+                rest = after;
+                continue;
+            }
+        }
+        output.push('\x1b');
+        rest = sequence;
+    }
+    output.push_str(rest);
+    Cow::Owned(output)
 }
 
 pub(crate) fn text_as_xhtml(input: &str) -> Result<String> {
@@ -1266,7 +1315,7 @@ mod tests {
             .next()
             .unwrap();
         assert_eq!(
-            book.resource(&Book::resolve(&path, image_href).unwrap())
+            book.resource(&Book::resolve(&path, &image_href.href).unwrap())
                 .unwrap(),
             *image.get_ref()
         );
@@ -1451,5 +1500,27 @@ mod tests {
         assert_eq!(Format::for_path(Path::new("book.azw")), Some(Format::Mobi));
         assert_eq!(Format::for_path(Path::new("book.azw3")), Some(Format::Mobi));
         assert_eq!(Format::for_path(Path::new("book.FB2")), Some(Format::Fb2));
+    }
+}
+
+#[cfg(test)]
+mod exported_text_tests {
+    use super::*;
+
+    #[test]
+    fn reads_a_text_export_with_html_breaks_and_terminal_colors() {
+        let source = "<HTML><HEAD><TITLE>Example</TITLE></HEAD><BODY><h3>Notes</h3><p>One<br>\x1b[32mTwo\x1b[0m</BODY></HTML>";
+        let book = text_document(source, "Export").unwrap();
+        let tree = Xml::parse(&book.xhtml).unwrap();
+        assert!(tree.descendants().any(|node| node.text() == Some("Two")));
+        assert!(!book.xhtml.contains('\x1b'));
+        assert!(!book.xhtml.contains("&lt;BODY"));
+        assert!(
+            text_document("Remember <em> and <p> are tags.", "Notes")
+                .unwrap()
+                .xhtml
+                .contains("&lt;em&gt;")
+        );
+        assert!(text_document("An unsupported control: \x01", "Bad").is_err());
     }
 }

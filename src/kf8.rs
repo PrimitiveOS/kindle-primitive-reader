@@ -4,7 +4,7 @@
 //! and libmobi's format declarations. This module implements the bounded subset
 //! directly and keeps reconstructed chapters and raster assets in memory.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::ops::Range;
 
 use roxmltree::{Document, Node, ParsingOptions};
@@ -22,8 +22,8 @@ const MAX_LINKS: usize = 2048;
 const MAX_ASSETS: usize = 128;
 const MAX_ASSET_BYTES: usize = 4 * 1024 * 1024;
 const MAX_TOTAL_ASSET_BYTES: usize = 8 * 1024 * 1024;
-const MAX_XHTML_BYTES: usize = 768 * 1024;
-const MAX_XML_NODES: u32 = 65_536;
+const MAX_XHTML_BYTES: usize = 16 * 1024 * 1024;
+const MAX_XML_NODES: u32 = 240_000;
 
 pub(crate) struct Kf8Document {
     pub title: Option<String>,
@@ -33,6 +33,7 @@ pub(crate) struct Kf8Document {
 }
 
 pub(crate) struct Kf8Chapter {
+    pub continued: bool,
     pub path: String,
     pub label: String,
     pub xhtml: String,
@@ -89,8 +90,17 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Kf8Document> {
     }
     check_reflowable(&record[end..])?;
     let first_nontext = usize::from(mobi::u16_at(header, 8)?) + 1;
-    let raw = mobi::decode_records(bytes, &records.offsets, header, mobi::u16_at(header, 242)?)?;
-    let flow = read_main_flow(&records, header, &raw, first_nontext)?;
+    let ranges = flow_ranges(&records, header, first_nontext)?;
+    let total_len = ranges.last().ok_or(MobiError::InvalidHeader)?.end;
+    let raw = mobi::decode_records(
+        bytes,
+        &records.offsets,
+        header,
+        mobi::u16_at(header, 242)?,
+        total_len,
+    )?;
+    let flows: Vec<&[u8]> = ranges.iter().map(|range| &raw[range.clone()]).collect();
+    let flow = flows[0];
     let skel = integer(header, 0xfc)?;
     let div = integer(header, 0xf8)?;
     if skel < first_nontext || div < first_nontext || skel == div {
@@ -100,7 +110,14 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Kf8Document> {
     let fragments = read_index(&records, div, MAX_FRAGMENTS)?;
     let (chapters, locations) = reconstruct(flow, &skeletons, &fragments)?;
     let images = integer(header, 0x6c)?;
-    let (chapters, resources) = normalize(chapters, &locations, &records, images, first_nontext)?;
+    let (chapters, resources) = normalize(
+        chapters,
+        &locations,
+        &records,
+        images,
+        first_nontext,
+        &flows,
+    )?;
     let (title, author) = mobi::kf8_labels(bytes, record, header);
     Ok(Kf8Document {
         title,
@@ -135,15 +152,11 @@ fn check_reflowable(exth: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn read_main_flow<'a>(
-    records: &Records<'_>,
-    header: &[u8],
-    raw: &'a [u8],
-    first: usize,
-) -> Result<&'a [u8]> {
+fn flow_ranges(records: &Records<'_>, header: &[u8], first: usize) -> Result<Vec<Range<usize>>> {
+    let declared = integer(header, 4)?;
     let count = integer(header, 0xc4)?;
     if count == 1 {
-        return Ok(raw);
+        return Ok(std::iter::once(0..declared).collect());
     }
     let index = integer(header, 0xc0)?;
     if !(2..=MAX_FLOWS).contains(&count) || index < first {
@@ -155,18 +168,23 @@ fn read_main_flow<'a>(
         return Err(MobiError::InvalidHeader);
     }
     let mut end = 0;
+    let mut ranges = Vec::with_capacity(count);
     for entry in 0..count {
         let offset = start + entry * 8;
         let next = integer(fdst, offset + 4)?;
-        if integer(fdst, offset)? != end || next < end || next > raw.len() {
+        if integer(fdst, offset)? != end || next < end || next > mobi::MAX_TEXT_BYTES {
             return Err(MobiError::InvalidHeader);
         }
+        ranges.push(end..next);
         end = next;
     }
-    if end != raw.len() {
+    let main = integer(fdst, start + 4)?;
+    // KindleGen may count just the markup flow in the PalmDOC header. CSS, SVG and
+    // other flows still occupy compressed text records and are bounded by FDST.
+    if declared != main && declared != end {
         return Err(MobiError::InvalidHeader);
     }
-    Ok(&raw[..integer(fdst, start + 4)?])
+    Ok(ranges)
 }
 
 struct Entry<'a> {
@@ -432,12 +450,25 @@ struct Edit {
 }
 
 fn normalize(
-    raw: Vec<String>,
+    mut raw: Vec<String>,
     locations: &[Location],
     records: &Records<'_>,
     images: usize,
     first: usize,
+    flows: &[&[u8]],
 ) -> Result<(Vec<Kf8Chapter>, Assets)> {
+    let mut positions = Vec::with_capacity(raw.len());
+    let mut normalized_bytes = 0;
+    for chapter in &mut raw {
+        positions.push(
+            crate::epub_xml::prepare_kf8(chapter, MAX_XHTML_BYTES - normalized_bytes)
+                .map_err(|_| MobiError::TextTooLarge)?,
+        );
+        normalized_bytes += chapter.len();
+        if normalized_bytes > MAX_XHTML_BYTES {
+            return Err(MobiError::TextTooLarge);
+        }
+    }
     let mut remaining_nodes = MAX_XML_NODES;
     let mut documents = Vec::with_capacity(raw.len());
     for xhtml in &raw {
@@ -450,10 +481,8 @@ fn normalize(
         )
         .map_err(|_| MobiError::InvalidText)?;
         let root = document.root_element();
-        if !root.has_tag_name((XHTML, "html"))
-            || !root
-                .children()
-                .any(|node| node.has_tag_name((XHTML, "body")))
+        if !html_element(root, "html")
+            || !root.children().any(|node| html_element(node, "body"))
             || root
                 .descendants()
                 .any(|node| node.ancestors().take(49).count() == 49)
@@ -473,22 +502,31 @@ fn normalize(
         .map(|document| {
             document
                 .descendants()
-                .filter(|node| node.is_element() && node.tag_name().namespace() == Some(XHTML))
+                .filter(|node| {
+                    node.is_element() && matches!(node.tag_name().namespace(), None | Some(XHTML))
+                })
                 .collect()
         })
         .collect();
     let mut generated = BTreeMap::<(usize, usize), String>::new();
-    let ids: Vec<BTreeSet<&str>> = indexed_nodes
+    let ids: Vec<BTreeMap<&str, usize>> = indexed_nodes
         .iter()
         .map(|nodes| {
-            nodes
-                .iter()
-                .filter_map(|node| node.attribute("id"))
-                .collect()
+            let mut ids = BTreeMap::new();
+            for id in nodes.iter().filter_map(|node| node.attribute("id")) {
+                *ids.entry(id).or_insert(0) += 1;
+            }
+            ids
         })
         .collect();
-    let mut resources = Assets::new();
-    let mut asset_bytes = 0;
+    let mut assets = Art {
+        records,
+        images,
+        first,
+        flows,
+        resources: Assets::new(),
+        bytes: 0,
+    };
     let mut links = 0;
     for (chapter, document) in documents.iter().enumerate() {
         for node in document.descendants().filter(Node::is_element) {
@@ -498,45 +536,29 @@ fn normalize(
             ) {
                 return Err(MobiError::Kf8);
             }
-            if node.has_tag_name((XHTML, "img")) {
-                if images < first {
-                    return Err(MobiError::InvalidHeader);
-                }
+            if html_element(node, "img") {
                 let src = node.attribute_node("src").ok_or(MobiError::InvalidText)?;
-                let number = src
-                    .value()
-                    .strip_prefix("kindle:embed:")
-                    .ok_or(MobiError::Kf8)?;
-                let number = number.split_once('?').map_or(number, |(number, _)| number);
-                let number = base32(number, 4)?
-                    .checked_sub(1)
-                    .ok_or(MobiError::InvalidText)?;
-                let index = images.checked_add(number).ok_or(MobiError::InvalidHeader)?;
-                let asset = records.at(index)?;
-                let extension = if asset.starts_with(b"\x89PNG\r\n\x1a\n") {
-                    "png"
-                } else if asset.starts_with(b"\xff\xd8\xff") {
-                    "jpg"
-                } else {
-                    return Err(MobiError::Kf8);
-                };
-                let path = format!("assets/kf8-{index}.{extension}");
-                if !resources.contains_key(&path) {
-                    if resources.len() == MAX_ASSETS
-                        || asset.len() > MAX_ASSET_BYTES
-                        || asset.len() > MAX_TOTAL_ASSET_BYTES - asset_bytes
-                    {
-                        return Err(MobiError::TooLarge);
-                    }
-                    asset_bytes += asset.len();
-                    resources.insert(path.clone(), asset.to_vec());
-                }
+                let path = assets.image(src.value())?;
                 edits[chapter].push(Edit {
                     bytes: src.range_value(),
                     text: path,
                 });
             }
-            if !node.has_tag_name((XHTML, "a")) {
+            if html_element(node, "link")
+                && let Some(href) = node.attribute_node("href")
+                && href.value().starts_with("kindle:flow:")
+                && href.value().ends_with("?mime=text/css")
+            {
+                let flow = flow_number(href.value())?;
+                let css = *flows.get(flow).ok_or(MobiError::InvalidHeader)?;
+                let path = format!("assets/kf8-flow-{flow}.css");
+                assets.store(&path, css)?;
+                edits[chapter].push(Edit {
+                    bytes: href.range_value(),
+                    text: path,
+                });
+            }
+            if !html_element(node, "a") {
                 continue;
             }
             let Some(href) = node.attribute_node("href") else {
@@ -560,6 +582,7 @@ fn normalize(
                 &indexed_nodes[target_chapter],
                 location,
                 offset,
+                &positions[target_chapter],
             )?;
             let start = target.range().start;
             let key = (target_chapter, start);
@@ -569,12 +592,7 @@ fn normalize(
                     || !id
                         .chars()
                         .all(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | ':'))
-                    || indexed_nodes[target_chapter]
-                        .iter()
-                        .filter(|node| node.attribute("id") == Some(id))
-                        .take(2)
-                        .count()
-                        != 1
+                    || ids[target_chapter].get(id) != Some(&1)
                 {
                     return Err(MobiError::Kf8);
                 }
@@ -583,7 +601,7 @@ fn normalize(
                 id.clone()
             } else {
                 let id = format!("kf8-position-{start}");
-                if ids[target_chapter].contains(id.as_str()) {
+                if ids[target_chapter].contains_key(id.as_str()) {
                     return Err(MobiError::Kf8);
                 }
                 let after_name = tag_name_end(&raw[target_chapter], start)?;
@@ -620,12 +638,184 @@ fn normalize(
         let xhtml = edit_markup(&raw, edits, MAX_XHTML_BYTES - total)?;
         total += xhtml.len();
         chapters.push(Kf8Chapter {
+            continued: false,
             path: chapter_path(index),
             label,
             xhtml,
         });
     }
-    Ok((chapters, resources))
+    Ok((chapters, assets.resources))
+}
+
+struct Art<'a> {
+    records: &'a Records<'a>,
+    images: usize,
+    first: usize,
+    flows: &'a [&'a [u8]],
+    resources: Assets,
+    bytes: usize,
+}
+
+fn html_element(node: Node<'_, '_>, name: &str) -> bool {
+    node.has_tag_name(name) && matches!(node.tag_name().namespace(), None | Some(XHTML))
+}
+
+fn flow_number(reference: &str) -> Result<usize> {
+    let number = reference
+        .strip_prefix("kindle:flow:")
+        .and_then(|rest| rest.split_once('?'))
+        .ok_or(MobiError::Kf8)?
+        .0;
+    base32(number, 4)
+}
+
+impl Art<'_> {
+    fn store(&mut self, path: &str, data: &[u8]) -> Result<()> {
+        if !self.resources.contains_key(path) {
+            if self.resources.len() >= MAX_ASSETS
+                || data.len() > MAX_ASSET_BYTES
+                || data.len() > MAX_TOTAL_ASSET_BYTES - self.bytes
+            {
+                return Err(MobiError::TooLarge);
+            }
+            self.bytes += data.len();
+            self.resources.insert(path.into(), data.to_vec());
+        }
+        Ok(())
+    }
+
+    fn image(&mut self, reference: &str) -> Result<String> {
+        if reference.starts_with("kindle:embed:") {
+            return self.raster(reference);
+        }
+        if !reference.ends_with("?mime=image/svg+xml") {
+            return Err(MobiError::Kf8);
+        }
+        let number = flow_number(reference)?;
+        let flow = *self.flows.get(number).ok_or(MobiError::InvalidHeader)?;
+        if flow.len() > crate::svg_image::MAX_SVG_BYTES {
+            return Err(MobiError::TooLarge);
+        }
+        let svg = std::str::from_utf8(flow).map_err(|_| MobiError::InvalidText)?;
+        let document = Document::parse_with_options(
+            svg,
+            ParsingOptions {
+                nodes_limit: 4096,
+                ..Default::default()
+            },
+        )
+        .map_err(|_| MobiError::InvalidText)?;
+        let root = document.root_element();
+        if !root.has_tag_name(("http://www.w3.org/2000/svg", "svg")) {
+            return Err(MobiError::InvalidText);
+        }
+        // KindleGen emits a cover as an SVG viewport around a single raster image.
+        if let Some(href) = crate::source::illustration_href(root) {
+            return self.raster(href);
+        }
+        if let Some(href) = full_bleed_cover(root) {
+            let path = self.raster(href)?;
+            // KindleGen can label a JPEG as PNG. Use the embedded file signature.
+            if path.ends_with(".jpg") {
+                return Ok(path);
+            }
+        }
+        let path = format!("assets/kf8-flow-{number}.svg");
+        self.store(&path, flow)?;
+        Ok(path)
+    }
+
+    fn raster(&mut self, reference: &str) -> Result<String> {
+        if self.images < self.first {
+            return Err(MobiError::InvalidHeader);
+        }
+        let value = reference
+            .strip_prefix("kindle:embed:")
+            .ok_or(MobiError::Kf8)?;
+        let number = value.split_once('?').map_or(value, |(number, _)| number);
+        let offset = base32(number, 4)?
+            .checked_sub(1)
+            .ok_or(MobiError::InvalidText)?;
+        let index = self
+            .images
+            .checked_add(offset)
+            .ok_or(MobiError::InvalidHeader)?;
+        let asset = self.records.at(index)?;
+        if asset.len() > MAX_ASSET_BYTES {
+            return Err(MobiError::TooLarge);
+        }
+        if asset.starts_with(b"GIF87a") || asset.starts_with(b"GIF89a") {
+            let path = format!("assets/kf8-{index}.png");
+            if !self.resources.contains_key(&path) {
+                let png = crate::comic::ImagePage::gif_as_png(asset)
+                    .map_err(|_| MobiError::InvalidText)?;
+                self.store(&path, &png)?;
+            }
+            return Ok(path);
+        }
+        let extension = if asset.starts_with(b"\x89PNG\r\n\x1a\n") {
+            "png"
+        } else if asset.starts_with(b"\xff\xd8\xff") {
+            "jpg"
+        } else {
+            return Err(MobiError::Kf8);
+        };
+        let path = format!("assets/kf8-{index}.{extension}");
+        self.store(&path, asset)?;
+        Ok(path)
+    }
+}
+
+// KindleGen sometimes paints a rectangle behind an opaque full-viewport JPEG. Its
+// embedded raster is the visible cover, even when the generic EPUB wrapper also permits
+// vector artwork and therefore cannot discard a rectangle.
+fn full_bleed_cover<'a>(root: Node<'a, '_>) -> Option<&'a str> {
+    let mut children = root
+        .children()
+        .filter(|n| n.is_element() && !matches!(n.tag_name().name(), "title" | "desc"));
+    let background = children.next()?;
+    let image = children.next()?;
+    if !background.has_tag_name(("http://www.w3.org/2000/svg", "rect"))
+        || !image.has_tag_name(("http://www.w3.org/2000/svg", "image"))
+        || children.next().is_some()
+    {
+        return None;
+    }
+    if root.has_attribute("transform")
+        || image.attributes().any(|a| {
+            matches!(
+                a.name(),
+                "transform" | "opacity" | "style" | "clip-path" | "mask"
+            )
+        })
+    {
+        return None;
+    }
+    let mut viewport = root
+        .attribute("viewBox")?
+        .split(|c: char| c.is_ascii_whitespace() || c == ',')
+        .filter(|s| !s.is_empty());
+    let mut number = || viewport.next()?.parse::<f32>().ok();
+    let (left, top, width, height) = (number()?, number()?, number()?, number()?);
+    if viewport.next().is_some()
+        || !width.is_finite()
+        || !height.is_finite()
+        || width <= 0.0
+        || height <= 0.0
+    {
+        return None;
+    }
+    if image.attribute("x").unwrap_or("0").parse::<f32>().ok()? != left
+        || image.attribute("y").unwrap_or("0").parse::<f32>().ok()? != top
+        || image.attribute("width")?.parse::<f32>().ok()? != width
+        || image.attribute("height")?.parse::<f32>().ok()? != height
+    {
+        return None;
+    }
+    let href = image
+        .attribute("href")
+        .or_else(|| image.attribute(("http://www.w3.org/1999/xlink", "href")))?;
+    href.starts_with("kindle:embed:").then_some(href)
 }
 
 fn link_node<'a, 'input>(
@@ -633,11 +823,12 @@ fn link_node<'a, 'input>(
     nodes: &[Node<'a, 'input>],
     location: &Location,
     offset: usize,
+    positions: &crate::epub_xml::SourceOffsets,
 ) -> Result<Node<'a, 'input>> {
     if offset > location.length {
         return Err(MobiError::Kf8);
     }
-    let position = location.insertion + offset;
+    let position = positions.resolve(location.insertion + offset);
     let last = nodes.partition_point(|node| node.range().start <= position);
     let &node = nodes
         .get(last.checked_sub(1).ok_or(MobiError::InvalidText)?)
@@ -711,7 +902,7 @@ fn chapter_path(index: usize) -> String {
 
 fn chapter_label(document: &Document<'_>, index: usize) -> String {
     let heading = document.descendants().find(|node| {
-        node.tag_name().namespace() == Some(XHTML)
+        matches!(node.tag_name().namespace(), None | Some(XHTML))
             && matches!(
                 node.tag_name().name(),
                 "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
@@ -819,16 +1010,20 @@ mod tests {
     }
 
     fn fixture() -> Vec<u8> {
+        fixture_flows(BASE, None)
+    }
+
+    fn fixture_flows(base: &str, auxiliary: Option<&str>) -> Vec<u8> {
         let first = "<h1>Shore Notes</h1><p>Look at the <a href='kindle:pos:fid:0001:off:0000000000'>next chapter</a>.</p><p><img src='kindle:embed:0001?mime=image/png'/></p>";
         let second = "<h2>Arrival</h2><p>Mặt trời lên.</p>";
-        let raw = format!("{BASE}{first}{BASE}{second}");
-        let body = BASE.find("</body>").unwrap();
-        let next_base = BASE.len() + first.len();
+        let raw = format!("{base}{first}{base}{second}");
+        let body = base.find("</body>").unwrap();
+        let next_base = base.len() + first.len();
         let [smeta, sdata] = table(
             &[1, 1, 1, 0, 6, 2, 2, 0, 0, 0, 0, 1],
             &[
-                ("SKEL0000000000", 3, &[1, 0, BASE.len()]),
-                ("SKEL0000000001", 3, &[1, next_base, BASE.len()]),
+                ("SKEL0000000000", 3, &[1, 0, base.len()]),
+                ("SKEL0000000001", 3, &[1, next_base, base.len()]),
             ],
         );
         let next_insert = (next_base + body).to_string();
@@ -854,15 +1049,34 @@ mod tests {
         word(&mut header, 0xc4, 1);
         word(&mut header, 0xf8, 4);
         word(&mut header, 0xfc, 2);
-        let records = [
+        if auxiliary.is_some() {
+            word(&mut header, 0xc4, 2);
+            word(&mut header, 0xc0, 7);
+        }
+        let mut text = raw.into_bytes();
+        let main = text.len();
+        let mut records = vec![
             header,
-            raw.into_bytes(),
+            {
+                text.extend_from_slice(auxiliary.unwrap_or("").as_bytes());
+                text
+            },
             smeta,
             sdata,
             dmeta,
             ddata,
             PNG.to_vec(),
         ];
+        if let Some(aux) = auxiliary {
+            let mut fdst = vec![0; 28];
+            fdst[..4].copy_from_slice(b"FDST");
+            word(&mut fdst, 4, 12);
+            word(&mut fdst, 8, 2);
+            word(&mut fdst, 16, main);
+            word(&mut fdst, 20, main);
+            word(&mut fdst, 24, main + aux.len());
+            records.push(fdst);
+        }
         let mut pdb = vec![0; 78 + 8 * records.len()];
         pdb[..12].copy_from_slice(b"Shore Notes\0");
         pdb[60..68].copy_from_slice(b"BOOKMOBI");
@@ -982,6 +1196,87 @@ mod tests {
         damaged[image] = 0;
         assert_eq!(decode(&damaged).err(), Some(MobiError::Kf8));
         assert!(decode(&good[..good.len() - PNG.len() - 1]).is_err());
+    }
+
+    #[test]
+    fn standalone_kindlegen_html_without_namespace_keeps_images_and_link_positions() {
+        let input = fixture_flows("<html><head/><body></body></html>", None);
+        let publication = decode(&input).unwrap();
+        assert_eq!(publication.chapters[1].label, "Arrival");
+        assert!(publication.chapters[0].xhtml.contains("assets/kf8-6.png"));
+        assert!(
+            publication.chapters[0]
+                .xhtml
+                .contains("chapter-0002.xhtml#kf8-position-")
+        );
+        let invalid = fixture_flows(
+            "<html xmlns='urn:unrelated'><head/><body></body></html>",
+            None,
+        );
+        assert_eq!(decode(&invalid).err(), Some(MobiError::InvalidText));
+    }
+
+    #[test]
+    fn kindlegen_rect_behind_viewport_sized_jpeg_exposes_the_opaque_cover() {
+        let xml = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 150'><rect width='100%' height='100%' fill='black'/><image width='100' height='150' href='kindle:embed:0001?mime=image/jpg'/></svg>";
+        let doc = Document::parse(xml).unwrap();
+        assert_eq!(
+            full_bleed_cover(doc.root_element()),
+            Some("kindle:embed:0001?mime=image/jpg")
+        );
+        let flow = xml.replace("image/jpg", "image/png");
+        let records = Records {
+            bytes: b"\xff\xd8\xff\xe0",
+            offsets: vec![0, 0, 4],
+        };
+        let flows: &[&[u8]] = &[b"", flow.as_bytes()];
+        let mut art = Art {
+            records: &records,
+            images: 1,
+            first: 1,
+            flows,
+            resources: Assets::new(),
+            bytes: 0,
+        };
+        assert_eq!(
+            art.image("kindle:flow:0001?mime=image/svg+xml").unwrap(),
+            "assets/kf8-1.jpg"
+        );
+        for altered in [
+            xml.replace("height='150'", "height='26'"),
+            xml.replace("kindle:embed:", "other:"),
+            xml.replace("<image", "<path/><image"),
+        ] {
+            assert_eq!(
+                full_bleed_cover(Document::parse(&altered).unwrap().root_element()),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn kindlegen_main_flow_length_and_external_doctype_keep_link_destinations() {
+        let base = "<!DOCTYPE html PUBLIC '-//W3C//DTD XHTML 1.1//EN' 'http://example.invalid/xhtml.dtd'><html xmlns='http://www.w3.org/1999/xhtml'><head><link rel='stylesheet' href='kindle:flow:0001?mime=text/css'/></head><body></body></html>";
+        let css = "p { text-align: left }";
+        let good = fixture_flows(base, Some(css));
+        let publication = decode(&good).unwrap();
+        assert_eq!(
+            publication.resources["assets/kf8-flow-1.css"],
+            css.as_bytes()
+        );
+        assert!(
+            publication.chapters[0]
+                .xhtml
+                .contains("chapter-0002.xhtml#kf8-position-")
+        );
+        let mut invalid = good.clone();
+        let fdst = integer(&invalid, 78 + 7 * 8).unwrap();
+        let end = integer(&invalid, fdst + 16).unwrap();
+        word(&mut invalid, fdst + 20, end - 1);
+        assert_eq!(decode(&invalid).err(), Some(MobiError::InvalidHeader));
+        let mut invalid = good;
+        word(&mut invalid, fdst + 24, usize::MAX - 8);
+        assert_eq!(decode(&invalid).err(), Some(MobiError::InvalidHeader));
     }
 
     #[test]

@@ -19,7 +19,7 @@ use std::sync::OnceLock;
 
 use crate::fixed_text::{self, PdfPageText, PdfTextError, PdfTextRect};
 
-pub const MAX_PDF_BYTES: usize = 32 * 1024 * 1024;
+pub const MAX_PDF_BYTES: usize = 128 * 1024 * 1024;
 const MAX_PAGES: usize = 10_000;
 pub const MAX_VIEWPORT_PIXELS: u32 = 4 * 1024 * 1024;
 pub const MAX_VIEWPORT_SIDE: u32 = 2048;
@@ -175,7 +175,7 @@ pub enum PdfError {
 impl fmt::Display for PdfError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::TooLarge => "This PDF exceeds Reader's 32 MB limit.",
+            Self::TooLarge => "This PDF exceeds Reader's 128 MiB limit.",
             Self::TooManyPages => "This PDF has more than 10,000 pages.",
             Self::Damaged => "This PDF is damaged or has no readable pages.",
             Self::PasswordProtected => {
@@ -192,6 +192,17 @@ impl fmt::Display for PdfError {
 }
 
 impl std::error::Error for PdfError {}
+
+/// Profile the real opening path without logging book names, paths, page text or passwords.
+pub(crate) fn pdf_open_timing<T>(stage: &str, run: impl FnOnce() -> T) -> T {
+    if std::env::var_os("READER_PDF_OPEN_TIMINGS").is_none() {
+        return run();
+    }
+    let started = std::time::Instant::now();
+    let result = run();
+    eprintln!("reader_pdf_open {stage}_ms={}", started.elapsed().as_millis());
+    result
+}
 
 impl Pdf {
     pub fn open(bytes: Vec<u8>) -> Result<Self, PdfError> {
@@ -371,7 +382,16 @@ impl Pdf {
 
     /// The returned frame is row-major grayscale, with exactly one byte per viewport pixel.
     pub fn render(&self, page: usize, request: RenderRequest) -> Result<Vec<u8>, PdfError> {
-        let page_to_viewport = request.page_to_viewport(self.page_size(page)?)?;
+        self.render_transformed(page, request, Affine::IDENTITY)
+    }
+
+    pub(crate) fn render_transformed(
+        &self,
+        page: usize,
+        request: RenderRequest,
+        correction: Affine,
+    ) -> Result<Vec<u8>, PdfError> {
+        let page_to_viewport = request.page_to_viewport(self.page_size(page)?)? * correction;
         let page = &self.document.pages()[page];
         let transform = page_to_viewport * page.initial_transform(true).to_kurbo();
 
@@ -379,23 +399,27 @@ impl Pdf {
             let mut context = RenderContext::new(request.width as u16, request.height as u16);
             let mut pixels = Pixmap::new(context.width(), context.height());
             // Per-frame resources keep page-specific glyphs and render caches from accumulating.
-            render_into(
-                page,
-                &RenderCache::new(),
-                &InterpreterSettings::default(),
-                &RenderSettings::default(),
-                &mut context,
-                transform,
-            );
-            context.flush();
-            context.render_with(
-                &mut pixels,
-                &mut Resources::default(),
-                RasterizerSettings {
-                    target_init: TargetInit::Clear(WHITE),
-                    ..Default::default()
-                },
-            );
+            pdf_open_timing("interpret", || {
+                render_into(
+                    page,
+                    &RenderCache::new(),
+                    &InterpreterSettings::default(),
+                    &RenderSettings::default(),
+                    &mut context,
+                    transform,
+                );
+            });
+            pdf_open_timing("rasterize", || {
+                context.flush();
+                context.render_with(
+                    &mut pixels,
+                    &mut Resources::default(),
+                    RasterizerSettings {
+                        target_init: TargetInit::Clear(WHITE),
+                        ..Default::default()
+                    },
+                );
+            });
             pixels
                 .data_as_u8_slice()
                 .as_chunks::<4>()

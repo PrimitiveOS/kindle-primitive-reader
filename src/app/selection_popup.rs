@@ -11,17 +11,31 @@ pub(super) enum SelectionAction {
     Highlight,
     Note,
     Dictionary,
+    Wikipedia,
+    Translate,
+    Chapter,
     Cancel,
 }
 
 impl SelectionAction {
-    const ALL: [Self; 4] = [Self::Highlight, Self::Note, Self::Dictionary, Self::Cancel];
+    const ALL: [Self; 7] = [
+        Self::Highlight,
+        Self::Note,
+        Self::Dictionary,
+        Self::Wikipedia,
+        Self::Translate,
+        Self::Chapter,
+        Self::Cancel,
+    ];
 
     fn label(self) -> &'static str {
         match self {
             Self::Highlight => "Highlight",
             Self::Note => "Note",
             Self::Dictionary => "Dictionary",
+            Self::Wikipedia => "Wikipedia",
+            Self::Translate => "Translate",
+            Self::Chapter => "Chapter",
             Self::Cancel => "Cancel",
         }
     }
@@ -30,12 +44,13 @@ impl SelectionAction {
 pub(super) struct SelectionPopup {
     rect: Rect,
     large: bool,
+    custom_chapters: bool,
 }
 
 impl SelectionPopup {
-    fn new(bounds: Option<Rect>, large: bool) -> Self {
-        let height = if large { 80 } else { 68 };
-        let width = (WIDTH as i32 - 48).min(864);
+    fn new(bounds: Option<Rect>, large: bool, custom_chapters: bool) -> Self {
+        let height = if large { 260 } else { 224 };
+        let width = (WIDTH as i32 - 72).min(950);
         let page_bottom = PAGE_HEIGHT as i32;
         // Leave space for the next line and for the canvas's popup border.
         let gap = 56;
@@ -56,6 +71,7 @@ impl SelectionPopup {
                 return Self {
                     rect: Rect::new(x, y, width, height),
                     large,
+                    custom_chapters,
                 };
             }
         }
@@ -66,20 +82,31 @@ impl SelectionPopup {
         Self {
             rect: Rect::new(16, page_bottom + 12, width, 50),
             large,
+            custom_chapters,
         }
     }
 
     fn buttons(&self) -> impl Iterator<Item = (SelectionAction, Rect)> + '_ {
         let inner = self.rect.inset(5);
-        let count = SelectionAction::ALL.len() as i32;
+        let floating = self.rect.y < PAGE_HEIGHT as i32;
+        let count = if self.custom_chapters { 7 } else { 6 };
+        let columns = if floating { (count + 1) / 2 } else { count };
+        let cell_h = if floating { inner.h / 2 } else { inner.h };
         SelectionAction::ALL
             .into_iter()
+            .filter(|action| *action != SelectionAction::Chapter || self.custom_chapters)
             .enumerate()
             .map(move |(index, action)| {
                 let index = index as i32;
-                let left = inner.x + inner.w * index / count;
-                let right = inner.x + inner.w * (index + 1) / count;
-                (action, Rect::new(left, inner.y, right - left, inner.h))
+                let row = index / columns;
+                let cols = (count - row * columns).min(columns);
+                let col = index % columns;
+                let left = inner.x + inner.w * col / cols;
+                let right = inner.x + inner.w * (col + 1) / cols;
+                (
+                    action,
+                    Rect::new(left, inner.y + row * cell_h, right - left, cell_h),
+                )
             })
     }
 
@@ -100,16 +127,44 @@ impl SelectionPopup {
         }
         // The balanced border also tells Canvas to cover the page raster under this popup.
         canvas.popup(self.rect);
-        let size = if self.large && floating { 34 } else { 28 };
-        for (index, (action, rect)) in self.buttons().enumerate() {
-            if index != 0 {
+        let size = if !floating {
+            23
+        } else if self.large {
+            34
+        } else {
+            28
+        };
+        for (action, rect) in self.buttons() {
+            if rect.x > self.rect.x + 5 {
                 canvas.fill(Rect::new(rect.x, rect.y + 10, 1, rect.h - 20), HAIRLINE);
+            }
+            if floating && rect.y > self.rect.y + 5 {
+                canvas.fill(Rect::new(rect.x + 10, rect.y, rect.w - 20, 1), HAIRLINE);
             }
             if canvas.control_pressed(rect, false) {
                 canvas.fill(rect.inset(2), 218);
             }
+            let text_y = if floating {
+                use super::bar_icons;
+                let icon = match action {
+                    SelectionAction::Highlight => bar_icons::HIGHLIGHT,
+                    SelectionAction::Note => bar_icons::PAGE,
+                    SelectionAction::Dictionary | SelectionAction::Chapter => bar_icons::BOOK,
+                    SelectionAction::Wikipedia => bar_icons::LINK,
+                    SelectionAction::Translate => bar_icons::TEXT,
+                    SelectionAction::Cancel => bar_icons::BACK,
+                };
+                canvas.icon(
+                    Rect::new(rect.x + (rect.w - 40) / 2, rect.y + 9, 40, 40),
+                    icon,
+                    0,
+                );
+                rect.y + 55
+            } else {
+                rect.y + (rect.h - size) / 2
+            };
             canvas.text(
-                Rect::new(rect.x, rect.y + (rect.h - size) / 2, rect.w, size + 9),
+                Rect::new(rect.x, text_y, rect.w, size + 9),
                 action.label(),
                 TextStyle::new(size).bold().center(),
             );
@@ -145,7 +200,11 @@ impl Reader {
 
     fn selection_popup(&self) -> Option<SelectionPopup> {
         (self.selection.is_some() || self.pdf_selection.is_some()).then(|| {
-            SelectionPopup::new(self.selection_bounds(), self.controls.large_toolbar)
+            SelectionPopup::new(
+                self.selection_bounds(),
+                self.controls.large_toolbar,
+                self.custom_contents_enabled(),
+            )
         })
     }
 
@@ -168,6 +227,9 @@ impl Reader {
                 Ok(())
             }
             Some(SelectionAction::Dictionary) => self.look_up_selection(),
+            Some(SelectionAction::Wikipedia) => self.prepare_online(true, false),
+            Some(SelectionAction::Translate) => self.prepare_online(false, false),
+            Some(SelectionAction::Chapter) => self.edit_selected_contents_chapter(),
             Some(SelectionAction::Cancel) => {
                 self.selection = None;
                 self.pdf_selection = None;
@@ -212,7 +274,7 @@ mod tests {
                 false,
             ),
         ] {
-            let popup = SelectionPopup::new(Some(bounds), large);
+            let popup = SelectionPopup::new(Some(bounds), large, true);
             let rect = popup.rect;
             assert!(rect.x >= 16 && rect.right() <= WIDTH as i32 - 16);
             assert!(rect.bottom() <= DONE.y || rect.right() < DONE.x);

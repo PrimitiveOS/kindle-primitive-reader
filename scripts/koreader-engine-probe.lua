@@ -4,11 +4,14 @@
 
 local scratch, fixture = arg[1], arg[2]
 local turns = tonumber(arg[3] or "30")
+local capture_page = arg[4] and tonumber(arg[4])
 assert(scratch and scratch:match("^/mnt/us/primitiveos%-reader%-p0%.[%w]+$"),
     "Use a scratch directory created with mktemp -d /mnt/us/primitiveos-reader-p0.XXXXXX")
 assert(fixture and fixture:match("^[%w_%-][%w_.%-]*%.epub$"), "Provide the scratch EPUB filename")
-assert(turns and turns >= 0 and turns <= 1000 and turns % 1 == 0 and not arg[4],
+assert(turns and turns >= 0 and turns <= 1000 and turns % 1 == 0 and not arg[5],
     "Choose between 0 and 1000 warm turns")
+assert(not arg[4] or (capture_page and capture_page >= 1 and capture_page % 1 == 0),
+    "Optional fourth argument is the page to capture")
 os.setlocale("C", "numeric")
 
 require("setupkoenv")
@@ -82,5 +85,12 @@ print(string.format(
     fixture, pages, time.to_ms(paint_start - start), time.to_ms(painted - paint_start),
     time.to_ms(painted - start), turns, percentile(0.5), percentile(0.95), peak))
 
+-- Capture after benchmarking so PNG encoding and file I/O stay outside timing samples.
+if capture_page then
+    assert(capture_page <= pages, "Capture page outside the document")
+    view:gotoPage(capture_page)
+    view:drawCurrentPage(buffer, false, false, false, false)
+    buffer:writePNG(scratch .. "/reference-page-" .. capture_page .. ".png")
+end
 view:close()
 buffer:free()

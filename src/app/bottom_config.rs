@@ -281,7 +281,7 @@ impl Reader {
                     ];
                 }
                 BarPanel::TextRendering => {
-                    return vec![
+                    let mut rows = vec![
                         ConfigRow::new(
                             "Publisher CSS",
                             [("Off", false), ("On", true)].map(|(title, publisher_styles)| {
@@ -327,6 +327,37 @@ impl Reader {
                             }),
                         ),
                     ];
+                    rows.push(ConfigRow::new(
+                        "Image scaling",
+                        [("Fast", false), ("Smooth", true)].map(|(label, smooth_images)| {
+                            Choice::option(
+                                label,
+                                Action::Text(Settings {
+                                    smooth_images,
+                                    ..settings
+                                }),
+                                smooth_images == settings.smooth_images,
+                            )
+                        }),
+                    ));
+                    if self.uses_night_pages() {
+                        rows.push(ConfigRow::new(
+                            "Night images",
+                            [("Original", false), ("Inverted", true)].map(
+                                |(label, invert_night_images)| {
+                                    Choice::option(
+                                        label,
+                                        Action::Text(Settings {
+                                            invert_night_images,
+                                            ..settings
+                                        }),
+                                        invert_night_images == settings.invert_night_images,
+                                    )
+                                },
+                            ),
+                        ));
+                    }
+                    return rows;
                 }
                 BarPanel::TextStyle => {
                     let mut rows = vec![ConfigRow::new(
@@ -550,6 +581,52 @@ impl Reader {
                                 )
                             }),
                         ));
+                    }
+                    if reading.supports_text() {
+                        rows.push(ConfigRow::new(
+                            "Auto straighten",
+                            [0, 5, 10, 15, 25].map(|limit| {
+                                let label = if limit == 0 {
+                                    "Off".to_owned()
+                                } else {
+                                    format!("{limit}°")
+                                };
+                                Choice::option(
+                                    label,
+                                    Action::StraightenScan(limit),
+                                    prefs.straighten_limit == limit,
+                                )
+                            }),
+                        ));
+                        if self.ocr_assets.is_some() || prefs.force_ocr {
+                            rows.push(ConfigRow::new(
+                                "Text selection",
+                                [("Embedded first", false), ("Force OCR", true)].map(
+                                    |(label, enabled)| {
+                                        Choice::option(
+                                            label,
+                                            Action::ForceOcr(enabled),
+                                            prefs.force_ocr == enabled,
+                                        )
+                                    },
+                                ),
+                            ));
+                        }
+                        let limit = prefs.straighten_limit;
+                        let mut fine = Vec::with_capacity(2);
+                        if limit > 0 {
+                            fine.push(Choice::live(
+                                "Decrease 1°",
+                                Action::StraightenScan(limit - 1),
+                            ));
+                        }
+                        if limit < crate::library::MAX_STRAIGHTEN_DEGREES {
+                            fine.push(Choice::live(
+                                "Increase 1°",
+                                Action::StraightenScan(limit + 1),
+                            ));
+                        }
+                        rows.push(ConfigRow::new(format!("Limit · {limit}°"), fine));
                     }
                     let tools = self
                         .scan_items()

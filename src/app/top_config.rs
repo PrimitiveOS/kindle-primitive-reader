@@ -5,15 +5,7 @@ use std::path::Path;
 use super::{Action, BookList, Item, Reader, Screen, text_items};
 use crate::reading_controls::ReadingControls;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum TopGroup {
-    Navigation,
-    Appearance,
-    Settings,
-    Tools,
-    Search,
-    Library,
-}
+pub(super) use crate::book_menus::TopGroup;
 
 impl TopGroup {
     pub(super) const ALL: [Self; 6] = [
@@ -52,10 +44,8 @@ impl Reader {
 
     fn navigation_items(&self) -> Vec<Item> {
         let mut items = Vec::new();
-        let bookmarks = if let Some(fixed) = &self.fixed {
-            if !fixed.reading.outline().is_empty() {
-                items.push(Item::new("Contents", Action::Show(Screen::FixedContents)));
-            }
+        let bookmarks = if self.fixed.is_some() {
+            items.push(Item::new("Contents", Action::Show(Screen::FixedContents)));
             Screen::FixedBookmarks
         } else if self.active.is_some() {
             items.push(Item::new("Contents", Action::Show(Screen::Contents)));
@@ -182,7 +172,11 @@ impl Reader {
 
     pub(super) fn reading_settings_items(&self) -> Vec<Item> {
         let current = self.controls;
-        let mut items = self.quick_display_items();
+        let mut items = vec![
+            Item::new("Reading gestures", Action::Show(Screen::Gestures))
+                .detail("Assign taps, holds and swipes"),
+        ];
+        items.extend(self.quick_display_items());
         // Under Primitive Launcher the pages follow the launcher's theme: no Night pages switch here.
         if !self.under_launcher() {
             items.push(
@@ -350,6 +344,7 @@ impl Reader {
         let mut items = Vec::new();
         if self.searchable_document() {
             items.push(Item::new("Find in document", Action::Show(Screen::Find)));
+            items.push(Item::new("Translate page", Action::TranslatePage));
             let has_matches = if self.fixed.is_some() {
                 !self.pdf_hits.is_empty()
             } else {
@@ -372,6 +367,8 @@ impl Reader {
         items.extend([
             Item::new("Find a document", Action::Show(Screen::LibraryFind)),
             Item::new("Dictionary lookup", Action::Show(Screen::DictionaryEntry)),
+            Item::new("Wikipedia", Action::Wikipedia).detail("Look up a topic"),
+            Item::new("Online history", Action::Show(Screen::OnlineHistory)),
             Item::new(
                 "Dictionary history",
                 Action::Show(Screen::DictionaryHistory),

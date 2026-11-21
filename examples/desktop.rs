@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use primitive_app::{App, HEIGHT, WIDTH, frame, write_png};
 use primitive_ui::{Canvas, Input};
@@ -7,6 +7,9 @@ use reader::Result;
 use reader::app::Reader;
 
 fn main() -> Result<()> {
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--lookup-worker")) {
+        return reader::online_lookup::worker();
+    }
     let mut args = std::env::args_os().skip(1).map(PathBuf::from);
     let usage = "Usage: desktop <books directory> <book filename> <output directory> <Noto Sans font> [fallback fonts...]";
     let documents = args.next().ok_or(usage)?;
@@ -82,5 +85,35 @@ fn main() -> Result<()> {
         HEIGHT,
         &frame(&app, &mut canvas, false),
     )?;
+    app.open_path(&book)?;
+    app.input(Input::Tap(WIDTH as f32 / 2.0, 30.0));
+    app.input(Input::Tap(525.0, 152.0)); // Settings tab.
+    app.input(Input::Tap(170.0, 285.0)); // Reading gestures.
+    write_png(
+        &output.join("reading-gestures.png"),
+        WIDTH,
+        HEIGHT,
+        &frame(&app, &mut canvas, false),
+    )?;
+    capture_footer(&mut app, &mut canvas, &book, &output)?;
+    Ok(())
+}
+
+fn capture_footer(app: &mut Reader, canvas: &mut Canvas, book: &Path, output: &Path) -> Result<()> {
+    app.open_path(book)?;
+    let tap = Input::Tap(200.0, HEIGHT as f32 - 36.0);
+    for name in ["footer-progress", "footer-chapter"] {
+        app.input(tap);
+        write_png(
+            &output.join(format!("{name}.png")),
+            WIDTH,
+            HEIGHT,
+            &frame(app, canvas, false),
+        )?;
+    }
+    // Complete the cycle so a repeated capture retains the same starting indicator.
+    for _ in 0..3 {
+        app.input(tap);
+    }
     Ok(())
 }

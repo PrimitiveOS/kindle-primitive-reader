@@ -16,9 +16,30 @@ use html5ever::tokenizer::{
 use std::cell::RefCell;
 use std::fmt;
 
+/// Read only the Palm database header and the encryption field. A large protected
+/// Kindle book can be identified without loading its contents into Reader.
+pub(crate) fn protected_kindle_header(path: &std::path::Path) -> std::io::Result<bool> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path)?;
+    let mut header = [0; 86];
+    file.read_exact(&mut header)?;
+    if &header[60..68] != b"BOOKMOBI" {
+        return Ok(false);
+    }
+    let count = u16::from_be_bytes([header[76], header[77]]);
+    let first = u32::from_be_bytes(header[78..82].try_into().unwrap()) as u64;
+    if count == 0 || first < 78 + 8 * u64::from(count) || first + 20 > file.metadata()?.len() {
+        return Ok(false);
+    }
+    file.seek(SeekFrom::Start(first + 12))?;
+    let mut flags = [0; 8];
+    file.read_exact(&mut flags)?;
+    Ok(&flags[4..8] == b"MOBI" && u16::from_be_bytes([flags[0], flags[1]]) != 0)
+}
+
 pub const MAX_MOBI_BYTES: usize = 32 * 1024 * 1024;
-const MAX_TEXT_BYTES: usize = 512 * 1024;
-const MAX_XHTML_BYTES: usize = 1024 * 1024;
+pub(crate) const MAX_TEXT_BYTES: usize = 12 * 1024 * 1024;
+const MAX_XHTML_BYTES: usize = 16 * 1024 * 1024;
 const MAX_RECORD_BYTES: usize = 32 * 1024;
 const MAX_PDB_RECORDS: usize = 8192;
 const MAX_EXTH_RECORDS: usize = 512;
@@ -57,7 +78,9 @@ impl fmt::Display for MobiError {
             Self::UnsupportedContainer => {
                 formatter.write_str("This is not a supported MOBI or PalmDOC database.")
             }
-            Self::Protected => formatter.write_str("This MOBI file is encrypted."),
+            Self::Protected => {
+                formatter.write_str("This Kindle book is encrypted. Open it in the Kindle Library.")
+            }
             Self::Kf8 => formatter.write_str(
                 "This Kindle file uses a KF8 variant or feature Reader does not support.",
             ),
@@ -120,7 +143,13 @@ pub fn decode(bytes: &[u8]) -> Result<MobiDocument, MobiError> {
     }
     let mobi = is_mobi.then(|| mobi_header(header)).transpose()?;
     let extra_data = mobi.as_ref().map_or(0, |mobi| mobi.extra_data);
-    let text = decode_records(bytes, &records, header, extra_data)?;
+    let text = decode_records(
+        bytes,
+        &records,
+        header,
+        extra_data,
+        u32_at(header, 4)? as usize,
+    )?;
     let encoding = mobi.as_ref().map_or(Encoding::Auto, |mobi| mobi.encoding);
     let text = decode_text(text, encoding)?;
     let text = text.trim_start_matches('\u{feff}');
@@ -147,12 +176,12 @@ pub(crate) fn decode_records(
     records: &[usize],
     header: &[u8],
     extra_data: u16,
+    text_length: usize,
 ) -> Result<Vec<u8>, MobiError> {
     let compression = u16_at(header, 0)?;
     if !matches!(compression, 1 | 2) {
         return Err(MobiError::UnsupportedCompression(compression));
     }
-    let text_length = u32_at(header, 4)? as usize;
     let text_records = usize::from(u16_at(header, 8)?);
     let record_size = usize::from(u16_at(header, 10)?);
     if text_length > MAX_TEXT_BYTES || record_size > MAX_RECORD_BYTES {
@@ -169,7 +198,7 @@ pub(crate) fn decode_records(
     let mut text = Vec::with_capacity(text_length);
     for pair in records[1..=text_records + 1].windows(2) {
         let payload = without_trailers(&bytes[pair[0]..pair[1]], extra_data)?;
-        let limit = record_size.min(text_length + record_size - text.len());
+        let limit = record_size.min((text_length + record_size).saturating_sub(text.len()));
         match compression {
             1 if payload.len() <= limit => text.extend_from_slice(payload),
             1 => return Err(MobiError::InvalidText),
@@ -471,7 +500,7 @@ fn plain_xhtml(text: &str) -> Result<String, MobiError> {
     finish_xhtml(output)
 }
 
-fn html_xhtml(text: &str) -> Result<String, MobiError> {
+pub(crate) fn html_xhtml(text: &str) -> Result<String, MobiError> {
     let input = BufferQueue::default();
     input.push_back(text.into());
     let tokenizer = Tokenizer::new(
@@ -768,6 +797,45 @@ mod tests {
         header[36..40].copy_from_slice(&version.to_be_bytes());
         header[242..244].copy_from_slice(&trailers.to_be_bytes());
         header
+    }
+
+    #[test]
+    fn full_length_mobi_opens_its_first_and_last_sections_without_losing_content() {
+        use std::io::Write;
+        let mut text = "<html><body><p id='opening'>Start</p>".to_owned();
+        text.push_str(&"<p>The paper is ready. </p>".repeat(26_100));
+        text.push_str("<p id='finish'>Finish</p></body></html>");
+        let mut header = mobi_header_for_test(2, text.len(), 65001, 6, 0);
+        let chunks: Vec<_> = text.as_bytes().chunks(4096).collect();
+        header[8..10].copy_from_slice(&(chunks.len() as u16).to_be_bytes());
+        // These ASCII bytes are literal tokens in PalmDOC compression.
+        let records: Vec<_> = std::iter::once(header.as_slice()).chain(chunks).collect();
+        let path =
+            std::env::temp_dir().join(format!("reader-large-mobi-{}.mobi", std::process::id()));
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(&pdb(b"BOOKMOBI", &records))
+            .unwrap();
+        let mut book = crate::epub::Book::open(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert!(book.chapters.len() > 4);
+        let sections = book.chapters.len();
+        let mut paragraphs = 0;
+        for i in 0..sections {
+            let xml = book.chapter(i).unwrap();
+            let document = roxmltree::Document::parse(&xml).unwrap();
+            paragraphs += document
+                .descendants()
+                .filter(|n| n.has_tag_name("p"))
+                .count();
+            if i == 0 {
+                assert!(xml.contains("id=\"opening\""));
+            }
+            if i + 1 == sections {
+                assert!(xml.contains("id=\"finish\""));
+            }
+        }
+        assert_eq!(paragraphs, 26_102);
     }
 
     #[test]

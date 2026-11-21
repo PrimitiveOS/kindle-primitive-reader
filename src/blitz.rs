@@ -10,7 +10,7 @@ use parley::FontContext;
 
 use crate::epub::Book;
 use crate::source::{SOURCE_ATTRIBUTE, Source};
-use crate::{Line, Result, Settings, grayscale, image_reader, svg_image};
+use crate::{Line, Result, Settings, grayscale, svg_image};
 
 const RESOURCE_HOST: &str = "epub.invalid";
 const MAX_RESOURCES: usize = 64;
@@ -67,10 +67,7 @@ impl ArchiveResources {
             return Some(data);
         }
         if matches!(extension.as_str(), "png" | "jpg" | "jpeg") {
-            let (w, h) = image_reader(&bytes).ok()?.into_dimensions().ok()?;
-            if w == 0 || h == 0 || w > 2048 || h > 2048 {
-                return None;
-            }
+            let (w, h) = crate::epub_raster_dimensions(&bytes).ok()?;
             self.pixels += w as usize * h as usize;
             if self.pixels > MAX_IMAGE_PIXELS {
                 return None;

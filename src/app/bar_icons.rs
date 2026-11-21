@@ -16,19 +16,19 @@ pub(super) const BOOK: Icon = line(&[
 pub(super) const TEXT: Icon = line(&["M4 19 L9 6 L14 19 M6.5 14 H11.5 M16 19 L19 11 L22 19"]);
 pub(super) const EXIT: Icon = line(&["M14 5 H19 V19 H14", "M4 12 H15 M11 8 L15 12 L11 16"]);
 const BOOKMARK: Icon = line(&["M7 4 H17 V20 L12 16 L7 20 Z"]);
-const PAGE: Icon = line(&["M5 4 H19 V20 H5 Z", "M8 9 H16 M8 13 H16 M8 17 H13"]);
+pub(super) const PAGE: Icon = line(&["M5 4 H19 V20 H5 Z", "M8 9 H16 M8 13 H16 M8 17 H13"]);
 const GRID: Icon = line(&[
     "M4 4 H10 V10 H4 Z M14 4 H20 V10 H14 Z",
     "M4 14 H10 V20 H4 Z M14 14 H20 V20 H14 Z",
 ]);
 const SEARCH: Icon = line(&["M12 4 A6 6 0 1 0 12 16 A6 6 0 1 0 12 4 Z M16 16 L21 21"]);
 const FOLDER: Icon = line(&["M3 6 H10 L12 8 H21 V19 H3 Z"]);
-const HIGHLIGHT: Icon = line(&["M4 15 L13 6 L18 11 L9 20 H4 Z M4 20 H20"]);
+pub(super) const HIGHLIGHT: Icon = line(&["M4 15 L13 6 L18 11 L9 20 H4 Z M4 20 H20"]);
 const CLOCK: Icon = line(&["M12 3 A9 9 0 1 0 12 21 A9 9 0 1 0 12 3 Z M12 7 V12 L16 15"]);
-const LINK: Icon =
+pub(super) const LINK: Icon =
     line(&["M10 8 L13 5 A4 4 0 0 1 19 11 L16 14 M14 16 L11 19 A4 4 0 0 1 5 13 L8 10 M9 15 L15 9"]);
 const JUMP: Icon = line(&["M4 12 H19 M14 7 L19 12 L14 17 M5 5 V19"]);
-const BACK: Icon = line(&["M20 12 H5 M10 7 L5 12 L10 17"]);
+pub(super) const BACK: Icon = line(&["M20 12 H5 M10 7 L5 12 L10 17"]);
 const CROP: Icon = line(&["M7 3 V17 H21 M3 7 H17 V21"]);
 const DISPLAY: Icon = line(&["M3 5 H21 V17 H3 Z M8 21 H16 M12 17 V21"]);
 const SLIDERS: Icon = icons::SETTINGS;
@@ -83,10 +83,12 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         )
         | Action::OpenPreviousDocument => CLOCK,
         Action::Show(Screen::BookMap) | Action::Overview => GRID,
-        Action::Show(Screen::Links) => LINK,
+        Action::Show(Screen::Links) | Action::Wikipedia => LINK,
+        Action::TranslatePage => TEXT,
+        Action::Show(Screen::OnlineHistory) => CLOCK,
         Action::Show(Screen::Highlights) | Action::ExportHighlights(_) => HIGHLIGHT,
         Action::Show(Screen::GoToPage) | Action::NextLocation => JUMP,
-        Action::Show(Screen::ReadingControls | Screen::ReadingData) => SLIDERS,
+        Action::Show(Screen::Gestures | Screen::ReadingControls | Screen::ReadingData | Screen::FooterSettings) => SLIDERS,
         Action::Show(Screen::Typography | Screen::ReadingProfiles)
         | Action::ShowFonts
         | Action::Text(_) => TEXT,

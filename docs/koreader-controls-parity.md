@@ -1,5 +1,10 @@
 # KOReader reading controls and Reader parity
 
+The tables below record the original controls comparison. For subsequent work,
+the [source inventory](koreader-source-inventory.md) maps each upstream module
+and panel to its reading behavior. The [real-document verification](real-document-verification.md)
+records results through the Kindle Documents picker separately from simulator tests.
+
 Reference release is KOReader **v2026.07.1**, commit `9192014d8bd82a91dc1012473be0f238dedfdb54`. The inventory follows the tagged Lua source through menu construction, gesture dispatch, document configuration and rendering. The acceptance tests extend the [reading parity plan](reading-parity-plan.md) and [requirements](requirements.md). [Tagged release](https://github.com/koreader/koreader/releases/tag/v2026.07.1) · [KOReader user guide](https://koreader.rocks/user_guide/)
 
 **Released** means present in published Reader 0.1.1 at `40f1f3fc3a8978039239dc5a449e1eeeeb03567e`. **In progress** means visible in the next worktree changes and awaiting integrated validation. **Open** means the equivalent still needs implementation or provider work. Publication and hardware validation are recorded separately. [Reader 0.1.1 release](https://github.com/PrimitiveOS/kindle-primitive-reader/releases/tag/v0.1.1)

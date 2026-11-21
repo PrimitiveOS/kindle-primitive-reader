@@ -142,7 +142,7 @@ impl Reader {
             let mut title = String::from("Documents");
             for part in &self.browser.directory {
                 title.push_str(" / ");
-                title.push_str(&part.to_string_lossy());
+                title.push_str(&crate::library::display_filename(&part.to_string_lossy()));
             }
             title
         };
@@ -309,6 +309,14 @@ fn file_item(entry: &BrowseEntry) -> Item {
             Action::Open(book.clone()),
             file_detail(&entry.path, book.size, None),
         ),
+        BrowseKind::KindleProtected { size } => (
+            Action::Heading,
+            file_detail(
+                &entry.path,
+                *size,
+                Some("Protected · Open in Kindle Library"),
+            ),
+        ),
         BrowseKind::Unavailable { size, too_large } => (
             Action::Heading,
             file_detail(
@@ -316,18 +324,33 @@ fn file_item(entry: &BrowseEntry) -> Item {
                 *size,
                 Some(if *too_large {
                     "Too large for Reader"
+                } else if entry
+                    .path
+                    .extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("kfx"))
+                {
+                    "Open in Kindle Library"
                 } else {
                     "Not supported in Reader"
                 }),
             ),
         ),
     };
-    let mut item = Item::new(&entry.name, action).detail(detail);
+    let mut item = if matches!(entry.kind, BrowseKind::Readable(_))
+        && crate::epub_members::is_folder_book(&entry.path)
+    {
+        Item::new("Read this book", action).detail("EPUB · Extracted publication")
+    } else {
+        Item::new(&entry.name, action).detail(detail)
+    };
     item.folder = matches!(entry.kind, BrowseKind::Folder);
     item
 }
 
 pub(super) fn file_type(path: &Path) -> String {
+    if crate::epub_members::is_folder_book(path) {
+        return "EPUB".into();
+    }
     path.extension()
         .and_then(|extension| extension.to_str())
         .filter(|extension| !extension.is_empty() && extension.chars().count() <= 8)

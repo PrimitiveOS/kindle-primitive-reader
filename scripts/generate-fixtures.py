@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rebuild the original Reader EPUB fixtures and their expected results."""
+"""Rebuild the original Reader publication fixtures and their expected results."""
 
 import argparse
 import hashlib
@@ -150,7 +150,7 @@ def navigation(chapters, epub3, identifier, title):
 '''
 
 
-def publication(title, slug, version, chapters, extra_resources=(), missing_paths=()):
+def publication(title, slug, version, chapters, extra_resources=(), missing_paths=(), *, rtl=False):
     epub3 = version == 3
     identifier = f"urn:primitiveos:reader:fixture:{slug}"
     nav_path = NAV_PATH if epub3 else NCX_PATH
@@ -158,6 +158,7 @@ def publication(title, slug, version, chapters, extra_resources=(), missing_path
     nav_property = ' properties="nav"' if epub3 else ""
     modified = '\n    <meta property="dcterms:modified">2026-11-20T00:00:00Z</meta>' if epub3 else ""
     toc = "" if epub3 else ' toc="nav"'
+    direction = ' page-progression-direction="rtl"' if rtl else ""
     publication_resources = [(path, XHTML, content) for path, _, content in chapters] + list(extra_resources)
     items = "\n".join(
         f'    <item id="resource-{index}" href="{href(path)}" media-type="{kind}"/>'
@@ -176,7 +177,7 @@ def publication(title, slug, version, chapters, extra_resources=(), missing_path
     <item id="nav" href="{href(nav_path)}" media-type="{nav_type}"{nav_property}/>
 {items}
   </manifest>
-  <spine{toc}>
+  <spine{toc}{direction}>
 {spine}
   </spine>
 </package>
@@ -304,6 +305,96 @@ def vertical_chapters():
     return publication(title, "vertical-chapters", 3, chapters, [css])
 
 
+def signal_guide():
+    title = "Along the Waterline"
+    intro = """<h1>Along the Waterline</h1>
+<p>Field notebook · Early summer</p>
+<p>At the inlet the contour narrows. Follow the channel until the marker
+<a href="legend.xhtml#beacon"><img class="beacon" src="../images/beacon.svg" alt="Beacon key"/></a>
+comes into view. Beyond it, the sand turns to slate.</p>
+<p>From the bluff, the small pillar lines up with the shoulder of the hill. The sketch below shows the approach from the west.</p>
+<p><img class="sketch" src="../images/shore.png" alt="Hill and beacon sketched from the west"/></p>
+<p>The tide has already covered the lowest steps. On the return walk, use the same mark to find the path inland.</p>"""
+    legend = """<h1 id="beacon">Beacon key</h1><p>A triangle marks the landing point.
+<a href="guide.xhtml">Return to the field notebook.</a></p>"""
+    mark = """<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">
+<path d="M48 4L94 85H2Z" fill="#292929"/><circle cx="48" cy="58" r="11" fill="white"/></svg>"""
+    css = ".beacon { height: 1.15em; vertical-align: middle } .sketch { width: 68%; height: auto }"
+    chapters = [
+        ("EPUB/chapters/guide.xhtml", title, xhtml(title, intro, True, "../styles/reader.css")),
+        ("EPUB/chapters/legend.xhtml", "Beacon key", xhtml(title, legend, True)),
+    ]
+    return publication(title, "signal-guide", 3, chapters, [
+        (CSS_PATH, "text/css", css), (IMAGE_PATH, "image/png", shore_image()),
+        ("EPUB/images/beacon.svg", "image/svg+xml", mark),
+    ])
+
+
+def rtl_notebook():
+    title = "Harbor notebook"
+    notes = [
+        ("The lamp is on the quay.", "المصباح على الرصيف."),
+        ("The wind is from the east.", "تهب الريح من الشرق."),
+        ("One boat returns before sunset.", "يعود قارب واحد قبل الغروب."),
+        ("The sea is calm tonight.", "البحر هادئ الليلة."),
+    ]
+    entries = ['<h1>Harbor notebook</h1>']
+    for number in range(1, 17):
+        english, arabic = notes[(number - 1) % len(notes)]
+        entries.extend([
+            f'<h2 id="entry-{number}">Observation {number}</h2>',
+            f'<p dir="rtl" xml:lang="ar">{arabic}</p>',
+            f'<p>{english} <a href="key.xhtml#key">Translation key</a></p>',
+        ])
+    chapters = [
+        ("EPUB/chapters/notes.xhtml", title, xhtml(title, "\n".join(entries), True)),
+        ("EPUB/chapters/key.xhtml", "Translation key",
+         xhtml("Translation key", '<h1 id="key">Translation key</h1><p>Notes from the quay.</p>', True)),
+    ]
+    return publication(title, "rtl-notebook", 3, chapters, rtl=True)
+
+
+def tilted_scan():
+    """Two original scan-like PDF pages with opposite tilts and an internal link."""
+    objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 /Resources << /Font << /F 7 0 R >> >> >>",
+    ]
+    # Draw about the centre of a 310 x 220 pt sheet with a known rotation of +/-8 degrees.
+    for index, sine in enumerate([0.139173, -0.139173]):
+        cosine = 0.990268
+        dx = 155 - cosine * 155 + sine * 110
+        dy = 110 - sine * 155 - cosine * 110
+        commands = [f"q {cosine:.6f} {sine:.6f} {-sine:.6f} {cosine:.6f} {dx:.6f} {dy:.6f} cm",
+                    "BT /F 11 Tf 1 0 0 1 30 180 Tm (Field observations) Tj ET"]
+        lines = ["A breeze crossed the water early that morning.",
+                 "The crew gathered beside the stone steps.",
+                 "Small waves rolled against the shaded quay.",
+                 "Trail notes recorded the change in the tide.",
+                 "At dusk the last boat returned to the cove.",
+                 "The keeper closed the notebook for the day."]
+        for row, text in enumerate(lines):
+            commands.append(f"BT /F 9 Tf 1 0 0 1 30 {152 - row * 19} Tm ({text}) Tj ET")
+        commands.append("Q")
+        data = "\n".join(commands) + "\n"
+        annots = " /Annots [8 0 R]" if index == 0 else ""
+        objects.extend([f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 310 220] /Contents {4 + index*2} 0 R{annots} >>",
+                        f"<< /Length {len(data)} >>\nstream\n{data}endstream"])
+    objects.extend(["<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+                    "<< /Subtype /Link /Rect [34 72 61 91] /Dest [5 0 R /Fit] >>"])
+    buffer = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for number, obj in enumerate(objects, 1):
+        offsets.append(len(buffer))
+        buffer.extend(f"{number} 0 obj\n{obj}\nendobj\n".encode("ascii"))
+    xref = len(buffer)
+    buffer.extend(f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode("ascii"))
+    for offset in offsets:
+        buffer.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+    buffer.extend(f"trailer\n<< /Root 1 0 R /Size {len(objects) + 1} >>\nstartxref\n{xref}\n%%EOF\n".encode("ascii"))
+    return bytes(buffer)
+
+
 def outputs():
     epub2 = archive(field_notes(2))
     epub3 = archive(field_notes(3))
@@ -312,6 +403,10 @@ def outputs():
     records = [
         ("field-notes-epub2.epub", epub2, field_expectations(2)),
         ("field-notes-epub3.epub", epub3, field_expectations(3)),
+        ("tilted-scan.pdf", tilted_scan(), {
+            "opens": True, "page_count": 2, "display_baseline_degrees": [-8, 8],
+            "internal_link_pages": [1, 2],
+        }),
         ("long-chapter.epub", archive(long_chapter()), {
             "opens": True, "epub_version": "3.0", "spine_count": 1, "observation_count": 240,
             "anchors": {"EPUB/chapters/walk.xhtml#station-137": "Observation 137.",
@@ -325,6 +420,15 @@ def outputs():
             "opens": True, "epub_version": "3.0", "spine_count": 3,
             "writing_modes": ["horizontal-tb", "vertical-rl", "horizontal-tb"],
             "anchors": {"EPUB/chapters/vertical.xhtml#entry-24": "Before the tide rose"},
+        }),
+        ("signal-guide.epub", archive(signal_guide()), {
+            "opens": True, "epub_version": "3.0", "spine_count": 2,
+            "inline_image": "EPUB/images/beacon.svg", "image_link": "EPUB/chapters/legend.xhtml#beacon",
+        }),
+        ("rtl-notebook.epub", archive(rtl_notebook()), {
+            "opens": True, "epub_version": "3.0", "spine_count": 2,
+            "page_progression": "rtl", "first_chapter": "EPUB/chapters/notes.xhtml",
+            "anchors": {"EPUB/chapters/key.xhtml#key": "Translation key"},
         }),
         ("missing-image.epub", archive(field_notes(2, missing_image=True)), {
             "missing_resource": IMAGE_PATH, "recovery": "Keep reading with image fallback or show an actionable error.",

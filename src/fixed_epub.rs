@@ -187,8 +187,8 @@ impl FixedEpub {
         fonts: &[PathBuf],
         content_size: (u32, u32),
     ) -> Result<Option<Self>> {
-        let book = Book::open(path)?;
-        let Some(spine) = book.fixed_spine().cloned() else {
+        let mut book = Book::open(path)?;
+        let Some(spine) = book.take_fixed_spine() else {
             return Ok(None);
         };
         let outline = book

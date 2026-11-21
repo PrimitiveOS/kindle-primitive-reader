@@ -43,8 +43,11 @@ Install Reader from PrimitiveOS Store or follow the manual install guide.
   each file's type and size. Files Reader cannot open are labelled and disabled.
   Use **Up** to return to the parent folder, or **Find** to search all Documents.
   **Continue reading** on the Documents screen returns to your saved passage.
-- Swipe down from the top edge for the upper menu. Start at the left, center,
-  or right to open Navigation, the last-used tab, or Library. Navigation has
+  Inside an extracted `.epub` folder, **Read this book** opens the publication.
+  Choosing one of its XHTML chapters opens that chapter with its illustrations and links.
+- Tap the upper center of the page to show the reading bars. For the upper menu
+  alone, swipe down from just below Launcher’s system gesture area. Start at the
+  left, center, or right to open Navigation, the last-used tab, or Library. Navigation has
   contents, bookmarks, location history, a book map, page previews, and
   automatic page turns. Search has full-text and bookmark search, recent
   queries, a typed dictionary lookup, and saved vocabulary.
@@ -53,7 +56,7 @@ Install Reader from PrimitiveOS Store or follow the manual install guide.
   independent margins, facing pages, weight, screen settings, and font profiles. Fixed-page
   controls include fit, zoom, rotation, scroll mode, and available scan tools.
   Make adjustments with the page visible. Tap the upper center to show both
-  bars. Tap the page to dismiss them. **Done** exits from the reading page.
+  bars. Tap the page to dismiss them. **Exit** returns to Launcher.
 - Use the Kindle's page buttons, tap the outer thirds of the page, or swipe.
   Text settings switch between paged and continuous reading in horizontal EPUBs.
   Supported `vertical-rl` chapters use right-to-left columns and page turns.
@@ -73,9 +76,20 @@ Install Reader from PrimitiveOS Store or follow the manual install guide.
   Definitions open over the current page, away from the selected words when
   space allows. Expand a longer result to read it at full size.
   Choose a preferred installed dictionary under Controls.
+- **Wikipedia and translation** open over the selected passage. Search also includes
+  typed Wikipedia topics, online lookup history and Translate page for selectable
+  documents. The sheet previews the text and names the provider. Tap Search or
+  Translate to send it. Choose the Wikipedia edition or translation languages
+  before sending. Google Translate supports automatic source detection. MyMemory
+  requires a source and target language. Cancel returns to the book.
+  Wikipedia shows ranked introductions, the full article when available and
+  paged text. Both providers can limit requests. Reader sends a request to the
+  provider you choose. Online history lets you clear saved queries and switch
+  recording off.
 - Hold a local EPUB illustration to open it for zoom and pan. Done returns
   to the same passage.
-- Search with or without case matching. Title and filename search also covers
+- Search with or without case matching. **Ignore accents** finds a word such as
+  *café* when you type *cafe*, and highlights its original spelling. Title and filename search also covers
   authors cached as books are opened.
 - Hold a book in Library to set its reading status, add it to Favorites, or
   organize it into collections. Create collections from **Organize**.
@@ -112,7 +126,7 @@ device. [Reading parity and device results](docs/reading-parity-plan.md)
 | SVG | Static geometry and local gradients in standalone files, linked EPUB illustrations, and fixed-layout EPUB pages. |
 | WebP and TIFF | Lossy, single-image VP8 WebP. Single-page uncompressed strip-based TIFF with top-left orientation and 1-bit or 8-bit grayscale. |
 | TXT, HTML/XHTML, HTMLZ, Markdown and FB2 | Shared text search and reading positions. Single-document HTMLZ archives use local illustrations and stylesheets. FB2 preserves section navigation and supported embedded images, including ZIP and gzip packages. Markdown builds a contents list from headings. |
-| MOBI, PalmDOC and AZW3 | Text and metadata from supported DRM-free legacy files. Standalone reflowable KF8/AZW3 with UTF-8 text, reconstructed chapters, supported local links, and JPEG or PNG illustrations. |
+| MOBI, PalmDOC and AZW3 | Full-length DRM-free legacy MOBI and PalmDOC text. Standalone reflowable KF8/AZW3 supports PalmDOC compression, contents, local links, KindleGen stylesheets, JPEG, PNG, first-frame GIF and supported SVG artwork. Large chapters open in bounded sections that retain link destinations. |
 | DOCX | Macro-free Strict and Transitional Word documents. Text, headings, basic emphasis, table reading order, and title and author metadata. |
 | CHM | Static help topics in single archives, with nested contents, headings, links and local JPEG or PNG illustrations. |
 | RTF and TCR | RTF preserves paragraphs and basic character styling. TCR opens bounded 8-bit dictionary-compressed text in the reflow reader. |
@@ -159,6 +173,16 @@ The formats and workflows above are development features. The
 [reading parity plan](docs/reading-parity-plan.md) lists the remaining work and
 the acceptance checks for each feature. See [packaging instructions](INSTALL.md)
 for a local ARMHF build.
+
+## Reading controls
+
+| Reading task | How it works |
+| --- | --- |
+| Track progress | Tap the footer to show book or chapter progress. Hold it to skim and return to your place. [Footer screenshot](docs/screenshots/reading-footer.png) |
+| Customize touch | Assign an action to a corner tap, hold or edge swipe in Reading gestures. [Gesture grid](docs/screenshots/reading-gestures.png) |
+| Edit the outline | Add a named entry at a reading location and jump back from Contents. [Custom contents](docs/screenshots/custom-contents.png) |
+| Read a scan | Straighten a tilted PDF or DjVu page. Run offline OCR when the embedded text is missing or inaccurate. [Scan controls](docs/scan-controls.md) |
+| Look up a passage | Open a dictionary, Wikipedia or translation from the selection sheet. Online lookup requires choosing a provider action. [Lookup controls and privacy](docs/online-lookups.md) |
 
 ## Design documents
 

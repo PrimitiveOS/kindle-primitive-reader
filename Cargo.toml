@@ -1,6 +1,6 @@
 [package]
 name = "reader"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2024"
 license = "PolyForm-Noncommercial-1.0.0"
 description = "Offline book reader for PrimitiveOS on Kindle"
@@ -8,7 +8,7 @@ description = "Offline book reader for PrimitiveOS on Kindle"
 [features]
 # On by default: the release (the shared package workflow) builds the Kindle binary without naming a feature.
 default = ["kindle"]
-kindle = ["dep:primitive-app", "dep:primitive-ui", "dep:unicode-bidi"]
+kindle = ["dep:primitive-app", "dep:primitive-ui", "dep:unicode-bidi", "dep:ureq", "dep:url"]
 
 [dependencies]
 ab_glyph_rasterizer = "=0.1.10"
@@ -40,11 +40,13 @@ primitive-app = { git = "https://github.com/PrimitiveOS/kindle-primtitive-tools.
 primitive-ui = { git = "https://github.com/PrimitiveOS/kindle-primtitive-tools.git", rev = "67db0b5cb7d9affc36b72734dbd977f301abb8a2", optional = true }
 pulldown-cmark = { version = "=0.13.0", default-features = false, features = ["html"] }
 rars = { version = "=0.12.3", default-features = false }
-resvg = { version = "=0.50.0", default-features = false }
+resvg = { version = "=0.50.0", default-features = false, features = ["raster-images"] }
 roxmltree = "=0.21.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 skrifa = { version = "=0.44.0", default-features = false, features = ["std"] }
+ureq = { version = "=3.5.2", default-features = false, features = ["rustls"], optional = true }
+url = { version = "=2.5.8", optional = true }
 unicode-bidi = { version = "=0.3.18", optional = true }
 zip = { version = "=2.6.1", default-features = false, features = ["deflate"] }
 
@@ -63,3 +65,7 @@ parley = { path = "vendor/parley" }
 
 [profile.release]
 codegen-units = 4
+
+[[example]]
+name = "verify_document"
+required-features = ["kindle"]

@@ -4,13 +4,15 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use crate::scan_deskew::{DeskewCache, FULL_PAGE, Quad, source_rect};
+use hayro::kurbo::{Affine, Point};
 use primitive_app::{WIDTH, with_storage};
 use primitive_ui::{CAPTION, Canvas, GrayImage, HAIRLINE, Input, Rect};
 
 use crate::Result;
 use crate::comic::{Comic, ImagePage};
 use crate::djvu::{Djvu, MAX_DJVU_BYTES};
-use crate::fixed::{MAX_PDF_BYTES, Pdf, PdfLinkTarget, PdfOutlineItem, RenderRequest};
+use crate::fixed::{MAX_PDF_BYTES, Pdf, PdfLinkTarget, PdfOutlineItem, RenderRequest, pdf_open_timing};
 use crate::fixed_epub::{FixedEpub, SpreadPlan};
 use crate::fixed_text::{PdfPageText, PdfTextRect};
 use crate::library::{
@@ -24,7 +26,7 @@ use crate::session::{
 #[path = "comic_panel.rs"]
 mod comic_panel;
 
-const SMALLER: Rect = Rect::new(840, PAGE_HEIGHT as i32 + 5, 120, 60);
+pub(crate) const SMALLER: Rect = Rect::new(840, PAGE_HEIGHT as i32 + 5, 120, 60);
 const LARGER: Rect = Rect::new(974, PAGE_HEIGHT as i32 + 5, 120, 60);
 const ZOOM: [f32; 5] = [1.0, 1.25, 1.5, 2.0, 3.0];
 const MAX_OCR_RASTER_SIDE: f32 = 1800.0;
@@ -43,13 +45,15 @@ pub(crate) struct FixedReading {
     page: usize,
     view: View,
     frame: GrayImage,
+    deskew_cache: DeskewCache,
     visible: Vec<VisiblePage>,
     epub_spreads: Option<EpubSpreads>,
     turns: PageTurns,
     pending_scroll: (f32, f32),
     outline: Vec<PdfOutlineItem>,
     ocr_path: Option<PathBuf>,
-    last_ocr: Option<(usize, PdfPageText)>,
+    last_ocr: Option<(usize, CachedRecognition)>,
+    pub(crate) ocr_language: Option<String>,
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -63,6 +67,7 @@ struct VisiblePage {
     size: (f32, f32),
     rows: Range<u32>,
     request: RenderRequest,
+    correction: Affine,
 }
 
 struct EpubSpreads {
@@ -77,6 +82,11 @@ enum Fit {
     Height,
 }
 
+pub(crate) enum WordAtTouch {
+    Ready(Option<PdfSelection>),
+    Recognize { page: usize, point: Point },
+}
+
 pub(crate) struct PdfSelection {
     page: usize,
     document: PdfPageText,
@@ -85,6 +95,19 @@ pub(crate) struct PdfSelection {
 }
 
 impl PdfSelection {
+    pub(crate) fn at(page: usize, point: Point, document: PdfPageText) -> Option<Self> {
+        let index = document
+            .words
+            .iter()
+            .position(|word| source_rect((1.0, 1.0), word.bounds).contains(point))?;
+        Some(Self {
+            page,
+            document,
+            first: index,
+            last: index,
+        })
+    }
+
     pub(crate) fn text(&self) -> &str {
         let words = &self.document.words;
         &self.document.text[words[self.first].bytes.start..words[self.last].bytes.end]
@@ -109,6 +132,27 @@ enum FixedDocument {
     Image(ImagePage),
 }
 
+/// Read under the caller’s storage guard. The same owned buffer goes to the identity hash and Hayro.
+pub(crate) fn pdf_bytes(path: &Path, expected_size: Option<u64>) -> io::Result<Vec<u8>> {
+    let mut file = File::open(path)?;
+    let metadata = file.metadata()?;
+    let size = metadata.len();
+    if size > MAX_PDF_BYTES as u64 {
+        return Err(io::Error::other(crate::fixed::PdfError::TooLarge));
+    }
+    if !metadata.is_file() || expected_size.is_some_and(|expected| expected != size) {
+        return Err(io::Error::other("The PDF changed while opening"));
+    }
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(size as usize).map_err(io::Error::other)?;
+    bytes.resize(size as usize, 0);
+    file.read_exact(&mut bytes)?;
+    if file.read(&mut [0])? != 0 {
+        return Err(io::Error::other("The PDF changed while opening"));
+    }
+    Ok(bytes)
+}
+
 impl FixedReading {
     pub(crate) fn open(
         format: DocumentFormat,
@@ -117,6 +161,7 @@ impl FixedReading {
         fonts: &[PathBuf],
         preferences: View,
         password: Option<&str>,
+        prepared_pdf: Option<Vec<u8>>,
     ) -> Result<Option<Self>> {
         let source = match format {
             DocumentFormat::Epub => {
@@ -127,17 +172,14 @@ impl FixedReading {
                 FixedDocument::Epub(Box::new(book))
             }
             DocumentFormat::Pdf => {
-                let bytes = with_storage(|| {
-                    let mut bytes = Vec::new();
-                    File::open(path)?
-                        .take((MAX_PDF_BYTES + 1) as u64)
-                        .read_to_end(&mut bytes)?;
-                    Ok(bytes)
+                let bytes = match prepared_pdf {
+                    Some(bytes) => bytes,
+                    None => with_storage(|| pdf_bytes(path, None))?,
+                };
+                let pdf = pdf_open_timing("parse", || {
+                    Pdf::open_with_password(bytes, password.unwrap_or_default())
                 })?;
-                FixedDocument::Pdf(Pdf::open_with_password(
-                    bytes,
-                    password.unwrap_or_default(),
-                )?)
+                FixedDocument::Pdf(pdf)
             }
             DocumentFormat::Djvu => {
                 let bytes = with_storage(|| {
@@ -202,18 +244,24 @@ impl FixedReading {
         let page = page.min(source.count() - 1);
         let outline = match &source {
             FixedDocument::Epub(book) => book.outline(),
-            FixedDocument::Pdf(pdf) => pdf.outline(),
+            FixedDocument::Pdf(pdf) => pdf_open_timing("outline", || pdf.outline()),
             _ => Vec::new(),
         };
         let view = preferences.normalized();
         let epub_spreads = source.epub_spreads(view);
-        let (page, view, frame, visible) =
-            source.presentation(page, view, epub_spreads.as_ref())?;
+        let mut deskew_cache = DeskewCache::default();
+        let mut present = || source.presentation(page, view, epub_spreads.as_ref(), &mut deskew_cache);
+        let (page, view, frame, visible) = if matches!(&source, FixedDocument::Pdf(_)) {
+            pdf_open_timing("first_raster", present)
+        } else {
+            present()
+        }?;
         Ok(Self {
             source,
             page,
             view,
             frame,
+            deskew_cache,
             visible,
             epub_spreads,
             turns: PageTurns::new(Instant::now()),
@@ -221,6 +269,7 @@ impl FixedReading {
             outline,
             ocr_path: None,
             last_ocr: None,
+            ocr_language: None,
         })
     }
 
@@ -414,6 +463,31 @@ impl FixedReading {
         Ok(())
     }
 
+    pub(crate) fn set_force_ocr(&mut self, enabled: bool) -> Result<()> {
+        if !self.supports_text() {
+            return Err("OCR selection is available for PDF and DjVu".into());
+        }
+        self.view.force_ocr = enabled;
+        Ok(())
+    }
+
+    pub(crate) fn set_straighten(&mut self, limit: u8) -> Result<()> {
+        if !self.supports_text() || limit > crate::library::MAX_STRAIGHTEN_DEGREES {
+            return Err("Auto straighten supports PDF and DjVu scans up to 25°".into());
+        }
+        if self.view.straighten_limit != limit {
+            self.present(
+                self.page,
+                View {
+                    straighten_limit: limit,
+                    ..self.view
+                },
+            )?;
+            self.pause();
+        }
+        Ok(())
+    }
+
     pub(crate) fn set_dither(&mut self, enabled: bool) {
         self.view.dither = enabled;
     }
@@ -527,12 +601,8 @@ impl FixedReading {
     }
 
     pub(crate) fn crop_point(&self, x: f32, y: f32) -> Option<(f32, f32)> {
-        let (size, viewport) = self.page_viewport()?;
-        let to_page = viewport.page_to_viewport(size).ok()?.inverse();
-        let point = to_page * hayro::kurbo::Point::new(f64::from(x), f64::from(y));
-        let x = point.x as f32 / size.0;
-        let y = point.y as f32 / size.1;
-        ((0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y)).then_some((x, y))
+        let point = self.source_point(self.page, x, y)?;
+        Some((point.x as f32, point.y as f32))
     }
 
     pub(crate) fn auto_crop(&self) -> Option<PdfTextRect> {
@@ -593,11 +663,21 @@ impl FixedReading {
         self.ocr_path = Some(path);
     }
 
+    pub(crate) fn forget_ocr(&mut self) {
+        self.last_ocr = None;
+    }
+
     pub(crate) fn cached_ocr(&self, page: usize) -> Option<PdfPageText> {
-        if let Some((index, text)) = &self.last_ocr
+        self.cached_ocr_for(page, None)
+    }
+
+    fn cached_ocr_for(&self, page: usize, language: Option<&str>) -> Option<PdfPageText> {
+        if let Some((index, saved)) = &self.last_ocr
             && *index == page
         {
-            return Some(text.clone());
+            return language
+                .is_none_or(|lang| saved.language == lang)
+                .then(|| saved.text.clone());
         }
         let path = self.ocr_path.as_ref()?.join(format!("{page}.json"));
         with_storage(|| {
@@ -609,16 +689,23 @@ impl FixedReading {
             File::open(path)?
                 .take(MAX_OCR_CACHE_BYTES + 1)
                 .read_to_end(&mut bytes)?;
-            let text: PdfPageText = serde_json::from_slice::<CachedRecognition>(&bytes)
-                .map(|saved| saved.text)
-                .or_else(|_| serde_json::from_slice(&bytes))
+            let saved = serde_json::from_slice::<CachedRecognition>(&bytes)
+                .or_else(|_| {
+                    serde_json::from_slice(&bytes).map(|text| CachedRecognition {
+                        language: "eng".to_owned(),
+                        text,
+                    })
+                })
                 .map_err(io::Error::other)?;
-            if bytes.len() as u64 > MAX_OCR_CACHE_BYTES || !text.valid_ocr_cache() {
+            if bytes.len() as u64 > MAX_OCR_CACHE_BYTES || !saved.text.valid_ocr_cache() {
                 return Err(io::Error::other("Reader OCR cache is invalid"));
             }
-            Ok(text)
+            Ok(language
+                .is_none_or(|lang| lang == saved.language)
+                .then_some(saved.text))
         })
         .ok()
+        .flatten()
     }
 
     pub(crate) fn remember_ocr(
@@ -630,17 +717,17 @@ impl FixedReading {
         if !text.valid_ocr_cache() {
             return Err("OCR returned invalid text positions".into());
         }
-        let Some(directory) = &self.ocr_path else {
-            self.last_ocr = Some((page, text));
-            return Ok(());
-        };
-        let path = directory.join(format!("{page}.json"));
         let saved = CachedRecognition {
             language: language.to_owned(),
             text,
         };
+        let Some(directory) = &self.ocr_path else {
+            self.last_ocr = Some((page, saved));
+            return Ok(());
+        };
+        let path = directory.join(format!("{page}.json"));
         let bytes = serde_json::to_vec(&saved)?;
-        self.last_ocr = Some((page, saved.text));
+        self.last_ocr = Some((page, saved));
         if bytes.len() as u64 > MAX_OCR_CACHE_BYTES {
             return Ok(());
         }
@@ -684,19 +771,22 @@ impl FixedReading {
         })
     }
 
-    pub(crate) fn select_word(&self, x: f32, y: f32) -> Result<Option<PdfSelection>> {
-        let Some(page) = self.page_at(y) else {
-            return Ok(None);
+    pub(crate) fn select_word(&self, x: f32, y: f32) -> Result<WordAtTouch> {
+        let Some((page, point)) = self
+            .page_at(y)
+            .and_then(|page| Some((page, self.source_point(page, x, y)?)))
+        else {
+            return Ok(WordAtTouch::Ready(None));
         };
-        let document = self.page_text(page)?;
-        Ok(self
-            .word_at(page, &document, x, y)
-            .map(|word| PdfSelection {
-                page,
-                document,
-                first: word,
-                last: word,
-            }))
+        let document = if self.view.force_ocr {
+            let Some(text) = self.cached_ocr_for(page, self.ocr_language.as_deref()) else {
+                return Ok(WordAtTouch::Recognize { page, point });
+            };
+            text
+        } else {
+            self.page_text(page)?
+        };
+        Ok(WordAtTouch::Ready(PdfSelection::at(page, point, document)))
     }
 
     /// Use the same transformed, visible word rectangles as fixed-page highlight drawing.
@@ -737,21 +827,35 @@ impl FixedReading {
             return None;
         };
         let page = self.page_at(y)?;
-        let point = hayro::kurbo::Point::new(f64::from(x), f64::from(y));
+        let point = self.source_point(page, x, y)?;
         pdf.page_links(page).ok()?.into_iter().find_map(|link| {
-            self.visible_rectangle(page, link.bounds)
-                .is_some_and(|bounds| bounds.contains(point))
+            source_rect((1.0, 1.0), link.bounds)
+                .contains(point)
                 .then_some(link.target)
         })
     }
 
     fn word_at(&self, page: usize, text: &PdfPageText, x: f32, y: f32) -> Option<usize> {
-        text.words.iter().position(|word| {
-            self.visible_rectangle(page, word.bounds)
-                .is_some_and(|rect| {
-                    rect.contains(hayro::kurbo::Point::new(f64::from(x), f64::from(y)))
-                })
-        })
+        let point = self.source_point(page, x, y)?;
+        text.words
+            .iter()
+            .position(|word| source_rect((1.0, 1.0), word.bounds).contains(point))
+    }
+
+    fn source_point(&self, index: usize, x: f32, y: f32) -> Option<Point> {
+        if !(0.0..WIDTH as f32).contains(&x) || self.page_at(y) != Some(index) {
+            return None;
+        }
+        let page = self.visible.iter().find(|p| p.index == index)?;
+        let transform = page.request.page_to_viewport(page.size).ok()? * page.correction;
+        let source = transform.inverse() * Point::new(f64::from(x), f64::from(y));
+        let normalized = Point::new(
+            source.x / f64::from(page.size.0),
+            source.y / f64::from(page.size.1),
+        );
+        source_rect((1.0, 1.0), self.view.crop.unwrap_or(FULL_PAGE))
+            .contains(normalized)
+            .then_some(normalized)
     }
 
     fn page_at(&self, y: f32) -> Option<usize> {
@@ -768,41 +872,43 @@ impl FixedReading {
             .map(|page| page.index)
     }
 
-    fn visible_rectangle(&self, index: usize, bounds: PdfTextRect) -> Option<hayro::kurbo::Rect> {
-        let (size, request) = self.viewport_for_page(index)?;
-        let mut rect = bounds.in_viewport(size, request)?;
-        if let Some(crop) = self.view.crop {
-            rect = rect.intersect(crop.in_viewport(size, request)?);
-        }
-        if let Some(page) = self.visible.iter().find(|page| page.index == index) {
-            rect.y0 = rect.y0.max(f64::from(page.rows.start));
-            rect.y1 = rect.y1.min(f64::from(page.rows.end));
-        }
-        (rect.x0 < rect.x1 && rect.y0 < rect.y1).then_some(rect)
-    }
-
-    pub(crate) fn page_viewport(&self) -> Option<((f32, f32), RenderRequest)> {
-        self.viewport_for_page(self.page)
-    }
-
-    fn viewport_for_page(&self, index: usize) -> Option<((f32, f32), RenderRequest)> {
-        if !self.visible.is_empty() {
-            return self
-                .visible
-                .iter()
-                .find(|page| page.index == index)
-                .map(|page| (page.size, page.request));
-        }
-        if index != self.page {
+    fn projected_region(
+        &self,
+        index: usize,
+        bounds: PdfTextRect,
+    ) -> Option<(Quad, hayro::kurbo::Rect)> {
+        let page = self.visible.iter().find(|p| p.index == index)?;
+        let transform = page.request.page_to_viewport(page.size).ok()? * page.correction;
+        let cropped = source_rect(page.size, bounds)
+            .intersect(source_rect(page.size, self.view.crop.unwrap_or(FULL_PAGE)));
+        if cropped.is_zero_area() {
             return None;
         }
-        let size = match &self.source {
-            FixedDocument::Pdf(pdf) => pdf.page_size(index).ok()?,
-            FixedDocument::Djvu(book) => book.page_size(index).ok()?,
-            _ => return None,
-        };
-        let mut view = self.view;
-        Some((size, viewport(size, &mut view)))
+        let quad = Quad::project(cropped, transform);
+        let clip = hayro::kurbo::Rect::new(
+            0.0,
+            f64::from(page.rows.start),
+            f64::from(WIDTH),
+            f64::from(page.rows.end),
+        );
+        let rect = quad.bounds().intersect(clip);
+        (!rect.is_zero_area()).then_some((quad, rect))
+    }
+
+    pub(crate) fn visible_rectangle(
+        &self,
+        index: usize,
+        bounds: PdfTextRect,
+    ) -> Option<hayro::kurbo::Rect> {
+        self.projected_region(index, bounds).map(|(_, rect)| rect)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn page_viewport(&self) -> Option<((f32, f32), RenderRequest)> {
+        self.visible
+            .iter()
+            .find(|p| p.index == self.page)
+            .map(|p| (p.size, p.request))
     }
 
     pub(crate) fn jump(&mut self, page: usize) -> Result<()> {
@@ -842,6 +948,8 @@ impl FixedReading {
                 dither: self.view.dither,
                 continuous_gap: self.view.continuous_gap,
                 scan_white_level: self.view.scan_white_level,
+                straighten_limit: self.view.straighten_limit,
+                force_ocr: self.view.force_ocr,
                 offset_y: if width_fit && !self.is_continuous() {
                     f32::MAX
                 } else {
@@ -1027,7 +1135,9 @@ impl FixedReading {
             None
         };
         let spreads = new_epub_spreads.as_ref().or(self.epub_spreads.as_ref());
-        let (page, view, frame, visible) = self.source.presentation(page, view, spreads)?;
+        let (page, view, frame, visible) =
+            self.source
+                .presentation(page, view, spreads, &mut self.deskew_cache)?;
         if new_epub_spreads.is_some() {
             self.epub_spreads = new_epub_spreads;
         }
@@ -1080,31 +1190,23 @@ impl FixedReading {
     ) {
         let mut frame = self.display_frame(paint.visible.clone());
         for (regions, gray) in [(marks, 220), (selection, 180)] {
-            for rect in regions
+            for (quad, clip) in regions
                 .iter()
-                .filter_map(|&(page, bounds)| self.visible_rectangle(page, bounds))
+                .filter_map(|&(page, bounds)| self.projected_region(page, bounds))
             {
-                let left = rect.x0.floor() as usize;
-                let right = (rect.x1.ceil() as usize).min(WIDTH as usize);
-                let top = rect.y0.floor() as usize;
-                let bottom = (rect.y1.ceil() as usize).min(PAGE_HEIGHT as usize);
-                for row in frame
-                    .pixels
-                    .as_chunks_mut::<{ WIDTH as usize }>()
-                    .0
-                    .iter_mut()
-                    .skip(top)
-                    .take(bottom - top)
-                {
-                    for pixel in &mut row[left..right] {
+                for y in clip.y0.floor() as usize..clip.y1.ceil() as usize {
+                    let span = quad.row(y, WIDTH as usize);
+                    let start = y * WIDTH as usize;
+                    for pixel in &mut frame.pixels[start + span.start..start + span.end] {
                         *pixel = (*pixel).min(gray);
                     }
                 }
             }
         }
         let full = paint.is_full();
+        let footer_visible = paint.visible.end == PAGE_HEIGHT;
         draw_page_picture(canvas, frame, paint);
-        if !full || !selection.is_empty() {
+        if !footer_visible || !selection.is_empty() {
             return;
         }
         canvas.fill(Rect::new(0, PAGE_HEIGHT as i32, WIDTH as i32, 1), HAIRLINE);
@@ -1130,6 +1232,9 @@ impl FixedReading {
             notice.unwrap_or(&label),
             CAPTION,
         );
+        if !full {
+            return;
+        }
         if !self.is_spread() {
             canvas.button(SMALLER, "-", false, false);
             canvas.button(LARGER, "+", false, false);
@@ -1182,6 +1287,7 @@ impl FixedDocument {
         page: usize,
         mut view: View,
         epub_spreads: Option<&EpubSpreads>,
+        cache: &mut DeskewCache,
     ) -> Result<(usize, View, GrayImage, Vec<VisiblePage>)> {
         if let Some(epub) = epub_spreads {
             view.spread = epub.plan.has_facing();
@@ -1197,7 +1303,7 @@ impl FixedDocument {
             && view.width_fit
             && let Self::Pdf(pdf) = self
         {
-            return continuous_frame(pdf, page, view);
+            return continuous_frame(pdf, page, view, cache);
         }
         view.continuous = false;
         let page = if view.spread && epub_spreads.is_none() {
@@ -1205,6 +1311,28 @@ impl FixedDocument {
         } else {
             page
         };
+        if let Some(scan) = ScanPage::from_document(self) {
+            let size = scan.page_size(page)?;
+            let request = viewport(size, &mut view);
+            let correction = scan.correction(page, size, &view, cache)?;
+            let pixels = scan.render(page, request, correction)?;
+            let pixels = mask_crop(pixels, view.crop, size, request, correction)?;
+            let frame = GrayImage {
+                width: WIDTH,
+                height: PAGE_HEIGHT,
+                pixels,
+            };
+            let visible = VisiblePage {
+                index: page,
+                size,
+                rows: 0..PAGE_HEIGHT,
+                request,
+                correction,
+            };
+            return Ok((page, view, frame, vec![visible]));
+        }
+        view.straighten_limit = 0;
+        view.force_ocr = false;
         let frame = self.frame(page, &mut view, epub_spreads)?;
         Ok((page, view, frame, Vec::new()))
     }
@@ -1229,16 +1357,7 @@ impl FixedDocument {
                     .render(viewport(image.page_size(), view))
                     .map_err(io::Error::other)
             })?,
-            Self::Pdf(pdf) => {
-                let size = pdf.page_size(page)?;
-                let request = viewport(size, view);
-                mask_crop(pdf.render(page, request)?, view.crop, size, request)
-            }
-            Self::Djvu(book) => {
-                let size = book.page_size(page)?;
-                let request = viewport(size, view);
-                mask_crop(book.render(page, request)?, view.crop, size, request)
-            }
+            Self::Pdf(_) | Self::Djvu(_) => unreachable!("scans use their page transform"),
             Self::Comic(comic) if view.spread => comic_spread_pixels(comic, page, *view)?,
             Self::Comic(comic) => {
                 let image = with_storage(|| comic.decode_page(page).map_err(io::Error::other))?;
@@ -1373,6 +1492,7 @@ fn continuous_frame(
     pdf: &Pdf,
     page: usize,
     view: View,
+    cache: &mut DeskewCache,
 ) -> Result<(usize, View, GrayImage, Vec<VisiblePage>)> {
     let (page, view) = continuous_position(pdf, page, view)?;
     let mut pixels = vec![255; (WIDTH * PAGE_HEIGHT) as usize];
@@ -1404,13 +1524,22 @@ fn continuous_frame(
             y: request.y - rows.start as f32,
             ..request
         };
-        let raster = mask_crop(pdf.render(index, slice)?, view.crop, size, slice);
+        let scan = ScanPage::Pdf(pdf);
+        let correction = scan.correction(index, size, &view, cache)?;
+        let raster = mask_crop(
+            scan.render(index, slice, correction)?,
+            view.crop,
+            size,
+            slice,
+            correction,
+        )?;
         pixels[(rows.start * WIDTH) as usize..(rows.end * WIDTH) as usize].copy_from_slice(&raster);
         visible.push(VisiblePage {
             index,
             size,
             rows,
             request,
+            correction,
         });
         top = bottom + continuous_gap_after(index, last, &view);
     }
@@ -1483,32 +1612,67 @@ fn continuous_metrics(
     Ok((size, metrics, height))
 }
 
+#[derive(Clone, Copy)]
+enum ScanPage<'a> {
+    Pdf(&'a Pdf),
+    Djvu(&'a Djvu),
+}
+
+impl<'a> ScanPage<'a> {
+    fn from_document(source: &'a FixedDocument) -> Option<Self> {
+        match source {
+            FixedDocument::Pdf(pdf) => Some(Self::Pdf(pdf)),
+            FixedDocument::Djvu(book) => Some(Self::Djvu(book)),
+            _ => None,
+        }
+    }
+
+    fn page_size(self, page: usize) -> Result<(f32, f32)> {
+        match self {
+            Self::Pdf(pdf) => Ok(pdf.page_size(page)?),
+            Self::Djvu(book) => Ok(book.page_size(page)?),
+        }
+    }
+
+    fn render(self, page: usize, request: RenderRequest, correction: Affine) -> Result<Vec<u8>> {
+        match self {
+            Self::Pdf(pdf) => Ok(pdf.render_transformed(page, request, correction)?),
+            Self::Djvu(book) => Ok(book.render_transformed(page, request, correction)?),
+        }
+    }
+
+    fn correction(
+        self,
+        page: usize,
+        size: (f32, f32),
+        view: &View,
+        cache: &mut DeskewCache,
+    ) -> Result<Affine> {
+        cache.correction(page, size, view.straighten_limit, view.crop, |request| {
+            self.render(page, request, Affine::IDENTITY)
+        })
+    }
+}
+
 fn mask_crop(
     mut pixels: Vec<u8>,
     crop: Option<PdfTextRect>,
     size: (f32, f32),
     request: RenderRequest,
-) -> Vec<u8> {
-    if let Some(crop) = crop.and_then(|crop| crop.in_viewport(size, request)) {
-        let left = crop.x0.floor() as usize;
-        let right = (crop.x1.ceil() as usize).min(WIDTH as usize);
-        let top = crop.y0.floor() as usize;
-        let bottom = (crop.y1.ceil() as usize).min(request.height as usize);
-        for (row, line) in pixels
-            .as_chunks_mut::<{ WIDTH as usize }>()
-            .0
-            .iter_mut()
-            .enumerate()
-        {
-            if (top..bottom).contains(&row) {
-                line[..left].fill(255);
-                line[right..].fill(255);
-            } else {
-                line.fill(255);
-            }
+    correction: Affine,
+) -> Result<Vec<u8>> {
+    if let Some(crop) = crop {
+        let quad = Quad::project(
+            source_rect(size, crop),
+            request.page_to_viewport(size)? * correction,
+        );
+        for (y, row) in pixels.chunks_exact_mut(request.width as usize).enumerate() {
+            let span = quad.row(y, row.len());
+            row[..span.start].fill(255);
+            row[span.end..].fill(255);
         }
     }
-    pixels
+    Ok(pixels)
 }
 
 struct ViewMetrics {
@@ -1581,6 +1745,15 @@ mod tests {
     use super::*;
     use std::io::Write;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    impl WordAtTouch {
+        fn ready(self) -> Option<PdfSelection> {
+            match self {
+                Self::Ready(word) => word,
+                Self::Recognize { .. } => panic!("unexpected OCR request"),
+            }
+        }
+    }
 
     struct ComicFixture(PathBuf);
 
@@ -1756,7 +1929,7 @@ mod tests {
 
         fn open(&self, page: usize, view: View) -> FixedReading {
             let fonts = [crate::test_fixture("fonts/Silkscreen-Regular.ttf")];
-            FixedReading::open(DocumentFormat::Epub, &self.0, page, &fonts, view, None)
+            FixedReading::open(DocumentFormat::Epub, &self.0, page, &fonts, view, None, None)
                 .unwrap()
                 .unwrap()
         }
@@ -1825,6 +1998,116 @@ mod tests {
     }
 
     #[test]
+    fn forced_ocr_reuses_only_the_chosen_language_and_keeps_legacy_english() {
+        let pdf = Pdf::open(include_bytes!("../tests/fixtures/tilted-scan.pdf").to_vec()).unwrap();
+        let mut reader = reading(pdf, View::default());
+        let tmp = std::env::temp_dir().join(format!("reader-ocr-language-{}", std::process::id()));
+        let mut words = reader.page_text(0).unwrap();
+        words.words.truncate(1);
+        words.lines.clear();
+        words.text.truncate(words.words[0].bytes.end);
+        reader.set_ocr_path(tmp.clone());
+        reader.remember_ocr(0, "fra", words.clone()).unwrap();
+        assert!(reader.cached_ocr_for(0, Some("eng")).is_none());
+        assert!(reader.cached_ocr_for(0, Some("fra")).is_some());
+        reader.forget_ocr();
+        assert!(reader.cached_ocr_for(0, Some("eng")).is_none());
+        assert_eq!(reader.cached_ocr_for(0, Some("fra")).unwrap(), words);
+        fs::write(tmp.join("0.json"), serde_json::to_vec(&words).unwrap()).unwrap();
+        assert!(reader.cached_ocr_for(0, Some("fra")).is_none());
+        assert_eq!(reader.cached_ocr_for(0, Some("eng")).unwrap(), words);
+        fs::remove_file(tmp.join("0.json")).unwrap();
+        fs::remove_dir(tmp).unwrap();
+    }
+
+    #[test]
+    fn straightening_keeps_source_words_links_and_highlights_aligned_in_each_view() {
+        let pdf = Pdf::open(include_bytes!("../tests/fixtures/tilted-scan.pdf").to_vec()).unwrap();
+        let mut reader = reading(pdf, View::default());
+        let original = reader.frame.pixels.clone();
+        reader.set_straighten(5).unwrap();
+        assert!(
+            original == reader.frame.pixels,
+            "8° is over the user's 5° limit"
+        );
+        reader.set_straighten(10).unwrap();
+        assert!(original != reader.frame.pixels);
+        let angle = |page: &VisiblePage| {
+            let c = page.correction.as_coeffs();
+            c[1].atan2(c[0]).to_degrees()
+        };
+        assert!(
+            (angle(&reader.visible[0]) - 8.0).abs() < 1.0,
+            "{}",
+            angle(&reader.visible[0])
+        );
+        let words = reader.page_text(0).unwrap();
+        let trail = words
+            .words
+            .iter()
+            .find(|w| &words.text[w.bytes.clone()] == "Trail")
+            .unwrap()
+            .bounds;
+        let link = match &reader.source {
+            FixedDocument::Pdf(pdf) => pdf.page_links(0).unwrap()[0],
+            _ => unreachable!(),
+        };
+        let verify = |reader: &FixedReading| {
+            let point = reader.visible_rectangle(0, trail).unwrap().center();
+            let word = reader
+                .select_word(point.x as f32, point.y as f32)
+                .unwrap()
+                .ready()
+                .unwrap();
+            assert_eq!(word.text(), "Trail");
+            assert_eq!(word.bounds().next(), Some(trail));
+            let (quad, rect) = reader.projected_region(0, link.bounds).unwrap();
+            let center = rect.center();
+            assert_eq!(
+                reader.link_at(center.x as f32, center.y as f32),
+                Some(PdfLinkTarget::Page(1))
+            );
+            // A projected box corner is outside this rotated annotation parallelogram.
+            let y = rect.y0.ceil() as usize + 1;
+            let span = quad.row(y, WIDTH as usize);
+            let x = if span.start as f64 - rect.x0 > 2.0 {
+                rect.x0 + 0.5
+            } else {
+                rect.x1 - 1.0
+            };
+            assert_eq!(reader.link_at(x as f32, y as f32 + 0.5), None);
+        };
+        verify(&reader);
+        reader.rotate().unwrap();
+        verify(&reader);
+        reader
+            .restore_view(View {
+                straighten_limit: 10,
+                crop: Some(PdfTextRect {
+                    x0: 0.04,
+                    y0: 0.04,
+                    x1: 0.96,
+                    y1: 0.96,
+                }),
+                ..View::default()
+            })
+            .unwrap();
+        verify(&reader);
+        reader.set_continuous(true).unwrap();
+        verify(&reader);
+        assert_eq!(reader.visible.len(), 2);
+        assert!((angle(&reader.visible[1]) + 8.0).abs() < 1.0);
+        let prefs = reader.preferences();
+        let restored: View = serde_json::from_slice(&serde_json::to_vec(&prefs).unwrap()).unwrap();
+        assert_eq!(restored.straighten_limit, 10);
+        let count = reader.deskew_cache.angles_count();
+        reader.set_straighten(0).unwrap();
+        assert_eq!(reader.deskew_cache.angles_count(), count);
+        reader.restore_view(View::default()).unwrap();
+        assert!(reader.frame.pixels == original);
+    }
+
+    #[test]
     fn continuous_composites_adjacent_pages_and_projects_each_page_overlay() {
         let mut reader = reading(
             striped_pdf(4),
@@ -1862,6 +2145,7 @@ mod tests {
         let selection = reader
             .select_word(word.x as f32, word.y as f32)
             .unwrap()
+            .ready()
             .unwrap();
         assert_eq!(selection.page(), 1);
         assert_eq!(selection.text(), "Second");
@@ -1912,6 +2196,7 @@ mod tests {
             reader
                 .select_word(word_before.x as f32, (divider + 12) as f32)
                 .unwrap()
+                .ready()
                 .is_none()
         );
         let word = reader.visible_rectangle(1, bounds).unwrap().center();
@@ -1920,6 +2205,7 @@ mod tests {
         let chosen = reader
             .select_word(word.x as f32, word.y as f32)
             .unwrap()
+            .ready()
             .unwrap();
         assert_eq!(chosen.text(), "Second");
         assert_eq!(
@@ -2196,6 +2482,7 @@ mod tests {
                 zoom: 1,
                 ..View::default()
             },
+            None,
             None,
         )
         .unwrap()

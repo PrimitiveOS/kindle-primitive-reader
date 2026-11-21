@@ -1,10 +1,12 @@
+use std::collections::HashMap;
 use std::ops::Range;
+use std::sync::Arc;
 
 use crate::book_style::Style;
 use crate::comic::ImagePage;
 use crate::epub::Book;
 use crate::gray_glyph::GlyphCache;
-use crate::source::{Block, Source};
+use crate::source::{Block, EmbeddedImage, Source};
 use crate::svg_image;
 use crate::{Line, Result, Settings, image_reader};
 use image::{DynamicImage, GrayImage, Luma, imageops::FilterType};
@@ -18,7 +20,8 @@ use parley::{
 const MAX_TEXT_BYTES: usize = 512 * 1024;
 const MAX_LINES: usize = 30_000;
 const MAX_HEIGHT: f32 = 2_000_000.0;
-const MAX_IMAGES: usize = 48;
+const MAX_IMAGE_BOXES: usize = 2_048;
+const MAX_DISTINCT_IMAGE_READS: usize = 512;
 const MAX_IMAGE_PIXELS: usize = 8 * 1024 * 1024;
 const MAX_RUBY_BASE_BYTES: usize = 192;
 const DISABLE_KERNING: [FontFeature; 1] = [FontFeature::new(Tag::new(b"kern"), 0)];
@@ -49,8 +52,12 @@ struct RubyCandidate {
 
 struct Illustration {
     path: Option<String>,
+    link: Option<String>,
+    label: String,
+    // Inline boxes provide x once the paragraph's line breaks and alignment are known.
+    x: Option<usize>,
     y: f32,
-    pixels: GrayImage,
+    pixels: Arc<GrayImage>,
 }
 
 /// A bounded chapter layout with a limited publisher style cascade and direct
@@ -89,13 +96,79 @@ impl ParleyChapter {
         let mut lines = Vec::new();
         let mut y = 0.0_f32;
         let mut image_budget = MAX_IMAGE_PIXELS;
+        let fallback = Arc::new(GrayImage::from_pixel(
+            settings.text_width().min(64),
+            36,
+            Luma([225]),
+        ));
+        let mut image_cache: HashMap<_, (Option<String>, Arc<GrayImage>)> = HashMap::new();
         let width = settings.text_width();
         let gap = settings.font_size * 0.32;
         for block in &source.blocks {
+            let first_image = chapter.illustrations.len();
+            let available = MAX_IMAGE_BOXES
+                .saturating_sub(first_image)
+                .min(block.images.len());
+            let mut inline_boxes = Vec::with_capacity(available);
+            for image in block.images.iter().take(available) {
+                let inline = !block.text.is_empty();
+                let sizing = ImageSizing::new(image, settings, &styles[image.element], inline);
+                let key = (
+                    &image.href,
+                    sizing.requested_width.map(f64::to_bits),
+                    sizing.requested_height.map(f64::to_bits),
+                    sizing.height,
+                );
+                let (path, pixels) = if let Some(cached) = image_cache.get(&key) {
+                    cached.clone()
+                } else if image_budget > 0 && image_cache.len() < MAX_DISTINCT_IMAGE_READS {
+                    let fitted = load_image(book, href, image, settings, sizing, &mut image_budget);
+                    let result = fitted.map_or_else(
+                        || (None, Arc::clone(&fallback)),
+                        |(path, pixels)| (Some(path), Arc::new(pixels)),
+                    );
+                    image_cache.insert(key, result.clone());
+                    result
+                } else {
+                    (None, Arc::clone(&fallback))
+                };
+                if inline {
+                    inline_boxes.push(parley::InlineBox {
+                        id: chapter.illustrations.len() as u64,
+                        index: image.offset,
+                        kind: parley::InlineBoxKind::InFlow,
+                        width: (pixels.width() as f32
+                            + if image.space_after {
+                                settings.font_size * 0.25
+                            } else {
+                                0.0
+                            })
+                        .min(width as f32),
+                        height: pixels.height() as f32,
+                        baseline: None,
+                        vertical_align: styles[image.element].image_align,
+                    });
+                }
+                chapter.illustrations.push(Illustration {
+                    path,
+                    link: image.link.clone(),
+                    label: image.label.clone(),
+                    x: None,
+                    y: 0.0,
+                    pixels,
+                });
+            }
             if !block.text.is_empty() {
                 let style = &styles[block.element];
-                let (layout, ruby) =
-                    layout_paragraph(&mut context, &mut fonts, block, width, settings, styles);
+                let (layout, ruby) = layout_with_images(
+                    &mut context,
+                    &mut fonts,
+                    block,
+                    width,
+                    settings,
+                    styles,
+                    &inline_boxes,
+                );
                 if lines.len() + layout.len() > MAX_LINES {
                     return Err("The chapter exceeds the Parley line limit".into());
                 }
@@ -106,6 +179,18 @@ impl ParleyChapter {
                 let mut bottom = origin + layout.height();
                 let mut overlays = ruby.iter().peekable();
                 for (index, line) in layout.lines().enumerate() {
+                    for item in line.items() {
+                        if let PositionedLayoutItem::InlineBox(position) = item {
+                            let image = &mut chapter.illustrations[position.id as usize];
+                            let after_gap = if layout.is_rtl() {
+                                position.width - image.pixels.width() as f32
+                            } else {
+                                0.0
+                            };
+                            image.x = Some((position.x + after_gap).round().max(0.0) as usize);
+                            image.y = (origin + position.y).round();
+                        }
+                    }
                     let metrics = line.metrics();
                     let mut top = metrics.content_block_min_coord;
                     while let Some(overlay) = overlays.next_if(|overlay| overlay.line == index) {
@@ -143,37 +228,20 @@ impl ParleyChapter {
                 });
             }
 
-            for image_href in &block.images {
-                if chapter.illustrations.len() == MAX_IMAGES {
-                    return Err("The chapter exceeds the Parley image limit".into());
+            if block.text.is_empty() {
+                for image in &mut chapter.illustrations[first_image..] {
+                    let top = y.ceil();
+                    let bottom = top + image.pixels.height() as f32;
+                    lines.push(Line {
+                        block: block.key,
+                        bytes: 0..0,
+                        top,
+                        bottom,
+                        missing_glyphs: 0,
+                    });
+                    image.y = top;
+                    y = bottom + gap;
                 }
-                let fitted = load_image(
-                    book,
-                    href,
-                    image_href,
-                    width,
-                    settings.text_height(),
-                    &mut image_budget,
-                );
-                let (path, pixels) = fitted.map_or_else(
-                    || (None, GrayImage::from_pixel(width.min(64), 36, Luma([225]))),
-                    |(path, pixels)| (Some(path), pixels),
-                );
-                let top = y.ceil();
-                let bottom = top + pixels.height() as f32;
-                lines.push(Line {
-                    block: block.key,
-                    bytes: 0..0,
-                    top,
-                    bottom,
-                    missing_glyphs: 0,
-                });
-                chapter.illustrations.push(Illustration {
-                    path,
-                    y: top,
-                    pixels,
-                });
-                y = bottom + gap;
             }
 
             if y > MAX_HEIGHT {
@@ -209,21 +277,74 @@ impl ParleyChapter {
         x: f32,
         y: f32,
     ) -> Option<&str> {
-        let content_y = y - settings.top_margin() as f32;
-        if !(0.0..visible_rows(&range, settings) as f32).contains(&content_y) {
-            return None;
-        }
-        self.illustrations.iter().find_map(|illustration| {
-            let path = illustration.path.as_deref()?;
+        self.visible_illustrations(range, settings)
+            .find_map(|(path, cols, rows)| {
+                (x >= cols.start as f32
+                    && x < cols.end as f32
+                    && y >= rows.start as f32
+                    && y < rows.end as f32)
+                    .then_some(path)
+            })
+    }
+
+    pub(crate) fn visible_illustrations(
+        &self,
+        range: Range<f32>,
+        settings: Settings,
+    ) -> impl Iterator<Item = (&str, Range<usize>, Range<usize>)> {
+        self.visible_artwork(range, settings)
+            .filter_map(|(image, cols, rows)| Some((image.path.as_deref()?, cols, rows)))
+    }
+
+    pub(crate) fn image_link_at(
+        &self,
+        range: Range<f32>,
+        settings: Settings,
+        x: f32,
+        y: f32,
+    ) -> Option<&str> {
+        self.visible_artwork(range, settings)
+            .find_map(|(image, cols, rows)| {
+                (x >= cols.start as f32
+                    && x < cols.end as f32
+                    && y >= rows.start as f32
+                    && y < rows.end as f32)
+                    .then(|| image.link.as_deref())
+                    .flatten()
+            })
+    }
+
+    pub(crate) fn image_links(
+        &self,
+        range: Range<f32>,
+        settings: Settings,
+    ) -> impl Iterator<Item = (&str, &str)> {
+        self.visible_artwork(range, settings)
+            .filter_map(|(image, _, _)| Some((image.label.as_str(), image.link.as_deref()?)))
+    }
+
+    fn visible_artwork(
+        &self,
+        range: Range<f32>,
+        settings: Settings,
+    ) -> impl Iterator<Item = (&Illustration, Range<usize>, Range<usize>)> {
+        let height = visible_rows(&range, settings) as i32;
+        self.illustrations.iter().filter_map(move |illustration| {
             let (left, top) = illustration.origin(
                 range.start,
                 settings.width as usize,
                 settings.side_margin() as usize,
             );
-            let (left, top) = (left as f32, top as f32);
-            let right = left + illustration.pixels.width() as f32;
-            let bottom = top + illustration.pixels.height() as f32;
-            ((left..right).contains(&x) && (top..bottom).contains(&content_y)).then_some(path)
+            let rows = top.max(0)..(top + illustration.pixels.height() as i32).min(height);
+            if rows.is_empty() {
+                return None;
+            }
+            let margin = settings.top_margin() as usize;
+            Some((
+                illustration,
+                left..left + illustration.pixels.width() as usize,
+                margin + rows.start as usize..margin + rows.end as usize,
+            ))
         })
     }
 
@@ -337,6 +458,7 @@ fn visible_rows(range: &Range<f32>, settings: Settings) -> usize {
         .clamp(1.0, settings.text_height() as f32) as usize
 }
 
+#[cfg(test)]
 fn layout_paragraph(
     context: &mut LayoutContext<()>,
     fonts: &mut FontContext,
@@ -345,7 +467,19 @@ fn layout_paragraph(
     settings: Settings,
     styles: &[Style],
 ) -> (Layout<()>, Vec<RubyOverlay>) {
-    let layout = make_paragraph(context, fonts, block, width, settings, styles, &[]);
+    layout_with_images(context, fonts, block, width, settings, styles, &[])
+}
+
+fn layout_with_images(
+    context: &mut LayoutContext<()>,
+    fonts: &mut FontContext,
+    block: &Block,
+    width: u32,
+    settings: Settings,
+    styles: &[Style],
+    images: &[parley::InlineBox],
+) -> (Layout<()>, Vec<RubyOverlay>) {
+    let layout = make_paragraph(context, fonts, block, width, settings, styles, &[], images);
     let mut candidates = Vec::new();
     for ruby in &block.ruby {
         if ruby.bytes.len() > MAX_RUBY_BASE_BYTES {
@@ -398,7 +532,16 @@ fn layout_paragraph(
         return (layout, Vec::new());
     }
     drop(layout);
-    let layout = make_paragraph(context, fonts, block, width, settings, styles, &candidates);
+    let layout = make_paragraph(
+        context,
+        fonts,
+        block,
+        width,
+        settings,
+        styles,
+        &candidates,
+        images,
+    );
     let mut overlays = Vec::new();
     for candidate in candidates {
         let Some((base, index)) = base_geometry(&layout, &candidate.bytes) else {
@@ -479,6 +622,7 @@ fn make_paragraph(
     settings: Settings,
     styles: &[Style],
     ruby: &[RubyCandidate],
+    images: &[parley::InlineBox],
 ) -> Layout<()> {
     let style = &styles[block.element];
     let language = block.language;
@@ -587,6 +731,9 @@ fn make_paragraph(
             annotation.bytes.clone(),
         );
     }
+    for image in images {
+        builder.push_inline_box(image.clone());
+    }
     let mut layout = builder.build(&block.text);
     layout.break_all_lines(Some(width as f32));
     let alignment = match settings.alignment {
@@ -609,14 +756,80 @@ fn line_break(language: Option<Language>) -> LineBreak {
     }
 }
 
+struct ImageSizing {
+    width: u32,
+    height: u32,
+    requested_width: Option<f64>,
+    requested_height: Option<f64>,
+}
+
+impl ImageSizing {
+    fn new(image: &EmbeddedImage, settings: Settings, style: &Style, inline: bool) -> Self {
+        let width = settings.text_width();
+        // Inline artwork shares its line with a font strut below the baseline.
+        let height = if inline {
+            settings
+                .text_height()
+                .saturating_sub((settings.font_size * 2.0).ceil() as u32)
+                .max(1)
+        } else {
+            settings.text_height()
+        };
+        let font_size = (settings.font_size * style.size_scale).clamp(12.0, 192.0);
+        let requested_width = style
+            .image_width
+            .map_or(image.width, |value| value.pixels(width, font_size))
+            .filter(|v| v.is_finite())
+            .map(f64::from);
+        let requested_height = style
+            .image_height
+            .map_or(image.height, |value| value.pixels(height, font_size))
+            .filter(|v| v.is_finite())
+            .map(f64::from);
+        Self {
+            width,
+            height,
+            requested_width,
+            requested_height,
+        }
+    }
+}
+
 fn load_image(
     book: &mut Book,
     chapter_href: &str,
-    image_href: &str,
-    width: u32,
-    height: u32,
+    image: &EmbeddedImage,
+    settings: Settings,
+    sizing: ImageSizing,
     budget: &mut usize,
 ) -> Option<(String, GrayImage)> {
+    let ImageSizing {
+        width,
+        height,
+        requested_width,
+        requested_height,
+    } = sizing;
+    let target = |original_w: u32, original_h: u32| {
+        let ratio = f64::from(original_w) / f64::from(original_h);
+        let w = requested_width
+            .unwrap_or_else(|| requested_height.map_or(f64::from(original_w), |h| h * ratio));
+        let h = requested_height.unwrap_or(w / ratio);
+        let scale = (f64::from(width) / w).min(f64::from(height) / h).min(1.0);
+        (
+            (w * scale).round().clamp(1.0, f64::from(width)) as u32,
+            (h * scale).round().clamp(1.0, f64::from(height)) as u32,
+        )
+    };
+    let styled_size = (requested_width.is_some() || requested_height.is_some())
+        .then_some(&target as &dyn Fn(u32, u32) -> (u32, u32));
+    if let Some(xml) = &image.inline_svg {
+        let (art, pixels) =
+            svg_image::render_inline(book, chapter_href, xml, width, height, *budget, styled_size)
+                .ok()?;
+        *budget -= pixels;
+        return Some((image.href.clone(), art));
+    }
+    let image_href = &image.href;
     let path = Book::resolve(chapter_href, image_href).ok()?;
     if svg_image::is_package_svg(&path) {
         if image_href
@@ -628,26 +841,36 @@ fn load_image(
         let bytes = book
             .resource_limited(&path, svg_image::MAX_SVG_BYTES)
             .ok()?;
-        let image = svg_image::rasterize(&bytes, width, height, *budget).ok()?;
+        let image =
+            svg_image::rasterize_with_size(&bytes, width, height, *budget, styled_size).ok()?;
         *budget -= image.width() as usize * image.height() as usize;
         return Some((path, image));
     }
     let bytes = book.resource(&path).ok()?;
-    let (original_w, original_h) = image_reader(&bytes).ok()?.into_dimensions().ok()?;
-    if original_w == 0 || original_h == 0 || original_w > 2048 || original_h > 2048 {
-        return None;
-    }
-    *budget = budget.checked_sub(original_w as usize * original_h as usize)?;
+    let (original_w, original_h) = crate::epub_raster_dimensions(&bytes).ok()?;
+    let (display_w, display_h) = target(original_w, original_h);
+    let remaining = budget.checked_sub(
+        (original_w as usize * original_h as usize).max(display_w as usize * display_h as usize),
+    )?;
     let mut image = image_reader(&bytes).ok()?.decode().ok()?;
-    if original_w > width || original_h > height {
-        image = image.resize(width, height, FilterType::Triangle);
+    *budget = remaining;
+    if (display_w, display_h) != (original_w, original_h) {
+        let filter = if settings.smooth_images {
+            FilterType::Triangle
+        } else {
+            FilterType::Nearest
+        };
+        image = image.resize_exact(display_w, display_h, filter);
     }
     Some((path, grayscale_image(image)))
 }
 
 pub(crate) fn original_illustration(bytes: &[u8]) -> Result<ImagePage> {
     let gray = match image_reader(bytes) {
-        Ok(reader) => grayscale_image(reader.decode()?),
+        Ok(reader) => {
+            crate::epub_raster_dimensions(bytes)?;
+            grayscale_image(reader.decode()?)
+        }
         Err(_) => svg_image::rasterize(
             bytes,
             svg_image::MAX_SVG_SIDE,
@@ -671,7 +894,8 @@ fn grayscale_image(image: DynamicImage) -> GrayImage {
 
 impl Illustration {
     fn origin(&self, start: f32, stride: usize, margin: usize) -> (usize, i32) {
-        let left = margin + (stride - 2 * margin - self.pixels.width() as usize) / 2;
+        let remaining = stride - 2 * margin - self.pixels.width() as usize;
+        let left = margin + self.x.map_or(remaining / 2, |x| x.min(remaining));
         (left, (self.y - start).round() as i32)
     }
 
@@ -1051,6 +1275,203 @@ mod tests {
         assert!(!reopened.selection_rects(page, &saved).is_empty());
     }
 
+    fn replace_opening(name: &str, chapter: &str) -> TemporaryEpub {
+        let original = File::open(crate::test_fixture("field-notes-epub3.epub")).unwrap();
+        let mut archive = zip::ZipArchive::new(original).unwrap();
+        let target = TemporaryEpub(
+            std::env::temp_dir().join(format!("reader-{name}-{}.epub", std::process::id())),
+        );
+        let mut changed = zip::ZipWriter::new(File::create(&target.0).unwrap());
+        for index in 0..archive.len() {
+            let entry = archive.by_index(index).unwrap();
+            if entry.name() == "EPUB/chapters/shore.xhtml" {
+                let options = zip::write::SimpleFileOptions::default()
+                    .compression_method(entry.compression());
+                changed.start_file(entry.name(), options).unwrap();
+                changed.write_all(chapter.as_bytes()).unwrap();
+            } else {
+                changed.raw_copy_file(entry).unwrap();
+            }
+        }
+        changed.finish().unwrap();
+        target
+    }
+
+    #[test]
+    fn composited_inline_svg_draws_an_archive_picture_in_its_transformed_viewport_and_opens_original()
+     {
+        let xhtml = r##"<html xmlns="http://www.w3.org/1999/xhtml" xmlns:xlink="http://www.w3.org/1999/xlink"><body>
+            <p id="cover"><svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="100%" height="100%" viewBox="0 0 144 96">
+            <rect width="100%" height="96" fill="#111111"/><g transform="translate(36 24) scale(.5)">
+            <image xlink:href="../images/shore.png" width="144" height="96"/></g>
+            </svg></p></body></html>"##;
+        let book = replace_opening("composited-artwork", xhtml);
+        let fonts = [crate::test_fixture("fonts/Silkscreen-Regular.ttf")];
+        let settings = Settings::default();
+        let probe = Probe::open(&book.0, Engine::Parley, &fonts, settings, 0).unwrap();
+        let Renderer::Parley(chapter) = &probe.renderer else {
+            unreachable!()
+        };
+        let art = &chapter.illustrations[0];
+        assert_eq!(art.pixels.dimensions(), (144, 96));
+        assert_eq!(art.pixels.get_pixel(2, 2).0, [17]);
+        assert!(art.pixels.get_pixel(42, 30).0[0] > 210);
+        assert_eq!(art.pixels.get_pixel(134, 80).0, [17]);
+        let bounded = art.path.as_deref().unwrap();
+        assert!(bounded.starts_with("reader-inline-svg:"));
+        let original = probe.open_illustration(&book.0, bounded).unwrap();
+        assert_eq!(original.page_size(), (144.0, 96.0));
+        assert_eq!(probe.page_for(&probe.fragment("cover").unwrap()), Some(0));
+        let (x, y) = art.origin(
+            0.0,
+            settings.width as usize,
+            settings.side_margin() as usize,
+        );
+        assert_eq!(
+            probe.illustration_at(
+                0,
+                x as f32 + 1.0,
+                y as f32 + settings.top_margin() as f32 + 1.0
+            ),
+            Some(bounded)
+        );
+        let mut source = Book::open(&book.0).unwrap();
+        let blocked = xhtml.replace("../images/shore.png", "https://example.invalid/never.png");
+        let src = Source::parse(&blocked).unwrap();
+        assert!(
+            svg_image::render_inline(
+                &mut source,
+                &probe.chapter,
+                src.blocks[0].images[0].inline_svg.as_ref().unwrap(),
+                144,
+                96,
+                MAX_IMAGE_PIXELS,
+                None
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn repeated_image_heavy_spine_shares_pixels_and_keeps_text_after_the_graphics_limit() {
+        let icon = r#"<img src="../images/shore.png" width="3" height="2"/>"#;
+        let markup = format!(
+            "<html><body><p>{}</p><p id='end'>Final field note.</p></body></html>",
+            icon.repeat(MAX_IMAGE_BOXES + 3)
+        );
+        let book = replace_opening("image-heavy", &markup);
+        let fonts = [crate::test_fixture("fonts/Silkscreen-Regular.ttf")];
+        let mut probe =
+            Probe::open(&book.0, Engine::Parley, &fonts, Settings::default(), 0).unwrap();
+        let Renderer::Parley(chapter) = &probe.renderer else {
+            unreachable!()
+        };
+        assert_eq!(chapter.illustrations.len(), MAX_IMAGE_BOXES);
+        assert!(
+            chapter
+                .illustrations
+                .iter()
+                .all(|art| Arc::ptr_eq(&chapter.illustrations[0].pixels, &art.pixels))
+        );
+        assert!(chapter.illustrations.last().unwrap().path.is_some());
+        let end = probe.fragment("end").unwrap();
+        let last = probe.page_for(&end).unwrap();
+        assert_eq!(last, probe.page_count() - 1);
+        assert_eq!(probe.matches("Final field note.").as_slice(), [end]);
+        assert!(probe.capture(last).unwrap().iter().any(|&p| p < 200));
+    }
+
+    #[test]
+    fn inline_image_preserves_text_geometry_css_sizing_and_link_destinations_after_reflow() {
+        let path = crate::test_fixture("signal-guide.epub");
+        let fonts = [crate::test_fixture("fonts/Silkscreen-Regular.ttf")];
+        let read = |settings| Probe::open(&path, Engine::Parley, &fonts, settings, 0).unwrap();
+        let settings = Settings {
+            width: 1000,
+            height: 1280,
+            font_size: 30.0,
+            ..Settings::default()
+        };
+        let mut probe = read(settings);
+        let marker = probe.matches("marker")[0].clone();
+        let position = probe.matches("comes")[0].clone();
+        let page = probe.page_for(&position).unwrap();
+        assert_eq!(probe.coverage().0, probe.coverage().1);
+        let Renderer::Parley(layout) = &probe.renderer else {
+            unreachable!()
+        };
+        let (path_on_page, cols, rows) = layout
+            .visible_illustrations(probe.pages.range(page).unwrap(), settings)
+            .find(|(path, _, _)| path.ends_with("beacon.svg"))
+            .unwrap();
+        assert_eq!(path_on_page, "EPUB/images/beacon.svg");
+        assert_eq!(cols.len(), 35);
+        assert_eq!(rows.len(), 35);
+        let x = (cols.start + cols.len() / 2) as f32;
+        let y = (rows.start + rows.len() / 2) as f32;
+        let target = probe.link_at(page, x, y).unwrap();
+        assert_eq!(target.path, "EPUB/chapters/legend.xhtml");
+        assert_eq!(target.fragment.as_deref(), Some("beacon"));
+        assert!(
+            probe
+                .links_on_page(page)
+                .iter()
+                .any(|(label, dest)| label == "Beacon key" && dest == &target)
+        );
+        assert_eq!(probe.illustration_at(page, x, y), Some(path_on_page));
+        assert_eq!(
+            probe
+                .open_illustration(&path, path_on_page)
+                .unwrap()
+                .page_size(),
+            (96.0, 96.0)
+        );
+        let ink = probe.capture(page).unwrap();
+        assert!(
+            rows.clone()
+                .flat_map(|y| (cols.clone()).map(move |x| y * settings.width as usize + x))
+                .any(|i| ink[i] < 55)
+        );
+        let first = |probe: &Probe, start: &crate::Anchor| {
+            let mut end = start.clone();
+            end.offset += 1;
+            probe.selection_rects(page, &probe.select_range(start, &end).unwrap())[0]
+        };
+        let prior = first(&probe, &marker);
+        let after = first(&probe, &position);
+        // A line break is valid on either side of the illustration; within
+        // a line its horizontal order must follow the original sentence.
+        assert!(prior.y < rows.start as i32 || prior.x < cols.start as i32);
+        assert!(
+            after.y >= rows.end as i32 || after.x >= cols.end as i32,
+            "before={prior:?} after={after:?} image={cols:?},{rows:?}"
+        );
+        assert_ne!(prior, after);
+        let enlarged = read(Settings {
+            width: 560,
+            font_size: 48.0,
+            ..settings
+        });
+        let page = enlarged.page_for(&position).unwrap();
+        let Renderer::Parley(layout) = &enlarged.renderer else {
+            unreachable!()
+        };
+        let (_, cols, _) = layout
+            .visible_illustrations(enlarged.pages.range(page).unwrap(), enlarged.settings)
+            .find(|(path, _, _)| path.ends_with("beacon.svg"))
+            .unwrap();
+        assert_eq!(cols.len(), 55);
+        let sketch = layout
+            .illustrations
+            .iter()
+            .find(|i| i.path.as_deref() == Some("EPUB/images/shore.png"))
+            .unwrap();
+        assert_eq!(
+            sketch.pixels.width(),
+            (enlarged.settings.text_width() as f32 * 0.68).round() as u32
+        );
+    }
+
     #[test]
     fn opens_a_linked_svg_with_the_existing_illustration_target() {
         let path =
@@ -1101,11 +1522,53 @@ mod tests {
         let package = "EPUB/images/shore.svg";
         assert!(layout.has_illustration(package));
         let image = &layout.illustrations[0].pixels;
-        assert_eq!(image.dimensions(), (80, 40));
+        // XHTML requests a width of 144px; CSS height:auto preserves the SVG aspect.
+        assert_eq!(image.dimensions(), (144, 72));
         assert!(image.get_pixel(4, 4).0[0] < 32);
-        assert!(image.get_pixel(76, 4).0[0] > 224);
+        assert!(image.get_pixel(140, 4).0[0] > 224);
         let original = probe.open_illustration(&publication.0, package).unwrap();
         assert_eq!(original.page_size(), (80.0, 40.0));
+    }
+
+    #[test]
+    fn image_scaling_changes_raster_samples_without_changing_the_page_or_anchor() {
+        let path = crate::test_fixture("field-notes-epub3.epub");
+        let fonts = [crate::test_fixture("fonts/Silkscreen-Regular.ttf")];
+        let settings = Settings {
+            width: 180,
+            height: 440,
+            margin: 40,
+            font_size: 20.0,
+            ..Settings::default()
+        };
+        let make = |smooth_images| {
+            Probe::open(
+                &path,
+                Engine::Parley,
+                &fonts,
+                Settings {
+                    smooth_images,
+                    ..settings
+                },
+                0,
+            )
+            .unwrap()
+        };
+        let smooth = make(true);
+        let fast = make(false);
+        let sample = |probe: &Probe| {
+            let Renderer::Parley(layout) = &probe.renderer else {
+                unreachable!()
+            };
+            layout.illustrations[0].pixels.clone()
+        };
+        let (smooth_image, fast_image) = (sample(&smooth), sample(&fast));
+        assert_eq!(smooth_image.dimensions(), fast_image.dimensions());
+        assert!(smooth_image.width() < 144);
+        assert_ne!(smooth_image.as_raw(), fast_image.as_raw());
+        let a = smooth.fragment("tide-b").unwrap();
+        assert_eq!(smooth.page_for(&a), fast.page_for(&a));
+        assert_eq!(smooth.page_count(), fast.page_count());
     }
 
     #[test]

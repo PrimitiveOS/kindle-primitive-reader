@@ -23,7 +23,7 @@ pub const MAX_COMIC_BYTES: u64 = 512 * 1024 * 1024;
 pub const MAX_IMAGE_BYTES: u64 = 16 * 1024 * 1024;
 pub const MAX_WEBP_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_COMIC_MEMBERS: usize = 8192;
-const MAX_IMAGE_SIDE: u32 = 4096;
+pub(crate) const MAX_IMAGE_SIDE: u32 = 4096;
 const MAX_IMAGE_PIXELS: u64 = 8 * 1024 * 1024;
 const MAX_DECODE_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_WEBP_PIXELS: u64 = 4 * 1024 * 1024;
@@ -631,6 +631,16 @@ impl ImagePage {
         Self::from_grayscale(width, height, gray)
     }
 
+    pub(crate) fn gif_as_png(bytes: &[u8]) -> Result<Vec<u8>> {
+        use image::ImageEncoder;
+        let image = Self::decode_gif(bytes)?;
+        let mut output = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut output).write_image(
+            &image.gray, image.width, image.height, image::ExtendedColorType::L8,
+        )?;
+        Ok(output)
+    }
+
     fn decode_gif(bytes: &[u8]) -> Result<Self> {
         let mut options = gif::DecodeOptions::new();
         options.set_color_output(gif::ColorOutput::Indexed);
@@ -744,7 +754,7 @@ fn simple_webp_dimensions(bytes: &[u8]) -> Result<(u32, u32)> {
     Ok((width, height))
 }
 
-fn image_dimensions_valid(width: u32, height: u32) -> bool {
+pub(crate) fn image_dimensions_valid(width: u32, height: u32) -> bool {
     (1..=MAX_IMAGE_SIDE).contains(&width)
         && (1..=MAX_IMAGE_SIDE).contains(&height)
         && u64::from(width) * u64::from(height) <= MAX_IMAGE_PIXELS

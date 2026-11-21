@@ -92,6 +92,8 @@ pub(crate) struct BookConfig {
     pub(crate) settings: Settings,
     pub(crate) scroll: bool,
     pub(crate) facing_pages: bool,
+    // Shared across chapter layouts, previews and font changes for the same open publication.
+    pub(crate) chapter_offsets: std::rc::Rc<std::cell::OnceCell<Vec<u64>>>,
 }
 
 impl BookConfig {
@@ -111,7 +113,9 @@ impl BookConfig {
         Ok(probe)
     }
 
-    fn layout_chapter(&self, book: Book, index: usize) -> Result<Probe> {
+    fn layout_chapter(&self, mut book: Book, index: usize) -> Result<Probe> {
+        self.chapter_offsets
+            .get_or_init(|| book.chapter_offsets().unwrap_or_default());
         let settings = if self.facing_pages && !self.scroll {
             let margin_limit = FACING_PAGE_WIDTH / 4;
             Settings {
@@ -285,6 +289,15 @@ impl Reading {
     }
 
     pub(crate) fn reflow(&mut self, settings: Settings) -> Result<()> {
+        if (Settings {
+            invert_night_images: settings.invert_night_images,
+            ..self.config.settings
+        }) == settings
+        {
+            self.config.settings.invert_night_images = settings.invert_night_images;
+            self.probe.settings.invert_night_images = settings.invert_night_images;
+            return Ok(());
+        }
         let anchor = self.anchor();
         let mut config = self.config.clone();
         config.settings = settings;
@@ -410,6 +423,24 @@ impl Reading {
                 .open_illustration(&self.config.book, package_path)
                 .map_err(io::Error::other)
         })?)
+    }
+
+    pub(crate) fn visible_text(&self) -> String {
+        let mut text = String::new();
+        for (range, _) in self.visible_columns() {
+            let mut visible = self.probe.lines.iter().filter(|line| {
+                !line.bytes.is_empty() && line.bottom > range.start && line.top < range.end
+            });
+            let Some(first) = visible.next() else { continue };
+            let last = visible.last().unwrap_or(first);
+            let start = self.probe.anchor(first.block, first.bytes.start);
+            let end = self.probe.anchor(last.block, last.bytes.end);
+            if let Some(selection) = self.probe.select_range(&start, &end) {
+                if !text.is_empty() { text.push('\n'); }
+                text.push_str(&selection.text);
+            }
+        }
+        text
     }
 
     pub(crate) fn links(&self) -> Vec<(String, Destination)> {
@@ -584,31 +615,11 @@ impl Reading {
         selection: &[HighlightRect],
         paint: PagePaint,
     ) {
-        let mut page = self.frame.clone();
-        for (rects, gray) in [(highlights, 220_u8), (selection, 176_u8)] {
-            for rect in rects {
-                let (x, y) = (rect.x as usize, rect.y as usize);
-                let (width, height) = (rect.width as usize, rect.height as usize);
-                for row in page
-                    .pixels
-                    .as_chunks_mut::<{ WIDTH as usize }>()
-                    .0
-                    .iter_mut()
-                    .skip(y)
-                    .take(height)
-                {
-                    for pixel in &mut row[x..x + width] {
-                        *pixel = (*pixel).min(gray);
-                    }
-                }
-            }
-        }
+        let page = self.marked_frame(highlights, selection, &paint);
         let full = paint.is_full();
-        if !full && !self.probe.is_vertical() {
-            self.clear_lines_cut_by_tools(&mut page, &paint.visible);
-        }
+        let footer_visible = paint.visible.end == PAGE_HEIGHT;
         draw_page_picture(canvas, page, paint);
-        if !full {
+        if !footer_visible {
             return;
         }
         canvas.fill(Rect::new(0, PAGE_HEIGHT as i32, WIDTH as i32, 1), HAIRLINE);
@@ -628,10 +639,48 @@ impl Reading {
         );
         canvas.text(
             Rect::new(38, PAGE_HEIGHT as i32 + 12, DONE.x - 60, 48),
-            notice.or(self.error.as_deref()).unwrap_or(&progress),
+            self.error.as_deref().or(notice).unwrap_or(&progress),
             CAPTION,
         );
-        canvas.button(DONE, action, false, false);
+        if full {
+            canvas.button(DONE, action, false, false);
+        }
+    }
+
+    fn marked_frame(
+        &self,
+        highlights: &[HighlightRect],
+        selection: &[HighlightRect],
+        paint: &PagePaint,
+    ) -> GrayImage {
+        let mut page = self.frame.clone();
+        if paint.inverted && !self.config.settings.invert_night_images {
+            for (range, x) in self.visible_columns() {
+                preinvert_images(&self.probe, range, x, page.width, &mut page.pixels);
+            }
+        }
+        for (rects, gray) in [(highlights, 220_u8), (selection, 176_u8)] {
+            for rect in rects {
+                let (x, y) = (rect.x as usize, rect.y as usize);
+                let (width, height) = (rect.width as usize, rect.height as usize);
+                for row in page
+                    .pixels
+                    .as_chunks_mut::<{ WIDTH as usize }>()
+                    .0
+                    .iter_mut()
+                    .skip(y)
+                    .take(height)
+                {
+                    for pixel in &mut row[x..x + width] {
+                        *pixel = (*pixel).min(gray);
+                    }
+                }
+            }
+        }
+        if !paint.is_full() && !self.probe.is_vertical() {
+            self.clear_lines_cut_by_tools(&mut page, &paint.visible);
+        }
+        page
     }
 
     fn clear_lines_cut_by_tools(&self, page: &mut GrayImage, visible: &Range<u32>) {
@@ -639,7 +688,12 @@ impl Reading {
             let offset = self.probe.settings.top_margin() as f32 - column.start;
             let (mut start, mut end) = (visible.start, visible.end);
             // The two pages can have different line breaks beneath the bars.
-            for line in &self.probe.lines {
+            for line in self
+                .probe
+                .lines
+                .iter()
+                .filter(|line| !line.bytes.is_empty())
+            {
                 let top = line.top + offset;
                 let bottom = line.bottom + offset;
                 if top < visible.start as f32 && bottom > visible.start as f32 {
@@ -671,7 +725,11 @@ impl App for Reading {
     }
 
     fn input(&mut self, input: Input) -> Change {
-        let advance = if self.probe.is_vertical() { -1 } else { 1 };
+        let advance = if self.probe.pages_right_to_left() {
+            -1
+        } else {
+            1
+        };
         let direction = match input {
             Input::Sleep => {
                 self.turns.pending.clear();
@@ -733,19 +791,82 @@ impl App for Reading {
     }
 }
 
-pub(crate) fn page_thumbnail(probe: &mut Probe, page: usize) -> Result<GrayImage> {
+/// Counteract the final page inversion just inside each visible illustration.
+fn preinvert_images(
+    probe: &Probe,
+    range: Range<f32>,
+    column: u32,
+    stride: u32,
+    pixels: &mut [u8],
+) -> bool {
+    let crate::Renderer::Parley(layout) = &probe.renderer else {
+        return false;
+    };
+    let mut changed = false;
+    for (_, cols, rows) in layout.visible_illustrations(range, probe.settings) {
+        for row in rows {
+            let start = row * stride as usize + column as usize + cols.start;
+            for pixel in &mut pixels[start..start + cols.len()] {
+                *pixel = 255 - *pixel;
+            }
+        }
+        changed = true;
+    }
+    changed
+}
+
+pub(crate) struct PageThumbnail {
+    light: GrayImage,
+    dark: Option<GrayImage>,
+}
+
+impl PageThumbnail {
+    pub(crate) fn plain(light: GrayImage) -> Self {
+        Self { light, dark: None }
+    }
+
+    pub(crate) fn for_theme(&self, dark: bool) -> GrayImage {
+        if !dark {
+            return self.light.clone();
+        }
+        if let Some(image) = &self.dark {
+            return image.clone();
+        }
+        let mut image = self.light.clone();
+        for pixel in &mut image.pixels {
+            *pixel = 255 - *pixel;
+        }
+        image
+    }
+}
+
+pub(crate) fn page_thumbnail(probe: &mut Probe, page: usize) -> Result<PageThumbnail> {
     let full = probe.capture(page)?;
     let settings = probe.settings;
-    let image = image::GrayImage::from_raw(settings.width, settings.height, full)
+    let mut image = image::GrayImage::from_raw(settings.width, settings.height, full)
         .ok_or("The page has incorrect dimensions")?;
     let height = 280;
     let width = settings.width * height / settings.height;
-    let pixels = image::imageops::thumbnail(&image, width, height).into_raw();
-    Ok(GrayImage {
+    let shrink = |image: &image::GrayImage| GrayImage {
         width,
         height,
-        pixels,
-    })
+        pixels: image::imageops::thumbnail(image, width, height).into_raw(),
+    };
+    let mut thumbnail = PageThumbnail::plain(shrink(&image));
+    // Only image-bearing previews need two rasters when the system theme changes.
+    if !settings.invert_night_images
+        && preinvert_images(
+            probe,
+            probe.page_range(page),
+            0,
+            settings.width,
+            image.as_mut(),
+        )
+    {
+        image::imageops::invert(&mut image);
+        thumbnail.dark = Some(shrink(&image));
+    }
+    Ok(thumbnail)
 }
 
 fn frame_span(probe: &Probe) -> usize {
@@ -763,10 +884,14 @@ fn first_frame_page(probe: &Probe, page: usize) -> usize {
 
 fn frame_columns(probe: &Probe, page: usize) -> impl Iterator<Item = (usize, u32)> + use<> {
     let first = first_frame_page(probe, page);
-    let end = (first + frame_span(probe)).min(probe.page_count());
-    (first..end)
-        .enumerate()
-        .map(|(index, page)| (page, index as u32 * (FACING_PAGE_WIDTH + FACING_GUTTER)))
+    let span = frame_span(probe);
+    let end = (first + span).min(probe.page_count());
+    let rtl = probe.pages_right_to_left();
+    // Keep logical leaf order for text ranges and links. Only the physical origin changes.
+    (first..end).enumerate().map(move |(index, page)| {
+        let slot = if rtl { span - 1 - index } else { index };
+        (page, slot as u32 * (FACING_PAGE_WIDTH + FACING_GUTTER))
+    })
 }
 
 fn capture(probe: &mut Probe, chapter: usize, page: usize, top: Option<f32>) -> Result<GrayImage> {
@@ -819,6 +944,7 @@ mod tests {
 
     fn example(book: &str, font_size: f32, facing_pages: bool) -> Reading {
         Reading::open(BookConfig {
+            chapter_offsets: Default::default(),
             engine: Engine::Parley,
             book: crate::test_fixture(book),
             fonts: vec![crate::test_fixture("fonts/Silkscreen-Regular.ttf")],
@@ -832,6 +958,74 @@ mod tests {
             facing_pages,
         })
         .unwrap()
+    }
+
+    #[test]
+    fn cover_and_blank_spine_pages_turn_both_ways_and_restore_their_location() {
+        use std::io::{Cursor, Read, Write};
+
+        let original = std::fs::File::open(crate::test_fixture("field-notes-epub3.epub")).unwrap();
+        let mut archive = zip::ZipArchive::new(original).unwrap();
+        let path = std::env::temp_dir().join(format!("reader-spine-cover-{}.epub", std::process::id()));
+        let mut output = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+        let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        let cover = r#"<html><body id="cover"><div><svg xmlns="http://www.w3.org/2000/svg"
+            xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 500 2300">
+            <image width="500" height="2300" xlink:href="../images/shore.png"/></svg></div></body></html>"#;
+        let blank = "<html><body><p> </p></body></html>";
+        let chapter = r#"<html><body><div id="first">Opening sentence.</div>
+            <img src="../images/shore.png"/><p id="end">Last words.</p></body></html>"#;
+        let mut photo = Cursor::new(Vec::new());
+        let art = image::GrayImage::from_fn(500, 2300, |x, _| image::Luma([if x < 250 { 40 } else { 180 }]));
+        image::DynamicImage::ImageLuma8(art).write_to(&mut photo, image::ImageFormat::Png).unwrap();
+        for index in 0..archive.len() {
+            let mut file = archive.by_index(index).unwrap();
+            output.start_file(file.name(), opts).unwrap();
+            match file.name() {
+                "EPUB/package.opf" => {
+                    let mut xml = String::new();
+                    file.read_to_string(&mut xml).unwrap();
+                    let xml = xml.replace("</manifest>", r#"<item id="blank" href="blank.xhtml" media-type="application/xhtml+xml"/></manifest>"#)
+                        .replace(r#"<itemref idref="resource-2"/>"#, r#"<itemref idref="blank"/><itemref idref="resource-2"/>"#);
+                    output.write_all(xml.as_bytes()).unwrap();
+                }
+                "EPUB/chapters/shore.xhtml" => output.write_all(cover.as_bytes()).unwrap(),
+                "EPUB/chapters/dusk.xhtml" => output.write_all(chapter.as_bytes()).unwrap(),
+                "EPUB/images/shore.png" => output.write_all(photo.get_ref()).unwrap(),
+                _ => { std::io::copy(&mut file, &mut output).unwrap(); }
+            }
+        }
+        output.start_file("EPUB/blank.xhtml", opts).unwrap();
+        output.write_all(blank.as_bytes()).unwrap();
+        output.finish().unwrap();
+
+        let mut config = example("field-notes-epub3.epub", 28.0, false).config;
+        config.book = path.clone();
+        config.chapter_offsets = Default::default();
+        let mut reading = Reading::open(config.clone()).unwrap();
+        assert_eq!(reading.probe.page_count(), 1);
+        assert!(reading.frame.pixels.iter().filter(|&&p| p == 40).count() > 1000);
+        let cover_anchor = reading.anchor().unwrap();
+        assert_eq!(reading.probe.fragment("cover"), Some(cover_anchor.clone()));
+        assert_eq!(reading.probe.page_for(&cover_anchor), Some(0));
+        assert_eq!(reading.open_illustration("EPUB/images/shore.png").unwrap().page_size(), (500.0, 2300.0));
+        reading.turn(1).unwrap();
+        assert_eq!((reading.chapter, reading.page), (1, 0));
+        assert!(reading.frame.pixels.iter().all(|&p| p == 255));
+        let mut restored_blank = Reading::restore(config.clone(), 1, 0, reading.anchor().as_ref()).unwrap();
+        restored_blank.turn(1).unwrap();
+        assert_eq!(restored_blank.chapter, 2);
+        let end = restored_blank.probe.fragment("end").unwrap();
+        restored_blank.jump_to_anchor(2, &end).unwrap();
+        assert_eq!(restored_blank.anchor(), Some(end.clone()));
+        let mut restored = Reading::restore(config, 2, 0, Some(&end)).unwrap();
+        assert_eq!(restored.anchor(), Some(end));
+        restored.go_to_page(2, 0).unwrap();
+        restored.turn(-1).unwrap();
+        assert_eq!(restored.chapter, 1);
+        restored.turn(-1).unwrap();
+        assert_eq!(restored.anchor(), Some(cover_anchor));
+        std::fs::remove_file(path).unwrap();
     }
 
     fn first_hit<T>(mut hit: impl FnMut(f32, f32) -> Option<T>) -> Option<(f32, f32, T)> {
@@ -889,7 +1083,7 @@ mod tests {
         assert!(rects.iter().any(|rect| rect.x >= right as i32));
         assert!(rects.iter().all(|rect| rect.x + rect.width <= WIDTH as i32));
         let thumbnail = page_thumbnail(&mut reading.probe, 1).unwrap();
-        assert_eq!(thumbnail.width, FACING_PAGE_WIDTH * 280 / PAGE_HEIGHT);
+        assert_eq!(thumbnail.light.width, FACING_PAGE_WIDTH * 280 / PAGE_HEIGHT);
     }
 
     #[test]
@@ -947,6 +1141,213 @@ mod tests {
     }
 
     #[test]
+    fn night_pages_preserve_illustrations_on_both_sized_views_and_in_skim() {
+        fn find_image(reading: &Reading) -> (usize, Range<usize>, Range<usize>) {
+            let probe = &reading.probe;
+            let crate::Renderer::Parley(layout) = &probe.renderer else {
+                unreachable!()
+            };
+            (0..probe.page_count())
+                .find_map(|page| {
+                    layout
+                        .visible_illustrations(probe.page_range(page), probe.settings)
+                        .next()
+                        .map(|(_, x, y)| (page, x, y))
+                })
+                .unwrap()
+        }
+
+        let render_night = |reading: &Reading| {
+            let paint = PagePaint::full(true);
+            let frame = reading.marked_frame(&[], &[], &paint);
+            paint.apply(frame).1.pixels
+        };
+        let mut reading = example("field-notes-epub3.epub", 60.0, false);
+        for facing in [true, false] {
+            reading.set_facing_pages(facing).unwrap();
+            let (page, cols, rows) = find_image(&reading);
+            reading.go_to_page(0, page).unwrap();
+            let (_, origin) = frame_columns(&reading.probe, page)
+                .find(|(index, _)| *index == page)
+                .unwrap();
+            let frame = render_night(&reading);
+            assert_eq!(frame[0], 0);
+            let pos = rows.start * WIDTH as usize + origin as usize + cols.start;
+            assert_eq!(
+                &frame[pos..pos + cols.len()],
+                &reading.frame.pixels[pos..pos + cols.len()]
+            );
+            let cutoff = (rows.start + rows.len() / 2) as u32;
+            let mut clipped = reading.frame.clone();
+            reading.clear_lines_cut_by_tools(&mut clipped, &(cutoff..PAGE_HEIGHT));
+            let start = cutoff as usize * WIDTH as usize + origin as usize + cols.start;
+            assert_eq!(
+                &clipped.pixels[start..start + cols.len()],
+                &reading.frame.pixels[start..start + cols.len()]
+            );
+            let thumb = page_thumbnail(&mut reading.probe, page).unwrap();
+            let dark = thumb.for_theme(true);
+            assert!(
+                dark.pixels
+                    .iter()
+                    .zip(&thumb.light.pixels)
+                    .any(|(&a, &b)| a != 255 - b)
+            );
+            assert_eq!(dark.pixels[0], 0);
+
+            let anchor = reading.anchor();
+            reading
+                .reflow(Settings {
+                    invert_night_images: true,
+                    ..reading.config.settings
+                })
+                .unwrap();
+            assert_eq!(reading.anchor(), anchor);
+            let inverted = render_night(&reading);
+            assert_eq!(inverted[pos], 255 - frame[pos]);
+            let thumb = page_thumbnail(&mut reading.probe, page).unwrap();
+            assert!(thumb.dark.is_none());
+            reading
+                .reflow(Settings {
+                    invert_night_images: false,
+                    ..reading.config.settings
+                })
+                .unwrap();
+        }
+
+        // A large type size leaves a full viewport after the image, so scrolling can bisect it.
+        reading.reflow(Settings { font_size: 110.0, ..reading.config.settings }).unwrap();
+        reading.set_scroll(true).unwrap();
+        let (page, _, rows) = find_image(&reading);
+        let top = reading.probe.page_range(page).start + (rows.start + rows.len() / 2) as f32
+            - reading.probe.settings.top_margin() as f32;
+        reading
+            .scroll(
+                reading.scroll_top.unwrap(),
+                top - reading.scroll_top.unwrap(),
+            )
+            .unwrap();
+        let (range, _) = reading.visible_columns().next().unwrap();
+        let crate::Renderer::Parley(layout) = &reading.probe.renderer else {
+            unreachable!()
+        };
+        let (_, cols, rows) = layout
+            .visible_illustrations(range, reading.probe.settings)
+            .next()
+            .unwrap();
+        assert_eq!(rows.start, reading.probe.settings.top_margin() as usize);
+        let night = render_night(&reading);
+        let idx = rows.start * WIDTH as usize + cols.start;
+        assert_eq!(night[idx], reading.frame.pixels[idx]);
+        assert_eq!(
+            night[idx - WIDTH as usize],
+            255 - reading.frame.pixels[idx - WIDTH as usize]
+        );
+    }
+
+    #[test]
+    fn rtl_spreads_keep_the_source_order_for_selection_links_and_resume() {
+        let mut reading = example("rtl-notebook.epub", 42.0, true);
+        assert!(reading.probe.pages_right_to_left());
+        let width = FACING_PAGE_WIDTH as usize;
+        let right = width + FACING_GUTTER as usize;
+        let mut words = Vec::new();
+        for (page, x) in [(0, right), (1, 0)] {
+            let expected = reading.probe.capture(page).unwrap();
+            assert!(expected.iter().any(|&pixel| pixel < 255));
+            for (actual, expected_row) in reading
+                .frame
+                .pixels
+                .chunks_exact(WIDTH as usize)
+                .zip(expected.chunks_exact(width))
+            {
+                assert_eq!(&actual[x..x + width], expected_row);
+            }
+            let (wx, wy, word) = first_hit(|px, py| reading.probe.word_at(page, px, py)).unwrap();
+            assert_eq!(reading.word_at(wx + x as f32, wy), Some(word.clone()));
+            let rects = reading.highlight_rects(&word);
+            assert!(!rects.is_empty());
+            assert!(
+                rects
+                    .iter()
+                    .all(|rect| rect.x >= x as i32 && rect.x + rect.width <= (x + width) as i32)
+            );
+            words.push(word);
+            let (lx, ly, target) = first_hit(|px, py| reading.probe.link_at(page, px, py)).unwrap();
+            assert_eq!(reading.link_at(lx + x as f32, ly), Some(target.clone()));
+            assert!(reading.links().iter().any(|(_, link)| *link == target));
+        }
+        assert!(reading.word_at(WIDTH as f32 / 2.0, 150.0).is_none());
+        let span = reading
+            .probe
+            .select_range(&words[0].start, &words[1].end)
+            .unwrap();
+        let rects = reading.highlight_rects(&span);
+        assert!(rects.iter().any(|rect| rect.x >= right as i32));
+        assert!(rects.iter().any(|rect| rect.x + rect.width <= width as i32));
+
+        let anchor = words[1].start.clone();
+        reading.jump_to_anchor(0, &anchor).unwrap();
+        assert_eq!(reading.page, 1);
+        reading.set_facing_pages(false).unwrap();
+        assert_eq!(reading.anchor(), Some(anchor.clone()));
+        reading.set_facing_pages(true).unwrap();
+        let resumed =
+            Reading::restore(reading.config.clone(), 0, 0, reading.anchor().as_ref()).unwrap();
+        assert_eq!(resumed.anchor(), Some(anchor));
+        assert_eq!(resumed.page, 1);
+        assert_eq!(resumed.frame.pixels, reading.frame.pixels);
+    }
+
+    #[test]
+    fn rtl_touch_follows_publisher_direction_and_page_buttons_follow_the_spine() {
+        let mut reading = example("rtl-notebook.epub", 42.0, true);
+        let right = FACING_PAGE_WIDTH + FACING_GUTTER;
+        let mid = PAGE_HEIGHT as f32 / 2.0;
+        for (input, expected_page) in [
+            (Input::Tap(16.0, mid), 2),
+            (Input::Tap(WIDTH as f32 - 16.0, mid), 0),
+            (
+                Input::Swipe {
+                    dx: 250.0,
+                    dy: 0.0,
+                    start_y: mid,
+                },
+                2,
+            ),
+            (Input::PageBack, 0),
+            (Input::PageForward, 2),
+            (
+                Input::Swipe {
+                    dx: -250.0,
+                    dy: 0.0,
+                    start_y: mid,
+                },
+                0,
+            ),
+        ] {
+            reading.turns.next_refresh = Instant::now();
+            assert_eq!(reading.input(input), Change::Partial);
+            assert_eq!(reading.page, expected_page);
+        }
+        reading.go_to_page(1, 0).unwrap();
+        assert_eq!(reading.probe.page_count(), 1);
+        assert_eq!(reading.probe.chapter_label, "Translation key");
+        assert!(
+            reading
+                .frame
+                .pixels
+                .chunks_exact(WIDTH as usize)
+                .all(|row| row[..right as usize].iter().all(|&pixel| pixel == 255))
+        );
+        assert!(reading.word_at(100.0, 150.0).is_none());
+        assert_eq!(reading.turn(1).unwrap(), Change::None);
+        assert_eq!(reading.turn(-1).unwrap(), Change::Partial);
+        assert_eq!(reading.chapter, 0);
+        assert_eq!(reading.last_visible_page(), reading.probe.page_count() - 1);
+    }
+
+    #[test]
     fn odd_chapter_tail_stays_blank_and_vertical_text_uses_the_full_view() {
         let mut reading = example("vertical-chapters.epub", 42.0, true);
         assert_eq!(reading.probe.page_count(), 1);
@@ -984,6 +1385,7 @@ mod tests {
     #[test]
     fn enters_and_leaves_vertical_chapters_with_scroll_preference_preserved() {
         let mut reading = Reading::open(BookConfig {
+            chapter_offsets: Default::default(),
             engine: Engine::Parley,
             book: crate::test_fixture("vertical-chapters.epub"),
             fonts: vec![crate::test_fixture("fonts/Silkscreen-Regular.ttf")],

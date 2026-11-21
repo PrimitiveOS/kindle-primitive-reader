@@ -4,6 +4,8 @@ use std::borrow::Cow;
 use std::ops::Range;
 
 use icu_casemap::{CaseMapper, CaseMapperBorrowed};
+use icu_normalizer::DecomposingNormalizer;
+use icu_properties::{CodePointMapData, props::GeneralCategory};
 
 use crate::epub::Book;
 use crate::source::Source;
@@ -80,8 +82,12 @@ impl Search {
     }
 
     pub fn with_case(query: &str, match_case: bool) -> Result<Self> {
+        Self::with_options(query, match_case, false)
+    }
+
+    pub fn with_options(query: &str, match_case: bool, ignore_accents: bool) -> Result<Self> {
         Ok(Self {
-            query: Query::new(query, match_case)?,
+            query: Query::with_options(query, match_case, ignore_accents)?,
             publication: None,
             next_chapter: 0,
             hits: 0,
@@ -176,10 +182,16 @@ impl Search {
 struct Query {
     text: String,
     match_case: bool,
+    ignore_accents: bool,
 }
 
 impl Query {
+    #[cfg(test)]
     fn new(text: &str, match_case: bool) -> Result<Self> {
+        Self::with_options(text, match_case, false)
+    }
+
+    fn with_options(text: &str, match_case: bool, ignore_accents: bool) -> Result<Self> {
         let text = text.trim();
         if text.len() > MAX_QUERY_BYTES {
             return Err("Enter a search term of up to 256 UTF-8 bytes".into());
@@ -189,25 +201,39 @@ impl Query {
         if term.is_empty() {
             return Err("Enter a search term of up to 256 UTF-8 bytes".into());
         }
-        let text = if match_case {
-            term.to_owned()
-        } else {
-            CASE_MAPPER.fold_string(term).into_owned()
-        };
-        Ok(Self { text, match_case })
+        let text = FoldedText::with_options(term, match_case, ignore_accents).text;
+        if text.trim().is_empty() {
+            return Err("Enter at least one searchable character".into());
+        }
+        Ok(Self {
+            text,
+            match_case,
+            ignore_accents,
+        })
     }
 
     fn matches(&self, source: &str, limit: usize) -> Vec<Range<usize>> {
-        if self.match_case && !source.contains(SOFT_HYPHEN) {
+        if self.match_case && !self.ignore_accents && !source.contains(SOFT_HYPHEN) {
             source
                 .match_indices(&self.text)
                 .take(limit)
                 .map(|(start, found)| start..start + found.len())
                 .collect()
         } else {
-            FoldedText::new(source, self.match_case)
+            FoldedText::with_options(source, self.match_case, self.ignore_accents)
                 .matches(&self.text)
                 .take(limit)
+                .map(|mut range| {
+                    // Include combining marks in the original selected word.
+                    if self.ignore_accents {
+                        range.end += source[range.end..]
+                            .chars()
+                            .take_while(|&ch| accent_mark(ch))
+                            .map(char::len_utf8)
+                            .sum::<usize>();
+                    }
+                    range
+                })
                 .collect()
         }
     }
@@ -222,6 +248,34 @@ fn match_case_preserves_original_utf8_offsets() {
     assert_eq!(&source[exact[0].clone()], "Straße");
     let insensitive = Query::new("Straße", false).unwrap().matches(source, 10);
     assert_eq!(insensitive.len(), 3);
+}
+
+#[cfg(test)]
+#[test]
+fn accent_matching_keeps_the_original_vietnamese_word_offsets_and_case() {
+    let source = "Cà phê · CA\u{300} PHE\u{302} · ca phe";
+    let query = Query::with_options("CA PHE", false, true).unwrap();
+    let matches: Vec<_> = query
+        .matches(source, 5)
+        .into_iter()
+        .map(|span| &source[span])
+        .collect();
+    assert_eq!(matches, ["Cà phê", "CA\u{300} PHE\u{302}", "ca phe"]);
+    assert_eq!(
+        Query::with_options("CA PHE", true, true)
+            .unwrap()
+            .matches(source, 5)
+            .len(),
+        1
+    );
+    assert!(Query::with_options("\u{301}", false, true).is_err());
+    assert_eq!(
+        Query::with_options("ca phe", false, false)
+            .unwrap()
+            .matches(source, 5)
+            .len(),
+        1
+    );
 }
 
 #[cfg(test)]
@@ -260,9 +314,18 @@ pub(crate) struct PdfSearchHit {
 
 #[cfg(feature = "kindle")]
 impl PdfSearch {
+    #[cfg(test)]
     pub(crate) fn new(query: &str, match_case: bool) -> Result<Self> {
+        Self::with_options(query, match_case, false)
+    }
+
+    pub(crate) fn with_options(
+        query: &str,
+        match_case: bool,
+        ignore_accents: bool,
+    ) -> Result<Self> {
         Ok(Self {
-            query: Query::new(query, match_case)?,
+            query: Query::with_options(query, match_case, ignore_accents)?,
             next_page: 0,
             text_pages: 0,
             skipped: 0,
@@ -316,11 +379,28 @@ struct FoldedText {
     edits: Vec<OffsetEdit>,
 }
 
+fn accent_mark(ch: char) -> bool {
+    matches!(
+        CodePointMapData::<GeneralCategory>::new().get(ch),
+        GeneralCategory::NonspacingMark
+            | GeneralCategory::SpacingMark
+            | GeneralCategory::EnclosingMark
+    )
+}
+
 impl FoldedText {
     fn new(original: &str, match_case: bool) -> Self {
+        Self::with_options(original, match_case, false)
+    }
+
+    fn with_options(original: &str, match_case: bool, ignore_accents: bool) -> Self {
         if original.is_ascii() {
             return Self {
-                text: original.to_ascii_lowercase(),
+                text: if match_case {
+                    original.to_owned()
+                } else {
+                    original.to_ascii_lowercase()
+                },
                 edits: Vec::new(),
             };
         }
@@ -328,7 +408,7 @@ impl FoldedText {
         let mut edits = Vec::new();
         let mut scalar = [0; 4];
         for (source_start, ch) in original.char_indices() {
-            if ch.is_ascii() || (match_case && ch != SOFT_HYPHEN) {
+            if ch.is_ascii() || (match_case && !ignore_accents && ch != SOFT_HYPHEN) {
                 text.push(if match_case {
                     ch
                 } else {
@@ -338,8 +418,20 @@ impl FoldedText {
             }
             let folded = if ch == SOFT_HYPHEN {
                 Cow::Borrowed("")
+            } else if match_case {
+                Cow::Borrowed(&*ch.encode_utf8(&mut scalar))
             } else {
                 CASE_MAPPER.fold_string(ch.encode_utf8(&mut scalar))
+            };
+            let folded = if ignore_accents {
+                Cow::Owned(
+                    DecomposingNormalizer::new_nfd()
+                        .normalize_iter(folded.chars())
+                        .filter(|&ch| !accent_mark(ch))
+                        .collect::<String>(),
+                )
+            } else {
+                folded
             };
             let folded_start = text.len();
             text.push_str(&folded);

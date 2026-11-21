@@ -9,19 +9,20 @@ esac
 
 stage=${2:-build/stage}
 binary=${CARGO_TARGET_DIR:-target}/$target/release/reader-kindle
-ocr=${READER_OCR_BUILD_DIR:-}
+ocr=${READER_OCR_BUILD_DIR:-build/ocr-armhf}
 [ -x "$binary" ] || { echo "Build $binary before staging." >&2; exit 1; }
 [ -r assets/reader-icon.png ] || { echo "Missing the Reader icon." >&2; exit 1; }
 [ -r assets/reader-icon-dark.png ] || { echo "Missing the Reader dark icon." >&2; exit 1; }
 icon="# Icon: data:image/png;base64,$(base64 < assets/reader-icon.png | tr -d '\n')"
 icon_dark="# IconDark: data:image/png;base64,$(base64 < assets/reader-icon-dark.png | tr -d '\n')"
 set -- "$binary"
-if [ -n "$ocr" ]; then
-    ocr_engine=$ocr/build-tesseract-linux41/bin/tesseract
-    ocr_model=$ocr/tessdata/eng.traineddata
-    [ -x "$ocr_engine" ] && [ -r "$ocr_model" ] || { echo "Build the OCR engine and model before staging." >&2; exit 1; }
-    set -- "$@" "$ocr_engine"
+if [ -z "${READER_OCR_BUILD_DIR:-}" ]; then
+    sh scripts/build-ocr-armhf.sh "$ocr"
 fi
+ocr_engine=$ocr/build-tesseract-linux41/bin/tesseract
+ocr_model=$ocr/tessdata/eng.traineddata
+[ -x "$ocr_engine" ] && [ -r "$ocr_model" ] || { echo "Build the OCR engine and model before staging." >&2; exit 1; }
+set -- "$@" "$ocr_engine"
 python3 - "$@" <<'PY'
 import sys
 
@@ -43,9 +44,7 @@ awk -v icon="$icon" -v icon_dark="$icon_dark" '{ print } /^# Author:/ { print ic
 chmod 755 "$stage/documents/Reader.sh"
 install -m 644 docs/licenses/README.md docs/licenses/THIRD-PARTY.txt "$stage/reader/licenses/"
 cp -R docs/licenses/pdf docs/licenses/runtime "$stage/reader/licenses/"
-if [ -n "$ocr" ]; then
-    install -d "$stage/reader/ocr/tessdata" "$stage/reader/licenses/ocr"
-    install -m 755 "$ocr_engine" "$stage/reader/ocr/tesseract"
-    install -m 644 "$ocr_model" "$stage/reader/ocr/tessdata/eng.traineddata"
-    install -m 644 docs/licenses/ocr/* "$stage/reader/licenses/ocr/"
-fi
+install -d "$stage/reader/ocr/tessdata" "$stage/reader/licenses/ocr"
+install -m 755 "$ocr_engine" "$stage/reader/ocr/tesseract"
+install -m 644 "$ocr_model" "$stage/reader/ocr/tessdata/eng.traineddata"
+install -m 644 docs/licenses/ocr/* "$stage/reader/licenses/ocr/"

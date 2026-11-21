@@ -109,3 +109,18 @@ separate acceptance checks. [Illustrated EPUB source](https://standardebooks.org
 
 The tested EPUB archive has SHA-256
 `e8a352212579562c9b0ab6c2439c635886409d75812288547da15f3d18c2641d`.
+
+## Illustrated reflow and navigation
+
+KOReader's quick-start publication places small illustrations within sentences, sizes them in font units and uses a different rule for standalone screenshots. A long press resolves the image at the touched page position. Reader now gives each inline illustration a place in the shaped paragraph, so text wraps around its occupied line space as font size or page width changes. [KOReader quick-start styles](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/quickstart.lua#L33-L41) · [KOReader image lookup](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/credocument.lua#L569-L585)
+
+| Reading behavior | Verification |
+| --- | --- |
+| Inline art and publisher sizing | The original *Along the Waterline* fixture combines a linked SVG symbol with a PNG field sketch. The symbol scales from 35 to 55 pixels when the font grows from 30 to 48 pixels. The sketch uses 68% of the text area. The simulator renders all 333 source characters with the Launcher's Noto Sans on a 1264 × 1680 canvas. [Simulated page](screenshots/epub-inline-illustrations.png) |
+| Links, text selection and return | A tap on the symbol opens the referenced chapter and fragment. The page's link list uses its alternative text. Selection geometry stays on the adjacent words. Tests return to the sentence, save, reopen and check the location again. |
+| Covers and blank leaves | Reflow accepts single-image covers and bounded inline SVG artwork with static vector shapes, background fills, transforms and up to eight local PNG/JPEG resources. The composition test checks the backdrop and the transformed picture at separate pixels, opens its original canvas and rejects an external image. A 2300-pixel-tall raster cover fits the reading page and opens at original resolution for inspection. Forward and backward turns and resume preserve the order of the cover, intentional blank leaf and following chapter. |
+| Books with mixed content | A desktop run opened and rendered all 36 spine items across two previously failing publications. Each chapter's mapped text covered all of its source characters. A separate source test checks that nested paragraphs, images, direct text, fragment IDs and link ranges remain in publication order. |
+
+A third publication used a background rectangle behind a raster image in its cover SVG. Its original cover members produced 256 grayscale tones at 480 × 720 in the desktop simulator. An image-heavy 48-chapter publication rendered all 47 available source chapters and the recovery notice for its missing chapter. Nineteen available chapters previously failed at the 48-image threshold. Repeated graphics now share decoded pixels. A regression lays out more than 2,048 references and verifies that the final paragraph remains readable.
+
+The native layout honors positive image sizes in CSS pixels, percentages and ems, explicit XHTML pixel dimensions, automatic aspect ratio and standard keyword vertical alignment. Graphics remain bounded by the chapter's pixel budget. CSS floats, SVG masks, filters and remote resources, viewport-relative length units, and full publisher box layouts still need coverage. Compare the device build separately when assessing e-ink refresh or speed.

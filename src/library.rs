@@ -1,5 +1,7 @@
 //! Local document discovery and reading state. Paths stored in state are relative to the library.
 
+pub(crate) mod custom_contents;
+
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{self, BufReader, Read, Seek, SeekFrom};
@@ -39,6 +41,7 @@ const MAX_FIXED_ZOOM: usize = 4;
 const MAX_FIXED_OFFSET: f32 = 32_768.0;
 pub const MAX_CONTINUOUS_GAP: u16 = 128;
 pub const MIN_SCAN_WHITE_LEVEL: u8 = 192;
+pub const MAX_STRAIGHTEN_DEGREES: u8 = 25;
 pub const MAX_SCAN_WHITE_LEVEL: u8 = 254;
 const MIN_CROP_SIZE: f32 = 0.025;
 const BACKUP_VERSION: u32 = 1;
@@ -92,6 +95,9 @@ impl DocumentFormat {
                 Format::Rtf => Self::Rtf,
                 Format::Tcr => Self::Tcr,
             });
+        }
+        if crate::epub_members::is_folder_book(path) {
+            return Some(Self::Epub);
         }
         let extension = path.extension()?.to_str()?;
         match extension.to_ascii_lowercase().as_str() {
@@ -214,6 +220,7 @@ pub enum BrowseKind {
     Folder,
     Readable(LibraryBook),
     Unavailable { size: u64, too_large: bool },
+    KindleProtected { size: u64 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -248,6 +255,9 @@ pub struct BookPreferences {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub font_kerning: Option<bool>,
     pub font_hinting: crate::FontHinting,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub smooth_images: Option<bool>,
+    pub invert_night_images: bool,
     pub override_fonts: bool,
     pub disable_soft_hyphens: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -289,6 +299,8 @@ impl BookPreferences {
             publisher_styles: self.publisher_styles.unwrap_or(settings.publisher_styles),
             font_kerning: self.font_kerning.unwrap_or(settings.font_kerning),
             font_hinting: self.font_hinting,
+            smooth_images: self.smooth_images.unwrap_or(settings.smooth_images),
+            invert_night_images: self.invert_night_images,
             override_fonts: self.override_fonts,
             disable_soft_hyphens: self.disable_soft_hyphens,
             ..settings
@@ -310,6 +322,8 @@ pub struct FixedPreferences {
     pub continuous: bool,
     pub spread: bool,
     pub scan_contrast: bool,
+    pub straighten_limit: u8,
+    pub force_ocr: bool,
     pub dither: bool,
     pub continuous_gap: u16,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -336,6 +350,7 @@ impl FixedPreferences {
             turns: self.turns % 4,
             height_fit: self.height_fit && !self.width_fit,
             continuous_gap: self.continuous_gap.min(MAX_CONTINUOUS_GAP),
+            straighten_limit: self.straighten_limit.min(MAX_STRAIGHTEN_DEGREES),
             scan_white_level: self.scan_white_level.filter(valid_white_level),
             offset_x: normalized_offset(f64::from(self.offset_x)),
             offset_y: normalized_offset(f64::from(self.offset_y)),
@@ -374,6 +389,9 @@ impl<'de> Deserialize<'de> for FixedPreferences {
             continuous: switch("continuous"),
             spread: switch("spread"),
             scan_contrast: switch("scan_contrast"),
+            force_ocr: switch("force_ocr"),
+            straighten_limit: integer("straighten_limit").min(u64::from(MAX_STRAIGHTEN_DEGREES))
+                as u8,
             dither: switch("dither"),
             continuous_gap: integer("continuous_gap").min(u64::from(MAX_CONTINUOUS_GAP)) as u16,
             scan_white_level: u8::try_from(integer("scan_white_level"))
@@ -514,12 +532,38 @@ pub struct BookState {
     pub preferences: BookPreferences,
     #[serde(default)]
     pub fixed_preferences: FixedPreferences,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "read_ocr_language"
+    )]
+    pub(crate) ocr_language: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::book_menus::BookMenus::is_empty"
+    )]
+    pub(crate) menus: crate::book_menus::BookMenus,
     #[serde(default)]
     pub bookmarks: Vec<Bookmark>,
+    #[serde(
+        default,
+        skip_serializing_if = "custom_contents::CustomContents::is_default"
+    )]
+    pub(crate) custom_contents: custom_contents::CustomContents,
     #[serde(default)]
     pub highlights: Vec<Highlight>,
     #[serde(default)]
     pub pdf_highlights: Vec<PdfHighlight>,
+}
+
+fn read_ocr_language<'de, D: serde::Deserializer<'de>>(
+    reader: D,
+) -> Result<Option<String>, D::Error> {
+    let value = serde_json::Value::deserialize(reader)?;
+    Ok(value
+        .as_str()
+        .filter(|code| crate::ocr::valid_language_name(code))
+        .map(str::to_owned))
 }
 
 impl BookState {
@@ -535,7 +579,10 @@ impl BookState {
             favorite: false,
             preferences: BookPreferences::default(),
             fixed_preferences: FixedPreferences::default(),
+            ocr_language: None,
+            menus: Default::default(),
             bookmarks: Vec::new(),
+            custom_contents: Default::default(),
             highlights: Vec::new(),
             pdf_highlights: Vec::new(),
         }
@@ -599,6 +646,7 @@ pub struct BackupSummary {
     pub new_books: usize,
     pub existing_books: usize,
     pub bookmarks_added: usize,
+    pub custom_chapters_added: usize,
     pub highlights_added: usize,
     pub pdf_highlights_added: usize,
     pub notes_added: usize,
@@ -697,6 +745,9 @@ impl Library {
                 continue;
             };
             if kind.is_dir() {
+                if has_extension(&path, "sdr") {
+                    continue;
+                }
                 if path.components().count() < MAX_PATH_DEPTH {
                     if let Ok(entries) = fs::read_dir(entry.path()) {
                         dirs.push((path, entries));
@@ -738,10 +789,7 @@ impl Library {
             }
             let Ok(entry) = entry else { continue };
             let filename = entry.file_name();
-            let Some(name) = filename
-                .to_str()
-                .filter(|name| !name.chars().any(char::is_control))
-            else {
+            let Some(name) = filename.to_str() else {
                 continue;
             };
             let path = folder.join(&filename);
@@ -766,6 +814,13 @@ impl Library {
                 }
                 let size = metadata.len();
                 match DocumentFormat::for_path(&path) {
+                    Some(DocumentFormat::Mobi)
+                        if has_extension(&path, "azw")
+                            && crate::mobi::protected_kindle_header(&entry.path())
+                                .unwrap_or(false) =>
+                    {
+                        BrowseKind::KindleProtected { size }
+                    }
                     Some(format) if size <= format.max_bytes() => {
                         let saved = known_metadata
                             .get(path.as_path())
@@ -791,14 +846,16 @@ impl Library {
             }
             entries.push(BrowseEntry {
                 path,
-                name: name.to_owned(),
+                name: display_filename(name),
                 kind,
             });
         }
         entries.sort_by(|left, right| {
             let folder = |entry: &BrowseEntry| matches!(entry.kind, BrowseKind::Folder);
-            folder(right)
-                .cmp(&folder(left))
+            let book = |entry: &BrowseEntry| crate::epub_members::is_folder_book(&entry.path);
+            book(right)
+                .cmp(&book(left))
+                .then_with(|| folder(right).cmp(&folder(left)))
                 .then_with(|| natural_cmp(&left.name, &right.name))
         });
         Ok(BrowseList { entries, truncated })
@@ -924,6 +981,27 @@ impl Library {
         Ok(library_book(relative.to_owned(), size, format, None))
     }
 
+    /// A chapter selected inside an extracted publication shares the full book's
+    /// illustrations, links, bookmarks and position. Unlisted HTML stays standalone.
+    pub fn publication_for_chapter(
+        &self,
+        entry: &LibraryBook,
+    ) -> Option<(LibraryBook, usize, String)> {
+        if entry.format != DocumentFormat::Html {
+            return None;
+        }
+        let folder = entry
+            .path
+            .ancestors()
+            .skip(1)
+            .find(|p| has_extension(p, "epub"))?;
+        let name = entry.path.strip_prefix(folder).ok()?.to_str()?;
+        let marker = self.resolve(&folder.join("mimetype")).ok()?;
+        let book = Book::open(&self.absolute_path(&marker.path).ok()?).ok()?;
+        let chapter = book.chapter_index(name)?;
+        Some((marker, chapter, name.to_owned()))
+    }
+
     pub fn absolute_path(&self, path: &Path) -> io::Result<PathBuf> {
         let relative = if path.is_absolute() {
             path.strip_prefix(&self.root)
@@ -932,9 +1010,19 @@ impl Library {
         } else {
             path
         };
-        let format = DocumentFormat::for_path(relative)
-            .filter(|_| safe_path(relative))
-            .ok_or_else(denied)?;
+        if !safe_path(relative) {
+            return Err(denied());
+        }
+        let format = DocumentFormat::for_path(relative).ok_or_else(|| {
+            if has_extension(relative, "kfx") {
+                io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "Kindle KFX files open in the Kindle Library.",
+                )
+            } else {
+                denied()
+            }
+        })?;
         let mut absolute = self.root.clone();
         let mut components = relative.components().peekable();
         while let Some(component) = components.next() {
@@ -944,8 +1032,21 @@ impl Library {
                 if !metadata.is_dir() {
                     return Err(denied());
                 }
-            } else if !metadata.is_file() || metadata.len() > format.max_bytes() {
+            } else if !metadata.is_file() {
                 return Err(denied());
+            } else if metadata.len() > format.max_bytes() {
+                if format == DocumentFormat::Mobi
+                    && crate::mobi::protected_kindle_header(&absolute).unwrap_or(false)
+                {
+                    return Err(io::Error::other(crate::mobi::MobiError::Protected));
+                }
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "This document exceeds the {} MiB limit for its format",
+                        format.max_bytes() / (1024 * 1024)
+                    ),
+                ));
             }
         }
         let verified = absolute.canonicalize()?;
@@ -974,7 +1075,15 @@ impl Library {
                 .map(|comic| comic.identity())
                 .map_err(io::Error::other);
         }
-        if !matches!(format, DocumentFormat::Epub | DocumentFormat::Cbz) {
+        if crate::epub_members::is_folder_book(&entry.path) {
+            return crate::epub_members::folder_identity(&path);
+        }
+        if format == DocumentFormat::Epub {
+            let archive = crate::epub_zip::open(file, size).map_err(io::Error::other)?;
+            let (input, offset) = archive.zip.into_inner().original_directory()?;
+            return fingerprint(input, size, format.tag(), size - offset);
+        }
+        if format != DocumentFormat::Cbz {
             return fingerprint(file, size, format.tag(), size);
         }
         let mut input = BufReader::new(file);
@@ -1000,6 +1109,11 @@ impl Library {
 
     pub fn state(&self, id: u64) -> Option<&BookState> {
         self.recent.iter().find(|state| state.id == id)
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn state_mut(&mut self, id: u64) -> Option<&mut BookState> {
+        self.recent.iter_mut().find(|state| state.id == id)
     }
 
     pub fn recents(&self) -> &[BookState] {
@@ -1413,6 +1527,8 @@ fn merge_states(current: &[BookState], backup: &[BookState]) -> (Vec<BookState>,
         } else if merged.len() < MAX_BACKUP_BOOKS {
             let mut added = source.clone();
             added.bookmarks = Vec::new();
+            added.custom_contents = custom_contents::CustomContents::default();
+            added.custom_contents.enabled = source.custom_contents.enabled;
             added.highlights = Vec::new();
             added.pdf_highlights = Vec::new();
             added.title = clean_metadata(&added.title);
@@ -1438,6 +1554,19 @@ fn merge_states(current: &[BookState], backup: &[BookState]) -> (Vec<BookState>,
             summary.skipped += 1;
             continue;
         };
+        for entry in source.custom_contents.entries() {
+            if target.custom_contents.find(&entry.position).is_some() {
+                summary.duplicates += 1;
+            } else if target
+                .custom_contents
+                .save(entry.position.clone(), &entry.label)
+                .is_ok()
+            {
+                summary.custom_chapters_added += 1;
+            } else {
+                summary.skipped += 1;
+            }
+        }
         for bookmark in &source.bookmarks {
             let label = clean_metadata(&bookmark.label);
             if !valid_position(&bookmark.position) || label.is_empty() {
@@ -1590,11 +1719,30 @@ fn load_library_state(path: &Path) -> io::Result<(Vec<BookState>, Vec<Collection
             && ids.insert(state.id)
     });
     for state in &mut recent {
+        state.custom_contents.sanitize();
         state.pdf_highlights.retain(PdfHighlight::is_valid);
         state.pdf_highlights.truncate(MAX_PDF_HIGHLIGHTS);
     }
     let collections = merge_collections(&[], &collections, &recent, &mut BackupSummary::default());
     Ok((recent, collections))
+}
+
+fn fingerprint_update(hash: u64, bytes: &[u8]) -> u64 {
+    bytes.iter().fold(hash, |hash, &byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
+    })
+}
+
+fn fingerprint_prefix(size: u64, tag: &[u8]) -> u64 {
+    fingerprint_update(
+        fingerprint_update(0xcbf29ce484222325, &size.to_le_bytes()),
+        tag,
+    )
+}
+
+#[cfg(feature = "kindle")]
+pub(crate) fn fingerprint_bytes(bytes: &[u8], tag: &[u8]) -> u64 {
+    fingerprint_update(fingerprint_prefix(bytes.len() as u64, tag), bytes)
 }
 
 pub(crate) fn fingerprint(
@@ -1603,17 +1751,12 @@ pub(crate) fn fingerprint(
     tag: &[u8],
     mut length: u64,
 ) -> io::Result<u64> {
-    let hash_bytes = |hash: u64, byte: u8| (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3);
-    let mut hash = size
-        .to_le_bytes()
-        .into_iter()
-        .chain(tag.iter().copied())
-        .fold(0xcbf29ce484222325, hash_bytes);
+    let mut hash = fingerprint_prefix(size, tag);
     let mut buffer = [0; 32 * 1024];
     while length > 0 {
         let count = length.min(buffer.len() as u64) as usize;
         input.read_exact(&mut buffer[..count])?;
-        hash = buffer[..count].iter().copied().fold(hash, hash_bytes);
+        hash = fingerprint_update(hash, &buffer[..count]);
         length -= count as u64;
     }
     if input.read(&mut buffer[..1])? != 0 {
@@ -1632,9 +1775,14 @@ fn library_book(
     known: Option<&BookState>,
 ) -> LibraryBook {
     let title = known.map(|state| state.title.clone()).unwrap_or_else(|| {
-        path.file_stem().map_or_else(
+        let source = if crate::epub_members::is_folder_book(&path) {
+            path.parent().unwrap_or(&path)
+        } else {
+            &path
+        };
+        source.file_stem().map_or_else(
             || "Untitled book".to_owned(),
-            |name| name.to_string_lossy().into_owned(),
+            |name| display_filename(&name.to_string_lossy()),
         )
     });
     let author = known
@@ -1669,6 +1817,15 @@ fn fold_search(text: &str) -> String {
     ComposingNormalizer::new_nfc()
         .normalize(&folded)
         .into_owned()
+}
+
+/// Keep the file's actual path for opening and persistence. Some Kindle downloads
+/// have C1 controls in their filename that should never enter a visible label.
+pub(crate) fn display_filename(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| if ch.is_control() { '�' } else { ch })
+        .collect()
 }
 
 fn clean_metadata(value: &str) -> String {
@@ -1708,6 +1865,26 @@ mod tests {
     const EPUB2: &[u8] = include_bytes!("../tests/fixtures/field-notes-epub2.epub");
     const EPUB3: &[u8] = include_bytes!("../tests/fixtures/field-notes-epub3.epub");
 
+    #[cfg(feature = "kindle")]
+    #[test]
+    fn single_read_pdf_preserves_known_book_identity_and_detects_a_size_change() {
+        let scratch = Scratch::new();
+        let path = scratch.0.join("single-read.pdf");
+        let expected = (0..=255u8).cycle().take(102_400).collect::<Vec<_>>();
+        fs::write(&path, &expected).unwrap();
+        let library = Library::open(&scratch.0, &scratch.0.join("state.json")).unwrap();
+        let entry = library.resolve(&path).unwrap();
+        let bytes = crate::fixed_session::pdf_bytes(&path, Some(entry.size)).unwrap();
+        let memory_id = fingerprint_bytes(&bytes, DocumentFormat::Pdf.tag());
+        assert_eq!(bytes, expected);
+        assert_eq!(memory_id, 0x12fc66d5b554deac);
+        assert_eq!(library.identify(&entry).unwrap(), memory_id);
+
+        fs::write(&path, &expected[..1000]).unwrap();
+        assert!(crate::fixed_session::pdf_bytes(&path, Some(entry.size)).is_err());
+        assert!(library.identify(&entry).is_err());
+    }
+
     struct Scratch(PathBuf);
 
     impl Scratch {
@@ -1727,6 +1904,99 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn reads_and_identifies_an_extracted_epub_as_a_complete_book() {
+        let scratch = Scratch::new();
+        let root = scratch.0.join("documents");
+        let extracted = root.join("Field notes.epub");
+        fs::create_dir_all(&extracted).unwrap();
+        let mut zip = ZipArchive::new(io::Cursor::new(EPUB3)).unwrap();
+        zip.extract(&extracted).unwrap();
+        let library = Library::open(&root, &scratch.0.join("state.json")).unwrap();
+        let root_rows = library.browse(Path::new("")).unwrap();
+        assert!(matches!(root_rows.entries[0].kind, BrowseKind::Folder));
+        let inside = library.browse(&root_rows.entries[0].path).unwrap();
+        let marker = inside
+            .entries
+            .iter()
+            .find(|entry| crate::epub_members::is_folder_book(&entry.path))
+            .unwrap();
+        let BrowseKind::Readable(book) = &marker.kind else {
+            panic!("Missing extracted book")
+        };
+        assert_eq!(book.title, "Field notes");
+        let identity = library.identify(book).unwrap();
+        let mut reading = Book::open(&extracted.join("mimetype")).unwrap();
+        assert!(reading.chapters.len() >= 2);
+        assert!(reading.chapter(1).unwrap().contains("<body"));
+        let chapter = extracted.join(&reading.chapters[1].href);
+        let chapter_entry = library.resolve(&chapter).unwrap();
+        let (publication, index, href) = library.publication_for_chapter(&chapter_entry).unwrap();
+        assert_eq!(publication.path, book.path);
+        assert_eq!(index, 1);
+        assert_eq!(href, reading.chapters[1].href);
+        File::options()
+            .append(true)
+            .open(&chapter)
+            .unwrap()
+            .write_all(b" ")
+            .unwrap();
+        assert_ne!(identity, library.identify(book).unwrap());
+        #[cfg(unix)]
+        {
+            let outside = scratch.0.join("private.txt");
+            fs::write(&outside, b"outside publication").unwrap();
+            std::os::unix::fs::symlink(&outside, extracted.join("escape.txt")).unwrap();
+            assert!(reading.resource("escape.txt").is_err());
+            assert!(reading.resource("../private.txt").is_err());
+        }
+    }
+
+    #[test]
+    fn picker_labels_an_encrypted_kindle_book_even_when_it_is_large() {
+        let scratch = Scratch::new();
+        let path = scratch.0.join("Dictionary.azw");
+        let mut header = vec![0; 108];
+        header[60..68].copy_from_slice(b"BOOKMOBI");
+        header[77] = 1;
+        header[81] = 88;
+        header[101] = 2;
+        header[104..108].copy_from_slice(b"MOBI");
+        let mut book = File::create(&path).unwrap();
+        book.write_all(&header).unwrap();
+        book.set_len(DocumentFormat::Mobi.max_bytes() + 1).unwrap();
+        let library = Library::open(&scratch.0, &scratch.0.join("reading.json")).unwrap();
+        let items = library.browse(Path::new("")).unwrap();
+        assert!(matches!(
+            items.entries[0].kind,
+            BrowseKind::KindleProtected { .. }
+        ));
+        assert!(
+            library
+                .resolve(&path)
+                .unwrap_err()
+                .to_string()
+                .contains("encrypted")
+        );
+    }
+
+    #[test]
+    fn picker_can_open_a_filename_with_an_invisible_character() {
+        let scratch = Scratch::new();
+        let root = scratch.0.join("documents");
+        fs::create_dir(&root).unwrap();
+        let actual = Path::new("Field\u{0080}notes.epub");
+        fs::write(root.join(actual), EPUB3).unwrap();
+        let library = Library::open(&root, &scratch.0.join("state.json")).unwrap();
+        let rows = library.browse(Path::new("")).unwrap();
+        assert_eq!(rows.entries.len(), 1);
+        assert_eq!(rows.entries[0].name, "Field�notes.epub");
+        assert_eq!(rows.entries[0].path, actual);
+        let book = library.resolve(&rows.entries[0].path).unwrap();
+        assert_eq!(book.title, "Field�notes");
+        assert!(library.identify(&book).is_ok());
     }
 
     #[test]
@@ -2347,6 +2617,8 @@ mod tests {
                 dither: false,
                 continuous_gap: 0,
                 scan_white_level: None,
+                straighten_limit: 0,
+                force_ocr: false,
                 offset_x: MAX_FIXED_OFFSET,
                 offset_y: 0.0,
                 right_to_left: true,

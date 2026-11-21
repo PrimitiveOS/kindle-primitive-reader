@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.6
+
+- Open full-length MOBI and KindleGen AZW3 books with separate stylesheet and artwork flows. Keep links usable in large illustrated chapters.
+- Improve compatibility with EPUB cover pages, XML declarations, ZIP packaging and filenames found in Kindle Documents.
+- Preserve the publisher’s order in right-to-left spreads. Add custom contents entries, book and chapter progress, and configurable reading gestures.
+- Add fine scan straightening and optional OCR over embedded text in PDF and DjVu. Include the offline English OCR engine and model in the Kindle package.
+- Add Wikipedia and translation for selected text and explicit page lookups, with separate controls for online history and language.
+- Remember the last reading panels separately for each book. Search can ignore accents while keeping the original word selected.
+- Open an extracted EPUB as a book, or choose an individual chapter from Documents. Protected AZW and KFX entries identify the Kindle Library as their reader.
+
 ## 0.1.5
 
 - The package declares firmware 5.18.2 (the firmware the Reader is tested on), so the Store lists it with the same range.

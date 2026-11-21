@@ -42,7 +42,7 @@ impl QuickDisplay {
         }
     }
 
-    fn level(&self, control: DisplayLevel) -> Option<u32> {
+    pub(super) fn level(&self, control: DisplayLevel) -> Option<u32> {
         match control {
             DisplayLevel::FrontLight => self.light,
             DisplayLevel::Warmth => self.warmth,
@@ -114,10 +114,7 @@ impl Reader {
             Item::new("Refresh screen now", Action::RefreshDisplay),
             Item::new(
                 "Reading status bar",
-                Action::SetReadingControls(crate::reading_controls::ReadingControls {
-                    status_bar: current.status_bar.next(),
-                    ..current
-                }),
+                Action::Show(super::Screen::FooterSettings),
             )
             .detail(current.status_bar.label()),
         ]);

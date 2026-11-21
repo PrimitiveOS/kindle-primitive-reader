@@ -1,13 +1,8 @@
 //! Import Tesseract TSV for one upright grayscale page.
 //! https://tesseract-ocr.github.io/tessdoc/Command-Line-Usage.html#tsv-output
 //!
-//! A future `OcrJob::start(engine, raster, language, deadline)` can accept an
-//! owned grayscale raster and installed language pack. `poll` can return one
-//! `OcrPage` or a worker error, and `cancel` can signal the worker. A fixed
-//! executable reads PGM on stdin and writes TSV on stdout. The adapter drains
-//! bounded stdout and stderr while feeding stdin, allows one active job, and
-//! kills and reaps the child on cancellation, deadline, or output overflow.
-//! The UI can poll between page events and release the book independently.
+//! The Kindle worker streams a bounded upright raster to the installed engine. The reader
+//! maps normalized TSV word rectangles through its current page transform for selection.
 
 use std::borrow::Cow;
 use std::fmt;
@@ -23,6 +18,14 @@ const MAX_WORD_BYTES: usize = 512;
 const MAX_TEXT_BYTES: usize = 96 * 1024;
 const HEADER: &str =
     "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext";
+
+pub(crate) fn valid_language_name(name: &str) -> bool {
+    name.len() <= 32
+        && name.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+}
 
 #[derive(Debug, PartialEq)]
 pub struct OcrPage {

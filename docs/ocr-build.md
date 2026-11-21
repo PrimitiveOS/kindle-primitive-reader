@@ -25,8 +25,8 @@ READER_OCR_BUILD_DIR=build/ocr-armhf sh scripts/stage.sh armhf build/stage-with-
 ```
 
 The OCR stage contains the static executable, English model and separate
-[upstream notices](licenses/ocr). A package can omit the OCR assets. Its PDF and
-DjVu readers still render pages and read text layers already present in files.
+[upstream notices](licenses/ocr). Release staging builds these pinned inputs by default. For a local build,
+`READER_OCR_BUILD_DIR` can point at an existing build of the same runtime.
 
 Install additional compatible Tesseract `.traineddata` files in
 `reader/ocr/tessdata/` alongside the English model. Names use lowercase

@@ -16,6 +16,9 @@ fn main() -> Result<()> {
         println!("{USAGE}");
         return Ok(());
     }
+    if first.as_deref() == Some(std::ffi::OsStr::new("--lookup-worker")) && args.len() == 0 {
+        return reader::online_lookup::worker();
+    }
     if env::var_os("KL_NATIVE_APP_RUN").is_none() {
         return Err("Open Reader from PrimitiveOS Launcher".into());
     }

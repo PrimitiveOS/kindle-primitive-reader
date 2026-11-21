@@ -3,6 +3,7 @@ mod annotation_export;
 #[cfg(feature = "kindle")]
 pub mod app;
 mod blitz;
+mod book_menus;
 mod book_style;
 mod cbr;
 mod chm;
@@ -12,6 +13,9 @@ pub mod djvu;
 mod docx;
 pub mod epub;
 pub mod epub_cfi;
+mod epub_members;
+mod epub_xml;
+mod epub_zip;
 pub mod fixed;
 pub mod fixed_epub;
 #[cfg(feature = "kindle")]
@@ -21,6 +25,7 @@ pub mod fixed_text;
 mod generated_contents;
 mod gray_glyph;
 mod kf8;
+mod kindle_sections;
 pub mod koreader_import;
 pub mod koreader_sidecar;
 pub mod library;
@@ -29,6 +34,8 @@ pub mod mobi;
 pub mod ocr;
 #[cfg(feature = "kindle")]
 mod ocr_job;
+#[cfg(feature = "kindle")]
+pub mod online_lookup;
 mod parley_layout;
 #[cfg(feature = "kindle")]
 mod pdf_annotations;
@@ -43,6 +50,8 @@ mod reading_stats;
 mod rtf;
 #[cfg(feature = "kindle")]
 mod scan_columns;
+#[cfg(feature = "kindle")]
+mod scan_deskew;
 #[cfg(feature = "kindle")]
 mod scan_reflow;
 pub mod search;
@@ -117,7 +126,7 @@ pub enum FontHinting {
     Auto,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Settings {
     pub width: u32,
     pub height: u32,
@@ -139,6 +148,8 @@ pub struct Settings {
     /// Use each font's normal OpenType kerning when shaping text.
     pub font_kerning: bool,
     pub font_hinting: FontHinting,
+    pub smooth_images: bool,
+    pub invert_night_images: bool,
 }
 
 impl Default for Settings {
@@ -162,6 +173,8 @@ impl Default for Settings {
             publisher_styles: true,
             font_kerning: true,
             font_hinting: FontHinting::Off,
+            smooth_images: true,
+            invert_night_images: false,
         }
     }
 }
@@ -313,7 +326,10 @@ pub struct Probe {
     pub toc: Vec<TocEntry>,
     #[cfg(feature = "kindle")]
     pub(crate) printed_pages: Vec<TocEntry>,
+    #[cfg(feature = "kindle")]
+    footer_chapters: std::cell::OnceCell<Vec<(usize, String)>>,
     settings: Settings,
+    spine_rtl: bool,
     source: Source,
     lines: Vec<Line>,
     pages: Pagination,
@@ -376,6 +392,7 @@ impl Probe {
         let title = book.title.clone();
         let author = book.author.clone();
         let publication = book.revision();
+        let spine_rtl = book.spine_rtl;
         let chapters = book.chapters.clone();
         let toc = book.toc.clone();
         #[cfg(feature = "kindle")]
@@ -449,10 +466,13 @@ impl Probe {
             chapter: href,
             chapter_label,
             book: publication,
+            spine_rtl,
             chapters,
             toc,
             #[cfg(feature = "kindle")]
             printed_pages,
+            #[cfg(feature = "kindle")]
+            footer_chapters: Default::default(),
             settings,
             source,
             lines,
@@ -467,6 +487,11 @@ impl Probe {
 
     pub(crate) fn is_vertical(&self) -> bool {
         matches!(&self.renderer, Renderer::Vertical(_))
+    }
+
+    /// The visual direction of forward page turns for this chapter.
+    pub fn pages_right_to_left(&self) -> bool {
+        self.spine_rtl || self.is_vertical()
     }
 
     pub fn chapter_count(&self) -> usize {
@@ -523,6 +548,12 @@ impl Probe {
         if book.revision() != self.book || book.chapter_index(&self.chapter).is_none() {
             return Err("This book changed after it was opened".into());
         }
+        if let Some(xml) = self.source.blocks.iter().flat_map(|block| &block.images)
+            .find(|image| image.href == package_path).and_then(|image| image.inline_svg.as_deref()) {
+            let (gray, _) = svg_image::render_inline(&mut book, &self.chapter, xml, svg_image::MAX_SVG_SIDE,
+                svg_image::MAX_SVG_SIDE, 8 * 1024 * 1024, None)?;
+            return comic::ImagePage::from_grayscale(gray.width(), gray.height(), gray.into_raw());
+        }
         let bytes = if svg_image::is_package_svg(package_path) {
             book.resource_limited(package_path, svg_image::MAX_SVG_BYTES)?
         } else {
@@ -538,6 +569,11 @@ impl Probe {
     }
 
     pub(crate) fn link_in(&self, range: Range<f32>, x: f32, y: f32) -> Option<Destination> {
+        if let Renderer::Parley(layout) = &self.renderer
+            && let Some(href) = layout.image_link_at(range.clone(), self.settings, x, y)
+        {
+            return Book::resolve_link(&self.chapter, href).ok();
+        }
         let (key, offset) = self.source_at(range, x, y)?;
         let block = self.source.blocks.iter().find(|block| block.key == key)?;
         let link = block
@@ -597,6 +633,15 @@ impl Probe {
                 }
             }
         }
+        if let Renderer::Parley(layout) = &self.renderer {
+            for (label, href) in layout.image_links(bounds, self.settings) {
+                if let Ok(target) = Book::resolve_link(&self.chapter, href)
+                    && !links.iter().any(|(_, existing)| existing == &target)
+                {
+                    links.push((label.to_owned(), target));
+                }
+            }
+        }
         links
     }
 
@@ -639,11 +684,18 @@ impl Probe {
             if offset != block.text.len() {
                 return None;
             }
-            self.lines
-                .iter()
-                .rev()
-                .find(|line| line.block == anchor.block && !line.bytes.is_empty())
-                .map(|line| line.top)
+            if block.text.is_empty() {
+                self.lines
+                    .iter()
+                    .find(|line| line.block == block.key)
+                    .map(|line| line.top)
+            } else {
+                self.lines
+                    .iter()
+                    .rev()
+                    .find(|line| line.block == block.key && !line.bytes.is_empty())
+                    .map(|line| line.top)
+            }
         })
     }
 
@@ -670,6 +722,17 @@ impl Probe {
             .iter()
             .find(|line| {
                 !line.bytes.is_empty() && line.bottom > range.start && line.top < range.end
+            })
+            .or_else(|| {
+                self.lines.iter().find(|line| {
+                    line.bottom > range.start
+                        && line.top < range.end
+                        && self
+                            .source
+                            .blocks
+                            .binary_search_by_key(&line.block, |block| block.key)
+                            .is_ok_and(|index| self.source.blocks[index].text.is_empty())
+                })
             })
             .map(|line| self.anchor(line.block, line.bytes.start))
     }
@@ -810,8 +873,8 @@ fn grayscale(rgba: &[u8]) -> impl Iterator<Item = u8> + '_ {
 fn image_reader(bytes: &[u8]) -> Result<image::ImageReader<std::io::Cursor<&[u8]>>> {
     let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format()?;
     let mut limits = image::Limits::default();
-    limits.max_image_width = Some(2048);
-    limits.max_image_height = Some(2048);
+    limits.max_image_width = Some(comic::MAX_IMAGE_SIDE);
+    limits.max_image_height = Some(comic::MAX_IMAGE_SIDE);
     limits.max_alloc = Some(24 * 1024 * 1024);
     reader.limits(limits);
     if !matches!(
@@ -821,4 +884,12 @@ fn image_reader(bytes: &[u8]) -> Result<image::ImageReader<std::io::Cursor<&[u8]
         return Err("The EPUB image format is outside the probe subset".into());
     }
     Ok(reader)
+}
+
+fn epub_raster_dimensions(bytes: &[u8]) -> Result<(u32, u32)> {
+    let (width, height) = image_reader(bytes)?.into_dimensions()?;
+    if !comic::image_dimensions_valid(width, height) {
+        return Err("The EPUB image exceeds Reader's decoded image limit".into());
+    }
+    Ok((width, height))
 }

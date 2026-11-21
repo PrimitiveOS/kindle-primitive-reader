@@ -1,6 +1,10 @@
-//! Static SVG illustrations from EPUB archive bytes with no external resource resolution.
+//! Static SVG illustrations with optional bounded raster resources from the open book.
 
-use image::GrayImage;
+use std::collections::HashMap;
+use std::fmt::Write;
+use std::sync::Arc;
+
+use image::{GrayImage, ImageDecoder};
 use resvg::{tiny_skia, usvg};
 use roxmltree::{Document, ParsingOptions};
 
@@ -27,7 +31,28 @@ pub(crate) fn rasterize(
     max_height: u32,
     available_pixels: usize,
 ) -> Result<GrayImage> {
-    let viewport = render_pixmap(bytes, max_width, max_height, available_pixels)?;
+    rasterize_with_size(bytes, max_width, max_height, available_pixels, None)
+}
+
+pub(crate) fn rasterize_with_size(
+    bytes: &[u8],
+    max_width: u32,
+    max_height: u32,
+    available_pixels: usize,
+    css_size: Option<&dyn Fn(u32, u32) -> (u32, u32)>,
+) -> Result<GrayImage> {
+    let viewport = render_pixmap(
+        bytes,
+        max_width,
+        max_height,
+        available_pixels,
+        css_size,
+        None,
+    )?;
+    grayscale_pixmap(viewport)
+}
+
+fn grayscale_pixmap(viewport: tiny_skia::Pixmap) -> Result<GrayImage> {
     GrayImage::from_raw(
         viewport.width(),
         viewport.height(),
@@ -36,8 +61,115 @@ pub(crate) fn rasterize(
     .ok_or_else(|| "SVG pixels have unexpected dimensions".into())
 }
 
+/// Detach a supported graphic from its XHTML without losing inherited XML
+/// namespace bindings. Prefixes on descendants continue to resolve normally.
+pub(crate) fn inline_source(node: roxmltree::Node<'_, '_>, xhtml: &str) -> Option<String> {
+    if node.range().len() > MAX_SVG_BYTES
+        || node.descendants().take(MAX_XML_NODES as usize + 1).count() > MAX_XML_NODES as usize
+    {
+        return None;
+    }
+    validate(node, true).ok()?;
+    let escape = |value: &str| {
+        value
+            .replace('&', "&amp;")
+            .replace('"', "&quot;")
+            .replace('<', "&lt;")
+    };
+    let mut xml = format!("<svg xmlns=\"{SVG_NAMESPACE}\"");
+    for namespace in node.namespaces() {
+        if let Some(prefix) = namespace.name()
+            && prefix != "xml"
+        {
+            write!(xml, " xmlns:{prefix}=\"{}\"", escape(namespace.uri())).ok()?;
+        }
+    }
+    for attribute in node.attributes() {
+        write!(
+            xml,
+            " {}=\"{}\"",
+            attribute.name(),
+            escape(attribute.value())
+        )
+        .ok()?;
+    }
+    xml.push('>');
+    if let (Some(first), Some(last)) = (node.first_child(), node.last_child()) {
+        xml.push_str(&xhtml[first.range().start..last.range().end]);
+    }
+    xml.push_str("</svg>");
+    (xml.len() <= MAX_SVG_BYTES).then_some(xml)
+}
+
+pub(crate) fn render_inline(
+    book: &mut crate::epub::Book,
+    chapter: &str,
+    xml: &str,
+    width: u32,
+    height: u32,
+    budget: usize,
+    css_size: Option<&dyn Fn(u32, u32) -> (u32, u32)>,
+) -> Result<(GrayImage, usize)> {
+    let doc = Document::parse(xml)?;
+    let mut images = HashMap::new();
+    let mut source_pixels = 0usize;
+    let mut source_bytes = 0usize;
+    for node in doc
+        .descendants()
+        .filter(|node| node.has_tag_name((SVG_NAMESPACE, "image")))
+    {
+        let href = node
+            .attribute("href")
+            .or_else(|| node.attribute(("http://www.w3.org/1999/xlink", "href")))
+            .ok_or("The SVG image reference is missing")?;
+        if images.contains_key(href) {
+            continue;
+        }
+        if images.len() >= 8 {
+            return Err("The inline SVG has too many image resources".into());
+        }
+        let path = crate::epub::Book::resolve(chapter, href)?;
+        let data =
+            book.resource_limited(&path, (8 * 1024 * 1024usize).saturating_sub(source_bytes))?;
+        source_bytes += data.len();
+        let (w, h) = crate::epub_raster_dimensions(&data)?;
+        source_pixels += w as usize * h as usize;
+        if source_pixels > budget {
+            return Err("The inline SVG exceeds its image budget".into());
+        }
+        let reader = crate::image_reader(&data)?;
+        let format = reader.format();
+        if reader.into_decoder()?.total_bytes() > 24 * 1024 * 1024 {
+            return Err("The inline SVG image is too large to decode".into());
+        }
+        let kind = match format {
+            Some(image::ImageFormat::Png) => usvg::ImageKind::PNG(Arc::new(data)),
+            Some(image::ImageFormat::Jpeg) => usvg::ImageKind::JPEG(Arc::new(data)),
+            _ => return Err("The inline SVG image needs a PNG or JPEG".into()),
+        };
+        images.insert(href.to_owned(), kind);
+    }
+    let viewport = render_pixmap(
+        xml.as_bytes(),
+        width,
+        height,
+        budget,
+        css_size,
+        Some(&images),
+    )?;
+    let cost = source_pixels.max(viewport.width() as usize * viewport.height() as usize);
+    Ok((grayscale_pixmap(viewport)?, cost))
+}
+
 pub(crate) fn png_resource(bytes: &[u8], available_pixels: usize) -> Result<(Vec<u8>, usize)> {
-    let viewport = render_pixmap(bytes, MAX_SVG_SIDE, MAX_SVG_SIDE, available_pixels)?;
+    let viewport = render_pixmap(
+        bytes,
+        MAX_SVG_SIDE,
+        MAX_SVG_SIDE,
+        available_pixels,
+        None,
+        None,
+    )?;
     let pixels = viewport.width() as usize * viewport.height() as usize;
     Ok((viewport.encode_png()?, pixels))
 }
@@ -47,6 +179,8 @@ fn render_pixmap(
     max_width: u32,
     max_height: u32,
     available_pixels: usize,
+    css_size: Option<&dyn Fn(u32, u32) -> (u32, u32)>,
+    images: Option<&HashMap<String, usvg::ImageKind>>,
 ) -> Result<tiny_skia::Pixmap> {
     if bytes.len() > MAX_SVG_BYTES || bytes.starts_with(&[0x1f, 0x8b]) {
         return Err("SVG must be uncompressed UTF-8 within 256 KiB".into());
@@ -62,12 +196,12 @@ fn render_pixmap(
             ..Default::default()
         },
     )?;
-    validate(&document)?;
+    validate(document.root_element(), images.is_some())?;
     let options = usvg::Options {
         max_depth: MAX_DEPTH,
         image_href_resolver: usvg::ImageHrefResolver {
             resolve_data: Box::new(|_, _, _| None),
-            resolve_string: Box::new(|_, _| None),
+            resolve_string: Box::new(|href, _| images.and_then(|images| images.get(href).cloned())),
         },
         ..Default::default()
     };
@@ -75,7 +209,17 @@ fn render_pixmap(
     let natural_width = f64::from(tree.size().width());
     let natural_height = f64::from(tree.size().height());
     let (width, height) = fitted_size(natural_width, natural_height, max_width, max_height)?;
-    if width as usize * height as usize > available_pixels {
+    // Render vectors directly at their final CSS size on the reading page.
+    // The natural viewport and the requested drawing retain their own limits.
+    let (width, height) = css_size.map_or((width, height), |size| {
+        size(natural_width.ceil() as u32, natural_height.ceil() as u32)
+    });
+    if width == 0
+        || height == 0
+        || width > max_width.min(MAX_SVG_SIDE)
+        || height > max_height.min(MAX_SVG_SIDE)
+        || width as usize * height as usize > available_pixels.min(MAX_SVG_PIXELS)
+    {
         return Err("The SVG exceeds the chapter image budget".into());
     }
     let scale = (
@@ -112,19 +256,25 @@ fn fitted_size(
     Ok((width, height))
 }
 
-fn validate(document: &Document<'_>) -> Result<()> {
-    let root = document.root_element();
+fn validate(root: roxmltree::Node<'_, '_>, local_images: bool) -> Result<()> {
     if root.tag_name().name() != "svg" || root.tag_name().namespace() != Some(SVG_NAMESPACE) {
         return Err("The illustration needs a standalone SVG root".into());
     }
     let mut vector_bytes = 0;
     for node in root.descendants().filter(roxmltree::Node::is_element) {
-        if node.ancestors().take(MAX_DEPTH as usize + 2).count() > MAX_DEPTH as usize + 1 {
+        if node
+            .ancestors()
+            .take_while(|ancestor| *ancestor != root)
+            .take(MAX_DEPTH as usize + 1)
+            .count()
+            > MAX_DEPTH as usize
+        {
             return Err("The SVG exceeds the nesting limit".into());
         }
         let element = node.tag_name();
         if element.namespace() != Some(SVG_NAMESPACE)
             || (node != root
+                && !(local_images && element.name() == "image")
                 && !matches!(
                     element.name(),
                     "g" | "defs"
@@ -151,6 +301,16 @@ fn validate(document: &Document<'_>) -> Result<()> {
         for attribute in node.attributes() {
             let name = attribute.name();
             let value = attribute.value();
+            if local_images
+                && element.name() == "image"
+                && name == "href"
+                && matches!(
+                    attribute.namespace(),
+                    None | Some("http://www.w3.org/1999/xlink")
+                )
+            {
+                continue;
+            }
             if attribute.namespace().is_some() || !is_static_attribute(name) {
                 return Err(format!(
                     "SVG attribute {name} is outside the static illustration subset"
@@ -260,6 +420,14 @@ fn charge_render(
                         .checked_sub(width * height * passes)
                         .ok_or("The SVG exceeds the paint work limit")?;
                 }
+            }
+            usvg::Node::Image(image) => {
+                let bounds = image.abs_bounding_box();
+                let width = paint_span(bounds.left(), bounds.right(), scale.0, viewport.0);
+                let height = paint_span(bounds.top(), bounds.bottom(), scale.1, viewport.1);
+                *remaining_pixels = remaining_pixels
+                    .checked_sub(width * height)
+                    .ok_or("The SVG exceeds its paint budget")?;
             }
             _ => return Err(unsupported.into()),
         }

@@ -23,6 +23,11 @@ pub(crate) struct ReadingControls {
     pub orientation: ReadingOrientation,
     pub palette: ScreenPalette,
     pub status_bar: StatusBar,
+    pub footer_scope: ProgressScope,
+    pub hide_chapter_markers: bool,
+    pub footer_all_at_once: bool,
+    pub footer_tap_locked: bool,
+    pub skim_on_footer_hold: bool,
     pub menu_activation: MenuActivation,
 }
 
@@ -59,6 +64,8 @@ pub(crate) enum StatusBar {
     #[default]
     PageNumbers,
     Progress,
+    Chapter,
+    Remaining,
     Minimal,
 }
 
@@ -66,7 +73,9 @@ impl StatusBar {
     pub fn label(self) -> &'static str {
         match self {
             Self::PageNumbers => "Page numbers",
-            Self::Progress => "Progress",
+            Self::Progress => "Book progress",
+            Self::Chapter => "Current chapter",
+            Self::Remaining => "Chapter pages left",
             Self::Minimal => "Minimal",
         }
     }
@@ -74,8 +83,37 @@ impl StatusBar {
     pub fn next(self) -> Self {
         match self {
             Self::PageNumbers => Self::Progress,
-            Self::Progress => Self::Minimal,
+            Self::Progress => Self::Chapter,
+            Self::Chapter => Self::Remaining,
+            Self::Remaining => Self::Minimal,
             Self::Minimal => Self::PageNumbers,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ProgressScope {
+    #[default]
+    Book,
+    Chapter,
+    Off,
+}
+
+impl ProgressScope {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Book => Self::Chapter,
+            Self::Chapter => Self::Off,
+            Self::Off => Self::Book,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Book => "Whole book",
+            Self::Chapter => "Current chapter",
+            Self::Off => "Off",
         }
     }
 }

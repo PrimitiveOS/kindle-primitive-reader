@@ -144,6 +144,23 @@
       }
     },
     {
+      "file": "tilted-scan.pdf",
+      "sha256": "2481fc5dc1ae096d54525aebf144d4bbbd72dd66049eec62decb738de2989e16",
+      "size_bytes": 2052,
+      "expected": {
+        "opens": true,
+        "page_count": 2,
+        "display_baseline_degrees": [
+          -8,
+          8
+        ],
+        "internal_link_pages": [
+          1,
+          2
+        ]
+      }
+    },
+    {
       "file": "long-chapter.epub",
       "sha256": "f87cb3327cdb5602b9ea92e6a8aa4bc90cdd2e7917aebf5da514c4f6a96cb3cc",
       "size_bytes": 51901,
@@ -186,6 +203,33 @@
         ],
         "anchors": {
           "EPUB/chapters/vertical.xhtml#entry-24": "Before the tide rose"
+        }
+      }
+    },
+    {
+      "file": "signal-guide.epub",
+      "sha256": "b046557554020f80ca8d0696c5b0c454d16a9f7147954c5cadab0440e34a2e70",
+      "size_bytes": 18455,
+      "expected": {
+        "opens": true,
+        "epub_version": "3.0",
+        "spine_count": 2,
+        "inline_image": "EPUB/images/beacon.svg",
+        "image_link": "EPUB/chapters/legend.xhtml#beacon"
+      }
+    },
+    {
+      "file": "rtl-notebook.epub",
+      "sha256": "d093270701b0e605666887e48882e056cd2a54a29ae900cf4a855695005f5c82",
+      "size_bytes": 5816,
+      "expected": {
+        "opens": true,
+        "epub_version": "3.0",
+        "spine_count": 2,
+        "page_progression": "rtl",
+        "first_chapter": "EPUB/chapters/notes.xhtml",
+        "anchors": {
+          "EPUB/chapters/key.xhtml#key": "Translation key"
         }
       }
     },
