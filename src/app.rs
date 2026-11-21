@@ -741,6 +741,7 @@ impl Reader {
             entry.author = reading.author();
             self.active = None;
             self.pages_since_refresh = 0;
+            self.range_edit = None;
             self.fixed = Some(ActiveFixed {
                 footer_chapters: reading_footer::fixed_chapters(&reading),
                 entry,
@@ -792,6 +793,7 @@ impl Reader {
         };
         entry.author.clone_from(&reading.probe.author);
         self.pages_since_refresh = 0;
+        self.range_edit = None;
         self.active = Some(ActiveBook { entry, id, reading });
         self.fixed = None;
         self.back.clear();
@@ -1224,12 +1226,12 @@ impl Reader {
             } else {
                 Action::Highlight(self.highlight_index)
             };
-            let mut items = vec![
+            let items = vec![
                 Item::new("Read passage", passage),
+                Item::new("Extend highlight", Action::ExtendHighlight),
                 Item::new("Edit note", Action::EditNote),
                 Item::new("Remove highlight", Action::Show(Screen::RemoveHighlight)),
             ];
-            if self.active.is_some() { items.insert(1, Item::new("Extend highlight", Action::ExtendHighlight)); }
             return items;
         }
         if self.screen == Screen::RemoveHighlight {
@@ -4537,6 +4539,7 @@ impl Reader {
             .into_iter()
             .filter_map(|annotation| {
                 let mark = PdfHighlight {
+                    continuation: Vec::new(),
                     page: annotation.page,
                     bounds: annotation.bounds,
                     text: annotation
@@ -4631,13 +4634,14 @@ impl Reader {
         if let Some(mark) = state
             .pdf_highlights
             .iter_mut()
-            .find(|mark| mark.page == selection.page() && mark.bounds == bounds)
+            .find(|mark| mark.continuation.is_empty() && mark.page == selection.page() && mark.bounds == bounds)
         {
             if note.is_some() {
                 mark.note = note;
             }
         } else {
             state.add_pdf_highlight(PdfHighlight {
+                continuation: Vec::new(),
                 page: selection.page(),
                 bounds,
                 text: selection.text().into(),
@@ -4742,8 +4746,15 @@ impl App for Reader {
                 .state(fixed.id)
                 .into_iter()
                 .flat_map(|state| &state.pdf_highlights)
-                .filter(|mark| fixed.reading.visible_pages().any(|page| page == mark.page))
-                .flat_map(|mark| mark.bounds.iter().map(|&bounds| (mark.page, bounds)))
+                .enumerate()
+                .filter_map(|(index, saved)| match self.range_edit.as_ref().filter(|edit| edit.index == index).map(|edit| &edit.draft) {
+                    Some(extend_highlight::Draft::Fixed {current, ..}) => Some(current),
+                    None => Some(saved),
+                    _ => None,
+                })
+                .flat_map(PdfHighlight::parts)
+                .filter(|(index, _, _)| fixed.reading.visible_pages().any(|page| page == *index))
+                .flat_map(|(page, rects, _)| rects.iter().map(move |&bounds| (page, bounds)))
                 .collect();
             marks.extend_from_slice(&self.pdf_result_regions);
             let selection: Vec<_> = self
@@ -4765,6 +4776,10 @@ impl App for Reader {
                 self.page_paint(),
             );
             self.draw_footer_track(canvas);
+            if self.screen == Screen::Fixed && self.range_edit.is_some() {
+                self.draw_range_tools(canvas);
+                return;
+            }
             if self.screen == Screen::Fixed {
                 self.draw_selection_popup(canvas);
             }
@@ -4803,7 +4818,10 @@ impl App for Reader {
                 .enumerate()
                 .flat_map(|(index, highlight)| {
                     let selected = self.range_edit.as_ref().filter(|edit| edit.index == index)
-                        .map_or(&highlight.selection, |edit| &edit.draft);
+                        .and_then(|edit| match &edit.draft {
+                            extend_highlight::Draft::Text {current, ..} => Some(current),
+                            _ => None,
+                        }).unwrap_or(&highlight.selection);
                     reading.highlight_rects(selected)
                 })
                 .collect();
@@ -5583,13 +5601,13 @@ fn definition_actions(popup: Rect) -> [Rect; 3] {
 }
 
 fn same_pdf_highlight(left: &PdfHighlight, right: &PdfHighlight) -> bool {
-    left.page == right.page
-        && left.bounds.len() == right.bounds.len()
-        && left.bounds.iter().zip(&right.bounds).all(|(a, b)| {
+    left.parts().any(|(page, bounds, _)| page == right.page
+        && bounds.len() == right.bounds.len()
+        && bounds.iter().zip(&right.bounds).all(|(a, b)| {
             [a.x0 - b.x0, a.y0 - b.y0, a.x1 - b.x1, a.y1 - b.y1]
                 .into_iter()
                 .all(|delta| delta.abs() <= 0.000_01)
-        })
+        }))
 }
 
 fn column_view(original: FixedPreferences, bounds: PdfTextRect) -> FixedPreferences {
@@ -6878,6 +6896,7 @@ mod tests {
         assert_eq!(state.pdf_highlights.len(), 1);
         state
             .add_pdf_highlight(PdfHighlight {
+                continuation: Vec::new(),
                 page: 0,
                 bounds: vec![PdfTextRect {
                     x0: 0.1,
@@ -8107,7 +8126,7 @@ mod tests {
                 )),
                 Change::Partial
             );
-            let draft = &app.range_edit.as_ref().unwrap().draft;
+            let extend_highlight::Draft::Text {current: draft,..} = &app.range_edit.as_ref().unwrap().draft else { panic!("expected an EPUB highlight") };
             assert_ne!(draft.start.chapter, draft.end.chapter);
             assert!(draft.text.contains("The first step"));
             assert!(draft.text.ends_with("At"));
@@ -8235,6 +8254,127 @@ mod tests {
     }
 
     #[test]
+    fn extends_one_saved_pdf_note_across_three_pages_and_restores_the_original_on_cancel() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Harbor chart.pdf");
+        let mut objects = vec![
+            "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+            "<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >>".to_string(),
+        ];
+        for page in 0..3 {
+            objects.push(format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 140] /Contents {} 0 R /Resources << /Font << /F1 9 0 R >> >> >>",page+6));
+        }
+        for line in ["Before low tide", "Quiet water", "After high tide"] {
+            let stream = format!("BT /F1 9 Tf 8 100 Td ({line}) Tj ET\n");
+            objects.push(format!(
+                "<< /Length {} >>\nstream\n{stream}endstream",
+                stream.len()
+            ));
+        }
+        objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".into());
+        let bytes = crate::fixed::tests::pdf_objects(
+            &objects.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
+        fs::write(&path, &bytes).unwrap();
+        let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+        let mut app = Reader::open(&fixture.root, &fixture.state, vec![font.clone()]).unwrap();
+        app.open_path(&path).unwrap();
+        let fixed = app.fixed.as_ref().unwrap();
+        let id = fixed.id;
+        let layer = fixed.reading.page_text(0).unwrap();
+        let first = layer.words.last().unwrap();
+        let initial = PdfHighlight {
+            page: 0,
+            bounds: vec![first.bounds],
+            text: layer.text[first.bytes.clone()].into(),
+            note: Some("Check the harbor".into()),
+            continuation: vec![],
+        };
+        app.library
+            .remember(&fixed.entry, id, &fixed.entry.title)
+            .add_pdf_highlight(initial.clone())
+            .unwrap();
+        app.follow_fixed(1, None).unwrap();
+        let origin = app.current_history_location().unwrap();
+        let history = app.back.clone();
+        for save in [false, true] {
+            app.activate(Action::ManageHighlight(0)).unwrap();
+            let mut canvas = Canvas::new(WIDTH, HEIGHT, &[font.display().to_string()]).unwrap();
+            let before = primitive_app::frame(&app, &mut canvas, false);
+            tap_contents_item(&mut app, "Extend highlight");
+            assert_eq!(app.screen, Screen::Fixed);
+            assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 0);
+            for _ in 0..2 {
+                app.input(Input::PageForward);
+                app.tick(Instant::now() + Duration::from_secs(1));
+            }
+            let fixed = app.fixed.as_ref().unwrap();
+            assert_eq!(fixed.reading.page(), 2);
+            let text = fixed.reading.page_text(2).unwrap();
+            let point = fixed
+                .reading
+                .visible_rectangle(2, text.words[1].bounds)
+                .unwrap()
+                .center();
+            app.input(Input::Tap(point.x as f32, point.y as f32));
+            let extend_highlight::Draft::Fixed { current, .. } =
+                &app.range_edit.as_ref().unwrap().draft
+            else {
+                panic!("expected a fixed-page highlight")
+            };
+            assert_eq!(current.text, "tide\nQuiet water\nAfter high");
+            assert_eq!(
+                current
+                    .parts()
+                    .map(|(page, bounds, text)| (page, bounds.len(), text))
+                    .collect::<Vec<_>>(),
+                [(0, 1, "tide"), (1, 2, "Quiet water"), (2, 2, "After high")]
+            );
+            assert_eq!(
+                app.library.state(id).unwrap().pdf_highlights,
+                vec![initial.clone()]
+            );
+            if save {
+                capture_test_screen(
+                    &app,
+                    std::slice::from_ref(&font),
+                    "READER_EXTEND_PDF_SCREENSHOT",
+                    false,
+                );
+                app.input(Input::Tap(1000.0, HEIGHT as f32 - 43.0));
+            } else {
+                app.input(Input::Tap(125.0, HEIGHT as f32 - 43.0));
+                assert_eq!(app.screen, Screen::Annotation);
+                assert_eq!(app.current_history_location(), Some(origin.clone()));
+                assert_eq!(app.back, history);
+                assert!(primitive_app::frame(&app, &mut canvas, false) == before);
+            }
+        }
+        app.save().unwrap();
+        let reopened = Reader::open(&fixture.root, &fixture.state, vec![font]).unwrap();
+        let records = &reopened.library.state(id).unwrap().pdf_highlights;
+        assert_eq!(records.len(), 1);
+        let mark = &records[0];
+        assert_eq!(mark.note.as_deref(), Some("Check the harbor"));
+        assert_eq!(mark.continuation.len(), 2);
+        let fixed = app.fixed.as_ref().unwrap();
+        let geometry = |page| fixed.reading.pdf_geometry(page);
+        let exported = pdf_annotations::export_copy(&bytes, records, geometry).unwrap();
+        let native = pdf_annotations::import_highlights(&exported, geometry).unwrap();
+        assert_eq!(native.len(), 3);
+        for ((page, bounds, quote), pdf) in mark.parts().zip(&native) {
+            assert_eq!(page, pdf.page);
+            assert_eq!(bounds.len(), pdf.bounds.len());
+            assert_eq!(pdf.text.as_deref(), Some(quote));
+            assert_eq!(pdf.note, mark.note);
+        }
+        assert_eq!(
+            pdf_annotations::export_copy(&exported, records, geometry).unwrap(),
+            exported
+        );
+    }
+
+    #[test]
     fn annotation_search_opens_a_saved_pdf_note_and_restores_the_source_page() {
         let fixture = Fixture::new();
         let path = fixture.root.join("Log sheets.pdf");
@@ -8246,6 +8386,7 @@ mod tests {
         let word = layer.words.first().unwrap();
         let state = app.library.remember(&fixed.entry, fixed.id, &fixed.entry.title);
         state.add_pdf_highlight(PdfHighlight {
+            continuation: Vec::new(),
             page: 1,
             bounds: vec![word.bounds],
             text: layer.text[word.bytes.clone()].to_owned(),
@@ -8850,6 +8991,7 @@ mod tests {
         app.library
             .remember(&fixed.entry, fixed.id, "Signal chart")
             .add_pdf_highlight(PdfHighlight {
+                continuation: Vec::new(),
                 page: 1,
                 bounds: top.clone(),
                 text: "Harbor light".into(),

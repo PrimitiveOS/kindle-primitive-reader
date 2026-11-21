@@ -33,7 +33,7 @@ const MAX_RELOCATION_READ_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_STATE_BYTES: u64 = 4 * 1024 * 1024;
 pub const MAX_BACKUP_BYTES: u64 = MAX_STATE_BYTES + 1024;
 pub const MAX_PDF_HIGHLIGHTS: usize = 256;
-const MAX_PDF_HIGHLIGHT_BOUNDS: usize = 64;
+pub(crate) const MAX_PDF_HIGHLIGHT_BOUNDS: usize = 64;
 pub(crate) const MAX_HIGHLIGHT_TEXT_BYTES: usize = 8192;
 const MAX_NOTE_BYTES: usize = 4096;
 const MAX_FIXED_ZOOM: usize = 4;
@@ -471,25 +471,77 @@ pub struct Highlight {
     pub note: Option<String>,
 }
 
+/// Further pages of one saved selection, in reading order.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct HighlightPage {
+    pub page: usize,
+    pub bounds: Vec<PdfTextRect>,
+    /// Start of this page in the shared quote, after the separating newline.
+    pub text_offset: usize,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PdfHighlight {
     pub page: usize,
     pub bounds: Vec<PdfTextRect>,
     pub text: String,
     pub note: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub continuation: Vec<HighlightPage>,
 }
 
 impl PdfHighlight {
+    pub(crate) const MAX_PAGES: usize = 64;
+
     pub fn is_valid(&self) -> bool {
-        !self.bounds.is_empty()
-            && self.bounds.len() <= MAX_PDF_HIGHLIGHT_BOUNDS
-            && !self.text.trim().is_empty()
-            && self.text.len() <= MAX_HIGHLIGHT_TEXT_BYTES
-            && self
+        let valid_bounds = |bounds: &[PdfTextRect]| {
+            !bounds.is_empty()
+                && bounds.len() <= MAX_PDF_HIGHLIGHT_BOUNDS
+                && bounds.iter().all(valid_page_rect)
+        };
+        if !valid_bounds(&self.bounds)
+            || self.text.trim().is_empty()
+            || self.text.len() > MAX_HIGHLIGHT_TEXT_BYTES
+            || self
                 .note
                 .as_ref()
-                .is_none_or(|note| note.len() <= MAX_NOTE_BYTES)
-            && self.bounds.iter().all(valid_page_rect)
+                .is_some_and(|note| note.len() > MAX_NOTE_BYTES)
+            || self.continuation.len() >= Self::MAX_PAGES
+        {
+            return false;
+        }
+        let mut previous = (self.page, 0);
+        for part in &self.continuation {
+            if previous.0.checked_add(1) != Some(part.page)
+                || part.text_offset <= previous.1 + 1
+                || part.text_offset >= self.text.len()
+                || !self.text.is_char_boundary(part.text_offset)
+                || self.text.as_bytes()[part.text_offset - 1] != b'\n'
+                || !valid_bounds(&part.bounds)
+            {
+                return false;
+            }
+            previous = (part.page, part.text_offset);
+        }
+        true
+    }
+
+    /// One slice per page, for highlighting and PDF annotation interchange.
+    pub(crate) fn parts(&self) -> impl Iterator<Item = (usize, &[PdfTextRect], &str)> {
+        std::iter::once((self.page, self.bounds.as_slice(), 0))
+            .chain(
+                self.continuation
+                    .iter()
+                    .map(|part| (part.page, part.bounds.as_slice(), part.text_offset)),
+            )
+            .enumerate()
+            .filter_map(|(index, (page, bounds, start))| {
+                let end = self
+                    .continuation
+                    .get(index)
+                    .map_or(self.text.len(), |next| next.text_offset.saturating_sub(1));
+                Some((page, bounds, self.text.get(start..end)?))
+            })
     }
 }
 
@@ -1644,7 +1696,7 @@ fn merge_states(current: &[BookState], backup: &[BookState]) -> (Vec<BookState>,
             } else if let Some(existing) = target
                 .pdf_highlights
                 .iter_mut()
-                .find(|existing| existing.page == mark.page && existing.bounds == mark.bounds)
+                .find(|existing| existing.page == mark.page && existing.bounds == mark.bounds && existing.continuation == mark.continuation)
             {
                 merge_note(&mut existing.note, &mark.note, &mut summary);
             } else if target.pdf_highlights.len() < MAX_PDF_HIGHLIGHTS {
@@ -2543,6 +2595,7 @@ mod tests {
             y1: 0.4,
         };
         let mark = PdfHighlight {
+            continuation: Vec::new(),
             page: 2,
             bounds: vec![bounds],
             text: "a passage".into(),
@@ -2593,6 +2646,45 @@ mod tests {
         let old: BookState =
             serde_json::from_str(r#"{"id":7,"path":"old.pdf","title":"Old"}"#).unwrap();
         assert!(old.pdf_highlights.is_empty());
+    }
+
+    #[test]
+    fn continued_pdf_highlights_validate_reading_order_quote_boundaries_and_old_records() {
+        let bounds = vec![PdfTextRect {
+            x0: 0.1,
+            y0: 0.1,
+            x1: 0.2,
+            y1: 0.2,
+        }];
+        let mut single = PdfHighlight {
+            page: 5,
+            bounds: bounds.clone(),
+            text: "First".into(),
+            note: None,
+            continuation: vec![],
+        };
+        let old = serde_json::to_value(&single).unwrap();
+        assert!(old.get("continuation").is_none());
+        assert_eq!(serde_json::from_value::<PdfHighlight>(old).unwrap(), single);
+        single.text.push_str("\nÉcluse");
+        single.continuation.push(HighlightPage {
+            page: 6,
+            bounds: bounds.clone(),
+            text_offset: 6,
+        });
+        assert!(single.is_valid());
+        assert_eq!(
+            single.parts().map(|(_, _, part)| part).collect::<Vec<_>>(),
+            ["First", "Écluse"]
+        );
+        for (page, offset) in [(5, 6), (7, 6), (6, 0), (6, 7), (6, usize::MAX)] {
+            let mut invalid = single.clone();
+            invalid.continuation[0].page = page;
+            invalid.continuation[0].text_offset = offset;
+            assert!(!invalid.is_valid());
+        }
+        single.continuation[0].bounds[0].x1 = 1.2;
+        assert!(!single.is_valid());
     }
 
     #[test]
@@ -2760,6 +2852,7 @@ mod tests {
         added.fixed_preferences.width_fit = true;
         added
             .add_pdf_highlight(PdfHighlight {
+                continuation: Vec::new(),
                 page: 2,
                 bounds: vec![PdfTextRect {
                     x0: 0.1,

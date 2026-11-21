@@ -197,7 +197,7 @@ impl Reader {
                 if state
                     .pdf_highlights
                     .iter()
-                    .any(|mark| slot.contains(&mark.page))
+                    .any(|mark| mark.parts().any(|(page, _, _)| slot.contains(&page)))
                 {
                     canvas.icon(
                         Rect::new(rect.x + 50, icon_y, 30, 30),

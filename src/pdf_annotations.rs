@@ -100,16 +100,21 @@ pub fn export_copy(
     if highlights.is_empty()
         || highlights.len() > MAX_MARKS
         || highlights.iter().any(|mark| !mark.is_valid())
+        || highlights.iter().map(|mark| mark.continuation.len() + 1).sum::<usize>() > MAX_MARKS
     {
-        return Err("Choose between 1 and 512 valid PDF highlights to export".into());
+        return Err("Choose between 1 and 512 valid PDF highlight pages to export".into());
     }
     let (document, pages) = load_pdf(input)?;
     if document.catalog()?.has(b"Perms") || document.objects.values().any(is_signature) {
         return Err("Reader cannot export highlights into a signed or certified PDF".into());
     }
-    let mut by_page = BTreeMap::<usize, Vec<&PdfHighlight>>::new();
+    let mut by_page = BTreeMap::<usize, Vec<PdfHighlight>>::new();
     for mark in highlights {
-        by_page.entry(mark.page).or_default().push(mark);
+        for (page, bounds, text) in mark.parts() {
+            by_page.entry(page).or_default().push(PdfHighlight {
+                page, bounds: bounds.to_vec(), text: text.to_owned(), note: mark.note.clone(), continuation: Vec::new(),
+            });
+        }
     }
     let mut copy = IncrementalDocument::create_from(input.to_vec(), document);
     for (page_index, marks) in by_page {
@@ -121,7 +126,7 @@ pub fn export_copy(
             .ok_or("PDF highlight page geometry is unavailable")?;
         let previous = copy.get_prev_documents();
         let existing = page_annots(previous, page_id)?;
-        let marks = new_marks(previous, existing, geometry, marks);
+        let marks = new_marks(previous, existing, geometry, marks.iter().collect());
         if marks.is_empty() {
             continue;
         }
@@ -888,6 +893,7 @@ mod tests {
 
     fn mark() -> PdfHighlight {
         PdfHighlight {
+            continuation: Vec::new(),
             page: 1,
             bounds: vec![
                 PdfTextRect {
@@ -989,6 +995,7 @@ mod tests {
         let original = fixture(false);
         let existing = import_highlights(&original, geometry).unwrap().remove(0);
         let external = PdfHighlight {
+            continuation: Vec::new(),
             page: existing.page,
             bounds: existing.bounds,
             text: "Imported PDF highlight".into(),
