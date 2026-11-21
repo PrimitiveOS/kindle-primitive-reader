@@ -35,3 +35,5 @@ cargo run --locked --bin reader-probe -- parley tests/fixtures/publisher-faces.e
   --font tests/fixtures/fonts/NotoSans-Regular.ttf --width 650 --height 620 \
   --size 32 --margin 40 --output publisher-faces.png
 ```
+
+On the Oasis 3, Reader independently matched all five deobfuscated OpenType or TrueType assets from the original EPUB and selected all five across 11,540 shaped clusters. It painted both sampled original sections. The authored IDPF and ordinary-font renderings also matched on the device, and the original EPUB checksum stayed the same. The combined physical EPUB/KF8 check completed in 139 seconds. [Kindle publication font results](kf8-publication-fonts.md)

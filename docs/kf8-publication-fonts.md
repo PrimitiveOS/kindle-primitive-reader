@@ -6,6 +6,12 @@ KOReader’s pinned CREngine Palm database importer registers JPEG, PNG and GIF 
 
 The remaining five records in one converted KF8 still contain the obfuscated payload from its EPUB counterpart. The KF8 records declare compression alone. Its standard resource metadata contains no publication identifier for the EPUB font transformation. Reader falls back to available fonts for this edition. A second original supplies three valid OpenType faces in one section without assigning their families to any text in that Kindle edition. Explicit selection in the test controls uses those three faces.
 
+### Oasis 3 verification
+
+The same five original KF8 books were read directly from Documents with separate test state. Reader checked 34 FONT records. It used every one of the 29 valid faces in explicit shaping controls. Across 13 original spine sections, 119,725 letter clusters rendered in the eight publisher faces actually selected by three editions. A fourth provided three unused OpenType faces. The fifth rendered all three sampled chapters with its fallback face. Every original checksum was identical before and after the check.
+
+The installed KOReader's CREngine identified all five files as PDB when invoked directly. It rendered an interior page from each and reported zero active embedded font families in all five. Its page counts ranged from 32 to 1,507 at the probe dimensions. KOReader's normal file registry lists its CREngine provider for AZW and MOBI extensions. Reader opens these standalone AZW3 files directly from its normal library. [KOReader format registration](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/credocument.lua#L1585-L1590) · [CREngine format names](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvdocview.cpp#L4639-L4673)
+
 The authored regression assigns Silkscreen to one heading and reads the rest of the book in the configured text face. Replacing the typeface with a damaged copy keeps the passage and its source anchor available. Silkscreen’s original OFL notice is in the fixture bundle. [Simulator capture](screenshots/kf8-publisher-font.png)
 
 ```sh
