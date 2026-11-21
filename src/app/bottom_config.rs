@@ -75,57 +75,65 @@ impl Reader {
     pub(super) fn bottom_config_rows(&self, panel: BarPanel) -> Vec<ConfigRow> {
         if matches!(panel, BarPanel::TextScreen | BarPanel::ViewScreen) {
             let controls = self.controls;
-            return vec![
-                ConfigRow::new(
-                    "Screen orientation",
-                    [
-                        ReadingOrientation::FollowLauncher,
-                        ReadingOrientation::Upright,
-                        ReadingOrientation::UpsideDown,
-                    ]
-                    .map(|orientation| {
-                        Choice::option(
-                            orientation.label(),
-                            Action::SetReadingControls(crate::reading_controls::ReadingControls {
-                                orientation,
-                                ..controls
-                            }),
-                            controls.orientation == orientation,
-                        )
-                    }),
-                ),
-                ConfigRow::new(
-                    "Interface palette",
-                    [
-                        ScreenPalette::FollowLauncher,
-                        ScreenPalette::Light,
-                        ScreenPalette::Dark,
-                    ]
-                    .map(|palette| {
-                        Choice::option(
-                            palette.label(),
-                            Action::SetReadingControls(crate::reading_controls::ReadingControls {
-                                palette,
-                                ..controls
-                            }),
-                            controls.palette == palette,
-                        )
-                    }),
-                ),
-                ConfigRow::new(
-                    "Page colors",
-                    [("Original", false), ("Inverted", true)].map(|(title, night_pages)| {
-                        Choice::option(
-                            title,
-                            Action::SetReadingControls(crate::reading_controls::ReadingControls {
-                                night_pages,
-                                ..controls
-                            }),
-                            controls.night_pages == night_pages,
-                        )
-                    }),
-                ),
-            ];
+            let mut rows = vec![ConfigRow::new(
+                "Screen orientation",
+                [
+                    ReadingOrientation::FollowLauncher,
+                    ReadingOrientation::Upright,
+                    ReadingOrientation::UpsideDown,
+                ]
+                .map(|orientation| {
+                    Choice::option(
+                        orientation.label(),
+                        Action::SetReadingControls(crate::reading_controls::ReadingControls {
+                            orientation,
+                            ..controls
+                        }),
+                        controls.orientation == orientation,
+                    )
+                }),
+            )];
+            // Under Primitive Launcher the theme is the launcher's: no light or dark switch here.
+            if !self.under_launcher() {
+                rows.extend([
+                    ConfigRow::new(
+                        "Interface palette",
+                        [
+                            ScreenPalette::FollowLauncher,
+                            ScreenPalette::Light,
+                            ScreenPalette::Dark,
+                        ]
+                        .map(|palette| {
+                            Choice::option(
+                                palette.label(),
+                                Action::SetReadingControls(
+                                    crate::reading_controls::ReadingControls {
+                                        palette,
+                                        ..controls
+                                    },
+                                ),
+                                controls.palette == palette,
+                            )
+                        }),
+                    ),
+                    ConfigRow::new(
+                        "Page colors",
+                        [("Original", false), ("Inverted", true)].map(|(title, night_pages)| {
+                            Choice::option(
+                                title,
+                                Action::SetReadingControls(
+                                    crate::reading_controls::ReadingControls {
+                                        night_pages,
+                                        ..controls
+                                    },
+                                ),
+                                controls.night_pages == night_pages,
+                            )
+                        }),
+                    ),
+                ]);
+            }
+            return rows;
         }
         if let Some(active) = &self.active {
             let settings = active.reading.config.settings;

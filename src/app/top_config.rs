@@ -183,19 +183,24 @@ impl Reader {
     pub(super) fn reading_settings_items(&self) -> Vec<Item> {
         let current = self.controls;
         let mut items = self.quick_display_items();
-        items.extend([
-            Item::new(
-                "Night pages",
-                Action::SetReadingControls(ReadingControls {
-                    night_pages: !current.night_pages,
-                    ..current
+        // Under Primitive Launcher the pages follow the launcher's theme: no Night pages switch here.
+        if !self.under_launcher() {
+            items.push(
+                Item::new(
+                    "Night pages",
+                    Action::SetReadingControls(ReadingControls {
+                        night_pages: !current.night_pages,
+                        ..current
+                    }),
+                )
+                .detail(if current.night_pages {
+                    "Light text on dark pages"
+                } else {
+                    "Dark text on light pages"
                 }),
-            )
-            .detail(if current.night_pages {
-                "Light text on dark pages"
-            } else {
-                "Dark text on light pages"
-            }),
+            );
+        }
+        items.extend([
             Item::new(
                 "Page turn tap zones",
                 Action::SetReadingControls(ReadingControls {

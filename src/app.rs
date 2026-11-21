@@ -36,7 +36,9 @@ use crate::library::{
 };
 use crate::ocr_job::{OcrAssets, OcrJob};
 use crate::pdf_annotations;
-use crate::reading_controls::{MenuActivation, ReadingControls, ReadingOrientation, StatusBar};
+use crate::reading_controls::{
+    MenuActivation, ReadingControls, ReadingOrientation, StatusBar, SystemTheme,
+};
 use crate::reading_fonts;
 use crate::reading_profiles::{self, Profile};
 use crate::reading_stats::ReadingStats;
@@ -422,6 +424,8 @@ pub struct Reader {
     reading_top: bool,
     reading_bottom: bool,
     quick_display: QuickDisplay,
+    /// Opened from Primitive Launcher: the launcher's theme, which the whole Reader follows. `None` standalone.
+    system_theme: Option<SystemTheme>,
     refresh_display: bool,
     auto_turn: AutoTurn,
     list_page: usize,
@@ -530,6 +534,7 @@ impl Reader {
             reading_top: false,
             reading_bottom: false,
             quick_display: QuickDisplay::default(),
+            system_theme: SystemTheme::from_env(),
             refresh_display: false,
             auto_turn: AutoTurn::default(),
             list_page: 0,
@@ -2576,8 +2581,17 @@ impl Reader {
         }
     }
 
+    /// Whether the pages are drawn light on dark. Under Primitive Launcher the launcher's theme decides; standalone,
+    /// the Night pages setting does.
     fn uses_night_pages(&self) -> bool {
-        self.controls.night_pages
+        self.system_theme
+            .as_ref()
+            .map_or(self.controls.night_pages, SystemTheme::dark)
+    }
+
+    /// Opened from Primitive Launcher, which owns the theme: Reader shows no light or dark switch of its own.
+    pub(super) fn under_launcher(&self) -> bool {
+        self.system_theme.is_some()
     }
 
     fn status_caption(&self) -> Option<String> {
@@ -4658,6 +4672,10 @@ impl Reader {
 
 impl App for Reader {
     fn draw(&self, canvas: &mut Canvas) {
+        // The launcher's theme may have changed (it asks for a redraw when it does).
+        if let Some(theme) = &self.system_theme {
+            theme.refresh();
+        }
         if let (Some(scan), Some(fixed)) = (&self.scan_columns, &self.fixed) {
             let status = format!(
                 "Column {} of 2 · Page {}",
@@ -5035,6 +5053,10 @@ impl App for Reader {
     }
 
     fn preferred_dark_mode(&self) -> Option<bool> {
+        // Under Primitive Launcher the menus follow the launcher's theme, which the app kit reads.
+        if self.under_launcher() {
+            return None;
+        }
         self.controls.palette.inverted()
     }
 
@@ -6067,6 +6089,53 @@ mod tests {
         );
         assert_eq!(app.screen, Screen::BookDetails);
         assert!(app.library.recently_read().next().is_none());
+    }
+
+    #[test]
+    fn under_the_launcher_the_whole_reader_follows_its_theme_with_no_switch_of_its_own() {
+        let fixture = Fixture::new();
+        let mut app = fixture.app();
+        let titles = |app: &Reader| {
+            app.reading_settings_items()
+                .into_iter()
+                .map(|item| item.title)
+                .collect::<Vec<_>>()
+        };
+        let rows = |app: &Reader| app.screen_row_labels();
+        let controls = ReadingControls {
+            palette: crate::reading_controls::ScreenPalette::Light,
+            ..ReadingControls::default()
+        };
+        app.activate(Action::SetReadingControls(controls)).unwrap();
+        // Standalone: Reader's own switches.
+        assert_eq!(app.preferred_dark_mode(), Some(false));
+        assert!(!app.uses_night_pages());
+        assert!(titles(&app).iter().any(|t| t == "Interface palette"));
+        assert!(titles(&app).iter().any(|t| t == "Night pages"));
+        assert!(rows(&app).iter().any(|r| r == "Page colors"));
+
+        let settings = fixture.root.join("launcher-settings.txt");
+        fs::write(&settings, "dark_mode=on\n").unwrap();
+        app.system_theme = Some(SystemTheme::new(settings.clone()));
+        let page = GrayImage {
+            width: WIDTH,
+            height: PAGE_HEIGHT,
+            pixels: vec![255; (WIDTH * PAGE_HEIGHT) as usize],
+        };
+        // Each frame reads the launcher's theme again (`draw`).
+        app.system_theme.as_ref().unwrap().refresh();
+        // The menus follow the launcher (the app kit reads its theme), and the pages are dark too.
+        assert_eq!(app.preferred_dark_mode(), None);
+        assert!(app.uses_night_pages());
+        assert_eq!(app.page_paint().apply(page.clone()).1.pixels[0], 0);
+        assert!(!titles(&app).iter().any(|t| t == "Interface palette"));
+        assert!(!titles(&app).iter().any(|t| t == "Night pages"));
+        assert_eq!(rows(&app), ["Screen orientation"]);
+
+        fs::write(&settings, "dark_mode=off\n").unwrap();
+        app.system_theme.as_ref().unwrap().refresh();
+        assert!(!app.uses_night_pages(), "the launcher's light mode");
+        assert_eq!(app.page_paint().apply(page).1.pixels[0], 255);
     }
 
     #[test]

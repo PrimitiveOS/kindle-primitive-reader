@@ -711,6 +711,14 @@ impl Reader {
             .unwrap_or_else(|| panic!("Missing reading control {label}"))
             .rect
     }
+
+    #[cfg(test)]
+    pub(super) fn screen_row_labels(&self) -> Vec<String> {
+        self.bottom_config_rows(BarPanel::TextScreen)
+            .into_iter()
+            .map(|row| row.label)
+            .collect()
+    }
 }
 
 #[cfg(test)]
