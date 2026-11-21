@@ -1,11 +1,13 @@
 [package]
 name = "reader"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 license = "PolyForm-Noncommercial-1.0.0"
 description = "Offline book reader for PrimitiveOS on Kindle"
 
 [features]
+# On by default: the release (the shared package workflow) builds the Kindle binary without naming a feature.
+default = ["kindle"]
 kindle = ["dep:primitive-app", "dep:primitive-ui", "dep:unicode-bidi"]
 
 [dependencies]
