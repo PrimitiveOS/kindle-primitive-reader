@@ -526,7 +526,7 @@ impl Reader {
         }
     }
 
-    fn tools_screen(&self) -> Screen {
+    pub(super) fn tools_screen(&self) -> Screen {
         if self.fixed.is_some() {
             Screen::FixedTools
         } else {

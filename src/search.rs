@@ -186,7 +186,7 @@ impl Search {
     }
 }
 
-struct Query {
+pub(crate) struct Query {
     text: String,
     match_case: bool,
     ignore_accents: bool,
@@ -198,7 +198,7 @@ impl Query {
         Self::with_options(text, match_case, false)
     }
 
-    fn with_options(text: &str, match_case: bool, ignore_accents: bool) -> Result<Self> {
+    pub(crate) fn with_options(text: &str, match_case: bool, ignore_accents: bool) -> Result<Self> {
         let text = text.trim();
         if text.len() > MAX_QUERY_BYTES {
             return Err("Enter a search term of up to 256 UTF-8 bytes".into());
@@ -219,7 +219,7 @@ impl Query {
         })
     }
 
-    fn matches(&self, source: &str, limit: usize) -> Vec<Range<usize>> {
+    pub(crate) fn matches(&self, source: &str, limit: usize) -> Vec<Range<usize>> {
         if self.match_case && !self.ignore_accents && !source.contains(SOFT_HYPHEN) {
             source
                 .match_indices(&self.text)

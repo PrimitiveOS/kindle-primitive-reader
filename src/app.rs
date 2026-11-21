@@ -1,4 +1,5 @@
 //! The daily reader interface and foreground lifecycle.
+mod annotation_search;
 mod bar_icons;
 mod custom_contents;
 mod contents_position;
@@ -217,7 +218,7 @@ impl Screen {
             Self::Matches => "Search results",
             Self::SearchHistory => "Recent searches",
             Self::BookmarkFind => "Find bookmarks",
-            Self::BookmarkMatches => "Matching bookmarks",
+            Self::BookmarkMatches => "Bookmark search results",
             Self::Highlights => "Highlights and notes",
             Self::Annotation => "Highlight",
             Self::RemoveHighlight => "Remove highlight?",
@@ -529,7 +530,7 @@ pub struct Reader {
     lookup_history_path: PathBuf,
     lookup_history: LookupHistory,
     online: Option<online_panel::Panel>,
-    bookmark_query: String,
+    annotation_search: annotation_search::AnnotationSearch,
     definition_word: String,
     definitions: Vec<dictionary::Definition>,
     definition_results_page: Option<usize>,
@@ -645,7 +646,7 @@ impl Reader {
             lookup_history_path,
             lookup_history,
             online: None,
-            bookmark_query: String::new(),
+            annotation_search: annotation_search::AnnotationSearch::default(),
             definition_word: String::new(),
             definitions: Vec::new(),
             definition_results_page: None,
@@ -753,6 +754,7 @@ impl Reader {
             self.forward.clear();
             self.auto_turn.configure(None, Instant::now());
             self.selection = None;
+            self.annotation_search = annotation_search::AnnotationSearch::default();
             self.restore_reading_menus(id);
             self.show(Screen::Fixed);
             self.record_position();
@@ -796,6 +798,7 @@ impl Reader {
         self.forward.clear();
         self.auto_turn.configure(None, Instant::now());
         self.selection = None;
+        self.annotation_search = annotation_search::AnnotationSearch::default();
         self.restore_reading_menus(id);
         self.show(Screen::Book);
         self.record_position();
@@ -829,6 +832,11 @@ impl Reader {
         }
         if matches!(screen, Screen::DictionaryEntry | Screen::BookmarkFind) {
             self.editor = Editor::new(96);
+            if screen == Screen::BookmarkFind {
+                if self.screen != Screen::BookmarkMatches { self.annotation_search.origin = Some(self.screen); }
+                self.editor.text = self.annotation_search.text.chars().collect();
+                self.editor.caret = self.editor.text.len();
+            }
         }
         if screen != Screen::Illustration {
             self.illustration = None;
@@ -999,11 +1007,7 @@ impl Reader {
                     .map(|word| Item::new(word, Action::LookUp(word.clone())))
                     .collect();
             }
-            Screen::BookmarkMatches => {
-                if let Some(id) = self.open_book_id() {
-                    return self.bookmark_items(id);
-                }
-            }
+            Screen::BookmarkMatches => return self.annotation_results(),
             _ => {}
         }
         if self.screen == Screen::Library {
@@ -1440,16 +1444,14 @@ impl Reader {
     }
 
     fn bookmark_items(&self, id: u64) -> Vec<Item> {
-        self.library
-            .state(id)
-            .into_iter()
-            .flat_map(|state| state.bookmarks.iter().enumerate())
-            .filter(|(_, bookmark)| {
-                self.screen != Screen::BookmarkMatches
-                    || bookmark.label.to_lowercase().contains(&self.bookmark_query)
-            })
+        let Some(state) = self.library.state(id) else { return Vec::new() };
+        let mut items: Vec<_> = state.bookmarks.iter().enumerate()
             .map(|(index, bookmark)| Item::new(&bookmark.label, Action::Bookmark(index)))
-            .collect()
+            .collect();
+        if !items.is_empty() || !state.highlights.is_empty() || !state.pdf_highlights.is_empty() {
+            items.insert(0, Item::new("Find bookmarks", Action::Show(Screen::BookmarkFind)));
+        }
+        items
     }
 
     fn book_map_items(&self) -> Vec<Item> {
@@ -2853,6 +2855,7 @@ impl Reader {
             self.show(match self.screen {
                 Screen::LibraryFind => Screen::Library,
                 Screen::EditNote => Screen::Annotation,
+                Screen::BookmarkFind => self.annotation_search.origin.unwrap_or(self.tools_screen()),
                 Screen::Note if self.fixed.is_some() => Screen::Fixed,
                 Screen::Note => Screen::Book,
                 _ if self.fixed.is_some() => Screen::FixedTools,
@@ -2863,6 +2866,9 @@ impl Reader {
         let Input::Tap(x, y) = input else {
             return Change::None;
         };
+        if self.screen == Screen::BookmarkFind && self.annotation_search.toggle_at(x, y) {
+            return Change::Partial;
+        }
         if self.screen == Screen::Find && FIND_CASE.contains(x, y) {
             self.find_match_case = !self.find_match_case;
             return Change::Partial;
@@ -2904,11 +2910,9 @@ impl Reader {
             }
             let result = match self.screen {
                 Screen::DictionaryEntry => self.look_up(&query),
-                Screen::BookmarkFind => {
-                    self.bookmark_query = query.trim().to_lowercase();
+                Screen::BookmarkFind => self.annotation_search.submit(&query).map(|()| {
                     self.show(Screen::BookmarkMatches);
-                    Ok(())
-                }
+                }),
                 _ => self.start_document_search(&query),
             };
             if let Err(error) = result {
@@ -4872,7 +4876,7 @@ impl App for Reader {
                 Screen::Note | Screen::EditNote => ("Note text", "Save"),
                 Screen::LibraryFind => ("Title, author or filename", "Find"),
                 Screen::DictionaryEntry => ("Word or phrase", "Look up"),
-                Screen::BookmarkFind => ("Bookmark title", "Find"),
+                Screen::BookmarkFind => ("Bookmark, highlighted text, or note", "Find"),
                 Screen::CollectionName => ("Collection name", "Save"),
                 Screen::ProfileName => ("Profile name", "Save"),
                 Screen::PdfPassword => ("PDF password", "Open"),
@@ -4898,6 +4902,9 @@ impl App for Reader {
                 self.screen == Screen::PdfPassword,
             );
             canvas.keyboard(self.editor.layer, action, None);
+            if self.screen == Screen::BookmarkFind {
+                self.annotation_search.draw_filters(canvas);
+            }
             if self.screen == Screen::Find {
                 let label = if self.find_match_case {
                     "Match case on"
@@ -4946,7 +4953,7 @@ impl App for Reader {
             let empty = match self.screen {
                 Screen::Bookmarks | Screen::FixedBookmarks => "No bookmarks in this book",
                 Screen::Highlights => "No highlights or notes in this book",
-                Screen::BookmarkMatches => "No matching bookmarks",
+                Screen::BookmarkMatches => "No matching bookmarks, highlights, or notes",
                 Screen::DictionaryHistory => "No lookups yet",
                 Screen::OnlineHistory => "No completed online lookups",
                 Screen::SearchHistory => "No recent searches",
@@ -5245,6 +5252,7 @@ impl App for Reader {
                     Screen::CustomContents => self.show(self.contents_screen()),
                     Screen::CustomEdits | Screen::CustomBookmarks => self.show(Screen::CustomContents),
                     Screen::GeneratedContents => self.show(Screen::Contents),
+                    Screen::BookmarkMatches => self.show(Screen::BookmarkFind),
                     Screen::Annotation | Screen::ImportAnnotations => self.show(Screen::Highlights),
                     Screen::ImportPosition => self.show(Screen::ReadingControls),
                     Screen::ImportPdfAnnotations => self.show(Screen::Highlights),
@@ -7899,6 +7907,109 @@ mod tests {
         app.show(Screen::FixedContents);
         assert_eq!(app.items()[app.current_contents_row.unwrap()].title, "Local soundings");
         assert_eq!(app.current_position(), Some(before));
+    }
+
+    fn submit_annotation_search(app: &mut Reader, query: &str) {
+        assert_eq!(app.screen, Screen::BookmarkFind);
+        app.editor.text = query.chars().collect();
+        app.editor.caret = app.editor.text.len();
+        let go = Layout::new(WIDTH, HEIGHT, 4, 5).keyboard_keys_with(app.editor.layer, "Find")
+            .into_iter().find(|(key, _)| key.key == primitive_ui::Key::Go).unwrap().1;
+        let (x, y) = rectangle_center(go);
+        assert_eq!(app.input(Input::Tap(x, y)), Change::Partial);
+        assert_eq!(app.screen, Screen::BookmarkMatches);
+    }
+
+    #[test]
+    fn annotation_search_finds_note_only_text_and_returns_to_the_source_on_either_bar() {
+        let fixture = Fixture::new();
+        let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+        let mut app = Reader::open(&fixture.root, &fixture.state, vec![font.clone()]).unwrap();
+        app.open_path(&fixture.book).unwrap();
+        app.activate(Action::AddBookmark).unwrap();
+        for (chapter, fragment, excerpt, note) in [
+            (0, "lantern", "The copper lantern", Some("Compare the Amber chart")),
+            (1, "door", "At dusk the door", None),
+        ] {
+            let reading = &mut app.active.as_mut().unwrap().reading;
+            reading.jump(chapter, Some(fragment)).unwrap();
+            let start = reading.probe.fragment(fragment).unwrap();
+            let mut end = start.clone();
+            end.offset += excerpt.len();
+            app.selection = reading.probe.select_range(&start, &end);
+            assert_eq!(app.selection.as_ref().unwrap().text, excerpt);
+            app.save_highlight(note.map(str::to_owned)).unwrap();
+        }
+        let original = app.current_position().unwrap();
+        app.open_reading_edge(false, 630.0);
+        assert_eq!(tap_reading_control(&mut app, "Bookmarks"), Change::Partial);
+        tap_contents_item(&mut app, "Find bookmarks");
+        capture_test_screen(&app, std::slice::from_ref(&font), "READER_ANNOTATION_FILTERS_SCREENSHOT", false);
+        submit_annotation_search(&mut app, "amber");
+        assert_eq!(app.items().len(), 1);
+        tap_contents_item(&mut app, "Compare the Amber chart");
+        assert_eq!(app.screen, Screen::Book);
+        let reading = &app.active.as_ref().unwrap().reading;
+        assert_eq!(reading.chapter, 0);
+        assert_eq!(reading.probe.page_for(&reading.probe.fragment("lantern").unwrap()), Some(reading.page));
+        app.activate(Action::ReturnToLocation).unwrap();
+        assert_eq!(app.current_position(), Some(original));
+
+        app.input(Input::Tap(630.0, 35.0));
+        tap_reading_control(&mut app, "Search");
+        tap_reading_control(&mut app, "Find bookmarks");
+        assert_eq!(app.editor.string(), "amber");
+        assert_eq!(app.input(Input::Tap(160.0, 330.0)), Change::Partial);
+        submit_annotation_search(&mut app, "amber");
+        assert!(app.items().is_empty());
+        let (bx,by) = rectangle_center(primitive_ui::back_button(WIDTH as i32));
+        app.input(Input::Tap(bx,by));
+        assert_eq!(app.screen, Screen::BookmarkFind);
+        submit_annotation_search(&mut app, "Amber");
+        assert_eq!(app.items().len(), 1);
+        app.input(Input::Tap(bx,by));
+        submit_annotation_search(&mut app, "");
+        assert_eq!(app.items().len(), 3);
+        capture_test_screen(&app, std::slice::from_ref(&font), "READER_ANNOTATION_RESULTS_SCREENSHOT", false);
+        app.input(Input::Tap(bx,by));
+        app.input(Input::Tap(1050.0, 424.0)); // Exclude notes.
+        submit_annotation_search(&mut app, "copper");
+        assert!(app.items().is_empty()); // A highlight with a note belongs to the Notes category.
+        app.input(Input::Tap(bx,by));
+        app.input(Input::Tap(640.0, 424.0)); // Exclude highlights.
+        submit_annotation_search(&mut app, "");
+        assert_eq!(app.items().len(), 1);
+        assert!(matches!(app.items()[0].action, Action::Bookmark(0)));
+    }
+
+    #[test]
+    fn annotation_search_opens_a_saved_pdf_note_and_restores_the_source_page() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Log sheets.pdf");
+        fs::write(&path, crate::fixed::tests::document()).unwrap();
+        let mut app = fixture.app();
+        app.open_path(&path).unwrap();
+        let fixed = app.fixed.as_ref().unwrap();
+        let state = app.library.remember(&fixed.entry, fixed.id, &fixed.entry.title);
+        state.pdf_highlights.push(PdfHighlight {
+            page: 1,
+            bounds: vec![PdfTextRect { x0: 5.0, y0: 14.0, x1: 37.0, y1: 28.0 }],
+            text: "Daily chart".into(),
+            note: Some("Harbor sounding".into()),
+        });
+        app.show(Screen::FixedBookmarks);
+        tap_contents_item(&mut app, "Find bookmarks");
+        submit_annotation_search(&mut app, "harbor");
+        assert_eq!(app.items().len(), 1);
+        tap_contents_item(&mut app, "Harbor sounding");
+        assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 1);
+        app.activate(Action::ReturnToLocation).unwrap();
+        assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 0);
+        app.show(Screen::FixedBookmarks);
+        tap_contents_item(&mut app, "Find bookmarks");
+        let (x,y) = rectangle_center(primitive_ui::back_button(WIDTH as i32));
+        app.input(Input::Tap(x,y));
+        assert_eq!(app.screen, Screen::FixedBookmarks);
     }
 
     fn save_chapter_title(app: &mut Reader, title: &str) {
