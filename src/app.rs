@@ -21,6 +21,7 @@ mod reading_bars;
 mod reading_footer;
 mod selection_popup;
 mod saved_highlight_popup;
+mod user_hyphenation;
 mod footnote_popup;
 mod top_config;
 
@@ -141,6 +142,7 @@ enum Screen {
     GeneratedContents,
     CustomContents,
     CustomTitle,
+    Hyphenate,
     CustomEdits,
     CustomBookmarks,
     Links,
@@ -213,6 +215,7 @@ impl Screen {
             Self::CustomContents => "Custom contents",
             Self::CustomEdits => "Edit chapters",
             Self::CustomBookmarks => "Choose a bookmark",
+            Self::Hyphenate => "Hyphenate",
             Self::CustomTitle => "Chapter title",
             Self::GeneratedContents => "Generated outline",
             Self::Links => "Links on this page",
@@ -291,6 +294,7 @@ enum Action {
     ReturnToLocation,
     ReturnToHistory(usize),
     NextLocation,
+    SetUserHyphenation(bool),
     Text(Settings),
     ShowFonts,
     ShowDictionaries,
@@ -458,6 +462,9 @@ struct PositionImport {
 
 pub struct Reader {
     library: Library,
+    user_hyphenation: std::rc::Rc<crate::user_hyphenation::Rules>,
+    user_hyphenation_path: PathBuf,
+    hyphenation_edit: Option<user_hyphenation::Draft>,
     browser: FileBrowser,
     library_query: String,
     book_list: Option<BookList>,
@@ -574,7 +581,14 @@ impl Reader {
         let lookup_history = LookupHistory::load(&lookup_history_path);
         let dictionary_settings = SourcePreferences::load(&dictionary_preference);
         let ocr_assets = with_storage(|| Ok(data.parent().and_then(OcrAssets::discover)))?;
+        let user_hyphenation_path = data.join("user-hyphenation.json");
+        let user_hyphenation = user_hyphenation::load(&user_hyphenation_path)
+            .unwrap_or_default()
+            .into();
         Ok(Self {
+            user_hyphenation,
+            user_hyphenation_path,
+            hyphenation_edit: None,
             library,
             browser,
             library_query: String::new(),
@@ -793,6 +807,7 @@ impl Reader {
             .fonts_for(custom_font)
             .unwrap_or_else(|_| self.fonts.clone());
         let config = BookConfig {
+            user_hyphenation: self.user_hyphenation.clone(),
             chapter_offsets: Default::default(),
             engine: Engine::Parley,
             book: absolute,
@@ -836,6 +851,9 @@ impl Reader {
     fn show(&mut self, screen: Screen) {
         if !matches!(screen, Screen::Footnote | Screen::Definition | Screen::OnlineLookup | Screen::OnlineEdit) {
             self.footnote = None;
+        }
+        if screen != Screen::Hyphenate {
+            self.hyphenation_edit = None;
         }
         if screen != Screen::CustomTitle { self.chapter_draft = None; }
         if !matches!(screen, Screen::OnlineLookup | Screen::OnlineEdit) {
@@ -1371,6 +1389,13 @@ impl Reader {
             Screen::Typography => {
                 let settings = reading.config.settings;
                 let mut items = text_items(settings, reading.config.scroll);
+                if !reading.probe.is_vertical()
+                    && settings.hyphenation_mode() == crate::HyphenationMode::Automatic
+                {
+                    let enabled = self.user_hyphenation.enabled;
+                    items.push(Item::new("Custom hyphenation rules", Action::SetUserHyphenation(!enabled))
+                        .detail(if enabled { "On" } else { "Off" }));
+                }
                 if reading.probe.is_vertical() {
                     items.retain(|item| match item.action {
                         Action::ReadingMode(_) => false,
@@ -2043,6 +2068,7 @@ impl Reader {
                 self.add_bookmark()?;
             }
             Action::ToggleBookmark => self.toggle_bookmark()?,
+            Action::SetUserHyphenation(enabled) => self.set_user_hyphenation(enabled)?,
             Action::Text(settings) => {
                 let active = self.active.as_mut().ok_or("No open book")?;
                 active.reading.reflow(settings)?;
@@ -4926,6 +4952,10 @@ impl App for Reader {
         }
         if self.screen == Screen::OnlineEdit { self.draw_online_editor(canvas); return; }
         if self.screen == Screen::OnlineLookup { self.draw_online(canvas); return; }
+        if self.screen == Screen::Hyphenate {
+            self.draw_hyphenation(canvas);
+            return;
+        }
         if self.screen == Screen::CustomTitle { self.draw_chapter_editor(canvas); return; }
         if self.screen == Screen::Library {
             self.draw_library(canvas);
@@ -5251,6 +5281,9 @@ impl App for Reader {
         }
         if matches!(self.screen, Screen::BookTools | Screen::FixedTools) {
             return self.reading_tools_input(input);
+        }
+        if self.screen == Screen::Hyphenate {
+            return self.hyphenation_input(input);
         }
         if self.screen == Screen::CustomTitle { return self.chapter_editor_input(input); }
         if self.screen == Screen::ClearOnlineHistory { return self.clear_online_history_input(input); }
@@ -5994,6 +6027,7 @@ pub fn run_reader(
 
 pub fn run_probe(engine: Engine, book: PathBuf, fonts: Vec<PathBuf>, home: &Path) -> Result<()> {
     let reading = Reading::open(BookConfig {
+        user_hyphenation: Default::default(),
         chapter_offsets: Default::default(),
         engine,
         book,

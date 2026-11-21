@@ -92,6 +92,7 @@ impl ParleyChapter {
         mut fonts: FontContext,
         settings: Settings,
         styles: &[Style],
+        user_rules: &crate::user_hyphenation::Rules,
     ) -> Result<(Self, Vec<Line>, f32)> {
         if source
             .blocks
@@ -254,6 +255,7 @@ impl ParleyChapter {
                     styles,
                     &inline_boxes,
                     indent,
+                    user_rules,
                 );
                 if lines.len() + layout.len() > MAX_LINES {
                     return Err("The chapter exceeds the Parley line limit".into());
@@ -770,6 +772,7 @@ fn layout_paragraph(
         styles,
         &[],
         indent,
+        &crate::user_hyphenation::Rules::default(),
     )
 }
 
@@ -782,8 +785,9 @@ fn layout_with_images(
     styles: &[Style],
     images: &[parley::InlineBox],
     indent: LineIndent,
+    user_rules: &crate::user_hyphenation::Rules,
 ) -> (Layout<()>, Vec<RubyOverlay>) {
-    let automatic = crate::hyphenation::opportunities(block, styles, settings);
+    let automatic = crate::hyphenation::with_user_rules(block, styles, settings, user_rules);
     let mut layout = make_paragraph(
         context,
         fonts,
@@ -1084,16 +1088,24 @@ fn make_paragraph(
     images: &[parley::InlineBox],
     fit_font_metrics: bool,
     indent: LineIndent,
-    automatic: &[usize],
+    automatic: &crate::user_hyphenation::Opportunities,
 ) -> Layout<()> {
     let style = &styles[block.element];
     let language = block.language;
     let mut builder = context.ranged_builder(fonts, &block.text, 1.0, true);
-    builder.set_automatic_hyphens(automatic);
+    builder.set_automatic_hyphens(&automatic.breaks);
     if !settings.font_kerning {
         builder.push_default(StyleProperty::FontFeatures((&DISABLE_KERNING).into()));
     }
     let soft_hyphen = |offset| {
+        let index = automatic.custom_words.partition_point(|range| range.end <= offset);
+        if automatic.custom_words.get(index).is_some_and(|range| range.contains(&offset)) {
+            return if automatic.matching_soft_hyphens.binary_search(&offset).is_ok() {
+                SoftHyphenAction::Draw
+            } else {
+                SoftHyphenAction::Suppress
+            };
+        }
         let index = block
             .styled_text
             .partition_point(|text| text.bytes.end <= offset);
@@ -2886,7 +2898,10 @@ mod tests {
                 ..Settings::default()
             };
             let (mut chapter, source_lines, height) =
-                ParleyChapter::new(&mut book, &path, &source, fonts.clone(), settings, &styles)
+                ParleyChapter::new(
+                    &mut book, &path, &source, fonts.clone(), settings, &styles,
+                    &crate::user_hyphenation::Rules::default(),
+                )
                     .unwrap();
             let glyph_runs: Vec<_> = chapter.paragraphs[0]
                 .layout

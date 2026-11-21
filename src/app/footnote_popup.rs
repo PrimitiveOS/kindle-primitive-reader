@@ -258,13 +258,14 @@ impl Reader {
             ) else {
                 return Ok(None);
             };
-            let mut preview = Probe::from_book_content(
+            let mut preview = Probe::from_book_with_rules(
                 book,
                 Engine::Parley,
                 &reading.config.fonts,
                 settings,
                 index,
                 Some(excerpt),
+                &reading.config.user_hyphenation,
             )
             .map_err(io::Error::other)?;
             let frame = Footnote::frame(&mut preview, 0).map_err(io::Error::other)?;

@@ -416,6 +416,16 @@ impl Reader {
                                 )
                             }),
                         ));
+                        if settings.hyphenation_mode() == crate::HyphenationMode::Automatic {
+                            rows.push(ConfigRow::new(
+                                "Custom rules",
+                                [false, true].map(|enabled| Choice::option(
+                                    if enabled { "On" } else { "Off" },
+                                    Action::SetUserHyphenation(enabled),
+                                    self.user_hyphenation.enabled == enabled,
+                                )),
+                            ));
+                        }
                     }
                     rows.push(ConfigRow::new(
                         "",

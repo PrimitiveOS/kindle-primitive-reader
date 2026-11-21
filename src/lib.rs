@@ -30,6 +30,7 @@ mod gray_glyph;
 #[cfg(feature = "kindle")]
 mod footnotes;
 mod hyphenation;
+mod user_hyphenation;
 mod jpeg2000;
 mod kf8;
 mod kindle_sections;
@@ -402,6 +403,8 @@ pub struct Probe {
     settings: Settings,
     spine_rtl: bool,
     source: Source,
+    #[cfg(feature = "kindle")]
+    custom_hyphenation_allowed: Vec<bool>,
     lines: Vec<Line>,
     pages: Pagination,
     renderer: Renderer,
@@ -448,12 +451,26 @@ impl Probe {
     }
 
     fn from_book_content(
+        book: Book,
+        engine: Engine,
+        fonts: &[PathBuf],
+        settings: Settings,
+        chapter: usize,
+        excerpt: Option<String>,
+    ) -> Result<Self> {
+        Self::from_book_with_rules(
+            book, engine, fonts, settings, chapter, excerpt, &user_hyphenation::Rules::default(),
+        )
+    }
+
+    fn from_book_with_rules(
         mut book: Book,
         engine: Engine,
         fonts: &[PathBuf],
         settings: Settings,
         chapter: usize,
         excerpt: Option<String>,
+        user_rules: &user_hyphenation::Rules,
     ) -> Result<Self> {
         if book.is_fixed_layout() {
             return Err("Open this fixed-layout EPUB in Reader".into());
@@ -485,6 +502,8 @@ impl Probe {
         };
         let mut source = Source::parse_with_language(&xhtml, book.language)?;
         let mut fonts = font_context(fonts)?;
+        #[cfg(feature = "kindle")]
+        let mut custom_hyphenation_allowed = Vec::new();
         let (renderer, mut lines, content_height) = match engine {
             Engine::Blitz => {
                 let (layout, lines, extent) =
@@ -504,6 +523,10 @@ impl Probe {
                     })
                     .unwrap_or_default();
                 let styles = author.compute(&source.elements);
+                #[cfg(feature = "kindle")]
+                {
+                    custom_hyphenation_allowed = styles.iter().map(hyphenation::allows_user_rules).collect();
+                }
                 let mut text = source
                     .blocks
                     .iter()
@@ -535,7 +558,7 @@ impl Probe {
                         let has_table = source.blocks.iter().any(|b| b.table_cell.is_some());
                         let mut lay_out = |source: &Source, faces| {
                             parley_layout::ParleyChapter::new(
-                                &mut book, &href, source, faces, settings, &styles,
+                                &mut book, &href, source, faces, settings, &styles, user_rules,
                             )
                         };
                         let (layout, lines, extent) = if has_table {
@@ -589,6 +612,8 @@ impl Probe {
             #[cfg(feature = "kindle")]
             footer_chapters: Default::default(),
             settings,
+            #[cfg(feature = "kindle")]
+            custom_hyphenation_allowed,
             source,
             lines,
             pages,

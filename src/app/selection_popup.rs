@@ -15,11 +15,12 @@ pub(super) enum SelectionAction {
     Translate,
     Find,
     Chapter,
+    Hyphenate,
     Cancel,
 }
 
 impl SelectionAction {
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 9] = [
         Self::Highlight,
         Self::Note,
         Self::Dictionary,
@@ -27,6 +28,7 @@ impl SelectionAction {
         Self::Translate,
         Self::Find,
         Self::Chapter,
+        Self::Hyphenate,
         Self::Cancel,
     ];
 
@@ -39,6 +41,7 @@ impl SelectionAction {
             Self::Translate => "Translate",
             Self::Find => "Find",
             Self::Chapter => "Chapter",
+            Self::Hyphenate => "Hyphenate",
             Self::Cancel => "Cancel",
         }
     }
@@ -48,10 +51,11 @@ pub(super) struct SelectionPopup {
     rect: Rect,
     large: bool,
     custom_chapters: bool,
+    hyphenate: bool,
 }
 
 impl SelectionPopup {
-    fn new(bounds: Option<Rect>, large: bool, custom_chapters: bool) -> Self {
+    fn new(bounds: Option<Rect>, large: bool, custom_chapters: bool, hyphenate: bool) -> Self {
         let height = if large { 260 } else { 224 };
         let width = (WIDTH as i32 - 72).min(950);
         let page_bottom = PAGE_HEIGHT as i32;
@@ -75,6 +79,7 @@ impl SelectionPopup {
                     rect: Rect::new(x, y, width, height),
                     large,
                     custom_chapters,
+                    hyphenate,
                 };
             }
         }
@@ -86,18 +91,22 @@ impl SelectionPopup {
             rect: Rect::new(16, page_bottom + 12, width, 50),
             large,
             custom_chapters,
+            hyphenate,
         }
     }
 
     fn buttons(&self) -> impl Iterator<Item = (SelectionAction, Rect)> + '_ {
         let inner = self.rect.inset(5);
         let floating = self.rect.y < PAGE_HEIGHT as i32;
-        let count = SelectionAction::ALL.len() as i32 - i32::from(!self.custom_chapters);
+        let count = SelectionAction::ALL.len() as i32
+            - i32::from(!self.custom_chapters)
+            - i32::from(!self.hyphenate);
         let columns = if floating { (count + 1) / 2 } else { count };
         let cell_h = if floating { inner.h / 2 } else { inner.h };
         SelectionAction::ALL
             .into_iter()
             .filter(|action| *action != SelectionAction::Chapter || self.custom_chapters)
+            .filter(|action| *action != SelectionAction::Hyphenate || self.hyphenate)
             .enumerate()
             .map(move |(index, action)| {
                 let index = index as i32;
@@ -154,7 +163,7 @@ impl SelectionPopup {
                     SelectionAction::Note => bar_icons::PAGE,
                     SelectionAction::Dictionary | SelectionAction::Chapter => bar_icons::BOOK,
                     SelectionAction::Wikipedia => bar_icons::LINK,
-                    SelectionAction::Translate => bar_icons::TEXT,
+                    SelectionAction::Hyphenate | SelectionAction::Translate => bar_icons::TEXT,
                     SelectionAction::Find => bar_icons::SEARCH,
                     SelectionAction::Cancel => bar_icons::BACK,
                 };
@@ -208,6 +217,7 @@ impl Reader {
                 self.selection_bounds(),
                 self.controls.large_toolbar,
                 self.custom_contents_enabled(),
+                self.hyphenation_word().is_some(),
             )
         })
     }
@@ -234,6 +244,7 @@ impl Reader {
             Some(SelectionAction::Wikipedia) => self.prepare_online(true, false),
             Some(SelectionAction::Translate) => self.prepare_online(false, false),
             Some(SelectionAction::Find) => self.find_selection(),
+            Some(SelectionAction::Hyphenate) => self.begin_hyphenation(),
             Some(SelectionAction::Chapter) => self.edit_selected_contents_chapter(),
             Some(SelectionAction::Cancel) => {
                 self.selection = None;
@@ -279,7 +290,7 @@ mod tests {
                 false,
             ),
         ] {
-            let popup = SelectionPopup::new(Some(bounds), large, true);
+            let popup = SelectionPopup::new(Some(bounds), large, true, false);
             let rect = popup.rect;
             assert!(rect.x >= 16 && rect.right() <= WIDTH as i32 - 16);
             assert!(rect.bottom() <= DONE.y || rect.right() < DONE.x);

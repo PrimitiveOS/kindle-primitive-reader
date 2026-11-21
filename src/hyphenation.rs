@@ -87,6 +87,110 @@ pub(crate) fn opportunities(block: &Block, styles: &[Style], settings: Settings)
     breaks
 }
 
+pub(crate) fn suggestion(
+    rules: &crate::user_hyphenation::Rules,
+    language: &str,
+    word: &str,
+) -> String {
+    if let Some(mask) = rules.mask(language, word) {
+        return crate::user_hyphenation::marked(
+            word,
+            &crate::user_hyphenation::source_offsets(word, &mask),
+        );
+    }
+    let mut breaks = Vec::new();
+    if word.contains('\u{ad}') {
+        breaks.extend(
+            word.char_indices()
+                .filter_map(|(i, c)| (c == '\u{ad}').then_some(i)),
+        );
+    } else if let Some(locale) = dictionary(&Style::default(), Language::parse(language).ok()) {
+        word_breaks(locale, word, |i| breaks.push(i));
+    }
+    crate::user_hyphenation::marked(word, &breaks)
+}
+
+pub(crate) fn allows_user_rules(style: &Style) -> bool {
+    style.hyphens == Hyphens::Auto
+        && style.word_break != WordBreak::BreakAll
+        && style.line_break != Some(LineBreak::Anywhere)
+}
+
+pub(crate) fn with_user_rules(
+    block: &Block,
+    styles: &[Style],
+    settings: Settings,
+    rules: &crate::user_hyphenation::Rules,
+) -> crate::user_hyphenation::Opportunities {
+    let breaks = opportunities(block, styles, settings);
+    let mut result = crate::user_hyphenation::Opportunities {
+        breaks,
+        custom_words: Vec::new(),
+        matching_soft_hyphens: Vec::new(),
+    };
+    if !rules.has_rules() || settings.disable_soft_hyphens || !settings.automatic_hyphenation {
+        return result;
+    }
+    let mut custom_breaks = Vec::new();
+    for range in crate::selection::word_ranges(&block.text) {
+        let first = block
+            .styled_text
+            .partition_point(|span| span.bytes.end <= range.start);
+        let mut spans = block.styled_text[first..]
+            .iter()
+            .take_while(|span| span.bytes.start < range.end);
+        let Some(run) = spans.next() else {
+            continue;
+        };
+        let Some(language) = run.language else {
+            continue;
+        };
+        let loc = crate::user_hyphenation::locale(&language);
+        let allowed = allows_user_rules;
+        if !allowed(&styles[run.element])
+            || !spans.all(|s| {
+                allowed(&styles[s.element])
+                    && s.language
+                        .as_ref()
+                        .is_some_and(|l| crate::user_hyphenation::locale(l) == loc)
+            })
+        {
+            continue;
+        }
+        let word = &block.text[range.clone()];
+        if let Some(mask) = rules.mask(loc, word) {
+            for byte in crate::user_hyphenation::source_offsets(word, &mask) {
+                // A matching publisher soft hyphen already supplies the boundary and glyph.
+                if let Some(prefix) = word[..byte].strip_suffix('\u{ad}') {
+                    result
+                        .matching_soft_hyphens
+                        .push(range.start + prefix.len());
+                } else {
+                    custom_breaks.push(range.start + byte);
+                }
+            }
+            result.custom_words.push(range);
+            if result.custom_words.len() == MAX_BREAKS
+                || custom_breaks.len() + result.matching_soft_hyphens.len() >= MAX_BREAKS
+            {
+                break;
+            }
+        }
+    }
+    if result.custom_words.is_empty() {
+        return result;
+    }
+    result.breaks.retain(|pos| {
+        let i = result.custom_words.partition_point(|r| r.end <= *pos);
+        !result.custom_words.get(i).is_some_and(|r| r.contains(pos))
+    });
+    result.breaks.extend(custom_breaks);
+    result.breaks.sort_unstable();
+    result.breaks.dedup();
+    result.breaks.truncate(MAX_BREAKS);
+    result
+}
+
 fn word_breaks(locale: English, word: &str, mut emit: impl FnMut(usize)) {
     let patterns = locale.patterns();
     let n = word.len();
@@ -286,8 +390,7 @@ mod tests {
         let chapter = book.chapters[0].href.clone();
         let mut fonts =
             crate::font_context(&[crate::test_fixture("fonts/NotoSans-Regular.ttf")]).unwrap();
-        let styles = BookStyle::load(&mut book, &chapter, &src, &mut fonts)
-            .compute(&src.elements);
+        let styles = BookStyle::load(&mut book, &chapter, &src, &mut fonts).compute(&src.elements);
         let active = Settings::default();
         for (i, block) in src.blocks.iter().enumerate() {
             let actual = opportunities(block, &styles, active);

@@ -122,7 +122,9 @@ Install Reader from PrimitiveOS Store or follow the manual install guide.
 - Text › Hyphenation offers Automatic, Authored and Off. In horizontal text,
   Automatic uses the book’s US or British English spelling, including local
   language changes. Search and selection keep the original word across lines.
-  [Compare both page layouts](docs/english-hyphenation.md)
+  In Text › Style, turn on Custom rules to edit a selected word’s breaks for
+  its language. Long-press the word and tap Hyphenate.
+  [Compare both page layouts](docs/english-hyphenation.md) · [Word break editor](docs/screenshots/custom-hyphenation.png)
 - Save a named preset in Text › Reading profiles and apply it to another book.
 
 Open Contents from either reading bar to see your current section in a long EPUB or PDF. Following a PDF link with an authored position brings that point into view when zoomed. [Current section](docs/screenshots/current-contents.png) · [PDF link target](docs/screenshots/pdf-link-destination.png)
