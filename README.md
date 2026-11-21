@@ -151,6 +151,11 @@ for a local ARMHF build.
 | [EPUB probe](docs/epub-probe.md) | Commands for comparing the two renderers on desktop and Kindle |
 | [EPUB feasibility results](docs/epub-probe-results.md) | Oasis 3 measurements, current engine choice, and remaining validation |
 
+## Downloads
+
+**31 downloads** from Store, as of 2026-11-21. Store shows the same count on the app page.
+The count is GitHub downloads of this app's release packages, from the [Store catalog](https://primitiveos.github.io/kindle-primitive-catalog/v1/index.json).
+
 ## Licence
 
 Project-owned software uses [PolyForm Noncommercial 1.0.0](LICENSE). Project-owned
