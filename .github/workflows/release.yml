@@ -14,5 +14,5 @@ jobs:
       dir: reader
       binary-crate: reader
       arches: armhf
-      firmware-min: "5.16.3"
+      firmware-min: "5.18.2"
       docs-licence-file: LICENSE-DOCS
