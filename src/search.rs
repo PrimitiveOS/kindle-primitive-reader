@@ -22,6 +22,9 @@ use crate::{Anchor, Result};
 use crate::fixed_text::{PdfPageText, PdfTextRect, PdfTextSpan};
 
 pub const MAX_SEARCH_HITS: usize = 100;
+/// KOReader's whole-book results list ceiling for rolling documents.
+pub const MAX_REFLOW_SEARCH_HITS: usize = 5_000;
+const MAX_RESULT_BYTES: usize = 8 * 1024 * 1024;
 pub(crate) const MAX_QUERY_BYTES: usize = 256;
 const CONTEXT_CHARACTERS: usize = 28;
 const CASE_MAPPER: CaseMapperBorrowed<'static> = CaseMapper::new();
@@ -82,6 +85,9 @@ pub struct Search {
     publication: Option<(u64, usize)>,
     next_chapter: usize,
     hits: usize,
+    limit: usize,
+    retained_bytes: usize,
+    memory_limited: bool,
     skipped: usize,
     stopped: bool,
 }
@@ -117,9 +123,22 @@ impl Search {
             publication: None,
             next_chapter: 0,
             hits: 0,
+            limit: MAX_REFLOW_SEARCH_HITS,
+            retained_bytes: 0,
+            memory_limited: false,
             skipped: 0,
             stopped: false,
         })
+    }
+
+    /// Request a smaller result set for an explicit bounded comparison.
+    pub fn at_most(mut self, limit: usize) -> Self {
+        self.limit = limit.min(MAX_REFLOW_SEARCH_HITS);
+        self
+    }
+
+    pub fn memory_limited(&self) -> bool {
+        self.memory_limited
     }
 
     pub fn scanned_chapters(&self) -> usize {
@@ -131,11 +150,12 @@ impl Search {
     }
 
     pub fn limit_reached(&self) -> bool {
-        self.hits >= MAX_SEARCH_HITS
+        self.hits >= self.limit
     }
 
     pub fn is_finished(&self) -> bool {
         self.stopped
+            || self.memory_limited
             || self.limit_reached()
             || self
                 .publication
@@ -188,12 +208,14 @@ impl Search {
             }
             let ranges = match &self.query {
                 ReflowQuery::Literal(query) => {
-                    query.matches(&block.text, MAX_SEARCH_HITS - self.hits)
+                    query.matches_until(&block.text, self.limit - self.hits, || {
+                        cancel.load(Ordering::Relaxed)
+                    })
                 }
                 ReflowQuery::Pattern(expression) => expression.ranges(
                     &block.text,
                     0..block.text.len(),
-                    MAX_SEARCH_HITS - self.hits,
+                    self.limit - self.hits,
                     false,
                     cancel,
                 )?,
@@ -202,6 +224,15 @@ impl Search {
                 let offset = range.start;
                 let end = range.end;
                 let (snippet, matched) = snippet(&block.text, range);
+                let allocation = std::mem::size_of::<SearchHit>()
+                    + text.label.len()
+                    + 2 * text.href.len()
+                    + snippet.capacity();
+                if allocation > MAX_RESULT_BYTES.saturating_sub(self.retained_bytes) {
+                    self.memory_limited = true;
+                    return Ok(hits);
+                }
+                self.retained_bytes += allocation;
                 hits.push(SearchHit {
                     chapter,
                     chapter_title: text.label.clone(),
@@ -300,35 +331,47 @@ impl Query {
     }
 
     pub(crate) fn matches(&self, source: &str, limit: usize) -> Vec<Range<usize>> {
+        self.matches_until(source, limit, || false)
+    }
+
+    fn matches_until(
+        &self,
+        source: &str,
+        limit: usize,
+        cancelled: impl Fn() -> bool,
+    ) -> Vec<Range<usize>> {
         if self.use_original(source) {
             source
                 .match_indices(&self.text)
+                .take_while(|_| !cancelled())
                 .take(limit)
                 .map(|(start, found)| start..start + found.len())
                 .collect()
         } else {
-            FoldedText::build(
+            let Some(folded) = FoldedText::build(
                 source,
                 self.match_case,
                 self.ignore_accents,
                 self.typography,
-                || false,
-            )
-            .unwrap()
-            .matches(&self.text)
-            .take(limit)
-            .map(|mut range| {
-                // Include combining marks in the original selected word.
-                if self.ignore_accents {
-                    range.end += source[range.end..]
-                        .chars()
-                        .take_while(|&ch| accent_mark(ch))
-                        .map(char::len_utf8)
-                        .sum::<usize>();
-                }
-                range
-            })
-            .collect()
+                &cancelled,
+            ) else {
+                return Vec::new();
+            };
+            folded
+                .matches_while(&self.text, || !cancelled())
+                .take(limit)
+                .map(|mut range| {
+                    // Include combining marks in the original selected word.
+                    if self.ignore_accents {
+                        range.end += source[range.end..]
+                            .chars()
+                            .take_while(|&ch| accent_mark(ch))
+                            .map(char::len_utf8)
+                            .sum::<usize>();
+                    }
+                    range
+                })
+                .collect()
         }
     }
 }
@@ -707,6 +750,7 @@ impl FoldedText {
         }
     }
 
+    #[cfg(test)]
     fn matches<'a>(&'a self, query: &'a str) -> impl Iterator<Item = Range<usize>> + 'a {
         self.matches_while(query, || true)
     }
@@ -746,7 +790,7 @@ fn snippet(text: &str, matched: Range<usize>) -> (String, Range<usize>) {
         .nth(CONTEXT_CHARACTERS - 1)
         .map_or(0, |(index, _)| index);
     // Regexps may select an entire paragraph. Keep the complete source anchors
-    // while bounding the memory kept by a 100-item results list.
+    // while bounding the memory kept by the results list.
     let shown_end = text[matched.clone()]
         .char_indices()
         .nth(256)
@@ -983,11 +1027,66 @@ mod tests {
         assert!(search.step(&mut book).unwrap().is_empty());
     }
 
+    fn chapter_with_text(label: String, html: String) -> nearby::ChapterText {
+        nearby::ChapterText {
+            book: 1,
+            label,
+            href: "chapter.xhtml".into(),
+            xhtml: Some(format!("<html><body>{html}</body></html>")),
+        }
+    }
+
+    #[test]
+    fn whole_list_stops_at_five_thousand_or_the_retained_result_budget() {
+        let cancel = AtomicBool::new(false);
+        let dense = format!("<p>{}</p>", "x ".repeat(MAX_REFLOW_SEARCH_HITS + 2));
+        let mut search = Search::with_case("x", true).unwrap();
+        let results = search
+            .step_loaded(
+                chapter_with_text("Chapter".into(), dense.clone()),
+                2,
+                &cancel,
+            )
+            .unwrap();
+        assert_eq!(results.len(), MAX_REFLOW_SEARCH_HITS);
+        assert!(search.limit_reached() && search.is_finished());
+        assert!(!search.memory_limited());
+
+        let mut search = Search::with_case("x", true).unwrap();
+        let results = search
+            .step_loaded(chapter_with_text("c".repeat(128 * 1024), dense), 2, &cancel)
+            .unwrap();
+        assert!(!results.is_empty() && results.len() < 64);
+        assert!(!search.limit_reached());
+        assert!(search.memory_limited() && search.is_finished());
+        assert!(search.retained_bytes <= MAX_RESULT_BYTES);
+    }
+
+    #[test]
+    fn whole_list_spans_inline_styles_and_soft_hyphens_with_original_offsets() {
+        let html = "<p>Cloud <i>caf&#x65;&#x301;</i> sea&#xad;bird.</p><p>Wind follows.</p>";
+        let cancel = AtomicBool::new(false);
+        let search = |query, accents| {
+            Search::with_options(query, true, accents)
+                .unwrap()
+                .step_loaded(chapter_with_text("Chapter".into(), html.into()), 1, &cancel)
+                .unwrap()
+        };
+        let found = search("Cloud cafe seabird", true);
+        assert_eq!(found.len(), 1);
+        let hit = &found[0];
+        let source = "Cloud cafe\u{301} sea\u{ad}bird";
+        assert_eq!(&hit.snippet[hit.matched.clone()], source);
+        assert_eq!(hit.end.offset - hit.anchor.offset, source.len());
+        assert!(search("Cloud cafe seabird", false).is_empty());
+        assert!(search("bird. Wind", false).is_empty());
+    }
+
     #[test]
     fn caps_dense_hits_without_scanning_past_the_current_chapter() {
         let fixture = crate::test_fixture("long-chapter.epub");
         let mut book = Book::open(&fixture).unwrap();
-        let mut search = Search::new("observation").unwrap();
+        let mut search = Search::new("observation").unwrap().at_most(MAX_SEARCH_HITS);
         let hits = search.step(&mut book).unwrap();
         assert_eq!(hits.len(), MAX_SEARCH_HITS);
         assert!(search.limit_reached());

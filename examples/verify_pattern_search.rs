@@ -17,7 +17,7 @@ fn main() -> Result<()> {
     let case = args.next().ok_or("Supply exact or insensitive")? == "exact";
     let font = PathBuf::from(args.next().ok_or("Supply a font")?);
     let mut book = Book::open(&document)?;
-    let mut all = Search::with_regular_expression(&pattern, case)?;
+    let mut all = Search::with_regular_expression(&pattern, case)?.at_most(100);
     let mut hits = Vec::new();
     while !all.is_finished() {
         hits.extend(all.step(&mut book)?);

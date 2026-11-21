@@ -17,7 +17,8 @@ fn literal_pattern(text: &str) -> String {
     }
     escaped
 }
-fn collect(search: &mut Search, book: &mut Book) -> Result<Vec<SearchHit>> {
+fn collect(search: Search, book: &mut Book) -> Result<Vec<SearchHit>> {
+    let mut search = search.at_most(100);
     let mut result = Vec::new();
     while !search.is_finished() {
         result.extend(search.step(book)?);
@@ -43,12 +44,12 @@ fn main() -> Result<()> {
     }
     let mut book = Book::open(&path)?;
     let exact = collect(
-        &mut Search::with_regular_expression(&literal_pattern(&published), true)?,
+        Search::with_regular_expression(&literal_pattern(&published), true)?,
         &mut book,
     )?;
-    let ordinary = collect(&mut Search::with_case(&typed, true)?, &mut book)?;
+    let ordinary = collect(Search::with_case(&typed, true)?, &mut book)?;
     let unmodified = collect(
-        &mut Search::with_regular_expression(&literal_pattern(&typed), true)?,
+        Search::with_regular_expression(&literal_pattern(&typed), true)?,
         &mut book,
     )?;
     let target = exact

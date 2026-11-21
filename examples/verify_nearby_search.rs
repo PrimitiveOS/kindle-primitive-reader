@@ -41,7 +41,7 @@ fn main() -> Result<()> {
         return Err("Select a chapter containing at least three literal occurrences".into());
     }
     let mut book = Book::open(&path)?;
-    let mut all = Search::with_case(&query, true)?;
+    let mut all = Search::with_case(&query, true)?.at_most(100);
     let mut listed = Vec::new();
     while !all.is_finished() {
         listed.extend(all.step(&mut book)?);

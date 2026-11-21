@@ -1,16 +1,16 @@
 # Finding text from a reading position
 
-In a reflowable book, open **Find in document**, enter a phrase and tap **Find next** or **Find previous**. The first search includes the visible page or spread. After a match opens, **Previous** and **Next** move from that occurrence, including other occurrences on the same page. A search stops at the start or end of the book. Return to the previous location to resume the original passage. **Find all** on the keyboard retains the existing list of up to 100 results in document order.
+In a reflowable book, open **Find in document**, enter a phrase and tap **Find next** or **Find previous**. The first search includes the visible page or spread. After a match opens, **Previous** and **Next** move from that occurrence, including other occurrences on the same page. A search stops at the start or end of the book. Return to the previous location to resume the original passage. **Find all** lists up to 5,000 occurrences in document order. Tap the first or last icon to jump through a long list. The middle arrows or the device page buttons move one results page.
 
 | Search controls | Matched passage |
 |---|---|
 | ![The search field, match case and ignore accents options, and directional controls](screenshots/nearby-find.png) | ![The matched text highlighted on the original reading page](screenshots/nearby-match.png) |
 
-KOReader v2026.07.1's search input offers All, Backward and Forward. Its rolling-document panel also exposes a whole-book start/end jump and checks an optional regular expression before searching. Reader now offers directional literal search, case sensitivity and optional accent folding. Whole-book start/end shortcuts, regular expressions and KOReader's page-level grouping remain outside this implementation. [KOReader search input](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readersearch.lua#L249-L333) · [Directional origin and continuation](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readersearch.lua#L648-L679)
+KOReader v2026.07.1's search input offers All, Backward and Forward. Its rolling-document panel also exposes a whole-book start/end jump and checks an optional regular expression before searching. Reader now offers directional literal search, case sensitivity and optional accent folding. Reader also supports regular expressions. Whole-book start/end directional shortcuts and page-level grouping remain open. [KOReader search input](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readersearch.lua#L249-L333) · [Directional origin and continuation](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readersearch.lua#L648-L679)
 
 A single worker reads chapters in the requested direction and stops at the nearest match. It loads one spine item at a time and releases Kindle storage before parsing, matching or waiting for input. Replacing or cancelling a request discards its result. Case folding, optional removal of accents and invisible soft hyphens map back to the source's UTF-8 boundaries. Tests cover overlapping strings, multi-character Unicode folds, a decomposed accent and a soft hyphen inside a selected word.
 
-## Original EPUB comparison
+## Directional search in Reader 0.1.13
 
 The Mac comparison used a position midway through the occurrences in each chapter. The verifier used the active layout engine to find literal source offsets independently, then compared the preceding and following hits with both anchors, the text selected by those anchors and the quoted word in each result. The first 100 whole-book results omitted the chosen position in all seven checks. [Source and geometry verifier](../examples/verify_nearby_search.rs)
 
@@ -26,9 +26,9 @@ The Mac comparison used a position midway through the occurrences in each chapte
 
 All chapter and page indices in this document are one-based. The screenshots use an original project fixture. [Harbour log](../tests/fixtures/nearby-search.xhtml)
 
-## Oasis verification
+## Directional search on the Oasis 3, Reader 0.1.13
 
-The Oasis 3 ran three native automated tests on authored documents. The tests checked Unicode offsets, chapter boundaries, cancellation, the Find controls, stepping in both directions and returning to the original reading position. Two additional offscreen comparisons used the original files from Documents. The English case in original 035 had 320 occurrences in chapter 12. The Vietnamese case in original 033 had 382 in chapter 8. For each book, both directions returned the adjacent occurrence with the expected start and end offsets and the complete selected word. The existing 100-result lists ended at chapter 5 in both cases.
+The Oasis 3 ran three native automated tests on authored documents. The tests checked Unicode offsets, chapter boundaries, cancellation, the Find controls, stepping in both directions and returning to the original reading position. Two additional offscreen comparisons used the original files from Documents. The English case in original 035 had 320 occurrences in chapter 12. The Vietnamese case in original 033 had 382 in chapter 8. For each book, both directions returned the adjacent occurrence with the expected start and end offsets and the complete selected word. The 0.1.13 lists of 100 results ended at chapter 5 in both cases.
 
 The verification used isolated storage. SHA-256 checks confirmed both books, the installed Reader binary, the library, the reading statistics and the Browser session were preserved. The Documents inventory matched before and after, and the temporary device files were removed. The normal foreground was available throughout.
 
@@ -43,3 +43,30 @@ KOReader's default rolling search sets the space, apostrophe and hyphen-folding 
 On the Mac, 16 comparisons across nine original EPUBs included five apostrophe passages, four dash passages and seven passages with nonbreaking spaces. With exact keyboard punctuation the target was missing in all 16 controls. Ordinary search found the original source range in the results list and from both directions in every case. In one book the list contained both the normally spaced spelling and the publisher-spaced spelling. The verifier selected each reference range in the layout and compared its UTF-8 text with the source. An authored UI test entered a straight apostrophe and normal space, moved forward and backward across two differently spaced passages and compared both endpoints with the all-results list. [Original-book verifier](../examples/verify_typographic_search.rs)
 
 The Oasis 3 also ran the authored keyboard and matching tests and compared original 035 with its installed KOReader. Both readers returned the same six apostrophe hits, one dash hit and one hit containing two consecutive nonbreaking spaces. Their character totals and ordered UTF-8 checksums matched in each case. Reader returned to every target from both directions and selected the original publisher text. The original document, installed Reader, library, reading statistics, Browser session and Documents inventory passed the preflight and postflight checks. All comparison files were removed from the device.
+
+## Finding every occurrence in a reflowable book
+
+KOReader defaults to 5,000 entries in **Find all**. Its results menu offers first, previous, next and last page controls. Reader loads results on a background worker and makes the first batch available while the search continues. Press Back to cancel. The list builds the visible rows as needed. Each displayed row retains its start and end positions in the publication, including positions after the first hundred occurrences. [KOReader search limit](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readersearch.lua#L49-L64) · [KOReader list navigation](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/menu.lua#L749-L855)
+
+![Last page of 240 search results in an authored coastal journal, with controls for navigating the results](screenshots/full-search-results.png)
+
+The device's retained result data has an 8 MiB budget. Very long chapter names or excerpts can reach it before 5,000 occurrences. In either case the list explains where it stopped. Directional search can continue beyond the list from the reading position. Fixed-page search retains its provider-specific limits.
+
+| Original EPUB | Installed KOReader on Oasis | Reader on Mac | Last result in Reader | Ordered UTF-8 checksum |
+|---|---:|---:|---|---|
+| 033, Vietnamese word | 2,371 | 2,371 | Spine 12, layout page 19 | a9ce1dcb |
+| 035, English word | 4,983 | 4,983 | Spine 33, layout page 2 | 985469a0 |
+| 042, English word | — | 5,000 | Spine 17, layout page 28 | 93b77ef1 |
+
+The checksums include the matched UTF-8 bytes and a delimiter for each match in reading order. For every book, the Mac verifier selected the first, hundredth, hundred-and-first, middle and last occurrences at their exact source anchors. All three scans completed without a skipped chapter. The Mac simulation used a 600 × 800 viewport. [Whole-list verifier](../examples/verify_reflow_results.rs)
+
+KOReader's CREngine can continue a match from one visible inline text node to the next inside a logical block. The scan stops at a different block. A displayed page break can fall inside the matched text. [CREngine source traversal](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvtinydom.cpp#L13189-L13282)
+
+| Mac comparison on original EPUBs | Result from Find all and both directions |
+|---|---|
+| 035, spine 5, formatting changes inside a phrase | A single match restored all 26 source bytes. A separate phrase made from adjacent paragraphs returned zero matches. |
+| 035, spine 12, displayed page turn | A 32-byte selection began on page 4 and ended on page 5. |
+| 033, spine 5, Vietnamese accents | The 17-byte input selected the original 23-byte spelling with Ignore accents enabled. |
+| 053, spine 11, published soft hyphen | A nine-byte input selected the eleven-byte word, including its original soft hyphen. |
+
+The boundary checks compare both endpoints of each positive result with the selection from the opposite search direction. A separate authored test combines inline emphasis, a decomposed accent, a soft hyphen and a real paragraph break in one passage. [Boundary verifier](../examples/verify_search_boundaries.rs)

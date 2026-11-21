@@ -28,6 +28,10 @@ const CLOCK: Icon = line(&["M12 3 A9 9 0 1 0 12 21 A9 9 0 1 0 12 3 Z M12 7 V12 L
 pub(super) const LINK: Icon =
     line(&["M10 8 L13 5 A4 4 0 0 1 19 11 L16 14 M14 16 L11 19 A4 4 0 0 1 5 13 L8 10 M9 15 L15 9"]);
 const JUMP: Icon = line(&["M4 12 H19 M14 7 L19 12 L14 17 M5 5 V19"]);
+pub(super) const FIRST_PAGE: Icon = line(&["M15 5 L8 12 L15 19 M5 5 V19"]);
+pub(super) const PREVIOUS_PAGE: Icon = line(&["M15 5 L8 12 L15 19"]);
+pub(super) const NEXT_PAGE: Icon = line(&["M9 5 L16 12 L9 19"]);
+pub(super) const LAST_PAGE: Icon = line(&["M9 5 L16 12 L9 19 M19 5 V19"]);
 pub(super) const BACK: Icon = line(&["M20 12 H5 M10 7 L5 12 L10 17"]);
 const CROP: Icon = line(&["M7 3 V17 H21 M3 7 H17 V21"]);
 const DISPLAY: Icon = line(&["M3 5 H21 V17 H3 Z M8 21 H16 M12 17 V21"]);

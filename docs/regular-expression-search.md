@@ -1,6 +1,6 @@
 # Regular expressions in reflow search
 
-In an EPUB or another reflowable book, open **Find in book** and select **Regular expression**. Use **Find previous** or **Find next** to jump from the current passage. **Find all** lists up to 100 occurrences in reading order. Back cancels a pending list search, or returns from a selected match. Search history remembers the pattern and case sensitivity. PDF and other fixed-page providers retain literal search.
+In an EPUB or another reflowable book, open **Find in book** and select **Regular expression**. Use **Find previous** or **Find next** to jump from the current passage. **Find all** lists up to 5,000 occurrences in reading order. Back cancels a pending list search, or returns from a selected match. Search history remembers the pattern and case sensitivity. PDF and other fixed-page providers retain literal search.
 
 | Enter a pattern | Open a result |
 |---|---|
@@ -22,7 +22,7 @@ The automated tests cover overlapping lookaround context, alternation, Unicode c
 
 On the Mac, four anonymous original EPUBs were searched with word-alternative, Vietnamese, numbered and lookbehind patterns. The verifier checked all 100 selected source ranges per original and the preceding and following occurrences at a midpoint. [Reader comparison](../examples/verify_pattern_search.rs) · [Installed KOReader comparison](../scripts/koreader-pattern-check.lua)
 
-An independent ECMAScript implementation also evaluated the original EPUB spine text. Its hit counts, character totals and checksums over UTF-8 quotes in document order agreed with Reader in five comparisons. Four reached the 100-result list limit. A fifth query for four-digit years in an English EPUB found all five occurrences. No private source text was required in either report.
+An independent ECMAScript implementation also evaluated the original EPUB spine text. Its hit counts, character totals and checksums over UTF-8 quotes in document order agreed with Reader in five comparisons. Four reached the 100-result limit of Reader 0.1.14. A fifth query for four-digit years in an English EPUB found all five occurrences. No private source text was required in either report.
 
 The branch's staged ARMHF ZIP contained 25 files, including the original SRELL notice and the libc++, libc++abi and libunwind notices. The package checker verified that all four notices matched the source files byte for byte and that the vendored SRELL header matched the KOReader pin. [Package verifier](../scripts/verify-pattern-package.py)
 
