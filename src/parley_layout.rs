@@ -479,7 +479,18 @@ fn layout_with_images(
     styles: &[Style],
     images: &[parley::InlineBox],
 ) -> (Layout<()>, Vec<RubyOverlay>) {
-    let layout = make_paragraph(context, fonts, block, width, settings, styles, &[], images);
+    let mut layout = make_paragraph(
+        context, fonts, block, width, settings, styles, &[], images, false,
+    );
+    // Some embedded fonts have ascenders and descenders taller than the publisher's
+    // line advance. A long paragraph can then have no page break between full lines.
+    let fit_font_metrics = overlaps_entire_page(&layout, settings.text_height() as f32);
+    if fit_font_metrics {
+        drop(layout);
+        layout = make_paragraph(
+            context, fonts, block, width, settings, styles, &[], images, true,
+        );
+    }
     let mut candidates = Vec::new();
     for ruby in &block.ruby {
         if ruby.bytes.len() > MAX_RUBY_BASE_BYTES {
@@ -541,6 +552,7 @@ fn layout_with_images(
         styles,
         &candidates,
         images,
+        fit_font_metrics,
     );
     let mut overlays = Vec::new();
     for candidate in candidates {
@@ -614,6 +626,27 @@ fn make_annotation(
     layout
 }
 
+fn overlaps_entire_page(layout: &Layout<()>, page_height: f32) -> bool {
+    if layout.len() < 2 {
+        return false;
+    }
+    let mut start = 0.0;
+    let mut end = f32::NEG_INFINITY;
+    for line in layout.lines() {
+        let metrics = line.metrics();
+        if metrics.content_block_min_coord >= end {
+            start = metrics.content_block_min_coord;
+            end = metrics.content_block_max_coord;
+        } else {
+            end = end.max(metrics.content_block_max_coord);
+            if end - start > page_height {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn make_paragraph(
     context: &mut LayoutContext<()>,
     fonts: &mut FontContext,
@@ -623,6 +656,7 @@ fn make_paragraph(
     styles: &[Style],
     ruby: &[RubyCandidate],
     images: &[parley::InlineBox],
+    fit_font_metrics: bool,
 ) -> Layout<()> {
     let style = &styles[block.element];
     let language = block.language;
@@ -660,9 +694,12 @@ fn make_paragraph(
     let default_spacing = Settings::default().line_height;
     let line_height = |style: &Style| {
         let publisher = style.line_height.unwrap_or(default_spacing);
-        LineHeight::FontSizeRelative(
-            (publisher * settings.line_height / default_spacing).clamp(1.0, 3.0),
-        )
+        let spacing = (publisher * settings.line_height / default_spacing).clamp(1.0, 3.0);
+        if fit_font_metrics {
+            LineHeight::MetricsRelative((spacing / default_spacing).max(1.05))
+        } else {
+            LineHeight::FontSizeRelative(spacing)
+        }
     };
     let font_size = |style: &Style| (settings.font_size * style.size_scale).clamp(12.0, 192.0);
     let weight = |style: &Style| {
@@ -918,6 +955,39 @@ impl Illustration {
 mod tests {
     use super::*;
     use crate::book_style::BookStyle;
+
+    #[test]
+    fn tight_publisher_leading_preserves_long_paragraphs_and_every_page_anchor() {
+        let words = "Light from the harbour reached the shore. ".repeat(90);
+        let markup = format!("<html><body><p style='line-height: 1'>{words}</p></body></html>");
+        let settings = Settings {
+            width: 540,
+            height: 490,
+            font_size: 38.0,
+            margin: 28,
+            ..Settings::default()
+        };
+        let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let path = crate::test_fixture("field-notes-epub3.epub");
+        let mut probe = crate::Probe::from_book_content(
+            Book::open(&path).unwrap(),
+            crate::Engine::Parley,
+            &fonts,
+            settings,
+            0,
+            Some(markup),
+        )
+        .unwrap();
+        assert!(probe.page_count() > 5);
+        let (visible, total) = probe.coverage();
+        assert!(total > 2_000);
+        assert_eq!(visible, total);
+        for page in 0..probe.page_count() {
+            let anchor = probe.page_anchor(page).unwrap();
+            assert_eq!(probe.page_for(&anchor), Some(page));
+            assert!(probe.capture(page).unwrap().iter().any(|&gray| gray < 180));
+        }
+    }
 
     #[test]
     fn text_contrast_darkens_glyphs_without_reflowing_the_page() {
