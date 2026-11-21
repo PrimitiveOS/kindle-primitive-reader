@@ -259,3 +259,9 @@ Another 27 contents links and 27 outline entries in the same file specify a null
 The mixed-orientation PDF has a landscape cover and 1,040 portrait pages. With a manual crop applied, simulated forward and back button presses crossed that boundary, the visible words tested on the second page remained selectable, and returning to the cover reproduced its first grayscale frame byte for byte.
 
 An independently authored two-page PDF exercises the ordinary tap, same-page link, history navigation, and reopen paths. Separate regression tests cover named and explicit destinations, rotated crop boxes, and paged and continuous reading at 300% zoom. Reader keeps the current zoom. A missing coordinate retains page-only navigation. [Oasis-size simulator after following a link](screenshots/pdf-link-destination.png)
+
+## Saved locations across the 0.1.8 upgrade
+
+Reader 0.1.9 reopened the stored 0.1.8 anchors for eleven original EPUB entries. On the Mac the test restored a painted page at two widths, with automatic and authored word breaks. All 33 restorations kept the publication, chapter and source revision identifiers. A change in displayed page number is expected when line breaks or the available width change.
+
+With the 0.1.9 default layout the same eleven entries produced 9,436 pages across 344 spine positions. All 9,413,128 source characters mapped to layout, 2,163 available illustrations rendered, and all 9,433 available page anchors returned to their page. The two blank leaves and the 31 missing illustrations have the same source explanation recorded above.
