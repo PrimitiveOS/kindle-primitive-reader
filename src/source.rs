@@ -596,6 +596,16 @@ impl Source {
             }
             return Err("The chapter's inline content could not be laid out".into());
         }
+        // A named anchor between paragraphs has no visible glyph of its own. Move to the
+        // next rendered block, or to the last visible character for a trailing anchor.
+        for anchor in body.descendants().filter(Node::is_element) {
+            let Some(id) = anchor.attribute("id") else { continue; };
+            if !element_ids.contains_key(&anchor.id()) || fragments.contains_key(id) { continue; }
+            let next = blocks.partition_point(|block| block.key < anchor.range().start);
+            let position = blocks.get(next).map(|block| (block.key,0))
+                .or_else(|| blocks.last().map(|block| (block.key,block.text.len())));
+            if let Some(position) = position { fragments.insert(id.into(),position); }
+        }
         // Some publishers insert an intentionally blank side of a leaf. Preserve
         // its spine location while continuing to reject unrenderable artwork.
         if blocks.is_empty()
@@ -863,6 +873,15 @@ fn hidden_element(node: Node<'_, '_>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn standalone_empty_anchors_reach_visible_paragraphs_and_the_chapter_end() {
+        let source = Source::parse("<html><body><p>North.</p><p id='marker'><a id='middle'/></p><a id='before'/><p>South.</p><a id='end'/></body></html>").unwrap();
+        assert_eq!(source.fragments["middle"],(source.blocks[1].key,0));
+        assert_eq!(source.fragments["before"],(source.blocks[1].key,0));
+        assert_eq!(source.fragments["marker"],(source.blocks[1].key,0));
+        assert_eq!(source.fragments["end"],(source.blocks[1].key,"South.".len()));
+    }
 
     #[test]
     fn normalizes_mixed_text_and_images_without_losing_document_order_or_markup() {

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use reader::Result;
 use reader::app::{run_probe, run_reader};
 
-const USAGE: &str = "Usage: reader-kindle [--open <document>]";
+const USAGE: &str = "Usage: reader-kindle [--open <document> | --check-document <document> <new scratch directory>]";
 
 fn main() -> Result<()> {
     let mut args = env::args_os().skip(1);
@@ -19,11 +19,27 @@ fn main() -> Result<()> {
     if first.as_deref() == Some(std::ffi::OsStr::new("--lookup-worker")) && args.len() == 0 {
         return reader::online_lookup::worker();
     }
+    let home = env::var_os("PRIMITIVE_READER_HOME")
+        .map_or_else(|| PathBuf::from("/mnt/us/reader"), PathBuf::from);
+    let documents = env::var_os("PRIMITIVE_READER_DOCUMENTS")
+        .map_or_else(|| PathBuf::from("/mnt/us/documents"), PathBuf::from);
+    if first.as_deref() == Some(std::ffi::OsStr::new("--check-document")) {
+        let document = args.next().map(PathBuf::from).ok_or(USAGE)?;
+        let scratch = args.next().map(PathBuf::from).ok_or(USAGE)?;
+        if args.next().is_some() {
+            return Err(USAGE.into());
+        }
+        return reader::document_check::verify(
+            &documents,
+            &document,
+            &scratch,
+            reading_fonts(&home),
+            true,
+        );
+    }
     if env::var_os("KL_NATIVE_APP_RUN").is_none() {
         return Err("Open Reader from PrimitiveOS Launcher".into());
     }
-    let home = env::var_os("PRIMITIVE_READER_HOME")
-        .map_or_else(|| PathBuf::from("/mnt/us/reader"), PathBuf::from);
     if let Some(engine) = first
         .as_deref()
         .and_then(|arg| arg.to_str())
@@ -44,8 +60,6 @@ fn main() -> Result<()> {
     if args.next().is_some() {
         return Err(USAGE.into());
     }
-    let documents = env::var_os("PRIMITIVE_READER_DOCUMENTS")
-        .map_or_else(|| PathBuf::from("/mnt/us/documents"), PathBuf::from);
     run_reader(&home, &documents, reading_fonts(&home), file.as_deref())
 }
 

@@ -564,6 +564,19 @@ fn normalize(
             let Some(href) = node.attribute_node("href") else {
                 continue;
             };
+            if href.value().starts_with("kindle:embed:")
+                && href
+                    .value()
+                    .split_once("?mime=")
+                    .is_some_and(|(_, kind)| kind.starts_with("image/"))
+            {
+                let path = assets.raster(href.value())?;
+                edits[chapter].push(Edit {
+                    bytes: href.range_value(),
+                    text: path,
+                });
+                continue;
+            }
             let Some(address) = href.value().strip_prefix("kindle:pos:fid:") else {
                 continue;
             };
@@ -781,13 +794,27 @@ fn full_bleed_cover<'a>(root: Node<'a, '_>) -> Option<&'a str> {
     {
         return None;
     }
-    if root.has_attribute("transform")
-        || image.attributes().any(|a| {
-            matches!(
-                a.name(),
-                "transform" | "opacity" | "style" | "clip-path" | "mask"
-            )
-        })
+    let plain_transform = |node: Node<'_, '_>| match node.attribute("transform") {
+        None => true,
+        Some(value) => value
+            .trim()
+            .strip_prefix("translate(")
+            .and_then(|v| v.strip_suffix(')'))
+            .is_some_and(|params| {
+                let values: Vec<_> = params
+                    .split(|c: char| c.is_ascii_whitespace() || c == ',')
+                    .filter(|v| !v.is_empty())
+                    .take(3)
+                    .collect();
+                (1..=2).contains(&values.len())
+                    && values.iter().all(|v| v.parse::<f32>() == Ok(0.0))
+            }),
+    };
+    if !plain_transform(root)
+        || !plain_transform(image)
+        || image
+            .attributes()
+            .any(|a| matches!(a.name(), "opacity" | "style" | "clip-path" | "mask"))
     {
         return None;
     }
@@ -945,7 +972,7 @@ fn edit_markup(raw: &str, mut edits: Vec<Edit>, limit: usize) -> Result<String> 
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     const BASE: &str = "<html xmlns='http://www.w3.org/1999/xhtml'><head/><body></body></html>";
@@ -1198,6 +1225,24 @@ mod tests {
         assert!(decode(&good[..good.len() - PNG.len() - 1]).is_err());
     }
 
+    pub(crate) fn linked_image_fixture() -> Vec<u8> {
+        fixture_flows(
+            "<html><head/><body><p><a href='kindle:embed:0001?mime=image/png'>View original</a></p></body></html>",
+            None,
+        )
+    }
+
+    #[test]
+    fn direct_illustration_links_point_to_the_original_local_resource() {
+        let publication = decode(&linked_image_fixture()).unwrap();
+        assert!(
+            publication.chapters[0]
+                .xhtml
+                .contains("href='assets/kf8-6.png'")
+        );
+        assert_eq!(publication.resources["assets/kf8-6.png"], PNG);
+    }
+
     #[test]
     fn standalone_kindlegen_html_without_namespace_keeps_images_and_link_positions() {
         let input = fixture_flows("<html><head/><body></body></html>", None);
@@ -1224,7 +1269,9 @@ mod tests {
             full_bleed_cover(doc.root_element()),
             Some("kindle:embed:0001?mime=image/jpg")
         );
-        let flow = xml.replace("image/jpg", "image/png");
+        let flow = xml
+            .replace("image/jpg", "image/png")
+            .replace("<image ", "<image transform='translate(0 0)' ");
         let records = Records {
             bytes: b"\xff\xd8\xff\xe0",
             offsets: vec![0, 0, 4],

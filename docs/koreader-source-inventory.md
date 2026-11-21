@@ -1,5 +1,8 @@
 # KOReader source inventory for Kindle reading
 
+The [reading controls audit](reading-control-evidence.md) ties seven distinct Oasis
+screen states to Rust and Lua handlers and identifies the next acceptance tests.
+
 KOReader commit `9192014d8bd82a91dc1012473be0f238dedfdb54` is the baseline for the Oasis captures. Each row names upstream identifiers, the Reader behavior to compare, and any remaining acceptance work. Some menu registrations depend on the document or device. Counts describe source entries. Functional parity requires a matching result with a real document. [Upstream tree](https://github.com/koreader/koreader/tree/v2026.07.1) · [Reader test evidence and feature comparisons](koreader-controls-parity.md)
 
 To check coverage, run `python3 scripts/check-koreader-inventory.py /path/to/koreader`. The check reads the pinned Git objects. It covers reader modules, document and file manager modules, bundled plug-ins, top-menu registrations and the outer rows in both configuration dialogs. Dynamic submenus, translation services, the rendering engines and platform-specific hooks require additional comparisons.

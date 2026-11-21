@@ -47,3 +47,11 @@ The Mac reflow check used both OCR outputs and the exact source rasters.
 The 316-word public-domain page wrapped into one, two, and four reading
 frames at word heights of 32, 40, and 64 pixels. The 28-word Vietnamese page
 fit in one frame at each height.
+
+## Release verification
+
+On November 22, 2026, a fresh macOS cross-build downloaded and verified the three pinned inputs above. With Zig 0.17.1, CMake 4.2.1 and Ninja, it produced the same static ARM executable as the preceding independent Mac build. The executable has the ARM hard-float ABI and no ELF interpreter or dynamic segment. Its SHA-256 was `020e7adfaf8e771d5b5731e065dbd8f9689a17f2b786767792c37b56cec2c45b`.
+
+The pinned release packager accepted a staging directory containing that executable, the English model and the Reader binary. An archive inspection compared the extracted engine, model, dependency notices and eight OCR notices byte-for-byte with their inputs. Regenerating the Cargo notices from the locked ARMHF graph reproduced the checked-in file, including all 321 dependency entries. The OCR notices matched the pinned Leptonica, Tesseract, tessdata_fast and Zig distribution files.
+
+The hosted release job runs on `ubuntu-latest`, installs Zig 0.17.1 and cargo-zigbuild 0.24.1, and invokes the same staging script. Hosted pass/fail and the published package are recorded in [Reader's release workflow runs](https://github.com/PrimitiveOS/kindle-primitive-reader/actions/workflows/release.yml). [Pinned packaging workflow](https://github.com/PrimitiveOS/kindle-primitive-build/blob/6235c4d7327fbcfce74fc68ec06ae3c4f9c4665d/.github/workflows/package.yml)

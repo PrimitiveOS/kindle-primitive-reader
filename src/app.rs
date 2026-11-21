@@ -2519,11 +2519,16 @@ impl Reader {
     fn follow(&mut self, target: Destination) -> Result<()> {
         let active = self.active.as_mut().ok_or("No open book")?;
         let previous = position(&active.reading);
-        let chapter = active
-            .reading
-            .probe
-            .chapter_index(&target.path)
-            .ok_or("That link is outside the reading order")?;
+        let Some(chapter) = active.reading.probe.chapter_index(&target.path) else {
+            if target.fragment.is_none() && active.reading.probe.links_to_image(&target.path) {
+                let image = active.reading.open_illustration(&target.path)?;
+                let view = FixedReading::inspect_image(image)?;
+                self.show(Screen::Illustration);
+                self.illustration = Some(view);
+                return Ok(());
+            }
+            return Err("That link is outside the reading order".into());
+        };
         active.reading.jump(chapter, target.fragment.as_deref())?;
         self.finish_link_jump(previous);
         Ok(())
@@ -6875,6 +6880,23 @@ mod tests {
         );
         assert_eq!(app.screen, Screen::BookTools);
         assert!(fixture.app().controls.disable_page_taps);
+    }
+
+    #[test]
+    fn follows_a_direct_kindle_image_link_and_returns_to_the_same_page() {
+        let fixture = Fixture::new();
+        let path = Path::new("Picture.azw3");
+        fs::write(fixture.root.join(path), crate::kf8::tests::linked_image_fixture()).unwrap();
+        let mut app = fixture.app();
+        app.open_path(path).unwrap();
+        let before = position(&app.active.as_ref().unwrap().reading);
+        let target = app.active.as_ref().unwrap().reading.links().into_iter().find_map(|(label,target)| (label.contains("View original")).then_some(target)).unwrap();
+        app.activate(Action::Jump(target)).unwrap();
+        assert_eq!(app.screen,Screen::Illustration);
+        assert!(app.illustration.is_some());
+        app.input(Input::Tap((DONE.x + 15) as f32,(DONE.y + 15) as f32));
+        assert_eq!(app.screen,Screen::Book);
+        assert_eq!(position(&app.active.as_ref().unwrap().reading), before);
     }
 
     #[test]

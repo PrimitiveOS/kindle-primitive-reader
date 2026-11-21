@@ -40,13 +40,15 @@ Install Reader from PrimitiveOS Store or follow the manual install guide.
 [Release downloads](https://github.com/PrimitiveOS/kindle-primitive-reader/releases) · [Install guide](INSTALL.md)
 
 - Browse Documents one folder at a time. Rows show a folder or file icon and
-  each file's type and size. Files Reader cannot open are labelled and disabled.
+  each file's type and size. Reader labels unsupported types, oversized files and
+  protected AZW books in the list. A damaged book can report an error when opened.
   Use **Up** to return to the parent folder, or **Find** to search all Documents.
   **Continue reading** on the Documents screen returns to your saved passage.
   Inside an extracted `.epub` folder, **Read this book** opens the publication.
   Choosing one of its XHTML chapters opens that chapter with its illustrations and links.
 - Tap the upper center of the page to show the reading bars. For the upper menu
-  alone, swipe down from just below Launcher’s system gesture area. Start at the
+  alone, use the default downward swipe just below Launcher’s system gesture area.
+  Reading controls can set this gesture to open both bars. Start at the
   left, center, or right to open Navigation, the last-used tab, or Library. Navigation has
   contents, bookmarks, location history, a book map, page previews, and
   automatic page turns. Search has full-text and bookmark search, recent

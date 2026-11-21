@@ -9,6 +9,8 @@ mod cbr;
 mod chm;
 pub mod comic;
 pub mod dictionary;
+#[cfg(feature = "kindle")]
+pub mod document_check;
 pub mod djvu;
 mod docx;
 pub mod epub;
@@ -538,9 +540,21 @@ impl Probe {
         layout.illustration_at(range, self.settings, x, y)
     }
 
+    fn links_to_image(&self, path: &str) -> bool {
+        let supported = path.rsplit_once('.').is_some_and(|(_, ext)| {
+            ["png", "jpg", "jpeg", "svg"].iter().any(|known| ext.eq_ignore_ascii_case(known))
+        });
+        supported && self.source.blocks.iter().any(|block| {
+            block.links.iter().map(|link| link.href.as_str())
+                .chain(block.images.iter().filter_map(|image| image.link.as_deref()))
+                .any(|href| Book::resolve_link(&self.chapter, href)
+                    .is_ok_and(|target| target.fragment.is_none() && target.path == path))
+        })
+    }
+
     /// Load original pixels for a displayed illustration, reopening the local book as needed.
     pub fn open_illustration(&self, path: &Path, package_path: &str) -> Result<comic::ImagePage> {
-        if !matches!(&self.renderer, Renderer::Parley(layout) if layout.has_illustration(package_path))
+        if !matches!(&self.renderer, Renderer::Parley(layout) if layout.has_illustration(package_path)) && !self.links_to_image(package_path)
         {
             return Err("This illustration is unavailable in the current chapter".into());
         }

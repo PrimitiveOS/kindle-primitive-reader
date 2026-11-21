@@ -14,6 +14,10 @@ struct Evidence {
     anchored_pages: usize,
     anchor_page_mismatches: usize,
     local_links: usize,
+    linked_image_destinations: usize,
+    hidden_image_links: usize,
+    sampled_linked_artworks: usize,
+    unavailable_linked_artworks: usize,
     unresolved_local_links: usize,
     sampled_fragment_destinations: usize,
     unresolved_sampled_fragments: usize,
@@ -21,6 +25,7 @@ struct Evidence {
     local_images: usize,
     image_decode_errors: usize,
     local_stylesheets: usize,
+    publisher_page_templates: usize,
     missing_stylesheets: usize,
     sampled_artworks: usize,
     unavailable_sampled_artworks: usize,
@@ -35,6 +40,7 @@ struct Section {
     ids: BTreeSet<String>,
     images: BTreeSet<String>,
     targets: BTreeSet<String>,
+    linked_artworks: BTreeSet<String>,
 }
 
 fn audit(path: &Path, fonts: &[PathBuf]) -> Result<Evidence> {
@@ -64,7 +70,13 @@ fn audit(path: &Path, fonts: &[PathBuf]) -> Result<Evidence> {
                 }
                 evidence.local_links += 1;
                 match Book::resolve_link(base, href) {
-                    Ok(destination) => destinations.push(destination),
+                    Ok(destination) => {
+                        let visible = !node.ancestors().any(|parent| {
+                            parent.has_attribute("hidden")
+                                || parent.attribute("aria-hidden") == Some("true")
+                        });
+                        destinations.push((index, destination, visible));
+                    }
                     Err(_) => evidence.unresolved_local_links += 1,
                 }
             }
@@ -86,13 +98,36 @@ fn audit(path: &Path, fonts: &[PathBuf]) -> Result<Evidence> {
                 && node.attribute("rel") == Some("stylesheet")
                 && let Some(href) = node.attribute("href")
             {
-                sheets.insert(Book::resolve(base, href)?);
+                let path = Book::resolve(base, href)?;
+                if path.ends_with(".xpgt") {
+                    evidence.publisher_page_templates += 1;
+                } else {
+                    sheets.insert(path);
+                }
             }
         }
         sections.push(section);
     }
-    for destination in destinations {
+    for (source, destination, visible) in destinations {
         let Some(index) = book.chapter_index(&destination.path) else {
+            if destination.fragment.is_none()
+                && destination
+                    .path
+                    .rsplit_once('.')
+                    .is_some_and(|(_, ext)| matches!(ext, "jpg" | "png" | "svg"))
+                && book.resource(&destination.path).is_ok()
+            {
+                evidence.linked_image_destinations += 1;
+                if visible {
+                    sections[source]
+                        .linked_artworks
+                        .insert(destination.path.clone());
+                } else {
+                    evidence.hidden_image_links += 1;
+                }
+                images.insert(destination.path);
+                continue;
+            }
             evidence.unresolved_local_links += 1;
             continue;
         };
@@ -151,6 +186,11 @@ fn audit(path: &Path, fonts: &[PathBuf]) -> Result<Evidence> {
     {
         sampled.insert(index);
     }
+    sampled.extend(
+        (0..count)
+            .filter(|&i| !sections[i].linked_artworks.is_empty())
+            .take(8),
+    );
     for index in sampled {
         let mut probe = Probe::open(path, Engine::Parley, fonts, Settings::default(), index)?;
         evidence.sampled_sections.push(index + 1);
@@ -182,6 +222,12 @@ fn audit(path: &Path, fonts: &[PathBuf]) -> Result<Evidence> {
                 .is_some_and(|a| probe.page_for(&a).is_some())
             {
                 evidence.unresolved_sampled_fragments += 1;
+            }
+        }
+        for image in sections[index].linked_artworks.iter().take(4) {
+            evidence.sampled_linked_artworks += 1;
+            if probe.open_illustration(path, image).is_err() {
+                evidence.unavailable_linked_artworks += 1;
             }
         }
         for image in sections[index].images.iter().take(2) {
