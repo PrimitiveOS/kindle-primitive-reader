@@ -1,5 +1,5 @@
 //! One offline match from a source position. Searches stop at the book boundary.
-use super::{FoldedText, Query, ReflowQuery, SOFT_HYPHEN, SearchHit, accent_mark, snippet};
+use super::{FoldedText, Query, ReflowQuery, SearchHit, accent_mark, snippet};
 use crate::{Anchor, Result, epub::Book, source::Source};
 use std::{
     ops::Range,
@@ -25,7 +25,7 @@ impl NearbySearch {
         direction: SearchDirection,
     ) -> Result<Self> {
         Ok(Self {
-            query: ReflowQuery::Literal(Query::with_options(text, match_case, ignore_accents)?),
+            query: ReflowQuery::Literal(Query::reflow(text, match_case, ignore_accents)?),
             direction,
         })
     }
@@ -192,8 +192,13 @@ impl ChapterText {
 }
 
 impl Query {
-    fn nearest(&self, source: &str, previous: bool, cancel: &AtomicBool) -> Option<Range<usize>> {
-        if self.match_case && !self.ignore_accents && !source.contains(SOFT_HYPHEN) {
+    pub(super) fn nearest(
+        &self,
+        source: &str,
+        previous: bool,
+        cancel: &AtomicBool,
+    ) -> Option<Range<usize>> {
+        if self.use_original(source) {
             let start = if previous {
                 source.rfind(&self.text)
             } else {
@@ -201,9 +206,13 @@ impl Query {
             }?;
             return Some(start..start + self.text.len());
         }
-        let folded = FoldedText::build(source, self.match_case, self.ignore_accents, || {
-            cancel.load(Ordering::Relaxed)
-        })?;
+        let folded = FoldedText::build(
+            source,
+            self.match_case,
+            self.ignore_accents,
+            self.typography,
+            || cancel.load(Ordering::Relaxed),
+        )?;
         let mut span = if previous {
             folded.last_match(&self.text, cancel)
         } else {

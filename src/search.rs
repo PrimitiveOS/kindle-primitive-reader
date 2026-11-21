@@ -98,7 +98,7 @@ impl Search {
     }
 
     pub fn with_options(query: &str, match_case: bool, ignore_accents: bool) -> Result<Self> {
-        Self::with_query(ReflowQuery::Literal(Query::with_options(
+        Self::with_query(ReflowQuery::Literal(Query::reflow(
             query,
             match_case,
             ignore_accents,
@@ -241,6 +241,7 @@ enum ReflowQuery {
 
 pub(crate) struct Query {
     text: String,
+    typography: bool,
     match_case: bool,
     ignore_accents: bool,
 }
@@ -252,6 +253,19 @@ impl Query {
     }
 
     pub(crate) fn with_options(text: &str, match_case: bool, ignore_accents: bool) -> Result<Self> {
+        Self::prepare(text, match_case, ignore_accents, false)
+    }
+
+    fn reflow(text: &str, match_case: bool, ignore_accents: bool) -> Result<Self> {
+        Self::prepare(text, match_case, ignore_accents, true)
+    }
+
+    fn prepare(
+        text: &str,
+        match_case: bool,
+        ignore_accents: bool,
+        typography: bool,
+    ) -> Result<Self> {
         let text = text.trim();
         if text.len() > MAX_QUERY_BYTES {
             return Err("Enter a search term of up to 256 UTF-8 bytes".into());
@@ -261,7 +275,9 @@ impl Query {
         if term.is_empty() {
             return Err("Enter a search term of up to 256 UTF-8 bytes".into());
         }
-        let text = FoldedText::with_options(term, match_case, ignore_accents).text;
+        let text = FoldedText::build(term, match_case, ignore_accents, typography, || false)
+            .unwrap()
+            .text;
         if text.trim().is_empty() {
             return Err("Enter at least one searchable character".into());
         }
@@ -269,32 +285,50 @@ impl Query {
             text,
             match_case,
             ignore_accents,
+            typography,
         })
     }
 
+    fn use_original(&self, source: &str) -> bool {
+        self.match_case
+            && !self.ignore_accents
+            && if self.typography {
+                plain_ascii(source)
+            } else {
+                !source.contains(SOFT_HYPHEN)
+            }
+    }
+
     pub(crate) fn matches(&self, source: &str, limit: usize) -> Vec<Range<usize>> {
-        if self.match_case && !self.ignore_accents && !source.contains(SOFT_HYPHEN) {
+        if self.use_original(source) {
             source
                 .match_indices(&self.text)
                 .take(limit)
                 .map(|(start, found)| start..start + found.len())
                 .collect()
         } else {
-            FoldedText::with_options(source, self.match_case, self.ignore_accents)
-                .matches(&self.text)
-                .take(limit)
-                .map(|mut range| {
-                    // Include combining marks in the original selected word.
-                    if self.ignore_accents {
-                        range.end += source[range.end..]
-                            .chars()
-                            .take_while(|&ch| accent_mark(ch))
-                            .map(char::len_utf8)
-                            .sum::<usize>();
-                    }
-                    range
-                })
-                .collect()
+            FoldedText::build(
+                source,
+                self.match_case,
+                self.ignore_accents,
+                self.typography,
+                || false,
+            )
+            .unwrap()
+            .matches(&self.text)
+            .take(limit)
+            .map(|mut range| {
+                // Include combining marks in the original selected word.
+                if self.ignore_accents {
+                    range.end += source[range.end..]
+                        .chars()
+                        .take_while(|&ch| accent_mark(ch))
+                        .map(char::len_utf8)
+                        .sum::<usize>();
+                }
+                range
+            })
+            .collect()
         }
     }
 }
@@ -525,25 +559,62 @@ fn accent_mark(ch: char) -> bool {
     )
 }
 
+fn plain_ascii(text: &str) -> bool {
+    text.is_ascii() && !text.contains('\t') && !text.contains("  ")
+}
+
+// These are CREngine's explicit punctuation equivalences in ordinary rolling
+// search. Preserve the source characters in storage, snippets and selections.
+fn typographic_char(ch: char) -> Option<char> {
+    match ch {
+        '\t'
+        | ' '
+        | '\u{00a0}'
+        | '\u{1680}'
+        | '\u{2000}'..='\u{200a}'
+        | '\u{202f}'
+        | '\u{205f}'
+        | '\u{3000}' => Some(' '),
+        '\u{0027}' | '\u{02bc}' | '\u{055a}' | '\u{05f3}' | '\u{2018}' | '\u{2019}'
+        | '\u{ff07}' => Some('\''),
+        '-' | '\u{2212}' => Some('-'),
+        // The stock provider handles U+1806 as a discretionary format control.
+        ch if ch != '\u{1806}'
+            && !ch.is_ascii()
+            && CodePointMapData::<GeneralCategory>::new().get(ch)
+                == GeneralCategory::DashPunctuation =>
+        {
+            Some('-')
+        }
+        _ => None,
+    }
+}
+
 impl FoldedText {
     fn new(original: &str, match_case: bool) -> Self {
         Self::with_options(original, match_case, false)
     }
 
     fn with_options(original: &str, match_case: bool, ignore_accents: bool) -> Self {
-        Self::build(original, match_case, ignore_accents, || false).unwrap()
+        Self::build(original, match_case, ignore_accents, false, || false).unwrap()
     }
 
     fn build(
         original: &str,
         match_case: bool,
         ignore_accents: bool,
+        typography: bool,
         cancelled: impl Fn() -> bool,
     ) -> Option<Self> {
         if cancelled() {
             return None;
         }
-        if original.is_ascii() {
+        let copy_ascii = if typography {
+            plain_ascii(original)
+        } else {
+            original.is_ascii()
+        };
+        if copy_ascii {
             return Some(Self {
                 text: if match_case {
                     original.to_owned()
@@ -560,7 +631,22 @@ impl FoldedText {
             if index % 2048 == 0 && cancelled() {
                 return None;
             }
-            if ch.is_ascii() || (match_case && !ignore_accents && ch != SOFT_HYPHEN) {
+            if typography && let Some(ascii) = typographic_char(ch) {
+                let start = text.len();
+                if ascii != ' ' || !text.ends_with(' ') {
+                    text.push(ascii);
+                }
+                if text.len() - start != ch.len_utf8() {
+                    edits.push(OffsetEdit {
+                        source_end: source_start + ch.len_utf8(),
+                        folded_start: start,
+                        folded_end: text.len(),
+                    });
+                }
+                continue;
+            }
+            let discretionary = ch == SOFT_HYPHEN || (typography && ch == '\u{1806}');
+            if ch.is_ascii() || (match_case && !ignore_accents && !discretionary) {
                 text.push(if match_case {
                     ch
                 } else {
@@ -568,7 +654,7 @@ impl FoldedText {
                 });
                 continue;
             }
-            let folded = if ch == SOFT_HYPHEN {
+            let folded = if discretionary {
                 Cow::Borrowed("")
             } else if match_case {
                 Cow::Borrowed(&*ch.encode_utf8(&mut scalar))
@@ -696,6 +782,69 @@ fn snippet(text: &str, matched: Range<usize>) -> (String, Range<usize>) {
 mod tests {
 
     use super::*;
+
+    #[test]
+    fn ordinary_reflow_folds_publication_punctuation_without_changing_other_providers() {
+        let text = "“L’ÉTÉ   coûte   dix”—l’été Co‑op co−op.";
+        let qry = Query::reflow("L'ETE coute dix", false, true).unwrap();
+        let hits = qry.matches(text, 8);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(&text[hits[0].clone()], "L’ÉTÉ   coûte   dix");
+        assert_eq!(
+            qry.nearest(text, true, &AtomicBool::new(false)),
+            Some(hits[0].clone())
+        );
+        assert!(
+            Query::reflow("L'ETE coute dix", false, false)
+                .unwrap()
+                .matches(text, 8)
+                .is_empty()
+        );
+        let case = Query::reflow("l'été", true, false)
+            .unwrap()
+            .matches(text, 8);
+        assert_eq!(case.len(), 1);
+        assert_eq!(&text[case[0].clone()], "l’été");
+        let dashes = Query::reflow("co-op", false, false)
+            .unwrap()
+            .matches(text, 8);
+        assert_eq!(
+            dashes.iter().map(|r| &text[r.clone()]).collect::<Vec<_>>(),
+            ["Co‑op", "co−op"]
+        );
+        assert!(
+            Query::with_options("co-op", false, false)
+                .unwrap()
+                .matches(text, 8)
+                .is_empty()
+        );
+        let pattern = pattern::Expression::new("co-op", false).unwrap();
+        assert!(
+            pattern
+                .ranges(text, 0..text.len(), 8, false, &AtomicBool::new(false))
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            Query::reflow("A  B", true, false)
+                .unwrap()
+                .matches("A    B", 1),
+            [0..6]
+        );
+        assert_eq!(
+            Query::reflow("don't", true, false)
+                .unwrap()
+                .matches("don＇t", 1),
+            [0..7]
+        );
+        assert_eq!(
+            Query::reflow("”", true, false)
+                .unwrap()
+                .matches("\"", 1)
+                .len(),
+            0
+        );
+    }
 
     #[cfg(feature = "kindle")]
     #[test]

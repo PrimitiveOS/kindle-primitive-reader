@@ -7341,6 +7341,48 @@ mod tests {
     }
 
     #[test]
+    fn ordinary_search_keyboard_selects_original_quotes_and_spaces_in_both_directions() {
+        let f = Fixture::new();
+        let path = f.root.join("Café.xhtml");
+        fs::write(
+            &path,
+            "<html><body><p>L’été\u{a0}arrive. L’été arrive.</p></body></html>",
+        )
+        .unwrap();
+        let mut app = f.app();
+        app.open_path(&path).unwrap();
+        app.show(Screen::Find);
+        app.editor.text = "L'été arrive".chars().collect();
+        app.editor.caret = app.editor.text.len();
+        let settle = |app: &mut Reader| {
+            let stop = Instant::now() + Duration::from_secs(10);
+            while app.nearby.deadline().is_some() && Instant::now() < stop {
+                app.poll_nearby(Instant::now()).unwrap();
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            assert!(app.nearby.deadline().is_none());
+        };
+        app.input(Input::Tap(900.0, 560.0));
+        settle(&mut app);
+        let first = app.result_selection.clone().unwrap();
+        assert_eq!(first.text, "L’été\u{a0}arrive");
+        app.activate(app.search_step(1).unwrap()).unwrap();
+        settle(&mut app);
+        assert_eq!(app.result_selection.as_ref().unwrap().text, "L’été arrive");
+        app.activate(app.search_step(-1).unwrap()).unwrap();
+        settle(&mut app);
+        assert_eq!(app.result_selection.as_ref().unwrap().start, first.start);
+        app.show(Screen::Find);
+        app.start_document_search("L'été arrive").unwrap();
+        while app.search_at.is_some() {
+            app.step_search(Instant::now()).unwrap();
+        }
+        assert_eq!(app.hits.len(), 2);
+        assert_eq!(app.hits[0].anchor, first.start);
+        assert_eq!(app.hits[0].end, first.end);
+    }
+
+    #[test]
     fn regex_search_reflow_controls_history_navigation_and_literal_pdf() {
         let fixture = Fixture::new();
         let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
