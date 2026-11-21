@@ -90,6 +90,7 @@ const UNLOCK_TOUCH: Rect = Rect::new(832, PAGE_HEIGHT as i32 + 5, 258, 60);
 const CANCEL_OCR: Rect = Rect::new(624, PAGE_HEIGHT as i32 + 5, 200, 60);
 const NEXT_COMIC: Rect = Rect::new(598, PAGE_HEIGHT as i32 + 5, 223, 60);
 const FIND_CASE: Rect = Rect::new(LIST_X, LIST_Y + 260, 335, 70);
+const FIND_PATTERN: Rect = Rect::new(LIST_X + 795, LIST_Y + 260, 380, 70);
 const FIND_ACCENTS: Rect = Rect::new(LIST_X + 355, LIST_Y + 260, 420, 70);
 const MATCH_PREV: Rect = Rect::new(420, PAGE_HEIGHT as i32 + 5, 196, 60);
 const MATCH_NEXT: Rect = Rect::new(628, PAGE_HEIGHT as i32 + 5, 196, 60);
@@ -528,6 +529,7 @@ pub struct Reader {
     nearby: nearby_search::Nearby,
     find_match_case: bool,
     find_ignore_accents: bool,
+    find_regex: bool,
     search_result: Option<usize>,
     pdf_search: Option<PdfSearch>,
     pdf_hits: Vec<PdfSearchHit>,
@@ -655,6 +657,7 @@ impl Reader {
             nearby: nearby_search::Nearby::default(),
             find_match_case: false,
             find_ignore_accents: false,
+            find_regex: false,
             search_result: None,
             pdf_search: None,
             pdf_hits: Vec::new(),
@@ -909,7 +912,7 @@ impl Reader {
             self.outline = None;
         }
         if screen == Screen::Find && self.screen != Screen::Matches {
-            self.editor = Editor::new(64);
+            self.editor = Editor::new(crate::search::MAX_QUERY_BYTES);
         }
         if screen == Screen::LibraryFind {
             self.editor = Editor::new(96);
@@ -1038,7 +1041,10 @@ impl Reader {
                     .lookup_history
                     .searches
                     .iter()
-                    .map(|query| Item::new(&query.text, Action::RepeatSearch(query.clone())))
+                    .map(|query| {
+                        let item = Item::new(&query.text, Action::RepeatSearch(query.clone()));
+                        if query.regular_expression { item.detail("Regular expression") } else { item }
+                    })
                     .collect();
             }
             Screen::DictionaryHistory | Screen::Vocabulary => {
@@ -1898,6 +1904,10 @@ impl Reader {
             Action::ClearOnlineHistory => {self.update_lookup_history(|h| h.online.clear())?; self.show(Screen::OnlineHistory);},
             Action::LookUp(word) => self.look_up(&word)?,
             Action::RepeatSearch(query) => {
+                if query.regular_expression && self.active.is_none() {
+                    return Err("Patterns require a reflowable book".into());
+                }
+                self.find_regex = query.regular_expression;
                 self.find_match_case = query.match_case;
                 self.find_ignore_accents = query.ignore_accents;
                 self.start_document_search(&query.text)?;
@@ -2923,7 +2933,14 @@ impl Reader {
             self.find_match_case = !self.find_match_case;
             return Change::Partial;
         }
+        if self.screen == Screen::Find && self.active.is_some() && FIND_PATTERN.contains(x, y) {
+            self.find_regex = !self.find_regex;
+            if self.find_regex { self.find_ignore_accents = false; }
+            self.notice = None;
+            return Change::Partial;
+        }
         if self.screen == Screen::Find && FIND_ACCENTS.contains(x, y) {
+            self.find_regex = false;
             self.find_ignore_accents = !self.find_ignore_accents;
             return Change::Partial;
         }
@@ -2977,12 +2994,15 @@ impl Reader {
         let match_case = self.find_match_case;
         let ignore_accents = self.find_ignore_accents;
         let pdf = self.fixed.is_some();
+        if !pdf && self.find_regex {
+            return self.start_all_patterns(query);
+        }
         let (search, pdf_search) = if pdf {
             (None, Some(PdfSearch::with_options(query, match_case, ignore_accents)?))
         } else {
             (Some(Search::with_options(query, match_case, ignore_accents)?), None)
         };
-        self.update_lookup_history(|history| history.search(query, match_case, ignore_accents))?;
+        self.update_lookup_history(|history| history.search(query, match_case, ignore_accents, false))?;
         self.nearby.clear();
         self.search_result = None;
         self.show(Screen::Matches);
@@ -4477,6 +4497,7 @@ impl Reader {
     }
 
     fn find_selection(&mut self) -> Result<()> {
+        self.find_regex = false;
         let query = self
             .selected_passage()?
             .split_whitespace()
@@ -5019,6 +5040,7 @@ impl App for Reader {
                     (hint, "Go")
                 }
                 Screen::GoToPage => ("Page, printed label, or % of document", "Go"),
+                Screen::Find if self.active.is_some() && self.find_regex => ("Regular expression", "Find all"),
                 Screen::Find if self.active.is_some() => ("Search text", "Find all"),
                 _ => ("Search text", "Find"),
             };
@@ -5041,6 +5063,9 @@ impl App for Reader {
                 };
                 canvas.button(FIND_CASE, label, self.find_match_case, false);
                 canvas.button(FIND_ACCENTS, "Ignore accents", self.find_ignore_accents, false);
+                if self.active.is_some() {
+                    canvas.button(FIND_PATTERN, "Regular expression", self.find_regex, false);
+                }
                 self.draw_nearby(canvas);
             }
             if let Some(notice) = &self.notice {
@@ -5090,7 +5115,7 @@ impl App for Reader {
                 Screen::Matches if self.search_at.is_some() && self.fixed.is_some() => {
                     "Searching pages"
                 }
-                Screen::Matches if self.search_at.is_some() => "Searching chapters",
+                Screen::Matches if self.search_at.is_some() || self.nearby.searching_all() => "Searching chapters",
                 Screen::Matches => "No matches",
                 Screen::GeneratedContents
                     if self
@@ -7313,6 +7338,81 @@ mod tests {
             zip.write_all(bytes).unwrap();
         }
         zip.finish().unwrap();
+    }
+
+    #[test]
+    fn regex_search_reflow_controls_history_navigation_and_literal_pdf() {
+        let fixture = Fixture::new();
+        let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+        let path = fixture.root.join("Harbour.xhtml");
+        fs::write(
+            &path,
+            include_bytes!("../tests/fixtures/nearby-search.xhtml"),
+        )
+        .unwrap();
+        let mut app = Reader::open(&fixture.root, &fixture.state, vec![font.clone()]).unwrap();
+        app.open_path(&path).unwrap();
+        let origin = position(&app.active.as_ref().unwrap().reading);
+        let settle = |app: &mut Reader| {
+            let stop = Instant::now() + Duration::from_secs(15);
+            while app.nearby.deadline().is_some() && Instant::now() < stop {
+                app.poll_nearby(Instant::now()).unwrap();
+                std::thread::sleep(Duration::from_millis(3));
+            }
+            assert!(app.nearby.deadline().is_none());
+        };
+        let pattern = r"tide\s+keeps|caf.";
+        app.show(Screen::Find);
+        app.input(Input::Tap(
+            (FIND_PATTERN.x + 10) as f32,
+            (FIND_PATTERN.y + 10) as f32,
+        ));
+        assert!(app.find_regex);
+        app.editor.text = pattern.chars().collect();
+        app.editor.caret = app.editor.text.len();
+        capture_test_screen(
+            &app,
+            std::slice::from_ref(&font),
+            "READER_PATTERN_INPUT",
+            false,
+        );
+        app.input(Input::Tap(900.0, 560.0));
+        settle(&mut app);
+        let first = app.result_selection.as_ref().unwrap().clone();
+        assert_eq!(first.text, "tide keeps");
+        app.activate(app.search_step(1).unwrap()).unwrap();
+        settle(&mut app);
+        assert_eq!(app.result_selection.as_ref().unwrap().text, "café");
+        app.activate(app.search_step(-1).unwrap()).unwrap();
+        settle(&mut app);
+        assert_eq!(app.result_selection.as_ref().unwrap().start, first.start);
+        app.activate(Action::ReturnToLocation).unwrap();
+        assert_eq!(position(&app.active.as_ref().unwrap().reading), origin);
+        app.show(Screen::Find);
+        assert!(app.start_document_search("[").is_err());
+        assert_eq!(app.screen, Screen::Find);
+        app.start_document_search(pattern).unwrap();
+        settle(&mut app);
+        assert_eq!(app.hits.len(), 3);
+        assert!(app.lookup_history.searches[0].regular_expression);
+        capture_test_screen(
+            &app,
+            std::slice::from_ref(&font),
+            "READER_PATTERN_RESULTS",
+            false,
+        );
+        let saved = app.lookup_history.searches[0].clone();
+        app.activate(Action::RepeatSearch(saved.clone())).unwrap();
+        app.show(Screen::Find);
+        assert!(!app.nearby.searching_all());
+        assert!(app.find_regex);
+        let pdf = fixture.root.join("Signal.pdf");
+        fs::write(&pdf, crate::fixed::tests::document()).unwrap();
+        app.open_path(&pdf).unwrap();
+        assert!(app.activate(Action::RepeatSearch(saved)).is_err());
+        app.start_document_search("H.rbor").unwrap();
+        assert!(app.pdf_search.is_some());
+        assert!(!app.nearby.searching_all());
     }
 
     #[test]

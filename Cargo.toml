@@ -10,6 +10,9 @@ description = "Offline book reader for PrimitiveOS on Kindle"
 default = ["kindle"]
 kindle = ["dep:primitive-app", "dep:primitive-ui", "dep:unicode-bidi", "dep:ureq", "dep:url", "dep:qrcodegen"]
 
+[build-dependencies]
+cc = "=1.11.2"
+
 [dependencies]
 ab_glyph_rasterizer = "=0.1.10"
 anyrender_vello_cpu = "=0.18.0"

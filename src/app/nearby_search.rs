@@ -22,9 +22,32 @@ struct Request {
     output: mpsc::Sender<Result<Option<SearchHit>>>,
 }
 
+fn load_text(path: &Path, ci: usize) -> Result<ChapterText> {
+    // Only owned text escapes the storage lease; matching never holds the device storage lock.
+    Ok(with_storage(|| {
+        let mut book = Book::open(path).map_err(io::Error::other)?;
+        ChapterText::read(&mut book, ci).map_err(io::Error::other)
+    })?)
+}
+
+impl Request {
+    fn run(self) {
+        let found = self.engine.scan(
+            self.chapter,
+            &self.anchor,
+            &self.cancelled,
+            self.chapters,
+            |ci| load_text(&self.path, ci),
+        );
+        if !self.cancelled.load(Ordering::Relaxed) {
+            let _ = self.output.send(found);
+        }
+    }
+}
+
 #[derive(Default)]
 struct Mailbox {
-    next: Option<Request>,
+    next: Option<Box<dyn FnOnce() + Send>>,
     closed: bool,
 }
 #[derive(Default)]
@@ -53,30 +76,13 @@ impl Worker {
                     }
                     let request = queue.next.take().unwrap();
                     drop(queue);
-                    let found = request.engine.scan(
-                        request.chapter,
-                        &request.anchor,
-                        &request.cancelled,
-                        request.chapters,
-                        |ci| {
-                            // Only owned document data crosses the storage lease. Unicode
-                            // folding and XHTML parsing run after the file has been closed.
-                            Ok(with_storage(|| {
-                                let mut book =
-                                    Book::open(&request.path).map_err(io::Error::other)?;
-                                ChapterText::read(&mut book, ci).map_err(io::Error::other)
-                            })?)
-                        },
-                    );
-                    if !request.cancelled.load(Ordering::Relaxed) {
-                        let _ = request.output.send(found);
-                    }
+                    request();
                 }
             })?;
         Ok(Self(queue))
     }
-    fn submit(&self, request: Request) {
-        self.0.mailbox.lock().unwrap().next = Some(request);
+    fn submit(&self, request: impl FnOnce() + Send + 'static) {
+        self.0.mailbox.lock().unwrap().next = Some(Box::new(request));
         self.0.ready.notify_one();
     }
 }
@@ -86,6 +92,22 @@ impl Drop for Worker {
         queue.next = None;
         queue.closed = true;
         self.0.ready.notify_one();
+    }
+}
+
+struct AllResults {
+    hits: Vec<SearchHit>,
+    limited: bool,
+    skipped: bool,
+}
+struct PendingAll {
+    cancel: Arc<AtomicBool>,
+    result: mpsc::Receiver<Result<AllResults>>,
+    at: Instant,
+}
+impl Drop for PendingAll {
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
     }
 }
 
@@ -106,16 +128,24 @@ impl Drop for Pending {
 pub(super) struct Nearby {
     worker: Option<Worker>,
     pending: Option<Pending>,
+    all: Option<PendingAll>,
     current: Option<SearchQuery>,
     end: Option<SearchDirection>,
 }
 
 impl Nearby {
     pub(super) fn deadline(&self) -> Option<Instant> {
-        self.pending.as_ref().map(|p| p.at)
+        self.pending
+            .as_ref()
+            .map(|p| p.at)
+            .or_else(|| self.all.as_ref().map(|p| p.at))
+    }
+    pub(super) fn searching_all(&self) -> bool {
+        self.all.is_some()
     }
     pub(super) fn cancel(&mut self) {
         self.pending = None;
+        self.all = None;
     }
     pub(super) fn clear(&mut self) {
         self.cancel();
@@ -176,14 +206,19 @@ impl Reader {
                 text: self.editor.string(),
                 match_case: self.find_match_case,
                 ignore_accents: self.find_ignore_accents,
+                regular_expression: self.find_regex,
             }
         };
-        let engine = NearbySearch::new(
-            &query.text,
-            query.match_case,
-            query.ignore_accents,
-            direction,
-        )?;
+        let engine = if query.regular_expression {
+            NearbySearch::with_regular_expression(&query.text, query.match_case, direction)?
+        } else {
+            NearbySearch::new(
+                &query.text,
+                query.match_case,
+                query.ignore_accents,
+                direction,
+            )?
+        };
         let anchor = if continuing {
             let selection = self
                 .result_selection
@@ -212,7 +247,12 @@ impl Reader {
         };
         if !continuing {
             self.update_lookup_history(|h| {
-                h.search(&query.text, query.match_case, query.ignore_accents)
+                h.search(
+                    &query.text,
+                    query.match_case,
+                    query.ignore_accents,
+                    query.regular_expression,
+                )
             })?;
             self.cancel_search();
             self.search_result = None;
@@ -228,7 +268,11 @@ impl Reader {
             result: rx,
             at: Instant::now() + SEARCH_DELAY,
         });
-        self.nearby.worker.as_ref().unwrap().submit(request);
+        self.nearby
+            .worker
+            .as_ref()
+            .unwrap()
+            .submit(move || request.run());
         self.notice = Some(
             match direction {
                 SearchDirection::Previous => "Searching earlier text",
@@ -238,7 +282,73 @@ impl Reader {
         );
         Ok(())
     }
+    pub(super) fn start_all_patterns(&mut self, pattern: &str) -> Result<()> {
+        let case = self.find_match_case;
+        let mut search = Search::with_regular_expression(pattern, case)?;
+        let active = self
+            .active
+            .as_ref()
+            .ok_or("Patterns require a reflowable book")?;
+        let path = active.reading.config.book.clone();
+        let chapters = active.reading.probe.chapter_count();
+        self.update_lookup_history(|h| h.search(pattern, case, false, true))?;
+        self.cancel_search();
+        self.show(Screen::Matches);
+        self.hits.clear();
+        self.pdf_hits.clear();
+        self.search_result = None;
+        if self.nearby.worker.is_none() {
+            self.nearby.worker = Some(Worker::start()?);
+        }
+        let (tx, result) = mpsc::channel();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        self.nearby.all = Some(PendingAll {
+            cancel: Arc::clone(&cancelled),
+            result,
+            at: Instant::now() + SEARCH_DELAY,
+        });
+        self.nearby.worker.as_ref().unwrap().submit(move || {
+            let scanned = (|| {
+                let mut hits = Vec::new();
+                for ci in 0..chapters {
+                    if cancelled.load(Ordering::Relaxed) || search.is_finished() {
+                        break;
+                    }
+                    hits.extend(search.step_loaded(load_text(&path, ci)?, chapters, &cancelled)?);
+                }
+                Ok(AllResults {
+                    hits,
+                    limited: search.limit_reached(),
+                    skipped: search.skipped_chapters() > 0,
+                })
+            })();
+            if !cancelled.load(Ordering::Relaxed) {
+                let _ = tx.send(scanned);
+            }
+        });
+        Ok(())
+    }
+
     pub(super) fn poll_nearby(&mut self, now: Instant) -> Result<Change> {
+        if let Some(all) = &mut self.nearby.all {
+            let outcome = match all.result.try_recv() {
+                Ok(result) => result,
+                Err(mpsc::TryRecvError::Empty) => {
+                    all.at = now + SEARCH_DELAY;
+                    return Ok(Change::None);
+                }
+                Err(mpsc::TryRecvError::Disconnected) => Err("The search stopped".into()),
+            };
+            self.nearby.all = None;
+            let all = outcome?;
+            self.hits = all.hits;
+            if all.limited {
+                self.notice = Some("First 100 matches".into());
+            } else if all.skipped {
+                self.notice = Some("Some chapters could not be searched".into());
+            }
+            return Ok(Change::Partial);
+        }
         let pending = self.nearby.pending.as_mut().ok_or("No active search")?;
         let outcome = match pending.result.try_recv() {
             Ok(result) => result,

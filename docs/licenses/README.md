@@ -6,6 +6,7 @@ available from its listed crate archive. PrimitiveOS Tools is used under its
 PolyForm Noncommercial option. The USB drive-mode artwork is from PrimitiveOS
 Launcher. [Launcher artwork terms](https://github.com/PrimitiveOS/kindle-primitive-launcher#licence)
 
+- [SRELL](SRELL.txt) covers the ECMAScript engine used in reflow search. The ARMHF binary uses the same LLVM [libc++](ocr/libcxx-LICENSE), [libc++abi](ocr/libcxxabi-LICENSE) and [libunwind](ocr/libunwind-LICENSE) runtimes already distributed with OCR.
 - [American and British English hyphenation patterns](ENGLISH-HYPHENATION.txt) cover the dictionaries compiled into native reflow.
 - [PDF assets](pdf/README.md) covers embedded fonts, character maps, and colour
   profiles supplied by the Hayro PDF libraries.

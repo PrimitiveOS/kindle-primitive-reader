@@ -1,12 +1,14 @@
 //! Offline search over the same normalized text and anchors used by the reader.
 
 mod nearby;
-pub use nearby::{NearbySearch, SearchDirection};
+mod pattern;
 #[cfg(feature = "kindle")]
 pub(crate) use nearby::ChapterText;
+pub use nearby::{NearbySearch, SearchDirection};
 
 use std::borrow::Cow;
 use std::ops::Range;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use icu_casemap::{CaseMapper, CaseMapperBorrowed};
 use icu_normalizer::DecomposingNormalizer;
@@ -68,7 +70,7 @@ pub struct SearchHit {
     pub end: Anchor,
     /// Original wording with a short amount of context.
     pub snippet: String,
-    /// The match's UTF-8 byte range within `snippet`.
+    /// The visible portion of the match in the bounded snippet, in UTF-8 bytes.
     pub matched: Range<usize>,
 }
 
@@ -76,7 +78,7 @@ pub struct SearchHit {
 /// The caller can stop or replace the task between steps. Search borrows
 /// the book only during the step, so a device can release the storage lease.
 pub struct Search {
-    query: Query,
+    query: ReflowQuery,
     publication: Option<(u64, usize)>,
     next_chapter: usize,
     hits: usize,
@@ -96,8 +98,22 @@ impl Search {
     }
 
     pub fn with_options(query: &str, match_case: bool, ignore_accents: bool) -> Result<Self> {
+        Self::with_query(ReflowQuery::Literal(Query::with_options(
+            query,
+            match_case,
+            ignore_accents,
+        )?))
+    }
+
+    pub fn with_regular_expression(pattern: &str, match_case: bool) -> Result<Self> {
+        Self::with_query(ReflowQuery::Pattern(pattern::Expression::new(
+            pattern, match_case,
+        )?))
+    }
+
+    fn with_query(query: ReflowQuery) -> Result<Self> {
         Ok(Self {
-            query: Query::with_options(query, match_case, ignore_accents)?,
+            query,
             publication: None,
             next_chapter: 0,
             hits: 0,
@@ -132,22 +148,34 @@ impl Search {
         if self.is_finished() {
             return Ok(Vec::new());
         }
-        let publication = (book.revision(), book.chapters.len());
+        if book.chapters.is_empty() {
+            self.stopped = true;
+            return Ok(Vec::new());
+        }
+        let text = nearby::ChapterText::read(book, self.next_chapter)?;
+        self.step_loaded(text, book.chapters.len(), &AtomicBool::new(false))
+    }
+
+    pub(crate) fn step_loaded(
+        &mut self,
+        text: nearby::ChapterText,
+        chapters: usize,
+        cancel: &AtomicBool,
+    ) -> Result<Vec<SearchHit>> {
+        let publication = (text.book, chapters);
         if *self.publication.get_or_insert(publication) != publication {
             self.stopped = true;
             return Err("The publication changed during the search".into());
         }
         let chapter = self.next_chapter;
-        let Some(info) = book.chapters.get(chapter).cloned() else {
-            return Ok(Vec::new());
-        };
         self.next_chapter += 1;
-        let source = match book
-            .chapter(chapter)
-            .and_then(|xhtml| Source::parse(&xhtml))
+        let source = match text
+            .xhtml
+            .as_deref()
+            .and_then(|xhtml| Source::parse(xhtml).ok())
         {
-            Ok(source) => source,
-            Err(_) => {
+            Some(source) => source,
+            None => {
                 self.skipped += 1;
                 return Ok(Vec::new());
             }
@@ -155,17 +183,32 @@ impl Search {
 
         let mut hits = Vec::new();
         for block in source.blocks {
-            for range in self.query.matches(&block.text, MAX_SEARCH_HITS - self.hits) {
+            if cancel.load(Ordering::Relaxed) {
+                break;
+            }
+            let ranges = match &self.query {
+                ReflowQuery::Literal(query) => {
+                    query.matches(&block.text, MAX_SEARCH_HITS - self.hits)
+                }
+                ReflowQuery::Pattern(expression) => expression.ranges(
+                    &block.text,
+                    0..block.text.len(),
+                    MAX_SEARCH_HITS - self.hits,
+                    false,
+                    cancel,
+                )?,
+            };
+            for range in ranges {
                 let offset = range.start;
                 let end = range.end;
                 let (snippet, matched) = snippet(&block.text, range);
                 hits.push(SearchHit {
                     chapter,
-                    chapter_title: info.label.clone(),
+                    chapter_title: text.label.clone(),
                     anchor: Anchor {
                         illustration: None,
                         book: publication.0,
-                        chapter: info.href.clone(),
+                        chapter: text.href.clone(),
                         revision: source.revision,
                         block: block.key,
                         offset,
@@ -173,7 +216,7 @@ impl Search {
                     end: Anchor {
                         illustration: None,
                         book: publication.0,
-                        chapter: info.href.clone(),
+                        chapter: text.href.clone(),
                         revision: source.revision,
                         block: block.key,
                         offset: end,
@@ -189,6 +232,11 @@ impl Search {
         }
         Ok(hits)
     }
+}
+
+enum ReflowQuery {
+    Literal(Query),
+    Pattern(pattern::Expression),
 }
 
 pub(crate) struct Query {
@@ -611,10 +659,20 @@ fn snippet(text: &str, matched: Range<usize>) -> (String, Range<usize>) {
         .rev()
         .nth(CONTEXT_CHARACTERS - 1)
         .map_or(0, |(index, _)| index);
-    let last = text[matched.end..]
+    // Regexps may select an entire paragraph. Keep the complete source anchors
+    // while bounding the memory kept by a 100-item results list.
+    let shown_end = text[matched.clone()]
         .char_indices()
-        .nth(CONTEXT_CHARACTERS)
-        .map_or(text.len(), |(index, _)| matched.end + index);
+        .nth(256)
+        .map_or(matched.end, |(offset, _)| matched.start + offset);
+    let last = if shown_end < matched.end {
+        shown_end
+    } else {
+        text[matched.end..]
+            .char_indices()
+            .nth(CONTEXT_CHARACTERS)
+            .map_or(text.len(), |(index, _)| matched.end + index)
+    };
     let mut preview = String::with_capacity(last - first + 6);
     if first > 0 {
         preview.push('…');
@@ -628,7 +686,10 @@ fn snippet(text: &str, matched: Range<usize>) -> (String, Range<usize>) {
     if last < text.len() {
         preview.push('…');
     }
-    (preview, match_start..match_start + matched.len())
+    (
+        preview,
+        match_start..match_start + (shown_end - matched.start),
+    )
 }
 
 #[cfg(test)]

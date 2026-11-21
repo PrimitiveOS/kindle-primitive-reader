@@ -15,6 +15,8 @@ pub(super) struct SearchQuery {
     pub match_case: bool,
     #[serde(default)]
     pub ignore_accents: bool,
+    #[serde(default)]
+    pub regular_expression: bool,
 }
 
 #[derive(Clone, Default, Deserialize, Serialize)]
@@ -33,7 +35,13 @@ impl LookupHistory {
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_default();
-        history.searches.retain(|item| valid(&item.text));
+        history.searches.retain(|item| {
+            if item.regular_expression {
+                !item.text.is_empty() && item.text.len() <= crate::search::MAX_QUERY_BYTES
+            } else {
+                valid(&item.text)
+            }
+        });
         history.dictionary.retain(|word| valid(word));
         history.vocabulary.retain(|word| valid(word));
         history.online.retain(|item| item.validate().is_ok());
@@ -50,11 +58,22 @@ impl LookupHistory {
         primitive_app::save(path, &contents)
     }
 
-    pub fn search(&mut self, text: &str, match_case: bool, ignore_accents: bool) {
+    pub fn search(
+        &mut self,
+        text: &str,
+        match_case: bool,
+        ignore_accents: bool,
+        regular_expression: bool,
+    ) {
         let current = SearchQuery {
-            text: text.trim().chars().take(MAX_QUERY_CHARS).collect(),
+            text: if regular_expression {
+                text.to_owned()
+            } else {
+                text.trim().chars().take(MAX_QUERY_CHARS).collect()
+            },
             match_case,
             ignore_accents,
+            regular_expression,
         };
         remember(&mut self.searches, current, MAX_QUERY_HISTORY);
     }

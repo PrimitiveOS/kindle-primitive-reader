@@ -1,5 +1,5 @@
 //! One offline match from a source position. Searches stop at the book boundary.
-use super::{FoldedText, Query, SOFT_HYPHEN, SearchHit, accent_mark, snippet};
+use super::{FoldedText, Query, ReflowQuery, SOFT_HYPHEN, SearchHit, accent_mark, snippet};
 use crate::{Anchor, Result, epub::Book, source::Source};
 use std::{
     ops::Range,
@@ -13,7 +13,7 @@ pub enum SearchDirection {
 }
 
 pub struct NearbySearch {
-    query: Query,
+    query: ReflowQuery,
     direction: SearchDirection,
 }
 
@@ -25,7 +25,18 @@ impl NearbySearch {
         direction: SearchDirection,
     ) -> Result<Self> {
         Ok(Self {
-            query: Query::with_options(text, match_case, ignore_accents)?,
+            query: ReflowQuery::Literal(Query::with_options(text, match_case, ignore_accents)?),
+            direction,
+        })
+    }
+
+    pub fn with_regular_expression(
+        pattern: &str,
+        match_case: bool,
+        direction: SearchDirection,
+    ) -> Result<Self> {
+        Ok(Self {
+            query: ReflowQuery::Pattern(super::pattern::Expression::new(pattern, match_case)?),
             direction,
         })
     }
@@ -110,8 +121,15 @@ impl NearbySearch {
                     let Some(window) = block.text.get(left..right) else {
                         return Err("The starting character is unavailable".into());
                     };
-                    if let Some(range) = self.query.nearest(window, previous, cancel) {
-                        let span = range.start + left..range.end + left;
+                    let hit = match &self.query {
+                        ReflowQuery::Literal(query) => query
+                            .nearest(window, previous, cancel)
+                            .map(|r| r.start + left..r.end + left),
+                        ReflowQuery::Pattern(expression) => expression
+                            .ranges(&block.text, left..right, 1, previous, cancel)?
+                            .pop(),
+                    };
+                    if let Some(span) = hit {
                         let start = Anchor {
                             book: text.book,
                             chapter: text.href.clone(),
@@ -151,10 +169,10 @@ impl NearbySearch {
 }
 
 pub(crate) struct ChapterText {
-    book: u64,
-    label: String,
-    href: String,
-    xhtml: Option<String>,
+    pub(super) book: u64,
+    pub(super) label: String,
+    pub(super) href: String,
+    pub(super) xhtml: Option<String>,
 }
 
 impl ChapterText {

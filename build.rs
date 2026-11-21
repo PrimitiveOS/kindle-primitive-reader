@@ -65,7 +65,44 @@ fn base_rules(tex: &str) -> Vec<String> {
     rules
 }
 
+fn build_pattern_engine() {
+    println!("cargo:rerun-if-changed=src/search/pattern.cpp");
+    println!("cargo:rerun-if-changed=vendor/srell/srell.hpp");
+    let mut compiler = cc::Build::new();
+    compiler
+        .cpp(true)
+        .std("c++14")
+        .warnings(false)
+        .include("vendor/srell")
+        .file("src/search/pattern.cpp");
+    if env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("musl") {
+        compiler.cpp_link_stdlib("c++");
+    } else if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        // The Command Line Tools install libc++ headers inside the selected SDK.
+        let sdk = env::var_os("SDKROOT").map(PathBuf::from).or_else(|| {
+            let output = std::process::Command::new("xcrun")
+                .arg("--show-sdk-path")
+                .output()
+                .ok()?;
+            output
+                .status
+                .success()
+                .then(|| PathBuf::from(String::from_utf8_lossy(&output.stdout).trim()))
+        });
+        if let Some(headers) = sdk
+            .map(|path| path.join("usr/include/c++/v1"))
+            .filter(|path| path.is_dir())
+        {
+            compiler
+                .flag("-isystem")
+                .flag(headers.to_str().expect("SDK header path"));
+        }
+    }
+    compiler.compile("reader_search_pattern");
+}
+
 fn main() {
+    build_pattern_engine();
     let american = tex_source("assets/hyphenation/hyph-en-us.tex");
     let british = tex_source("assets/hyphenation/hyph-en-gb.tex");
     let corrections = tex_source("assets/hyphenation/ushyphex.tex");
