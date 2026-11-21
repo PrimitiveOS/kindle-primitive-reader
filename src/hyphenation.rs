@@ -286,7 +286,7 @@ mod tests {
         let chapter = book.chapters[0].href.clone();
         let mut fonts =
             crate::font_context(&[crate::test_fixture("fonts/NotoSans-Regular.ttf")]).unwrap();
-        let styles = BookStyle::load(&mut book, &chapter, &src.stylesheets, &mut fonts)
+        let styles = BookStyle::load(&mut book, &chapter, &src, &mut fonts)
             .compute(&src.elements);
         let active = Settings::default();
         for (i, block) in src.blocks.iter().enumerate() {

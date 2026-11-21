@@ -77,3 +77,5 @@ page. [OpenJPEG](https://www.openjpeg.org/) · [Reader decoder tests](../../src/
 
 
 [publisher-lists.xhtml](publisher-lists.xhtml) is an original short publication with a numbered checklist, nested bullets, a reversed alphabetical list, a source-authored ordinal and a list with its markers disabled in CSS. Its text and artwork may be redistributed under the project licence.
+
+`paragraph-indents.xhtml` is an original short coastal journal for comparing inherited first-line indents, an explicit zero, a percentage of the reading column and hanging lines. Its text and stylesheet were written for Reader.

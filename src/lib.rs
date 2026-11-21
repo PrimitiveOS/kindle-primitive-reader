@@ -498,7 +498,7 @@ impl Probe {
                         book_style::BookStyle::load(
                             &mut book,
                             &href,
-                            &source.stylesheets,
+                            &source,
                             &mut fonts,
                         )
                     })

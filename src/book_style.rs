@@ -16,7 +16,7 @@ use parley::{
 };
 
 use crate::epub::Book;
-use crate::source::{Element, Stylesheet};
+use crate::source::{Element, Source, Stylesheet};
 
 const MAX_SHEETS: usize = 8;
 const MAX_SHEET_BYTES: usize = 96 * 1024;
@@ -71,6 +71,51 @@ impl ImageLength {
     }
 }
 
+#[derive(Clone, Copy)]
+enum IndentLength {
+    Em(f32),
+    RootEm(f32),
+    Pixels(f32),
+    Fraction(f32),
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct TextIndent {
+    length: IndentLength,
+    pub hanging: bool,
+}
+
+impl Default for TextIndent {
+    fn default() -> Self {
+        Self {
+            length: IndentLength::Pixels(0.0),
+            hanging: false,
+        }
+    }
+}
+
+impl TextIndent {
+    // Resolve font-relative values at the declaring element so descendants that
+    // change font size inherit the computed length. Percentages stay relative
+    // to the width of the block being laid out.
+    fn computed(self, font: f32, root_font: f32) -> Self {
+        let length = match self.length {
+            IndentLength::Em(em) => IndentLength::Em(em * font),
+            IndentLength::RootEm(em) => IndentLength::Em(em * root_font),
+            length => length,
+        };
+        Self { length, ..self }
+    }
+
+    pub fn pixels(self, width: u32, reader_font: f32) -> f32 {
+        match self.length {
+            IndentLength::Em(em) | IndentLength::RootEm(em) => em * reader_font,
+            IndentLength::Pixels(px) => px,
+            IndentLength::Fraction(ratio) => ratio * width as f32,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Hyphens {
     None,
@@ -85,6 +130,7 @@ pub(crate) struct Style {
     pub font_weight: FontWeight,
     pub font_style: FontStyle,
     pub line_height: Option<f32>,
+    pub text_indent: TextIndent,
     pub background: Option<u8>,
     pub marker: crate::list_marker::MarkerKind,
     pub image_width: Option<ImageLength>,
@@ -105,6 +151,7 @@ impl Default for Style {
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
             line_height: None,
+            text_indent: TextIndent::default(),
             background: None,
             marker: crate::list_marker::MarkerKind::None,
             image_width: None,
@@ -130,12 +177,7 @@ pub(crate) struct BookStyle {
 }
 
 impl BookStyle {
-    pub fn load(
-        book: &mut Book,
-        chapter: &str,
-        sheets: &[Stylesheet],
-        fonts: &mut FontContext,
-    ) -> Self {
+    pub fn load(book: &mut Book, chapter: &str, source: &Source, fonts: &mut FontContext) -> Self {
         let mut styled = Self {
             author_inline: true,
             ..Self::default()
@@ -146,10 +188,14 @@ impl BookStyle {
                 .family_names()
                 .map(|name| (name.to_ascii_lowercase(), Arc::from(name))),
         );
+        if source.stylesheets.is_empty() {
+            return styled;
+        }
         let mut remaining = MAX_CSS_BYTES;
         let mut linked = 0;
         let mut inline = 0;
-        for sheet in sheets {
+        let names = ChapterNames::new(&source.elements);
+        for sheet in &source.stylesheets {
             match sheet {
                 Stylesheet::Linked(href) if linked < MAX_SHEETS => {
                     linked += 1;
@@ -166,12 +212,12 @@ impl BookStyle {
                         continue;
                     };
                     if let Ok(text) = std::str::from_utf8(&bytes) {
-                        styled.read_sheet(book, &path, text, &mut remaining, fonts);
+                        styled.read_sheet(book, &path, text, &mut remaining, fonts, &names);
                     }
                 }
                 Stylesheet::Inline(sheet) if inline < MAX_SHEETS => {
                     inline += 1;
-                    styled.read_sheet(book, chapter, sheet, &mut remaining, fonts);
+                    styled.read_sheet(book, chapter, sheet, &mut remaining, fonts, &names);
                 }
                 _ => {}
             }
@@ -247,6 +293,13 @@ impl BookStyle {
                             Size::Reference(scale) => *scale,
                         };
                     }
+                    Property::Indent(indent) => {
+                        if let Some(indent) = indent {
+                            let font = style.size_scale.clamp(0.125, 8.0);
+                            let root_font = result.first().map_or(font, |root| root.size_scale);
+                            style.text_indent = indent.computed(font, root_font);
+                        }
+                    }
                     Property::LineHeight(height) => style.line_height = *height,
                     Property::Marker(kind) => style.marker = *kind,
                     Property::Background(gray) => style.background = *gray,
@@ -278,6 +331,7 @@ impl BookStyle {
         text: &str,
         remaining: &mut usize,
         fonts: &mut FontContext,
+        names: &ChapterNames<'_>,
     ) {
         if text.len() > MAX_SHEET_BYTES || text.len() > *remaining {
             return;
@@ -289,7 +343,14 @@ impl BookStyle {
             .flatten()
         {
             match rule {
-                SheetItem::Rule(rule) if self.rules.len() < MAX_RULES => self.rules.push(rule),
+                SheetItem::Rule(mut rule)
+                    if self.rules.len() < MAX_RULES && !rule.declarations.is_empty() =>
+                {
+                    rule.selectors.retain(|selector| names.possible(selector));
+                    if !rule.selectors.is_empty() {
+                        self.rules.push(rule);
+                    }
+                }
                 SheetItem::Font(declarations) => {
                     self.register_font(book, base, declarations, fonts)
                 }
@@ -472,6 +533,49 @@ impl Selector {
     }
 }
 
+// Shared publisher stylesheets often describe hundreds of classes used only
+// in other chapters. Keep their selectors out of the per-chapter rule budget.
+struct ChapterNames<'a> {
+    classes: Option<HashSet<&'a str>>,
+    ids: Option<HashSet<&'a str>>,
+}
+
+impl<'a> ChapterNames<'a> {
+    fn new(elements: &'a [Element]) -> Self {
+        fn bounded<'a>(names: impl Iterator<Item = &'a str>) -> Option<HashSet<&'a str>> {
+            let mut found = HashSet::new();
+            for name in names {
+                found.insert(name);
+                // When the index is full, allow every candidate in this category.
+                if found.len() > 1024 {
+                    return None;
+                }
+            }
+            Some(found)
+        }
+        Self {
+            classes: bounded(
+                elements
+                    .iter()
+                    .flat_map(|el| el.classes.split_ascii_whitespace()),
+            ),
+            ids: bounded(elements.iter().filter_map(|el| el.id.as_deref())),
+        }
+    }
+
+    fn possible(&self, selector: &Selector) -> bool {
+        selector.steps.iter().all(|step| {
+            self.classes
+                .as_ref()
+                .is_none_or(|names| step.classes.iter().all(|c| names.contains(c.as_str())))
+                && self
+                    .ids
+                    .as_ref()
+                    .is_none_or(|names| step.ids.iter().all(|id| names.contains(id.as_str())))
+        })
+    }
+}
+
 struct Rule {
     selectors: Vec<Selector>,
     declarations: Vec<Declaration>,
@@ -546,7 +650,7 @@ fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
 }
 
 type Priority = (bool, bool, Specificity);
-type Winners<'a> = [Option<(Priority, &'a Property)>; 15];
+type Winners<'a> = [Option<(Priority, &'a Property)>; 16];
 
 fn choose<'a>(
     winners: &mut Winners<'a>,
@@ -571,6 +675,7 @@ fn choose<'a>(
             Property::Height(_) => 12,
             Property::VerticalAlign(_) => 13,
             Property::Marker(_) => 14,
+            Property::Indent(_) => 15,
             Property::FontSource(_) => continue,
         };
         let priority = (declaration.important, inline, specificity);
@@ -611,6 +716,7 @@ impl Weight {
 }
 
 enum Property {
+    Indent(Option<TextIndent>),
     Marker(crate::list_marker::MarkerKind),
     Family(Vec<Family>),
     FontSource(Vec<String>),
@@ -643,6 +749,7 @@ impl<'i> DeclarationParser<'i> for Properties {
     ) -> CssResult<Declaration> {
         let property = input.parse_until_before(Delimiter::Bang, |input| {
             let property = match name.to_ascii_lowercase().as_ref() {
+                "text-indent" => Property::Indent(parse_indent(input)?),
                 "vertical-align" => {
                     use parley::VerticalAlign;
                     Property::VerticalAlign(
@@ -861,6 +968,51 @@ impl<'i> RuleBodyItemParser<'i, Declaration, ()> for Properties {
     }
 }
 
+fn parse_indent(input: &mut Parser<'_>) -> CssResult<Option<TextIndent>> {
+    if let Ok(keyword) = input.try_parse(Parser::expect_ident_cloned) {
+        match keyword.to_ascii_lowercase().as_str() {
+            "initial" => return Ok(Some(TextIndent::default())),
+            "inherit" | "unset" | "revert" => return Ok(None),
+            "hanging" => {
+                return Ok(Some(TextIndent {
+                    length: indent_length(input)?,
+                    hanging: true,
+                }));
+            }
+            _ => return Err(ParseError::unexpected_token()),
+        }
+    }
+    let length = indent_length(input)?;
+    let hanging = input
+        .try_parse(|input| input.expect_ident_matching("hanging"))
+        .is_ok();
+    Ok(Some(TextIndent { length, hanging }))
+}
+
+fn indent_length(input: &mut Parser<'_>) -> CssResult<IndentLength> {
+    match input.next()?.clone() {
+        Token::Number { value: 0.0, .. } => Ok(IndentLength::Pixels(0.0)),
+        Token::Percentage { unit_value, .. } if unit_value.is_finite() => {
+            Ok(IndentLength::Fraction(unit_value))
+        }
+        Token::Dimension { value, unit, .. } if value.is_finite() => {
+            Ok(match unit.to_ascii_lowercase().as_str() {
+                "em" => IndentLength::Em(value),
+                "rem" => IndentLength::RootEm(value),
+                "px" => IndentLength::Pixels(value),
+                "pt" => IndentLength::Pixels(value * (96.0 / 72.0)),
+                "pc" => IndentLength::Pixels(value * 16.0),
+                "in" => IndentLength::Pixels(value * 96.0),
+                "cm" => IndentLength::Pixels(value * (96.0 / 2.54)),
+                "mm" => IndentLength::Pixels(value * (96.0 / 25.4)),
+                "q" => IndentLength::Pixels(value * (96.0 / 101.6)),
+                _ => return Err(ParseError::unexpected_token()),
+            })
+        }
+        _ => Err(ParseError::unexpected_token()),
+    }
+}
+
 fn font_family<'i>(input: &mut Parser<'i>) -> CssResult<Family> {
     if let Ok(quoted) = input.try_parse(Parser::expect_string_cloned) {
         return Ok(Family::Named(Arc::from(quoted.as_ref())));
@@ -938,8 +1090,8 @@ mod tests {
         let chapter = book.chapters[0].href.clone();
         let fonts = [crate::test_fixture("fonts/Silkscreen-Regular.ttf")];
         let mut fonts = crate::font_context(&fonts).unwrap();
-        let styles = BookStyle::load(&mut book, &chapter, &source.stylesheets, &mut fonts)
-            .compute(&source.elements);
+        let styles =
+            BookStyle::load(&mut book, &chapter, &source, &mut fonts).compute(&source.elements);
         (source, styles)
     }
 
@@ -994,6 +1146,30 @@ mod tests {
         let explicit = style_of("plain");
         assert_eq!(explicit.font_weight, FontWeight::NORMAL);
         assert_eq!(explicit.font_style, FontStyle::Normal);
+    }
+
+    #[test]
+    fn unrelated_publisher_selectors_do_not_displace_the_chapters_paragraph_indent() {
+        let unrelated = |start| {
+            (start..start + 190)
+                .map(|n| format!(".appendix{n} p {{font-weight:bold}}"))
+                .collect::<String>()
+        };
+        let markup = format!(
+            r#"<html><head>
+            <style>p {{text-indent:1em}} {}</style><style>{}</style>
+            <style>.citation {{text-indent:-1em}}</style></head>
+            <body><p class="citation">Reference to the tide tables.</p></body></html>"#,
+            unrelated(0),
+            unrelated(190)
+        );
+        let (source, styles) = computed(&markup);
+        assert_eq!(
+            styles[source.blocks[0].element]
+                .text_indent
+                .pixels(500, 32.0),
+            -32.0
+        );
     }
 
     #[test]

@@ -243,15 +243,17 @@ impl ParleyChapter {
             }
             if !block.text.is_empty() {
                 let style = &styles[block.element];
+                let indent =
+                    LineIndent::resolve(style, image_width, width, settings.font_size, hanging);
                 let (layout, ruby) = layout_with_images(
                     &mut context,
                     &mut fonts,
                     block,
-                    width,
+                    width - indent.common,
                     settings,
                     styles,
                     &inline_boxes,
-                    hanging,
+                    indent,
                 );
                 if lines.len() + layout.len() > MAX_LINES {
                     return Err("The chapter exceeds the Parley line limit".into());
@@ -261,7 +263,12 @@ impl ParleyChapter {
                     .next()
                     .map_or(0.0, |line| line.metrics().content_block_min_coord.min(0.0));
                 rtl = layout.is_rtl();
-                let x = column_x as f32 + if rtl { 0.0 } else { (gutter - hanging) as f32 };
+                let x = column_x as f32
+                    + if rtl {
+                        0.0
+                    } else {
+                        (gutter - hanging + indent.common) as f32
+                    };
                 marker_baseline = layout.get(0).map(|line| origin + line.metrics().baseline);
                 let mut bottom = origin + layout.height();
                 let mut overlays = ruby.iter().peekable();
@@ -710,6 +717,40 @@ fn visible_rows(range: &Range<f32>, settings: Settings) -> usize {
         .clamp(1.0, settings.text_height() as f32) as usize
 }
 
+#[derive(Clone, Copy)]
+struct LineIndent {
+    common: u32,
+    amount: f32,
+    hanging: bool,
+}
+
+impl LineIndent {
+    fn resolve(style: &Style, content_width: u32, width: u32, font: f32, marker: u32) -> Self {
+        // Keep enough of the column for a word or glyph, even for malformed
+        // publisher lengths. An outdent at the reading margin uses the first
+        // available column and shifts the other lines inward (as CREngine does
+        // when page overflow is disabled). This also protects adjacent cells.
+        let limit = (width as f32 - font.min(width as f32 / 2.0)).max(0.0);
+        let css = style
+            .text_indent
+            .pixels(content_width, font)
+            .clamp(-limit, limit);
+        let (first, rest) = if style.text_indent.hanging {
+            (0.0, marker as f32 + css)
+        } else {
+            (css, marker as f32)
+        };
+        let outside = first.min(rest).min(0.0);
+        let first = (first - outside).clamp(0.0, limit);
+        let rest = (rest - outside).clamp(0.0, limit);
+        Self {
+            common: first.min(rest).round() as u32,
+            amount: (first - rest).abs(),
+            hanging: rest > first,
+        }
+    }
+}
+
 #[cfg(test)]
 fn layout_paragraph(
     context: &mut LayoutContext<()>,
@@ -719,7 +760,17 @@ fn layout_paragraph(
     settings: Settings,
     styles: &[Style],
 ) -> (Layout<()>, Vec<RubyOverlay>) {
-    layout_with_images(context, fonts, block, width, settings, styles, &[], 0)
+    let indent = LineIndent::resolve(&styles[block.element], width, width, settings.font_size, 0);
+    layout_with_images(
+        context,
+        fonts,
+        block,
+        width - indent.common,
+        settings,
+        styles,
+        &[],
+        indent,
+    )
 }
 
 fn layout_with_images(
@@ -730,7 +781,7 @@ fn layout_with_images(
     settings: Settings,
     styles: &[Style],
     images: &[parley::InlineBox],
-    hanging: u32,
+    indent: LineIndent,
 ) -> (Layout<()>, Vec<RubyOverlay>) {
     let automatic = crate::hyphenation::opportunities(block, styles, settings);
     let mut layout = make_paragraph(
@@ -743,7 +794,7 @@ fn layout_with_images(
         &[],
         images,
         false,
-        hanging,
+        indent,
         &automatic,
     );
     // Some embedded fonts have ascenders and descenders taller than the publisher's
@@ -761,7 +812,7 @@ fn layout_with_images(
             &[],
             images,
             true,
-            hanging,
+            indent,
             &automatic,
         );
     }
@@ -827,7 +878,7 @@ fn layout_with_images(
         &candidates,
         images,
         fit_font_metrics,
-        hanging,
+        indent,
         &automatic,
     );
     let mut overlays = Vec::new();
@@ -1032,7 +1083,7 @@ fn make_paragraph(
     ruby: &[RubyCandidate],
     images: &[parley::InlineBox],
     fit_font_metrics: bool,
-    hanging: u32,
+    indent: LineIndent,
     automatic: &[usize],
 ) -> Layout<()> {
     let style = &styles[block.element];
@@ -1152,11 +1203,11 @@ fn make_paragraph(
         builder.push_inline_box(image.clone());
     }
     let mut layout = builder.build(&block.text);
-    if hanging > 0 {
+    if indent.amount > 0.0 {
         layout.set_text_indent(
-            hanging as f32,
+            indent.amount,
             parley::IndentOptions {
-                hanging: true,
+                hanging: indent.hanging,
                 each_line: false,
             },
         );
@@ -1533,6 +1584,156 @@ mod tests {
     }
 
     #[test]
+    fn publisher_paragraph_indents_preserve_source_hits_search_and_saved_positions() {
+        let original = include_str!("../tests/fixtures/paragraph-indents.xhtml");
+        let settings = Settings {
+            width: 600,
+            height: 800,
+            font_size: 32.0,
+            margin: 24,
+            ..Settings::default()
+        };
+        let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let book = crate::test_fixture("field-notes-epub3.epub");
+        let open = |publisher_styles| {
+            crate::Probe::from_book_content(
+                Book::open(&book).unwrap(),
+                crate::Engine::Parley,
+                &fonts,
+                Settings {
+                    publisher_styles,
+                    ..settings
+                },
+                0,
+                Some(original.to_owned()),
+            )
+            .unwrap()
+        };
+        let mut styled = open(true);
+        let mut plain = open(false);
+        assert_ne!(styled.capture(0).unwrap(), plain.capture(0).unwrap());
+        assert_eq!(styled.coverage(), plain.coverage());
+        assert_eq!(styled.coverage().0, styled.coverage().1);
+        for (id, word, first, rest) in [
+            ("tide", "tide", 48.0, 0.0),
+            ("pier", "pier", 0.0, 0.0),
+            ("signal", "signal", 55.2, 0.0),
+            ("weather", "Weather", 0.0, 32.0),
+        ] {
+            let saved = plain.fragment(id).unwrap();
+            assert_eq!(styled.fragment(id).unwrap(), saved);
+            assert!(styled.page_for(&saved).is_some());
+            assert_eq!(plain.matches(word), styled.matches(word));
+            let start = styled.matches(word).remove(0);
+            let end = crate::Anchor {
+                offset: start.offset + word.len(),
+                ..start.clone()
+            };
+            let selection = styled.select_range(&start, &end).unwrap();
+            assert_eq!(selection.text, word);
+            let page = styled.page_for(&start).unwrap();
+            let rect = styled.selection_rects(page, &selection)[0];
+            assert_eq!(
+                styled
+                    .word_at(
+                        page,
+                        (rect.x + rect.width / 2) as f32,
+                        (rect.y + rect.height / 2) as f32
+                    )
+                    .unwrap()
+                    .text,
+                word
+            );
+            let crate::Renderer::Parley(engine) = &styled.renderer else {
+                panic!()
+            };
+            let p = engine
+                .paragraphs
+                .iter()
+                .find(|p| p.key == start.block)
+                .unwrap();
+            for (line, expected) in [(0, first), (1, rest), (2, rest)] {
+                let x = p.x + p.layout.get(line).unwrap().metrics().offset;
+                assert!(
+                    (x - expected).abs() <= 0.6,
+                    "{id} line {line} starts at {x}, expected {expected}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn signed_paragraph_indents_follow_the_cascade_and_stay_inside_the_column() {
+        let filler =
+            "Harbour lights reflected off the quiet water while the boat was waiting. ".repeat(6);
+        let markup = format!(
+            r#"<html style="font-size:1.5em"><body style="font-size:1em; text-indent:2em">
+            <p style="font-size:0.5em">{filler}</p>
+            <p style="text-indent:initial">{filler}</p>
+            <p style="text-indent:1rem">{filler}</p>
+            <p style="text-indent:0; text-indent:inherit">{filler}</p>
+            <p style="text-indent:-1em">{filler}</p>
+            <p style="text-indent:hanging -1em">{filler}</p>
+            <p style="text-indent:1pt !important; text-indent:0">{filler}</p>
+            <p style="text-indent:12px; text-indent:3foo">{filler}</p>
+            <p style="text-indent:40000%">{filler}</p>
+            <p dir="rtl" style="text-indent:24px">{filler}</p>
+        </body></html>"#
+        );
+        let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let book = crate::test_fixture("field-notes-epub3.epub");
+        let settings = Settings {
+            width: 600,
+            height: 800,
+            font_size: 32.0,
+            margin: 24,
+            ..Settings::default()
+        };
+        let p = crate::Probe::from_book_content(
+            Book::open(&book).unwrap(),
+            crate::Engine::Parley,
+            &fonts,
+            settings,
+            0,
+            Some(markup),
+        )
+        .unwrap();
+        assert_eq!(p.coverage().0, p.coverage().1);
+        let crate::Renderer::Parley(engine) = &p.renderer else {
+            panic!()
+        };
+        assert_eq!(engine.paragraphs.len(), 10);
+        for (p, (first, rest)) in engine.paragraphs.iter().zip([
+            (96.0, 0.0),
+            (0.0, 0.0),
+            (48.0, 0.0),
+            (96.0, 0.0),
+            (0.0, 48.0),
+            (48.0, 0.0),
+            (96.0 / 72.0, 0.0),
+            (12.0, 0.0),
+            (520.0, 0.0),
+        ]) {
+            for (line, expected) in [(0, first), (1, rest)] {
+                assert!(
+                    (p.layout.get(line).unwrap().metrics().offset + p.x - expected).abs() <= 0.6,
+                    "line {line} expected {expected}"
+                );
+            }
+        }
+        let rtl = &engine.paragraphs[9];
+        assert!(rtl.layout.is_rtl());
+        for (line, inset) in [(0, 24.0), (1, 0.0)] {
+            let m = rtl.layout.get(line).unwrap();
+            let right = m.metrics().offset + m.metrics().advance;
+            assert!(
+                (right + inset - settings.text_width() as f32).abs() < 1.0,
+                "rtl line {line} ends at {right}"
+            );
+        }
+    }
+
+    #[test]
     fn tight_publisher_leading_preserves_long_paragraphs_and_every_page_anchor() {
         let words = "Light from the harbour reached the shore. ".repeat(90);
         let markup = format!("<html><body><p style='line-height: 1'>{words}</p></body></html>");
@@ -1714,8 +1915,8 @@ mod tests {
         let href = book.chapters[0].href.clone();
         let mut fonts =
             crate::font_context(&[crate::test_fixture("fonts/Silkscreen-Regular.ttf")]).unwrap();
-        let styles = BookStyle::load(&mut book, &href, &source.stylesheets, &mut fonts)
-            .compute(&source.elements);
+        let styles =
+            BookStyle::load(&mut book, &href, &source, &mut fonts).compute(&source.elements);
         let mut context = LayoutContext::new();
         let mut sample = |settings| {
             let (layout, _) = layout_paragraph(
@@ -1865,8 +2066,8 @@ mod tests {
         let href = book.chapters[0].href.clone();
         let fonts = [crate::test_fixture("fonts/Silkscreen-Regular.ttf")];
         let mut fonts = crate::font_context(&fonts).unwrap();
-        let styles = BookStyle::load(&mut book, &href, &source.stylesheets, &mut fonts)
-            .compute(&source.elements);
+        let styles =
+            BookStyle::load(&mut book, &href, &source, &mut fonts).compute(&source.elements);
         let mut context = LayoutContext::new();
         let settings = Settings {
             font_size: 24.0,
@@ -1939,8 +2140,8 @@ mod tests {
         let href = book.chapters[0].href.clone();
         let fonts = [crate::test_fixture("fonts/Silkscreen-Regular.ttf")];
         let mut fonts = crate::font_context(&fonts).unwrap();
-        let styles = BookStyle::load(&mut book, &href, &source.stylesheets, &mut fonts)
-            .compute(&source.elements);
+        let styles =
+            BookStyle::load(&mut book, &href, &source, &mut fonts).compute(&source.elements);
         let mut context = LayoutContext::new();
         let settings = Settings {
             font_size: 24.0,
@@ -2011,8 +2212,8 @@ mod tests {
         let href = book.chapters[0].href.clone();
         let fonts = [crate::test_fixture("fonts/Silkscreen-Regular.ttf")];
         let mut fonts = crate::font_context(&fonts).unwrap();
-        let styles = BookStyle::load(&mut book, &href, &source.stylesheets, &mut fonts)
-            .compute(&source.elements);
+        let styles =
+            BookStyle::load(&mut book, &href, &source, &mut fonts).compute(&source.elements);
         let mut context = LayoutContext::new();
         let settings = Settings {
             font_size: 24.0,
@@ -2669,9 +2870,8 @@ mod tests {
         let path = book.chapters[0].href.clone();
         let fonts = [crate::test_fixture("fonts/Silkscreen-Regular.ttf")];
         let mut fonts = crate::font_context(&fonts).unwrap();
-        let styles =
-            crate::book_style::BookStyle::load(&mut book, &path, &source.stylesheets, &mut fonts)
-                .compute(&source.elements);
+        let styles = crate::book_style::BookStyle::load(&mut book, &path, &source, &mut fonts)
+            .compute(&source.elements);
         let (block, anchor) = source.fragments["anchor"];
         let text = &source.blocks[0].text;
         assert_eq!(block, source.blocks[0].key);
