@@ -260,6 +260,19 @@ The mixed-orientation PDF has a landscape cover and 1,040 portrait pages. With a
 
 An independently authored two-page PDF exercises the ordinary tap, same-page link, history navigation, and reopen paths. Separate regression tests cover named and explicit destinations, rotated crop boxes, and paged and continuous reading at 300% zoom. Reader keeps the current zoom. A missing coordinate retains page-only navigation. [Oasis-size simulator after following a link](screenshots/pdf-link-destination.png)
 
+### Physical PDF link taps at 300%
+
+Two independently built ARMHF verifiers ran on the Kindle Oasis, opening the original 1,066-page PDF in Documents. A test harness positioned each source annotation in view and tapped it through Reader’s ordinary input handler. It measured the destination in the resulting offscreen viewport. Each run used its own reading profile. The SHA-256 of the 12,698,773-byte source matched before and after all four runs.
+
+| Build and reading mode | Correct physical page | Authored point visible | Within one pixel of intended corner |
+| --- | ---: | ---: | ---: |
+| 0.1.8, paged | 50/50 | 0/50 | 0/50 |
+| 0.1.8, continuous | 50/50 | 0/50 | 0/50 |
+| 0.1.9 candidate, paged | 50/50 | 50/50 | 50/50 |
+| 0.1.9 candidate, continuous | 50/50 | 50/50 | 50/50 |
+
+The candidate’s largest error on either axis was below 0.00004 pixels in paged mode and 0.258 pixels in continuous mode. All nine interior points met the one-pixel criterion in both modes. The reference manifest was decoded separately on the Mac. The Oasis matched all 86 annotations in this PDF, including 27 missing targets and nine external links, and matched all 80 outline rows. Each run also tapped one missing target and one external link and verified the message and source page. The tested revisions were `2420137` and `2def76c`.
+
 ## Saved locations across the 0.1.8 upgrade
 
 Reader 0.1.9 reopened the stored 0.1.8 anchors for eleven original EPUB entries. On the Mac the test restored a painted page at two widths, with automatic and authored word breaks. All 33 restorations kept the publication, chapter and source revision identifiers. A change in displayed page number is expected when line breaks or the available width change.
