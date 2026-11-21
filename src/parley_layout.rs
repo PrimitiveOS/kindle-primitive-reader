@@ -274,6 +274,45 @@ impl ParleyChapter {
         Ok((chapter, lines, extent))
     }
 
+    /// Last conservative paint bound. Parley's paragraph height also includes leading
+    /// and layout lines after a final hard break, which can overflow onto a blank page.
+    pub(crate) fn last_paint_bottom(&self, source: &Source) -> f32 {
+        let artwork = self
+            .illustrations
+            .iter()
+            .map(|art| art.y + art.display.1 as f32)
+            .fold(0.0, f32::max);
+        for paragraph in self.paragraphs.iter().rev() {
+            if paragraph.background.is_some_and(|gray| gray < 255) {
+                return artwork.max(paragraph.bottom);
+            }
+            let Ok(index) = source
+                .blocks
+                .binary_search_by_key(&paragraph.key, |block| block.key)
+            else {
+                return artwork.max(paragraph.bottom);
+            };
+            let text = &source.blocks[index].text;
+            let ruby = paragraph
+                .ruby
+                .iter()
+                .map(|reading| paragraph.y + reading.bottom)
+                .fold(artwork, f32::max);
+            for line in paragraph.layout.lines().rev() {
+                if text[line.text_range()].chars().any(|ch| !ch.is_whitespace())
+                    || line.items().any(|item| matches!(item,
+                        PositionedLayoutItem::GlyphRun(run) if run.advance() > 0.0 && run.style().underline.is_some()))
+                {
+                    return ruby.max(paragraph.y + line.metrics().content_block_max_coord);
+                }
+            }
+            if ruby > artwork {
+                return ruby;
+            }
+        }
+        artwork
+    }
+
     pub(crate) fn source_at(&self, x: f32, y: f32, visible: &Range<f32>) -> Option<(usize, usize)> {
         let paragraph = self.paragraphs.get(
             self.paragraphs
@@ -1063,6 +1102,121 @@ mod tests {
             assert_eq!(probe.page_for(&anchor), Some(page));
             assert!(probe.capture(page).unwrap().iter().any(|&gray| gray < 180));
         }
+    }
+
+    #[test]
+    fn terminal_breaks_keep_end_anchors_on_the_last_painted_page() {
+        let path = crate::test_fixture("field-notes-epub3.epub");
+        let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let settings = Settings {
+            width: 240,
+            height: 200,
+            font_size: 22.,
+            margin: 10,
+            ..Settings::default()
+        };
+        let markup = format!(
+            "<html><body><p>First.<br/>{}<span id='last'>Last.</span>{}<span id='end'/></p></body></html>",
+            "Body line.<br/>".repeat(8),
+            "<br/>".repeat(17)
+        );
+        let mut probe = crate::Probe::from_book_content(
+            Book::open(&path).unwrap(),
+            crate::Engine::Parley,
+            &fonts,
+            settings,
+            0,
+            Some(markup),
+        )
+        .unwrap();
+        let last = probe.page_count() - 1;
+        assert!(last > 0);
+        assert_eq!(probe.page_for(&probe.fragment("last").unwrap()), Some(last));
+        assert_eq!(probe.page_for(&probe.fragment("end").unwrap()), Some(last));
+        for page in 0..=last {
+            assert!(probe.capture(page).unwrap().iter().any(|&gray| gray < 180));
+            assert_eq!(
+                probe.page_for(&probe.page_anchor(page).unwrap()),
+                Some(page)
+            );
+        }
+        let blank = crate::Probe::from_book_content(
+            Book::open(&path).unwrap(),
+            crate::Engine::Parley,
+            &fonts,
+            settings,
+            0,
+            Some("<html><body><p> </p></body></html>".into()),
+        )
+        .unwrap();
+        assert_eq!(blank.page_count(), 1);
+    }
+
+    #[test]
+    fn fractional_leading_extending_beyond_the_last_page_restores_the_last_visible_line() {
+        let path = crate::test_fixture("field-notes-epub3.epub");
+        let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let markup = "<html><body><p>First line.<br/>Second line.<br/>Third line.<br/><span id='last'>Fourth line.</span></p></body></html>";
+        let settings = Settings {
+            width: 280,
+            height: 240,
+            margin: 0,
+            font_size: 25.,
+            line_height: 1.8,
+            ..Settings::default()
+        };
+        let mut probe = crate::Probe::from_book_content(
+            Book::open(&path).unwrap(),
+            crate::Engine::Parley,
+            &fonts,
+            settings,
+            0,
+            Some(markup.into()),
+        )
+        .unwrap();
+        let crate::Renderer::Parley(chapter) = &probe.renderer else {
+            unreachable!()
+        };
+        let paint_end = chapter.last_paint_bottom(&probe.source);
+        let nominal_end = chapter.paragraphs.last().unwrap().bottom;
+        let height = paint_end.ceil();
+        assert!(height < nominal_end);
+        let mut pages = crate::Pagination::new(&probe.lines, height, nominal_end).unwrap();
+        assert_eq!(pages.len(), 2);
+        pages.trim_unpainted_tail(paint_end);
+        assert_eq!(pages.len(), 1);
+        probe.pages = pages;
+        assert_eq!(probe.page_for(&probe.fragment("last").unwrap()), Some(0));
+        assert!(probe.capture(0).unwrap().iter().any(|&gray| gray < 180));
+    }
+
+    #[test]
+    fn trailing_shaded_breaks_remain_visible() {
+        let path = crate::test_fixture("field-notes-epub3.epub");
+        let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let settings = Settings {
+            width: 240,
+            height: 200,
+            font_size: 22.,
+            margin: 10,
+            ..Settings::default()
+        };
+        let markup = format!(
+            "<html><body><p style='background-color:#aaa'>Start.{}<span id='end'/></p></body></html>",
+            "<br/>".repeat(17)
+        );
+        let mut probe = crate::Probe::from_book_content(
+            Book::open(&path).unwrap(),
+            crate::Engine::Parley,
+            &fonts,
+            settings,
+            0,
+            Some(markup),
+        )
+        .unwrap();
+        let last = probe.page_count() - 1;
+        assert!(last > 0);
+        assert!(probe.capture(last).unwrap().iter().any(|&gray| gray < 220));
     }
 
     #[test]

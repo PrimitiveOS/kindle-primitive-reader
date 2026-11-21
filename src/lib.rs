@@ -302,6 +302,19 @@ impl Pagination {
         Ok(Self { bounds })
     }
 
+    fn trim_unpainted_tail(&mut self, painted_bottom: f32) {
+        if self.len() < 2 || self.bounds[self.len() - 1] < painted_bottom {
+            return;
+        }
+        // Keep at least one view for a deliberately empty spine entry. The source
+        // and all of its line positions remain available for links and saved anchors.
+        let pages = self.bounds[..self.len()]
+            .partition_point(|&start| start < painted_bottom)
+            .max(1);
+        self.bounds.truncate(pages + 1);
+        self.bounds[pages] = painted_bottom;
+    }
+
     fn page(&self, y: f32) -> usize {
         self.bounds[..self.len()]
             .partition_point(|&bound| bound <= y)
@@ -477,11 +490,14 @@ impl Probe {
         };
         lines.sort_by(|a, b| a.top.total_cmp(&b.top));
         let height = settings.text_height() as f32;
-        let pages = if matches!(&renderer, Renderer::Vertical(_)) {
+        let mut pages = if matches!(&renderer, Renderer::Vertical(_)) {
             Pagination::fixed_stride(height, content_height)?
         } else {
             Pagination::new(&lines, height, content_height)?
         };
+        if pages.len() > 1 && let Renderer::Parley(chapter) = &renderer {
+            pages.trim_unpainted_tail(chapter.last_paint_bottom(&source));
+        }
         Ok(Self {
             title,
             author,

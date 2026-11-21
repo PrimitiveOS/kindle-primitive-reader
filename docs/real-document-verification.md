@@ -97,6 +97,12 @@ both. All 315 spine entries opened and every one of the 8,575 pages painted.
   pass measures the software renderer and input handlers. Physical display
   behavior is covered by the separately identified Oasis runs.
 
+### Trailing reflow pages
+
+A follow-up Mac run checked the two all-white trailing views from the whole-spine table. In 032, the final 113.9 pixels held a terminal hard break and an empty layout line. In 061, the paragraph's nominal height extended 0.44 pixels past the page boundary after its last visible line. Reader now ends pagination at the final line, illustration, annotation or paragraph background with visible content. End-of-chapter links and saved text positions still resolve.
+
+The two affected chapters produced 102 and 10 pages respectively. All 112 pages showed ink, all 112 page anchors returned to their original pages, all 214 source fragments resolved and all 120,896 non-whitespace characters mapped to laid-out lines. The two intentionally empty entries in 055 each continued to paint a single white page. Authored regression tests also check multiple terminal breaks, a trailing anchor and shaded whitespace.
+
 ## Reader 0.1.5 on the Oasis
 
 | Format | Files attempted | Opened and drew a page |
