@@ -1,6 +1,7 @@
 //! The daily reader interface and foreground lifecycle.
 mod bar_icons;
 mod custom_contents;
+mod contents_position;
 mod dictionary_panel;
 mod gestures;
 mod library_view;
@@ -475,6 +476,7 @@ pub struct Reader {
     refresh_display: bool,
     auto_turn: AutoTurn,
     list_page: usize,
+    current_contents_row: Option<usize>,
     back: Vec<ReadingPosition>,
     forward: Vec<ReadingPosition>,
     notice: Option<String>,
@@ -589,6 +591,7 @@ impl Reader {
             refresh_display: false,
             auto_turn: AutoTurn::default(),
             list_page: 0,
+            current_contents_row: None,
             back: Vec::new(),
             forward: Vec::new(),
             notice: None,
@@ -862,7 +865,8 @@ impl Reader {
         self.screen = screen;
         self.sync_auto_turn(Instant::now());
         self.update_stats_activity(Instant::now());
-        self.list_page = 0;
+        self.current_contents_row = self.locate_contents_row();
+        self.list_page = self.current_contents_row.unwrap_or_default() / ROWS_PER_PAGE;
         self.notice = None;
     }
 
@@ -4880,7 +4884,13 @@ impl App for Reader {
             }
             return;
         }
-        let items = self.items();
+        let mut items = self.items();
+        if let Some(current) = self.current_contents_row.and_then(|row| items.get_mut(row)) {
+            current.detail = Some(match current.detail.take() {
+                Some(detail) => format!("Current section · {detail}"),
+                None => "Current section".into(),
+            });
+        }
         let rows: Vec<_> = items
             .iter()
             .skip(self.list_page * ROWS_PER_PAGE)
@@ -6953,7 +6963,7 @@ mod tests {
         );
         for index in 1..=14 {
             use std::fmt::Write as _;
-            write!(first, "<h1>Passage {index}</h1><p>{lyric}</p>").unwrap();
+            write!(first, r#"<h1 id="passage{index}">Passage {index}</h1><p>{lyric}</p>"#).unwrap();
         }
         first.push_str("</body></html>");
         let second = br#"<html xmlns="http://www.w3.org/1999/xhtml"><body><p>There are no headings here.</p></body></html>"#;
@@ -7682,6 +7692,85 @@ mod tests {
         while app.list_page > page { app.input(Input::PageBack); }
         let y = LIST_Y + (index % ROWS_PER_PAGE) as i32 * ROW_HEIGHT + ROW_HEIGHT / 2;
         assert_eq!(app.input(Input::Tap(160.0, y as f32)), Change::Partial);
+    }
+
+    #[test]
+    fn contents_opens_at_the_current_section_from_either_reading_bar() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Daily notebook.epub");
+        fs::copy(crate::test_fixture("many-chapters.epub"), &path).unwrap();
+        let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+        let mut app = Reader::open(&fixture.root, &fixture.state, vec![font.clone()]).unwrap();
+        app.open_path(&path).unwrap();
+        app.follow_reflow_page(37, 0).unwrap();
+        let before = app.current_position().unwrap();
+        let history_len = app.back.len();
+        for upper in [true, false] {
+            app.open_reading_edge(upper, if upper { 100.0 } else { 630.0 });
+            if upper && app.top_group != Some(TopGroup::Navigation) {
+                tap_reading_control(&mut app, "Navigation");
+            }
+            assert_eq!(tap_reading_control(&mut app, "Contents"), Change::Partial);
+            let row = app.current_contents_row.unwrap();
+            assert_eq!(app.items()[row].title, "Day 38");
+            assert_eq!(app.list_page, row / ROWS_PER_PAGE);
+            assert!(app.list_page > 0);
+            if upper {
+                capture_test_screen(&app, std::slice::from_ref(&font), "READER_CURRENT_CONTENTS_SCREENSHOT", false);
+            }
+            assert_eq!(app.input(Input::PageBack), Change::Partial);
+            assert_eq!(app.list_page, row / ROWS_PER_PAGE - 1);
+            assert_eq!(app.current_position(), Some(before.clone()));
+            assert_eq!(app.back.len(), history_len);
+            app.show(Screen::Book);
+            assert_eq!(app.current_contents_row, None);
+        }
+    }
+
+    #[test]
+    fn contents_resolves_same_chapter_fragments_and_ignores_unreadable_targets() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Anchored contents.epub");
+        let nav = br##"<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><nav epub:type="toc"><ol><li><a href="first.xhtml#absent">Missing</a></li><li><a href="first.xhtml#passage2">Opening</a></li><li><a href="first.xhtml#passage12">Later section</a></li><li><a href="first.xhtml#passage12">Duplicate heading</a></li><li><a href="second.xhtml">Closing</a></li></ol></nav></body></html>"##;
+        write_outline_fixture(&path, Some(nav), None);
+        let mut app = fixture.app();
+        app.open_path(&path).unwrap();
+        let active = &mut app.active.as_mut().unwrap().reading;
+        active.jump(0, Some("passage12")).unwrap();
+        let before = app.current_position().unwrap();
+        app.show(Screen::Contents);
+        assert_eq!(app.items()[app.current_contents_row.unwrap()].title, "Later section");
+        assert_eq!(app.current_position(), Some(before));
+    }
+
+    #[test]
+    fn fixed_contents_uses_publisher_and_custom_page_destinations() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Chart booklet.pdf");
+        fs::write(&path, crate::fixed::tests::pdf_objects(&[
+            "<< /Type /Catalog /Pages 2 0 R /Outlines 5 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 120] >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 120] >>",
+            "<< /Type /Outlines /First 6 0 R /Last 7 0 R >>",
+            "<< /Title (First chart) /Dest [3 0 R /Fit] /Parent 5 0 R /Next 7 0 R >>",
+            "<< /Title (Second chart) /Dest [4 0 R /Fit] /Parent 5 0 R /Prev 6 0 R >>",
+        ])).unwrap();
+        let mut app = fixture.app();
+        app.open_path(&path).unwrap();
+        app.follow_fixed(1, None).unwrap();
+        let before = app.current_position().unwrap();
+        app.show(Screen::FixedContents);
+        assert_eq!(app.items()[app.current_contents_row.unwrap()].title, "Second chart");
+        assert_eq!(app.current_position(), Some(before.clone()));
+
+        let fixed = app.fixed.as_ref().unwrap();
+        let custom = &mut app.library.remember(&fixed.entry, fixed.id, &fixed.entry.title).custom_contents;
+        custom.save(before.clone(), "Local soundings").unwrap();
+        custom.enabled = true;
+        app.show(Screen::FixedContents);
+        assert_eq!(app.items()[app.current_contents_row.unwrap()].title, "Local soundings");
+        assert_eq!(app.current_position(), Some(before));
     }
 
     fn save_chapter_title(app: &mut Reader, title: &str) {
