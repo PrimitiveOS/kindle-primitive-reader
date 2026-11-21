@@ -21,6 +21,29 @@ At fit page the maximum quantized difference in both photograph regions was one 
 
 The OCR comparison counted chart lines for which full decoding reproduced at least 90% of the expected character sequence. The candidate retained 10/10 such lines at fit page, 17/17 at 150% and 20/20 at 300%. The small CMYK chart and a page containing six exceptional inputs produced byte-identical viewport images with the alternate decoder enabled and disabled.
 
+## Kindle Oasis 3 comparisons
+
+The Oasis rendered the same 1264 × 1606 viewport in twelve separate Reader processes and four installed KOReader/MuPDF processes. Each time measures the page raster after parsing the PDF. Peak resident memory was sampled before encoding the output PNG. The source PDF retained its original checksum. Two fit-page passes for each Reader path produced identical full PNGs within that path.
+
+| Document and view | Reader full raster | Reader reduced raster | KOReader grayscale raster | Reader peak KiB, full / reduced |
+| --- | ---: | ---: | ---: | ---: |
+| Original cover, fit page, reverse-order pair | 26.817 s | 11.223 s | 5.773 s | 185,732 / 153,236 |
+| Original cover, 300% | 31.641 s | 28.253 s | 10.027 s | 203,060 / 203,060 |
+| Authored print scan, fit page | 4.189 s | 3.585 s | 1.223 s | 78,652 / 42,352 |
+| Authored print scan, 150% | 5.387 s | 3.020 s | 1.219 s | 78,668 / 42,376 |
+| Small CMYK chart, fit page | 0.458 s | 0.444 s | — | 14,648 / 14,652 |
+
+At fit page three cover images qualified for reduced decoding. In the reverse-order pair the raster took 15.594 seconds less and used 32,496 KiB less peak memory. Installed MuPDF rendered the same viewport 5.450 seconds faster and peaked at 38,564 KiB. A concurrent file transfer overlapped both measurements of the first pair, which took 26.276 seconds with full decoding and 15.338 seconds with reduced decoding. At 300% on the original and at fit page on the small chart, both settings ran the full decoder and produced byte-identical full PNGs. Their single-pass timing differences show run-to-run variability.
+
+| Physical fit-page photograph | Pixels | Mean absolute difference (0–255) | 99th percentile | SSIM vs full decoding | SSIM vs KOReader, full / reduced |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Left | 346,112 | 0.144 | 2 | 0.99850 | 0.94737 / 0.94912 |
+| Right | 338,676 | 0.408 | 4 | 0.99738 | 0.94613 / 0.94480 |
+
+Two pixels in the right photograph changed by two shades after quantization to sixteen gray levels. All other pixels in both photograph regions changed by at most one shade. In the authored scan, reduction retained all 10 fit-page and 17 enlarged text lines that full decoding reproduced with at least 90% character agreement. At 150%, seventeen pixels across the authored text and registration regions changed by two shades. The desktop three-sample guard returned to full decoding at this zoom for these inputs and rendered the same cover pixels as the two-sample guard at fit page.
+
+The standard Reader package continues to use full decoding. The experiment demonstrates a fit-page speed and memory benefit for this print PDF. Assessing the three-sample guard on more independently sourced CMYK and YCCK scans would give a broader picture of fine text and photographic detail before choosing a release default.
+
 ## Reproduction
 
 The chart generator takes one output path and requires Pillow. The example accepts a PDF, a one-based page number, a zoom factor relative to fit page and an output PNG path. It prints elapsed page raster time and, on Linux, process peak resident memory. The example viewport is 1264 × 1606 pixels.
