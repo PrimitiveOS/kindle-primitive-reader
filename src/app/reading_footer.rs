@@ -1,5 +1,6 @@
 //! Reading status shares the existing compact page footer with document controls.
-use super::{Action, Item, Reader, Screen};
+use super::{Action, ActiveFixed, Item, Reader, Screen};
+use crate::library::Bookmark;
 use crate::Probe;
 use crate::fixed_session::FixedReading;
 use crate::reading_controls::{ProgressScope, ReadingControls, StatusBar};
@@ -50,6 +51,35 @@ impl Probe {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum PageSections<'a> {
+    Publisher(&'a [(usize, String)]),
+    Custom(&'a [Bookmark]),
+}
+
+impl<'a> PageSections<'a> {
+    fn len(self) -> usize {
+        match self {
+            Self::Publisher(entries) => entries.len(),
+            Self::Custom(entries) => entries.len(),
+        }
+    }
+
+    pub(super) fn before(self, page: usize) -> usize {
+        match self {
+            Self::Publisher(entries) => entries.partition_point(|(p, _)| *p < page),
+            Self::Custom(entries) => entries.partition_point(|entry| entry.position.page < page),
+        }
+    }
+
+    pub(super) fn at(self, index: usize) -> Option<(usize, &'a str)> {
+        match self {
+            Self::Publisher(entries) => entries.get(index).map(|(page, title)| (*page, title.as_str())),
+            Self::Custom(entries) => entries.get(index).map(|entry| (entry.position.page, entry.label.as_str())),
+        }
+    }
+}
+
 struct Progress<'a> {
     section_name: &'a str,
     section_page: usize,
@@ -61,7 +91,7 @@ struct Progress<'a> {
 }
 
 enum Ticks<'a> {
-    Pages(&'a [(usize, String)], usize),
+    Pages(PageSections<'a>, usize),
     Bytes(&'a [u64]),
 }
 
@@ -69,8 +99,8 @@ impl Ticks<'_> {
     fn draw(&self, mut mark: impl FnMut(f64)) {
         match *self {
             Self::Pages(sections, count) => {
-                for (page, _) in sections {
-                    mark(*page as f64 / count as f64);
+                for (page, _) in (0..sections.len()).filter_map(|index| sections.at(index)) {
+                    mark(page as f64 / count as f64);
                 }
             }
             Self::Bytes(offsets) => {
@@ -88,17 +118,14 @@ impl<'a> Progress<'a> {
     fn from_pages(
         page: usize,
         count: usize,
-        sections: &'a [(usize, String)],
+        sections: PageSections<'a>,
         fallback: &'a str,
     ) -> Self {
         let count = count.max(1);
         let page = page.min(count - 1);
-        let next = sections.partition_point(|(start, _)| *start <= page);
-        let (start, name) = next.checked_sub(1).map_or((0, fallback), |index| {
-            let (start, name) = &sections[index];
-            (*start, name.as_str())
-        });
-        let end = sections.get(next).map_or(count, |(end, _)| *end);
+        let next = sections.before(page.saturating_add(1));
+        let (start, name) = next.checked_sub(1).and_then(|index| sections.at(index)).unwrap_or((0, fallback));
+        let end = sections.at(next).map_or(count, |(end, _)| end);
         Self {
             section_name: name,
             section_page: page - start + 1,
@@ -124,13 +151,29 @@ impl<'a> Progress<'a> {
 }
 
 impl Reader {
+    pub(super) fn fixed_sections<'a>(&'a self, fixed: &'a ActiveFixed) -> PageSections<'a> {
+        let custom = self.library.state(fixed.id).map(|state| &state.custom_contents);
+        if let Some(chapters) = custom.filter(|chapters| chapters.enabled) {
+            let entries = chapters.entries();
+            // CustomContents orders fixed-page positions before reflow anchors in each chapter.
+            // A restored entry beyond this edition's last page cannot define a chapter here.
+            let end = entries.partition_point(|entry| {
+                let p = &entry.position;
+                p.chapter == 0 && p.anchor.is_none() && p.page < fixed.reading.count()
+            });
+            PageSections::Custom(&entries[..end])
+        } else {
+            PageSections::Publisher(&fixed.footer_chapters)
+        }
+    }
+
     fn footer_progress(&self) -> Option<Progress<'_>> {
         if let Some(fixed) = &self.fixed {
             let reading = &fixed.reading;
             return Some(Progress::from_pages(
                 reading.page(),
                 reading.count(),
-                &fixed.footer_chapters,
+                self.fixed_sections(fixed),
                 "Document",
             ));
         }
@@ -139,7 +182,7 @@ impl Reader {
         let mut progress = Progress::from_pages(
             reading.last_visible_page(),
             probe.page_count(),
-            probe.footer_sections(),
+            PageSections::Publisher(probe.footer_sections()),
             &probe.chapter_label,
         );
         if probe.chapter_count() > 1 {
@@ -403,7 +446,7 @@ mod tests {
             (5, "Part II", 1, 2),
             (6, "Part II", 2, 2),
         ] {
-            let p = Progress::from_pages(page, 7, &sections, "Front matter");
+            let p = Progress::from_pages(page, 7, PageSections::Publisher(&sections), "Front matter");
             assert_eq!(
                 (p.section_name, p.section_page, p.section_len),
                 (title, current, count)
@@ -411,7 +454,7 @@ mod tests {
             assert_eq!(p.pages_left(), count - current);
         }
         let mut ticks = Vec::new();
-        Ticks::Pages(&sections, 7).draw(|pos| ticks.push(pos));
+        Ticks::Pages(PageSections::Publisher(&sections), 7).draw(|pos| ticks.push(pos));
         assert_eq!(ticks, [2.0 / 7.0, 5.0 / 7.0]);
     }
 }

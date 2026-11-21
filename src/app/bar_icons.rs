@@ -15,7 +15,7 @@ pub(super) const BOOK: Icon = line(&[
 ]);
 pub(super) const TEXT: Icon = line(&["M4 19 L9 6 L14 19 M6.5 14 H11.5 M16 19 L19 11 L22 19"]);
 pub(super) const EXIT: Icon = line(&["M14 5 H19 V19 H14", "M4 12 H15 M11 8 L15 12 L11 16"]);
-const BOOKMARK: Icon = line(&["M7 4 H17 V20 L12 16 L7 20 Z"]);
+pub(super) const BOOKMARK: Icon = line(&["M7 4 H17 V20 L12 16 L7 20 Z"]);
 pub(super) const PAGE: Icon = line(&["M5 4 H19 V20 H5 Z", "M8 9 H16 M8 13 H16 M8 17 H13"]);
 const GRID: Icon = line(&[
     "M4 4 H10 V10 H4 Z M14 4 H20 V10 H14 Z",

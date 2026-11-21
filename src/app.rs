@@ -3,6 +3,7 @@ mod bar_icons;
 mod custom_contents;
 mod contents_position;
 mod dictionary_panel;
+mod fixed_book_map;
 mod gestures;
 mod library_view;
 mod lookup_history;
@@ -498,6 +499,7 @@ pub struct Reader {
     auto_turn: AutoTurn,
     list_page: usize,
     current_contents_row: Option<usize>,
+    map_window: fixed_book_map::MapWindow,
     back: Vec<HistoryLocation>,
     forward: Vec<HistoryLocation>,
     notice: Option<String>,
@@ -613,6 +615,7 @@ impl Reader {
             auto_turn: AutoTurn::default(),
             list_page: 0,
             current_contents_row: None,
+            map_window: fixed_book_map::MapWindow::default(),
             back: Vec::new(),
             forward: Vec::new(),
             notice: None,
@@ -884,6 +887,7 @@ impl Reader {
             self.cancel_search();
         }
         self.screen = screen;
+        self.map_window = fixed_book_map::MapWindow::default();
         self.sync_auto_turn(Instant::now());
         self.update_stats_activity(Instant::now());
         self.current_contents_row = self.locate_contents_row();
@@ -1453,39 +1457,6 @@ impl Reader {
             return Vec::new();
         };
         let state = self.library.state(id);
-        if let Some(fixed) = &self.fixed {
-            let reading = &fixed.reading;
-            return (0..reading.count())
-                .step_by(20)
-                .map(|start| {
-                    let end = (start + 20).min(reading.count());
-                    let pages = start..end;
-                    let marks = state.map_or(0, |state| {
-                        state
-                            .bookmarks
-                            .iter()
-                            .filter(|mark| pages.contains(&mark.position.page))
-                            .count()
-                    });
-                    let highlights = state.map_or(0, |state| {
-                        state
-                            .pdf_highlights
-                            .iter()
-                            .filter(|mark| pages.contains(&mark.page))
-                            .count()
-                    });
-                    Item::new(
-                        format!("Pages {}–{end}", start + 1),
-                        Action::FixedPage(start),
-                    )
-                    .detail(map_detail(
-                        pages.contains(&reading.page()),
-                        marks,
-                        highlights,
-                    ))
-                })
-                .collect();
-        }
         let Some(active) = &self.active else {
             return Vec::new();
         };
@@ -4876,6 +4847,10 @@ impl App for Reader {
             _ => self.screen.title(),
         };
         header(canvas, title, "Back");
+        if self.screen == Screen::BookMap && self.fixed.is_some() {
+            self.draw_fixed_book_map(canvas);
+            return;
+        }
         if self.screen == Screen::PageOverview {
             self.draw_overview(canvas);
             return;
@@ -5168,6 +5143,9 @@ impl App for Reader {
         }
         if self.screen == Screen::GoToPage {
             return self.handle_page_number(input);
+        }
+        if self.screen == Screen::BookMap && self.fixed.is_some() {
+            return self.fixed_map_input(input);
         }
         if self.screen == Screen::PageOverview {
             return self.overview_input(input);
@@ -7821,6 +7799,76 @@ mod tests {
         app.show(Screen::Contents);
         assert_eq!(app.items()[app.current_contents_row.unwrap()].title, "Later section");
         assert_eq!(app.current_position(), Some(before));
+    }
+
+    #[test]
+    fn fixed_book_map_browses_without_moving_and_returns_from_a_selected_page() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Atlas.pdf");
+        let external = std::env::var_os("READER_TEST_BOOK_MAP_PDF");
+        if let Some(source) = &external {
+            fs::copy(source, &path).unwrap();
+        } else {
+            let kids = (3..99).map(|id| format!("{id} 0 R")).collect::<Vec<_>>().join(" ");
+            let mut objects = vec![
+                "<< /Type /Catalog /Pages 2 0 R >>".into(),
+                format!("<< /Type /Pages /Count 96 /Kids [{kids}] /MediaBox [0 0 300 400] >>"),
+            ];
+            objects.extend((0..96).map(|_| "<< /Type /Page /Parent 2 0 R >>".into()));
+            fs::write(&path, crate::fixed::tests::pdf_objects(&objects)).unwrap();
+        }
+        let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+        let mut app = Reader::open(&fixture.root, &fixture.state, vec![font.clone()]).unwrap();
+        assert!(app.open_path(&path).is_ok());
+        let count = app.fixed.as_ref().unwrap().reading.count();
+        assert!((49..=2304).contains(&count));
+        let original = count / 2;
+        app.follow_fixed(original, None).unwrap();
+        app.activate(Action::ToggleBookmark).unwrap();
+        if external.is_none() {
+            let id = app.open_book_id().unwrap();
+            let custom = &mut app.library.state_mut(id).unwrap().custom_contents;
+            custom.enabled = true;
+            for (page, label) in [(0, "Harbor"), (12, "Estuary"), (24, "Narrows"), (36, "Ferry"), (48, "Headland"), (60, "Beacon"), (72, "Passage"), (84, "Inlet")] {
+                custom.save(ReadingPosition { chapter: 0, page, anchor: None }, label).unwrap();
+            }
+        }
+        app.show(Screen::Fixed);
+        if external.is_none() {
+            use crate::reading_controls::StatusBar;
+            app.controls.status_bar = StatusBar::Chapter;
+            assert_eq!(app.status_caption().as_deref(), Some("Headland  ·  Page 1 of 12"));
+            let id = app.open_book_id().unwrap();
+            app.library.state_mut(id).unwrap().custom_contents.enabled = false;
+            assert_eq!(app.status_caption().as_deref(), Some("Document  ·  Page 49 of 96"));
+            app.library.state_mut(id).unwrap().custom_contents.enabled = true;
+        }
+        let prior = app.back.clone();
+        let fonts = [font.display().to_string()];
+        let mut canvas = Canvas::new(WIDTH, HEIGHT, &fonts).unwrap();
+        let frame = primitive_app::frame(&app, &mut canvas, false);
+        app.open_reading_edge(true, 1.0);
+        tap_reading_control(&mut app, "Book map");
+        assert_eq!(app.screen, Screen::BookMap);
+        if external.is_none() {
+            capture_test_screen(&app, &[font], "READER_TEST_BOOK_MAP_SCREEN", false);
+        }
+        let tap = |i| {
+            let rect = fixed_book_map::cell(i);
+            Input::Tap((rect.x + rect.w / 2) as f32, (rect.y + rect.h / 2) as f32)
+        };
+        let slot_width = count.div_ceil(48);
+        app.input(tap(1));
+        assert_eq!(app.input(Input::PageForward), Change::Partial);
+        assert_eq!(app.input(Input::PageBack), Change::Partial);
+        assert_eq!(app.current_position().unwrap().page, original);
+        assert_eq!(app.back, prior);
+        assert_eq!(app.input(tap(0)), Change::Full);
+        assert_eq!(app.screen, Screen::Fixed);
+        assert_eq!(app.current_position().unwrap().page, slot_width);
+        app.activate(Action::ReturnToLocation).unwrap();
+        assert_eq!(app.current_position().unwrap().page, original);
+        assert!(primitive_app::frame(&app, &mut canvas, false) == frame);
     }
 
     #[test]
