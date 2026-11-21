@@ -19,11 +19,7 @@ const XHTML: &str = "http://www.w3.org/1999/xhtml";
 const XML: &str = "http://www.w3.org/XML/1998/namespace";
 const ID_ESCAPES: [char; 8] = ['^', '[', ']', '(', ')', ',', ';', '='];
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CfiPosition {
-    pub chapter: usize,
-    pub anchor: Anchor,
-}
+pub use crate::epub::EpubPosition as CfiPosition;
 
 struct Step {
     index: usize,
@@ -39,7 +35,7 @@ struct Point {
 
 /// Resolve a point against the opened publication without guessing a different position.
 pub fn resolve(book: &mut Book, value: &str) -> Result<CfiPosition> {
-    if book.is_fixed_layout() {
+    if !book.is_reflowable_epub() {
         return Err("CFI import requires a reflowable EPUB".into());
     }
     let point = Point::parse(value)?;
@@ -66,22 +62,8 @@ pub fn resolve(book: &mut Book, value: &str) -> Result<CfiPosition> {
     }
     let xhtml = book.chapter(chapter)?;
     let source = Source::parse(&xhtml)?;
-    let mut without_doctype;
-    let document = match Document::parse_with_options(&xhtml, xml_limits()) {
-        Err(roxmltree::Error::DtdDetected) => {
-            const PLAIN_DOCTYPE: &str = "<!DOCTYPE html>";
-            let start = xhtml
-                .find(PLAIN_DOCTYPE)
-                .ok_or(roxmltree::Error::DtdDetected)?;
-            without_doctype = xhtml.clone();
-            without_doctype.replace_range(
-                start..start + PLAIN_DOCTYPE.len(),
-                &" ".repeat(PLAIN_DOCTYPE.len()),
-            );
-            Document::parse_with_options(&without_doctype, xml_limits())?
-        }
-        outcome => outcome?,
-    };
+    let xml = crate::epub_xml::without_plain_doctype(&xhtml);
+    let document = Document::parse_with_options(&xml, xml_limits())?;
     let mut target = authored_body(document.root_element(), &point.local[0])?;
     for step in &point.local[1..] {
         target = if step.index.is_multiple_of(2) {

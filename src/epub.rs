@@ -27,6 +27,13 @@ const MAX_PAGE_REFERENCES: usize = 8192;
 use crate::epub_members::Members as Archive;
 pub(crate) use crate::epub_zip::check_zip_directory;
 
+/// A source-verified reading position in a reflowable EPUB.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EpubPosition {
+    pub chapter: usize,
+    pub anchor: crate::Anchor,
+}
+
 #[derive(Clone, Debug)]
 pub struct Chapter {
     pub href: String,
@@ -545,6 +552,10 @@ impl Book {
 
     pub fn is_fixed_layout(&self) -> bool {
         self.fixed_placements.is_some()
+    }
+
+    pub(crate) fn is_reflowable_epub(&self) -> bool {
+        matches!(self.content, Content::Archive { .. }) && !self.is_fixed_layout()
     }
 
     pub(crate) fn take_fixed_spine(&mut self) -> Option<FixedSpine> {

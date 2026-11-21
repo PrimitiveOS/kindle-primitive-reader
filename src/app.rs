@@ -1167,7 +1167,7 @@ impl Reader {
                                         }),
                                     ),
                                 Item::new("Edition check", Action::Heading).detail(
-                                    "CFI resolves and the KOReader sampled fingerprint matches",
+                                    "Reading position and KOReader sampled fingerprint match",
                                 ),
                             ]
                         }
@@ -4227,16 +4227,8 @@ impl Reader {
                     .map(|active| (&active.entry, active.id))
             })
             .ok_or("Open the matching book first")?;
-        if self.fixed.is_none() {
-            if entry.format != DocumentFormat::Epub {
-                return Err("This format uses a KOReader pointer that Reader cannot map".into());
-            }
-            if progress.last_epubcfi.is_none() {
-                return Err(
-                    "This sidecar has no EPUB CFI. Reader cannot map the legacy CREngine pointer"
-                        .into(),
-                );
-            }
+        if self.fixed.is_none() && entry.format != DocumentFormat::Epub {
+            return Err("This format uses a KOReader pointer that Reader cannot map".into());
         }
         let position = with_storage(|| {
             if self.library.identify(entry)? != id {
@@ -4257,9 +4249,13 @@ impl Reader {
                     anchor: None,
                 })
             } else {
-                let cfi = progress.reflow_cfi(checksum).map_err(io::Error::other)?;
+                progress
+                    .check_fingerprint(checksum)
+                    .map_err(io::Error::other)?;
                 let mut book = Book::open(&path).map_err(io::Error::other)?;
-                let target = crate::epub_cfi::resolve(&mut book, cfi).map_err(io::Error::other)?;
+                let target = progress
+                    .reflow_position(&mut book)
+                    .map_err(io::Error::other)?;
                 Ok(ReadingPosition {
                     chapter: target.chapter,
                     page: 0,
@@ -6691,6 +6687,51 @@ mod tests {
         );
         assert_eq!(position(&app.active.as_ref().unwrap().reading), original);
         assert!(app.back.is_empty());
+    }
+
+    #[test]
+    fn imports_a_koreader_epub_pointer_and_keeps_the_sidecar_and_return_position() {
+        let fixture = Fixture::new();
+        let path = fixture.state.with_file_name("koreader-progress.lua");
+        let authored = include_bytes!("../tests/fixtures/koreader-epub-position.lua");
+        fs::write(&path, authored).unwrap();
+        let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts.to_vec()).unwrap();
+        app.open_path(&fixture.book).unwrap();
+        app.activate(Action::Text(Settings { font_size: 50.0, ..device_settings() })).unwrap();
+        let original = position(&app.active.as_ref().unwrap().reading);
+        app.activate(Action::PreviewKoReaderPosition).unwrap();
+        let expected = app
+            .position_import
+            .as_ref()
+            .unwrap()
+            .target
+            .as_ref()
+            .unwrap()
+            .anchor
+            .clone()
+            .unwrap();
+        assert_eq!(expected.offset, 4);
+        capture_test_screen(&app, &fonts, "READER_KOREADER_POSITION_PREVIEW", false);
+        app.activate(Action::ApplyKoReaderPosition).unwrap();
+        let reading = &app.active.as_ref().unwrap().reading;
+        assert_eq!(reading.probe.page_for(&expected), Some(reading.page));
+        assert_eq!(expected.block, reading.probe.fragment("door").unwrap().block);
+        assert_ne!(reading.chapter, original.chapter);
+        capture_test_screen(&app, &fonts, "READER_KOREADER_POSITION_PAGE", false);
+        assert_eq!(fs::read(&path).unwrap(), authored);
+        app.activate(Action::ReturnToLocation).unwrap();
+        assert_eq!(position(&app.active.as_ref().unwrap().reading), original);
+
+        let invalid = std::str::from_utf8(authored)
+            .unwrap()
+            .replace("p[1]", "p[900]");
+        fs::write(&path, invalid.as_bytes()).unwrap();
+        app.activate(Action::PreviewKoReaderPosition).unwrap();
+        assert!(app.position_import.as_ref().unwrap().target.is_err());
+        assert!(app.activate(Action::ApplyKoReaderPosition).is_err());
+        assert_eq!(position(&app.active.as_ref().unwrap().reading), original);
+        assert_eq!(fs::read(&path).unwrap(), invalid.as_bytes());
     }
 
     #[test]
