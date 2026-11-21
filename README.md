@@ -182,6 +182,8 @@ entries before applying the import. [KOReader JSON exporter](https://github.com/
 
 Open a book and choose **Controls › Import KOReader position**. Reader looks for KOReader’s metadata beside the book. For example, `Harbor.epub` uses `Harbor.sdr/metadata.epub.lua`. Preview the destination and choose **Apply reading position** to move there. Reader checks the edition fingerprint and leaves KOReader’s data in place. For metadata kept elsewhere, copy it to `reader/data/koreader-progress.lua` and choose **Reading data › Import a copied KOReader position**. Fixed-page imports also check the page count. Reflow imports support a subset of EPUB CFIs.
 
+To extend a saved highlight, open it in **Highlights**, select **Extend highlight**, turn to the other end of the passage, and tap a word. **Apply** saves the expanded highlight with its note. **Cancel** returns to the original selection. Text selections can cross chapters. In supported fixed-page books they can cross pages with selectable text.
+
 The formats and workflows above are development features. The
 [reading parity plan](docs/reading-parity-plan.md) lists the remaining work and
 the acceptance checks for each feature. See [packaging instructions](INSTALL.md)
