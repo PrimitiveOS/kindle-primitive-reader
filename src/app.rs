@@ -1021,6 +1021,9 @@ impl Reader {
 
     fn list_window(&self) -> (usize, Vec<Item>) {
         let first = self.list_page * ROWS_PER_PAGE;
+        if self.screen == Screen::PublisherPages {
+            return self.publisher_page_window(first, ROWS_PER_PAGE);
+        }
         if self.screen == Screen::Matches && self.active.is_some() {
             let items = self
                 .hits
@@ -1041,8 +1044,9 @@ impl Reader {
         )
     }
 
-    fn large_search_list(&self) -> bool {
-        self.screen == Screen::Matches && self.active.is_some() && self.hits.len() > ROWS_PER_PAGE
+    fn has_list_shortcuts(&self, count: usize) -> bool {
+        matches!(self.screen, Screen::Matches | Screen::PublisherPages)
+            && self.active.is_some() && count > ROWS_PER_PAGE
     }
 
     fn items(&self) -> Vec<Item> {
@@ -1412,7 +1416,7 @@ impl Reader {
                 }
                 items
             }
-            Screen::PublisherPages => self.publisher_page_items(),
+            Screen::PublisherPages => self.publisher_page_window(0, usize::MAX).1,
             Screen::GeneratedContents => self.outline.as_ref().map_or_else(Vec::new, |outline| {
                 outline
                     .contents
@@ -5138,7 +5142,7 @@ impl App for Reader {
                 BODY,
             );
         }
-        if self.large_search_list() {
+        if self.has_list_shortcuts(count) {
             let last = count.saturating_sub(1) / ROWS_PER_PAGE;
             for (rect, icon, available) in [
                 (FIRST_MATCH_PAGE, bar_icons::FIRST_PAGE, self.list_page > 0),
@@ -5406,7 +5410,7 @@ impl App for Reader {
             return self.library_input(input);
         }
         let (count, mut items) = self.list_window();
-        let broad = self.large_search_list();
+        let broad = self.has_list_shortcuts(count);
         let (prev, next) = if broad {
             (PREV_MATCH_PAGE, NEXT_MATCH_PAGE)
         } else {

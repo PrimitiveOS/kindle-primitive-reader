@@ -7,6 +7,8 @@ use std::collections::HashMap;
 
 pub(crate) struct PublisherPositions {
     preceding: Option<usize>,
+    chapters: Vec<Option<usize>>,
+    screen_pages: HashMap<usize, usize>,
     // Each pair locates one print boundary in the open chapter's layout.
     visible: Vec<(f32, usize)>,
 }
@@ -22,6 +24,8 @@ impl Probe {
                 .collect();
             let chapter = order[self.chapter.as_str()];
             let mut preceding = None;
+            let mut chapters = vec![None; self.printed_pages.len()];
+            let mut screen_pages = HashMap::new();
             let mut visible = Vec::new();
             for (i, entry) in self.printed_pages.iter().enumerate() {
                 let Some(target) = &entry.destination else {
@@ -30,6 +34,7 @@ impl Probe {
                 let Some(&section) = order.get(target.path.as_str()) else {
                     continue;
                 };
+                chapters[i] = Some(section + 1);
                 if section < chapter {
                     preceding = preceding.max(Some((section, i)));
                 } else if section == chapter {
@@ -41,11 +46,14 @@ impl Probe {
                     };
                     if let Some(top) = top {
                         visible.push((top, i));
+                        screen_pages.insert(i, self.page_at(top) + 1);
                     }
                 }
             }
             visible.sort_by(|(a, i), (b, j)| a.total_cmp(b).then(i.cmp(j)));
             PublisherPositions {
+                chapters,
+                screen_pages,
                 preceding: preceding.map(|(_, i)| i),
                 visible,
             }
@@ -71,28 +79,21 @@ impl Reader {
         })
     }
 
-    pub(super) fn publisher_page_items(&self) -> Vec<Item> {
+    pub(super) fn publisher_page_window(&self, first: usize, limit: usize) -> (usize, Vec<Item>) {
         let Some(book) = &self.active else {
-            return Vec::new();
+            return (0, Vec::new());
         };
         let probe = &book.reading.probe;
-        let chapters: HashMap<_, _> = probe
-            .chapter_entries()
-            .iter()
-            .enumerate()
-            .map(|(i, chapter)| (chapter.href.as_str(), i + 1))
-            .collect();
-        let screen_pages: HashMap<_, _> = probe
-            .publisher_positions()
-            .visible
-            .iter()
-            .map(|(top, row)| (*row, probe.page_at(*top) + 1))
-            .collect();
-        let mut items: Vec<_> = probe
-            .printed_pages
-            .iter()
-            .enumerate()
-            .map(|(row, entry)| {
+        let geometry = probe.publisher_positions();
+        let count = probe.printed_pages.len() + usize::from(probe.printed_source.is_some());
+        let rows = (first..count.min(first.saturating_add(limit)))
+            .filter_map(|row| {
+                let Some(entry) = probe.printed_pages.get(row) else {
+                    return Some(
+                        Item::new("Print edition source", Action::Heading)
+                            .detail(probe.printed_source.as_ref()?),
+                    );
+                };
                 let item = Item::new(
                     &entry.label,
                     entry
@@ -100,23 +101,16 @@ impl Reader {
                         .clone()
                         .map_or(Action::Heading, Action::Jump),
                 );
-                let Some(chapter) = entry
-                    .destination
-                    .as_ref()
-                    .and_then(|d| chapters.get(d.path.as_str()))
-                else {
-                    return item;
-                };
-                item.detail(match screen_pages.get(&row) {
-                    Some(page) => format!("Chapter {chapter} · Screen page {page}"),
-                    None => format!("Chapter {chapter}"),
+                Some(match geometry.chapters[row] {
+                    Some(chapter) => item.detail(match geometry.screen_pages.get(&row) {
+                        Some(page) => format!("Chapter {chapter} · Screen page {page}"),
+                        None => format!("Chapter {chapter}"),
+                    }),
+                    None => item,
                 })
             })
             .collect();
-        if let Some(source) = &probe.printed_source {
-            items.push(Item::new("Print edition source", Action::Heading).detail(source));
-        }
-        items
+        (count, rows)
     }
 
     pub(super) fn publisher_footer_enabled(&self) -> bool {

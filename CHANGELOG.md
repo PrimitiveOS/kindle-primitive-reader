@@ -2,6 +2,9 @@
 
 ## 0.1.15
 
+- Find up to 5,000 occurrences in reflowable text. Move to the first or last page of results, open the passage and return to your reading position.
+- Use the publisher’s embedded regular, italic, bold and bold-italic faces in supported EPUBs.
+
 - Browse the publisher’s print page labels, jump to an exact label, and show print boundaries in the margin or footer of a reflowable EPUB. Each book remembers its choices.
 
 ## 0.1.14
