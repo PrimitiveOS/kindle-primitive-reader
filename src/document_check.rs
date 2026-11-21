@@ -133,7 +133,7 @@ pub fn verify(
     drop(pixels);
     let spine = match env::var("READER_VERIFY_SPINE") {
         Ok(mode) if matches!(entry.format, DocumentFormat::Epub | DocumentFormat::Mobi) => Some(
-            verify_spine(&saved.absolute_path(&entry.path)?, &fonts, mode == "all")?,
+            verify_spine(&saved.absolute_path(&entry.path)?, &fonts, &mode)?,
         ),
         _ => None,
     };

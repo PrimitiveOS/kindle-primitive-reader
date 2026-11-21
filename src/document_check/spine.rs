@@ -180,7 +180,13 @@ fn literal_empty_body(markup: &str) -> bool {
     .unwrap_or(false)
 }
 
-pub(super) fn verify_spine(path: &Path, fonts: &[PathBuf], all: bool) -> Result<Audit> {
+pub(super) fn verify_spine(path: &Path, fonts: &[PathBuf], mode: &str) -> Result<Audit> {
+    let (all_chapters, all_pages) = match mode {
+        "sample" => (false, false),
+        "all-sections" => (true, false),
+        "all" => (true, true),
+        _ => return Err("Use sample, all-sections or all for READER_VERIFY_SPINE".into()),
+    };
     let package = Book::open(path)?;
     let count = package.chapters.len();
     let is_fixed = package.is_fixed_layout();
@@ -204,7 +210,7 @@ pub(super) fn verify_spine(path: &Path, fonts: &[PathBuf], all: bool) -> Result<
         chapters: count,
         ..Default::default()
     };
-    for index in indices(count, all) {
+    for index in indices(count, all_chapters) {
         audit.checked += 1;
         let result = (|| -> Result<()> {
             if let Some(book) = &fixed {
@@ -220,7 +226,7 @@ pub(super) fn verify_spine(path: &Path, fonts: &[PathBuf], all: bool) -> Result<
                 let literal_empty = chapter.source.blocks.is_empty()
                     && !placeholders[index]
                     && literal_empty_body(&Book::open(path)?.chapter(index)?);
-                audit.reflow(&mut chapter, index, placeholders[index], literal_empty, all)?;
+                audit.reflow(&mut chapter, index, placeholders[index], literal_empty, all_pages)?;
             }
             Ok(())
         })();
@@ -269,7 +275,7 @@ mod tests {
         let file =
             std::env::temp_dir().join(format!("reader-spine-{}-{nonce}.epub", std::process::id()));
         std::fs::write(&file, &bytes).unwrap();
-        let result = verify_spine(&file, &fonts, true);
+        let result = verify_spine(&file, &fonts, "all");
         std::fs::remove_file(&file).unwrap();
         let audit = result.unwrap();
         assert!(audit.failed_indices.is_empty());

@@ -3,6 +3,7 @@
 ## 0.1.7
 
 - Read long EPUB paragraphs whose embedded fonts previously prevented page breaks. Search the selected words directly from the reading page.
+- Keep illustrations visible within the Kindle image-memory budget, and restore the exact page when a paragraph contains several full-page pictures.
 - Preview an EPUB footnote over the page, look up a word inside it, or jump to the full note and return.
 - Switch dictionaries and results, find text within a definition, and open nested lookups with the original selection and scroll position preserved.
 - Reduce first-page drawing time and peak memory on print-color PDFs. The large original PDF's rendered cover matched the previous release pixel for pixel on the Oasis.
