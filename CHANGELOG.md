@@ -3,7 +3,7 @@
 ## 0.1.8
 
 - Read numbered and bulleted lists, including nested lists, reversed numbering and publisher-specified starting values.
-- Keep table entries under their headings in supported EPUB and Kindle books. Select text and follow links in individual cells.
+- Keep table entries under their headings in supported EPUB and Kindle books, including tables with percentage column widths and merged cells. Select text and follow links in individual cells.
 - Return directly to the last painted page of a chapter when extra line breaks or fractional line spacing follow its final text.
 - Use installed Kindle font fallbacks for additional mathematical signs and symbols.
 
