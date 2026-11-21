@@ -349,3 +349,9 @@ KOReader’s link controller offers Copy and QR code on this device. Its optiona
 Reader and an independent MuPDF extraction visited all **2,377 physical pages** in the four PDFs from the Oasis. Their page counts and upright dimensions agreed on every page within 0.02 PDF points. Both found alphanumeric text on the same 2,375 pages. Reader checked 1,235,700 word spans for valid source-byte ranges and page coordinates. No page reached its text extraction limit.
 
 The comparison measures page geometry, text availability and selection bounds. Word segmentation and readings of individual glyphs are checked separately using source passages. To repeat the comparison, pass the PDF and a JSON array of `width`, `height` and `has_readable_text` values to `cargo run --example verify_pdf_pages --`. The verifier emits counts and page numbers. [Page verifier](../examples/verify_pdf_pages.rs) · [Reading interaction checks](reading-control-evidence.md)
+
+## Inline illustrations across the original EPUB editions
+
+A resource inventory of the 30 distinct EPUB editions found 29 packages with directly readable central directories. Their manifests declared 706 JPEG, 216 PNG and 82 GIF resources. The bounded recovery path for the remaining damaged edition is described above.
+
+In the 0.1.13 desktop run, three books showed a total of 80 placeholder placements for valid packaged GIF illustrations. All 82 original GIF files have a single frame. The book containing 17 GIF files references 15 of them in the checked page layouts. These 80 placements identify an EPUB decoder gap. The 31 unavailable images in the damaged edition have a different cause. Opening, turning pages and resuming a book can all succeed while individual illustrations still need correction.
