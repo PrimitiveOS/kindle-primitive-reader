@@ -96,9 +96,20 @@ fn main() -> Result<()> {
             return Err("Directional source offsets or text differ".into());
         }
     }
+    // Same ordered-byte checksum as the installed reference, with a NUL
+    // separator after each quote. The private publication text stays local.
+    let (mut a, mut b, mut characters) = (1u32, 0u32, 0usize);
+    for hit in &ordinary {
+        let quote = &hit.snippet[hit.matched.clone()];
+        characters += quote.chars().count();
+        for byte in quote.bytes().chain([0]) {
+            a = (a + u32::from(byte)) % 65521;
+            b = (b + a) % 65521;
+        }
+    }
     println!(
         "{}",
-        serde_json::json!({"chapter":target.chapter+1,"literal":ordinary.len(),"original_spelling":exact.len(),"exact_typed":unmodified.len(),"original_bytes":published.len(),"typed_bytes":typed.len(),"verified_directions":2,"exact_source_selection":true})
+        serde_json::json!({"chapter":target.chapter+1,"literal":ordinary.len(),"original_spelling":exact.len(),"exact_typed":unmodified.len(),"original_bytes":published.len(),"typed_bytes":typed.len(),"verified_directions":2,"exact_source_selection":true,"characters":characters,"ordered_text_checksum":format!("{b:04x}{a:04x}")})
     );
     Ok(())
 }

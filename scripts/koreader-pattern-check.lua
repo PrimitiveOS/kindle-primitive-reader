@@ -1,5 +1,7 @@
 -- Offscreen comparator for installed KOReader CREngine. Output contains only counts and a checksum.
-local scratch, document, pattern, mode = arg[1], arg[2], arg[3], arg[4]
+local scratch, document, pattern, mode, search_type = arg[1], arg[2], arg[3], arg[4], arg[5]
+assert(search_type == nil or search_type == "literal")
+local regex = search_type ~= "literal"
 assert(scratch and scratch:sub(1,1) == "/" and scratch ~= "/mnt/us/documents" and scratch:sub(1,18) ~= "/mnt/us/documents/" and not scratch:find("/%.%./"))
 assert(document and document:sub(1,1) == "/" and not document:find("/%.%./"))
 assert(mode == "exact" or mode == "insensitive")
@@ -17,8 +19,8 @@ view:setFontFace("Noto Sans")
 view:setFontSize(42)
 assert(view:loadDocument(document, false))
 view:renderDocument()
-assert(view:checkRegex(pattern) == 0)
-local hits = view:findAllText(pattern, mode == "insensitive", true, 100, true, 0, 1) or {}
+if regex then assert(view:checkRegex(pattern) == 0) end
+local hits = view:findAllText(pattern, mode == "insensitive", regex, 100, true, 0, regex and 1 or 255) or {}
 local a, b, characters = 1, 0, 0
 local function add(byte) a = (a+byte)%65521; b=(b+a)%65521 end
 for i=1,math.min(100,#hits) do
