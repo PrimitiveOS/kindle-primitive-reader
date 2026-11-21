@@ -1,5 +1,13 @@
 # Reader for PrimitiveOS
 
+
+[![CI](https://img.shields.io/github/actions/workflow/status/PrimitiveOS/kindle-primitive-reader/ci.yml?branch=main&label=CI)](https://github.com/PrimitiveOS/kindle-primitive-reader/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/PrimitiveOS/kindle-primitive-reader?label=release)](https://github.com/PrimitiveOS/kindle-primitive-reader/releases)
+[![Tag](https://img.shields.io/github/v/tag/PrimitiveOS/kindle-primitive-reader?label=tag)](https://github.com/PrimitiveOS/kindle-primitive-reader/tags)
+[![Licence: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/licence-PolyForm%20Noncommercial%201.0.0-blue)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/PrimitiveOS/kindle-primitive-reader?style=social)](https://github.com/PrimitiveOS/kindle-primitive-reader/stargazers)
+[![Store downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fprimitiveos.github.io%2Fkindle-primitive-catalog%2Fv1%2Fbadges%2Fprimitive-reader.json)](https://primitiveos.github.io/kindle-primitive-catalog/v1/index.json)
+
 Reader is a native Rust book and document reader for PrimitiveOS on Kindle.
 It uses Parley for reflowable books and Hayro for PDF pages. The reading
 workflows and format coverage are being compared with KOReader on the same
