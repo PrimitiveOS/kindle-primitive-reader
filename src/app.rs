@@ -509,6 +509,7 @@ pub struct Reader {
     pages_since_refresh: u8,
     touch_locked: bool,
     stats: ReadingStats,
+    pace: crate::reading_pace::ReadingPace,
     stats_path: PathBuf,
     stats_awake: bool,
     backup_import: Option<BackupImport>,
@@ -636,6 +637,7 @@ impl Reader {
             pages_since_refresh: 0,
             touch_locked: false,
             stats,
+            pace: crate::reading_pace::ReadingPace::new(data.join("reading-pace")),
             stats_path,
             stats_awake: true,
             backup_import: None,
@@ -997,6 +999,7 @@ impl Reader {
     }
 
     fn record_position(&mut self) {
+        self.update_stats_activity(Instant::now());
         if let Some(fixed) = &self.fixed {
             let saved = self
                 .library
@@ -1033,6 +1036,25 @@ impl Reader {
             _ => None,
         };
         self.stats.set_active(book, now);
+        let page = book.and_then(|id| {
+            if let Some(fixed) = &self.fixed {
+                let span = if fixed.reading.is_spread() {
+                    fixed.reading.visible_pages().count().clamp(1, 2) as u8
+                } else {
+                    1
+                };
+                return Some((id, fixed.reading.page() as u64, span));
+            }
+            let reading = &self.active.as_ref()?.reading;
+            let page_key = reading.probe.pace_key(reading.chapter, reading.page);
+            let visible_pages = reading
+                .last_visible_page()
+                .saturating_sub(reading.page)
+                .saturating_add(1)
+                .min(2);
+            Some((id, page_key, visible_pages as u8))
+        });
+        self.pace.set_page(page, now);
     }
 
     fn save_library(&mut self) -> io::Result<()> {
@@ -5321,6 +5343,7 @@ impl App for Reader {
                 self.update_stats_activity(Instant::now());
             } else {
                 self.stats.discard_active();
+                self.pace.storage_returned();
             }
             if let Some(active) = &mut self.active {
                 active.reading.input(input);
@@ -5658,7 +5681,10 @@ impl App for Reader {
             }
         }
         if self.stats.deadline().is_some_and(|at| at <= now)
-            && let Err(error) = self.stats.checkpoint(&self.stats_path, now, false)
+            && let Err(error) = self
+                .stats
+                .checkpoint(&self.stats_path, now, false)
+                .and_then(|_| self.pace.checkpoint(now))
             && error.kind() != io::ErrorKind::WouldBlock
         {
             return self.report(error);
@@ -5767,9 +5793,9 @@ impl App for Reader {
 
     fn save(&mut self) -> io::Result<()> {
         self.save_library()?;
-        self.stats
-            .checkpoint(&self.stats_path, Instant::now(), true)?;
-        Ok(())
+        let now = Instant::now();
+        self.stats.checkpoint(&self.stats_path, now, true)?;
+        self.pace.checkpoint(now)
     }
 
     fn storage_returned(&mut self) -> io::Result<()> {
@@ -5780,6 +5806,7 @@ impl App for Reader {
             self.show(Screen::Contents);
         }
         self.stats.discard_active();
+        self.pace.storage_returned();
         self.update_stats_activity(Instant::now());
         self.ocr_assets = self
             .ocr_root
@@ -9493,7 +9520,15 @@ mod tests {
         let hold = Input::LongTap(250.0, HEIGHT as f32 - 32.0);
         assert_eq!(app.input(hold), Change::None);
 
-        for mode in [StatusBar::Progress, StatusBar::Chapter, StatusBar::Remaining, StatusBar::Minimal, StatusBar::PageNumbers] {
+        for mode in [
+            StatusBar::Progress,
+            StatusBar::Chapter,
+            StatusBar::Remaining,
+            StatusBar::ChapterTime,
+            StatusBar::BookTime,
+            StatusBar::Minimal,
+            StatusBar::PageNumbers,
+        ] {
             assert_eq!(app.input(tap), Change::Partial);
             assert_eq!(app.screen, Screen::Book);
             assert_eq!(app.controls.status_bar, mode);
@@ -9502,6 +9537,10 @@ mod tests {
                 StatusBar::Progress => assert!(app.status_caption().unwrap().ends_with("% of book")),
                 StatusBar::Chapter => assert!(app.status_caption().unwrap().contains("Page 1 of")),
                 StatusBar::Remaining => assert!(app.status_caption().unwrap().ends_with("left")),
+                StatusBar::ChapterTime => {
+                    assert!(app.status_caption().unwrap().contains("in chapter"))
+                }
+                StatusBar::BookTime => assert!(app.status_caption().unwrap().contains("in book")),
                 StatusBar::Minimal => assert_eq!(app.status_caption().unwrap(), ""),
                 StatusBar::PageNumbers => assert!(app.status_caption().is_none()),
             }

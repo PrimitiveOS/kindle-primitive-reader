@@ -58,6 +58,8 @@ mod reading_fonts;
 mod reading_profiles;
 #[cfg(feature = "kindle")]
 mod reading_stats;
+#[cfg(feature = "kindle")]
+mod reading_pace;
 mod rtf;
 #[cfg(feature = "kindle")]
 mod scan_columns;
@@ -407,6 +409,8 @@ pub struct Probe {
     #[cfg(feature = "kindle")]
     footer_chapters: std::cell::OnceCell<Vec<(usize, String)>>,
     #[cfg(feature = "kindle")]
+    pace_page: std::cell::Cell<Option<(usize, u64)>>,
+    #[cfg(feature = "kindle")]
     publisher_positions: std::cell::OnceCell<app::publisher_pages::PublisherPositions>,
     settings: Settings,
     spine_rtl: bool,
@@ -623,6 +627,8 @@ impl Probe {
             printed_source,
             #[cfg(feature = "kindle")]
             footer_chapters: Default::default(),
+            #[cfg(feature = "kindle")]
+            pace_page: Default::default(),
             #[cfg(feature = "kindle")]
             publisher_positions: Default::default(),
             settings,

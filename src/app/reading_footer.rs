@@ -83,6 +83,8 @@ struct Progress<'a> {
     section_name: &'a str,
     section_page: usize,
     section_len: usize,
+    book_pages_left: usize,
+    future_pages_estimated: bool,
     // Fixed documents use physical pages. Reflow estimates weight spine items by source size.
     book_fraction: f64,
     estimated: bool,
@@ -129,6 +131,8 @@ impl<'a> Progress<'a> {
             section_name: name,
             section_page: page - start + 1,
             section_len: end - start,
+            book_pages_left: count - page - 1,
+            future_pages_estimated: false,
             book_fraction: (page + 1) as f64 / count as f64,
             estimated: false,
             book_ticks: Ticks::Pages(sections, count),
@@ -169,8 +173,13 @@ impl Reader {
     fn footer_progress(&self) -> Option<Progress<'_>> {
         if let Some(fixed) = &self.fixed {
             let reading = &fixed.reading;
+            let last = if reading.is_spread() {
+                reading.visible_pages().max().unwrap_or_else(|| reading.page())
+            } else {
+                reading.page()
+            };
             return Some(Progress::from_pages(
-                reading.page(),
+                last,
                 reading.count(),
                 self.fixed_sections(fixed),
                 "Document",
@@ -196,6 +205,18 @@ impl Reader {
             // An index based on chapter count is the fallback when sizes were unavailable.
             progress.estimated = true;
             progress.book_ticks = Ticks::Bytes(weights);
+            progress.future_pages_estimated = ch + 1 < probe.chapter_count();
+            let later_pages = match (weights.get(ch..=ch + 1), weights.last()) {
+                (Some([start, end]), Some(&total)) if end > start => {
+                    ((total - end) as f64 * probe.page_count() as f64 / (end - start) as f64)
+                        .round() as usize
+                }
+                _ => probe
+                    .chapter_count()
+                    .saturating_sub(ch + 1)
+                    .saturating_mul(probe.page_count()),
+            };
+            progress.book_pages_left = progress.book_pages_left.saturating_add(later_pages);
             progress.book_fraction = match (weights.get(ch..=ch + 1), weights.last()) {
                 (Some([start, end]), Some(&length)) if length > 0 => {
                     (*start as f64 + progress.book_fraction * (end - start) as f64) / length as f64
@@ -221,7 +242,40 @@ impl Reader {
             return printed();
         }
         let p = self.footer_progress()?;
+        let time = |scope| {
+            let (pages, unit) = if scope == ProgressScope::Book {
+                (p.book_pages_left, "book")
+            } else {
+                (p.pages_left(), "chapter")
+            };
+            let id = self
+                .fixed
+                .as_ref()
+                .map(|b| b.id)
+                .or_else(|| self.active.as_ref().map(|b| b.id))?;
+            let seconds = (self.pace.rate(id) * pages as f64).round() as u64;
+            let duration = match seconds {
+                0 => "0 min".to_owned(),
+                1..60 => "Under 1 min".to_owned(),
+                _ => super::reading_time(seconds),
+            };
+            let approximate = if scope == ProgressScope::Book
+                && p.future_pages_estimated
+                && pages > 0
+                && seconds >= 60
+            {
+                "About "
+            } else {
+                ""
+            };
+            Some(format!("{approximate}{duration} left in {unit}"))
+        };
         if self.controls.footer_all_at_once {
+            if let Some(scope @ (ProgressScope::Book | ProgressScope::Chapter)) =
+                self.controls.footer_combined_time
+            {
+                return Some(format!("{} · {}", p.percentage(), time(scope)?));
+            }
             return Some(format!(
                 "{} of book  ·  {}  ·  {} left",
                 p.percentage(),
@@ -230,6 +284,8 @@ impl Reader {
             ));
         }
         match mode {
+            StatusBar::ChapterTime => time(ProgressScope::Chapter),
+            StatusBar::BookTime => time(ProgressScope::Book),
             StatusBar::Progress => Some(format!("{} of book", p.percentage())),
             StatusBar::Chapter => Some(format!(
                 "{}  ·  Page {} of {}",
@@ -426,6 +482,21 @@ impl Reader {
                 },
             ),
         ]);
+        if c.footer_all_at_once {
+            let (label, next) = match c.footer_combined_time {
+                Some(ProgressScope::Chapter) => ("Chapter", Some(ProgressScope::Book)),
+                Some(ProgressScope::Book) => ("Book", None),
+                _ => ("Off", Some(ProgressScope::Chapter)),
+            };
+            items.push(setting(
+                "Time estimate in combined status",
+                label,
+                ReadingControls {
+                    footer_combined_time: next,
+                    ..c
+                },
+            ));
+        }
         items
     }
 }
@@ -462,3 +533,6 @@ mod tests {
         assert_eq!(ticks, [2.0 / 7.0, 5.0 / 7.0]);
     }
 }
+
+#[cfg(test)]
+mod pace_replay;

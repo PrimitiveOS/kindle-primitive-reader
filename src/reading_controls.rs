@@ -28,6 +28,7 @@ pub(crate) struct ReadingControls {
     pub footer_scope: ProgressScope,
     pub hide_chapter_markers: bool,
     pub footer_all_at_once: bool,
+    pub footer_combined_time: Option<ProgressScope>,
     pub footer_tap_locked: bool,
     pub skim_on_footer_hold: bool,
     pub menu_activation: MenuActivation,
@@ -93,6 +94,8 @@ pub(crate) enum StatusBar {
     Progress,
     Chapter,
     Remaining,
+    ChapterTime,
+    BookTime,
     Minimal,
 }
 
@@ -103,6 +106,8 @@ impl StatusBar {
             Self::Progress => "Book progress",
             Self::Chapter => "Current chapter",
             Self::Remaining => "Chapter pages left",
+            Self::ChapterTime => "Chapter time left",
+            Self::BookTime => "Book time left",
             Self::Minimal => "Minimal",
         }
     }
@@ -112,7 +117,9 @@ impl StatusBar {
             Self::PageNumbers => Self::Progress,
             Self::Progress => Self::Chapter,
             Self::Chapter => Self::Remaining,
-            Self::Remaining => Self::Minimal,
+            Self::Remaining => Self::ChapterTime,
+            Self::ChapterTime => Self::BookTime,
+            Self::BookTime => Self::Minimal,
             Self::Minimal => Self::PageNumbers,
         }
     }
