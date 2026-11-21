@@ -342,3 +342,9 @@ The Oasis repeated Preview, Apply twice and reopen against each of those three E
 Three original PDFs contained sixteen URI annotations. Twelve recorded web addresses, one a mail address, one a file URI, and two relative addresses. A fourth original contained no URI annotations. On the Mac, all sixteen link rectangles opened the same address that the independent PDF parser extracted. Displaying a QR code and copying an address preserved the exact page, viewport and location history.
 
 KOReader’s link controller offers Copy and QR code on this device. Its optional browser action depends on the device URL handler. On the tested Kindle, the generic device sets that capability to false and the Kindle backend inherits it. Reader likewise keeps the address dialog offline. Paste link inserts a copied address into a Reader search or note field. The compiled QR generator’s MIT notice is included with the application. [KOReader link dialog](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerlink.lua#L138-L179) · [QR encoding](https://docs.rs/qrcodegen/1.8.0/qrcodegen/struct.QrCode.html)
+
+## Inline illustrations across the original EPUB editions
+
+A resource inventory of the 30 distinct EPUB editions found 29 packages with directly readable central directories. Their manifests declared 706 JPEG, 216 PNG and 82 GIF resources. The bounded recovery path for the remaining damaged edition is described above.
+
+In the 0.1.13 desktop run, three books showed a total of 80 placeholder placements for valid packaged GIF illustrations. All 82 original GIF files have a single frame. The book containing 17 GIF files references 15 of them in the checked page layouts. These 80 placements identify an EPUB decoder gap. The 31 unavailable images in the damaged edition have a different cause. Opening, turning pages and resuming a book can all succeed while individual illustrations still need correction.
