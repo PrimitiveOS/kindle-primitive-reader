@@ -36,6 +36,10 @@ The aggregate verifier prints counts and numeric section indices. It accepts add
 cargo run --locked --example verify_kindle_sections -- book.azw3 path/to/reading-font.ttf
 ```
 
+## All-section check with Oasis fonts
+
+A further Mac run used the four fonts configured in Reader 0.1.7 on the Oasis. It visited **all 501 sections** of the 16 AZW3 books and one MOBI and painted their first, middle and last pages where distinct. All 8,964,009 non-whitespace characters mapped to text lines, all 716 illustration placements decoded, and all 12,487 fragment anchors resolved. Of 1,281 painted pages, 1,279 contained ink. All 1,279 page anchors supplied by these views returned to the same page. One book contained 134 missing-glyph occurrences in its publisher's private-use symbol range. Text coverage and glyph coverage are measured separately.
+
 ## Oasis 3 device verification
 
 The physical Oasis 3 batch used the installed Documents collection and a fresh scratch profile for each file. All 16 AZW3 books and both legacy MOBI files opened from the picker, changed frame after a hardware page-key input event, and restored the saved page after a Reader restart. The extra MOBI was part of the device collection.

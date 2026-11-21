@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.8
+
+- Read numbered and bulleted lists, including nested lists, reversed numbering and publisher-specified starting values.
+- Keep table entries under their headings in supported EPUB and Kindle books. Select text and follow links in individual cells.
+- Return directly to the last painted page of a chapter when extra line breaks or fractional line spacing follow its final text.
+- Use installed Kindle font fallbacks for additional mathematical signs and symbols.
+
 ## 0.1.7
 
 - Read long EPUB paragraphs whose embedded fonts previously prevented page breaks. Search the selected words directly from the reading page.

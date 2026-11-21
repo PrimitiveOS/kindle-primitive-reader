@@ -112,6 +112,8 @@ Install Reader from PrimitiveOS Store or follow the manual install guide.
   when the book specifies its own fonts.
 - Save a named preset in Text › Reading profiles and apply it to another book.
 
+Numbered and bulleted lists preserve their markers and nesting. In supported EPUB and Kindle tables, text stays under its column heading as the type size changes. Links, selection and bookmarks use the same source positions in both layouts. [List example](docs/screenshots/publisher-lists.png) · [Table example](docs/screenshots/publisher-table.png)
+
 ## Development status
 
 The [KOReader controls checklist](docs/koreader-controls-parity.md) traces
