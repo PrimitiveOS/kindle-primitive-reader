@@ -202,12 +202,17 @@ impl Reader {
             if self.current_history_location().as_ref() != Some(&origin) {
                 self.push_history(origin);
             }
+            self.saved_popup = None;
             self.show(screen);
             self.notice = Some("Highlight extended".into());
         } else {
             self.go_to_location(&origin)?;
             self.range_edit = None;
-            self.show(Screen::Annotation);
+            if self.saved_popup.is_some() {
+                self.return_to_saved_mark();
+            } else {
+                self.show(Screen::Annotation);
+            }
         }
         Ok(())
     }

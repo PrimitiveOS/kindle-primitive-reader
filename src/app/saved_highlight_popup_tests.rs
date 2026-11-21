@@ -1,0 +1,383 @@
+use super::*;
+use crate::app::tests::Fixture;
+use primitive_app::App;
+
+fn center(rect: Rect) -> Input {
+    Input::Tap((rect.x + rect.w / 2) as f32, (rect.y + rect.h / 2) as f32)
+}
+fn fixture(variable: Option<&str>, pdf: bool) -> (Fixture, Reader, PathBuf, bool) {
+    let fixture = Fixture::new();
+    let external = variable.and_then(std::env::var_os).map(PathBuf::from);
+    let path = external.clone().unwrap_or_else(|| {
+        if pdf {
+            let p = fixture.root.join("Estuary.pdf");
+            std::fs::write(&p, crate::fixed::tests::document()).unwrap();
+            p
+        } else {
+            fixture.book.clone()
+        }
+    });
+    let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+    let mut reader =
+        Reader::open(path.parent().unwrap(), &fixture.state, vec![font.clone()]).unwrap();
+    reader.open_path(&path).unwrap();
+    (fixture, reader, font, external.is_some())
+}
+
+fn capture(reader: &Reader, canvas: &mut Canvas, env: &str, external: bool) {
+    if !external && let Some(path) = std::env::var_os(env) {
+        let frame = primitive_app::frame(reader, canvas, false);
+        primitive_app::write_png(std::path::Path::new(&path), WIDTH, HEIGHT, &frame).unwrap();
+    }
+}
+
+#[test]
+fn tap_saved_epub_highlights_chooses_overlaps_and_reads_and_edits_the_note_in_place() {
+    let (_fixture, mut app, font, external) = fixture(Some("READER_TEST_TAP_EPUB"), false);
+    let chapter = if external {
+        std::env::var("READER_TEST_TAP_CHAPTER")
+            .unwrap_or_else(|_| "1".into())
+            .parse::<usize>()
+            .unwrap()
+    } else {
+        1
+    };
+    let probe = app
+        .active
+        .as_ref()
+        .unwrap()
+        .reading
+        .config
+        .chapter(chapter)
+        .unwrap();
+    let (block, words) = if external {
+        probe
+            .source
+            .blocks
+            .iter()
+            .find_map(|block| {
+                let words = crate::selection::word_ranges(&block.text).collect::<Vec<_>>();
+                let chosen = words.windows(3).find(|words| {
+                    words
+                        .iter()
+                        .all(|word| block.text[word.clone()].chars().any(char::is_alphanumeric))
+                        && block.links.iter().all(|link| {
+                            link.bytes.end <= words[0].start || words[2].end <= link.bytes.start
+                        })
+                })?;
+                Some((block, chosen.to_vec()))
+            })
+            .expect("The selected chapter needs three consecutive unlinked words")
+    } else {
+        let anchor = probe.fragment("door").unwrap();
+        let block = probe
+            .source
+            .blocks
+            .iter()
+            .find(|b| b.key == anchor.block)
+            .unwrap();
+        (
+            block,
+            crate::selection::word_ranges(&block.text).take(7).collect(),
+        )
+    };
+    let span = |from: usize, to: usize| {
+        probe
+            .select_range(
+                &probe.anchor(block.key, words[from].start),
+                &probe.anchor(block.key, words[to].end),
+            )
+            .unwrap()
+    };
+    let middle = if external { 1 } else { 2 };
+    let overlap = span(middle, middle);
+    let long_note = [
+            "The open door appears twice in this chapter. Both times Linh leaves the notebook beside it. On my next reading, I want to follow where she puts her hands as the light changes.",
+            "The harbor is easier to hear after dusk. In the first chapter she measures one step against the tide. Here, beside the same water, she waits long enough to hear the boats coming home.",
+            "For the reading group, compare the lantern beside the door with the lamps across the water. Does either light change what Linh can see, or only what she expects to find?"
+        ].join("\n\n");
+    app.selection = Some(span(0, if external { 1 } else { 6 }));
+    app.save_highlight(Some(long_note.clone())).unwrap();
+    app.selection = Some(span(middle, if external { 2 } else { 6 }));
+    app.save_highlight(None).unwrap();
+    app.restore_position(&ReadingPosition {
+        chapter,
+        page: 0,
+        anchor: Some(overlap.start.clone()),
+    })
+    .unwrap();
+    let raw = app
+        .active
+        .as_ref()
+        .unwrap()
+        .reading
+        .highlight_rects(&overlap)[0];
+    let hit = Input::Tap(
+        (raw.x + raw.width / 2) as f32,
+        (raw.y + raw.height / 2) as f32,
+    );
+    let origin = app.current_history_location().unwrap();
+    let history = app.back.clone();
+    let mut canvas = Canvas::new(WIDTH, HEIGHT, &[font.display().to_string()]).unwrap();
+    let frame = primitive_app::frame(&app, &mut canvas, false);
+    app.input(hit);
+    let p = app.saved_popup.as_ref().unwrap();
+    assert!(p.view == View::Choices && p.hits == [0, 1]);
+    capture(&app, &mut canvas, "READER_TAP_OVERLAP_SCREENSHOT", external);
+    let row = center(app.saved_popup.as_ref().unwrap().row(0));
+    app.input(row);
+    assert!(
+        app.saved_popup
+            .as_ref()
+            .is_some_and(|p| p.view == View::Note(0))
+    );
+    let _ = primitive_app::frame(&app, &mut canvas, false);
+    assert!(app.saved_popup.as_ref().unwrap().pages.get() > 1);
+    capture(&app, &mut canvas, "READER_TAP_NOTE_SCREENSHOT", external);
+    app.input(Input::PageForward);
+    assert_eq!(app.saved_popup.as_ref().unwrap().page, 1);
+    app.input(Input::PageBack);
+    assert_eq!(app.saved_popup.as_ref().unwrap().page, 0);
+    let edit = center(app.saved_popup.as_ref().unwrap().button(1, 4));
+    app.input(edit);
+    assert!(app.screen == Screen::EditNote && app.editor.string() == long_note.trim());
+    app.input(Input::PageBack);
+    assert!(app.saved_popup_over_book());
+    let close = center(app.saved_popup.as_ref().unwrap().close());
+    app.input(close);
+    assert!(
+        app.saved_popup.is_none()
+            && app.back == history
+            && app.current_history_location().as_ref() == Some(&origin)
+    );
+    assert!(primitive_app::frame(&app, &mut canvas, false) == frame);
+    app.input(hit);
+    let row = center(app.saved_popup.as_ref().unwrap().row(1));
+    app.input(row);
+    let p = app.saved_popup.as_ref().unwrap();
+    assert!(p.view == View::Actions(1));
+    let extend = center(p.manage_button(true));
+    app.input(extend);
+    assert!(app.range_edit.is_some());
+    app.input(Input::Tap(125.0, HEIGHT as f32 - 43.0));
+    assert!(
+        app.saved_popup_over_book() && app.saved_popup.as_ref().unwrap().view == View::Actions(1)
+    );
+    assert!(app.current_history_location().as_ref() == Some(&origin));
+    let remove = center(app.saved_popup.as_ref().unwrap().button(1, 2));
+    app.input(remove);
+    assert!(app.saved_popup.as_ref().unwrap().view == View::RemoveMark(1));
+    let confirm = center(app.saved_popup.as_ref().unwrap().button(1, 2));
+    app.input(confirm);
+    assert!(app.saved_popup.is_none() && app.screen == Screen::Book);
+    app.input(hit);
+    assert!(app.saved_popup.as_ref().unwrap().view == View::Note(0));
+    app.input(Input::Tap(18.0, 580.0));
+    assert!(app.saved_popup.is_none());
+    app.input(Input::Tap(30.0, 890.0));
+    app.tick(Instant::now() + Duration::from_secs(2));
+    assert!(app.saved_popup.is_none());
+    assert!(app.current_history_location().as_ref() != Some(&origin));
+}
+
+#[test]
+fn tap_saved_pdf_highlights_matches_zoomed_page_geometry_and_preserves_the_viewport() {
+    let (_fixture, mut app, font, external) = fixture(Some("READER_TEST_TAP_PDF"), true);
+    let page = if external {
+        std::env::var("READER_TEST_TAP_PAGE")
+            .unwrap_or_else(|_| "1".into())
+            .parse::<usize>()
+            .unwrap()
+    } else {
+        1
+    };
+    let fixed = app.fixed.as_mut().unwrap();
+    let id = fixed.id;
+    let text = fixed.reading.page_text(page).unwrap();
+    let word = text
+        .words
+        .iter()
+        .find(|w| w.bounds.x1 - w.bounds.x0 > 0.007 && w.bounds.y1 - w.bounds.y0 > 0.004)
+        .unwrap();
+    let bounds = word.bounds;
+    let quote = &text.text[word.bytes.clone()];
+    let state = app.library.remember(&fixed.entry, id, &fixed.entry.title);
+    for note in [Some("Sounding at the jetty".into()), None] {
+        state
+            .add_pdf_highlight(PdfHighlight {
+                page,
+                bounds: vec![bounds],
+                continuation: vec![],
+                text: quote.into(),
+                note,
+            })
+            .unwrap();
+    }
+    let mut view = fixed.reading.preferences();
+    view.zoom = 4;
+    fixed.reading.restore_view(view).unwrap();
+    app.jump_fixed(page, FixedJump::regions(&[bounds])).unwrap();
+    let fixed = app.fixed.as_ref().unwrap();
+    assert_eq!(fixed.reading.preferences().zoom, 4);
+    let p = fixed
+        .reading
+        .visible_rectangle(page, bounds)
+        .unwrap()
+        .center();
+    let hit = Input::Tap(p.x as f32, p.y as f32);
+    let origin = app.current_history_location().unwrap();
+    let history = app.back.clone();
+    let mut canvas = Canvas::new(WIDTH, HEIGHT, &[font.display().to_string()]).unwrap();
+    let frame = primitive_app::frame(&app, &mut canvas, false);
+    app.input(hit);
+    assert!(
+        app.saved_popup
+            .as_ref()
+            .is_some_and(|p| p.view == View::Choices && p.hits.len() == 2)
+    );
+    let row = center(app.saved_popup.as_ref().unwrap().row(0));
+    app.input(row);
+    capture(
+        &app,
+        &mut canvas,
+        "READER_TAP_ZOOMED_PDF_SCREENSHOT",
+        external,
+    );
+    assert!(
+        app.saved_popup
+            .as_ref()
+            .is_some_and(|p| p.view == View::Note(0))
+    );
+    let close = center(app.saved_popup.as_ref().unwrap().close());
+    app.input(close);
+    assert!(app.current_history_location().as_ref() == Some(&origin) && app.back == history);
+    assert!(primitive_app::frame(&app, &mut canvas, false) == frame);
+    // The gesture outside the selected word still goes to the document.
+    let left = (22.0_f32, 820.0_f32);
+    let bounds = app
+        .fixed
+        .as_ref()
+        .unwrap()
+        .reading
+        .visible_rectangle(page, bounds)
+        .unwrap();
+    let y = if bounds.contains(hayro::kurbo::Point::new(left.0 as f64, left.1 as f64)) {
+        1100.0
+    } else {
+        left.1
+    };
+    app.input(Input::Tap(left.0, y));
+    app.tick(Instant::now() + Duration::from_secs(2));
+    assert!(app.saved_popup.is_none());
+    assert_eq!(app.fixed.as_ref().unwrap().reading.page(), page - 1);
+}
+
+#[test]
+fn taps_on_saved_text_links_follow_the_link_before_opening_the_highlight() {
+    let (_fixture, mut app, _, _) = fixture(None, false);
+    let active = app.active.as_ref().unwrap();
+    let block = active
+        .reading
+        .probe
+        .source
+        .blocks
+        .iter()
+        .find(|b| b.links.iter().any(|l| l.href.ends_with("#tide-note")))
+        .unwrap();
+    let link = block
+        .links
+        .iter()
+        .find(|l| l.href.ends_with("#tide-note"))
+        .unwrap();
+    let probe = &active.reading.probe;
+    let selection = probe
+        .select_range(
+            &probe.anchor(block.key, link.bytes.start),
+            &probe.anchor(block.key, link.bytes.end),
+        )
+        .unwrap();
+    app.selection = Some(selection.clone());
+    app.save_highlight(None).unwrap();
+    app.restore_position(&ReadingPosition {
+        chapter: 0,
+        page: 0,
+        anchor: Some(selection.start.clone()),
+    })
+    .unwrap();
+    let rect = app
+        .active
+        .as_ref()
+        .unwrap()
+        .reading
+        .highlight_rects(&selection)[0];
+    let input = Input::Tap(
+        (rect.x + rect.width / 2) as f32,
+        (rect.y + rect.height / 2) as f32,
+    );
+    let Input::Tap(x, y) = input else {
+        unreachable!()
+    };
+    assert!(app.active.as_ref().unwrap().reading.link_at(x, y).is_some());
+    let origin = app.current_history_location().unwrap();
+    app.input(input);
+    assert!(app.saved_popup.is_none());
+    assert!(
+        app.footnote.is_some()
+            || (app.current_history_location().as_ref() != Some(&origin)
+                && app.back.contains(&origin))
+    );
+}
+
+#[test]
+fn multiple_boxes_hit_once_and_a_note_can_be_removed_without_removing_the_passage() {
+    let (_fixture, mut app, font, _) = fixture(None, true);
+    let active = app.fixed.as_mut().unwrap();
+    let id = active.id;
+    let layer = active.reading.page_text(1).unwrap();
+    let word = &layer.words[0];
+    let state = app.library.remember(&active.entry, id, &active.entry.title);
+    for index in 0..6 {
+        state
+            .add_pdf_highlight(PdfHighlight {
+                page: 1,
+                bounds: vec![word.bounds, word.bounds],
+                text: layer.text[word.bytes.clone()].into(),
+                note: Some(format!("Observation {index}")),
+                continuation: vec![],
+            })
+            .unwrap();
+    }
+    app.jump_fixed(1, FixedJump::regions(&[word.bounds]))
+        .unwrap();
+    let pos = app
+        .fixed
+        .as_ref()
+        .unwrap()
+        .reading
+        .visible_rectangle(1, word.bounds)
+        .unwrap()
+        .center();
+    app.input(Input::Tap(pos.x as f32, pos.y as f32));
+    let mut canvas = Canvas::new(WIDTH, HEIGHT, &[font.display().to_string()]).unwrap();
+    let _ = primitive_app::frame(&app, &mut canvas, false);
+    assert_eq!(app.saved_popup.as_ref().unwrap().hits.len(), 6);
+    app.input(Input::PageForward);
+    let row = center(app.saved_popup.as_ref().unwrap().row(0));
+    app.input(row);
+    let p = app.saved_popup.as_ref().unwrap();
+    assert!(p.view == View::Note(4));
+    let action = center(p.button(1, 2));
+    app.input(action);
+    let remove = center(app.saved_popup.as_ref().unwrap().button(0, 2));
+    app.input(remove);
+    let confirm = center(app.saved_popup.as_ref().unwrap().button(1, 2));
+    app.input(confirm);
+    assert!(app.saved_popup.as_ref().unwrap().view == View::Actions(4));
+    let marks = &app.library.state(id).unwrap().pdf_highlights;
+    assert!(
+        marks.len() == 6
+            && marks[4].note.is_none()
+            && marks[3].note.is_some()
+            && marks[5].note.is_some()
+    );
+}

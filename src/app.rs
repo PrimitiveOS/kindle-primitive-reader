@@ -17,6 +17,7 @@ mod reader_timer;
 mod reading_bars;
 mod reading_footer;
 mod selection_popup;
+mod saved_highlight_popup;
 mod footnote_popup;
 mod top_config;
 
@@ -528,6 +529,7 @@ pub struct Reader {
     range_edit: Option<extend_highlight::RangeEdit>,
     link_popup: Option<external_link::LinkPopup>,
     copied_address: Option<String>,
+    saved_popup: Option<saved_highlight_popup::SavedPopup>,
     exports: PathBuf,
     dictionaries: PathBuf,
     dictionary_preference: PathBuf,
@@ -648,6 +650,7 @@ impl Reader {
             range_edit: None,
             link_popup: None,
             copied_address: None,
+            saved_popup: None,
             exports: state.parent().unwrap_or(documents).join("exports"),
             dictionaries: state.parent().unwrap_or(documents).join("dictionaries"),
             dictionary_preference,
@@ -752,6 +755,7 @@ impl Reader {
             self.active = None;
             self.pages_since_refresh = 0;
             self.range_edit = None;
+            self.saved_popup = None;
             self.fixed = Some(ActiveFixed {
                 footer_chapters: reading_footer::fixed_chapters(&reading),
                 entry,
@@ -804,6 +808,7 @@ impl Reader {
         entry.author.clone_from(&reading.probe.author);
         self.pages_since_refresh = 0;
         self.range_edit = None;
+        self.saved_popup = None;
         self.active = Some(ActiveBook { entry, id, reading });
         self.fixed = None;
         self.back.clear();
@@ -2233,8 +2238,8 @@ impl Reader {
                 } else {
                     &state.highlights[index].note
                 };
-                let text: Vec<_> = note.as_deref().unwrap_or("").chars().take(240).collect();
-                self.editor = Editor::new(240);
+                let text: Vec<_> = note.as_deref().unwrap_or("").chars().collect();
+                self.editor = Editor::new(crate::library::MAX_NOTE_BYTES);
                 self.editor.text = text;
                 self.editor.caret = self.editor.text.len();
                 self.show(Screen::EditNote);
@@ -2801,6 +2806,7 @@ impl Reader {
             && !self.touch_locked
             && self.link_popup.is_none()
             && self.range_edit.is_none()
+            && self.saved_popup.is_none()
             && self.selection.is_none()
             && self.pdf_selection.is_none()
             && matches!(self.screen, Screen::Book | Screen::Fixed)
@@ -2890,6 +2896,9 @@ impl Reader {
         {
             self.show(match self.screen {
                 Screen::LibraryFind => Screen::Library,
+                Screen::EditNote if self.saved_popup.is_some() => {
+                    if self.fixed.is_some() { Screen::Fixed } else { Screen::Book }
+                }
                 Screen::EditNote => Screen::Annotation,
                 Screen::BookmarkFind => self.annotation_search.origin.unwrap_or(self.tools_screen()),
                 Screen::Note if self.fixed.is_some() => Screen::Fixed,
@@ -2994,6 +3003,9 @@ impl Reader {
     fn update_note(&mut self, value: String) -> Result<()> {
         let index = self.highlight_index;
         let pdf = self.fixed.is_some();
+        if value.trim().len() > crate::library::MAX_NOTE_BYTES {
+            return Err("The note exceeds the saved note size limit".into());
+        }
         let note = (!value.trim().is_empty()).then(|| value.trim().to_owned());
         let state = self.highlight_state()?;
         if pdf {
@@ -3002,7 +3014,11 @@ impl Reader {
             state.highlights[index].note = note;
         }
         self.mark_dirty();
-        self.show(Screen::Highlights);
+        if self.saved_popup.is_some() {
+            self.saved_note_updated(index);
+        } else {
+            self.show(Screen::Highlights);
+        }
         self.notice = Some("Note saved".into());
         Ok(())
     }
@@ -4800,6 +4816,10 @@ impl App for Reader {
                 self.page_paint(),
             );
             self.draw_footer_track(canvas);
+            if self.saved_popup_over_book() {
+                self.draw_saved_popup(canvas);
+                return;
+            }
             if self.screen == Screen::Fixed && self.range_edit.is_some() {
                 self.draw_range_tools(canvas);
                 return;
@@ -4874,6 +4894,10 @@ impl App for Reader {
                 self.page_paint(),
             );
             self.draw_footer_track(canvas);
+            if self.saved_popup_over_book() {
+                self.draw_saved_popup(canvas);
+                return;
+            }
             if self.screen == Screen::Book && self.range_edit.is_some() {
                 self.draw_range_tools(canvas);
                 return;
@@ -5079,6 +5103,9 @@ impl App for Reader {
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
         if self.range_edit.is_some() { return self.range_input(input); }
+        if self.saved_popup_over_book() {
+            return self.saved_popup_input(input);
+        }
         if self.screen == Screen::PageOverview
             && let Input::Swipe { dx, start_y, .. } = input
             && OVERVIEW_TRACK.contains(start_x, start_y)
@@ -5163,6 +5190,12 @@ impl App for Reader {
             }
         }
         if self.range_edit.is_some() { return self.range_input(input); }
+        if self.saved_popup_over_book() {
+            return self.saved_popup_input(input);
+        }
+        if let Input::Tap(x, y) = input && self.tap_saved_mark(x, y) {
+            return Change::Partial;
+        }
         if let Some(change) = self.assigned_gesture(input, None) {
             return change;
         }
