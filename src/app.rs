@@ -5942,6 +5942,9 @@ pub fn run_probe(engine: Engine, book: PathBuf, fonts: Vec<PathBuf>, home: &Path
 }
 
 #[cfg(test)]
+mod external_range_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use primitive_ui::GrayImage;

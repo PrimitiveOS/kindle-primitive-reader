@@ -36,6 +36,8 @@ These captures use Reader's Kindle interface in the desktop simulator.
 
 In fixed-page books, Book map shows where you are and where you saved bookmarks and highlights. Open a group to see individual pages. [Book map on the Oasis display](docs/screenshots/fixed-book-map.png)
 
+Preview a saved KOReader position before applying it, or extend a saved passage while keeping its note. [Position preview](docs/screenshots/koreader-position-preview.png) · [Extend an EPUB highlight](docs/screenshots/extend-epub-highlight.png) · [Extend a PDF highlight](docs/screenshots/extend-pdf-highlight.png)
+
 ## Reading on Kindle
 
 Install Reader from PrimitiveOS Store or follow the manual install guide.
