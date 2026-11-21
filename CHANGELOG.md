@@ -3,6 +3,7 @@
 ## 0.1.9
 
 - Open Contents at the section you are reading from either reading bar. Return to the same passage after checking your place in a long outline.
+- Follow a PDF contents link to its specified position in a zoomed or continuously scrolling page. Back and Forward restore the previous view.
 
 ## 0.1.8
 

@@ -112,6 +112,8 @@ Install Reader from PrimitiveOS Store or follow the manual install guide.
   when the book specifies its own fonts.
 - Save a named preset in Text › Reading profiles and apply it to another book.
 
+Open Contents from either reading bar to see your current section in a long EPUB or PDF. Following a PDF link with an authored position brings that point into view when zoomed. [Current section](docs/screenshots/current-contents.png) · [PDF link target](docs/screenshots/pdf-link-destination.png)
+
 Numbered and bulleted lists preserve their markers and nesting. In supported EPUB and Kindle tables, text stays under its column heading as the type size changes. Links, selection and bookmarks use the same source positions in both layouts. [List example](docs/screenshots/publisher-lists.png) · [Table example](docs/screenshots/publisher-table.png)
 
 ## Development status
