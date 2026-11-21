@@ -10,3 +10,6 @@ licence texts are in [the dependency notices](../THIRD-PARTY.txt).
   [`hayro-cmap` 0.1.1](https://crates.io/crates/hayro-cmap/0.1.1)
 - [Colour profile terms](JPEG2000-COLOUR-PROFILES.txt) from
   [`hayro-jpeg2000` 0.5.0](https://crates.io/crates/hayro-jpeg2000/0.5.0)
+
+
+The 32-bit ARM build reuses exact four-channel image colors before Hayro’s DeviceCMYK conversion. The interpreter’s CMYK and Lab reference profiles retain their upstream CC0 terms in the packaged dependency notices. [Profile attribution](https://github.com/LaurenzV/hayro/blob/3f3825c3e50bb41ed6ec6c3f4b6007978bd13def/hayro-interpret/assets/README.md) · [Profile license](../THIRD-PARTY.txt)

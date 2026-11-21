@@ -404,11 +404,45 @@ def tilted_scan():
                         f"<< /Length {len(data)} >>\nstream\n{data}endstream"])
     objects.extend(["<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
                     "<< /Subtype /Link /Rect [34 72 61 91] /Dest [5 0 R /Fit] >>"])
+    return pdf_objects(objects)
+
+
+def cmyk_print_chart():
+    """Original printer-color swatches, a vector border and an overprinted registration line."""
+    width, height = 512, 384
+    swatches = [
+        (0, 0, 0, 0), (0, 0, 0, 255), (240, 0, 0, 0), (0, 235, 0, 0),
+        (0, 0, 245, 0), (135, 110, 30, 45), (35, 15, 185, 35), (75, 55, 15, 95),
+    ]
+    rows = []
+    for y in range(height):
+        row = bytearray()
+        for x in range(width):
+            base = swatches[(x // 64 + y // 96) % len(swatches)]
+            tint = (y % 96) // 8
+            row.extend(min(channel + tint, 255) for channel in base)
+        rows.append(row)
+    raster = zlib.compress(b"".join(rows), 9)
+    image = (f"<< /Type /XObject /Subtype /Image /Width {width} /Height {height} "
+             f"/ColorSpace /DeviceCMYK /BitsPerComponent 8 /Filter /FlateDecode /Length {len(raster)} >>\nstream\n").encode()
+    paint = "q 512 0 0 384 16 16 cm /Chart Do Q\n0 G 2 w 16 16 512 384 re S\n1 G 4 w 16 16 m 528 400 l S\n"
+    return pdf_objects([
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 544 416] /Resources << /XObject << /Chart 4 0 R >> >> /Contents 5 0 R >>",
+        image + raster + b"\nendstream",
+        f"<< /Length {len(paint)} >>\nstream\n{paint}endstream",
+    ])
+
+
+def pdf_objects(objects):
     buffer = bytearray(b"%PDF-1.4\n")
     offsets = []
     for number, obj in enumerate(objects, 1):
         offsets.append(len(buffer))
-        buffer.extend(f"{number} 0 obj\n{obj}\nendobj\n".encode("ascii"))
+        buffer.extend(f"{number} 0 obj\n".encode("ascii"))
+        buffer.extend(obj.encode("ascii") if isinstance(obj, str) else obj)
+        buffer.extend(b"\nendobj\n")
     xref = len(buffer)
     buffer.extend(f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode("ascii"))
     for offset in offsets:
@@ -425,6 +459,10 @@ def outputs():
     records = [
         ("field-notes-epub2.epub", epub2, field_expectations(2)),
         ("field-notes-epub3.epub", epub3, field_expectations(3)),
+        ("cmyk-print-chart.pdf", cmyk_print_chart(), {
+            "opens": True, "page_count": 1, "color_space": "DeviceCMYK",
+            "source_pixels": [512, 384], "page_points": [544, 416],
+        }),
         ("tilted-scan.pdf", tilted_scan(), {
             "opens": True, "page_count": 2, "display_baseline_degrees": [-8, 8],
             "internal_link_pages": [1, 2],

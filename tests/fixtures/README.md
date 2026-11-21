@@ -47,3 +47,6 @@ The TCR fixture has SHA-256
 The simulated interface uses [Launcher’s Noto Sans Regular](https://github.com/PrimitiveOS/kindle-primitive-launcher/blob/799cd5348d0a82673ea4fc36664ffc084146f238/assets/fonts/NotoSans-Regular.ttf). Its [SIL Open Font License](fonts/OFL-NotoSans.txt) travels with the test bundle.
 
 `signal-guide.epub` contains an original two-chapter field notebook with an inline SVG reference and a percentage-sized PNG sketch. The Parley tests verify CSS sizing, image targets, text geometry and source coverage. The Reader test taps the illustrated link, returns, saves and reopens the book. Reproduce the [simulated page](../../docs/screenshots/epub-inline-illustrations.png) using `reader-probe parley tests/fixtures/signal-guide.epub --font <NotoSans-Regular.ttf> --width 1264 --height 1680 --size 44 --margin 72 --output <page.png>`.
+
+
+`cmyk-print-chart.pdf` contains an original 512 × 384 DeviceCMYK test chart with eight swatches, small tint variations, and a vector registration line. The generator defines every source pixel and PDF object. Reader maps its colors through Hayro’s standard printer-color profile.

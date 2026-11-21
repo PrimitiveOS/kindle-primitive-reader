@@ -144,6 +144,24 @@
       }
     },
     {
+      "file": "cmyk-print-chart.pdf",
+      "sha256": "2b3d71bade4a4df4e883f695ff92f2f554469660d74ed419da1c53c41fc78dbb",
+      "size_bytes": 6077,
+      "expected": {
+        "opens": true,
+        "page_count": 1,
+        "color_space": "DeviceCMYK",
+        "source_pixels": [
+          512,
+          384
+        ],
+        "page_points": [
+          544,
+          416
+        ]
+      }
+    },
+    {
       "file": "tilted-scan.pdf",
       "sha256": "2481fc5dc1ae096d54525aebf144d4bbbd72dd66049eec62decb738de2989e16",
       "size_bytes": 2052,

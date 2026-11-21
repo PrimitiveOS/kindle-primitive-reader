@@ -1,8 +1,6 @@
 //! Rasterize one visible PDF viewport without retaining a Kindle storage handle.
 //! Based on the bounded PDF renderer in PrimitiveOS Viewer.
 
-use hayro::hayro_interpret::InterpreterSettings;
-use hayro::hayro_interpret::util::{RectExt, TransformExt};
 use hayro::hayro_syntax::object::{
     Array, Dict, MaybeRef, Name, Object, ObjectIdentifier, Rect as PdfRect, String as PdfString,
 };
@@ -12,6 +10,8 @@ use hayro::kurbo::{Affine, Rect};
 use hayro::vello_cpu::color::palette::css::WHITE;
 use hayro::vello_cpu::{Pixmap, RasterizerSettings, RenderContext, Resources, TargetInit};
 use hayro::{RenderCache, RenderSettings, render_into};
+use hayro_interpret::InterpreterSettings;
+use hayro_interpret::util::{RectExt, TransformExt};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -951,6 +951,23 @@ pub(crate) mod tests {
         ));
         objects.extend(labels.iter().map(|label| (*label).to_owned()));
         Pdf::open(pdf_objects(&objects)).unwrap()
+    }
+
+    #[test]
+    fn printer_color_chart_keeps_its_swatches_and_vector_registration_line() {
+        let bytes = include_bytes!("../tests/fixtures/cmyk-print-chart.pdf").to_vec();
+        let document = Pdf::open(bytes).unwrap();
+        assert_eq!(document.page_size(0).unwrap(), (544.0, 416.0));
+        let frame = document.fit(0, 544, 416, 0).unwrap();
+        let gray = |x: usize, y: usize| frame[y * 544 + x];
+        assert!(gray(37, 33) > 235, "paper");
+        assert!(gray(105, 33) < 100, "black ink");
+        assert!(
+            gray(170, 33).saturating_add(5) < gray(300, 33),
+            "cyan and yellow"
+        );
+        assert_eq!(gray(272, 208), 255, "white vector overprint");
+        assert_eq!(gray(4, 4), 255, "paper margin");
     }
 
     #[test]
