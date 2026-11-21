@@ -450,6 +450,22 @@ pub(crate) struct PdfSearchHit {
 }
 
 #[cfg(feature = "kindle")]
+pub(crate) struct FixedPageSearchHit {
+    pub(crate) focus: Vec<PdfTextRect>,
+    pub(crate) regions: Vec<PdfTextRect>,
+    pub(crate) limited: bool,
+}
+
+#[cfg(feature = "kindle")]
+fn matching_words<'a>(text: &'a PdfPageText, range: &Range<usize>) -> &'a [PdfTextSpan] {
+    let first = text
+        .words
+        .partition_point(|word| word.bytes.end <= range.start);
+    let rest = &text.words[first..];
+    &rest[..rest.partition_point(|word| word.bytes.start < range.end)]
+}
+
+#[cfg(feature = "kindle")]
 impl PdfSearch {
     #[cfg(test)]
     pub(crate) fn new(query: &str, match_case: bool) -> Result<Self> {
@@ -480,19 +496,11 @@ impl PdfSearch {
         if !text.text.trim().is_empty() {
             self.text_pages += 1;
         }
-        let searchable = if self.query.text.contains(' ') {
-            phrase_text(text)
-        } else {
-            Cow::Borrowed(text.text.as_str())
-        };
-        self.query
-            .matches(&searchable, limit)
+        self.ranges(text, limit)
             .into_iter()
             .map(|range| {
-                let bounds = text
-                    .words
+                let bounds = matching_words(text, &range)
                     .iter()
-                    .filter(|word| word.bytes.start < range.end && word.bytes.end > range.start)
                     .map(|word| word.bounds)
                     .collect();
                 PdfSearchHit {
@@ -502,6 +510,45 @@ impl PdfSearch {
                 }
             })
             .collect()
+    }
+    fn ranges(&self, text: &PdfPageText, limit: usize) -> Vec<Range<usize>> {
+        let searchable = if self.query.text.contains(' ') {
+            phrase_text(text)
+        } else {
+            Cow::Borrowed(text.text.as_str())
+        };
+        self.query.matches(&searchable, limit)
+    }
+
+    pub(crate) fn page_match(
+        &self,
+        text: &PdfPageText,
+        direction: SearchDirection,
+    ) -> Option<FixedPageSearchHit> {
+        const MAX_PAGE_MATCHES: usize = 5_000;
+        let ranges = self.ranges(text, MAX_PAGE_MATCHES + 1);
+        let limited = ranges.len() > MAX_PAGE_MATCHES;
+        let mut regions = Vec::new();
+        let mut focus = None;
+        for range in ranges.iter().take(MAX_PAGE_MATCHES) {
+            let words = matching_words(text, range);
+            if words.is_empty() {
+                continue;
+            }
+            if focus.is_none() || direction == SearchDirection::Previous {
+                focus = Some(words);
+            }
+            for word in words {
+                if regions.last() != Some(&word.bounds) {
+                    regions.push(word.bounds);
+                }
+            }
+        }
+        Some(FixedPageSearchHit {
+            focus: focus?.iter().map(|word| word.bounds).collect(),
+            regions,
+            limited,
+        })
     }
 }
 

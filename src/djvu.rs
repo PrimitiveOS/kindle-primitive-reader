@@ -515,7 +515,7 @@ fn zone_bounds(zone: &TextZone, width: u32, height: u32) -> Option<PdfTextRect> 
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -578,7 +578,7 @@ mod tests {
         }
     }
 
-    fn document(rotation: u8, compressed_text: bool) -> Vec<u8> {
+    pub(crate) fn document(rotation: u8, compressed_text: bool) -> Vec<u8> {
         // Original synthetic page with a dark region under a two-word text layer.
         let (width, height) = (64, 40);
         let mut bitmap = Bitmap::new(width, height);

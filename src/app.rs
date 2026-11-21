@@ -3020,7 +3020,7 @@ impl Reader {
         let action = match self.screen {
             Screen::DictionaryEntry => "Look up",
             _ if note => "Save",
-            Screen::Find if self.active.is_some() => "Find all",
+            Screen::Find => "Find all",
             _ => "Find",
         };
         let Some(key) = keyboard_key(&layout, &self.editor, action, x, y) else {
@@ -3808,6 +3808,7 @@ impl Reader {
                 self.notice = None;
                 self.cancel_ocr_selection();
                 if changed || continuous {
+                    self.nearby.clear();
                     self.search_result = None;
                     self.pdf_selection = None;
                     self.pdf_result_regions.clear();
@@ -3890,6 +3891,9 @@ impl Reader {
     fn search_caption(&self) -> Option<String> {
         let index = self.search_result?;
         if self.nearby.result() {
+            if let Some(fixed) = &self.fixed {
+                return Some(format!("Matching page {} of {}", fixed.reading.page() + 1, fixed.reading.count()));
+            }
             return Some("Search match".into());
         }
         let count = if self.fixed.is_some() {
@@ -5084,7 +5088,7 @@ impl App for Reader {
                 }
                 Screen::GoToPage => ("Page, printed label, or % of document", "Go"),
                 Screen::Find if self.active.is_some() && self.find_regex => ("Regular expression", "Find all"),
-                Screen::Find if self.active.is_some() => ("Search text", "Find all"),
+                Screen::Find => ("Search text", "Find all"),
                 _ => ("Search text", "Find"),
             };
             canvas.single_line_field(

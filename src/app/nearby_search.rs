@@ -127,10 +127,27 @@ impl Drop for Pending {
         self.cancelled.store(true, Ordering::Relaxed);
     }
 }
+struct FixedPending {
+    search: PdfSearch,
+    query: SearchQuery,
+    direction: SearchDirection,
+    next_page: Option<usize>,
+    continuing: bool,
+    at: Instant,
+}
+
+fn adjacent_page(page: usize, count: usize, direction: SearchDirection) -> Option<usize> {
+    match direction {
+        SearchDirection::Previous => page.checked_sub(1),
+        SearchDirection::Next => page.checked_add(1).filter(|&next| next < count),
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Nearby {
     worker: Option<Worker>,
     pending: Option<Pending>,
+    fixed: Option<FixedPending>,
     all: Option<PendingAll>,
     current: Option<SearchQuery>,
     end: Option<SearchDirection>,
@@ -141,16 +158,18 @@ impl Nearby {
         self.pending
             .as_ref()
             .map(|p| p.at)
+            .or_else(|| self.fixed.as_ref().map(|p| p.at))
             .or_else(|| self.all.as_ref().map(|p| p.at))
     }
     pub(super) fn searching_direction(&self) -> bool {
-        self.pending.is_some()
+        self.pending.is_some() || self.fixed.is_some()
     }
     pub(super) fn searching_all(&self) -> bool {
         self.all.is_some()
     }
     pub(super) fn cancel(&mut self) {
         self.pending = None;
+        self.fixed = None;
         self.all = None;
     }
     pub(super) fn clear(&mut self) {
@@ -167,8 +186,16 @@ impl Nearby {
 }
 
 impl Reader {
+    fn supports_nearby_search(&self) -> bool {
+        self.active.is_some()
+            || self
+                .fixed
+                .as_ref()
+                .is_some_and(|book| book.reading.supports_text())
+    }
+
     pub(super) fn nearby_input(&mut self, x: f32, y: f32) -> Option<Change> {
-        if self.active.is_none() {
+        if !self.supports_nearby_search() {
             return None;
         }
         let direction = if PREVIOUS.contains(x, y) {
@@ -189,10 +216,10 @@ impl Reader {
         })
     }
     pub(super) fn draw_nearby(&self, canvas: &mut Canvas) {
-        if self.active.is_none() {
+        if !self.supports_nearby_search() {
             return;
         }
-        if self.nearby.pending.is_some() {
+        if self.nearby.searching_direction() {
             canvas.button(PREVIOUS, "Cancel search", false, false);
         } else {
             canvas.button(PREVIOUS, "Find previous", false, false);
@@ -204,7 +231,6 @@ impl Reader {
         direction: SearchDirection,
         continuing: bool,
     ) -> Result<()> {
-        let active = self.active.as_ref().ok_or("Open a reflowable book first")?;
         let query = if continuing {
             self.nearby.current.clone().ok_or("No current search")?
         } else {
@@ -212,9 +238,40 @@ impl Reader {
                 text: self.editor.string(),
                 match_case: self.find_match_case,
                 ignore_accents: self.find_ignore_accents,
-                regular_expression: self.find_regex,
+                regular_expression: self.active.is_some() && self.find_regex,
             }
         };
+        if let Some(fixed) = &self.fixed {
+            if !fixed.reading.supports_text() {
+                return Err("This document has no searchable text layer".into());
+            }
+            let search =
+                PdfSearch::with_options(&query.text, query.match_case, query.ignore_accents)?;
+            let page = fixed.reading.page();
+            let next_page = if continuing {
+                adjacent_page(page, fixed.reading.count(), direction)
+            } else {
+                Some(page)
+            };
+            if !continuing {
+                self.update_lookup_history(|h| {
+                    h.search(&query.text, query.match_case, query.ignore_accents, false)
+                })?;
+                self.cancel_search();
+                self.search_result = None;
+            }
+            self.nearby.fixed = Some(FixedPending {
+                search,
+                query,
+                direction,
+                next_page,
+                continuing,
+                at: Instant::now(),
+            });
+            self.notice = Some("Searching pages".into());
+            return Ok(());
+        }
+        let active = self.active.as_ref().ok_or("Open a book first")?;
         let engine = if query.regular_expression {
             NearbySearch::with_regular_expression(&query.text, query.match_case, direction)?
         } else {
@@ -348,6 +405,55 @@ impl Reader {
     }
 
     pub(super) fn poll_nearby(&mut self, now: Instant) -> Result<Change> {
+        if let Some(mut pending) = self.nearby.fixed.take() {
+            let fixed = self.fixed.as_ref().ok_or("No open document")?;
+            let Some(page) = pending.next_page else {
+                self.nearby.end = Some(pending.direction);
+                let message = if pending.search.skipped > 0 {
+                    "No match found. Some pages could not be searched"
+                } else {
+                    match pending.direction {
+                        SearchDirection::Previous => "No earlier matching page",
+                        SearchDirection::Next => "No later matching page",
+                    }
+                };
+                self.notice = Some(message.into());
+                return Ok(Change::Partial);
+            };
+            // Reuse the open provider and its cached OCR. Yield after every page so
+            // search can be cancelled without opening a second copy of a large PDF.
+            let found = match fixed.reading.page_text(page) {
+                Ok(text) => pending.search.page_match(&text, pending.direction),
+                Err(_) => {
+                    pending.search.skipped += 1;
+                    None
+                }
+            };
+            let Some(found) = found else {
+                pending.next_page = adjacent_page(page, fixed.reading.count(), pending.direction);
+                pending.at = now + SEARCH_DELAY;
+                self.nearby.fixed = Some(pending);
+                return Ok(Change::None);
+            };
+            // Keep all matching words highlighted, while a zoomed viewport
+            // follows the first occurrence forward or the last one backward.
+            let previous = self.jump_fixed(page, FixedJump::regions(&found.focus))?;
+            if !pending.continuing {
+                self.push_history(previous);
+            }
+            self.pdf_result_regions = found
+                .regions
+                .into_iter()
+                .map(|bounds| (page, bounds))
+                .collect();
+            if found.limited {
+                self.notice = Some("Showing the first 5,000 matches on this page".into());
+            }
+            self.search_result = Some(0);
+            self.nearby.current = Some(pending.query);
+            self.nearby.end = None;
+            return Ok(Change::Partial);
+        }
         if let Some(all) = &mut self.nearby.all {
             let outcome = match all.result.try_recv() {
                 Ok(result) => result,
@@ -420,5 +526,251 @@ impl Reader {
         self.nearby.current = Some(pending.query.clone());
         self.nearby.end = None;
         Ok(Change::Partial)
+    }
+}
+
+#[cfg(test)]
+mod fixed_tests {
+    use super::*;
+    use crate::app::tests::{Fixture, capture_test_screen};
+
+    fn coastal_guide() -> Vec<u8> {
+        let pages = [
+            ("Buoy register", vec!["beacon ".repeat(8); 15]),
+            (
+                "Outer harbour",
+                vec!["A beacon guards the harbour mouth.".into()],
+            ),
+            (
+                "Night passage",
+                vec![
+                    "The beacon stands above the tide.".into(),
+                    "A second beacon marks the channel.".into(),
+                ],
+            ),
+            (
+                "Tidal notes",
+                vec!["Slack water begins before dawn.".into()],
+            ),
+            (
+                "Arrival",
+                vec!["The beacon signals the final approach.".into()],
+            ),
+        ];
+        let mut objects = vec![
+            "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+            "<< /Type /Pages /Count 5 /Kids [4 0 R 6 0 R 8 0 R 10 0 R 12 0 R] /Resources << /Font << /F1 3 0 R >> >> >>".to_owned(),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned(),
+        ];
+        for (heading, lines) in pages {
+            let stream_no = objects.len() + 2;
+            objects.push(format!(
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 360 480] /Contents {stream_no} 0 R >>"
+            ));
+            let mut content = format!(
+                "BT /F1 12 Tf 28 440 Td (COASTAL FIELD GUIDE) Tj 0 -44 Td /F1 22 Tf ({heading}) Tj 0 -38 Td /F1 13 Tf"
+            );
+            for line in lines {
+                content.push_str(&format!(" ({line}) Tj 0 -20 Td"));
+            }
+            content.push_str(" ET\n");
+            objects.push(format!(
+                "<< /Length {} >>\nstream\n{content}endstream",
+                content.len()
+            ));
+        }
+        crate::fixed::tests::pdf_objects(&objects)
+    }
+
+    fn tap(app: &mut Reader, rect: Rect) -> Change {
+        app.input(Input::Tap(
+            (rect.x + rect.w / 2) as f32,
+            (rect.y + rect.h / 2) as f32,
+        ))
+    }
+
+    fn settle(app: &mut Reader) {
+        let stop = Instant::now() + Duration::from_secs(90);
+        while app.nearby.searching_direction() && Instant::now() < stop {
+            app.poll_nearby(Instant::now()).unwrap();
+        }
+        assert!(!app.nearby.searching_direction());
+    }
+
+    #[test]
+    fn finds_pdf_pages_from_the_visible_passage_and_restores_its_viewport() {
+        let fixture = Fixture::new();
+        let external = std::env::var_os("READER_TEST_FIXED_SEARCH_DOCUMENT").map(PathBuf::from);
+        let authored = external.is_none();
+        let path = external.unwrap_or_else(|| {
+            let path = fixture.root.join("Coastal field guide.pdf");
+            fs::write(&path, coastal_guide()).unwrap();
+            path
+        });
+        let query =
+            std::env::var("READER_TEST_FIXED_SEARCH_QUERY").unwrap_or_else(|_| "beacon".into());
+        let expected =
+            std::env::var("READER_TEST_FIXED_SEARCH_PAGES").unwrap_or_else(|_| "3,2,5".into());
+        let expected: Vec<usize> = expected
+            .split(',')
+            .map(|n| n.parse::<usize>().unwrap() - 1)
+            .collect();
+        assert_eq!(expected.len(), 3);
+        let (origin, before, after) = (expected[0], expected[1], expected[2]);
+        let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+        let mut app =
+            Reader::open(path.parent().unwrap(), &fixture.state, vec![font.clone()]).unwrap();
+        app.open_path(&path).unwrap();
+        app.fixed.as_mut().unwrap().reading.jump(origin).unwrap();
+        let old = app.current_history_location().unwrap();
+        if authored || std::env::var_os("READER_TEST_FIXED_SEARCH_OLD_LIST").is_some() {
+            app.start_document_search(&query).unwrap();
+            while app.search_at.is_some() {
+                app.step_pdf_search(Instant::now()).unwrap();
+            }
+            assert_eq!(app.pdf_hits.len(), MAX_SEARCH_HITS);
+            assert!(app.pdf_hits.last().unwrap().page < origin);
+        }
+        app.show(Screen::Find);
+        app.editor.text = query.chars().collect();
+        app.editor.caret = app.editor.text.len();
+        if authored {
+            capture_test_screen(
+                &app,
+                std::slice::from_ref(&font),
+                "READER_FIXED_FIND_CONTROLS",
+                false,
+            );
+        }
+        assert_eq!(tap(&mut app, NEXT_HERE), Change::Partial);
+        settle(&mut app);
+        assert_eq!(app.screen, Screen::Fixed);
+        let page = |app: &Reader| app.fixed.as_ref().unwrap().reading.page();
+        assert_eq!(page(&app), origin);
+        let marks = app.pdf_result_regions.len();
+        assert!(marks > 0);
+        if authored {
+            assert_eq!(marks, 2);
+            capture_test_screen(
+                &app,
+                std::slice::from_ref(&font),
+                "READER_FIXED_FIND_MATCH",
+                false,
+            );
+        }
+        let mut visited = vec![origin + 1];
+        let mut word_boxes = vec![marks];
+        for (button, expected) in [
+            (MATCH_NEXT, after),
+            (MATCH_PREV, origin),
+            (MATCH_PREV, before),
+        ] {
+            assert_eq!(tap(&mut app, button), Change::Partial);
+            settle(&mut app);
+            assert_eq!(page(&app), expected);
+            assert!(app.pdf_result_regions.iter().all(|(p, _)| *p == expected));
+            visited.push(expected + 1);
+            word_boxes.push(app.pdf_result_regions.len());
+        }
+        app.activate(Action::ReturnToLocation).unwrap();
+        assert_eq!(app.current_history_location(), Some(old));
+        if let Some(file) = std::env::var_os("READER_TEST_FIXED_SEARCH_REPORT") {
+            let result = serde_json::json!({"visited":visited, "word_boxes":word_boxes,"viewport_restored":true});
+            fs::write(file, serde_json::to_vec(&result).unwrap()).unwrap();
+        }
+    }
+
+    #[test]
+    fn directional_djvu_search_uses_the_embedded_word_rectangles() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Tidal signal.djvu");
+        fs::write(&path, crate::djvu::tests::document(1, true)).unwrap();
+        let mut app = Reader::open(
+            &fixture.root,
+            &fixture.state,
+            vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+        )
+        .unwrap();
+        app.open_path(&path).unwrap();
+        let words = app.fixed.as_ref().unwrap().reading.page_text(0).unwrap();
+        app.show(Screen::Find);
+        app.find_ignore_accents = true;
+        app.editor.text = "cafe".chars().collect();
+        tap(&mut app, NEXT_HERE);
+        settle(&mut app);
+        assert_eq!(app.screen, Screen::Fixed);
+        assert_eq!(app.pdf_result_regions, vec![(0, words.words[1].bounds)]);
+        tap(&mut app, MATCH_NEXT);
+        settle(&mut app);
+        assert_eq!(app.notice.as_deref(), Some("No later matching page"));
+    }
+
+    #[test]
+    fn a_zoomed_directional_pdf_match_returns_to_the_same_source_point() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Guide.pdf");
+        fs::write(&path, coastal_guide()).unwrap();
+        let mut app = Reader::open(
+            &fixture.root,
+            &fixture.state,
+            vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+        )
+        .unwrap();
+        app.open_path(&path).unwrap();
+        let reading = &mut app.fixed.as_mut().unwrap().reading;
+        reading.jump(2).unwrap();
+        reading.set_zoom(3).unwrap();
+        reading
+            .input(Input::Swipe {
+                dx: -240.0,
+                dy: -450.0,
+                start_y: 720.0,
+            })
+            .unwrap();
+        let original = app.current_history_location().unwrap();
+        assert!(original.scan_point.is_some());
+        app.show(Screen::Find);
+        app.editor.text = "beacon".chars().collect();
+        tap(&mut app, NEXT_HERE);
+        settle(&mut app);
+        assert_eq!(app.pdf_result_regions.len(), 2);
+        tap(&mut app, MATCH_NEXT);
+        settle(&mut app);
+        app.activate(Action::ReturnToLocation).unwrap();
+        let restored = app.current_history_location().unwrap();
+        assert_eq!(restored.position, original.position);
+        let delta = restored.scan_point.unwrap() - original.scan_point.unwrap();
+        assert!(delta.hypot() < 0.01);
+    }
+
+    #[test]
+    fn cancels_fixed_search_and_stops_at_the_publication_edges() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Guide.pdf");
+        fs::write(&path, coastal_guide()).unwrap();
+        let mut app = Reader::open(
+            &fixture.root,
+            &fixture.state,
+            vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+        )
+        .unwrap();
+        app.open_path(&path).unwrap();
+        app.show(Screen::Find);
+        app.editor.text = "absent".chars().collect();
+        tap(&mut app, PREVIOUS);
+        assert!(app.nearby.searching_direction());
+        tap(&mut app, PREVIOUS);
+        assert!(!app.nearby.searching_direction());
+        assert_eq!(app.screen, Screen::Find);
+        app.editor.text = "beacon".chars().collect();
+        tap(&mut app, PREVIOUS);
+        settle(&mut app);
+        assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 0);
+        tap(&mut app, MATCH_PREV);
+        settle(&mut app);
+        assert_eq!(app.notice.as_deref(), Some("No earlier matching page"));
+        assert!(app.search_step(-1).is_none());
+        assert!(app.search_step(1).is_some());
+        assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 0);
     }
 }

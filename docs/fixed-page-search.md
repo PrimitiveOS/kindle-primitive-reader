@@ -1,0 +1,24 @@
+# Find a matching PDF or DjVu page
+
+Open **Find in book**, enter a word or phrase and tap **Find previous** or **Find next**. Reader starts with the page on screen. On a matching page it highlights the matching words and shows the physical page number. Use **Previous** or **Next** to reach another matching page in that direction. Return to the previous location to restore the page and its prior viewport. **Find all** continues to open the separate list of individual occurrences from the beginning of the document.
+
+| Entering a search | Both matching words on the current page |
+|---|---|
+| ![Search controls on a PDF with Find previous, Find next and Find all](screenshots/fixed-find-pages.png) | ![Search for beacon highlights two separate words on the same PDF page](screenshots/fixed-find-matches.png) |
+
+KOReader's PDF and DjVu providers call the same fixed-page search implementation. It includes the current page on a new search, skips it when continuing, and returns all matching word rectangles on the first page it finds. Its reading UI remembers the original viewport even when the first match is on that page. [PDF provider](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/pdfdocument.lua#L352-L357) · [DjVu provider](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/djvudocument.lua#L271-L277) · [Search and page bounds](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/koptinterface.lua#L1593-L1648) · [Highlighting and return](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readersearch.lua#L418-L431)
+
+Reader searches the existing open document and checks one physical page per event-loop turn. Cancel search stops before the next page. Embedded text and previously recognized page text use the same page coordinates as normal selection. Regular expressions are available for reflowable books. A directional search retains up to 5,000 occurrences on its current page. A message identifies a truncated page. The separate fixed-layout Find all list retains its 100-occurrence limit.
+
+## Original PDFs on the Mac
+
+For each original, an independent Poppler extraction located an interior page with a matching word and its preceding and following matching pages. The normal Reader controls first opened that page, then the next matching page, then returned across it to the preceding match. The tests also ran ordinary **Find all** and confirmed its hundredth occurrence came before these pages.
+
+| Original and physical page count | Independent page containing the 100th matching word | Pages opened in Reader | Word boxes highlighted in Reader |
+|---|---:|---|---|
+| 030, 229 pages | 8 | 115 → 116 → 115 → 114 | 9, 15, 9, 3 |
+| 044, 1,041 pages | 9 | 521 → 522 → 521 → 520 | 30, 57, 30, 41 |
+| 054, 1,066 pages | 106 | 542 → 543 → 542 → 538 | 1, 2, 1, 2 |
+| 056, 41 pages | 11 | 21 → 22 → 21 → 20 | 7, 6, 7, 5 |
+
+All four returned to the original reading position. A separate authored PDF test restored a zoomed and panned source point to within 0.01 PDF points. The five-page authored coastal guide in the screenshots contains repeated terms, an intervening page without a match and two matching words on the displayed page. A rotated DjVu with compressed embedded text verified that an accent-insensitive search selects its original word rectangle. [Functional tests and authored guide](../src/app/nearby_search.rs) · [Installed KOReader comparison](../scripts/koreader-fixed-direction-check.lua)
