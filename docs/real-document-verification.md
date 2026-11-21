@@ -355,3 +355,8 @@ The comparison measures page geometry, text availability and selection bounds. W
 A resource inventory of the 30 distinct EPUB editions found 29 packages with directly readable central directories. Their manifests declared 706 JPEG, 216 PNG and 82 GIF resources. The bounded recovery path for the remaining damaged edition is described above.
 
 In the 0.1.13 desktop run, three books showed a total of 80 placeholder placements for valid packaged GIF illustrations. All 82 original GIF files have a single frame. The book containing 17 GIF files references 15 of them in the checked page layouts. These 80 placements identify an EPUB decoder gap. The 31 unavailable images in the damaged edition have a different cause. Opening, turning pages and resuming a book can all succeed while individual illustrations still need correction.
+
+
+## Installed KOReader provider sweep on 22 November 2026
+
+A headless comparison used the installed KOReader release on the Oasis, a temporary cache, the original Documents files and a six-minute limit per book. Of 30 distinct EPUB editions, 29 returned a rendered EPUB document with a page count. The remaining damaged EPUB timed out. An earlier provider check had identified its plain-text fallback. Both MOBI books opened as PDB, and all four PDFs opened through MuPDF with 229, 1,041, 1,066 and 41 pages respectively. File and existing Reader and Browser state checksums matched before and after the sweep. The provider counts cover these 36 publications. Reader’s full Documents open-and-resume checks are recorded separately. [Provider comparison tool](../scripts/koreader-document-check.lua)

@@ -42,6 +42,8 @@ Tap a PDF web link to inspect its address over the current page. **Copy** makes 
 
 Tap a saved passage to read its note. When marks overlap, Reader shows the matching passages so you can choose one. In **Find**, the arrows start at your current passage. [Overlapping highlights](docs/screenshots/overlapping-highlights.png) · [Note on the page](docs/screenshots/tapped-note.png) · [Find from this passage](docs/screenshots/nearby-find.png)
 
+Read with publisher fonts on supported Kindle editions, or find the previous or next matching page directly from the current PDF or DjVu view. [Embedded font support](docs/kf8-publication-fonts.md) · [Fixed-page search](docs/fixed-page-search.md)
+
 ## Reading on Kindle
 
 Install Reader from PrimitiveOS Store or follow the manual install guide.
@@ -145,7 +147,7 @@ device. [Reading parity and device results](docs/reading-parity-plan.md)
 
 | Format | Current implementation |
 | --- | --- |
-| EPUB 2 and EPUB 3 reflow | [Printed page numbers in the list, margin and footer](docs/publisher-page-numbers.md), publisher navigation, local links, saved text positions, per-book typography, bookmarks, search and notes. Embedded GIF diagrams retain their intrinsic dimensions and open at full size. Linked static SVG and short horizontal ruby annotations render within documented limits. [GIF illustrations and limits](docs/epub-gif-illustrations.md) |
+| EPUB 2 and EPUB 3 reflow | [Publisher page numbers](docs/publisher-page-numbers.md), [character-count pages and per-book defaults](docs/character-count-pages.md), publisher navigation, local links, saved text positions, per-book typography, bookmarks, search and notes. Embedded GIF diagrams retain their intrinsic dimensions and open at full size. Linked static SVG and short horizontal ruby annotations render within documented limits. [GIF illustrations and limits](docs/epub-gif-illustrations.md) |
 | Fixed-layout EPUB 3 | Static XHTML and supported SVG spine pages, contents, zoom and rotation. Publisher page progression and facing-page hints control spreads. |
 | PDF | Page turns or continuous scrolling, printed page labels, local outlines and links, bookmarks, passwords, page, width and height fit, crop, zoom, pan and rotation. Embedded text supports search, selection, highlights and notes. |
 | DjVu | Fixed pages, crop, embedded text with search and annotations, and [publisher contents](docs/djvu-contents.md) with named page destinations |

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.16
+
+- Generate stable pages for an EPUB from 500 to 3,000 characters per page. Jump to a stable number, show it in the margin or footer and set defaults for new books.
+- In PDF and DjVu, find matching pages forward or backward from the page you are reading. Returning restores the starting page and viewport.
+- Read supported publisher fonts in KF8 and in EPUBs that use standard IDPF font embedding.
+
 ## 0.1.15
 
 - Find up to 5,000 occurrences in reflowable text. Move to the first or last page of results, open the passage and return to your reading position.
