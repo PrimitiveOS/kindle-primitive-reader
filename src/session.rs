@@ -368,6 +368,10 @@ impl Reading {
         Ok(())
     }
 
+    pub(crate) fn visible_end(&self) -> f32 {
+        self.visible_columns().map(|(range, _)| range.end).fold(0.0, f32::max)
+    }
+
     fn visible_range(&self) -> Range<f32> {
         self.scroll_top.map_or_else(
             || self.probe.page_range(self.page),
@@ -375,7 +379,7 @@ impl Reading {
         )
     }
 
-    fn visible_columns(&self) -> impl Iterator<Item = (Range<f32>, u32)> + '_ {
+    pub(crate) fn visible_columns(&self) -> impl Iterator<Item = (Range<f32>, u32)> + '_ {
         frame_columns(&self.probe, self.page).map(|(page, x)| {
             let range = self.scroll_top.map_or_else(
                 || self.probe.page_range(page),

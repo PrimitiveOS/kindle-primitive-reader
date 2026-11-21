@@ -593,6 +593,10 @@ pub struct BookState {
     reading_status: Option<ReadingStatus>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub favorite: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub(crate) publisher_page_footer: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub(crate) publisher_page_margins: bool,
     #[serde(default)]
     pub preferences: BookPreferences,
     #[serde(default)]
@@ -644,6 +648,8 @@ impl BookState {
             position: None,
             reading_status: None,
             favorite: false,
+            publisher_page_footer: false,
+            publisher_page_margins: false,
             preferences: BookPreferences::default(),
             fixed_preferences: FixedPreferences::default(),
             preferred_dictionaries: Vec::new(),

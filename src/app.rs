@@ -3,6 +3,7 @@ mod annotation_search;
 mod bar_icons;
 mod custom_contents;
 mod contents_position;
+pub(crate) mod publisher_pages;
 mod dictionary_panel;
 mod dictionary_sources;
 use dictionary_sources::{SourceAction, SourcePreferences};
@@ -136,6 +137,7 @@ enum Screen {
     OcrLanguage,
     PdfPassword,
     GoToPage,
+    PublisherPages,
     PageOverview,
     BookMap,
     AutoTurn,
@@ -206,6 +208,7 @@ impl Screen {
             | Self::FixedCrop
             | Self::Illustration => "",
             Self::GoToPage => "Go to page",
+            Self::PublisherPages => "Stable page number list",
             Self::PageOverview => "Pages",
             Self::BookMap => "Book map",
             Self::AutoTurn => "Automatic page turns",
@@ -288,6 +291,8 @@ enum Action {
     ExportAnnotatedPdf,
     Show(Screen),
     Jump(Destination),
+    TogglePublisherFooter,
+    TogglePublisherMargins,
     ShowGeneratedContents,
     Custom(CustomAction),
     GeneratedEntry(usize),
@@ -520,6 +525,7 @@ pub struct Reader {
     auto_turn: AutoTurn,
     list_page: usize,
     current_contents_row: Option<usize>,
+    publisher_label_canvas: std::cell::RefCell<Option<Canvas>>,
     map_window: fixed_book_map::MapWindow,
     back: Vec<HistoryLocation>,
     forward: Vec<HistoryLocation>,
@@ -648,6 +654,7 @@ impl Reader {
             auto_turn: AutoTurn::default(),
             list_page: 0,
             current_contents_row: None,
+            publisher_label_canvas: Default::default(),
             map_window: fixed_book_map::MapWindow::default(),
             back: Vec::new(),
             forward: Vec::new(),
@@ -947,7 +954,11 @@ impl Reader {
         self.map_window = fixed_book_map::MapWindow::default();
         self.sync_auto_turn(Instant::now());
         self.update_stats_activity(Instant::now());
-        self.current_contents_row = self.locate_contents_row();
+        self.current_contents_row = if screen == Screen::PublisherPages {
+            self.visible_publisher_page()
+        } else {
+            self.locate_contents_row()
+        };
         self.list_page = self.current_contents_row.unwrap_or_default() / ROWS_PER_PAGE;
         self.notice = None;
     }
@@ -1374,6 +1385,7 @@ impl Reader {
                 }
                 items
             }
+            Screen::PublisherPages => self.publisher_page_items(),
             Screen::GeneratedContents => self.outline.as_ref().map_or_else(Vec::new, |outline| {
                 outline
                     .contents
@@ -1891,6 +1903,8 @@ impl Reader {
             Action::Show(screen) => self.show(screen),
             Action::Jump(target) => self.follow(target)?,
             Action::Custom(action) => self.custom_action(action)?,
+            Action::TogglePublisherFooter => self.toggle_publisher_labels(false)?,
+            Action::TogglePublisherMargins => self.toggle_publisher_labels(true)?,
             Action::ShowGeneratedContents => self.start_generated_contents()?,
             Action::GeneratedEntry(index) => self.follow_generated_entry(index)?,
             Action::ReturnToLocation => {
@@ -4949,6 +4963,7 @@ impl App for Reader {
                 &selection,
                 self.page_paint(),
             );
+            self.draw_publisher_margins(canvas);
             self.draw_footer_track(canvas);
             if self.saved_popup_over_book() {
                 self.draw_saved_popup(canvas);
@@ -5085,9 +5100,10 @@ impl App for Reader {
         }
         let mut items = self.items();
         if let Some(current) = self.current_contents_row.and_then(|row| items.get_mut(row)) {
+            let context = if self.screen == Screen::PublisherPages { "Current printed page" } else { "Current section" };
             current.detail = Some(match current.detail.take() {
-                Some(detail) => format!("Current section · {detail}"),
-                None => "Current section".into(),
+                Some(detail) => format!("{context} · {detail}"),
+                None => context.into(),
             });
         }
         let rows: Vec<_> = items
@@ -7303,6 +7319,133 @@ mod tests {
         let second = Book::open(&fixture.book).unwrap();
         assert_eq!(second.toc[0].label, "XHTML contents");
         assert_eq!(second.printed_pages()[0].label, "7");
+    }
+
+    #[test]
+    fn publisher_pages_browse_exact_destinations_and_follow_the_visible_passage() {
+        let fixture = Fixture::new();
+        let mut nav = String::from(r#"<html><body><nav type="page-list"><ol>"#);
+        nav.push_str(r#"<li><a href="first.xhtml#passage2">iii</a></li>"#);
+        for n in 3..=14 {
+            nav.push_str(&format!(r#"<li><a href="first.xhtml#passage{n}">{n}</a></li>"#));
+        }
+        nav.push_str(r#"<li><a href="second.xhtml">14</a></li></ol></nav></body></html>"#);
+        write_outline_fixture(&fixture.book, Some(nav.as_bytes()), None);
+        let fonts = std::env::var_os("READER_TEST_FONTS")
+            .map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
+            .unwrap_or_else(|| vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")]);
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        app.open_path(&fixture.book).unwrap();
+        assert_eq!(app.visible_publisher_page(), None);
+        assert_eq!(app.status_caption(), None);
+        app.open_reading_edge(true, 520.);
+        tap_reading_control(&mut app, "Printed pages in footer");
+        assert_eq!(app.status_caption().as_deref(), Some("Printed page iii"));
+        app.open_reading_edge(true, 520.);
+        tap_reading_control(&mut app, "Stable page number list");
+        assert_eq!(app.current_contents_row, None);
+        assert_eq!(app.items().len(), 14);
+        let target = app.items().remove(12);
+        assert_eq!(target.title, "14");
+        app.activate(target.action).unwrap();
+        assert_eq!(app.active.as_ref().unwrap().reading.chapter, 0);
+        let frame = |app: &Reader, dark| {
+            let paths = fonts.iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>();
+            let mut canvas = Canvas::new(WIDTH, HEIGHT, &paths).unwrap();
+            primitive_app::frame(app, &mut canvas, dark)
+        };
+        let original = frame(&app, false);
+        app.open_reading_edge(true, 520.);
+        tap_reading_control(&mut app, "Printed pages in margin");
+        let marked = frame(&app, false);
+        let margin = app.active.as_ref().unwrap().reading.probe.settings.side_margin();
+        let changes = original.iter().zip(&marked).enumerate().filter(|(_, (a, b))| a != b)
+            .map(|(index, _)| index).collect::<Vec<_>>();
+        assert!(!changes.is_empty(), "A visible source boundary should draw a label");
+        assert!(changes.iter().all(|index| index % WIDTH as usize >= (WIDTH - margin) as usize
+            && index / (WIDTH as usize) < PAGE_HEIGHT as usize));
+        capture_test_screen(&app, &fonts, "READER_PRINTED_MARGIN_SCREENSHOT", false);
+        app.activate(Action::TogglePublisherMargins).unwrap();
+        assert_eq!(frame(&app, false), original);
+        app.show(Screen::PublisherPages);
+        assert_eq!(app.current_contents_row, Some(12));
+        assert_eq!(app.list_page, 12 / ROWS_PER_PAGE);
+        let later_page = app.list_page;
+        app.input(Input::PageBack);
+        capture_test_screen(&app, &fonts, "READER_PRINTED_LIST_SCREENSHOT", false);
+        app.input(Input::PageForward);
+        assert_eq!(app.list_page, later_page);
+        let target = app.items().remove(13);
+        app.activate(target.action).unwrap();
+        assert_eq!(app.active.as_ref().unwrap().reading.chapter, 1);
+        assert_eq!(app.status_caption().as_deref(), Some("Printed page 14"));
+        app.activate(Action::ReturnToLocation).unwrap();
+        let before = app.current_publisher_page();
+        app.save().unwrap();
+        let mut reopened = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+        reopened.activate(Action::Continue).unwrap();
+        assert_eq!(reopened.current_publisher_page(), before);
+        assert_eq!(reopened.status_caption().as_deref(), Some("Printed page 14"));
+        let next = Settings { font_size: 48., ..reopened.active.as_ref().unwrap().reading.config.settings };
+        reopened.activate(Action::Text(next)).unwrap();
+        assert_eq!(reopened.status_caption().as_deref(), Some("Printed page 14"));
+        reopened.activate(Action::TogglePublisherFooter).unwrap();
+        assert_eq!(reopened.status_caption(), None);
+        let mut persisted = fixture.app();
+        persisted.activate(Action::Continue).unwrap();
+        assert!(!persisted.publisher_footer_enabled());
+    }
+
+    #[test]
+    #[ignore = "requires an original EPUB and independent page labels"]
+    fn compares_publisher_pages_in_an_original_document() {
+        let original = PathBuf::from(std::env::var_os("READER_PAGE_MAP_BOOK").expect("EPUB"));
+        let labels: Vec<String> = serde_json::from_slice(&fs::read(std::env::var_os("READER_PAGE_MAP_LABELS").expect("labels")).unwrap()).unwrap();
+        let f = Fixture::new();
+        let mut app = Reader::open(original.parent().unwrap(), &f.state, simulation_fonts()).unwrap();
+        app.open_path(&original).unwrap();
+        app.activate(Action::TogglePublisherFooter).unwrap();
+        app.open_reading_edge(true, 520.);
+        tap_reading_control(&mut app, "Stable page number list");
+        let actual: Vec<_> = app.items().into_iter().filter(|item| matches!(item.action, Action::Jump(_))).map(|item| item.title).collect();
+        assert_eq!(actual.len(), labels.len());
+        assert!(actual == labels, "Publisher labels or order differed");
+        let active = app.active.as_ref().unwrap();
+        let mut by_chapter: std::collections::BTreeMap<usize, Vec<&Destination>> = Default::default();
+        for entry in &active.reading.probe.printed_pages {
+            let dest = entry.destination.as_ref().expect("Missing print destination");
+            let chapter = active.reading.probe.chapter_index(&dest.path).expect("Missing print chapter");
+            by_chapter.entry(chapter).or_default().push(dest);
+        }
+        let mut mapped = 0;
+        for (chapter, entries) in by_chapter {
+            let probe = active.reading.config.chapter(chapter).unwrap();
+            for destination in entries {
+                if let Some(id) = &destination.fragment {
+                    let anchor = probe.fragment(id).expect("Unresolved printed page ID");
+                    assert!(probe.page_for(&anchor).is_some(), "No visible geometry for print boundary");
+                }
+                mapped += 1;
+            }
+        }
+        assert_eq!(mapped, labels.len());
+        for n in [0, labels.len()/2, labels.len()-1] {
+            let target = app.items().remove(n).action;
+            let Action::Jump(dest) = &target else { panic!("Missing print destination") };
+            let expected = dest.clone();
+            app.activate(target).unwrap();
+            let reading = &app.active.as_ref().unwrap().reading;
+            assert_eq!(reading.probe.chapter, expected.path);
+            if let Some(id) = &expected.fragment {
+                let page = reading.probe.page_for(&reading.probe.fragment(id).expect("Missing printed page anchor")).unwrap();
+                assert_eq!(reading.page, page);
+            }
+            assert!(app.status_caption().is_some_and(|s| s.starts_with("Printed page ")));
+            app.show(Screen::PublisherPages);
+            let row = app.current_contents_row.expect("Selected print range");
+            assert!(row >= n && row < labels.len());
+        }
+        println!("Matched {} publisher labels, {} source locations and three exact jumps", labels.len(), mapped);
     }
 
     fn write_outline_fixture(path: &Path, nav: Option<&[u8]>, ncx: Option<&[u8]>) {

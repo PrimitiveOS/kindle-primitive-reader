@@ -400,7 +400,11 @@ pub struct Probe {
     #[cfg(feature = "kindle")]
     pub(crate) printed_pages: Vec<TocEntry>,
     #[cfg(feature = "kindle")]
+    pub(crate) printed_source: Option<String>,
+    #[cfg(feature = "kindle")]
     footer_chapters: std::cell::OnceCell<Vec<(usize, String)>>,
+    #[cfg(feature = "kindle")]
+    publisher_positions: std::cell::OnceCell<app::publisher_pages::PublisherPositions>,
     settings: Settings,
     spine_rtl: bool,
     source: Source,
@@ -497,6 +501,8 @@ impl Probe {
         let toc = book.toc.clone();
         #[cfg(feature = "kindle")]
         let printed_pages = book.printed_pages().to_vec();
+        #[cfg(feature = "kindle")]
+        let printed_source = book.printed_page_source().map(str::to_owned);
         let xhtml = match excerpt {
             Some(value) => value,
             None => book.chapter(chapter).map_err(|e| e.to_string())?,
@@ -611,7 +617,11 @@ impl Probe {
             #[cfg(feature = "kindle")]
             printed_pages,
             #[cfg(feature = "kindle")]
+            printed_source,
+            #[cfg(feature = "kindle")]
             footer_chapters: Default::default(),
+            #[cfg(feature = "kindle")]
+            publisher_positions: Default::default(),
             settings,
             #[cfg(feature = "kindle")]
             custom_hyphenation_allowed,

@@ -15,7 +15,7 @@ To check coverage, run `python3 scripts/check-koreader-inventory.py /path/to/kor
 | --- | --- |
 | `readerannotation`, `readerbookmark`, `readerdogear`, `readerhighlight` | Reader stores bookmarks, highlights and notes. Check drawing styles, cross-page selection, filters, ordering and export for both reflow and fixed pages. |
 | `readerback`, `readerflipping`, `readergoto`, `readerlink`, `readerthumbnail` | Location history, page jumps, links and thumbnail skimming are available. Check cancellation, forward history after branching, footnote previews and nonlinear flows. |
-| `readerhandmade`, `readerpagemap`, `readertoc` | Publisher contents and generated outlines are available. Hand-edited contents, imported reference-page labels and alternate-flow editing require separate workflows. |
+| `readerhandmade`, `readerpagemap`, `readertoc` | Publisher, generated and custom contents have dedicated workflows. The print list follows the publisher’s exact targets and exposes per-book footer and margin controls. Character-count maps and alternate-flow editing have separate acceptance checks. [Print page evidence](publisher-page-numbers.md) |
 | `readerdictionary`, `readerwikipedia` | Lookup uses installed dictionaries. Compare lookup history, source changes, morphology, Wikipedia, translation, full articles and offline outcomes. |
 | `readerfooter`, `readerstatus`, `readeractivityindicator`, `readerdevicestatus` | Check independent footer display, chapter progress, hidden mode and deliberate exit. Compare each device indicator against Launcher ownership. |
 | `readerconfig`, `readermenu` | Compare upper groups, lower format controls, remembered selections, current values, outside dismissal and page-button behavior on both document types. |
@@ -23,7 +23,7 @@ To check coverage, run `python3 scripts/check-koreader-inventory.py /path/to/kor
 | `readerhinting`, `readerpaging`, `readerrolling`, `readerscrolling`, `readerview` | Exercise eager and delayed pagination, continuous scroll, mixed writing directions, overlap, source anchors and cache behavior. |
 | `readercoptlistener`, `readerkoptlistener`, `readercropping`, `readerpanning`, `readerzooming` | Compare each provider option, pan to source corners, follow a link, mark text and reopen at the same source position. |
 | `readerkeyselection` | Oasis has two page buttons. Test their configured functions. D-pad-only text selection depends on a device with those keys. |
-| `readersearch` | Search with case matching, Unicode text, repeated phrases, multiple chapters, cancellation and back navigation. Ignore accents retains the original UTF-8 selection in reflow and PDF text. Regex and directional traversal from the current location require separate evidence. |
+| `readersearch` | Search with case matching, Unicode text, repeated phrases, multiple chapters, cancellation and back navigation. Ignore accents retains the original UTF-8 selection in reflow and PDF text. Directional traversal and regular expressions have been compared with original EPUBs. The full-list result limit is tracked independently. [Reflow search](reflow-search.md) · [Expression tests](regular-expression-search.md) |
 
 ## File manager modules
 

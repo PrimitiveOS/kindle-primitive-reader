@@ -211,16 +211,20 @@ impl Reader {
         if mode == StatusBar::Minimal {
             return Some(String::new());
         }
+        let printed = || {
+            let active = self.active.as_ref()?;
+            self.publisher_footer_enabled().then(|| self.current_publisher_page()).flatten()
+                .map(|row| format!("Printed page {}", super::publisher_pages::compact_label(&active.reading.probe.printed_pages[row].label)))
+        };
         if !self.controls.footer_all_at_once && mode == StatusBar::PageNumbers {
-            return None;
+            return printed();
         }
         let p = self.footer_progress()?;
         if self.controls.footer_all_at_once {
             return Some(format!(
-                "{} of book  ·  {} / {}  ·  {} left",
+                "{} of book  ·  {}  ·  {} left",
                 p.percentage(),
-                p.section_page,
-                p.section_len,
+                printed().unwrap_or_else(|| format!("{} / {}", p.section_page, p.section_len)),
                 p.pages_left()
             ));
         }

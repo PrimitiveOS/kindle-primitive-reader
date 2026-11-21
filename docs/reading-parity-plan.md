@@ -6,6 +6,8 @@ Compare against the installed KOReader release for hardware measurements. Record
 
 ## Implementation checkpoint
 
+The publisher-page workflow has independent checks for source order, exact destinations and the label shown at a reflowed passage. Generated character-count numbers have their own acceptance criteria. [Printed page controls](publisher-page-numbers.md)
+
 | Area | Development coverage | Remaining work |
 | --- | --- | --- |
 | EPUB reading | Saved positions, page and scroll modes, reading bars, printed page references, whole-book percentage jumps, generated contents from headings or chapter starts, publisher CSS with first-line and hanging indents and supported structural selectors, local fonts and illustrations, numbered and nested lists, supported tables with column widths and merged cells, footnote previews, bounded static SVG, ruby, authored soft hyphens, automatic US and British English hyphenation, inherited language, horizontal writing direction, and publisher line-breaking rules. Supported vertical chapters use right-to-left columns and the same text anchors. Fixed pages include publisher-defined spreads and the XHTML viewport directives. | More advanced stylesheet cases, other hyphenation dictionaries and user exceptions, mixed writing modes in one chapter, and broader live typography checks |

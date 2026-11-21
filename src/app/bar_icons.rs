@@ -87,6 +87,7 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         Action::TranslatePage => TEXT,
         Action::Show(Screen::OnlineHistory) => CLOCK,
         Action::Show(Screen::Highlights) | Action::ExportHighlights(_) => HIGHLIGHT,
+        Action::Show(Screen::PublisherPages) | Action::TogglePublisherFooter | Action::TogglePublisherMargins => PAGE,
         Action::Show(Screen::GoToPage) | Action::NextLocation => JUMP,
         Action::Show(Screen::Gestures | Screen::ReadingControls | Screen::ReadingData | Screen::FooterSettings) => SLIDERS,
         Action::Show(Screen::Typography | Screen::ReadingProfiles)

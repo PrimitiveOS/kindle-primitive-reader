@@ -72,6 +72,14 @@ impl Reader {
                 ),
             ),
         ]);
+        if let Some(pages) = self.active.as_ref().map(|b| &b.reading.probe.printed_pages).filter(|pages| !pages.is_empty()) {
+            items.push(Item::new("Stable page number list", Action::Show(Screen::PublisherPages))
+                .detail(format!("{} publisher labels", pages.len())));
+            items.push(Item::new("Printed pages in footer", Action::TogglePublisherFooter)
+                .detail(if self.publisher_footer_enabled() { "On" } else { "Off" }));
+            items.push(Item::new("Printed pages in margin", Action::TogglePublisherMargins)
+                .detail(if self.publisher_margins_enabled() { "On" } else { "Off" }));
+        }
         if self
             .active
             .as_ref()

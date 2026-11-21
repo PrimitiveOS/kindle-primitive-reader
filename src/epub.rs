@@ -84,6 +84,7 @@ pub struct Book {
     pub chapters: Vec<Chapter>,
     pub toc: Vec<TocEntry>,
     printed_pages: Vec<TocEntry>,
+    printed_source: Option<String>,
     revision: u64,
     pub(crate) spine_rtl: bool,
     fixed_placements: Option<Vec<ItemPlacement>>,
@@ -351,25 +352,36 @@ impl Book {
         if chapters.is_empty() {
             return Err("The EPUB contains no reading chapters".into());
         }
-        if !printed_pages.is_empty() {
+        let adobe_map = spine.attribute("page-map").and_then(|id| manifest.get(id));
+        if !printed_pages.is_empty() || adobe_map.is_some() {
             let mut paths = BTreeMap::new();
             for chapter in &chapters {
                 *paths.entry(chapter.href.as_str()).or_insert(0) += 1;
             }
-            printed_pages.retain(|entry| {
-                entry.label.len() <= 256
-                    && entry
-                        .destination
-                        .as_ref()
-                        .is_some_and(|destination| paths.get(destination.path.as_str()) == Some(&1))
-            });
+            let valid = |entry: &TocEntry| {
+                entry.label.len() <= 256 && entry.destination.as_ref().is_some_and(|destination| {
+                    paths.get(destination.path.as_str()) == Some(&1)
+                })
+            };
+            printed_pages.retain(valid);
+            if printed_pages.is_empty() && let Some(item) = adobe_map
+                && let Ok(xml) = xml_entry(&mut archive, &item.path)
+                && let Ok(doc) = parse_xml(&xml)
+            {
+                printed_pages = adobe_pages(&doc, &item.path).filter(valid).take(MAX_PAGE_REFERENCES).collect();
+            }
         }
+        let printed_source = metadata.children()
+            .find(|node| node.has_tag_name(("http://purl.org/dc/elements/1.1/", "source")))
+            .and_then(|node| node.text()).map(str::trim)
+            .filter(|source| !source.is_empty() && source.len() <= 1024).map(str::to_owned);
         Ok(Self {
             title,
             author,
             chapters,
             toc,
             printed_pages,
+            printed_source,
             revision,
             language,
             spine_rtl: spine.attribute("page-progression-direction") == Some("rtl"),
@@ -429,6 +441,7 @@ impl Book {
             author: document.author,
             toc: document.toc,
             printed_pages: Vec::new(),
+            printed_source: None,
             content: Content::Loose {
                 xhtml: BTreeMap::from([(chapter_path, document.xhtml)]),
                 resources: document.resources,
@@ -508,6 +521,7 @@ impl Book {
             chapters,
             toc,
             printed_pages: Vec::new(),
+            printed_source: None,
             revision,
             language: publication.language,
             spine_rtl: false,
@@ -541,6 +555,7 @@ impl Book {
             chapters: chm.chapters.clone(),
             toc: chm.toc.clone(),
             printed_pages: Vec::new(),
+            printed_source: None,
             revision,
             language: None,
             spine_rtl: false,
@@ -569,6 +584,10 @@ impl Book {
     /// Return the publication's ordered reading contents.
     pub fn toc(&self) -> &[TocEntry] {
         &self.toc
+    }
+
+    pub fn printed_page_source(&self) -> Option<&str> {
+        self.printed_source.as_deref()
     }
 
     pub fn printed_pages(&self) -> &[TocEntry] {
@@ -1093,6 +1112,16 @@ fn ncx_pages(doc: &Document<'_>, base: &str) -> Vec<TocEntry> {
     )
 }
 
+fn adobe_pages<'a>(doc: &'a Document<'a>, base: &'a str) -> impl Iterator<Item = TocEntry> + 'a {
+    let root = doc.root_element();
+    root.children().filter(move |node| root.has_tag_name("page-map") && node.has_tag_name("page"))
+        .filter_map(move |node| {
+            let label = node.attribute("name")?.split_whitespace().collect::<Vec<_>>().join(" ");
+            let destination = Book::resolve_link(base, node.attribute("href")?).ok()?;
+            (!label.is_empty()).then_some(TocEntry { label, destination: Some(destination), depth: 0 })
+        })
+}
+
 fn toc_entry(base: &str, href: Option<&str>, node: Node<'_, '_>, depth: usize) -> Option<TocEntry> {
     let text: String = node
         .descendants()
@@ -1228,6 +1257,20 @@ mod tests {
     impl Drop for MetadataFixture {
         fn drop(&mut self) {
             let _ = fs::remove_file(&self.0);
+        }
+    }
+
+    #[test]
+    fn adobe_map_resolves_local_pages_and_preserves_distinct_repeated_labels() {
+        let doc = parse_xml(r#"<page-map xmlns="http://www.idpf.org/2007/opf"><page name=" iv " href="../text/part.xhtml#p1"/><page name="iv" href="../text/part.xhtml#p2"/><page name="" href="x"/><page name="Web" href="https://example.com/"/><page name="Missing"/></page-map>"#).unwrap();
+        let entries = adobe_pages(&doc, "Book/maps/pages.xml").collect::<Vec<_>>();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].label, "iv");
+        assert_eq!(entries[1].label, "iv");
+        for (i, entry) in entries.iter().enumerate() {
+            let dest = entry.destination.as_ref().unwrap();
+            assert_eq!(dest.path, "Book/text/part.xhtml");
+            assert_eq!(dest.fragment.as_deref(), Some(if i==0 { "p1" } else { "p2" }));
         }
     }
 
