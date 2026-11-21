@@ -3,7 +3,9 @@
 ## 0.1.12
 
 - Preview and import page bookmarks, exact highlights and their notes from KOReader metadata beside an EPUB. Repeating the import keeps one copy of each mark.
-- Honor publisher first-line and hanging paragraph indents, including an explicit zero reset. Paragraph wrapping, selection and bookmarks follow the same source text.
+- Honor publisher first-line and hanging paragraph indents, including an explicit zero reset. Paragraph wrapping, selection and bookmarks follow the same source text. Chapter-opening paragraphs follow supported sibling and first-of-type stylesheet rules.
+- Find a PDF phrase across a printed line break within a column. The search result highlights both lines and opens the passage in the current view.
+- Tap a PDF link to preview the address, copy it into a note or search, or scan an offline QR code.
 
 ## 0.1.11
 
