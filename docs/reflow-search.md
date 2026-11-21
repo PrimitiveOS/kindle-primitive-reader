@@ -25,3 +25,11 @@ The Mac comparison used a position midway through the occurrences in each chapte
 | 061 | 28 | 112 | 8 |
 
 All chapter and page indices in this document are one-based. The screenshots use an original project fixture. [Harbour log](../tests/fixtures/nearby-search.xhtml)
+
+## Oasis verification
+
+The Oasis 3 ran three native automated tests on authored documents. The tests checked Unicode offsets, chapter boundaries, cancellation, the Find controls, stepping in both directions and returning to the original reading position. Two additional offscreen comparisons used the original files from Documents. The English case in original 035 had 320 occurrences in chapter 12. The Vietnamese case in original 033 had 382 in chapter 8. For each book, both directions returned the adjacent occurrence with the expected start and end offsets and the complete selected word. The existing 100-result lists ended at chapter 5 in both cases.
+
+The verification used isolated storage. SHA-256 checks confirmed both books, the installed Reader binary, the library, the reading statistics and the Browser session were preserved. The Documents inventory matched before and after, and the temporary device files were removed. The normal foreground was available throughout.
+
+The Mac simulator also opened the existing PDF search fixture at 300% zoom. Four words across two lines stayed highlighted in both paged and continuous views, and Back restored the source page. The wrapped-passage capture matched the earlier version byte for byte. A two-result PDF displayed the shared Previous control beside zoom and Exit. [Wrapped passage](screenshots/pdf-wrapped-search.png) · [Two-result search](screenshots/pdf-search-target.png)
