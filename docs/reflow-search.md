@@ -70,3 +70,17 @@ KOReader's CREngine can continue a match from one visible inline text node to th
 | 053, spine 11, published soft hyphen | A nine-byte input selected the eleven-byte word, including its original soft hyphen. |
 
 The boundary checks compare both endpoints of each positive result with the selection from the opposite search direction. A separate authored test combines inline emphasis, a decomposed accent, a soft hyphen and a real paragraph break in one passage. [Boundary verifier](../examples/verify_search_boundaries.rs)
+
+### Oasis 3 results
+
+The complete list and its first, hundredth, hundred-and-first, middle and final selected passages matched the Mac on originals 033 and 035. Through Reader's normal controls, an automated test jumped to the final list page, opened occurrence 2,371 or 4,983, verified its highlighted source range, and returned to the original reading position in each book. Three additional native tests exercised long-list controls on an authored book, capped and memory-limited lists, and source offsets in styled and hyphenated text.
+
+| Normal-controls process, including opening the original and returning | 033 | 035 |
+|---|---:|---:|
+| User CPU | 1.84 s | 3.45 s |
+| Elapsed time | 6.74 s | 10.11 s |
+| Peak resident memory | 19,632 KiB | 44,016 KiB |
+
+The measurements ran at low priority during another library verification. Installed KOReader and native Reader each found the formatted phrase, the displayed-page-spanning phrase and the Vietnamese accent-insensitive phrase exactly once. Both returned zero results for the false join between paragraphs. The soft-hyphen check on original 053 used the Mac. The device checks preserved both originals, the Documents inventory, installed Reader, library, reading statistics and Browser session. The private test folder was removed.
+
+A separate simulator regression starts a dense search, uses Back after the first batch, then finds a single numbered observation. It checks that pending rows from the cancelled search cannot appear in the replacement results.

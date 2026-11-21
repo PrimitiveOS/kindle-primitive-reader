@@ -7618,6 +7618,27 @@ mod tests {
     }
 
     #[test]
+    fn replacing_a_partially_delivered_dense_search_discards_queued_results() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Coastal observations.epub");
+        fs::write(&path, include_bytes!("../tests/fixtures/long-chapter.epub")).unwrap();
+        let mut app = fixture.app();
+        app.open_path(&path).unwrap();
+        app.start_document_search("e").unwrap();
+        wait_for_search(&mut app, 1);
+        assert!(app.nearby.searching_all());
+        let (x, y) = rectangle_center(primitive_ui::back_button(WIDTH as i32));
+        app.input(Input::Tap(x, y));
+        assert_eq!(app.screen, Screen::Find);
+        assert!(!app.nearby.searching_all());
+        app.start_document_search("Observation 239.").unwrap();
+        wait_for_search(&mut app, usize::MAX);
+        assert_eq!(app.hits.len(), 1);
+        let hit = &app.hits[0];
+        assert_eq!(&hit.snippet[hit.matched.clone()], "Observation 239.");
+    }
+
+    #[test]
     fn ordinary_search_keyboard_selects_original_quotes_and_spaces_in_both_directions() {
         let f = Fixture::new();
         let path = f.root.join("Café.xhtml");
