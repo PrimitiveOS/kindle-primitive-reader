@@ -160,7 +160,7 @@ impl DictionarySources {
         }
         let folded = CaseMapper::new().fold_string(term);
         let query = Query {
-            word: term,
+            word,
             folded: &folded,
         };
         let mut hits = Hits::new();
@@ -454,8 +454,14 @@ fn lookup_dictionary(
     let mut read_hits = |matches: Vec<IndexMatch>| -> io::Result<Vec<Definition>> {
         let mut definitions = Vec::new();
         for matched in matches {
-            let bytes = data.read(matched.offset, matched.size, &mut budget.dictzip_bytes)?;
-            if let Some(text) = definition(&bytes, info.fields.as_deref()) {
+            let text = if matched.size == 0 {
+                // Some bilingual indexes intentionally contain headword-only entries.
+                Some(String::new())
+            } else {
+                let bytes = data.read(matched.offset, matched.size, &mut budget.dictzip_bytes)?;
+                definition(&bytes, info.fields.as_deref())
+            };
+            if let Some(text) = text {
                 definitions.push(Definition {
                     dictionary: info.title.clone(),
                     word: matched.word,
@@ -463,6 +469,7 @@ fn lookup_dictionary(
                 });
             }
         }
+        definitions.sort_by_key(|entry| entry.text.is_empty());
         Ok(definitions)
     };
     let exact = read_hits(matches.exact)?;
@@ -829,7 +836,7 @@ fn scan_index(
         {
             return Err(invalid("A dictionary definition is outside the data file"));
         }
-        if size == 0 || size as usize > MAX_ENTRY_BYTES {
+        if size as usize > MAX_ENTRY_BYTES {
             continue;
         }
         let exact = headword == query.headword.word || query.aliases.exact.binary_search(&ordinal).is_ok();
@@ -1293,6 +1300,19 @@ pub(crate) mod tests {
         let fallback =
             lookup_preferred(&temp.0, "word", Some(Path::new("../unavailable.ifo"))).unwrap();
         assert_eq!(fallback[0].dictionary, "Harbor");
+    }
+
+    #[test]
+    fn an_alias_can_refer_to_a_headword_only_entry_in_the_same_dictionary() {
+        let temp = TestDirectory::new();
+        write_dictionary(&temp.0, "Bilingual", "sametypesequence=m\n",
+            &[("alias", b""), ("lamp", b"A portable light.")]);
+        write_synonyms(&temp.0, "Bilingual", &[("lamp", 0), ("lamp", 1)]);
+        let hits = lookup(&temp.0, "lamp").unwrap();
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].text, "A portable light.");
+        assert_eq!(hits[1].word, "alias");
+        assert!(hits[1].text.is_empty());
     }
 
     #[test]

@@ -9495,7 +9495,7 @@ mod tests {
             let mut remaining: Vec<_> = app.definitions.iter().collect();
             for (dictionary, word, visible_digest) in case.results {
                 let index = remaining.iter().position(|entry| {
-                    if entry.dictionary != dictionary || entry.word != word || entry.text.trim().is_empty() {
+                    if entry.dictionary != dictionary || entry.word != word {
                         return false;
                     }
                     visible_digest.as_ref().is_none_or(|digest| {

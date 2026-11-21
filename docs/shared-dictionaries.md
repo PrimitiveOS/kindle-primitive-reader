@@ -10,7 +10,7 @@ Hold a word and tap **Dictionary**. The results panel stays over the passage. Us
 
 ## What determines a match
 
-An exact headword and an alias may both resolve in one dictionary. Another dictionary may have a direct entry for the same selected word. Reader consults the optional synonym table before streaming the main index, so each dictionary needs one main-index pass. The result set retains distinct senses with identical spellings. Unicode case folding supplies a fallback. Each lookup has shared scan and decompression limits.
+An exact headword and an alias may both resolve in one dictionary. Another dictionary may have a direct entry for the same selected word. Reader consults the optional synonym table before streaming the main index, so each dictionary needs one main-index pass. The result set retains distinct senses with identical spellings. Some bilingual indexes return legitimate alias headwords with a zero-byte definition. These appear as **Headword only**. Entries with definition text appear first within the same dictionary. Unicode case folding supplies a fallback. Each lookup has shared scan and decompression limits.
 
 For an XDXF dictionary, the headword appears in the popup heading and its pronunciation appears in brackets in the definition. HTML definitions preserve visible text and paragraph breaks. Reader opens dictionary components read-only, keeps local preferences in its own data directory and ignores executable dictionary customization files.
 

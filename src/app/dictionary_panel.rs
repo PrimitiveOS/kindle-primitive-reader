@@ -154,6 +154,8 @@ fn definition_result_row(popup: Rect, row: usize) -> Rect {
     )
 }
 
+const HEADWORD_ONLY: &str = "Headword only";
+
 impl Reader {
     fn draw_definition_results(&self, canvas: &mut Canvas, popup: Rect, page: usize) {
         let first = page * RESULTS_PER_PAGE;
@@ -179,7 +181,7 @@ impl Reader {
                 .text
                 .lines()
                 .next()
-                .unwrap_or_default()
+                .unwrap_or(HEADWORD_ONLY)
                 .chars()
                 .take(120)
                 .collect();
@@ -666,6 +668,9 @@ impl Reader {
         let rect = body(popup);
         if let Some(result) = self.definitions.get(self.list_page) {
             let text = &result.text;
+            if text.is_empty() {
+                canvas.text(rect, HEADWORD_ONLY, CAPTION);
+            }
             let lines = view.layout.get_or_init(|| layout(canvas, text, rect.w));
             let current = view.find.as_ref().map(|f| &f.hits[f.index]);
             let first = view.first_line(rows);
