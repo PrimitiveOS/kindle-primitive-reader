@@ -416,8 +416,17 @@ impl Reading {
         } else {
             &word.end
         };
-        let first = order(start)?.0;
-        let last = order(end)?.0;
+        self.anchored_quote(start, end)
+    }
+
+    pub(crate) fn anchored_quote(&self, start: &Anchor, end: &Anchor) -> Result<TextSelection> {
+        let first = self.probe.chapter_index(&start.chapter)
+            .ok_or("The saved section is unavailable")?;
+        let last = self.probe.chapter_index(&end.chapter)
+            .ok_or("The saved section is unavailable")?;
+        if (first, start.block, start.offset) >= (last, end.block, end.offset) {
+            return Err("The passage endpoints are out of order".into());
+        }
         let mut text = String::new();
         for index in first..=last {
             let loaded;

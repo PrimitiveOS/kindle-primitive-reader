@@ -1654,42 +1654,7 @@ fn merge_states(current: &[BookState], backup: &[BookState]) -> (Vec<BookState>,
                 summary.skipped += 1;
             }
         }
-        for bookmark in &source.bookmarks {
-            let label = clean_metadata(&bookmark.label);
-            if !valid_position(&bookmark.position) || label.is_empty() {
-                summary.skipped += 1;
-            } else if target
-                .bookmarks
-                .iter()
-                .any(|existing| same_position(&existing.position, &bookmark.position))
-            {
-                summary.duplicates += 1;
-            } else if target.bookmarks.len() < MAX_IMPORTED_MARKS {
-                target.bookmarks.push(Bookmark {
-                    label,
-                    position: bookmark.position.clone(),
-                });
-                summary.bookmarks_added += 1;
-            } else {
-                summary.skipped += 1;
-            }
-        }
-        for mark in &source.highlights {
-            if !valid_highlight(mark) {
-                summary.skipped += 1;
-            } else if let Some(existing) = target.highlights.iter_mut().find(|existing| {
-                existing.selection.start == mark.selection.start
-                    && existing.selection.end == mark.selection.end
-            }) {
-                merge_note(&mut existing.note, &mark.note, &mut summary);
-            } else if target.highlights.len() < MAX_IMPORTED_MARKS {
-                target.highlights.push(mark.clone());
-                summary.highlights_added += 1;
-                summary.notes_added += usize::from(mark.note.is_some());
-            } else {
-                summary.skipped += 1;
-            }
-        }
+        merge_text_marks(target, &source.bookmarks, &source.highlights, &mut summary);
         for mark in &source.pdf_highlights {
             if !mark.is_valid() {
                 summary.skipped += 1;
@@ -1709,6 +1674,50 @@ fn merge_states(current: &[BookState], backup: &[BookState]) -> (Vec<BookState>,
         }
     }
     (merged, summary)
+}
+
+pub(crate) fn merge_text_marks(
+    target: &mut BookState,
+    bookmarks: &[Bookmark],
+    highlights: &[Highlight],
+    summary: &mut BackupSummary,
+) {
+    for bookmark in bookmarks {
+        let label = clean_metadata(&bookmark.label);
+        if !valid_position(&bookmark.position) || label.is_empty() {
+            summary.skipped += 1;
+        } else if target
+            .bookmarks
+            .iter()
+            .any(|existing| same_position(&existing.position, &bookmark.position))
+        {
+            summary.duplicates += 1;
+        } else if target.bookmarks.len() < MAX_IMPORTED_MARKS {
+            target.bookmarks.push(Bookmark {
+                label,
+                position: bookmark.position.clone(),
+            });
+            summary.bookmarks_added += 1;
+        } else {
+            summary.skipped += 1;
+        }
+    }
+    for mark in highlights {
+        if !valid_highlight(mark) {
+            summary.skipped += 1;
+        } else if let Some(existing) = target.highlights.iter_mut().find(|existing| {
+            existing.selection.start == mark.selection.start
+                && existing.selection.end == mark.selection.end
+        }) {
+            merge_note(&mut existing.note, &mark.note, summary);
+        } else if target.highlights.len() < MAX_IMPORTED_MARKS {
+            target.highlights.push(mark.clone());
+            summary.highlights_added += 1;
+            summary.notes_added += usize::from(mark.note.is_some());
+        } else {
+            summary.skipped += 1;
+        }
+    }
 }
 
 fn merge_note(

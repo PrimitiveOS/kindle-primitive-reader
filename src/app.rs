@@ -7,6 +7,7 @@ mod dictionary_panel;
 mod fixed_book_map;
 mod gestures;
 mod extend_highlight;
+mod sidecar_marks;
 mod library_view;
 mod lookup_history;
 mod online_panel;
@@ -262,6 +263,8 @@ enum Action {
     ClearOcr,
     PreviewBackup,
     MergeBackup,
+    PreviewNearbyMarks,
+    ApplyNearbyMarks,
     PreviewKoReader,
     ApplyKoReader,
     PreviewKoReaderPosition,
@@ -466,6 +469,7 @@ pub struct Reader {
     stats_awake: bool,
     backup_import: Option<BackupImport>,
     annotation_import: Option<AnnotationImport>,
+    nearby_marks: Option<sidecar_marks::MarkImport>,
     position_import: Option<PositionImport>,
     pdf_annotation_import: Vec<PdfHighlight>,
     import_path: PathBuf,
@@ -580,6 +584,7 @@ impl Reader {
             stats_awake: true,
             backup_import: None,
             annotation_import: None,
+            nearby_marks: None,
             position_import: None,
             pdf_annotation_import: Vec::new(),
             import_path: state
@@ -851,6 +856,7 @@ impl Reader {
         }
         if screen != Screen::ImportAnnotations {
             self.annotation_import = None;
+            self.nearby_marks = None;
         }
         if screen != Screen::ImportPosition {
             self.position_import = None;
@@ -1204,6 +1210,11 @@ impl Reader {
                 .collect();
         }
         if self.screen == Screen::ImportAnnotations
+            && let Some(import) = &self.nearby_marks
+        {
+            return import.items();
+        }
+        if self.screen == Screen::ImportAnnotations
             && let Some(import) = &self.annotation_import
         {
             let checked = format!("{} of {} quotes checked", import.next, import.entries.len());
@@ -1439,6 +1450,13 @@ impl Reader {
                     Item::new("Import KOReader annotations", Action::PreviewKoReader)
                         .detail("Copy a JSON export to reader/data/koreader-import.json"),
                 ];
+                if active.entry.format == DocumentFormat::Epub {
+                    items.insert(
+                        0,
+                        Item::new("Import marks saved beside this book", Action::PreviewNearbyMarks)
+                            .detail("Preview KOReader bookmarks, highlights and notes"),
+                    );
+                }
                 if let Some(state) = self.library.state(active.id) {
                     items.extend(annotation_items(
                         state
@@ -1817,6 +1835,8 @@ impl Reader {
             }
             Action::PreviewBackup => self.preview_backup()?,
             Action::MergeBackup => self.restore_backup()?,
+            Action::PreviewNearbyMarks => self.preview_nearby_marks()?,
+            Action::ApplyNearbyMarks => self.apply_nearby_marks()?,
             Action::PreviewKoReader => self.preview_koreader()?,
             Action::ApplyKoReader => self.apply_koreader()?,
             Action::PreviewKoReaderPosition => self.preview_koreader_position(false)?,
@@ -5357,6 +5377,7 @@ impl App for Reader {
             .and_then(|fixed| fixed.reading.deadline());
         page.into_iter()
             .chain(fixed_page)
+            .chain(self.nearby_marks.as_ref().and_then(|import| import.deadline))
             .chain(self.save_at)
             .chain(self.search_at)
             .chain(self.outline.as_ref().and_then(|outline| outline.deadline))
@@ -5405,6 +5426,17 @@ impl App for Reader {
             .is_some_and(|at| at <= now)
         {
             return self.step_scan_column(now);
+        }
+        if self.nearby_marks.as_ref()
+            .and_then(|import| import.deadline).is_some_and(|at| at <= now)
+        {
+            return match self.step_nearby_marks() {
+                Ok(change) => change,
+                Err(error) => {
+                    self.show(Screen::Highlights);
+                    self.report(error)
+                }
+            };
         }
         if self
             .annotation_import
@@ -7842,7 +7874,7 @@ mod tests {
             .unwrap_or_else(|| vec![crate::test_fixture("fonts/Silkscreen-Regular.ttf")])
     }
 
-    fn capture_test_screen(app: &Reader, fonts: &[PathBuf], output_variable: &str, dark: bool) {
+    pub(super) fn capture_test_screen(app: &Reader, fonts: &[PathBuf], output_variable: &str, dark: bool) {
         if let Some(path) = std::env::var_os(output_variable) {
             let font_paths = fonts.iter().map(|p| p.display().to_string()).collect::<Vec<_>>();
             let mut canvas = Canvas::new(WIDTH, HEIGHT, &font_paths).unwrap();
@@ -7883,7 +7915,7 @@ mod tests {
         assert!(!prefs.smooth_images && prefs.invert_night_images);
     }
 
-    fn tap_contents_item(app: &mut Reader, label: &str) {
+    pub(super) fn tap_contents_item(app: &mut Reader, label: &str) {
         let index = app.items().iter().position(|item| item.title == label).unwrap_or_else(|| panic!("No row {label} in {:?}", app.screen));
         let page = index / ROWS_PER_PAGE;
         while app.list_page < page { app.input(Input::PageForward); }
