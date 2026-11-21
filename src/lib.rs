@@ -65,6 +65,7 @@ pub mod selection;
 #[cfg(feature = "kindle")]
 mod session;
 mod source;
+mod table_layout;
 mod svg_image;
 mod tcr;
 #[cfg(feature = "kindle")]

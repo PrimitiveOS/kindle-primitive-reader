@@ -21,6 +21,7 @@ pub(crate) struct Emphasis {
 }
 
 pub(crate) struct Block {
+    pub table_cell: Option<crate::table_layout::Cell>,
     pub key: usize,
     pub text: String,
     pub element: usize,
@@ -349,6 +350,7 @@ impl Source {
             });
         }
         let mut list_items = crate::list_marker::Items::read(body, &element_ids);
+        let tables = crate::table_layout::TableCells::read(body, &element_ids);
         let mut blocks = Vec::new();
         let mut fragments = BTreeMap::new();
         let mut insertions = Vec::new();
@@ -558,6 +560,7 @@ impl Source {
             insertions.push((key + tag_end, key));
             ruby_exclusions.extend(exclusions);
             blocks.push(Block {
+                table_cell: tables.containing(node),
                 key,
                 text,
                 element: element_ids[&node.id()],
