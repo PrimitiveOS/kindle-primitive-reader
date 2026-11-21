@@ -33,6 +33,25 @@ One input exposed a material error in the earlier experiment. ImageSharp’s sep
 
 The candidate passed 411 host library and integration tests. Two additional opt-in tests exercised highlight extension on independently checksummed original EPUB and PDF files in temporary reading profiles. The three JPEG header regression tests cover the Adobe marker, baseline precision and components, bounded scanning across large profiles, malformed lengths and the noninterleaved fallback.
 
+## Kindle Oasis 3
+
+The device rendered the same 1264 × 1606 viewport in separate processes. Each cell gives the page raster time in seconds and peak process memory in KiB. The original publication has 1,041 pages. At fit page the first pair ran full decoding first and the second pair ran reduced decoding first.
+
+| Page and zoom | Full, seconds / KiB | Three-sample guard, seconds / KiB |
+| --- | ---: | ---: |
+| Original cover, fit, first pair | 29.205 / 185,700 | 13.856 / 153,200 |
+| Original cover, fit, reverse pair | 28.597 / 185,708 | 14.694 / 153,204 |
+| Original cover, 150% | 28.641 / 187,192 | 31.362 / 187,192 |
+| Skia direct CMYK crop | 0.412 / 14,920 | 0.397 / 14,540 |
+| ImageSharp noninterleaved YCCK | 0.512 / 15,608 | 0.496 / 15,616 |
+| Authored fine print and lines, 150% | 6.244 / 78,636 | 4.255 / 78,632 |
+
+The three-sample guard reduced original fit-page raster time by 49–53% across the two orderings. Peak memory fell by 32,500–32,504 KiB. Installed KOReader’s MuPDF rendered the original in 5.785 seconds at fit (38,564 KiB) and 8.490 seconds at 150% (38,188 KiB).
+
+The two original photo regions had SSIM values of 0.99850 and 0.99738 against full decoding. Both met the desktop criteria against installed MuPDF. The Skia crop reached 0.99964 SSIM against full decoding. At 150% the entire original cover and authored chart matched full decoding byte for byte. The noninterleaved control also retained its exact full frame. These three full-decoding controls show how much a single timing can vary on the device. [All device measurements](../tests/fixtures/dct/oasis-results.json)
+
+This branch exposes reduced decoding through the experimental build feature and explicit measurement switch. The released Reader uses the full decoder.
+
 ## Reproduction
 
 The comparison uses Python 3.12, NumPy 2.5.5, Pillow 13.0.0 and PyMuPDF 2.1. It needs network access for the initial fixture downloads. Subsequent runs verify and reuse the cached sources. The results file includes the decoder executable hash and, for each view, the number of reduced images and both reference SSIM scores.

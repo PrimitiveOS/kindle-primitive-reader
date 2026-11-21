@@ -1,0 +1,219 @@
+{
+  "hardware": "Kindle Oasis 3",
+  "viewport_pixels": [
+    1264,
+    1606
+  ],
+  "renderer_source_commit": "c05248f",
+  "arm_binary_sha256": "4a9ae8f3ac9583417a9b250c6180671460587b4a256363ba62f7633209f64893",
+  "method": "Separate serial processes on the same device, with alternating order at original fit. Times cover page raster and peak is per-process VmHWM.",
+  "measurements": [
+    {
+      "sample": "original",
+      "zoom": 1,
+      "guard": 0,
+      "order": "a",
+      "raster_ms": 29205,
+      "peak_kib": 185700,
+      "reduced_images": 0
+    },
+    {
+      "sample": "original",
+      "zoom": 1,
+      "guard": 3,
+      "order": "a",
+      "raster_ms": 13856,
+      "peak_kib": 153200,
+      "reduced_images": 3
+    },
+    {
+      "sample": "original",
+      "zoom": 1,
+      "guard": 3,
+      "order": "b",
+      "raster_ms": 14694,
+      "peak_kib": 153204,
+      "reduced_images": 3
+    },
+    {
+      "sample": "original",
+      "zoom": 1,
+      "guard": 0,
+      "order": "b",
+      "raster_ms": 28597,
+      "peak_kib": 185708,
+      "reduced_images": 0
+    },
+    {
+      "sample": "original",
+      "zoom": 1.5,
+      "guard": 3,
+      "order": "a",
+      "raster_ms": 31362,
+      "peak_kib": 187192,
+      "reduced_images": 0
+    },
+    {
+      "sample": "original",
+      "zoom": 1.5,
+      "guard": 0,
+      "order": "a",
+      "raster_ms": 28641,
+      "peak_kib": 187192,
+      "reduced_images": 0
+    },
+    {
+      "sample": "direct",
+      "zoom": 1,
+      "guard": 0,
+      "order": "a",
+      "raster_ms": 412,
+      "peak_kib": 14920,
+      "reduced_images": 0
+    },
+    {
+      "sample": "direct",
+      "zoom": 1,
+      "guard": 3,
+      "order": "a",
+      "raster_ms": 397,
+      "peak_kib": 14540,
+      "reduced_images": 1
+    },
+    {
+      "sample": "sequential",
+      "zoom": 1,
+      "guard": 3,
+      "order": "a",
+      "raster_ms": 496,
+      "peak_kib": 15616,
+      "reduced_images": 0
+    },
+    {
+      "sample": "sequential",
+      "zoom": 1,
+      "guard": 0,
+      "order": "a",
+      "raster_ms": 512,
+      "peak_kib": 15608,
+      "reduced_images": 0
+    },
+    {
+      "sample": "authored",
+      "zoom": 1.5,
+      "guard": 0,
+      "order": "a",
+      "raster_ms": 6244,
+      "peak_kib": 78636,
+      "reduced_images": 0
+    },
+    {
+      "sample": "authored",
+      "zoom": 1.5,
+      "guard": 3,
+      "order": "a",
+      "raster_ms": 4255,
+      "peak_kib": 78632,
+      "reduced_images": 0
+    },
+    {
+      "sample": "original",
+      "zoom": 1,
+      "guard": "stock",
+      "order": "stock",
+      "raster_ms": 5785,
+      "peak_kib": 38564,
+      "reduced_images": 0
+    },
+    {
+      "sample": "original",
+      "zoom": 1.5,
+      "guard": "stock",
+      "order": "stock",
+      "raster_ms": 8490,
+      "peak_kib": 38188,
+      "reduced_images": 0
+    }
+  ],
+  "image_comparison": {
+    "comparison": [
+      {
+        "sample": "original",
+        "zoom": 1,
+        "region": 0,
+        "delta": {
+          "mae": 0.14358069,
+          "p99": 2.0,
+          "ssim": 0.99850102,
+          "over_one_shade_percent": 0.0,
+          "max_shades": 1,
+          "pixels": 346112
+        },
+        "base_to_stock_ssim": 0.94737196,
+        "new_to_stock_ssim": 0.94912466,
+        "reference_loss": -0.0017527
+      },
+      {
+        "sample": "original",
+        "zoom": 1,
+        "region": 1,
+        "delta": {
+          "mae": 0.40838441,
+          "p99": 4.0,
+          "ssim": 0.99738192,
+          "over_one_shade_percent": 0.00059053,
+          "max_shades": 2,
+          "pixels": 338676
+        },
+        "base_to_stock_ssim": 0.94613009,
+        "new_to_stock_ssim": 0.94480405,
+        "reference_loss": 0.00132605
+      },
+      {
+        "sample": "original",
+        "zoom": 1.5,
+        "region": 0,
+        "delta": {
+          "mae": 0.0,
+          "p99": 0.0,
+          "ssim": 1.0,
+          "over_one_shade_percent": 0.0,
+          "max_shades": 0,
+          "pixels": 572008
+        },
+        "base_to_stock_ssim": 0.94721475,
+        "new_to_stock_ssim": 0.94721475,
+        "reference_loss": 0.0
+      },
+      {
+        "sample": "original",
+        "zoom": 1.5,
+        "region": 1,
+        "delta": {
+          "mae": 0.0,
+          "p99": 0.0,
+          "ssim": 1.0,
+          "over_one_shade_percent": 0.0,
+          "max_shades": 0,
+          "pixels": 576072
+        },
+        "base_to_stock_ssim": 0.92372219,
+        "new_to_stock_ssim": 0.92372219,
+        "reference_loss": 0.0
+      }
+    ],
+    "direct_public_crop": {
+      "mae": 0.02964154,
+      "p99": 1.0,
+      "ssim": 0.99963682,
+      "over_one_shade_percent": 0.0,
+      "max_shades": 1,
+      "pixels": 4352
+    },
+    "original_guard3_matches_earlier_guard2": true,
+    "all_exact_fallbacks": true,
+    "all_origin_hashes_match": true,
+    "original_meets_desktop_criteria": true,
+    "public_crop_meets_pixel_criteria": true
+  }
+}
