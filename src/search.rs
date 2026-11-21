@@ -12,7 +12,7 @@ use crate::source::Source;
 use crate::{Anchor, Result};
 
 #[cfg(feature = "kindle")]
-use crate::fixed_text::{PdfPageText, PdfTextRect};
+use crate::fixed_text::{PdfPageText, PdfTextRect, PdfTextSpan};
 
 pub const MAX_SEARCH_HITS: usize = 100;
 pub(crate) const MAX_QUERY_BYTES: usize = 256;
@@ -331,8 +331,10 @@ impl PdfSearch {
         match_case: bool,
         ignore_accents: bool,
     ) -> Result<Self> {
+        let mut query = Query::with_options(query, match_case, ignore_accents)?;
+        query.text = query.text.split_whitespace().collect::<Vec<_>>().join(" ");
         Ok(Self {
-            query: Query::with_options(query, match_case, ignore_accents)?,
+            query,
             next_page: 0,
             text_pages: 0,
             skipped: 0,
@@ -348,8 +350,13 @@ impl PdfSearch {
         if !text.text.trim().is_empty() {
             self.text_pages += 1;
         }
+        let searchable = if self.query.text.contains(' ') {
+            phrase_text(text)
+        } else {
+            Cow::Borrowed(text.text.as_str())
+        };
         self.query
-            .matches(&text.text, limit)
+            .matches(&searchable, limit)
             .into_iter()
             .map(|range| {
                 let bounds = text
@@ -366,6 +373,81 @@ impl PdfSearch {
             })
             .collect()
     }
+}
+
+/// Join a wrapped phrase in visual reading order and keep every original UTF-8 boundary.
+/// A PDF text draw can place separate columns on the same baseline or switch columns
+/// between lines. Neither gap should make its two words into a single search phrase.
+#[cfg(feature = "kindle")]
+fn phrase_text(page: &PdfPageText) -> Cow<'_, str> {
+    let mut text = Cow::Borrowed(page.text.as_str());
+    let mut previous = None;
+    for line in &page.lines {
+        let first = page
+            .words
+            .partition_point(|word| word.bytes.end <= line.bytes.start);
+        let rest = &page.words[first..];
+        let end = rest.partition_point(|word| word.bytes.end <= line.bytes.end);
+        let words = &rest[..end];
+        let Some(start) = words.first() else {
+            previous = None;
+            continue;
+        };
+        let mut segment = start.bounds;
+        let mut first_segment = None;
+        for pair in words.windows(2) {
+            let (a, b) = (&pair[0], &pair[1]);
+            let gap = a.bytes.end..b.bytes.start;
+            if page.text.get(gap.clone()) == Some(" ") && column_gap(page, a, b) {
+                first_segment.get_or_insert(segment);
+                text.to_mut().replace_range(gap, "\n");
+                segment = b.bounds;
+            } else {
+                segment = PdfTextRect {
+                    x0: segment.x0.min(b.bounds.x0),
+                    y0: segment.y0.min(b.bounds.y0),
+                    x1: segment.x1.max(b.bounds.x1),
+                    y1: segment.y1.max(b.bounds.y1),
+                };
+            }
+        }
+        if let Some((end, tail)) = previous {
+            let gap = end..line.bytes.start;
+            if page.text.get(gap.clone()) == Some("\n")
+                && wrapped_line(tail, first_segment.unwrap_or(segment))
+            {
+                text.to_mut().replace_range(gap, " ");
+            }
+        }
+        previous = Some((line.bytes.end, segment));
+    }
+    text
+}
+
+#[cfg(feature = "kindle")]
+fn column_gap(page: &PdfPageText, a: &PdfTextSpan, b: &PdfTextSpan) -> bool {
+    // Compare on the same axis. Normalized coordinates have different x/y scales.
+    let advance = |word: &PdfTextSpan| {
+        let n = page
+            .text
+            .get(word.bytes.clone())
+            .map_or(1, |text| text.chars().count().max(1)) as f32;
+        (word.bounds.x1 - word.bounds.x0) / n
+    };
+    let gap = (b.bounds.x0 - a.bounds.x1).max(a.bounds.x0 - b.bounds.x1);
+    gap > 5.0 * advance(a).max(advance(b))
+}
+
+#[cfg(feature = "kindle")]
+fn wrapped_line(a: PdfTextRect, b: PdfTextRect) -> bool {
+    let overlap = a.x1.min(b.x1) - a.x0.max(b.x0);
+    let narrow = (a.x1 - a.x0).min(b.x1 - b.x0);
+    let step = (b.y0 + b.y1 - a.y0 - a.y1) * 0.5;
+    let ha = a.y1 - a.y0;
+    let hb = b.y1 - b.y0;
+    // The extractor measures glyph ink, which can occupy less than half the
+    // baseline spacing of a double-spaced page.
+    overlap > narrow * 0.3 && step > 0.2 * ha.min(hb) && step <= 3.0 * ha.max(hb)
 }
 
 /// Byte positions changed by full case folding or removed soft hyphens.
@@ -522,6 +604,94 @@ fn snippet(text: &str, matched: Range<usize>) -> (String, Range<usize>) {
 mod tests {
 
     use super::*;
+
+    #[cfg(feature = "kindle")]
+    #[test]
+    fn wrapped_pdf_phrases_keep_source_words_and_respect_column_gutters() {
+        let mut page = PdfPageText::default();
+        // Two rows in parallel columns, followed by a double-spaced paragraph.
+        for (y, row) in [
+            (
+                0.1,
+                vec![
+                    (0.1, "North"),
+                    (0.16, "bank"),
+                    (0.62, "South"),
+                    (0.68, "bank"),
+                ],
+            ),
+            (
+                0.13,
+                vec![
+                    (0.1, "West"),
+                    (0.15, "pier"),
+                    (0.62, "East"),
+                    (0.67, "pier"),
+                ],
+            ),
+            (0.5, vec![(0.1, "Marée"), (0.16, "basse")]),
+            (0.55, vec![(0.1, "au"), (0.13, "quai")]),
+            (0.8, vec![(0.1, "Final"), (0.16, "page")]),
+        ] {
+            if !page.text.is_empty() {
+                page.text.push('\n');
+            }
+            let start = page.text.len();
+            let left = row[0].0;
+            for (x, token) in row {
+                if page.text.len() != start {
+                    page.text.push(' ');
+                }
+                let offset = page.text.len();
+                page.text.push_str(token);
+                page.words.push(PdfTextSpan {
+                    bytes: offset..page.text.len(),
+                    bounds: PdfTextRect {
+                        x0: x,
+                        x1: x + 0.01 * token.chars().count() as f32,
+                        y0: y,
+                        y1: y + 0.02,
+                    },
+                });
+            }
+            page.lines.push(PdfTextSpan {
+                bytes: start..page.text.len(),
+                bounds: PdfTextRect {
+                    x0: left,
+                    ..page.words.last().unwrap().bounds
+                },
+            });
+        }
+        let found = PdfSearch::with_options("MAREE  basse\n au\tquai", false, true)
+            .unwrap()
+            .hits(2, &page, 3);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].page, 2);
+        assert!(found[0].snippet.contains("Marée basse au quai"));
+        assert_eq!(
+            found[0].bounds,
+            page.words[8..12]
+                .iter()
+                .map(|w| w.bounds)
+                .collect::<Vec<_>>()
+        );
+        for query in ["bank South", "bank West", "pier East", "quai Final"] {
+            assert!(
+                PdfSearch::new(query, false)
+                    .unwrap()
+                    .hits(2, &page, 3)
+                    .is_empty(),
+                "{query}"
+            );
+        }
+        assert_eq!(
+            PdfSearch::new("East pier", true)
+                .unwrap()
+                .hits(2, &page, 1)
+                .len(),
+            1
+        );
+    }
 
     #[test]
     fn locates_original_utf8_spans_for_full_case_folds() {

@@ -9093,6 +9093,49 @@ mod tests {
             reopened.fixed.as_ref().unwrap().reading.preferences(),
             saved
         );
+
+        // This phrase begins on the second line of the chart and wraps back
+        // to the left. Both pairs of search marks fit even at 300% zoom.
+        for continuous in [false, true] {
+            let reading = &mut reopened.fixed.as_mut().unwrap().reading;
+            reading.set_continuous(continuous).unwrap();
+            reading.set_zoom(4).unwrap();
+            reading.jump(0).unwrap();
+            reopened.start_document_search("turns north past the").unwrap();
+            while reopened.search_at.is_some() {
+                reopened.step_pdf_search(Instant::now()).unwrap();
+            }
+            assert_eq!(reopened.pdf_hits.len(), 1);
+            reopened.activate(Action::PdfSearchHit(0)).unwrap();
+            let words = &reopened.pdf_hits[0].bounds;
+            assert_eq!(words.len(), 4);
+            assert!(words[2].y0 > words[1].y0 && words[2].x0 < words[1].x0);
+            let reading = &reopened.fixed.as_ref().unwrap().reading;
+            assert_eq!(reading.page(), 1);
+            assert_eq!(reading.is_continuous(), continuous);
+            assert_eq!(
+                reopened.pdf_result_regions,
+                words.iter().map(|&bounds| (1, bounds)).collect::<Vec<_>>()
+            );
+            let (size, view) = reading.page_viewport().unwrap();
+            for &word in words {
+                let rect = reading.visible_rectangle(1, word).unwrap();
+                let width = (word.x1 - word.x0) * size.0 * view.scale;
+                let height = (word.y1 - word.y0) * size.1 * view.scale;
+                assert!((rect.width() - f64::from(width)).abs() < 1.0);
+                assert!((rect.height() - f64::from(height)).abs() < 1.0);
+            }
+            if !continuous {
+                capture_test_screen(
+                    &reopened,
+                    &[crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+                    "READER_PDF_WRAPPED_SEARCH",
+                    false,
+                );
+            }
+            reopened.activate(Action::ReturnToLocation).unwrap();
+            assert_eq!(reopened.fixed.as_ref().unwrap().reading.page(), 0);
+        }
     }
 
     #[test]

@@ -297,6 +297,19 @@ The same search and saved-highlight check ran offscreen on the physical Oasis wi
 
 The Mac also repeated the 50 local PDF link taps on the revised build. All 50 XYZ destinations, including the nine interior points, landed within one pixel of the intended corner at 300% in both modes. The largest axis errors were 0.000032 pixels in paged reading and 0.258 pixels in continuous reading.
 
+### Phrases that wrap in a PDF
+
+Four original PDFs contained 2,377 pages in total. The Mac check sampled three interior pages per document. For each page, MuPDF independently located four consecutive words split over two lines and a separate four-word phrase on one line. Its results occupied two physical rectangles and one respectively. Reader’s word coordinates contained all 96 independently measured word centers.
+
+| Query | Pages with the expected result before | Pages with the expected result after |
+| --- | ---: | ---: |
+| Four words on one line | 12/12 | 12/12 |
+| Four words spanning two lines | 0/12 | 12/12 |
+
+KOReader searches the next word box when a query continues on the following line and marks each matched word. Reader uses the source word boxes and preserves UTF-8 offsets while matching across adjacent lines in the same column. The authored tests cover double-spaced lines, folded accents, a large gap between paragraphs and rows containing two unrelated columns. On the authored chart, all four marked words fit completely at 300% in both paged and continuous reading, and Previous location returns to the source page. [KOReader’s fixed-page phrase matcher](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/koptinterface.lua#L1502-L1607) · [Oasis-size simulation of a wrapped search match](screenshots/pdf-wrapped-search.png)
+
+Each real wrapped hit spanned more than the screen width at 300%. On the Mac, selecting each of the 12 hits in both modes retained all four word marks, showed both words at the beginning of the match completely and returned to the previous page. The other two words remained marked at the far side of the following line.
+
 ## Reading positions saved beside existing books
 
 KOReader places metadata beside a document by replacing its last filename suffix with `.sdr` and naming the file `metadata.<original suffix>.lua`. Reader checks that exact location, including suffix case. With a copied file and adjacent metadata both present, the book’s normal import opens the adjacent file and the separate Reading data action opens the copy. Each route previews the destination before applying it. [KOReader’s sidecar naming](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/docsettings.lua#L118-L145)
