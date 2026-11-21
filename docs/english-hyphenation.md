@@ -108,6 +108,30 @@ Bold at 32 px on a 600 × 800 viewport with 24 px margins.
 | British English from AZW3 markup | 8,510 | 21 | 21 | 11,626 | 0 |
 | Generic English from legacy MOBI metadata | 58,184 | 160 | 158 | 13,124 | 0 |
 
+### Original-book check on Kindle Oasis 3
+
+The same two AZW3 sections and legacy MOBI section ran offscreen on the
+Oasis 3 with its five configured fonts. The 0.1.9 ARMHF probe wrote a
+page-two source bookmark. The new ARMHF probe reopened that bookmark in
+Automatic and Authored modes for each original. All three yielded the same
+page counts and changed-pixel totals as the Mac table above. All 82,308
+nonspace characters mapped, with zero missing glyphs. All three source
+files matched their pre-test SHA-256 digests after reading.
+
+| Original section | First frame, 0.1.9 → Automatic | Peak process memory, 0.1.9 → Automatic |
+| --- | ---: | ---: |
+| US English from AZW3 metadata | 350 → 388 ms | 5,504 → 5,900 KiB |
+| British English from AZW3 markup | 197 → 234 ms | 5,396 → 5,664 KiB |
+| Generic English from legacy MOBI metadata | 833 → 907 ms | 10,912 → 11,396 KiB |
+
+These are single runs in fresh processes at the 600 × 800 comparison size.
+The authored regional fixture rendered pixel-for-pixel identically to the
+Mac capture above. Two additional ARMHF unit tests checked the complete
+US and British pattern tables, all correction spellings and nested changes
+of language within one paragraph. The candidate package verification read
+the full British MIT text and the dependency notice back from the staged
+ARMHF ZIP and compared both with the licensed sources in the repository.
+
 ## Tests with existing books
 
 Eleven private EPUB copies, including one duplicate, declared English in ten
