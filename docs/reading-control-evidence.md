@@ -109,3 +109,11 @@ The integrated build passed 411 tests on both the Mac and the Oasis. Four additi
 All 420 integrated tests passed on both the Mac and the Oasis. In eleven original EPUB entries, the Mac rendered 9,461 pages across 344 sections and returned all 9,458 available page anchors to their source pages. The independent typography checks used the publisher's paragraph and sibling structure. In the three original books with KOReader annotations, preview, repeat import and reopen retained the expected two highlights and one bookmark.
 
 On the Oasis, tapping all sixteen external URI annotations in three original PDFs revealed the addresses independently extracted from the publications. The offline QR dialog and Copy preserved Reader's page and history. A separate four-PDF comparison verified wrapped phrase search and both zoomed reading modes against the installed KOReader. Screenshots in the repository use redistributable authored publications. [Original-document evidence](real-document-verification.md) · [Paragraph measurements](paragraph-indentation.md)
+
+## Oasis release verification for Reader 0.1.13
+
+On the Mac and the Oasis, 432 tests passed. Separate real-book runs held a word, opened its dictionary and checked all 37 returned entries, including headword-only results, for 13 selections against the installed KOReader. The books exercised four StarDict dictionaries, duplicate headwords, aliases, HTML and XDXF pronunciation. Closing each popup restored the same passage and selection. The tests retained the original books, dictionaries and saved profile. [Offline dictionary comparison](shared-dictionaries.md)
+
+An original EPUB and a 1,066-page PDF exercised overlapping highlights, multi-page notes and page turns outside the popup. Two original EPUBs exercised Previous and Next matches beyond the first 100 results, including Unicode source offsets. [Directional search](reflow-search.md)
+
+The full Mac chapter sweep used the actual Kindle publications. SHA-256 grouped 49 EPUB, AZW3 and MOBI file entries into 48 distinct editions. All 1,509 sections completed, with 27,643 painted pages and 27,638 exact page-anchor returns. The previously reported 130-entry device sweep remains a separate open-and-resume test.
