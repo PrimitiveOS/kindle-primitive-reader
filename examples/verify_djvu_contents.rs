@@ -3,7 +3,13 @@ use reader::{djvu::Djvu, fixed::RenderRequest};
 use std::{env, fs};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let path = env::args_os().nth(1).ok_or("Supply a DjVu document")?;
+    let mut arguments = env::args_os().skip(1);
+    let path = arguments.next().ok_or("Supply a DjVu document")?;
+    let sample_pages = match arguments.next().as_deref() {
+        None => true,
+        Some(flag) if flag == "--outline-only" => false,
+        _ => return Err("Use --outline-only to skip decoding page images".into()),
+    };
     let doc = Djvu::open(fs::read(path)?)?;
     let count = doc.page_count();
     let entries: Vec<_> = doc
@@ -12,7 +18,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|row| (&row.title, row.depth, row.page))
         .collect();
     let mut sampled = Vec::new();
-    for page in [0, count / 2, count - 1] {
+    let pages = [0, count / 2, count - 1];
+    for &page in if sample_pages { &pages[..] } else { &[] } {
         if sampled.last() == Some(&page) {
             continue;
         }
