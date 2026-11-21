@@ -26,9 +26,11 @@ const MAX_RULES: usize = 256;
 const MAX_SELECTOR_BYTES: usize = 128;
 const MAX_SELECTORS_PER_RULE: usize = 24;
 const MAX_SELECTOR_STEPS: usize = 8;
+const MAX_FACE_RULES: usize = 64;
 const MAX_FONT_READS: usize = 6;
 const MAX_FONT_BYTES: usize = 2 * 1024 * 1024;
-const MAX_TOTAL_FONT_BYTES: usize = 4 * 1024 * 1024;
+// Four normal/italic/bold/bold-italic publication faces can be ~1.4 MiB each.
+const MAX_TOTAL_FONT_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Family {
@@ -171,9 +173,6 @@ pub(crate) struct BookStyle {
     author_inline: bool,
     rules: Vec<Rule>,
     families: HashMap<String, Arc<str>>,
-    font_paths: HashSet<String>,
-    font_reads: usize,
-    font_bytes: usize,
 }
 
 impl BookStyle {
@@ -191,6 +190,7 @@ impl BookStyle {
         if source.stylesheets.is_empty() {
             return styled;
         }
+        let mut faces = Vec::new();
         let mut remaining = MAX_CSS_BYTES;
         let mut linked = 0;
         let mut inline = 0;
@@ -212,16 +212,17 @@ impl BookStyle {
                         continue;
                     };
                     if let Ok(text) = std::str::from_utf8(&bytes) {
-                        styled.read_sheet(book, &path, text, &mut remaining, fonts, &names);
+                        styled.read_sheet(&path, text, &mut remaining, &mut faces, &names);
                     }
                 }
                 Stylesheet::Inline(sheet) if inline < MAX_SHEETS => {
                     inline += 1;
-                    styled.read_sheet(book, chapter, sheet, &mut remaining, fonts, &names);
+                    styled.read_sheet(chapter, sheet, &mut remaining, &mut faces, &names);
                 }
                 _ => {}
             }
         }
+        styled.register_fonts(book, &faces, fonts);
         styled
     }
 
@@ -330,11 +331,10 @@ impl BookStyle {
 
     fn read_sheet(
         &mut self,
-        book: &mut Book,
         base: &str,
         text: &str,
         remaining: &mut usize,
-        fonts: &mut FontContext,
+        faces: &mut Vec<FontFace>,
         names: &ChapterNames<'_>,
     ) {
         if text.len() > MAX_SHEET_BYTES || text.len() > *remaining {
@@ -355,85 +355,135 @@ impl BookStyle {
                         self.rules.push(rule);
                     }
                 }
-                SheetItem::Font(declarations) => {
-                    self.register_font(book, base, declarations, fonts)
+                SheetItem::Font(declarations) if faces.len() < MAX_FACE_RULES => {
+                    if let Some(face) = FontFace::from_rule(base, declarations) {
+                        faces.push(face);
+                    }
                 }
                 _ => {}
             }
         }
     }
 
-    fn register_font(
-        &mut self,
-        book: &mut Book,
-        base: &str,
-        declarations: Vec<Declaration>,
-        fonts: &mut FontContext,
-    ) {
-        let Some([Family::Named(alias)]) =
-            declarations.iter().rev().find_map(|declaration| {
-                match (&declaration.property, declaration.important) {
-                    (Property::Family(families), false) => Some(families.as_slice()),
-                    _ => None,
+    fn register_fonts(&mut self, book: &mut Book, faces: &[FontFace], fonts: &mut FontContext) {
+        let mut assets = FontAssets::default();
+        let mut seen = HashSet::new();
+        for family in faces.iter().map(|face| &face.family) {
+            if !seen.insert(family) {
+                continue;
+            }
+            // Keep the book's CSS families separate from device families of the same name.
+            let internal = format!("PrimitiveOS EPUB Face {}", seen.len());
+            let mut registered = Vec::new();
+            // Later rules for an identical face have priority. A missing source can
+            // still fall through to another URL or an earlier face declaration.
+            for face in faces.iter().rev().filter(|face| &face.family == family) {
+                let descriptor = (face.weight, face.style);
+                if registered.contains(&descriptor) {
+                    continue;
                 }
-            })
-        else {
-            return;
-        };
-        let sources = declarations
-            .iter()
-            .rev()
-            .find_map(
-                |declaration| match (&declaration.property, declaration.important) {
-                    (Property::FontSource(sources), false) => Some(sources.as_slice()),
-                    _ => None,
-                },
-            )
-            .unwrap_or_default();
-        for url in sources {
-            if self.font_reads >= MAX_FONT_READS || self.font_bytes >= MAX_TOTAL_FONT_BYTES {
-                return;
+                for path in &face.paths {
+                    let Some(data) = assets.load(book, path) else {
+                        continue;
+                    };
+                    let overrides = FontInfoOverride {
+                        family_name: Some(&internal),
+                        weight: Some(face.weight),
+                        style: Some(face.style),
+                        ..Default::default()
+                    };
+                    if !fonts
+                        .collection
+                        .register_fonts(data, Some(overrides))
+                        .is_empty()
+                    {
+                        registered.push(descriptor);
+                        break;
+                    }
+                }
             }
-            let Ok(path) = Book::resolve(base, url) else {
-                continue;
-            };
-            if !path
-                .rsplit_once('.')
-                .is_some_and(|(_, ext)| matches!(ext.to_ascii_lowercase().as_str(), "ttf" | "otf"))
-            {
-                continue;
-            }
-            if !self.font_paths.insert(path.clone()) {
-                continue;
-            }
-            self.font_reads += 1;
-            let Ok(bytes) = book.resource(&path) else {
-                continue;
-            };
-            let length = bytes.len();
-            if length > MAX_FONT_BYTES
-                || self.font_bytes + length > MAX_TOTAL_FONT_BYTES
-                || !(bytes.starts_with(b"\0\x01\0\0") || bytes.starts_with(b"OTTO"))
-            {
-                continue;
-            }
-            let family = format!("PrimitiveOS EPUB Face {}", self.font_reads);
-            let data = Blob::new(Arc::new(bytes));
-            let overrides = FontInfoOverride {
-                family_name: Some(&family),
-                ..Default::default()
-            };
-            if !fonts
-                .collection
-                .register_fonts(data, Some(overrides))
-                .is_empty()
-            {
-                self.font_bytes += length;
-                self.families
-                    .insert(alias.to_ascii_lowercase(), Arc::from(family));
-                return;
+            if !registered.is_empty() {
+                self.families.insert(family.clone(), Arc::from(internal));
             }
         }
+    }
+}
+
+struct FontFace {
+    family: String,
+    weight: FontWeight,
+    style: FontStyle,
+    paths: Vec<String>,
+}
+
+impl FontFace {
+    fn from_rule(base: &str, declarations: Vec<Declaration>) -> Option<Self> {
+        let mut family = None;
+        let mut weight = FontWeight::NORMAL;
+        let mut style = FontStyle::Normal;
+        let mut paths = Vec::new();
+        for declaration in declarations
+            .into_iter()
+            .filter(|declaration| !declaration.important)
+        {
+            match declaration.property {
+                Property::Family(names) => {
+                    if let [Family::Named(name)] = names.as_slice() {
+                        family = Some(name.to_ascii_lowercase());
+                    }
+                }
+                Property::Weight(Weight::Fixed(value)) => weight = value,
+                Property::Slant(value) => style = value,
+                Property::FontSource(urls) => {
+                    paths = urls
+                        .iter()
+                        .filter_map(|url| Book::resolve(base, url).ok())
+                        .filter(|path| {
+                            path.rsplit_once('.').is_some_and(|(_, ext)| {
+                                ext.eq_ignore_ascii_case("ttf") || ext.eq_ignore_ascii_case("otf")
+                            })
+                        })
+                        .collect();
+                }
+                _ => {}
+            }
+        }
+        if paths.is_empty() {
+            return None;
+        }
+        Some(Self {
+            family: family?,
+            weight,
+            style,
+            paths,
+        })
+    }
+}
+
+#[derive(Default)]
+struct FontAssets {
+    files: HashMap<String, Option<Blob<u8>>>,
+    bytes: usize,
+}
+
+impl FontAssets {
+    fn load(&mut self, book: &mut Book, path: &str) -> Option<Blob<u8>> {
+        if let Some(cached) = self.files.get(path) {
+            return cached.clone();
+        }
+        if self.files.len() >= MAX_FONT_READS {
+            return None;
+        }
+        let limit = MAX_FONT_BYTES.min(MAX_TOTAL_FONT_BYTES - self.bytes);
+        let data = book.resource_limited(path, limit).ok().and_then(|bytes| {
+            if !(bytes.starts_with(b"\0\x01\0\0") || bytes.starts_with(b"OTTO")) {
+                return None;
+            }
+            self.bytes += bytes.len();
+            Some(Blob::new(Arc::new(bytes)))
+        });
+        self.files.insert(path.to_owned(), data.clone());
+        data
     }
 }
 

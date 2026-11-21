@@ -30,6 +30,10 @@ FONT_NOTICE_PATH = f"META-INF/{FONT_NOTICE}"
 FONT_SHA256 = "c845473330b94c2079ce9af01c51ac8ba2d99c24f4d14c039843bbb8e642ebd8"
 FONT_NOTICE_SHA256 = "86c5e9c9382cdcc5948704fdfe60f2aa164a719746931219a42736ecd9cefbd3"
 FONT_SOURCE = "https://github.com/google/fonts/tree/7e8d490955e9d2629cd3095e8dadd6fafe3c16b8/ofl/silkscreen"
+NOTO_FONT = "NotoSans-Regular.ttf"
+NOTO_SHA256 = "dac8e68fe43fca59d522fa5f763322cfb4a919c28957656c58e7836d915307d0"
+NOTO_NOTICE = "OFL-NotoSans.txt"
+NOTO_NOTICE_SHA256 = "0dab92d0544f7b233403f14b84a663bdbfa746982eda629e7f4f9ffe1b036feb"
 REPEATED_TEXT = "The tide keeps its own time."
 UNIQUE_TEXT = "The copper lantern stood beside the door."
 VIETNAMESE_TEXT = "Mặt trời vừa lên, những con thuyền nhỏ rời bến."
@@ -231,6 +235,31 @@ def field_notes(version, missing_image=False):
     entries = publication(title, slug, version, chapters, resources, (IMAGE_PATH,) if missing_image else ())
     if epub3:
         entries[FONT_NOTICE_PATH] = font_asset(FONT_NOTICE, FONT_NOTICE_SHA256)
+    return entries
+
+
+def publisher_faces():
+    title = "The letterpress room"
+    css = f'''@font-face {{font-family: Press; src: url("../fonts/{FONT}");}}
+@font-face {{font-family: Press; src: url("../fonts/{NOTO_FONT}");}}
+@font-face {{font-family: Press; src: url("../fonts/unavailable.ttf");}}
+@font-face {{font-family: Press; font-weight: bold; src: url("../fonts/{FONT}");}}
+@font-face {{font-family: Press; font-style: italic; src: url("../fonts/{FONT}");}}
+@font-face {{font-family: Press; font-weight: bold; font-style: italic; src: url("../fonts/{NOTO_FONT}");}}
+@font-face {{font-family: Display; src: url("../fonts/{FONT}");}}
+body {{font-family: Press, serif;}}
+.display {{font-family: Display, sans-serif;}}'''
+    body = """<p id="regular">The printer set the body text by hand.</p>
+<p id="bold"><strong>A second typeface marked the headings.</strong></p>
+<p id="italic"><em>The same letters appeared in the notes.</em></p>
+<p id="both"><strong><em>The signature returned to the body face.</em></strong></p>
+<p class="display" id="display">An imprint closed the edition.</p>"""
+    entries = publication(title, "publisher-faces", 3,
+        [(SHORE_PATH, title, xhtml(title, body, True, "../styles/reader.css"))],
+        [(CSS_PATH, "text/css", css), (FONT_PATH, "font/ttf", font_asset(FONT, FONT_SHA256)),
+         (f"EPUB/fonts/{NOTO_FONT}", "font/ttf", font_asset(NOTO_FONT, NOTO_SHA256))])
+    entries[FONT_NOTICE_PATH] = font_asset(FONT_NOTICE, FONT_NOTICE_SHA256)
+    entries[f"META-INF/{NOTO_NOTICE}"] = font_asset(NOTO_NOTICE, NOTO_NOTICE_SHA256)
     return entries
 
 
@@ -476,6 +505,9 @@ def outputs():
             "opens": True, "page_count": 2, "display_baseline_degrees": [-8, 8],
             "internal_link_pages": [1, 2],
         }),
+        ("publisher-faces.epub", archive(publisher_faces()), {
+            "opens": True, "spine_count": 1, "font_families": 2, "face_styles": 4,
+        }),
         ("english-hyphenation.epub", archive(english_hyphenation()), {
             "opens": True, "spine_count": 1, "package_language": "en",
             "xhtml_language": None, "authored_soft_hyphens": 0,
@@ -527,7 +559,13 @@ def outputs():
             "name": "Silkscreen Regular", "license": "OFL-1.1", "source": FONT_SOURCE,
             "source_file": f"fonts/{FONT}", "sha256": FONT_SHA256,
             "notice_file": f"fonts/{FONT_NOTICE}", "notice_sha256": FONT_NOTICE_SHA256,
-            "included_in": ["field-notes-epub3.epub"], "archive_notice": FONT_NOTICE_PATH,
+            "included_in": ["field-notes-epub3.epub", "publisher-faces.epub"], "archive_notice": FONT_NOTICE_PATH,
+        }, {
+            "name": "Noto Sans Regular", "license": "OFL-1.1",
+            "source": "https://github.com/PrimitiveOS/kindle-primitive-launcher/blob/799cd5348d0a82673ea4fc36664ffc084146f238/assets/fonts/NotoSans-Regular.ttf",
+            "source_file": f"fonts/{NOTO_FONT}", "sha256": NOTO_SHA256,
+            "notice_file": f"fonts/{NOTO_NOTICE}", "notice_sha256": NOTO_NOTICE_SHA256,
+            "included_in": ["publisher-faces.epub"], "archive_notice": f"META-INF/{NOTO_NOTICE}",
         }],
         "fixtures": [
             {"file": name, "sha256": digest(content), "size_bytes": len(content), "expected": expected}
