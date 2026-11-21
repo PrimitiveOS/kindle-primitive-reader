@@ -409,11 +409,31 @@ impl BookStyle {
     }
 }
 
+#[derive(Clone, Eq, Hash, PartialEq)]
+enum FontPath {
+    Local(String),
+    Kindle(usize),
+}
+
+impl FontPath {
+    fn resolve(base: &str, url: &str) -> Option<Self> {
+        if let Some(number) = crate::kf8::fonts::reference(url) {
+            return Some(Self::Kindle(number));
+        }
+        let path = Book::resolve(base, url).ok()?;
+        path.rsplit_once('.')
+            .is_some_and(|(_, ext)| {
+                ext.eq_ignore_ascii_case("ttf") || ext.eq_ignore_ascii_case("otf")
+            })
+            .then_some(Self::Local(path))
+    }
+}
+
 struct FontFace {
     family: String,
     weight: FontWeight,
     style: FontStyle,
-    paths: Vec<String>,
+    paths: Vec<FontPath>,
 }
 
 impl FontFace {
@@ -437,12 +457,7 @@ impl FontFace {
                 Property::FontSource(urls) => {
                     paths = urls
                         .iter()
-                        .filter_map(|url| Book::resolve(base, url).ok())
-                        .filter(|path| {
-                            path.rsplit_once('.').is_some_and(|(_, ext)| {
-                                ext.eq_ignore_ascii_case("ttf") || ext.eq_ignore_ascii_case("otf")
-                            })
-                        })
+                        .filter_map(|url| FontPath::resolve(base, url))
                         .collect();
                 }
                 _ => {}
@@ -462,12 +477,12 @@ impl FontFace {
 
 #[derive(Default)]
 struct FontAssets {
-    files: HashMap<String, Option<Blob<u8>>>,
+    files: HashMap<FontPath, Option<Blob<u8>>>,
     bytes: usize,
 }
 
 impl FontAssets {
-    fn load(&mut self, book: &mut Book, path: &str) -> Option<Blob<u8>> {
+    fn load(&mut self, book: &mut Book, path: &FontPath) -> Option<Blob<u8>> {
         if let Some(cached) = self.files.get(path) {
             return cached.clone();
         }
@@ -475,7 +490,12 @@ impl FontAssets {
             return None;
         }
         let limit = MAX_FONT_BYTES.min(MAX_TOTAL_FONT_BYTES - self.bytes);
-        let data = book.resource_limited(path, limit).ok().and_then(|bytes| {
+        let data = match path {
+            FontPath::Local(path) => book.resource_limited(path, limit),
+            FontPath::Kindle(number) => book.kindle_font(*number, limit),
+        }
+        .ok()
+        .and_then(|bytes| {
             if !(bytes.starts_with(b"\0\x01\0\0") || bytes.starts_with(b"OTTO")) {
                 return None;
             }

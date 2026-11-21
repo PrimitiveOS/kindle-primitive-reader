@@ -101,6 +101,7 @@ enum Content {
     Loose {
         xhtml: BTreeMap<String, String>,
         resources: BTreeMap<String, Vec<u8>>,
+        fonts: Option<kf8::fonts::FontSource>,
     },
     Chm(Box<Chm>),
 }
@@ -450,17 +451,18 @@ impl Book {
             content: Content::Loose {
                 xhtml: BTreeMap::from([(chapter_path, document.xhtml)]),
                 resources: document.resources,
+                fonts: None,
             },
         }
     }
 
     fn open_mobi(path: &Path) -> Result<Self> {
-        let input = File::open(path)?;
+        let mut input = File::open(path)?;
         let metadata = input.metadata()?;
         if !metadata.is_file() || metadata.len() > mobi::MAX_MOBI_BYTES as u64 {
             return Err(mobi::MobiError::TooLarge.into());
         }
-        let bytes = loose::read_bounded(input, mobi::MAX_MOBI_BYTES)?;
+        let bytes = loose::read_bounded(&mut input, mobi::MAX_MOBI_BYTES)?;
         let fallback_title = loose::fallback_title(path);
         let mut publication = match mobi::decode(&bytes) {
             Ok(document) if document.xhtml.len() > 512 * 1024 => {
@@ -473,6 +475,7 @@ impl Book {
                     title: document.title,
                     author: document.author,
                     resources: BTreeMap::new(),
+                    font_records: BTreeMap::new(),
                     chapters: vec![kf8::Kf8Chapter {
                         continued: false,
                         path: loose::CHAPTER_PATH.into(),
@@ -536,6 +539,10 @@ impl Book {
             content: Content::Loose {
                 xhtml,
                 resources: publication.resources,
+                fonts: (!publication.font_records.is_empty()).then_some(kf8::fonts::FontSource {
+                    file: input,
+                    records: publication.font_records,
+                }),
             },
         })
     }
@@ -696,6 +703,15 @@ impl Book {
             offsets.push(total);
         }
         Ok(offsets)
+    }
+
+    pub(crate) fn kindle_font(&mut self, number: usize, cap: usize) -> Result<Vec<u8>> {
+        match &mut self.content {
+            Content::Loose {
+                fonts: Some(fonts), ..
+            } => fonts.read(number, cap),
+            _ => Err("The book has no Kindle font records".into()),
+        }
     }
 
     /// Read a canonical, decoded archive path without extracting it to disk.
