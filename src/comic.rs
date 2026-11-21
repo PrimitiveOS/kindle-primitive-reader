@@ -379,20 +379,7 @@ pub(crate) fn page_name(name: &str) -> bool {
         return false;
     }
     name.rsplit_once('.')
-        .is_some_and(|(_, extension)| format_for_extension(extension).is_some())
-}
-
-pub(crate) fn format_for_extension(extension: &str) -> Option<ImageFormat> {
-    match extension.to_ascii_lowercase().as_str() {
-        "jpg" | "jpeg" => Some(ImageFormat::Jpeg),
-        "png" => Some(ImageFormat::Png),
-        "gif" => Some(ImageFormat::Gif),
-        "bmp" => Some(ImageFormat::Bmp),
-        "pnm" | "pbm" | "pgm" | "ppm" | "pam" => Some(ImageFormat::Pnm),
-        "webp" => Some(ImageFormat::WebP),
-        "tif" | "tiff" => Some(ImageFormat::Tiff),
-        _ => None,
-    }
+        .is_some_and(|(_, extension)| crate::library::DocumentFormat::raster_for_extension(extension).is_some())
 }
 
 /// Compare digit groups by numeric value without converting them to integers.
@@ -569,6 +556,10 @@ impl ImagePage {
     }
 
     fn decode(bytes: &[u8]) -> Result<Self> {
+        if crate::jpeg2000::has_signature(bytes) {
+            let gray = crate::jpeg2000::decode(bytes)?;
+            return Self::from_grayscale(gray.width(), gray.height(), gray.into_raw());
+        }
         let mut reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
         match reader.format() {
             Some(ImageFormat::Gif) => return Self::decode_gif(bytes),
@@ -695,14 +686,10 @@ impl ImagePage {
 }
 
 pub(crate) fn raster_input_limit(path: &Path) -> u64 {
-    if path
-        .extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("webp"))
-    {
-        MAX_WEBP_BYTES
-    } else {
-        MAX_IMAGE_BYTES
-    }
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .and_then(crate::library::DocumentFormat::raster_for_extension)
+        .map_or(MAX_IMAGE_BYTES, crate::library::DocumentFormat::max_bytes)
 }
 
 // Simple lossy WebP contains only RIFF/WEBP and one VP8 key-frame chunk.
@@ -987,7 +974,10 @@ mod tests {
     fn simple_lossy_webp_renders_as_a_standalone_image_and_comic_page() {
         let fixture = Fixture::new("WEBP");
         fs::write(&fixture.0, SIMPLE_LOSSY_WEBP).unwrap();
-        assert_eq!(format_for_extension("WebP"), Some(ImageFormat::WebP));
+        assert_eq!(
+            crate::library::DocumentFormat::raster_for_extension("WebP"),
+            Some(crate::library::DocumentFormat::WebP)
+        );
         let page = ImagePage::open(&fixture.0).unwrap();
         assert_eq!(page.page_size(), (16.0, 8.0));
         let raster = page.fit(16, 8, 0).unwrap();

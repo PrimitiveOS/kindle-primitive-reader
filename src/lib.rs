@@ -28,6 +28,7 @@ mod generated_contents;
 mod gray_glyph;
 #[cfg(feature = "kindle")]
 mod footnotes;
+mod jpeg2000;
 mod kf8;
 mod kindle_sections;
 pub mod koreader_import;

@@ -121,7 +121,7 @@ Use this table as the initial format inventory. A decoder that opens a file qual
 | PDF | P2 native fixed pages and text. P3 scanned PDF tools. | Text and image-only PDFs, outlines, passwords, rotation, crop, source preservation, and PDF annotation interchange. |
 | DjVu/DJV | P3 native decoder evaluation followed by scan tools. | Multipage containers, single pages, outlines, embedded text, coordinate accuracy and scanned reflow. |
 | JPEG/PNG and standalone image sequences | P2 native using the fixed-page surface. | EXIF orientation, alpha, grayscale, zoom, dimension limits, invalid input, and resume in image sequences. |
-| GIF, BMP, WebP, TIFF, SVG, JPEG 2000, JPEG XR, and portable bitmap images | Native BMP, GIF first frame, PAM/PBM/PGM/PNM/PPM, bounded static SVG and single-image lossy VP8 WebP. TIFF accepts one top-left page of uncompressed 1-bit or 8-bit grayscale strips. Evaluate broader codec variants, J2K, JP2, JXR, HDP and WDP individually. | Animation/static policy, multi-image behavior, compression variants, orientation, alpha, external SVG resource rules, and bounded decode. |
+| GIF, BMP, WebP, TIFF, SVG, JPEG 2000, JPEG XR, and portable bitmap images | Native BMP, GIF first frame, PAM/PBM/PGM/PNM/PPM, bounded static SVG and single-image lossy VP8 WebP. TIFF accepts one top-left page of uncompressed 1-bit or 8-bit grayscale strips. JP2 containers and raw J2K codestreams open in Library and inside supported comics. JPEG XR, HDP, WDP and broader variants remain to evaluate. | Animation/static policy, multi-image behavior, compression variants, orientation, alpha, external SVG resource rules, and bounded decode. |
 | CBZ, CBT, CBR | Native CBZ and uncompressed USTAR CBT. CBR supports bounded single-volume, unencrypted, non-solid RAR4 and RAR5 with independent page extraction and checksum checks. Opening an installed KOReader remains available in Files for wider RAR variants. | Entry order, paths, archive variants and signatures, grayscale displays, reading direction, spreads and large archive limits. |
 | TXT, FB2/FB2.ZIP, FB3 | P2 native TXT/FB2. P3 verifies ZIP packaging and FB3 packaging. | BOM and encoding variants, FB2 metadata/sections/notes/images, embedded identifiers, and bounded archive resources. |
 | HTML, XHTML, HTM, HTMLZ, Markdown, XML, and plain text aliases | Native offline HTML/XHTML and single-document Calibre-style HTMLZ with one root HTML file, local PNG/JPEG and CSS, and optional OPF metadata. Evaluate other markup and archive variants in P3. | Links, images and anchors within permitted book resources, conversion fidelity, text selection, and explicit handling of unsupported script or remote content. |
@@ -150,6 +150,22 @@ with complete coverage of 489,427 source characters and zero missing glyphs.
 The pinned CHM dependency read all 570 ordinary members of that archive.
 The package retains the upstream MIT notice and limits archive directory,
 topic, LZX window and frame allocations. [PuTTY 0.83 release](https://www.chiark.greenend.org.uk/~sgtatham/putty/releases/0.83.html)
+
+KOReader registers both `.jp2` and `.j2k` with its fixed-page provider. Reader
+opens single-image JP2 containers and raw JPEG 2000 Part 1 codestreams from
+Library and comic pages. The decoder accepts opaque unsigned grayscale, sRGB
+and sYCC with equal component depths from 1 to 16 bits. Palette colors, ICC
+profiles, CMYK, alpha, signed or mixed-depth samples, and JPX or motion
+containers remain outside this implementation. [KOReader provider registration](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/pdfdocument.lua#L401-L402) · [Hayro JPEG 2000 decoder](https://docs.rs/hayro-jpeg2000/0.5.0/hayro_jpeg2000/)
+
+Reader checks the encoded source and metadata before allocating wavelet or
+color planes. Each file or archive page is limited to 8 MiB, 4,096 pixels
+per side, 4,194,304 pixels, 8,388,608 component samples and 1,024 tiles. The
+box metadata and codestream main header are each capped at 1 MiB. Independent
+OpenJPEG comparisons cover tiled images, lossless grayscale and RGB values,
+16-bit downconversion, and lossy decoding with subsampled chroma. The desktop
+workflow opens both extensions through Library, turns a mixed comic page and
+resumes it after restart. [Fixtures and verification](../tests/fixtures/README.md#jpeg-2000-pages) · [Simulator capture](screenshots/jpeg2000-beacon.png)
 
 The desktop Reader rendered the same first page from independently prepared
 compressed RAR4 and RAR5 comics. Tests cover natural ordering, independent

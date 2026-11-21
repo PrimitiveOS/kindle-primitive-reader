@@ -2170,6 +2170,7 @@ dependencies = [
  "harfrust",
  "hayro",
  "hayro-interpret",
+ "hayro-jpeg2000",
  "html5ever",
  "icu_casemap",
  "icu_normalizer",

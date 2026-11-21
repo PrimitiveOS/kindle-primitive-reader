@@ -1,1 +1,2 @@
 tests/fixtures/*.pdf binary
+tests/fixtures/*.pgm binary

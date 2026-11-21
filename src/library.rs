@@ -9,12 +9,11 @@ use std::path::{Component, Path, PathBuf};
 
 use icu_casemap::CaseMapper;
 use icu_normalizer::{ComposingNormalizer, DecomposingNormalizer};
-use image::ImageFormat;
 use serde::{Deserialize, Serialize};
 use zip::ZipArchive;
 
 use crate::comic::{
-    MAX_COMIC_BYTES, MAX_IMAGE_BYTES, MAX_WEBP_BYTES, format_for_extension, natural_cmp,
+    MAX_COMIC_BYTES, MAX_IMAGE_BYTES, MAX_WEBP_BYTES, natural_cmp,
 };
 use crate::djvu::MAX_DJVU_BYTES;
 use crate::epub::{Book, MAX_ARCHIVE, check_zip_directory};
@@ -71,6 +70,7 @@ pub enum DocumentFormat {
     Cbt,
     Cbr,
     Jpeg,
+    Jpeg2000,
     Png,
     Gif,
     Bmp,
@@ -108,16 +108,21 @@ impl DocumentFormat {
             "cbt" => Some(Self::Cbt),
             "cbr" => Some(Self::Cbr),
             "svg" => Some(Self::Svg),
-            _ => match format_for_extension(extension)? {
-                ImageFormat::Jpeg => Some(Self::Jpeg),
-                ImageFormat::Png => Some(Self::Png),
-                ImageFormat::Gif => Some(Self::Gif),
-                ImageFormat::Bmp => Some(Self::Bmp),
-                ImageFormat::Pnm => Some(Self::Pnm),
-                ImageFormat::WebP => Some(Self::WebP),
-                ImageFormat::Tiff => Some(Self::Tiff),
-                _ => None,
-            },
+            _ => Self::raster_for_extension(extension),
+        }
+    }
+
+    pub(crate) fn raster_for_extension(extension: &str) -> Option<Self> {
+        match extension.to_ascii_lowercase().as_str() {
+            "jpg" | "jpeg" => Some(Self::Jpeg),
+            "jp2" | "j2k" => Some(Self::Jpeg2000),
+            "png" => Some(Self::Png),
+            "gif" => Some(Self::Gif),
+            "bmp" => Some(Self::Bmp),
+            "pnm" | "pbm" | "pgm" | "ppm" | "pam" => Some(Self::Pnm),
+            "webp" => Some(Self::WebP),
+            "tif" | "tiff" => Some(Self::Tiff),
+            _ => None,
         }
     }
 
@@ -125,6 +130,7 @@ impl DocumentFormat {
         matches!(
             self,
             Self::Jpeg
+                | Self::Jpeg2000
                 | Self::Png
                 | Self::Gif
                 | Self::Bmp
@@ -159,6 +165,7 @@ impl DocumentFormat {
             }
             Self::Svg => crate::svg_image::MAX_SVG_BYTES as u64,
             Self::WebP => MAX_WEBP_BYTES,
+            Self::Jpeg2000 => crate::jpeg2000::MAX_INPUT,
         }
     }
 
@@ -180,6 +187,7 @@ impl DocumentFormat {
             Self::Cbz => b"reader-cbz\0",
             Self::Cbt => b"reader-cbt\0",
             Self::Cbr => b"reader-cbr\0",
+            Self::Jpeg2000 => b"reader-jpeg2000\0",
             Self::Jpeg => b"reader-jpeg\0",
             Self::Png => b"reader-png\0",
             Self::Gif => b"reader-gif\0",

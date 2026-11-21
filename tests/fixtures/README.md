@@ -50,3 +50,24 @@ The simulated interface uses [Launcher’s Noto Sans Regular](https://github.com
 
 
 `cmyk-print-chart.pdf` contains an original 512 × 384 DeviceCMYK test chart with eight swatches, small tint variations, and a vector registration line. The generator defines every source pixel and PDF object. Reader maps its colors through Hayro’s standard printer-color profile.
+
+## JPEG 2000 pages
+
+OpenJPEG 2.5.4 encoded the original harbor drawings and gradients. Each input
+measures 160 × 112 pixels. Use the following files directly in Reader's Library.
+
+| File | Independent comparison |
+| --- | --- |
+| `harbor-beacon.jp2` | Lossless 8-bit grayscale. Every output pixel matches the original drawing. |
+| `signal-flags.j2k` | Four lossless RGB tiles in a raw codestream. Reader's luminance matches the original signal flags pixel for pixel. |
+| `evening-light.jp2` | Lossless unsigned 16-bit samples. Every 8-bit display value matches the original intensity scaled to the screen. |
+| `harbor-lights.jp2` | Lossy 4:2:0 sYCC. Every 8-bit output luminance is within three levels of the separately decoded `harbor-lights-reference.pgm`. |
+| `harbor-signals.cbz` | The beacon and signal flags in page order. Standalone and comic renders match at native size and after a quarter turn. |
+
+Use `python3 scripts/generate-jpeg2000-fixtures.py` to compare the committed
+files with OpenJPEG. The optional `--write` argument regenerates them. Only the
+fixture generator uses the OpenJPEG command-line programs. Reader uses the Rust
+decoder on the host and Kindle. Run `cargo test --locked --features kindle --lib jpeg2000`
+to check the pixel comparisons and normal Library workflow. Set
+`READER_JPEG2000_SCREENSHOT` to a PNG path to capture the simulated beacon
+page. [OpenJPEG](https://www.openjpeg.org/) · [Reader decoder tests](../../src/jpeg2000.rs)

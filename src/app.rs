@@ -7308,6 +7308,53 @@ mod tests {
     }
 
     #[test]
+    fn jpeg2000_images_open_from_the_picker_and_the_comic_resumes_its_second_page() {
+        let fixture = Fixture::new();
+        let files = [
+            ("harbor-beacon.jp2", "Beacon.JP2"),
+            ("signal-flags.j2k", "Flags.J2K"),
+            ("harbor-signals.cbz", "Signals.cbz"),
+        ];
+        for (source, name) in files {
+            fs::copy(crate::test_fixture(source), fixture.root.join(name)).unwrap();
+        }
+        let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        for name in ["Beacon.JP2", "Flags.J2K", "Signals.cbz"] {
+            let items = app.items();
+            let idx = items.iter().position(|item| item.title == name).unwrap();
+            assert!(matches!(items[idx].action, Action::Open(_)));
+            assert_eq!(
+                app.input(Input::Tap(
+                    150.0,
+                    (library_view::LIBRARY_LIST_Y + ROW_HEIGHT * idx as i32 + 30) as f32
+                )),
+                Change::Partial
+            );
+            assert_eq!(app.screen, Screen::Fixed);
+            let active = &app.fixed.as_ref().unwrap().reading;
+            if name == "Signals.cbz" {
+                assert_eq!(active.count(), 2);
+                app.input(Input::PageForward);
+                if let Some(due) = app.fixed.as_ref().unwrap().reading.deadline() {
+                    app.tick(due);
+                }
+                assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 1);
+                app.save().unwrap();
+            } else {
+                assert_eq!(active.count(), 1);
+                if name == "Beacon.JP2" {
+                    capture_test_screen(&app, &fonts, "READER_JPEG2000_SCREENSHOT", false);
+                }
+            }
+            app.activate(Action::Show(Screen::Library)).unwrap();
+        }
+        let mut reopen = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+        reopen.open_path(&fixture.root.join("Signals.cbz")).unwrap();
+        assert_eq!(reopen.fixed.as_ref().unwrap().reading.page(), 1);
+    }
+
+    #[test]
     fn opens_a_comic_panel_without_changing_the_underlying_page_or_fit() {
         let fixture = Fixture::new();
         let comic = fixture.root.join("Panels.cbz");
