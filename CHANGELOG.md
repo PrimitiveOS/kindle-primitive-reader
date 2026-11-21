@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.15
+
+- Browse the publisher’s print page labels, jump to an exact label, and show print boundaries in the margin or footer of a reflowable EPUB. Each book remembers its choices.
+
 ## 0.1.14
 
 - Read publisher GIF illustrations inline and open them at full size. The first frame is shown for animated GIFs.
