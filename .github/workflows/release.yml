@@ -12,7 +12,7 @@ jobs:
     with:
       id: primitive-reader
       dir: reader
-      binary-crate: reader-kindle
+      binary-crate: reader
       arches: armhf
       firmware-min: "5.16.3"
       docs-licence-file: LICENSE-DOCS
