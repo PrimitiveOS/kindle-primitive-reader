@@ -82,6 +82,7 @@ fn reading_fonts(home: &Path) -> Vec<PathBuf> {
         .chain([
             PathBuf::from("/usr/java/lib/fonts/NotoNaskh-Regular.ttf"),
             PathBuf::from("/usr/java/lib/fonts/TBGothicMed_213.ttf"),
+            PathBuf::from("/usr/java/lib/fonts/code2000.ttf"),
         ])
         .filter(|path| path.is_file())
         .collect()

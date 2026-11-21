@@ -208,3 +208,18 @@ those differences visible without publishing a page from the owner's library.
 | KOReader on Oasis | PrimitiveOS Reader |
 | --- | --- |
 | <img src="screenshots/koreader-long-chapter.png" width="245" alt="KOReader rendering the opening of the generated long chapter"> | <img src="screenshots/reader-long-chapter.png" width="245" alt="PrimitiveOS Reader rendering the same chapter in its reading interface"> |
+
+
+## Oasis firmware font coverage
+
+A follow-up Mac run shaped all 82 spine entries of the three originals that contributed the 620 missing glyphs in the whole-spine table. It used the same Launcher regular and bold fonts and the installed Oasis 3 firmware fonts in Reader's preference order. Every missing character belonged to Unicode's Common script. The source contained 556 mathematical symbol occurrences, 63 other symbol occurrences and one nonprinting C1 control.
+
+| Font configuration | Missing printable glyphs | Missing control glyphs |
+| --- | ---: | ---: |
+| Launcher Noto Sans regular and bold | 619 | 1 |
+| Launcher fonts plus the existing Noto Naskh Arabic and TBGothic firmware fallbacks | 64 | 1 |
+| Same configuration with the installed Code2000 last | 0 | 1 |
+
+Reader discovers Code2000 when the firmware provides it. Fontique maps the firmware files on demand. Removable user fonts keep their existing in-memory handling. The check retained source characters and counted the control's missing glyph explicitly. The regression test uses two redistributable fixture fonts, and the release contains no Oasis firmware fonts.
+
+On the Mac, an authored EPUB's first-page layout and raster took a median of 19.80 ms with the previous stack and 19.55 ms with the additional file-backed fallback. Each configuration ran 21 times, alternating their order after three warm-up rounds. These are warm-filesystem host timings. The Kindle foreground stayed undisturbed during this comparison.

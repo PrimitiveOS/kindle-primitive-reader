@@ -910,14 +910,33 @@ fn revision_bytes(bytes: &[u8]) -> u64 {
 }
 
 fn font_context(paths: &[PathBuf]) -> Result<FontContext> {
+    font_context_with_firmware(paths, Path::new("/usr/java/lib/fonts"))
+}
+
+fn font_context_with_firmware(paths: &[PathBuf], firmware: &Path) -> Result<FontContext> {
     if paths.is_empty() {
         return Err("Provide at least one reading font".into());
     }
     let mut fonts = FontContext::default();
     let mut families = Vec::new();
     for path in paths {
-        if fs::metadata(path)?.len() > 64 * 1024 * 1024 {
+        let metadata = fs::metadata(path)?;
+        if metadata.len() > 64 * 1024 * 1024 {
             return Err("A reading font exceeds the size limit".into());
+        }
+        if path.parent() == Some(firmware) && metadata.is_file() {
+            // The firmware volume stays mounted when books and user fonts are removed
+            // over USB. Fontique can safely map these fonts on demand without a heap
+            // copy of the whole fallback stack on every chapter open.
+            let known = fonts.collection.family_ids().collect::<Vec<_>>();
+            fonts.collection.load_fonts_from_paths([path]);
+            families.extend(
+                fonts
+                    .collection
+                    .family_ids()
+                    .filter(|id| !known.contains(id)),
+            );
+            continue;
         }
         let data = parley::fontique::Blob::new(std::sync::Arc::new(fs::read(path)?));
         families.extend(
@@ -938,6 +957,56 @@ fn font_context(paths: &[PathBuf]) -> Result<FontContext> {
         .collection
         .set_generic_families(GenericFamily::SansSerif, families.iter().copied());
     Ok(fonts)
+}
+
+#[cfg(test)]
+mod firmware_font_tests {
+    use super::*;
+    use parley::{
+        Layout, LayoutContext, PositionedLayoutItem, StyleProperty, fontique::SourceKind,
+    };
+
+    fn missing(fonts: &mut FontContext, text: &str) -> usize {
+        let mut context = LayoutContext::new();
+        let mut builder = context.ranged_builder(fonts, text, 1.0, true);
+        builder.push_default(StyleProperty::FontFamily(GenericFamily::Serif.into()));
+        let mut layout: Layout<()> = builder.build(text);
+        layout.break_all_lines(None);
+        layout
+            .lines()
+            .flat_map(|line| line.items())
+            .map(|item| match item {
+                PositionedLayoutItem::GlyphRun(run) => {
+                    run.positioned_glyphs().filter(|g| g.id == 0).count()
+                }
+                PositionedLayoutItem::InlineBox(_) => 0,
+            })
+            .sum()
+    }
+
+    #[test]
+    fn file_backed_fallback_preserves_priority_and_shapes_missing_characters() {
+        let first = test_fixture("fonts/Silkscreen-Regular.ttf");
+        let fallback = test_fixture("fonts/NotoSans-Regular.ttf");
+        let firmware = fallback.parent().unwrap();
+        let paths = [first, fallback.clone()];
+        let mut primary = font_context_with_firmware(&paths[..1], firmware).unwrap();
+        assert_eq!(missing(&mut primary, "AΩ"), 1);
+        let mut fonts = font_context_with_firmware(&paths, firmware).unwrap();
+        let stack: Vec<_> = fonts
+            .collection
+            .generic_families(GenericFamily::Serif)
+            .collect();
+        assert_eq!(stack.len(), 2);
+        for (id, expected_path) in stack.into_iter().zip(&paths) {
+            let family = fonts.collection.family(id).unwrap();
+            assert!(family.fonts().iter().any(|font|
+                matches!(font.source().kind(), SourceKind::Path(path) if path.as_ref() == expected_path)));
+        }
+        assert_eq!(missing(&mut fonts, "AΩ"), 0);
+        // Neither test font assigns a glyph to this private-use code point.
+        assert_eq!(missing(&mut fonts, "\u{F0000}"), 1);
+    }
 }
 
 fn grayscale(rgba: &[u8]) -> impl Iterator<Item = u8> + '_ {
