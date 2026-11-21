@@ -7986,13 +7986,15 @@ mod tests {
         let mut app = fixture.app();
         app.open_path(&path).unwrap();
         let fixed = app.fixed.as_ref().unwrap();
+        let layer = fixed.reading.page_text(1).unwrap();
+        let word = layer.words.first().unwrap();
         let state = app.library.remember(&fixed.entry, fixed.id, &fixed.entry.title);
-        state.pdf_highlights.push(PdfHighlight {
+        state.add_pdf_highlight(PdfHighlight {
             page: 1,
-            bounds: vec![PdfTextRect { x0: 5.0, y0: 14.0, x1: 37.0, y1: 28.0 }],
-            text: "Daily chart".into(),
+            bounds: vec![word.bounds],
+            text: layer.text[word.bytes.clone()].to_owned(),
             note: Some("Harbor sounding".into()),
-        });
+        }).unwrap();
         app.show(Screen::FixedBookmarks);
         tap_contents_item(&mut app, "Find bookmarks");
         submit_annotation_search(&mut app, "harbor");
