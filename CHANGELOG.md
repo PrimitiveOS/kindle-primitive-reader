@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.7
+
+- Read long EPUB paragraphs whose embedded fonts previously prevented page breaks. Search the selected words directly from the reading page.
+- Preview an EPUB footnote over the page, look up a word inside it, or jump to the full note and return.
+- Switch dictionaries and results, find text within a definition, and open nested lookups with the original selection and scroll position preserved.
+- Reduce first-page drawing time and peak memory on print-color PDFs. The large original PDF's rendered cover matched the previous release pixel for pixel on the Oasis.
+- Read JPEG 2000 images in Documents and inside comic archives, including tested grayscale, RGB and subsampled color examples.
+
 ## 0.1.6
 
 - Open full-length MOBI and KindleGen AZW3 books with separate stylesheet and artwork flows. Keep links usable in large illustrated chapters.
