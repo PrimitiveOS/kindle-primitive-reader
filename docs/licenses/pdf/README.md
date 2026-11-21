@@ -13,3 +13,8 @@ licence texts are in [the dependency notices](../THIRD-PARTY.txt).
 
 
 The 32-bit ARM build reuses exact four-channel image colors before Hayro’s DeviceCMYK conversion. The interpreter’s CMYK and Lab reference profiles retain their upstream CC0 terms in the packaged dependency notices. [Profile attribution](https://github.com/LaurenzV/hayro/blob/3f3825c3e50bb41ed6ec6c3f4b6007978bd13def/hayro-interpret/assets/README.md) · [Profile license](../THIRD-PARTY.txt)
+
+The experimental scaled-DCT feature uses the four-component decoder and scaled inverse
+DCT in `jpeg-decoder` 0.3.2. This dependency is optional and is distributed here
+under its MIT licence. [Decoder source](https://github.com/image-rs/jpeg-decoder/tree/v0.3.2) ·
+[MIT notice](JPEG-DECODER-MIT.txt)

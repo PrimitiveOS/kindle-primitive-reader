@@ -1,5 +1,7 @@
 mod image;
 mod mask;
+#[cfg(feature = "experimental-scaled-dct")]
+mod scaled_dct;
 
 pub(crate) use image::{DecodedImage, decode_image};
 pub(crate) use mask::{DecodedMask, decode_mask};
@@ -45,11 +47,14 @@ fn decode_context<'a>(
         height: obj.height(),
     };
 
-    let decoded = obj
-        .stream
-        .decoded_image(&decode_params)
-        .map_err(|_| (obj.warning_sink)(InterpreterWarning::ImageDecodeFailure))
-        .ok()?;
+    let full = || {
+        obj.stream.decoded_image(&decode_params)
+            .map_err(|_| (obj.warning_sink)(InterpreterWarning::ImageDecodeFailure)).ok()
+    };
+    #[cfg(feature = "experimental-scaled-dct")]
+    let decoded = scaled_dct::decode(obj, &decode_params).or_else(full)?;
+    #[cfg(not(feature = "experimental-scaled-dct"))]
+    let decoded = full()?;
 
     let (mut scale_x, mut scale_y) = (1.0, 1.0);
 
