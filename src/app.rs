@@ -5910,6 +5910,9 @@ pub fn run_probe(engine: Engine, book: PathBuf, fonts: Vec<PathBuf>, home: &Path
 }
 
 #[cfg(test)]
+mod external_range_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use primitive_ui::GrayImage;
@@ -7883,7 +7886,7 @@ mod tests {
         assert!(!prefs.smooth_images && prefs.invert_night_images);
     }
 
-    fn tap_contents_item(app: &mut Reader, label: &str) {
+    pub(super) fn tap_contents_item(app: &mut Reader, label: &str) {
         let index = app.items().iter().position(|item| item.title == label).unwrap_or_else(|| panic!("No row {label} in {:?}", app.screen));
         let page = index / ROWS_PER_PAGE;
         while app.list_page < page { app.input(Input::PageForward); }
