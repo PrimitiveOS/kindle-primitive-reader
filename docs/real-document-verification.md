@@ -342,3 +342,10 @@ The Oasis repeated Preview, Apply twice and reopen against each of those three E
 Three original PDFs contained sixteen URI annotations. Twelve recorded web addresses, one a mail address, one a file URI, and two relative addresses. A fourth original contained no URI annotations. On the Mac, all sixteen link rectangles opened the same address that the independent PDF parser extracted. Displaying a QR code and copying an address preserved the exact page, viewport and location history.
 
 KOReader’s link controller offers Copy and QR code on this device. Its optional browser action depends on the device URL handler. On the tested Kindle, the generic device sets that capability to false and the Kindle backend inherits it. Reader likewise keeps the address dialog offline. Paste link inserts a copied address into a Reader search or note field. The compiled QR generator’s MIT notice is included with the application. [KOReader link dialog](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerlink.lua#L138-L179) · [QR encoding](https://docs.rs/qrcodegen/1.8.0/qrcodegen/struct.QrCode.html)
+
+
+## Page geometry and text across four original PDFs
+
+Reader and an independent MuPDF extraction visited all **2,377 physical pages** in the four PDFs from the Oasis. Their page counts and upright dimensions agreed on every page within 0.02 PDF points. Both found alphanumeric text on the same 2,375 pages. Reader checked 1,235,700 word spans for valid source-byte ranges and page coordinates. No page reached its text extraction limit.
+
+The comparison measures page geometry, text availability and selection bounds. Word segmentation and readings of individual glyphs are checked separately using source passages. To repeat the comparison, pass the PDF and a JSON array of `width`, `height` and `has_readable_text` values to `cargo run --example verify_pdf_pages --`. The verifier emits counts and page numbers. [Page verifier](../examples/verify_pdf_pages.rs) · [Reading interaction checks](reading-control-evidence.md)
