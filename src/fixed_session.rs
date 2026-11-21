@@ -2211,7 +2211,7 @@ mod tests {
         };
         for (continuous, turns) in [(false, 0), (true, 0), (false, 1), (true, 3)] {
             let pdf = Pdf::open(crate::fixed::tests::pdf_objects(&objects)).unwrap();
-            let link = pdf.page_links(0).unwrap()[0];
+            let link = &pdf.page_links(0).unwrap()[0];
             assert_eq!(link.target, PdfLinkTarget::Page(1));
             let preferences = View {
                 zoom: 4,
@@ -2269,7 +2269,7 @@ mod tests {
             .unwrap()
             .bounds;
         let link = match &reader.source {
-            FixedDocument::Pdf(pdf) => pdf.page_links(0).unwrap()[0],
+            FixedDocument::Pdf(pdf) => pdf.page_links(0).unwrap().into_iter().next().unwrap(),
             _ => unreachable!(),
         };
         let verify = |reader: &FixedReading| {

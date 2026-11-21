@@ -38,6 +38,8 @@ In fixed-page books, Book map shows where you are and where you saved bookmarks 
 
 Preview a saved KOReader position before applying it, or extend a saved passage while keeping its note. [Position preview](docs/screenshots/koreader-position-preview.png) · [Extend an EPUB highlight](docs/screenshots/extend-epub-highlight.png) · [Extend a PDF highlight](docs/screenshots/extend-pdf-highlight.png)
 
+Tap a PDF web link to inspect its address over the current page. **Copy** makes it available in Reader’s search and note fields for this session. **QR code** lets you scan it with another device. [Address preview](docs/screenshots/pdf-link-address.png) · [QR display](docs/screenshots/pdf-link-code.png)
+
 ## Reading on Kindle
 
 Install Reader from PrimitiveOS Store or follow the manual install guide.

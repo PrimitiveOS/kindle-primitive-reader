@@ -7,6 +7,7 @@ mod dictionary_panel;
 mod fixed_book_map;
 mod gestures;
 mod extend_highlight;
+mod external_link;
 mod sidecar_marks;
 mod library_view;
 mod lookup_history;
@@ -525,6 +526,8 @@ pub struct Reader {
     footnote: Option<footnote_popup::Footnote>,
     highlight_index: usize,
     range_edit: Option<extend_highlight::RangeEdit>,
+    link_popup: Option<external_link::LinkPopup>,
+    copied_address: Option<String>,
     exports: PathBuf,
     dictionaries: PathBuf,
     dictionary_preference: PathBuf,
@@ -643,6 +646,8 @@ impl Reader {
             footnote: None,
             highlight_index: 0,
             range_edit: None,
+            link_popup: None,
+            copied_address: None,
             exports: state.parent().unwrap_or(documents).join("exports"),
             dictionaries: state.parent().unwrap_or(documents).join("dictionaries"),
             dictionary_preference,
@@ -902,6 +907,7 @@ impl Reader {
         if !matches!(screen, Screen::Matches | Screen::Book | Screen::Fixed) {
             self.cancel_search();
         }
+        self.link_popup = None;
         self.screen = screen;
         self.map_window = fixed_book_map::MapWindow::default();
         self.sync_auto_turn(Instant::now());
@@ -2793,6 +2799,7 @@ impl Reader {
     fn auto_turn_eligible(&self) -> bool {
         self.stats_awake
             && !self.touch_locked
+            && self.link_popup.is_none()
             && self.range_edit.is_none()
             && self.selection.is_none()
             && self.pdf_selection.is_none()
@@ -3681,9 +3688,10 @@ impl Reader {
                         Ok(()) => Change::Partial,
                         Err(error) => self.report(error),
                     },
-                    PdfLinkTarget::External => {
-                        self.report("This link opens a resource outside the PDF")
-                    }
+                    PdfLinkTarget::External => match link.uri {
+                        Some(address) => self.show_link_address(address),
+                        None => self.report("This link refers to a resource outside the PDF"),
+                    },
                     PdfLinkTarget::Unavailable => self.report("This PDF link is unavailable"),
                 };
             }
@@ -4813,6 +4821,7 @@ impl App for Reader {
             } else if self.screen == Screen::Fixed && selection.is_empty() {
                 self.draw_search_steps(canvas);
             }
+            if let Some(popup) = &self.link_popup { popup.draw(canvas); }
             if self.screen == Screen::OnlineLookup { self.draw_online(canvas); }
             if self.definition_over_book() {
                 self.draw_definition_popup(canvas);
@@ -4962,6 +4971,7 @@ impl App for Reader {
                 self.screen == Screen::PdfPassword,
             );
             canvas.keyboard(self.editor.layer, action, None);
+            if self.can_paste_address() { external_link::draw_paste(canvas); }
             if self.screen == Screen::BookmarkFind {
                 self.annotation_search.draw_filters(canvas);
             }
@@ -5136,6 +5146,10 @@ impl App for Reader {
         }
         self.sync_auto_turn(Instant::now());
         self.auto_turn.activity(Instant::now());
+        if self.link_popup.is_some() { return self.link_address_input(input); }
+        if self.can_paste_address() && matches!(input, Input::Tap(x, y) if external_link::PASTE.contains(x,y)) {
+            return self.paste_address();
+        }
         if self.touch_locked {
             match input {
                 Input::Tap(x, y) if UNLOCK_TOUCH.contains(x, y) => {

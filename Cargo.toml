@@ -8,7 +8,7 @@ description = "Offline book reader for PrimitiveOS on Kindle"
 [features]
 # On by default: the release (the shared package workflow) builds the Kindle binary without naming a feature.
 default = ["kindle"]
-kindle = ["dep:primitive-app", "dep:primitive-ui", "dep:unicode-bidi", "dep:ureq", "dep:url"]
+kindle = ["dep:primitive-app", "dep:primitive-ui", "dep:unicode-bidi", "dep:ureq", "dep:url", "dep:qrcodegen"]
 
 [dependencies]
 ab_glyph_rasterizer = "=0.1.10"
@@ -52,6 +52,7 @@ ureq = { version = "=3.5.2", default-features = false, features = ["rustls"], op
 url = { version = "=2.5.8", optional = true }
 unicode-bidi = { version = "=0.3.18", optional = true }
 zip = { version = "=2.6.1", default-features = false, features = ["deflate"] }
+qrcodegen = { version = "=1.8.0", optional = true }
 
 [target.'cfg(target_arch = "arm")'.dependencies]
 # Select the exact-color cache for 32-bit ARM's scalar CMYK conversion.

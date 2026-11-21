@@ -54,6 +54,14 @@ def read_notices(package, fetched):
                     if (parent / "LICENSE-POLYFORM").is_file())
         return [(path.name, path.read_text(encoding="utf-8"))]
 
+    if name == "qrcodegen":
+        text = (crate / "src/lib.rs").read_text(encoding="utf-8")
+        header = text.split("*/", 1)[0].removeprefix("/*")
+        notice = "\n".join(line.strip().removeprefix("*").lstrip() for line in header.splitlines())
+        if "Copyright (c) Project Nayuki" not in notice or "Permission is hereby granted" not in notice:
+            raise ValueError("qrcodegen source notice is missing")
+        return [("src/lib.rs", notice.strip())]
+
     paths = sorted(path for path in crate.rglob("*")
                    if path.is_file() and path.name.upper().startswith(PREFIXES))
     if name == "hayro-interpret":

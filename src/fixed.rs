@@ -73,10 +73,12 @@ pub enum PdfLinkTarget {
     Unavailable,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PdfLink {
     pub bounds: PdfTextRect,
     pub target: PdfLinkTarget,
+    /// Address recorded by a URI link annotation.
+    pub uri: Option<String>,
     /// An explicit PDF XYZ position, in the target page's upright, cropped point space.
     pub destination_point: Option<Point>,
 }
@@ -642,11 +644,26 @@ fn read_page_links(document: &Document, page: usize, viewport: Rect) -> Vec<PdfL
                     x1: (rect.x1 / viewport.width()) as f32,
                     y1: (rect.y1 / viewport.height()) as f32,
                 },
+                uri: if target == PdfLinkTarget::External { annotation_uri(&annotation) } else { None },
                 target,
                 destination_point,
             })
         })
         .collect()
+}
+
+fn annotation_uri(annotation: &Dict<'_>) -> Option<String> {
+    let action = annotation.get::<Dict<'_>>(b"A")?;
+    if action.get::<Name<'_>>(b"S")?.as_ref() != b"URI" { return None; }
+    let bytes = action.get::<PdfString<'_>>(b"URI")?;
+    if bytes.is_empty() || bytes.len() > 8192 { return None; }
+    let address = if bytes.starts_with(b"\xfe\xff") || bytes.starts_with(b"\xef\xbb\xbf") {
+        pdf_text(&bytes)
+    } else {
+        std::str::from_utf8(&bytes).map(str::to_owned).unwrap_or_else(|_| pdf_text(&bytes))
+    };
+    if address.trim().is_empty() || address.chars().any(char::is_control) { return None; }
+    Some(address)
 }
 
 fn read_outline(document: &Document) -> Vec<PdfOutlineItem> {
@@ -1172,6 +1189,8 @@ pub(crate) mod tests {
                 PdfLinkTarget::Unavailable,
             ]
         );
+        assert_eq!(links[3].uri.as_deref(), Some("https://example.invalid/"));
+        assert_eq!(links[4].uri, None);
         assert!(pdf.page_links(1).unwrap().is_empty());
         assert_eq!(pdf.page_links(2), Err(PdfError::MissingPage));
 
