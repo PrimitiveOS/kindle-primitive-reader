@@ -15,7 +15,7 @@ use crate::{Anchor, Result};
 use crate::fixed_text::{PdfPageText, PdfTextRect};
 
 pub const MAX_SEARCH_HITS: usize = 100;
-const MAX_QUERY_BYTES: usize = 256;
+pub(crate) const MAX_QUERY_BYTES: usize = 256;
 const CONTEXT_CHARACTERS: usize = 28;
 const CASE_MAPPER: CaseMapperBorrowed<'static> = CaseMapper::new();
 const SOFT_HYPHEN: char = '\u{ad}';

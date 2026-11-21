@@ -13,17 +13,19 @@ pub(super) enum SelectionAction {
     Dictionary,
     Wikipedia,
     Translate,
+    Find,
     Chapter,
     Cancel,
 }
 
 impl SelectionAction {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 8] = [
         Self::Highlight,
         Self::Note,
         Self::Dictionary,
         Self::Wikipedia,
         Self::Translate,
+        Self::Find,
         Self::Chapter,
         Self::Cancel,
     ];
@@ -35,6 +37,7 @@ impl SelectionAction {
             Self::Dictionary => "Dictionary",
             Self::Wikipedia => "Wikipedia",
             Self::Translate => "Translate",
+            Self::Find => "Find",
             Self::Chapter => "Chapter",
             Self::Cancel => "Cancel",
         }
@@ -89,7 +92,7 @@ impl SelectionPopup {
     fn buttons(&self) -> impl Iterator<Item = (SelectionAction, Rect)> + '_ {
         let inner = self.rect.inset(5);
         let floating = self.rect.y < PAGE_HEIGHT as i32;
-        let count = if self.custom_chapters { 7 } else { 6 };
+        let count = SelectionAction::ALL.len() as i32 - i32::from(!self.custom_chapters);
         let columns = if floating { (count + 1) / 2 } else { count };
         let cell_h = if floating { inner.h / 2 } else { inner.h };
         SelectionAction::ALL
@@ -152,6 +155,7 @@ impl SelectionPopup {
                     SelectionAction::Dictionary | SelectionAction::Chapter => bar_icons::BOOK,
                     SelectionAction::Wikipedia => bar_icons::LINK,
                     SelectionAction::Translate => bar_icons::TEXT,
+                    SelectionAction::Find => bar_icons::SEARCH,
                     SelectionAction::Cancel => bar_icons::BACK,
                 };
                 canvas.icon(
@@ -229,6 +233,7 @@ impl Reader {
             Some(SelectionAction::Dictionary) => self.look_up_selection(),
             Some(SelectionAction::Wikipedia) => self.prepare_online(true, false),
             Some(SelectionAction::Translate) => self.prepare_online(false, false),
+            Some(SelectionAction::Find) => self.find_selection(),
             Some(SelectionAction::Chapter) => self.edit_selected_contents_chapter(),
             Some(SelectionAction::Cancel) => {
                 self.selection = None;

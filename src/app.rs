@@ -4327,9 +4327,8 @@ impl Reader {
         Ok(())
     }
 
-    fn look_up_selection(&mut self) -> Result<()> {
-        let word = self
-            .pdf_selection
+    fn selected_passage(&self) -> Result<&str> {
+        self.pdf_selection
             .as_ref()
             .map(PdfSelection::text)
             .or_else(|| {
@@ -4337,9 +4336,44 @@ impl Reader {
                     .as_ref()
                     .map(|selection| selection.text.as_str())
             })
-            .ok_or("Select a word first")?
-            .to_owned();
+            .ok_or_else(|| "Select a word first".into())
+    }
+
+    fn look_up_selection(&mut self) -> Result<()> {
+        let word = self.selected_passage()?.to_owned();
         self.look_up(&word)
+    }
+
+    fn find_selection(&mut self) -> Result<()> {
+        let query = self
+            .selected_passage()?
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        if query.is_empty() {
+            return Err("The selection has no searchable text".into());
+        }
+        let excerpt: Vec<char> = query
+            .char_indices()
+            .take(128)
+            .take_while(|(offset, ch)| offset + ch.len_utf8() <= crate::search::MAX_QUERY_BYTES)
+            .map(|(_, ch)| ch)
+            .collect();
+        let shortened = query.len() > crate::search::MAX_QUERY_BYTES || query.chars().count() > excerpt.len();
+        if shortened {
+            self.show(Screen::Find);
+        } else {
+            self.start_document_search(&query)?;
+        }
+        self.editor = Editor::new(128);
+        self.editor.caret = excerpt.len();
+        self.editor.text = excerpt;
+        if shortened {
+            self.notice = Some("Edit this excerpt to search a shorter passage".into());
+        }
+        self.selection = None;
+        self.pdf_selection = None;
+        Ok(())
     }
 
     fn look_up(&mut self, word: &str) -> Result<()> {
@@ -8427,6 +8461,51 @@ mod tests {
         let mut reopened = fixture.app();
         reopened.activate(Action::Continue).unwrap();
         assert_eq!(position(&reopened.active.as_ref().unwrap().reading), saved);
+    }
+
+    #[test]
+    fn searches_from_a_selection_on_reflow_and_rotated_pdf_pages() {
+        let fixture = Fixture::new();
+        let fonts = simulation_fonts();
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        app.open_path(&fixture.book).unwrap();
+        let reading = &app.active.as_ref().unwrap().reading;
+        let target = Book::resolve_link(&reading.probe.chapter, "#tide-note").unwrap();
+        app.follow(target).unwrap();
+        let reading = &app.active.as_ref().unwrap().reading;
+        let start = reading.probe.fragment("tide-note").unwrap();
+        let mut end = start.clone();
+        end.offset += "The first".len();
+        app.selection = reading.probe.select_range(&start, &end);
+        let original = position(reading);
+        capture_test_screen(&app, &fonts, "READER_SELECTION_FIND_SCREENSHOT", false);
+        assert_eq!(tap_selection_action(&mut app, selection_popup::SelectionAction::Find), Change::Partial);
+        assert_eq!(app.screen, Screen::Matches);
+        assert_eq!(app.editor.string(), "The first");
+        assert!(app.selection.is_none());
+        app.step_search(Instant::now()).unwrap();
+        assert!(app.hits.iter().any(|hit| hit.anchor == start && hit.end == end));
+        app.activate(Action::SearchHit(0)).unwrap();
+        app.activate(Action::ReturnToLocation).unwrap();
+        assert_eq!(position(&app.active.as_ref().unwrap().reading), original);
+
+        let pdf = fixture.root.join("Search selection.pdf");
+        fs::write(&pdf, crate::fixed::tests::document()).unwrap();
+        app.open_path(&pdf).unwrap();
+        app.activate(Action::RotatePage).unwrap();
+        let reading = &app.fixed.as_ref().unwrap().reading;
+        let text = reading.page_text(0).unwrap();
+        let (size, viewport) = reading.page_viewport().unwrap();
+        let word = &text.words[0];
+        let expected = text.text[word.bytes.clone()].to_owned();
+        let point = word.bounds.in_viewport(size, viewport).unwrap().center();
+        app.input(Input::LongTap(point.x as f32, point.y as f32));
+        assert_eq!(tap_selection_action(&mut app, selection_popup::SelectionAction::Find), Change::Partial);
+        assert_eq!(app.screen, Screen::Matches);
+        app.step_search(Instant::now()).unwrap();
+        assert!(app.pdf_hits.iter().any(|hit| hit.page == 0 && hit.region.is_some()));
+        assert_eq!(app.lookup_history.searches[0].text, expected);
+        assert!(app.pdf_selection.is_none());
     }
 
     #[test]

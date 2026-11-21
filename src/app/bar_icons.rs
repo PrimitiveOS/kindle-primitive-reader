@@ -21,7 +21,7 @@ const GRID: Icon = line(&[
     "M4 4 H10 V10 H4 Z M14 4 H20 V10 H14 Z",
     "M4 14 H10 V20 H4 Z M14 14 H20 V20 H14 Z",
 ]);
-const SEARCH: Icon = line(&["M12 4 A6 6 0 1 0 12 16 A6 6 0 1 0 12 4 Z M16 16 L21 21"]);
+pub(super) const SEARCH: Icon = line(&["M12 4 A6 6 0 1 0 12 16 A6 6 0 1 0 12 4 Z M16 16 L21 21"]);
 const FOLDER: Icon = line(&["M3 6 H10 L12 8 H21 V19 H3 Z"]);
 pub(super) const HIGHLIGHT: Icon = line(&["M4 15 L13 6 L18 11 L9 20 H4 Z M4 20 H20"]);
 const CLOCK: Icon = line(&["M12 3 A9 9 0 1 0 12 21 A9 9 0 1 0 12 3 Z M12 7 V12 L16 15"]);
