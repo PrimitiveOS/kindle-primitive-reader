@@ -1,6 +1,7 @@
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -25,12 +26,14 @@ impl Drop for TemporaryBook {
 }
 
 fn temporary_document(extension: &str) -> (TemporaryBook, File) {
+    static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
+    let id = NEXT_FILE.fetch_add(1, Ordering::Relaxed);
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
     let path = std::env::temp_dir().join(format!(
-        "primitiveos-reader-test-{}-{nonce}.{extension}",
+        "primitiveos-reader-test-{}-{nonce}-{id}.{extension}",
         std::process::id()
     ));
     let output = File::options()
