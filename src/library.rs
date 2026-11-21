@@ -34,7 +34,7 @@ const MAX_STATE_BYTES: u64 = 4 * 1024 * 1024;
 pub const MAX_BACKUP_BYTES: u64 = MAX_STATE_BYTES + 1024;
 pub const MAX_PDF_HIGHLIGHTS: usize = 256;
 const MAX_PDF_HIGHLIGHT_BOUNDS: usize = 64;
-const MAX_HIGHLIGHT_TEXT_BYTES: usize = 8192;
+pub(crate) const MAX_HIGHLIGHT_TEXT_BYTES: usize = 8192;
 const MAX_NOTE_BYTES: usize = 4096;
 const MAX_FIXED_ZOOM: usize = 4;
 const MAX_FIXED_OFFSET: f32 = 32_768.0;
@@ -1700,10 +1700,10 @@ fn valid_highlight(mark: &Highlight) -> bool {
     valid_anchor(&selection.start)
         && valid_anchor(&selection.end)
         && selection.start.book == selection.end.book
-        && selection.start.revision == selection.end.revision
-        && selection.start.chapter == selection.end.chapter
-        && (selection.start.block, selection.start.offset)
-            < (selection.end.block, selection.end.offset)
+        && (selection.start.chapter != selection.end.chapter
+            || (selection.start.revision == selection.end.revision
+                && (selection.start.block, selection.start.offset)
+                    < (selection.end.block, selection.end.offset)))
         && !selection.text.trim().is_empty()
         && selection.text.len() <= MAX_HIGHLIGHT_TEXT_BYTES
         && mark

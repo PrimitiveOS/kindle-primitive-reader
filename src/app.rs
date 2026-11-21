@@ -6,6 +6,7 @@ mod contents_position;
 mod dictionary_panel;
 mod fixed_book_map;
 mod gestures;
+mod extend_highlight;
 mod library_view;
 mod lookup_history;
 mod online_panel;
@@ -302,6 +303,7 @@ enum Action {
     PdfHighlight(usize),
     Highlight(usize),
     ManageHighlight(usize),
+    ExtendHighlight,
     EditNote,
     RemoveHighlight,
     ExportHighlights(annotation_export::Format),
@@ -518,6 +520,7 @@ pub struct Reader {
     selection: Option<TextSelection>,
     footnote: Option<footnote_popup::Footnote>,
     highlight_index: usize,
+    range_edit: Option<extend_highlight::RangeEdit>,
     exports: PathBuf,
     dictionaries: PathBuf,
     dictionary_preference: PathBuf,
@@ -634,6 +637,7 @@ impl Reader {
             selection: None,
             footnote: None,
             highlight_index: 0,
+            range_edit: None,
             exports: state.parent().unwrap_or(documents).join("exports"),
             dictionaries: state.parent().unwrap_or(documents).join("dictionaries"),
             dictionary_preference,
@@ -1220,11 +1224,13 @@ impl Reader {
             } else {
                 Action::Highlight(self.highlight_index)
             };
-            return vec![
+            let mut items = vec![
                 Item::new("Read passage", passage),
                 Item::new("Edit note", Action::EditNote),
                 Item::new("Remove highlight", Action::Show(Screen::RemoveHighlight)),
             ];
+            if self.active.is_some() { items.insert(1, Item::new("Extend highlight", Action::ExtendHighlight)); }
+            return items;
         }
         if self.screen == Screen::RemoveHighlight {
             return vec![
@@ -2185,6 +2191,7 @@ impl Reader {
                 })?;
                 self.push_history(previous);
             }
+            Action::ExtendHighlight => self.begin_extending_highlight()?,
             Action::ManageHighlight(index) => {
                 self.highlight_index = index;
                 self.show(Screen::Annotation);
@@ -2764,6 +2771,7 @@ impl Reader {
     fn auto_turn_eligible(&self) -> bool {
         self.stats_awake
             && !self.touch_locked
+            && self.range_edit.is_none()
             && self.selection.is_none()
             && self.pdf_selection.is_none()
             && matches!(self.screen, Screen::Book | Screen::Fixed)
@@ -4792,7 +4800,12 @@ impl App for Reader {
                 .state(active.id)
                 .into_iter()
                 .flat_map(|state| &state.highlights)
-                .flat_map(|highlight| reading.highlight_rects(&highlight.selection))
+                .enumerate()
+                .flat_map(|(index, highlight)| {
+                    let selected = self.range_edit.as_ref().filter(|edit| edit.index == index)
+                        .map_or(&highlight.selection, |edit| &edit.draft);
+                    reading.highlight_rects(selected)
+                })
                 .collect();
             if let Some(reference) = self.footnote.as_ref().and_then(|note| note.reference.as_ref()) {
                 highlights.extend(reading.highlight_rects(reference));
@@ -4818,6 +4831,10 @@ impl App for Reader {
                 self.page_paint(),
             );
             self.draw_footer_track(canvas);
+            if self.screen == Screen::Book && self.range_edit.is_some() {
+                self.draw_range_tools(canvas);
+                return;
+            }
             if self.screen == Screen::Book {
                 self.draw_selection_popup(canvas);
             }
@@ -5017,6 +5034,7 @@ impl App for Reader {
     }
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
+        if self.range_edit.is_some() { return self.range_input(input); }
         if self.screen == Screen::PageOverview
             && let Input::Swipe { dx, start_y, .. } = input
             && OVERVIEW_TRACK.contains(start_x, start_y)
@@ -5096,6 +5114,7 @@ impl App for Reader {
                 _ => return Change::None,
             }
         }
+        if self.range_edit.is_some() { return self.range_input(input); }
         if let Some(change) = self.assigned_gesture(input, None) {
             return change;
         }
@@ -8039,6 +8058,107 @@ mod tests {
         app.show(Screen::FixedContents);
         assert_eq!(app.items()[app.current_contents_row.unwrap()].title, "Local soundings");
         assert_eq!(app.current_position(), Some(before));
+    }
+
+    #[test]
+    fn extends_a_saved_epub_note_across_chapters_without_changing_the_original_on_cancel() {
+        let fixture = Fixture::new();
+        let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+        let mut app = Reader::open(&fixture.root, &fixture.state, vec![font.clone()]).unwrap();
+        app.open_path(&fixture.book).unwrap();
+        let reading = &app.active.as_ref().unwrap().reading;
+        let mark = reading.probe.fragment("tide-note").unwrap();
+        let mut end = mark.clone();
+        end.offset += "The first step".len();
+        app.selection = reading.probe.select_range(&mark, &end);
+        app.save_highlight(Some("Keep this writing".into()))
+            .unwrap();
+        app.follow_reflow_page(1, 0).unwrap();
+        let origin = app.current_history_location().unwrap();
+        let id = app.open_book_id().unwrap();
+        let original = app.library.state(id).unwrap().highlights[0]
+            .selection
+            .clone();
+        let history_before = app.back.clone();
+        for save in [false, true] {
+            app.activate(Action::ManageHighlight(0)).unwrap();
+            let mut canvas = Canvas::new(WIDTH, HEIGHT, &[font.display().to_string()]).unwrap();
+            let before = primitive_app::frame(&app, &mut canvas, false);
+            tap_contents_item(&mut app, "Extend highlight");
+            assert!(app.range_edit.is_some());
+            for _ in 0..32 {
+                if app.active.as_ref().unwrap().reading.chapter == 1 {
+                    break;
+                }
+                app.input(Input::PageForward);
+                app.tick(Instant::now() + Duration::from_secs(1));
+            }
+            let reading = &app.active.as_ref().unwrap().reading;
+            assert_eq!(reading.chapter, 1);
+            let start = reading.probe.fragment("door").unwrap();
+            let mut end = start.clone();
+            end.offset += 2;
+            let word = reading.probe.select_range(&start, &end).unwrap();
+            let bounds = reading.highlight_rects(&word)[0];
+            assert_eq!(
+                app.input(Input::Tap(
+                    (bounds.x + bounds.width as i32 / 2) as f32,
+                    (bounds.y + bounds.height as i32 / 2) as f32
+                )),
+                Change::Partial
+            );
+            let draft = &app.range_edit.as_ref().unwrap().draft;
+            assert_ne!(draft.start.chapter, draft.end.chapter);
+            assert!(draft.text.contains("The first step"));
+            assert!(draft.text.ends_with("At"));
+            let reading = &app.active.as_ref().unwrap().reading;
+            assert!(!reading.highlight_rects(draft).is_empty());
+            let first = reading.config.chapter(0).unwrap();
+            assert!(
+                !first
+                    .selection_rects(first.page_for(&draft.start).unwrap(), draft)
+                    .is_empty()
+            );
+            let at = reading.probe.select_range(&start, &end).unwrap();
+            let first_word = first.select_range(&original.start, &original.end).unwrap();
+            let reverse = reading.extend_saved_quote(&at, &first_word).unwrap();
+            assert_eq!(&reverse, draft);
+            assert_eq!(
+                app.library.state(id).unwrap().highlights[0].selection,
+                original
+            );
+            if save {
+                capture_test_screen(
+                    &app,
+                    std::slice::from_ref(&font),
+                    "READER_EXTEND_HIGHLIGHT_SCREENSHOT",
+                    false,
+                );
+                app.input(Input::Tap(1000.0, HEIGHT as f32 - 43.0));
+                assert!(app.range_edit.is_none());
+                app.save().unwrap();
+            } else {
+                app.input(Input::Tap(125.0, HEIGHT as f32 - 43.0));
+                assert!(app.range_edit.is_none());
+                assert_eq!(app.screen, Screen::Annotation);
+                assert_eq!(app.current_history_location(), Some(origin.clone()));
+                assert_eq!(app.back, history_before);
+                assert!(primitive_app::frame(&app, &mut canvas, false) == before);
+                assert_eq!(
+                    app.library.state(id).unwrap().highlights[0].selection,
+                    original
+                );
+            }
+        }
+        let reopened = Reader::open(&fixture.root, &fixture.state, vec![font]).unwrap();
+        let marks = &reopened.library.state(id).unwrap().highlights;
+        assert_eq!(marks.len(), 1);
+        assert_eq!(marks[0].note.as_deref(), Some("Keep this writing"));
+        assert_eq!(marks[0].selection.start, original.start);
+        assert_ne!(
+            marks[0].selection.start.chapter,
+            marks[0].selection.end.chapter
+        );
     }
 
     fn submit_annotation_search(app: &mut Reader, query: &str) {

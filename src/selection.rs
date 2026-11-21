@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Anchor, Probe, Renderer, Settings};
 
-/// A half-open range of source text in one chapter, ordered in reading order.
+/// A half-open range of source text, ordered in publication reading order.
 /// `text` preserves the source wording with the same whitespace normalization
 /// used by the renderer. Paragraphs in a selection are separated by newlines.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -208,8 +208,41 @@ impl Probe {
     }
 
     fn selection_spans(&self, start: &Anchor, end: &Anchor) -> Option<Spans> {
-        let a = self.project_anchor(start)?;
-        let b = self.project_anchor(end)?;
+        let (a, b) = if start.chapter == end.chapter {
+            (self.project_anchor(start)?, self.project_anchor(end)?)
+        } else {
+            if start.book != self.book || end.book != self.book {
+                return None;
+            }
+            let start_chapter = self.chapter_index(&start.chapter)?;
+            let end_chapter = self.chapter_index(&end.chapter)?;
+            let current = self.chapter_index(&self.chapter)?;
+            if !(start_chapter..=end_chapter).contains(&current) {
+                return None;
+            }
+            let local_start = if current == start_chapter {
+                self.project_anchor(start)?
+            } else {
+                (
+                    self.source
+                        .blocks
+                        .iter()
+                        .position(|block| !block.text.is_empty())?,
+                    0,
+                )
+            };
+            let local_end = if current == end_chapter {
+                self.project_anchor(end)?
+            } else {
+                let last = self
+                    .source
+                    .blocks
+                    .iter()
+                    .rposition(|block| !block.text.is_empty())?;
+                (last, self.source.blocks[last].text.len())
+            };
+            (local_start, local_end)
+        };
         if a == b {
             return None;
         }
@@ -221,6 +254,7 @@ impl Probe {
             last_byte,
         })
     }
+
 }
 
 struct PagePoint {

@@ -393,6 +393,61 @@ impl Reading {
         self.probe.word_in(range, x, y)
     }
 
+    /// Include the saved selection, the newly touched word and the intervening source.
+    pub(crate) fn extend_saved_quote(
+        &self,
+        saved: &TextSelection,
+        word: &TextSelection,
+    ) -> Result<TextSelection> {
+        let order = |anchor: &Anchor| -> Result<(usize, usize, usize)> {
+            let chapter = self
+                .probe
+                .chapter_index(&anchor.chapter)
+                .ok_or("The saved section is unavailable")?;
+            Ok((chapter, anchor.block, anchor.offset))
+        };
+        let start = if order(&saved.start)? <= order(&word.start)? {
+            &saved.start
+        } else {
+            &word.start
+        };
+        let end = if order(&saved.end)? >= order(&word.end)? {
+            &saved.end
+        } else {
+            &word.end
+        };
+        let first = order(start)?.0;
+        let last = order(end)?.0;
+        let mut text = String::new();
+        for index in first..=last {
+            let loaded;
+            let probe = if index == self.chapter {
+                &self.probe
+            } else {
+                loaded = self.config.chapter(index)?;
+                &loaded
+            };
+            let part = probe.select_range(start, end);
+            if let Some(part) = part {
+                let extra = usize::from(!text.is_empty());
+                if text.len() + extra + part.text.len() > crate::library::MAX_HIGHLIGHT_TEXT_BYTES {
+                    return Err("This selection exceeds the saved highlight size limit".into());
+                }
+                if extra != 0 {
+                    text.push('\n');
+                }
+                text.push_str(&part.text);
+            } else if index == first || index == last {
+                return Err("The saved selection no longer resolves in this edition".into());
+            }
+        }
+        Ok(TextSelection {
+            start: start.clone(),
+            end: end.clone(),
+            text,
+        })
+    }
+
     pub(crate) fn highlight_rects(&self, selection: &TextSelection) -> Vec<HighlightRect> {
         self.visible_columns()
             .flat_map(|(range, x)| {
