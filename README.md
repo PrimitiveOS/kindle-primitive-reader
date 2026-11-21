@@ -153,8 +153,7 @@ for a local ARMHF build.
 
 ## Downloads
 
-**31 downloads** from Store, as of 2026-11-21. Store shows the same count on the app page.
-The count is GitHub downloads of this app's release packages, from the [Store catalog](https://primitiveos.github.io/kindle-primitive-catalog/v1/index.json).
+The badge at the top shows the number of Store downloads. It counts GitHub downloads of this app's release packages, across all versions and architectures, and is refreshed daily from the [Store catalog](https://primitiveos.github.io/kindle-primitive-catalog/v1/index.json).
 
 ## Licence
 
