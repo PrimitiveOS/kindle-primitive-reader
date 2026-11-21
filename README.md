@@ -180,13 +180,7 @@ Highlights can also import KOReader JSON annotations for the open reflowable
 book. Reader previews uniquely matched quotations and reports unresolved
 entries before applying the import. [KOReader JSON exporter](https://github.com/koreader/koreader/blob/042d9b39d4835408121970229cc37624e4f794bc/plugins/exporter.koplugin/target/json.lua)
 
-For KOReader progress, copy the book's `metadata.<format>.lua`
-to `reader/data/koreader-progress.lua`. Open the matching document, then choose
-Controls › Import KOReader position. Reader checks KOReader's sampled
-fingerprint and previews the destination. Fixed-page imports also check the
-source page count. Reflowable EPUB imports require a supported EPUB CFI from a
-newer KOReader sidecar. A legacy CREngine pointer can only show progress as a
-percentage when that value is available.
+Open a book and choose **Controls › Import KOReader position**. Reader looks for KOReader’s metadata beside the book. For example, `Harbor.epub` uses `Harbor.sdr/metadata.epub.lua`. Preview the destination and choose **Apply reading position** to move there. Reader checks the edition fingerprint and leaves KOReader’s data in place. For metadata kept elsewhere, copy it to `reader/data/koreader-progress.lua` and choose **Reading data › Import a copied KOReader position**. Fixed-page imports also check the page count. Reflow imports support a subset of EPUB CFIs.
 
 The formats and workflows above are development features. The
 [reading parity plan](docs/reading-parity-plan.md) lists the remaining work and

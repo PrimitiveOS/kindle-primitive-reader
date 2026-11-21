@@ -1069,6 +1069,28 @@ impl Library {
         Ok(verified)
     }
 
+    /// KOReader keeps metadata for books sharing a stem in one directory, with one file per format.
+    pub(crate) fn nearby_koreader_metadata(&self, path: &Path) -> io::Result<Option<PathBuf>> {
+        let book = self.absolute_path(path)?;
+        let Some(extension) = book.extension().and_then(|ext| ext.to_str()) else {
+            return Ok(None);
+        };
+        let directory = book.with_extension("sdr");
+        match fs::symlink_metadata(&directory) {
+            Ok(dir) if dir.is_dir() => {}
+            Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(err),
+            Ok(_) => return Err(denied()),
+        }
+        let metadata = directory.join(format!("metadata.{extension}.lua"));
+        match fs::symlink_metadata(&metadata) {
+            Ok(file) if file.is_file() => Ok(Some(metadata)),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(err) => Err(err),
+            Ok(_) => Err(denied()),
+        }
+    }
+
     /// Fingerprint a file or a validated archive index, independent of its library path.
     pub fn identify(&self, entry: &LibraryBook) -> io::Result<u64> {
         let path = self.absolute_path(&entry.path)?;

@@ -347,7 +347,7 @@ impl Reader {
         if self.active.is_some() || self.fixed.is_some() {
             items.push(
                 Item::new("Import KOReader position", Action::PreviewKoReaderPosition)
-                    .detail("Copy metadata to reader/data/koreader-progress.lua"),
+                    .detail("Preview the saved position for this book"),
             );
         }
         items.push(Item::new("Reading data", Action::Show(Screen::ReadingData)));

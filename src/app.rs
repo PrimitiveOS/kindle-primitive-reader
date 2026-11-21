@@ -264,6 +264,7 @@ enum Action {
     PreviewKoReader,
     ApplyKoReader,
     PreviewKoReaderPosition,
+    PreviewCopiedPosition,
     ApplyKoReaderPosition,
     PreviewPdfAnnotations,
     ApplyPdfAnnotations,
@@ -437,6 +438,7 @@ struct AnnotationImport {
 }
 
 struct PositionImport {
+    source: &'static str,
     sidecar: SidecarProgress,
     target: std::result::Result<ReadingPosition, String>,
 }
@@ -1042,7 +1044,7 @@ impl Reader {
                 items.push(Item::new("Book details", Action::OrganizeCurrent));
                 items.push(
                     Item::new("Import KOReader position", Action::PreviewKoReaderPosition)
-                        .detail("Copy metadata to reader/data/koreader-progress.lua"),
+                        .detail("Preview the saved position for this book"),
                 );
             }
             return items;
@@ -1071,7 +1073,7 @@ impl Reader {
             return items;
         }
         if self.screen == Screen::ReadingData {
-            return vec![
+            let mut items = vec![
                 Item::new("Back up reading data", Action::ExportBackup)
                     .detail("Saves progress, bookmarks, highlights, and preferences to exports"),
                 Item::new("Restore a backup", Action::PreviewBackup)
@@ -1079,6 +1081,11 @@ impl Reader {
                 Item::new("Clear recognized text", Action::Show(Screen::ClearOcr))
                     .detail("Clear saved OCR text from document pages"),
             ];
+            if self.open_book_id().is_some() {
+                items.push(Item::new("Import a copied KOReader position", Action::PreviewCopiedPosition)
+                    .detail("From reader/data/koreader-progress.lua"));
+            }
+            return items;
         }
         if self.screen == Screen::ClearOcr {
             return vec![
@@ -1137,7 +1144,7 @@ impl Reader {
                                     import.sidecar.last_page.unwrap_or(0),
                                     fixed.reading.count()
                                 )),
-                            Item::new("Edition check", Action::Heading)
+                            Item::new(import.source, Action::Heading)
                                 .detail("KOReader sampled fingerprint and page count match"),
                         ];
                     }
@@ -1168,6 +1175,7 @@ impl Reader {
                             Action::Heading,
                         ));
                     }
+                    rows.push(Item::new(import.source, Action::Heading));
                     rows
                 });
         }
@@ -1803,7 +1811,8 @@ impl Reader {
             Action::MergeBackup => self.restore_backup()?,
             Action::PreviewKoReader => self.preview_koreader()?,
             Action::ApplyKoReader => self.apply_koreader()?,
-            Action::PreviewKoReaderPosition => self.preview_koreader_position()?,
+            Action::PreviewKoReaderPosition => self.preview_koreader_position(false)?,
+            Action::PreviewCopiedPosition => self.preview_koreader_position(true)?,
             Action::ApplyKoReaderPosition => self.apply_koreader_position()?,
             Action::PreviewPdfAnnotations => self.preview_pdf_annotations()?,
             Action::ApplyPdfAnnotations => self.apply_pdf_annotations()?,
@@ -4164,8 +4173,15 @@ impl Reader {
         Ok(())
     }
 
-    fn preview_koreader_position(&mut self) -> Result<()> {
-        let path = self.import_path.with_file_name("koreader-progress.lua");
+    fn preview_koreader_position(&mut self, copied_only: bool) -> Result<()> {
+        let entry = self.fixed.as_ref().map(|book| &book.entry)
+            .or_else(|| self.active.as_ref().map(|book| &book.entry))
+            .ok_or("Open the matching book first")?;
+        let nearby = if copied_only { None } else {
+            with_storage(|| self.library.nearby_koreader_metadata(&entry.path))?
+        };
+        let source = if nearby.is_some() { "Saved beside this book" } else { "Copied to Reader data" };
+        let path = nearby.unwrap_or_else(|| self.import_path.with_file_name("koreader-progress.lua"));
         let bytes = read_import_file(&path, koreader_sidecar::MAX_SIDECAR_BYTES as u64).map_err(
             |error| {
                 if error.kind() == io::ErrorKind::NotFound {
@@ -4179,9 +4195,6 @@ impl Reader {
             },
         )?;
         let sidecar = koreader_sidecar::parse(&bytes)?;
-        if self.fixed.is_none() && self.active.is_none() {
-            return Err("Open the matching book first".into());
-        }
         let target = self.resolve_koreader_position(&sidecar);
         let target = if self.fixed.is_some() {
             Ok(target?)
@@ -4189,7 +4202,7 @@ impl Reader {
             target.map_err(|error| error.to_string())
         };
         self.show(Screen::ImportPosition);
-        self.position_import = Some(PositionImport { sidecar, target });
+        self.position_import = Some(PositionImport { sidecar, target, source });
         Ok(())
     }
 
@@ -6320,6 +6333,73 @@ mod tests {
         assert_eq!(position(reading).anchor, original.anchor);
         reopened.activate(Action::RemoveProfile(0)).unwrap();
         assert!(fixture.app().profiles.is_empty());
+    }
+
+    #[test]
+    fn adjacent_koreader_metadata_is_previewed_without_changing_either_book_or_source() {
+        let fixture = Fixture::new();
+        let pdf = fixture.root.join("Log.book.PDF");
+        fs::write(&pdf, crate::fixed::tests::document()).unwrap();
+        let mut app = fixture.app();
+        app.open_path(&pdf).unwrap();
+        let hash = md5::Digest(koreader_sidecar::partial_md5(&mut fs::File::open(&pdf).unwrap()).unwrap());
+        let progress = |page| format!("return {{last_page = {page}, doc_pages = 2, partial_md5_checksum = '{hash:x}'}}");
+        let nearby = pdf.with_extension("sdr");
+        fs::create_dir(&nearby).unwrap();
+        let metadata = nearby.join("metadata.PDF.lua");
+        fs::write(&metadata, progress(2)).unwrap();
+        fs::write(nearby.join("metadata.epub.lua"), "return {}").unwrap();
+        fs::write(fixture.root.join("koreader-progress.lua"), progress(1)).unwrap();
+        app.activate(Action::PreviewKoReaderPosition).unwrap();
+        assert!(app.items().iter().any(|item| item.title == "Saved beside this book"));
+        assert_eq!(app.position_import.as_ref().unwrap().target.as_ref().unwrap().page, 1);
+        assert_eq!(app.current_position().unwrap().page, 0);
+        app.activate(Action::ApplyKoReaderPosition).unwrap();
+        assert_eq!(app.current_position().unwrap().page, 1);
+        app.show(Screen::ReadingData);
+        tap_contents_item(&mut app, "Import a copied KOReader position");
+        assert!(app.items().iter().any(|item| item.title == "Copied to Reader data"));
+        assert_eq!(app.position_import.as_ref().unwrap().target.as_ref().unwrap().page, 0);
+        assert_eq!(app.current_position().unwrap().page, 1);
+        assert_eq!(fs::read_to_string(metadata).unwrap(), progress(2));
+    }
+
+    #[test]
+    fn real_adjacent_position_uses_an_isolated_profile_and_preserves_source_metadata() {
+        let fixture = Fixture::new();
+        let external = std::env::var_os("READER_TEST_NEARBY_DOCUMENT").map(PathBuf::from);
+        let book = if let Some(path) = external {
+            path
+        } else {
+            let path = fixture.root.join("Coastal chart.pdf");
+            fs::write(&path, crate::fixed::tests::document()).unwrap();
+            let hash = koreader_sidecar::partial_md5(&mut fs::File::open(&path).unwrap()).unwrap();
+            let directory = path.with_extension("sdr");
+            fs::create_dir(&directory).unwrap();
+            fs::write(directory.join("metadata.pdf.lua"), format!(
+                "return {{last_page=2, doc_pages=2, partial_md5_checksum='{:x}'}}", md5::Digest(hash)
+            )).unwrap();
+            path
+        };
+        let mut app = Reader::open(book.parent().unwrap(), &fixture.state,
+            vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")]).unwrap();
+        assert!(app.open_path(&book).is_ok());
+        let entry = &app.fixed.as_ref().unwrap().entry;
+        let metadata = app.library.nearby_koreader_metadata(&entry.path).unwrap().unwrap();
+        let before = fs::read(&metadata).unwrap();
+        let expected = koreader_sidecar::parse(&before).unwrap().last_page.unwrap() as usize - 1;
+        let old = app.current_position().unwrap();
+        app.show(Screen::ReadingControls);
+        tap_contents_item(&mut app, "Import KOReader position");
+        assert!(app.items().iter().any(|row| row.title == "Saved beside this book"));
+        assert_eq!(app.current_position(), Some(old.clone()));
+        tap_contents_item(&mut app, "Apply reading position");
+        assert_eq!(app.current_position().unwrap().page, expected);
+        if old.page != expected {
+            app.activate(Action::ReturnToLocation).unwrap();
+            assert_eq!(app.current_position(), Some(old));
+        }
+        assert!(fs::read(metadata).unwrap() == before);
     }
 
     #[test]
