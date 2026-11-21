@@ -310,6 +310,8 @@ KOReader searches the next word box when a query continues on the following line
 
 Each real wrapped hit spanned more than the screen width at 300%. On the Mac, selecting each of the 12 hits in both modes retained all four word marks, showed both words at the beginning of the match completely and returned to the previous page. The other two words remained marked at the far side of the following line.
 
+An offscreen Oasis run repeated all 24 Reader jumps with the same geometry and history results. In a separate process, the installed KOReader Lua phrase matcher searched the same pages using its own MuPDF word boxes. It located all four independently measured word centers for every wrapped and same-line control. All four original SHA-256 digests matched before and after Reader’s checks. Both verifiers ran against the books in Documents with separate test state.
+
 ## Reading positions saved beside existing books
 
 KOReader places metadata beside a document by replacing its last filename suffix with `.sdr` and naming the file `metadata.<original suffix>.lua`. Reader checks that exact location, including suffix case. With a copied file and adjacent metadata both present, the book’s normal import opens the adjacent file and the separate Reading data action opens the copy. Each route previews the destination before applying it. [KOReader’s sidecar naming](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/docsettings.lua#L118-L145)
