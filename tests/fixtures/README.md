@@ -81,3 +81,5 @@ page. [OpenJPEG](https://www.openjpeg.org/) · [Reader decoder tests](../../src/
 `paragraph-indents.xhtml` is an original short coastal journal for comparing inherited first-line indents, an explicit zero, a percentage of the reading column and hanging lines. Its text and stylesheet were written for Reader.
 
 `paragraph-opener.xhtml` is an original harbour journal that checks publisher styling for a paragraph after a heading and the first paragraph of a section.
+
+`nearby-search.xhtml` is an original short harbour log with a repeated sentence for directional search and return-to-location checks.

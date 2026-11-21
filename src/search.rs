@@ -1,5 +1,10 @@
 //! Offline search over the same normalized text and anchors used by the reader.
 
+mod nearby;
+pub use nearby::{NearbySearch, SearchDirection};
+#[cfg(feature = "kindle")]
+pub(crate) use nearby::ChapterText;
+
 use std::borrow::Cow;
 use std::ops::Range;
 
@@ -478,20 +483,35 @@ impl FoldedText {
     }
 
     fn with_options(original: &str, match_case: bool, ignore_accents: bool) -> Self {
+        Self::build(original, match_case, ignore_accents, || false).unwrap()
+    }
+
+    fn build(
+        original: &str,
+        match_case: bool,
+        ignore_accents: bool,
+        cancelled: impl Fn() -> bool,
+    ) -> Option<Self> {
+        if cancelled() {
+            return None;
+        }
         if original.is_ascii() {
-            return Self {
+            return Some(Self {
                 text: if match_case {
                     original.to_owned()
                 } else {
                     original.to_ascii_lowercase()
                 },
                 edits: Vec::new(),
-            };
+            });
         }
         let mut text = String::with_capacity(original.len());
         let mut edits = Vec::new();
         let mut scalar = [0; 4];
-        for (source_start, ch) in original.char_indices() {
+        for (index, (source_start, ch)) in original.char_indices().enumerate() {
+            if index % 2048 == 0 && cancelled() {
+                return None;
+            }
             if ch.is_ascii() || (match_case && !ignore_accents && ch != SOFT_HYPHEN) {
                 text.push(if match_case {
                     ch
@@ -527,7 +547,7 @@ impl FoldedText {
                 });
             }
         }
-        Self { text, edits }
+        Some(Self { text, edits })
     }
 
     fn source_offset(&self, boundary: usize, match_start: bool) -> Option<usize> {
@@ -554,9 +574,20 @@ impl FoldedText {
     }
 
     fn matches<'a>(&'a self, query: &'a str) -> impl Iterator<Item = Range<usize>> + 'a {
+        self.matches_while(query, || true)
+    }
+
+    fn matches_while<'a>(
+        &'a self,
+        query: &'a str,
+        keep_searching: impl Fn() -> bool + 'a,
+    ) -> impl Iterator<Item = Range<usize>> + 'a {
         let mut cursor = 0;
         std::iter::from_fn(move || {
             loop {
+                if !keep_searching() {
+                    return None;
+                }
                 let folded_start = cursor + self.text.get(cursor..)?.find(query)?;
                 let folded_end = folded_start + query.len();
                 if let (Some(start), Some(end)) = (

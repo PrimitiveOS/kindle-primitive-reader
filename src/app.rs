@@ -11,6 +11,7 @@ mod external_link;
 mod sidecar_marks;
 mod library_view;
 mod lookup_history;
+mod nearby_search;
 mod online_panel;
 mod quick_display;
 mod reader_timer;
@@ -297,6 +298,7 @@ enum Action {
     ToggleOnlineHistory,
     ClearOnlineHistory,
     RepeatSearch(SearchQuery),
+    StepNearby(crate::search::SearchDirection),
     SetFont(Option<String>),
     ApplyProfile(usize),
     RemoveProfile(usize),
@@ -512,6 +514,7 @@ pub struct Reader {
     save_at: Option<Instant>,
     editor: Editor,
     search: Option<Search>,
+    nearby: nearby_search::Nearby,
     find_match_case: bool,
     find_ignore_accents: bool,
     search_result: Option<usize>,
@@ -633,6 +636,7 @@ impl Reader {
             save_at: None,
             editor: Editor::new(64),
             search: None,
+            nearby: nearby_search::Nearby::default(),
             find_match_case: false,
             find_ignore_accents: false,
             search_result: None,
@@ -923,6 +927,7 @@ impl Reader {
     }
 
     fn cancel_search(&mut self) {
+        self.nearby.clear();
         self.search = None;
         self.pdf_search = None;
         self.search_at = None;
@@ -2158,6 +2163,7 @@ impl Reader {
                 self.show(Screen::Book);
                 self.record_position();
             }
+            Action::StepNearby(direction) => self.begin_nearby(direction, true)?,
             Action::SearchHit(index) => {
                 let hit = self.hits.get(index).ok_or("That result is unavailable")?;
                 let end = hit.end.clone();
@@ -2912,6 +2918,15 @@ impl Reader {
         if self.screen == Screen::BookmarkFind && self.annotation_search.toggle_at(x, y) {
             return Change::Partial;
         }
+        if self.screen == Screen::Find {
+            if let Some(change) = self.nearby_input(x, y) {
+                return change;
+            }
+            if self.nearby.deadline().is_some() {
+                self.nearby.cancel();
+                self.notice = None;
+            }
+        }
         if self.screen == Screen::Find && FIND_CASE.contains(x, y) {
             self.find_match_case = !self.find_match_case;
             return Change::Partial;
@@ -2924,6 +2939,7 @@ impl Reader {
         let action = match self.screen {
             Screen::DictionaryEntry => "Look up",
             _ if note => "Save",
+            Screen::Find if self.active.is_some() => "Find all",
             _ => "Find",
         };
         let Some(key) = keyboard_key(&layout, &self.editor, action, x, y) else {
@@ -2975,6 +2991,7 @@ impl Reader {
             (Some(Search::with_options(query, match_case, ignore_accents)?), None)
         };
         self.update_lookup_history(|history| history.search(query, match_case, ignore_accents))?;
+        self.nearby.clear();
         self.search_result = None;
         self.show(Screen::Matches);
         self.hits.clear();
@@ -3765,7 +3782,16 @@ impl Reader {
     }
 
     fn search_step(&self, step: isize) -> Option<Action> {
-        let index = self.search_result?.checked_add_signed(step)?;
+        let current = self.search_result?;
+        if self.nearby.result() {
+            let direction = if step < 0 {
+                crate::search::SearchDirection::Previous
+            } else {
+                crate::search::SearchDirection::Next
+            };
+            return self.nearby.can_step(direction).then_some(Action::StepNearby(direction));
+        }
+        let index = current.checked_add_signed(step)?;
         if self.fixed.is_some() {
             (index < self.pdf_hits.len()).then_some(Action::PdfSearchHit(index))
         } else {
@@ -3784,6 +3810,11 @@ impl Reader {
         } else {
             return None;
         };
+        if self.nearby.deadline().is_some() {
+            self.nearby.cancel();
+            self.notice = None;
+            return Some(Change::Partial);
+        }
         let action = self.search_step(step)?;
         Some(match self.activate(action) {
             Ok(()) => Change::Partial,
@@ -3792,16 +3823,23 @@ impl Reader {
     }
 
     fn draw_search_steps(&self, canvas: &mut Canvas) {
+        if self.nearby.deadline().is_some() {
+            canvas.button(MATCH_PREV, "Cancel", false, false);
+            return;
+        }
         if self.search_step(-1).is_some() {
-            canvas.button(MATCH_PREV, "Prev match", false, false);
+            canvas.button(MATCH_PREV, "Previous", false, false);
         }
         if self.search_step(1).is_some() {
-            canvas.button(MATCH_NEXT, "Next match", false, false);
+            canvas.button(MATCH_NEXT, "Next", false, false);
         }
     }
 
     fn search_caption(&self) -> Option<String> {
         let index = self.search_result?;
+        if self.nearby.result() {
+            return Some("Search match".into());
+        }
         let count = if self.fixed.is_some() {
             self.pdf_hits.len()
         } else {
@@ -4118,6 +4156,7 @@ impl Reader {
     }
 
     fn clear_stale_selection(&mut self) {
+        self.nearby.clear();
         self.result_selection = None;
         self.search_result = None;
         if let (Some(active), Some(selection)) = (&self.active, &self.selection)
@@ -4984,6 +5023,7 @@ impl App for Reader {
                     (hint, "Go")
                 }
                 Screen::GoToPage => ("Page, printed label, or % of document", "Go"),
+                Screen::Find if self.active.is_some() => ("Search text", "Find all"),
                 _ => ("Search text", "Find"),
             };
             canvas.single_line_field(
@@ -5005,6 +5045,7 @@ impl App for Reader {
                 };
                 canvas.button(FIND_CASE, label, self.find_match_case, false);
                 canvas.button(FIND_ACCENTS, "Ignore accents", self.find_ignore_accents, false);
+                self.draw_nearby(canvas);
             }
             if let Some(notice) = &self.notice {
                 canvas.text(
@@ -5425,6 +5466,7 @@ impl App for Reader {
             .chain(self.nearby_marks.as_ref().and_then(|import| import.deadline))
             .chain(self.save_at)
             .chain(self.search_at)
+            .chain(self.nearby.deadline())
             .chain(self.outline.as_ref().and_then(|outline| outline.deadline))
             .chain(
                 self.annotation_import
@@ -5506,6 +5548,12 @@ impl App for Reader {
                     return self.report(error);
                 }
             }
+        }
+        if self.nearby.deadline().is_some_and(|at| at <= now) {
+            return match self.poll_nearby(now) {
+                Ok(change) => change,
+                Err(error) => self.report(error),
+            };
         }
         if self.search_at.is_some_and(|at| at <= now) {
             return match self.step_search(now) {
@@ -7260,6 +7308,76 @@ mod tests {
             zip.write_all(bytes).unwrap();
         }
         zip.finish().unwrap();
+    }
+
+    #[test]
+    fn directional_find_uses_the_current_passage_and_returns_to_the_original_position() {
+        use crate::search::SearchDirection;
+        let fixture = Fixture::new();
+        let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+        let path = fixture.root.join("Harbour.xhtml");
+        fs::write(
+            &path,
+            include_bytes!("../tests/fixtures/nearby-search.xhtml"),
+        )
+        .unwrap();
+        let mut app = Reader::open(&fixture.root, &fixture.state, vec![font.clone()]).unwrap();
+        app.open_path(&path).unwrap();
+        let original = position(&app.active.as_ref().unwrap().reading);
+        app.show(Screen::Find);
+        app.editor.text = "the tide keeps its own time".chars().collect();
+        app.editor.caret = app.editor.text.len();
+        capture_test_screen(
+            &app,
+            std::slice::from_ref(&font),
+            "READER_NEARBY_FIND_SCREENSHOT",
+            false,
+        );
+        let await_result = |app: &mut Reader| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while app.nearby.deadline().is_some() && Instant::now() < deadline {
+                app.poll_nearby(Instant::now()).unwrap();
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            assert!(app.nearby.deadline().is_none());
+        };
+        app.input(Input::Tap(900.0, 560.0));
+        await_result(&mut app);
+        assert_eq!(app.screen, Screen::Book);
+        assert_eq!(
+            app.result_selection.as_ref().unwrap().text.to_lowercase(),
+            "the tide keeps its own time"
+        );
+        capture_test_screen(
+            &app,
+            std::slice::from_ref(&font),
+            "READER_NEARBY_MATCH_SCREENSHOT",
+            false,
+        );
+        let first = app.result_selection.as_ref().unwrap().start.clone();
+        assert_eq!(app.back.len(), 1);
+        app.activate(app.search_step(1).unwrap()).unwrap();
+        await_result(&mut app);
+        assert_ne!(app.result_selection.as_ref().unwrap().start, first);
+        assert_eq!(app.back.len(), 1);
+        app.activate(app.search_step(-1).unwrap()).unwrap();
+        await_result(&mut app);
+        assert_eq!(app.result_selection.as_ref().unwrap().start, first);
+        app.begin_nearby(SearchDirection::Previous, true).unwrap();
+        await_result(&mut app);
+        assert_eq!(app.notice.as_deref(), Some("No earlier match"));
+        assert!(app.search_step(-1).is_none());
+        app.activate(Action::ReturnToLocation).unwrap();
+        let restored = position(&app.active.as_ref().unwrap().reading);
+        assert_eq!(original.anchor, restored.anchor);
+
+        app.show(Screen::Find);
+        app.editor.text = "absent-from-this-reading".chars().collect();
+        app.input(Input::Tap(900.0, 560.0));
+        assert!(app.nearby.deadline().is_some());
+        app.input(Input::Tap(270.0, 560.0));
+        assert!(app.nearby.deadline().is_none());
+        assert_eq!(app.screen, Screen::Find);
     }
 
     #[test]

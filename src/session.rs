@@ -519,6 +519,32 @@ impl Reading {
         })?)
     }
 
+    pub(crate) fn search_boundary(
+        &self,
+        direction: crate::search::SearchDirection,
+    ) -> Option<Anchor> {
+        let previous = direction == crate::search::SearchDirection::Previous;
+        let mut edges = self.visible_columns().filter_map(|(range, _)| {
+            let mut lines = self.probe.lines.iter().filter(|line| {
+                !line.bytes.is_empty() && line.bottom > range.start && line.top < range.end
+            });
+            let line = if previous {
+                lines.next_back()
+            } else {
+                lines.next()
+            }?;
+            Some(self.probe.anchor(
+                line.block,
+                if previous {
+                    line.bytes.end
+                } else {
+                    line.bytes.start
+                },
+            ))
+        });
+        if previous { edges.last() } else { edges.next() }.or_else(|| self.anchor())
+    }
+
     pub(crate) fn visible_text(&self) -> String {
         let mut text = String::new();
         for (range, _) in self.visible_columns() {
