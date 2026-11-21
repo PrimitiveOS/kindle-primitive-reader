@@ -8,6 +8,9 @@
 //! https://github.com/koreader/koreader/blob/042d9b39d4835408121970229cc37624e4f794bc/frontend/apps/reader/modules/readerrolling.lua
 //! https://www.lua.org/manual/5.1/manual.html#2.1
 
+mod annotations;
+pub use annotations::{SidecarAnnotations, SidecarMark, parse_annotations};
+
 use std::borrow::Cow;
 use std::fmt;
 use std::io::{self, Read, Seek, SeekFrom};
@@ -122,7 +125,7 @@ impl SidecarProgress {
         Ok(cfi)
     }
 
-    fn check_fingerprint(&self, checksum: [u8; 16]) -> Result<(), SidecarError> {
+    pub(crate) fn check_fingerprint(&self, checksum: [u8; 16]) -> Result<(), SidecarError> {
         let stored = self
             .partial_md5_checksum
             .ok_or(SidecarError::MissingChecksum)?;
@@ -171,6 +174,23 @@ fn sample_digest(reader: &mut (impl Read + Seek)) -> io::Result<[u8; 16]> {
 /// Read a bounded `return { ... }` table as literals and reject executable
 /// syntax anywhere in the input, including fields that Reader does not use.
 pub fn parse(bytes: &[u8]) -> Result<SidecarProgress, SidecarError> {
+    let mut state = ProgressFields::default();
+    read_fields(bytes, &mut |key, value| {
+        if let Some(key) = key {
+            state.insert(&key, value)?;
+        }
+        Ok(())
+    })?;
+    if state.seen == 0 {
+        return Err(SidecarError::InvalidData);
+    }
+    state.value.percent_finished = state.value.percent_finished.or(state.legacy_percent);
+    Ok(state.value)
+}
+
+type Visitor<'v, 'a> = dyn FnMut(Option<Cow<'a, [u8]>>, Value<'a>) -> Result<(), SidecarError> + 'v;
+
+fn read_fields<'a>(bytes: &'a [u8], visitor: &mut Visitor<'_, 'a>) -> Result<(), SidecarError> {
     if bytes.len() > MAX_SIDECAR_BYTES {
         return Err(SidecarError::TooLarge);
     }
@@ -184,17 +204,15 @@ pub fn parse(bytes: &[u8]) -> Result<SidecarProgress, SidecarError> {
     if parser.identifier() != Some(b"return") {
         return Err(SidecarError::InvalidData);
     }
-    let mut state = ProgressFields::default();
-    parser.table(1, Some(&mut state))?;
+    parser.table(1, Some(visitor))?;
     parser.space()?;
     if parser.take(b';') {
         parser.space()?;
     }
-    if parser.offset != bytes.len() || state.seen == 0 {
+    if parser.offset != bytes.len() {
         return Err(SidecarError::InvalidData);
     }
-    state.value.percent_finished = state.value.percent_finished.or(state.legacy_percent);
-    Ok(state.value)
+    Ok(())
 }
 
 #[derive(Default)]
@@ -305,7 +323,7 @@ enum Value<'a> {
     Number(f64),
     Nil,
     Boolean,
-    Table,
+    Table(&'a [u8]),
 }
 
 impl Value<'_> {
@@ -345,7 +363,7 @@ impl<'a> Parser<'a> {
     fn table(
         &mut self,
         depth: usize,
-        mut progress: Option<&mut ProgressFields>,
+        mut visitor: Option<&mut Visitor<'_, 'a>>,
     ) -> Result<(), SidecarError> {
         if depth > MAX_DEPTH {
             return Err(SidecarError::TooLarge);
@@ -359,8 +377,8 @@ impl<'a> Parser<'a> {
             }
             let key = self.key()?;
             let value = self.value(depth)?;
-            if let (Some(progress), Some(key)) = (progress.as_deref_mut(), key) {
-                progress.insert(&key, value)?;
+            if let Some(visit) = visitor.as_deref_mut() {
+                visit(key, value)?;
             }
             self.space()?;
             if self.take(b',') || self.take(b';') {
@@ -424,8 +442,9 @@ impl<'a> Parser<'a> {
     fn value(&mut self, depth: usize) -> Result<Value<'a>, SidecarError> {
         self.space()?;
         if self.peek() == Some(b'{') {
+            let start = self.offset;
             self.table(depth + 1, None)?;
-            return Ok(Value::Table);
+            return Ok(Value::Table(&self.bytes[start..self.offset]));
         }
         self.scalar()
     }
