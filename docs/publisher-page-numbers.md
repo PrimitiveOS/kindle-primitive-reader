@@ -17,3 +17,5 @@ The comparison uses KOReader’s installed release, its stable page menu and the
 ## Original-book comparison
 
 Nine EPUBs in the Oasis Documents collection had publisher-supplied page lists. Independent XML extraction found 3,264 labels. On eight books the installed KOReader returned all 2,311 labels in the same order. The remaining damaged book supplied 953 labels. KOReader exposed no page map when it opened that file through its fallback path. Reader recovered its package navigation. Twenty-six labels referred to chapter payloads lost from the ZIP. Reader removes those destinations and retains the 927 labels backed by surviving source elements. None of the personal page lists or source text is redistributed. [Installed engine comparison](../scripts/koreader-page-map-check.lua)
+
+On both the Mac and the Oasis, all 3,238 surviving boundaries resolved to a location in the source edition. From the list, Reader followed the first, middle and last entries in each of the nine books, a total of 27 exact jumps per platform. The on-device checks preserved the originals and existing reading data.

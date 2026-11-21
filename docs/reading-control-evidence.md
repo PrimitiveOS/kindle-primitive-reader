@@ -123,3 +123,9 @@ The full Mac chapter sweep used the actual Kindle publications. SHA-256 grouped 
 The final Mac and ARM suites each passed 446 tests. Separate device tests exercised four installed dictionaries with global and per-book ordering on two original EPUBs, language-specific word breaks in a third, literal punctuation search, and regular expressions against installed KOReader. The original files and existing reading profiles were retained. [Dictionary controls](shared-dictionaries.md) · [Search comparisons](reflow-search.md)
 
 The Mac rendered 27,652 pages in 1,509 sections across 48 distinct EPUB, AZW3 and MOBI editions. The remaining 31 illustration placeholders point to unavailable resources in one damaged EPUB. All 80 referenced GIF placements in three other books rendered. Both Reader and the installed KOReader GIF inspector produced the independent reference pixels for all 82 packaged GIFs, including two out-of-spine assets. [Illustration comparison](epub-gif-illustrations.md)
+
+## Reader 0.1.15 on the Oasis 3
+
+The Mac and Oasis each passed 456 automated tests. Across nine original EPUBs, both systems resolved all 3,238 available publisher page labels and followed 27 first, middle and last jumps. Eight intact editions agreed with KOReader on the order of every label. In the damaged edition, 927 destinations remained usable. [Publisher page numbers](publisher-page-numbers.md)
+
+For searches in two original EPUBs, the Oasis returned the same 4,983 and 2,371 ordered matches as installed KOReader. The first, middle and last results opened at their source passages. For two editions that assign embedded fonts to regular, bold and italic text, all 31,258 examined Latin glyph groups used the intended face. [Search checks](reflow-search.md) · [Font comparisons](embedded-font-families.md)
