@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.9
+
+- Open Contents at the section you are reading from either reading bar. Return to the same passage after checking your place in a long outline.
+
 ## 0.1.8
 
 - Read numbered and bulleted lists, including nested lists, reversed numbering and publisher-specified starting values.
