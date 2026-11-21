@@ -64,14 +64,33 @@ local function run()
     end
     local next_ms = ms() - first
     local format = view:getDocumentFormat() or "unknown"
+    local inspected
+    if os.getenv("READER_COMPARE_CONTENTS") == "1" then
+        local pages = { [1] = true, [count] = true }
+        for _, entry in ipairs(view:getToc()) do
+            if type(entry.page) == "number" and entry.page >= 1 and entry.page <= count then
+                pages[entry.page] = true
+            end
+        end
+        inspected = 0
+        for page = 1, count do
+            if pages[page] then
+                view:gotoPage(page)
+                view:drawCurrentPage(bb, false, false, false, false)
+                inspected = inspected + 1
+            end
+        end
+    end
     bb:free()
     view:close()
     -- Only an engine's format label may enter a public aggregate.
-    return true, count, opened, first, next_ms, format:gsub("[^%w /+.-]", "")
+    local label = format:gsub("[^%w /+.-]", "")
+    return true, count, opened, first, next_ms, label, inspected
 end
-local ok, opened, count, parse, first, turn, format = pcall(run)
+local ok, opened, count, parse, first, turn, format, inspected = pcall(run)
 if ok and opened then
-    print(string.format('{"opened":true,"provider":"%s","format":"%s","pages":%d,"parse_ms":%d,"first_frame_ms":%d,"next_ms":%d}',provider,format,count,parse,first,turn))
+    local extra = inspected and string.format(',"contents_pages_painted":%d', inspected) or ""
+    print(string.format('{"opened":true,"provider":"%s","format":"%s","pages":%d,"parse_ms":%d,"first_frame_ms":%d,"next_ms":%d%s}',provider,format,count,parse,first,turn,extra))
 else
     print(string.format('{"opened":false,"provider":"%s","outcome":"%s"}',provider,ok and "declined" or "engine error"))
 end

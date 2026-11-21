@@ -118,6 +118,14 @@ selected provider; the tagged front end has no stock AZW3 registration.
   measured bottleneck is color conversion during the first paint. [MuPDF drawing](https://github.com/koreader/koreader-base/blob/6e4bc81af4e04f78d81677a323a780a71b29702a/ffi/mupdf.lua#L716-L749)
   · [KOReader PDF dependency](https://github.com/koreader/koreader-base/blob/6e4bc81af4e04f78d81677a323a780a71b29702a/thirdparty/mupdf/CMakeLists.txt#L125-L132)
 
+## Checking past the opening page
+
+The public 0.1.6 ZIP was installed in place on the Oasis. Its 23 files matched the release checksum manifest and the three existing Reader data files retained their checksums. The installed executable rendered and resumed all 117 readable entries. In the same run, it tried 212 first, middle or final spine entries, including entries reached from the extracted book's separate XHTML files. Two sampled chapters in one EPUB failed after its opening page had passed.
+
+In this book, a font's ascenders and descenders overlapped the next line's nominal bounds. Reader treated an entire long paragraph as inseparable at a page break. The revised layout uses the font's natural line spacing for a paragraph whose overlapping lines would otherwise fill a whole screen. The Oasis rendered the first and last pages of **all 29 chapters** and restored the page after a fresh start. The two initially failing chapters accounted for 34,478 non-whitespace source characters on the Mac; all of them mapped to laid-out lines. On this same Oasis, KOReader identified the original as EPUB, laid it out in 844 pages and painted 30 distinct first, last or contents destinations. The page counts depend on the selected fonts and margins. CREngine's page splitter explicitly distinguishes an oversized single line from a group of lines that can be separated. [Upstream page splitting](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvpagesplitter.cpp#L539-L600)
+
+The optional check `READER_COMPARE_CONTENTS=1` makes the installed KOReader comparator paint every distinct contents destination plus the opening and closing pages. Only counts, detected format and timings are reported. [Reference tool](../scripts/koreader-document-check.lua)
+
 ## Comparable page images
 
 Both views show the same generated long-chapter publication, using Noto Sans at
