@@ -10,17 +10,28 @@ its clock on activation, resets the inactivity point on input, and advances one
 relative view only when Reader is the top visible widget. It unschedules on
 suspend or close and starts a fresh timeout on resume. Its timeout picker accepts
 up to one day; a held menu action configures the signed fractional scroll
-distance.
+distance. The setting spans −20.0 to +20.0 page heights, changes in 0.1
+increments, and changes in 0.5 increments while held. [The paging module]
+(https://github.com/koreader/koreader/blob/v2026.07.1/frontend/apps/reader/modules/readerpaging.lua)
+maps this distance to continuous scrolling or relative page movement.
 
 ## PrimitiveOS Reader implementation
 
 The Navigation group offers the existing presets (Off, 10, 30, 60 and 120
-seconds) and a **Custom interval** keyboard entry. Custom intervals accept 1 to
-86,400 seconds. The selected interval is stored in `reading-controls.json` and
-restored when another book opens or Reader restarts. Zero disables turns. User
-input resets the deadline; a late scheduler tick performs one movement without
-catching up. Menus and other non-reading screens pause the timer, and Kindle
-Sleep pauses it until Wake.
+seconds), a **Custom interval** keyboard entry and a **Scroll distance**
+control. Custom intervals accept 1 to 86,400 seconds. Distance moves in 10% or
+50% steps within −2,000% to +2,000% of a visible page. Both preferences are
+stored in `reading-controls.json` and restored when another book opens or
+Reader restarts. **Off** disables automatic turns but keeps the last interval
+for the next time they are enabled. User input resets the deadline; a late
+scheduler tick performs one movement without catching up. Menus and other
+non-reading screens pause the timer, and Kindle Sleep pauses it until Wake.
+
+In continuous EPUB and PDF views, the selected distance moves that fraction of
+the viewport and negative values reverse direction. In paginated EPUB, any
+nonzero setting moves at least one page and larger magnitudes round to whole
+pages. Noncontinuous fixed-page views do not yet preserve sub-page offsets while
+zoomed; that remains a tracked gap.
 
 The interval is global to Reader, as in KOReader. Device-level frontlight,
 rotation and sleep behavior remain owned by Primitive Launcher and the app kit.
@@ -31,12 +42,19 @@ rotation and sleep behavior remain owned by Primitive Launcher and the app kit.
 
 The functional test `custom_auto_turn_interval_is_validated_saved_and_restored_on_reopen`
 exercises the settings row, 1..86,400 validation, persistence, reopening the
-book, sleep/wake pause, and return to the last book. The `AutoTurn` unit tests
-also cover activity resetting the deadline, paused timer behavior, disabling,
-and a late tick producing exactly one turn. Verified with `cargo test --locked`: 894 library tests passed, with 66 ignored; the Kindle binary test (1), EPUB package tests (14), and layout probes (4) also passed. The test captures the simulator screenshot above. The focused functional test passed independently as well.
+book, sleep/wake pause, and return to the last book. A second test exercises the
+distance controls and persistence. Session tests cover signed fractional EPUB
+scroll, fixed PDF scrolling and multi-page movement. The `AutoTurn` unit tests
+cover activity resetting the deadline, paused timer behavior, disabling, and a
+late tick producing exactly one turn. The simulator functional test captures
+the screenshot above. The focused interval test also passes independently.
+`cargo test --locked` passed all 898 library tests with 66 ignored, the Kindle
+binary test (1), EPUB package tests (14), and layout probes (4).
+The ARMHF release build also succeeded; `file` confirms a static, stripped
+32-bit ARM EABI5 executable. It has not been installed on the Kindle yet.
 
 ## Remaining parity work
 
-- Let the user choose KOReader's signed fractional scroll distance for continuous reading, including direction and adjustment step.
+- Match sub-page movement on zoomed, noncontinuous fixed-page documents.
 - Compare USB handoff and actual sleep/resume timing on the Kindle. This Mac simulator check does not validate physical panel refresh or deep-suspend timing.
 - Keep on-device acceptance pending while the Kindle is disconnected.

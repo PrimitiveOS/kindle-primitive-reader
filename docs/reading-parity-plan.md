@@ -19,8 +19,9 @@ Custom hidden reading flows now have source-anchored boundary editing, explicit 
 The publisher-page workflow has independent checks for source order, exact destinations and the label shown at a reflowed passage. Generated character-count numbers have their own acceptance criteria. [Printed page controls](publisher-page-numbers.md)
 
 Automatic turns now accept and persist custom inactivity intervals from 1 second
-to 24 hours, matching KOReader's saved timeout and one-turn-per-late-tick
-behavior. Fractional scroll distance remains open. [Automatic page-turn parity](auto-turn-parity.md)
+to 24 hours and signed scroll distance from −20.0 to +20.0 pages. EPUB and
+continuous PDF views move by the selected fraction; noncontinuous fixed pages
+still need sub-page pan parity. [Automatic page-turn parity](auto-turn-parity.md)
 
 | Area | Development coverage | Remaining work |
 | --- | --- | --- |

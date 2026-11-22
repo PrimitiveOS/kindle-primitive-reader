@@ -105,7 +105,8 @@ Install Reader from PrimitiveOS Store or follow the manual install guide.
   Reading controls can set this gesture to open both bars. Start at the
   left, center, or right to open Navigation, the last-used tab, or Library. Navigation has
   contents, bookmarks, location history, a book map, page previews, and
-  automatic page turns with saved preset or custom intervals. Search has full-text and bookmark search, recent
+  automatic page turns with saved preset or custom intervals and an adjustable
+  signed scroll distance. Search has full-text and bookmark search, recent
   queries, a typed dictionary lookup, and [vocabulary review](docs/vocabulary-review.md)
   with reading context, due dates and per-word undo.
 - Swipe up from the bottom edge to reopen the last formatting panel for the

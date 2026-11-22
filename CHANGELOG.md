@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Set automatic page turns to a custom interval from 1 second to 24 hours. The timeout persists across Reader restarts and pauses when Reader leaves the reading page or the Kindle sleeps.
+- Set automatic page turns to a custom interval from 1 second to 24 hours, and adjust signed scroll distance from −20.0 to +20.0 pages. Turning auto-turn off keeps its last interval. These preferences persist across Reader restarts; turns pause when Reader leaves the reading page or the Kindle sleeps.
 
 ## 0.1.22
 

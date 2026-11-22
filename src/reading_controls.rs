@@ -12,6 +12,7 @@ use crate::session::PAGE_HEIGHT;
 
 const MAX_FILE_BYTES: u64 = 4096;
 pub(crate) const MAX_AUTO_TURN_SECONDS: u32 = 86_400;
+pub(crate) const MAX_AUTO_TURN_DISTANCE_TENTHS: i16 = 200;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
@@ -34,8 +35,12 @@ pub(crate) struct ReadingControls {
     pub large_toolbar: bool,
     pub disable_page_taps: bool,
     pub page_refresh: PageRefresh,
-    /// Persistent KOReader-style page-turn timeout. Zero disables automatic turns.
+    /// Persistent KOReader-style page-turn timeout, retained when turns are disabled.
     pub auto_turn_seconds: u32,
+    /// Enabled separately so turning automatic movement off keeps the last timeout.
+    pub auto_turn_enabled: bool,
+    /// Signed movement distance in tenths of a page. Zero is the legacy 100% default.
+    pub auto_turn_distance_tenths: i16,
     pub both_toolbars: bool,
     pub orientation: ReadingOrientation,
     pub palette: ScreenPalette,
@@ -422,9 +427,19 @@ impl PageRefresh {
 }
 
 impl ReadingControls {
+    pub(crate) fn auto_turn_distance_tenths(self) -> i16 {
+        if self.auto_turn_distance_tenths == 0
+            || self.auto_turn_distance_tenths.unsigned_abs()
+                > MAX_AUTO_TURN_DISTANCE_TENTHS as u16
+        {
+            10
+        } else {
+            self.auto_turn_distance_tenths
+        }
+    }
+
     pub(crate) fn auto_turn_interval(self) -> Option<Duration> {
-        (1..=MAX_AUTO_TURN_SECONDS)
-            .contains(&self.auto_turn_seconds)
+        (self.auto_turn_enabled && (1..=MAX_AUTO_TURN_SECONDS).contains(&self.auto_turn_seconds))
             .then(|| Duration::from_secs(u64::from(self.auto_turn_seconds)))
     }
 
@@ -439,6 +454,12 @@ impl ReadingControls {
             let mut controls: Self = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
             if controls.auto_turn_seconds > MAX_AUTO_TURN_SECONDS {
                 controls.auto_turn_seconds = 0;
+                controls.auto_turn_enabled = false;
+            }
+            if controls.auto_turn_distance_tenths.unsigned_abs()
+                > MAX_AUTO_TURN_DISTANCE_TENTHS as u16
+            {
+                controls.auto_turn_distance_tenths = 0;
             }
             Ok(controls)
         })
@@ -553,6 +574,7 @@ mod tests {
     fn auto_turn_timeout_round_trips_and_rejects_out_of_range_values() {
         let mut controls = ReadingControls {
             auto_turn_seconds: 75,
+            auto_turn_enabled: true,
             ..ReadingControls::default()
         };
         assert_eq!(controls.auto_turn_interval(), Some(Duration::from_secs(75)));
@@ -561,7 +583,24 @@ mod tests {
         assert_eq!(controls.auto_turn_seconds, 75);
         assert_eq!(controls.auto_turn_interval(), Some(Duration::from_secs(75)));
 
+        controls.auto_turn_enabled = false;
+        assert_eq!(controls.auto_turn_seconds, 75);
+        assert_eq!(controls.auto_turn_interval(), None);
+        controls.auto_turn_enabled = true;
         controls.auto_turn_seconds = MAX_AUTO_TURN_SECONDS + 1;
         assert_eq!(controls.auto_turn_interval(), None);
+    }
+
+    #[test]
+    fn automatic_scroll_distance_defaults_to_one_page_and_preserves_signed_tenths() {
+        let mut controls = ReadingControls::default();
+        assert_eq!(controls.auto_turn_distance_tenths(), 10);
+        controls.auto_turn_distance_tenths = -17;
+        let bytes = serde_json::to_vec(&controls).unwrap();
+        controls = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(controls.auto_turn_distance_tenths(), -17);
+
+        controls.auto_turn_distance_tenths = i16::MIN;
+        assert_eq!(controls.auto_turn_distance_tenths(), 10);
     }
 }

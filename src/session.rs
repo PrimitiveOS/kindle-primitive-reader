@@ -89,6 +89,7 @@ impl<T> PageTurns<T> {
     }
 }
 
+#[derive(Clone)]
 enum ReadingMotion {
     Page(isize),
     Pixels(f32),
@@ -202,6 +203,26 @@ pub(crate) struct Reading {
 }
 
 impl Reading {
+    pub(crate) fn automatic_turn(&mut self, distance_tenths: i16) -> Change {
+        if distance_tenths == 0 {
+            return Change::None;
+        }
+        let distance = f32::from(distance_tenths) / 10.0;
+        if self.scroll_top.is_some() {
+            let viewport = (self.config.settings.text_height() as f32 - 90.0).max(1.0);
+            self.turns
+                .pending
+                .push(ReadingMotion::Pixels(distance * viewport));
+        } else {
+            let direction = if distance > 0.0 { 1 } else { -1 };
+            let pages = distance.abs().round().max(1.0) as usize;
+            self.turns
+                .pending
+                .extend(std::iter::repeat(ReadingMotion::Page(direction)).take(pages));
+        }
+        self.present_page_turns(Instant::now())
+    }
+
     pub(crate) fn open(config: BookConfig) -> Result<Self> {
         let chapter = if !config.hidden_flows.enabled
             && config.hide_nonlinear
@@ -1805,6 +1826,30 @@ mod tests {
             })
             .unwrap();
         assert_eq!(reading.frame.pixels, before);
+    }
+
+    #[test]
+    fn automatic_turn_uses_signed_fractional_scroll_and_whole_page_motion() {
+        let mut scrolling = example("long-chapter.epub", 42.0, false);
+        scrolling.set_scroll(true).unwrap();
+        let start = scrolling.scroll_top.unwrap();
+        let viewport = (scrolling.config.settings.text_height() as f32 - 90.0).max(1.0);
+        scrolling.turns.next_refresh = Instant::now();
+        assert_eq!(scrolling.automatic_turn(5), Change::Partial);
+        let middle = scrolling.scroll_top.unwrap();
+        assert!((middle - (start + viewport * 0.5)).abs() < 1.0);
+
+        scrolling.turns.next_refresh = Instant::now();
+        assert_eq!(scrolling.automatic_turn(-5), Change::Partial);
+        assert!((scrolling.scroll_top.unwrap() - start).abs() < 1.0);
+
+        let mut paged = example("long-chapter.epub", 42.0, false);
+        paged.turns.next_refresh = Instant::now();
+        assert_eq!(paged.automatic_turn(20), Change::Partial);
+        assert_eq!(paged.page, 2);
+        paged.turns.next_refresh = Instant::now();
+        assert_eq!(paged.automatic_turn(-20), Change::Partial);
+        assert_eq!(paged.page, 0);
     }
 
     #[test]

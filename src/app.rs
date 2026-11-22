@@ -191,6 +191,7 @@ enum Screen {
     PageOverview,
     BookMap,
     AutoTurn,
+    AutoTurnDistance,
     LocationHistory,
     BookTools,
     Contents,
@@ -293,6 +294,7 @@ impl Screen {
             Self::PageOverview => "Pages",
             Self::BookMap => "Book map",
             Self::AutoTurn => "Automatic page turns",
+            Self::AutoTurnDistance => "Automatic scroll distance",
             Self::LocationHistory => "Location history",
             Self::ReadFixedText => "",
             Self::OcrLanguage => "Recognize text",
@@ -375,6 +377,8 @@ enum Action {
     SetDisplayLevel(DisplayLevel, u32),
     RefreshDisplay,
     AutoTurn(Option<Duration>),
+    AdjustAutoTurnDistance(i16),
+    ResetAutoTurnDistance,
     ReadAlarm,
     SaveBookData,
     HighlightStyle,
@@ -1410,7 +1414,33 @@ impl Reader {
                         "Enter 1 to 86,400 seconds".to_owned()
                     }),
                 );
+                items.push(
+                    Item::new("Scroll distance", Action::Show(Screen::AutoTurnDistance)).detail(
+                        format!(
+                            "{:+}% of a page",
+                            i32::from(self.controls.auto_turn_distance_tenths()) * 10
+                        ),
+                    ),
+                );
                 return items;
+            }
+            Screen::AutoTurnDistance => {
+                return vec![
+                    Item::new("Decrease by 50%", Action::AdjustAutoTurnDistance(-5))
+                        .detail("Move 50 percentage points back"),
+                    Item::new("Decrease by 10%", Action::AdjustAutoTurnDistance(-1))
+                        .detail("Move 10 percentage points back"),
+                    Item::new("Reset to 100%", Action::ResetAutoTurnDistance)
+                        .detail("One visible page at a time"),
+                    Item::new("Increase by 10%", Action::AdjustAutoTurnDistance(1))
+                        .detail("Move 10 percentage points forward"),
+                    Item::new("Increase by 50%", Action::AdjustAutoTurnDistance(5))
+                        .detail("Move 50 percentage points forward"),
+                    Item::new("Current distance", Action::Heading).detail(format!(
+                        "{:+}% of a page · KOReader range −2,000% to +2,000%",
+                        i32::from(self.controls.auto_turn_distance_tenths()) * 10
+                    )),
+                ];
             }
             Screen::OnlineHistory | Screen::ClearOnlineHistory => return self.online_history_items(),
             Screen::SearchHistory => {
@@ -2249,11 +2279,20 @@ impl Reader {
                 self.notice = Some("Reading data saved".into());
             }
             Action::AutoTurn(interval) => {
-                let seconds = interval
-                    .map(|value| value.as_secs().min(u64::from(crate::reading_controls::MAX_AUTO_TURN_SECONDS)) as u32)
-                    .unwrap_or(0);
-                self.set_auto_turn_seconds(seconds)?;
+                if let Some(interval) = interval {
+                    let seconds = interval
+                        .as_secs()
+                        .min(u64::from(crate::reading_controls::MAX_AUTO_TURN_SECONDS))
+                        as u32;
+                    self.set_auto_turn_seconds(seconds)?;
+                } else {
+                    self.disable_auto_turn()?;
+                }
             }
+            Action::AdjustAutoTurnDistance(delta) => {
+                self.adjust_auto_turn_distance(delta)?;
+            }
+            Action::ResetAutoTurnDistance => self.reset_auto_turn_distance()?,
             Action::LockTouch => {
                 self.selection = None;
                 self.pdf_selection = None;
@@ -3261,8 +3300,32 @@ impl Reader {
     }
 
     fn step_auto_turn(&mut self, now: Instant) -> Change {
-        let change = self.input(Input::PageForward);
+        let distance = self.controls.auto_turn_distance_tenths();
+        let change = match self.screen {
+            Screen::Book => {
+                let Some((previous, change)) = self.active.as_mut().map(|active| {
+                    let previous = (active.reading.chapter, active.reading.page);
+                    let change = active.reading.automatic_turn(distance);
+                    (previous, change)
+                }) else {
+                    return Change::None;
+                };
+                self.finish_book_update(change, previous)
+            }
+            Screen::Fixed => {
+                let Some((previous, result)) = self.fixed.as_mut().map(|fixed| {
+                    let previous = fixed.reading.page();
+                    let result = fixed.reading.automatic_turn(distance);
+                    (previous, result)
+                }) else {
+                    return Change::None;
+                };
+                self.finish_fixed_update(result, previous)
+            }
+            _ => self.input(Input::PageForward),
+        };
         self.auto_turn.activity(now);
+        self.sync_auto_turn(now);
         let turn_pending = self
             .active
             .as_ref()
@@ -6126,6 +6189,7 @@ impl App for Reader {
                     Screen::CustomContents => self.show(self.contents_screen()),
                     Screen::CustomEdits | Screen::CustomBookmarks => self.show(Screen::CustomContents),
                     Screen::NumberingDefaults => self.show(Screen::PageNumbering),
+                    Screen::AutoTurnDistance => self.show(Screen::AutoTurn),
                     Screen::PageNumbering | Screen::PublisherOffer => self.show(Screen::Book),
                     Screen::GeneratedContents => self.show(Screen::Contents),
                     Screen::BookmarkMatches => self.show(Screen::BookmarkFind),

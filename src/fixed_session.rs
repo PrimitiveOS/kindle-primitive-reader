@@ -1300,6 +1300,25 @@ impl FixedReading {
         self.tick(Instant::now())
     }
 
+    pub(crate) fn automatic_turn(&mut self, distance_tenths: i16) -> Result<bool> {
+        if distance_tenths == 0 {
+            return Ok(false);
+        }
+        let distance = f32::from(distance_tenths) / 10.0;
+        if self.is_continuous() {
+            return self.queue_scroll(
+                0.0,
+                -distance * (self.frame.height as f32 * 0.9),
+            );
+        }
+        let direction = if distance > 0.0 { 1 } else { -1 };
+        let pages = distance.abs().round().max(1.0) as usize;
+        self.turns
+            .pending
+            .extend(std::iter::repeat(direction).take(pages));
+        self.tick(Instant::now())
+    }
+
     fn queue_scroll(&mut self, dx: f32, dy: f32) -> Result<bool> {
         if dx.is_finite() && dy.is_finite() {
             let limit = self.frame.height as f32 * 8.0;
@@ -2718,6 +2737,26 @@ pub(crate) mod tests {
         assert_eq!(reader.page(), 1);
         assert_eq!(reader.preferences().offset_y, -30.0);
         assert_eq!(reader.page_at(0.0), Some(1));
+    }
+
+    #[test]
+    fn automatic_turn_scrolls_a_signed_fraction_of_the_pdf_viewport() {
+        let mut reader = reading(
+            striped_pdf(6),
+            View {
+                width_fit: true,
+                continuous: true,
+                ..View::default()
+            },
+        );
+        let start = reader.preferences().offset_y;
+        reader.turns.next_refresh = Instant::now();
+        assert!(reader.automatic_turn(5).unwrap());
+        let middle = reader.preferences().offset_y;
+        assert!(middle < start);
+        reader.turns.next_refresh = Instant::now();
+        assert!(reader.automatic_turn(-5).unwrap());
+        assert!(reader.preferences().offset_y > middle);
     }
 
     #[test]

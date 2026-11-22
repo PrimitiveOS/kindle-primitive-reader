@@ -619,6 +619,18 @@ mod tests {
             item.title == "Custom interval" && item.detail.as_deref() == Some("86400 seconds")
         }));
 
+        app.activate(Action::AutoTurn(None)).unwrap();
+        assert_eq!(app.auto_turn.interval(), None);
+        assert_eq!(app.controls.auto_turn_seconds, 86_400);
+        assert!(!app.controls.auto_turn_enabled);
+        assert_eq!(ReadingControls::load(&app.controls_path, true).auto_turn_seconds, 86_400);
+        let custom = app.items().into_iter().find(|item| item.title == "Custom interval").unwrap();
+        app.activate(custom.action).unwrap();
+        assert_eq!(app.editor.string(), "86400");
+        app.activate(Action::AutoTurn(Some(Duration::from_secs(86_400))))
+            .unwrap();
+        assert_eq!(app.auto_turn.interval(), Some(Duration::from_secs(86_400)));
+
         app.show(Screen::Book);
         let due = app.auto_turn.deadline().unwrap();
         assert!(due >= Instant::now() + Duration::from_secs(74));
@@ -646,6 +658,37 @@ mod tests {
         reopened.open_path(&fixture.book).unwrap();
         assert_eq!(reopened.auto_turn.interval(), Some(Duration::from_secs(86_400)));
         assert!(reopened.auto_turn.deadline().is_some());
+    }
+
+    #[test]
+    fn auto_turn_distance_menu_saves_a_signed_adjustment() {
+        let fixture = Fixture::new();
+        let mut app = app(&fixture);
+        app.open_path(&fixture.book).unwrap();
+        app.show(Screen::AutoTurn);
+        let distance = app
+            .items()
+            .into_iter()
+            .find(|item| item.title == "Scroll distance")
+            .unwrap();
+        app.activate(distance.action).unwrap();
+        assert_eq!(app.screen, Screen::AutoTurnDistance);
+        let increase = app
+            .items()
+            .into_iter()
+            .find(|item| item.title == "Increase by 10%")
+            .unwrap();
+        app.activate(increase.action).unwrap();
+        assert_eq!(app.controls.auto_turn_distance_tenths(), 11);
+        assert_eq!(
+            ReadingControls::load(&app.controls_path, true).auto_turn_distance_tenths(),
+            11
+        );
+        app.input(tap(primitive_ui::back_button(WIDTH as i32)));
+        assert_eq!(app.screen, Screen::AutoTurn);
+        assert!(app.items().iter().any(|item| {
+            item.title == "Scroll distance" && item.detail.as_deref() == Some("+110% of a page")
+        }));
     }
 
     #[test]

@@ -56,11 +56,12 @@ impl AutoTurn {
 
 impl Reader {
     pub(super) fn set_auto_turn_seconds(&mut self, seconds: u32) -> Result<()> {
-        if seconds > crate::reading_controls::MAX_AUTO_TURN_SECONDS {
-            return Err("Automatic page turns must be at most one day".into());
+        if !(1..=crate::reading_controls::MAX_AUTO_TURN_SECONDS).contains(&seconds) {
+            return Err("Automatic page turns must be from 1 second to one day".into());
         }
         let controls = crate::reading_controls::ReadingControls {
             auto_turn_seconds: seconds,
+            auto_turn_enabled: true,
             ..self.controls
         };
         controls.save(&self.controls_path)?;
@@ -68,6 +69,50 @@ impl Reader {
         let now = Instant::now();
         self.auto_turn.configure(controls.auto_turn_interval(), now);
         self.sync_auto_turn(now);
+        Ok(())
+    }
+
+    pub(super) fn disable_auto_turn(&mut self) -> Result<()> {
+        let controls = crate::reading_controls::ReadingControls {
+            auto_turn_enabled: false,
+            ..self.controls
+        };
+        controls.save(&self.controls_path)?;
+        self.controls = controls;
+        let now = Instant::now();
+        self.auto_turn.configure(None, now);
+        self.sync_auto_turn(now);
+        Ok(())
+    }
+
+    pub(super) fn adjust_auto_turn_distance(&mut self, delta_tenths: i16) -> Result<()> {
+        let current = self.controls.auto_turn_distance_tenths();
+        let mut next = current.saturating_add(delta_tenths).clamp(
+            -crate::reading_controls::MAX_AUTO_TURN_DISTANCE_TENTHS,
+            crate::reading_controls::MAX_AUTO_TURN_DISTANCE_TENTHS,
+        );
+        if next == 0 {
+            next = if delta_tenths < 0 { -1 } else { 1 };
+        }
+        self.set_auto_turn_distance(next)
+    }
+
+    pub(super) fn reset_auto_turn_distance(&mut self) -> Result<()> {
+        self.set_auto_turn_distance(10)
+    }
+
+    fn set_auto_turn_distance(&mut self, tenths: i16) -> Result<()> {
+        if tenths == 0
+            || tenths.unsigned_abs() > crate::reading_controls::MAX_AUTO_TURN_DISTANCE_TENTHS as u16
+        {
+            return Err("Automatic scroll distance must be between −20.0 and +20.0 pages".into());
+        }
+        let controls = crate::reading_controls::ReadingControls {
+            auto_turn_distance_tenths: tenths,
+            ..self.controls
+        };
+        controls.save(&self.controls_path)?;
+        self.controls = controls;
         Ok(())
     }
 }
