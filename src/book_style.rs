@@ -169,6 +169,7 @@ pub(crate) struct Style {
     pub size_scale: f32,
     pub text_rise: TextRise,
     pub decoration: TextDecoration,
+    pub page_breaks: crate::publisher_breaks::Rules,
     pub font_weight: FontWeight,
     pub font_style: FontStyle,
     pub line_height: Option<f32>,
@@ -192,6 +193,7 @@ impl Default for Style {
             size_scale: 1.0,
             text_rise: TextRise::default(),
             decoration: TextDecoration::default(),
+            page_breaks: Default::default(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
             line_height: None,
@@ -280,6 +282,7 @@ impl BookStyle {
             let mut style = parent.clone();
             // A parent's background paints its box. It is not a text property.
             style.background = None;
+            style.page_breaks = Default::default();
             if let Some(kind) = element.list_kind {
                 style.marker = kind;
             }
@@ -371,6 +374,9 @@ impl BookStyle {
                     Property::Slant(slant) => style.font_style = *slant,
                     Property::LineBreak(breaking) => style.line_break = *breaking,
                     Property::WordBreak(breaking) => style.word_break = *breaking,
+                    Property::BreakBefore(value) => style.page_breaks.before = value.unwrap_or(parent.page_breaks.before),
+                    Property::BreakAfter(value) => style.page_breaks.after = value.unwrap_or(parent.page_breaks.after),
+                    Property::BreakInside(value) => style.page_breaks.keep_together = value.unwrap_or(parent.page_breaks.keep_together),
                     Property::Hyphens(mode) => style.hyphens = *mode,
                     Property::WritingMode(mode) => style.writing_mode = *mode,
                     Property::Width(value) => style.image_width = Some(*value),
@@ -876,7 +882,7 @@ fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
 }
 
 type Priority = (bool, bool, Specificity);
-type Winners<'a> = [Option<(Priority, &'a Property)>; 17];
+type Winners<'a> = [Option<(Priority, &'a Property)>; 20];
 
 fn choose<'a>(
     winners: &mut Winners<'a>,
@@ -903,6 +909,9 @@ fn choose<'a>(
             Property::Marker(_) => 14,
             Property::Indent(_) => 15,
             Property::Decoration(_) => 16,
+            Property::BreakBefore(_) => 17,
+            Property::BreakAfter(_) => 18,
+            Property::BreakInside(_) => 19,
             Property::FontSource(_) => continue,
         };
         let priority = (declaration.important, inline, specificity);
@@ -943,6 +952,9 @@ impl Weight {
 }
 
 enum Property {
+    BreakBefore(Option<crate::publisher_breaks::Edge>),
+    BreakAfter(Option<crate::publisher_breaks::Edge>),
+    BreakInside(Option<bool>),
     Decoration(Option<TextDecoration>),
     Indent(Option<TextIndent>),
     Marker(crate::list_marker::MarkerKind),
@@ -977,6 +989,12 @@ impl<'i> DeclarationParser<'i> for Properties {
     ) -> CssResult<Declaration> {
         let property = input.parse_until_before(Delimiter::Bang, |input| {
             let property = match name.to_ascii_lowercase().as_ref() {
+                "page-break-before" | "break-before" => Property::BreakBefore(break_edge(input)?),
+                "page-break-after" | "break-after" => Property::BreakAfter(break_edge(input)?),
+                "page-break-inside" | "break-inside" => Property::BreakInside(match break_edge(input)? {
+                    Some(crate::publisher_breaks::Edge::Force) => return Err(ParseError::unexpected_token()),
+                    value => value.map(|edge| edge == crate::publisher_breaks::Edge::Avoid),
+                }),
                 "text-indent" => Property::Indent(parse_indent(input)?),
                 "text-decoration" | "text-decoration-line" => {
                     let mut lines = TextDecoration::default();
@@ -1224,6 +1242,17 @@ impl<'i> RuleBodyItemParser<'i, Declaration, ()> for Properties {
     fn parse_qualified(&self) -> bool {
         false
     }
+}
+
+fn break_edge(input: &mut Parser<'_>) -> CssResult<Option<crate::publisher_breaks::Edge>> {
+    use crate::publisher_breaks::Edge;
+    Ok(match input.expect_ident()?.to_ascii_lowercase().as_str() {
+        "always" | "page" => Some(Edge::Force),
+        "avoid" | "avoid-page" => Some(Edge::Avoid),
+        "auto" | "initial" | "unset" | "revert" => Some(Edge::Auto),
+        "inherit" => None,
+        _ => return Err(ParseError::unexpected_token()),
+    })
 }
 
 fn parse_indent(input: &mut Parser<'_>) -> CssResult<Option<TextIndent>> {

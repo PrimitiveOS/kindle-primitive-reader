@@ -840,31 +840,34 @@ fn wrap_inline_runs(xhtml: &str, body: Node<'_, '_>) -> Option<(String, Vec<usiz
 }
 
 fn is_block(node: Node<'_, '_>) -> bool {
-    node.is_element()
-        && matches!(
-            node.tag_name().name(),
-            "body"
-                | "article"
-                | "section"
-                | "div"
-                | "aside"
-                | "p"
-                | "li"
-                | "dd"
-                | "dt"
-                | "h1"
-                | "h2"
-                | "h3"
-                | "h4"
-                | "h5"
-                | "h6"
-                | "blockquote"
-                | "figure"
-                | "figcaption"
-                | "pre"
-                | "td"
-                | "th"
-        )
+    node.is_element() && is_block_tag(node.tag_name().name())
+}
+
+pub(crate) fn is_block_tag(tag: &str) -> bool {
+    matches!(
+        tag,
+        "body"
+            | "article"
+            | "section"
+            | "div"
+            | "aside"
+            | "p"
+            | "li"
+            | "dd"
+            | "dt"
+            | "h1"
+            | "h2"
+            | "h3"
+            | "h4"
+            | "h5"
+            | "h6"
+            | "blockquote"
+            | "figure"
+            | "figcaption"
+            | "pre"
+            | "td"
+            | "th"
+    )
 }
 
 fn content_language(node: Node<'_, '_>, inherited: Option<Language>) -> Option<Language> {

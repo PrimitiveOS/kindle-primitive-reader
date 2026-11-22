@@ -48,6 +48,7 @@ mod ocr_job;
 #[cfg(feature = "kindle")]
 pub mod online_lookup;
 mod parley_layout;
+mod publisher_breaks;
 #[cfg(feature = "kindle")]
 mod pdf_annotations;
 #[cfg(feature = "kindle")]
@@ -340,7 +341,11 @@ impl Pagination {
         Ok(Self { bounds })
     }
 
-    fn new(lines: &[Line], height: f32, mut content_height: f32) -> Result<Self> {
+    fn new(lines: &[Line], height: f32, content_height: f32) -> Result<Self> {
+        Self::with_breaks(lines, height, content_height, &[])
+    }
+
+    fn with_breaks(lines: &[Line], height: f32, mut content_height: f32, breaks: &[publisher_breaks::BoxRules]) -> Result<Self> {
         let mut intervals: Vec<Range<f32>> = Vec::new();
         for line in lines {
             if !line.top.is_finite() || !line.bottom.is_finite() || line.top > line.bottom {
@@ -355,20 +360,33 @@ impl Pagination {
         if !content_height.is_finite() || !(0.0..=2_000_000.0).contains(&content_height) {
             return Err("The chapter exceeds the layout height limit".into());
         }
+        let boundaries = publisher_breaks::boundaries(&intervals, breaks);
         let mut bounds = vec![0.0];
-        for interval in intervals {
+        let mut allowed_start = 0.0;
+        for (index, interval) in intervals.iter().enumerate() {
+            use publisher_breaks::Edge;
             if interval.end - interval.start > height {
                 return Err("The chapter contains content taller than one reading page".into());
             }
             let origin = *bounds.last().unwrap();
-            if interval.end > origin + height && interval.start > origin {
-                // Keep any full blank views from intentional large gaps. A short
-                // remainder before the next line belongs to the preceding view's
-                // trailing whitespace, rather than a separate empty page.
-                while interval.start >= *bounds.last().unwrap() + 2.0 * height {
+            let edge = boundaries.get(index).copied().unwrap_or_default();
+            if edge != Edge::Avoid {
+                allowed_start = interval.start;
+            }
+            let forced = index > 0 && edge == Edge::Force;
+            let overflows = interval.end > origin + height && interval.start > origin;
+            if forced || overflows {
+                let next = if allowed_start > origin && interval.end <= allowed_start + height {
+                    allowed_start
+                } else {
+                    interval.start
+                };
+                while next >= *bounds.last().unwrap() + 2.0 * height {
                     bounds.push(bounds.last().unwrap() + height);
                 }
-                bounds.push(interval.start);
+                if next > *bounds.last().unwrap() {
+                    bounds.push(next);
+                }
             }
         }
         while content_height > *bounds.last().unwrap() + height {
@@ -537,6 +555,7 @@ impl Probe {
         let mut fonts = font_context(fonts)?;
         #[cfg(feature = "kindle")]
         let mut custom_hyphenation_allowed = Vec::new();
+        let mut publisher_edges = Vec::new();
         let (renderer, mut lines, content_height) = match engine {
             Engine::Blitz => {
                 let (layout, lines, extent) =
@@ -616,6 +635,7 @@ impl Probe {
                         } else {
                             lay_out(&source, fonts)?
                         };
+                        publisher_edges = publisher_breaks::geometry(&source, &styles, &lines);
                         (Renderer::Parley(layout), lines, extent)
                     }
                 }
@@ -626,7 +646,7 @@ impl Probe {
         let mut pages = if matches!(&renderer, Renderer::Vertical(_)) {
             Pagination::fixed_stride(height, content_height)?
         } else {
-            Pagination::new(&lines, height, content_height)?
+            Pagination::with_breaks(&lines, height, content_height, &publisher_edges)?
         };
         if pages.len() > 1 && let Renderer::Parley(chapter) = &renderer {
             pages.trim_unpainted_tail(chapter.last_paint_bottom(&source));
