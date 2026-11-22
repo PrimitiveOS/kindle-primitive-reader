@@ -246,3 +246,68 @@ fn multiline_condensing_justification_and_tracking_keep_copy_word_hits_and_links
         );
     }
 }
+
+#[test]
+fn candidate_rewind_repeated_layout_and_forced_break_reset_do_not_carry_capacity() {
+    let pair = WordSpacePercent {
+        scaling: 95,
+        minimum: 25,
+    };
+    let prefix = format!("{}\n", "one two three four five six ".repeat(5));
+    let suffix = "\u{a0}— Albatross beta extraordinary delta epsilon zeta eta theta";
+    let text = format!("{prefix}{suffix}");
+    let width = 290.0;
+    let mut joined = shaped(&text, Some(pair), width, &[]);
+    let separate = shaped(suffix, Some(pair), width, &[]);
+    let expected: Vec<_> = separate.lines().map(|line| line.text_range()).collect();
+    let actual: Vec<_> = joined
+        .lines()
+        .map(|line| line.text_range())
+        .filter(|r| r.start >= prefix.len())
+        .map(|r| r.start - prefix.len()..r.end - prefix.len())
+        .collect();
+    assert_eq!(actual, expected);
+    let old: Vec<_> = joined
+        .lines()
+        .map(|line| (line.text_range(), line.metrics().advance))
+        .collect();
+    joined.break_all_lines(Some(width));
+    joined.align(Alignment::Start, AlignmentOptions::default());
+    let again: Vec<_> = joined
+        .lines()
+        .map(|line| (line.text_range(), line.metrics().advance))
+        .collect();
+    assert_eq!(again, old);
+    let after_break = prefix.len();
+    assert!((advance(&joined, after_break) - advance(&separate, 0)).abs() < 0.01);
+}
+
+#[test]
+fn trailing_picture_only_line_keeps_source_caret_and_cannot_borrow_old_space_capacity() {
+    let text = "alpha beta gamma delta epsilon";
+    let mut fonts =
+        crate::font_context(&[crate::test_fixture("fonts/NotoSans-Regular.ttf")]).unwrap();
+    let mut context = LayoutContext::new();
+    let mut builder = context.ranged_builder(&mut fonts, text, 1.0, true);
+    builder.push_default(StyleProperty::FontSize(40.0));
+    builder.push_inline_box(parley::InlineBox {
+        id: 1,
+        index: text.len(),
+        kind: parley::InlineBoxKind::InFlow,
+        width: 350.0,
+        height: 90.0,
+        baseline: None,
+        vertical_align: parley::VerticalAlign::BASELINE,
+    });
+    let mut layout = builder.build(text);
+    layout.set_word_spacing_percent(text, 95, 25, &[]);
+    layout.break_all_lines(Some(290.0));
+    let last = layout.lines().last().unwrap();
+    assert!(last.runs().next().is_none());
+    assert_eq!(last.text_range(), text.len()..text.len());
+    assert_eq!(last.metrics().advance, 350.0);
+    for line in layout.lines() {
+        let range = line.text_range();
+        assert!(range.start <= range.end && range.end <= text.len());
+    }
+}
