@@ -21,6 +21,7 @@ mod fixed_results_tests;
 mod sidecar_marks;
 mod library_view;
 mod lookup_history;
+mod metadata_save;
 mod nearby_search;
 mod online_panel;
 mod quick_display;
@@ -131,6 +132,7 @@ enum Screen {
     ReadingControls,
     FooterSettings,
     EndActionSettings,
+    MetadataSaveSettings,
     Gestures,
     GestureBinding(Gesture),
     ReadingData,
@@ -212,6 +214,7 @@ impl Screen {
             Self::ReadingControls => "Reading controls",
             Self::FooterSettings => "Reading status bar",
             Self::EndActionSettings => "At the end of a book",
+            Self::MetadataSaveSettings => "Save reading data",
             Self::Gestures => "Reading gestures",
             Self::GestureBinding(gesture) => gesture.label(),
             Self::ReadingData => "Reading data",
@@ -571,6 +574,7 @@ pub struct Reader {
     notice: Option<String>,
     dirty: bool,
     save_at: Option<Instant>,
+    metadata_checkpoint: metadata_save::Checkpoint,
     editor: Editor,
     nearby: nearby_search::Nearby,
     find_match_case: bool,
@@ -620,7 +624,7 @@ impl Reader {
         })?;
         let data = state.parent().unwrap_or(documents);
         let controls_path = data.join("reading-controls.json");
-        let controls = ReadingControls::load(&controls_path);
+        let controls = ReadingControls::load(&controls_path, !library.recents().is_empty());
         let stats_path = data.join("reading-stats.json");
         let stats = ReadingStats::load(&stats_path);
         let profiles_path = data.join("reading-profiles.json");
@@ -708,6 +712,7 @@ impl Reader {
             notice: None,
             dirty: false,
             save_at: None,
+            metadata_checkpoint: metadata_save::Checkpoint::new(Instant::now()),
             editor: Editor::new(64),
             nearby: nearby_search::Nearby::default(),
             find_match_case: false,
@@ -834,6 +839,7 @@ impl Reader {
                 entry.title = title;
             }
             entry.author = reading.author();
+            self.save_library()?;
             self.active = None;
             self.pages_since_refresh = 0;
             self.range_edit = None;
@@ -889,6 +895,7 @@ impl Reader {
             Reading::open(config)?
         };
         entry.author.clone_from(&reading.probe.author);
+        self.save_library()?;
         self.pages_since_refresh = 0;
         self.range_edit = None;
         self.saved_popup = None;
@@ -1036,22 +1043,33 @@ impl Reader {
     }
 
     fn record_position(&mut self) {
-        self.update_stats_activity(Instant::now());
-        if let Some(fixed) = &self.fixed {
+        self.record_position_at(Instant::now());
+    }
+
+    fn record_position_at(&mut self, now: Instant) {
+        self.update_stats_activity(now);
+        let position_changed = if let Some(fixed) = &self.fixed {
             let saved = self
                 .library
                 .remember(&fixed.entry, fixed.id, &fixed.entry.title);
-            saved.position = Some(fixed_position(&fixed.reading));
+            let position = fixed_position(&fixed.reading);
+            let changed = saved.position.as_ref() != Some(&position);
+            saved.position = Some(position);
             saved.fixed_preferences = fixed.reading.preferences();
             saved.ocr_language.clone_from(&fixed.reading.ocr_language);
-            self.mark_dirty();
+            changed
+        } else if let Some(active) = &self.active {
+            let title = &active.reading.probe.title;
+            let saved = self.library.remember(&active.entry, active.id, title);
+            let position = position(&active.reading);
+            let changed = saved.position.as_ref() != Some(&position);
+            saved.position = Some(position);
+            changed
+        } else {
             return;
-        }
-        let Some(active) = &self.active else { return };
-        let title = &active.reading.probe.title;
-        let saved = self.library.remember(&active.entry, active.id, title);
-        saved.position = Some(position(&active.reading));
-        self.mark_dirty();
+        };
+        self.dirty = true;
+        self.metadata_checkpoint.record(self.controls.metadata_save, position_changed, now);
     }
 
     fn mark_dirty(&mut self) {
@@ -1096,11 +1114,16 @@ impl Reader {
     }
 
     fn save_library(&mut self) -> io::Result<()> {
+        self.save_library_at(Instant::now())
+    }
+
+    fn save_library_at(&mut self, now: Instant) -> io::Result<()> {
         if self.dirty {
             self.library.persist()?;
             self.dirty = false;
         }
         self.save_at = None;
+        self.metadata_checkpoint = metadata_save::Checkpoint::new(now);
         Ok(())
     }
 
@@ -1238,6 +1261,9 @@ impl Reader {
         }
         if self.screen == Screen::EndActionSettings {
             return self.end_action_rows();
+        }
+        if self.screen == Screen::MetadataSaveSettings {
+            return self.metadata_save_items();
         }
         if self.screen == Screen::Dictionaries { return self.source_rows(); }
         if let Screen::DictionaryOptions(i) = self.screen { return self.source_options(i); }
@@ -1979,6 +2005,12 @@ impl Reader {
                 {
                     self.refresh_display = true;
                 }
+                if controls.metadata_save != self.controls.metadata_save {
+                    self.metadata_checkpoint.cancel();
+                    if self.dirty {
+                        self.metadata_checkpoint.record(controls.metadata_save, false, Instant::now());
+                    }
+                }
                 self.controls = controls;
             }
             Action::BindGesture(gesture, binding) => {
@@ -2435,7 +2467,7 @@ impl Reader {
                 } else {
                     state.highlights.remove(index);
                 }
-                self.mark_dirty();
+                self.mark_book_changed();
                 self.show(Screen::Highlights);
                 self.notice = Some("Highlight removed".into());
             }
@@ -2671,7 +2703,7 @@ impl Reader {
                 return Err("This book has reached its bookmark limit".into());
             }
             state.bookmarks.push(Bookmark { label, position });
-            self.mark_dirty();
+            self.mark_book_changed();
         }
         self.show(screen);
         self.notice = Some("Page bookmarked".into());
@@ -2730,7 +2762,7 @@ impl Reader {
                 .remember(&active.entry, active.id, &active.reading.probe.title)
         };
         state.bookmarks.remove(index);
-        self.mark_dirty();
+        self.mark_book_changed();
         self.show(if self.fixed.is_some() {
             Screen::Fixed
         } else {
@@ -3227,7 +3259,7 @@ impl Reader {
         } else {
             state.highlights[index].note = note;
         }
-        self.mark_dirty();
+        self.mark_book_changed();
         if self.saved_popup.is_some() {
             self.saved_note_updated(index);
         } else {
@@ -4735,7 +4767,7 @@ impl Reader {
             });
         }
         self.selection = None;
-        self.mark_dirty();
+        self.mark_book_changed();
         self.show(Screen::Book);
         self.notice = Some("Highlight saved".into());
         Ok(())
@@ -4915,7 +4947,7 @@ impl Reader {
             })?;
         }
         self.pdf_selection = None;
-        self.mark_dirty();
+        self.mark_book_changed();
         self.show(Screen::Fixed);
         self.notice = Some("Highlight saved".into());
         Ok(())
@@ -5283,7 +5315,9 @@ impl Reader {
             .map(|item| Row {
                 title: if self.screen == Screen::Matches { "" } else { &item.title },
                 detail: item.detail.as_deref(),
-                accessory: if matches!(item.action, Action::Heading) {
+                accessory: if self.screen == Screen::MetadataSaveSettings
+                    || matches!(item.action, Action::Heading)
+                {
                     RowAccessory::None
                 } else {
                     RowAccessory::Disclosure
@@ -5456,6 +5490,9 @@ impl App for Reader {
         }
         if matches!(input, Input::Sleep | Input::Wake) {
             self.stats_awake = input == Input::Wake;
+            if input == Input::Wake {
+                self.metadata_checkpoint = metadata_save::Checkpoint::new(Instant::now());
+            }
             self.sync_auto_turn(Instant::now());
             self.pages_since_refresh = 0;
             if with_storage(|| Ok(())).is_ok() {
@@ -5679,7 +5716,7 @@ impl App for Reader {
                         self.list_page = i / ROWS_PER_PAGE;
                     }
                     Screen::Dictionaries => self.show(self.dictionary_origin),
-                    Screen::FooterSettings | Screen::EndActionSettings => {
+                    Screen::FooterSettings | Screen::EndActionSettings | Screen::MetadataSaveSettings => {
                         self.show(Screen::ReadingControls)
                     }
                     Screen::ReadingProfiles => self.show(Screen::Typography),
@@ -5796,6 +5833,7 @@ impl App for Reader {
             .chain(fixed_page)
             .chain(self.nearby_marks.as_ref().and_then(|import| import.deadline))
             .chain(self.save_at)
+            .chain(self.metadata_checkpoint.deadline())
             .chain(self.stats_awake.then(|| self.read_alarm.deadline()).flatten())
             .chain(self.search_at)
             .chain(self.nearby.deadline())
@@ -5831,9 +5869,12 @@ impl App for Reader {
         }
         if let Some(change) = self.poll_spelling_lookup(now) { return change; }
         if let Some(change) = self.poll_online(now) { return change; }
-        if self.save_at.is_some_and(|at| at <= now) {
+        if self.save_at.is_some_and(|at| at <= now)
+            || self.metadata_checkpoint.deadline().is_some_and(|at| at <= now)
+        {
             self.save_at = None;
-            if let Err(error) = self.save_library()
+            self.metadata_checkpoint.cancel();
+            if let Err(error) = self.save_library_at(now)
                 && error.kind() != io::ErrorKind::WouldBlock
             {
                 return self.report(error);
@@ -9946,7 +9987,7 @@ mod tests {
             assert_eq!(app.input(tap), Change::Partial);
             assert_eq!(app.screen, Screen::Book);
             assert_eq!(app.controls.status_bar, mode);
-            assert_eq!(ReadingControls::load(&app.controls_path).status_bar, mode);
+            assert_eq!(ReadingControls::load(&app.controls_path, true).status_bar, mode);
             match mode {
                 StatusBar::Progress => assert!(app.status_caption().unwrap().ends_with("% of book")),
                 StatusBar::Chapter => assert!(app.status_caption().unwrap().contains("Page 1 of")),

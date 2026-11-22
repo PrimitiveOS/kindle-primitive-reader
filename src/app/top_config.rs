@@ -221,6 +221,8 @@ impl Reader {
                 .detail("Assign taps, holds and swipes"),
             Item::new("At the end of a book", Action::Show(Screen::EndActionSettings))
                 .detail(current.end_action.label()),
+            Item::new("Save reading data", Action::Show(Screen::MetadataSaveSettings))
+                .detail(current.metadata_save.label()),
         ];
         items.extend(self.quick_display_items());
         // Under Primitive Launcher the pages follow the launcher's theme: no Night pages switch here.

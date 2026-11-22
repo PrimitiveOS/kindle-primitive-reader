@@ -2,6 +2,7 @@ use std::cell::Cell;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use primitive_app::{Change, WIDTH, with_storage};
 use primitive_ui::Input;
@@ -36,6 +37,57 @@ pub(crate) struct ReadingControls {
     pub numbering: NumberingDefaults,
     pub end_action: EndAction,
     pub finish_at_end: bool,
+    #[serde(default = "legacy_metadata_save")]
+    pub metadata_save: MetadataSave,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum MetadataSave {
+    CloseOrSleep,
+    FiveMinutes,
+    #[default]
+    FifteenMinutes,
+    ThirtyMinutes,
+    OneHour,
+    AfterChange,
+}
+
+fn legacy_metadata_save() -> MetadataSave {
+    MetadataSave::AfterChange
+}
+
+impl MetadataSave {
+    pub const ALL: [Self; 6] = [
+        Self::CloseOrSleep,
+        Self::FiveMinutes,
+        Self::FifteenMinutes,
+        Self::ThirtyMinutes,
+        Self::OneHour,
+        Self::AfterChange,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::CloseOrSleep => "On close or sleep",
+            Self::FiveMinutes => "Every 5 minutes",
+            Self::FifteenMinutes => "Every 15 minutes",
+            Self::ThirtyMinutes => "Every 30 minutes",
+            Self::OneHour => "Every 60 minutes",
+            Self::AfterChange => "After each change",
+        }
+    }
+
+    pub fn interval(self) -> Option<Duration> {
+        let minutes = match self {
+            Self::FiveMinutes => 5,
+            Self::FifteenMinutes => 15,
+            Self::ThirtyMinutes => 30,
+            Self::OneHour => 60,
+            Self::CloseOrSleep | Self::AfterChange => return None,
+        };
+        Some(Duration::from_secs(60 * minutes))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -356,7 +408,7 @@ impl PageRefresh {
 }
 
 impl ReadingControls {
-    pub fn load(path: &Path) -> Self {
+    pub fn load(path: &Path, existing_library: bool) -> Self {
         with_storage(|| {
             let file = fs::File::open(path)?;
             let mut bytes = Vec::new();
@@ -366,7 +418,13 @@ impl ReadingControls {
             }
             serde_json::from_slice(&bytes).map_err(io::Error::other)
         })
-        .unwrap_or_default()
+        .unwrap_or_else(|_| {
+            let mut controls = Self::default();
+            if existing_library {
+                controls.metadata_save = MetadataSave::AfterChange;
+            }
+            controls
+        })
     }
 
     pub fn save(&self, path: &Path) -> io::Result<()> {
