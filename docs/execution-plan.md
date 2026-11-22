@@ -39,6 +39,9 @@ Reader now applies CREngine's defined Windows-1252 numeric-reference substitutio
 ## Private-use source font audit
 
 The remaining 134 private-use characters are already present in an original KF8 source with no font declaration or embedded font. Its reconstructed chapters preserve the exact character sequence. An authored Microsoft Symbol cmap control renders all eight tested values with unchanged source anchors through the existing pipeline. Do not infer the original symbols from low bytes or an unrelated font. Explicit secondary Symbol-map coverage and an actual affected-passage comparison in stock KOReader remain pending device availability. [Provenance and limits](symbol-font-provenance.md)
+## OPDS and calibre acquisition · K21
+
+The development candidate adds explicit configured OPDS catalogs, advertised search, server pagination, publication details, format choice and validated download to a selected Documents folder. Host checks use the real process worker, normal Reader controls and unchanged original EPUB content. The provider gate covers an isolated calibre Content server; wireless transfer and additional provider extensions remain separate. Native acquisition acceptance is pending the next combined Kindle build. [Protocol scope and evidence](opds-acquisition.md)
 
 ## P0.1 Prepare the corpus
 

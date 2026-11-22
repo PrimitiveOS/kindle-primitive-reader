@@ -74,6 +74,8 @@ The upper **Tools** menu includes **Read timer** for a countdown or a local cloc
 
 The reading footer can estimate how long the current chapter or book will take. Superscripts and subscripts follow the publisher's text, keeping footnotes and formulas legible. [Reading time](docs/reading-time-estimates.md) · [Sample reading page](docs/screenshots/inline-scripts.png)
 
+Browse configured online book catalogs from **Library › Online catalogs**. Choose a publication format and a destination in Documents, then keep the completed book for offline reading. The development candidate supports OPDS Atom/JSON and direct calibre Content server acquisition. [Protocols, controls and verification](docs/opds-acquisition.md)
+
 ## Reading on Kindle
 
 Install Reader from PrimitiveOS Store or follow the manual install guide.

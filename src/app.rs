@@ -29,6 +29,7 @@ mod vocabulary;
 mod metadata_save;
 mod nearby_search;
 mod online_panel;
+mod opds;
 mod quick_display;
 mod reader_timer;
 mod read_alarm;
@@ -139,6 +140,7 @@ enum Screen {
     OrganizeLibrary,
     BookmarkBrowser(bookmark_browser::Page),
     ReadingHistory(reading_history::Page),
+    Catalog(opds::Page),
     BookList,
     BookDetails,
     CollectionName,
@@ -230,6 +232,7 @@ impl Screen {
             Self::OrganizeLibrary => "Library organization",
             Self::BookmarkBrowser(page) => page.title(),
             Self::ReadingHistory(page) => page.title(),
+            Self::Catalog(page) => page.title(),
             Self::BookList => "Books",
             Self::BookDetails => "Book details",
             Self::CollectionName => "Collection name",
@@ -313,6 +316,7 @@ impl Screen {
 }
 
 enum Action {
+    Catalog(opds::Command),
     Open(LibraryBook),
     OpenTracked(u64),
     OpenPreviousDocument,
@@ -541,6 +545,7 @@ struct PositionImport {
 
 pub struct Reader {
     library: Library,
+    catalog: opds::Panel,
     user_hyphenation: std::rc::Rc<crate::user_hyphenation::Rules>,
     user_hyphenation_path: PathBuf,
     hyphenation_edit: Option<user_hyphenation::Draft>,
@@ -689,6 +694,7 @@ impl Reader {
             user_hyphenation_path,
             hyphenation_edit: None,
             library,
+            catalog: opds::Panel::load(documents,data.join("opds-catalogs.json"))?,
             browser,
             bookmark_browser: bookmark_browser::Browser::load(data.join("bookmark-browser.json")),
             library_query: String::new(),
@@ -977,6 +983,7 @@ impl Reader {
     }
 
     fn show(&mut self, screen: Screen) {
+        if !matches!(screen,Screen::Catalog(_)) { self.catalog.cancel(); }
         self.flow_popup = None;
         self.end_dialog = None;
         if screen != Screen::Definition { self.spelling_lookup = None; }
@@ -1241,6 +1248,7 @@ impl Reader {
         if let Screen::ReadingHistory(page) = self.screen { return self.reading_history_items(page); }
         if matches!(self.screen, Screen::Vocabulary | Screen::VocabularyWord | Screen::VocabularyOptions | Screen::VocabularyBooks) { return self.vocabulary_items(); }
         if let Screen::LibraryExport(page) = self.screen { return self.library_export_items(page); }
+        if let Screen::Catalog(page) = self.screen { return self.catalog_items(page); }
         if self.screen == Screen::HiddenFlows { return self.hidden_flow_items(); }
         if matches!(self.screen, Screen::CustomContents | Screen::CustomEdits | Screen::CustomBookmarks) ||
              (matches!(self.screen, Screen::Contents | Screen::FixedContents) && self.custom_contents_enabled()) {
@@ -1807,6 +1815,7 @@ impl Reader {
                 items.extend(ReadingStatus::ALL.into_iter().map(|status| {
                     Item::new(status.label(), Action::ListBooks(BookList::Status(status)))
                 }));
+                items.push(Item::new("Online catalogs",Action::Catalog(opds::Command::Open)));
                 items.push(Item::new("New collection", Action::NameCollection(None)));
                 items.extend(self.library.collections().iter().map(|collection| {
                     Item::new(
@@ -1969,6 +1978,7 @@ impl Reader {
 
     fn activate(&mut self, action: Action) -> Result<()> {
         match action {
+            Action::Catalog(command) => self.catalog_action(command)?,
             Action::BookmarkBrowser(command) => self.activate_bookmark_browser(command)?,
             Action::ReadingHistory(command) => self.activate_reading_history(command)?,
             Action::Flow(action) => self.flow_action(action)?,
@@ -5123,6 +5133,7 @@ impl Reader {
 impl Reader {
     fn draw_content(&self, canvas: &mut Canvas) {
         if self.draw_reading_history(canvas) { return; }
+        if let Screen::Catalog(page) = self.screen && self.draw_catalog(canvas,page) { return; }
         // The launcher's theme may have changed (it asks for a redraw when it does).
         if let Some(theme) = &self.system_theme {
             theme.refresh();
@@ -5647,6 +5658,7 @@ impl App for Reader {
         self.draw_flow_popup(canvas);
         self.read_alarm.draw(canvas, self.screen == Screen::Book);
         self.draw_vocabulary_dialog(canvas);
+        self.draw_catalog_popup(canvas);
     }
 
     fn press_point(&self, input: Input) -> Option<(f32, f32)> {
@@ -5661,6 +5673,7 @@ impl App for Reader {
     }
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
+        if let Screen::Catalog(page) = self.screen && let Some(change) = self.catalog_input(page,input) { return change; }
         if let Some(change) = self.vocabulary_dialog_input(input) { return change; }
         if self.flow_popup.is_some() { return self.flow_popup_input(input); }
         if self.read_alarm.modal() { return self.read_alarm_input(input); }
@@ -5708,6 +5721,7 @@ impl App for Reader {
     fn input(&mut self, input: Input) -> Change {
         if let Some(change) = self.vocabulary_dialog_input(input) { return change; }
         if input == Input::Sleep {
+            self.cancel_catalog_for_sleep();
             self.spelling_lookup = None;
             self.cancel_library_export();
         }
@@ -5751,6 +5765,7 @@ impl App for Reader {
         if self.read_alarm.modal() { return self.read_alarm_input(input); }
         if let Some(change) = self.reading_history_input(input) { return change; }
         self.sync_auto_turn(Instant::now());
+        if let Screen::Catalog(page) = self.screen && let Some(change) = self.catalog_input(page,input) { return change; }
         if self.flow_popup.is_some() { return self.flow_popup_input(input); }
         self.auto_turn.activity(Instant::now());
         if self.end_dialog.is_some() { return self.end_dialog_input(input); }
@@ -5937,6 +5952,7 @@ impl App for Reader {
             Input::Tap(x, y) if primitive_ui::back_button(WIDTH as i32).contains(x, y) => {
                 match self.screen {
                     Screen::LibraryExport(page) => self.back_from_library_export(page),
+                    Screen::Catalog(page) => self.catalog_back(page),
                     Screen::OrganizeLibrary => self.show(Screen::Library),
                     Screen::BookList if matches!(self.book_list, Some(BookList::Author(_))) => {
                         self.book_list = Some(BookList::Authors);
@@ -6078,6 +6094,7 @@ impl App for Reader {
         page.into_iter()
             .chain(fixed_page)
             .chain(self.export_deadline())
+            .chain(self.catalog.job.as_ref().map(|job| job.poll_at))
             .chain(self.bookmark_metadata_deadline())
             .chain(self.nearby_marks.as_ref().and_then(|import| import.deadline))
             .chain(self.save_at)
@@ -6118,6 +6135,7 @@ impl App for Reader {
         }
         if let Some(change) = self.poll_spelling_lookup(now) { return change; }
         if let Some(change) = self.poll_online(now) { return change; }
+        if let Some(change) = self.poll_catalog(now) { return change; }
         if self.save_at.is_some_and(|at| at <= now)
             || self.metadata_checkpoint.deadline().is_some_and(|at| at <= now)
         {
@@ -6261,6 +6279,7 @@ impl App for Reader {
     }
 
     fn save(&mut self) -> io::Result<()> {
+        self.catalog.cancel();
         self.save_library()?;
         let now = Instant::now();
         self.stats.checkpoint(&self.stats_path, now, true)?;
