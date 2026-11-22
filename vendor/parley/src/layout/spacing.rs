@@ -150,6 +150,8 @@ pub(crate) struct EffectiveSpacing<'a> {
     spacing: Spacing,
     justification: Justification,
     expanded_gaps: &'a [(u32, f32)],
+    shrink_capacities: &'a [f32],
+    shrink_fraction: f32,
 }
 
 impl<'a> EffectiveSpacing<'a> {
@@ -166,6 +168,8 @@ impl<'a> EffectiveSpacing<'a> {
             spacing,
             justification,
             expanded_gaps: &[],
+            shrink_capacities: &[],
+            shrink_fraction: 0.0,
             cluster_spacing,
         }
     }
@@ -175,9 +179,15 @@ impl<'a> EffectiveSpacing<'a> {
         self
     }
 
+    pub(crate) fn with_shrink(mut self, capacities: &'a [f32], fraction: f32) -> Self {
+        self.shrink_capacities = capacities;
+        self.shrink_fraction = fraction;
+        self
+    }
+
     #[inline(always)]
     pub(crate) const fn is_zero(self) -> bool {
-        self.spacing.is_zero()
+        self.shrink_fraction == 0.0 && self.spacing.is_zero()
             && self.justification.amount_per_opportunity == 0.
             && self.expanded_gaps.is_empty()
             && self.cluster_spacing.is_empty()
@@ -194,6 +204,9 @@ impl<'a> EffectiveSpacing<'a> {
             gaps.after += extra.after;
         }
 
+        if self.shrink_fraction > 0.0 {
+            gaps.after -= self.shrink_capacities.get(index).copied().unwrap_or(0.0) * self.shrink_fraction;
+        }
         if is_word_separator(whitespace)
             && atom.shaped_clusters_range().end <= self.justification.justification_end_cluster
         {

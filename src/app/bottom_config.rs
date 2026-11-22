@@ -318,22 +318,17 @@ impl Reader {
                     return vec![
                         ConfigRow::new(
                             "Word spacing",
-                            [
-                                ("Tight", -2.0),
-                                ("Normal", 0.0),
-                                ("Wide", 4.0),
-                                ("Wider", 8.0),
-                            ]
-                            .map(|(title, word_spacing)| {
-                                Choice::option(
-                                    title,
-                                    Action::Text(Settings {
-                                        word_spacing,
-                                        ..settings
-                                    }),
-                                    settings.word_spacing == word_spacing,
-                                )
-                            }),
+                            [("Small", crate::WordSpacePercent::SMALL),
+                             ("Medium", crate::WordSpacePercent::MEDIUM),
+                             ("Large", crate::WordSpacePercent::LARGE)]
+                            .map(|(label,value)|Choice::option(label,Action::ApplyWordSpacing(active.id,value),settings.percent_word_spacing==Some(value))),
+                        ),
+                        ConfigRow::new(
+                            match settings.percent_word_spacing {
+                                Some(pair)=>format!("{}% / {}%",pair.scaling,pair.minimum),
+                                None=>format!("Legacy: {:+} px",settings.word_spacing),
+                            },
+                            [Choice::link("More",Action::Show(Screen::NumberingValue(NumberField::WordSpacing(self.word_spacing_draft(active.id)))))],
                         ),
                         ConfigRow::new(
                             "Letter spacing",

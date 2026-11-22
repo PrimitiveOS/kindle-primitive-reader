@@ -112,6 +112,7 @@ pub(crate) struct LineData {
     pub(crate) num_justification_opportunities: u32,
     pub(crate) justification: Justification,
     pub(crate) expanded_gaps: Range<usize>,
+    pub(crate) space_shrink_fraction: f32,
     /// This line's entries in [`LayoutData::aligned_subtree_offsets`].
     ///
     /// Empty for lines with only baseline-relative content because the root aligned subtree
@@ -228,6 +229,8 @@ pub(crate) struct LayoutData<B: Brush> {
     pub(crate) soft_hyphens: Vec<SoftHyphenOpportunity>,
     /// Extra advance indexed by the first shaped cluster of an atom. Empty by default.
     pub(crate) cluster_spacing: Vec<Gaps>,
+    /// Maximum allowed shrink of each ordinary space atom.
+    pub(crate) space_shrink: Vec<f32>,
     pub(crate) runs: Vec<RunData>,
     pub(crate) items: Vec<LayoutItem>,
 
@@ -276,6 +279,7 @@ impl<B: Brush> Default for LayoutData<B> {
             shaped_text: ShapedText::new(),
             soft_hyphens: Vec::new(),
             cluster_spacing: Vec::new(),
+            space_shrink: Vec::new(),
             runs: Vec::new(),
             items: Vec::new(),
             lines: Vec::new(),
@@ -308,6 +312,7 @@ impl<B: Brush> LayoutData<B> {
         self.shaped_text.clear();
         self.soft_hyphens.clear();
         self.cluster_spacing.clear();
+        self.space_shrink.clear();
         self.runs.clear();
         self.items.clear();
         self.lines.clear();

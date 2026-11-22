@@ -9,6 +9,7 @@ mod contents_position;
 pub(crate) mod publisher_pages;
 mod character_page_settings;
 mod content_dpi;
+mod word_spacing;
 use character_page_settings::NumberField;
 mod dictionary_panel;
 mod default_settings;
@@ -280,6 +281,7 @@ impl Screen {
             Self::GoToPage => "Go to page",
             Self::PageNumbering => "Page numbering",
             Self::NumberingValue(NumberField::ContentDpi(_)) => "Content zoom",
+            Self::NumberingValue(NumberField::WordSpacing(_)) => "Word spacing",
             Self::NumberingValue(NumberField::MarginSize) => "Margin label size",
             Self::NumberingValue(_) => "Characters per page",
             Self::NumberingDefaults => "Page numbering defaults",
@@ -407,6 +409,7 @@ enum Action {
     NextLocation,
     SetUserHyphenation(bool),
     Text(Settings),
+    ApplyWordSpacing(u64, crate::WordSpacePercent),
     ShowFonts,
     ShowDictionaries,
     DictionarySource(SourceAction),
@@ -895,7 +898,7 @@ impl Reader {
             }
         })?;
         let unseen = self.library.state(id).is_none();
-        let mut initial_preferences = self.document_defaults.templates.reflow.clone().unwrap_or_default();
+        let mut initial_preferences = self.document_defaults.templates.reflow.clone().unwrap_or_else(BookPreferences::for_new_reflow);
         let mut default_font_missing = false;
         let mut settings = initial_preferences.apply_to(self.device_reading_settings());
         let mut scroll = initial_preferences.scroll;
@@ -1155,6 +1158,7 @@ impl Reader {
         self.link_popup = None;
         self.screen = screen;
         self.prepare_content_dpi_editor();
+        self.prepare_word_spacing_editor();
         self.map_window = fixed_book_map::MapWindow::default();
         self.sync_auto_turn(Instant::now());
         self.update_stats_activity(Instant::now());
@@ -2441,6 +2445,7 @@ impl Reader {
             }
             Action::ToggleBookmark => self.toggle_bookmark()?,
             Action::SetUserHyphenation(enabled) => self.set_user_hyphenation(enabled)?,
+            Action::ApplyWordSpacing(owner,value) => self.apply_word_spacing(owner,value)?,
             Action::Text(settings) => {
                 let active = self.active.as_mut().ok_or("No open book")?;
                 active.reading.reflow(settings)?;
@@ -2459,6 +2464,7 @@ impl Reader {
                 preferences.margin_bottom = settings.margin_bottom;
                 preferences.line_height = Some(settings.line_height);
                 preferences.word_spacing = settings.word_spacing;
+                preferences.percent_word_spacing = settings.percent_word_spacing;
                 preferences.word_expansion = Some(settings.word_expansion);
                 preferences.letter_spacing = settings.letter_spacing;
                 preferences.cjk_width_percent = (settings.cjk_width_percent != 100).then_some(settings.cjk_width_percent);
@@ -3413,6 +3419,7 @@ impl Reader {
 
     fn handle_page_number(&mut self, input: Input) -> Change {
         if let Some(change) = self.content_dpi_input(input) { return change; }
+        if let Some(change) = self.word_spacing_input(input) { return change; }
         if matches!(input, Input::PageBack)
             || matches!(input, Input::Tap(x, y) if primitive_ui::back_button(WIDTH as i32).contains(x, y))
         {
@@ -5462,6 +5469,7 @@ impl Reader {
                 Screen::ProfileName => ("Profile name", "Save"),
                 Screen::PdfPassword => ("PDF password", "Open"),
                 Screen::NumberingValue(NumberField::ContentDpi(_)) => ("Content zoom: 0 to 300 dpi", "Set"),
+                Screen::NumberingValue(NumberField::WordSpacing(draft)) => (match draft.field { word_spacing::Field::Scaling => "Scaling: 10 to 500%", word_spacing::Field::Minimum => "Reduction: 25 to 100%" }, "Set"),
                 Screen::NumberingValue(NumberField::MarginSize) => ("Margin text size from 8 to 20", "Set"),
                 Screen::NumberingValue(_) => ("500 to 3,000 characters per page", "Set"),
                 Screen::GoToPage if self.fixed.is_none() => {
@@ -5489,6 +5497,7 @@ impl Reader {
             );
             canvas.keyboard(self.editor.layer, action, None);
             self.draw_content_dpi(canvas);
+            self.draw_word_spacing(canvas);
             if self.can_paste_address() { external_link::draw_paste(canvas); }
             if self.screen == Screen::BookmarkFind {
                 self.annotation_search.draw_filters(canvas);

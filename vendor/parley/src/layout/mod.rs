@@ -11,6 +11,7 @@ mod run;
 mod spacing;
 pub(crate) mod style_metrics;
 mod whitespace;
+mod word_spacing;
 
 // TODO - Add to allowed lint set?
 #[expect(

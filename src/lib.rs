@@ -1,3 +1,5 @@
+pub mod word_spacing;
+pub use word_spacing::WordSpacePercent;
 #[cfg(feature = "kindle")]
 mod annotation_export;
 #[cfg(feature = "kindle")]
@@ -189,6 +191,8 @@ pub struct Settings {
     pub margin_bottom: Option<u32>,
     pub line_height: f32,
     pub word_spacing: f32,
+    /// None preserves the existing additive-pixel layout exactly.
+    pub percent_word_spacing: Option<WordSpacePercent>,
     /// Maximum tracking in justified words, as a percentage of font size.
     pub word_expansion: u8,
     pub letter_spacing: f32,
@@ -229,6 +233,7 @@ impl Default for Settings {
             margin_bottom: None,
             line_height: 1.35,
             word_spacing: 0.0,
+            percent_word_spacing: None,
             word_expansion: 0,
             letter_spacing: 0.0,
             cjk_width_percent: 100,
@@ -307,6 +312,7 @@ impl Settings {
             || !(12.0..=144.0).contains(&self.font_size)
             || !(1.0..=3.0).contains(&self.line_height)
             || !(-2.0..=12.0).contains(&self.word_spacing)
+            || self.percent_word_spacing.is_some_and(|pair| !pair.valid())
             || self.word_expansion > 20
             || !(-1.0..=4.0).contains(&self.letter_spacing)
             || !(100..=150).contains(&self.cjk_width_percent)

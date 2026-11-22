@@ -33,6 +33,7 @@ impl Reader {
             margin_bottom: settings.margin_bottom,
             line_height: Some(settings.line_height),
             word_spacing: settings.word_spacing,
+            percent_word_spacing: settings.percent_word_spacing,
             word_expansion: Some(settings.word_expansion),
             letter_spacing: settings.letter_spacing,
             cjk_width_percent: (settings.cjk_width_percent != 100)
@@ -64,7 +65,7 @@ impl Reader {
             .templates
             .reflow
             .clone()
-            .unwrap_or_default();
+            .unwrap_or_else(BookPreferences::for_new_reflow);
         let missing =
             prefs.font_file.is_some() && self.fonts_for(prefs.font_file.as_deref()).is_err();
         if missing {
