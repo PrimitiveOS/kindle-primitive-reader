@@ -37,6 +37,8 @@ mod quick_display;
 mod reader_timer;
 mod read_alarm;
 mod reading_backup;
+#[cfg(test)]
+mod backup_defaults_integration_tests;
 mod reading_bars;
 mod result_context;
 mod reading_footer;

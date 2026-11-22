@@ -126,6 +126,8 @@ vocabulary scheduler and dated journal, opens the restored book, and reimports
 with both default skips and explicit replacement. Legacy v1 input retains its
 existing merge behavior.
 
+The combined default/backup regression uses the normal Save current buttons, keyboard note entry, restore-preview rows and Apply action. After replacing an existing default component, genuinely distinct EPUB and PDF editions receive imported text/content-DPI and fixed-page defaults. Known editions keep their own preferences, source anchor/page, bookmarks and notes after restore and restart. All six input publication hashes remain unchanged. [Cross-feature regression](../src/app/backup_defaults_integration_tests.rs)
+
 The storage tests exit a real test subprocess without unwinding after each
 prepared/apply/commit step, recover from the parent process and check the entire
 old-or-new state. Additional cases cover a failed reload, corrupt recovery slots,
