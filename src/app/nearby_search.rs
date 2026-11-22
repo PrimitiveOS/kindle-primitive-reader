@@ -830,6 +830,48 @@ mod fixed_tests {
     }
 
     #[test]
+    fn finds_a_printed_ellipsis_with_the_fixed_document_controls() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Harbour timetable.pdf");
+        // U+2026 is 0x85 in the PDF WinAnsi encoding.
+        let content = r"BT /F1 11 Tf 28 440 Td (HARBOUR TIMETABLE) Tj 0 -46 Td /F1 22 Tf (Gate notices) Tj 0 -43 Td /F1 13 Tf (Boarding\205 Please wait at gate four.) Tj 0 -25 Td (Departures resume when the tide turns.) Tj ET";
+        let pdf = crate::fixed::tests::pdf_objects(&[
+            "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+            "<< /Type /Pages /Count 1 /Kids [3 0 R] >>".to_owned(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 360 480] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>".to_owned(),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".to_owned(),
+            format!("<< /Length {} >>\nstream\n{content}\nendstream",content.len()),
+        ]);
+        fs::write(&path, pdf).unwrap();
+        let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+        let mut app = Reader::open(&fixture.root, &fixture.state, vec![font.clone()]).unwrap();
+        app.open_path(&path).unwrap();
+        let text = app.fixed.as_ref().unwrap().reading.page_text(0).unwrap();
+        let printed = text
+            .words
+            .iter()
+            .find(|w| &text.text[w.bytes.clone()] == "Boarding…")
+            .unwrap();
+        app.show(Screen::Find);
+        app.editor.text = "...".chars().collect();
+        tap(&mut app, FixedNavigation::Next.entry().0);
+        settle(&mut app);
+        assert_eq!(app.pdf_result_regions, [(0, printed.bounds)]);
+        capture_test_screen(
+            &app,
+            std::slice::from_ref(&font),
+            "READER_FIXED_UNICODE_SCREENSHOT",
+            false,
+        );
+        app.show(Screen::Find);
+        app.find_match_case = true;
+        app.editor.text = "...".chars().collect();
+        tap(&mut app, FixedNavigation::Next.entry().0);
+        settle(&mut app);
+        assert_eq!(app.notice.as_deref(), Some("No later matching page"));
+    }
+
+    #[test]
     fn jumps_from_an_interior_fixed_page_to_the_first_and_last_matching_pages() {
         let fixture = Fixture::new();
         let external = std::env::var_os("READER_TEST_MATCH_ENDS_DOCUMENT").map(PathBuf::from);

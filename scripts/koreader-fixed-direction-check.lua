@@ -20,6 +20,30 @@ function doc:getPageTextBoxes(n)
     p:close()
     return lines
 end
+if arg[4] == "--unicode" then
+    local json = require("json")
+    local file = assert(io.open(query, "rb"))
+    local cases = json.decode(file:read("*a"))
+    file:close()
+    local result = {}
+    for _, case in ipairs(cases) do
+        local page = pdf:openPage(case.page)
+        local dc = require("ffi/drawcontext").new()
+        local w, h = page:getSize(dc)
+        page:close()
+        for _, sensitive in ipairs({false,true}) do
+            local hits = kopt:findAllMatches(doc, case.query, not sensitive, case.page) or {}
+            local rects = {}
+            for _, box in ipairs(hits) do
+                rects[#rects+1] = {box.x/w, box.y/h, (box.x+box.w)/w, (box.y+box.h)/h}
+            end
+            result[#result+1] = {page=case.page, case=sensitive, boxes=rects}
+        end
+    end
+    pdf:close()
+    print("unicode-boxes " .. json.encode(result))
+    return
+end
 if arg[4] == "--word-edges" then
     local counts = {}
     for _, pattern in ipairs({query, " " .. query, query .. " ", " " .. query .. " "}) do
