@@ -6632,6 +6632,7 @@ fn device_settings() -> Settings {
     Settings {
         width: WIDTH,
         height: PAGE_HEIGHT,
+        font_scale: crate::logical_font::ScaleContext::new(WIDTH, HEIGHT),
         ..Settings::default()
     }
 }
@@ -7184,6 +7185,7 @@ mod tests {
         assert_eq!(position(reading).anchor, passage.anchor);
         let settings = Settings {
             font_size: 58.0,
+            logical_font_size: None,
             ..reading.config.settings
         };
         app.activate(Action::Text(settings)).unwrap();
@@ -7220,7 +7222,8 @@ mod tests {
         let original = position(&app.active.as_ref().unwrap().reading);
         app.activate(Action::ResetText).unwrap();
         let reset = &app.active.as_ref().unwrap().reading;
-        assert_eq!(reset.config.settings.font_size, device_settings().font_size);
+        assert_eq!(reset.config.settings.logical_font_size, Some(crate::logical_font::DEFAULT));
+        assert_eq!(reset.config.settings.font_size, device_settings().font_scale.effective(crate::logical_font::DEFAULT).unwrap());
         assert_eq!(
             reset.config.settings.hyphenation_mode(),
             crate::HyphenationMode::Automatic
@@ -8105,7 +8108,7 @@ mod tests {
         reopened.activate(Action::Continue).unwrap();
         assert_eq!(reopened.current_publisher_page(), before);
         assert_eq!(reopened.status_caption().as_deref(), Some("Printed page 14"));
-        let next = Settings { font_size: 48., ..reopened.active.as_ref().unwrap().reading.config.settings };
+        let next = Settings { font_size: 48., logical_font_size: None, ..reopened.active.as_ref().unwrap().reading.config.settings };
         reopened.activate(Action::Text(next)).unwrap();
         assert_eq!(reopened.status_caption().as_deref(), Some("Printed page 14"));
         reopened.activate(Action::TogglePublisherFooter).unwrap();
@@ -8187,7 +8190,7 @@ mod tests {
         let id = app.active.as_ref().unwrap().id;
         let before = app.active.as_ref().unwrap().numbering.as_ref().unwrap().locate(current);
         app.show(Screen::Book);
-        let settings = Settings { font_size: 48., ..app.active.as_ref().unwrap().reading.config.settings };
+        let settings = Settings { font_size: 48., logical_font_size: None, ..app.active.as_ref().unwrap().reading.config.settings };
         app.activate(Action::Text(settings)).unwrap();
         app.activate(Action::CharacterPage(current)).unwrap();
         app.save().unwrap();

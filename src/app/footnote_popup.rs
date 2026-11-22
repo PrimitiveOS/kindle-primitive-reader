@@ -240,6 +240,8 @@ impl Reader {
             margin_top: Some(8),
             margin_bottom: Some(8),
             font_size: (reading.config.settings.font_size - 2.0).clamp(18.0, 64.0),
+            // The existing compact popup keeps its independent physical-pixel policy.
+            logical_font_size: None,
             ..reading.config.settings
         };
         let toc_target = reading

@@ -82,7 +82,7 @@ fn sample() -> std::path::PathBuf {
             .unwrap()
             .as_nanos()
     ));
-    std::fs::write(&path,"<html><head><title>Large text</title></head><body><p id='start'>Harbor <a href='#end'>lantern</a> returns at dusk.</p><p id='end'>End.</p></body></html>").unwrap();
+    std::fs::write(&path,"<html><head><title>Large text</title></head><body><p id='start'>Harbor WWW <a href='#end'>lantern</a> returns at dusk.</p><p id='end'>End.</p></body></html>").unwrap();
     path
 }
 #[test]
@@ -152,5 +152,36 @@ fn logical_css_font_caps_do_not_corrupt_nested_inheritance_or_em_lengths() {
         styles[p].padding[0].box_pixels(1000, settings.font_size),
         settings.font_size
     );
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn legacy_context_changes_leave_all_pixels_and_page_anchors_identical() {
+    let path = sample();
+    let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let settings = Settings {
+        font_size: 42.25,
+        ..Settings::default()
+    };
+    let mut baseline = Probe::open(&path, Engine::Parley, &fonts, settings, 0).unwrap();
+    let mut changed = Probe::open(
+        &path,
+        Engine::Parley,
+        &fonts,
+        Settings {
+            font_scale: ScaleContext::with_override(600, 800, Some(900)).unwrap(),
+            ..settings
+        },
+        0,
+    )
+    .unwrap();
+    assert_eq!(baseline.page_count(), changed.page_count());
+    for page in 0..baseline.page_count() {
+        assert_eq!(baseline.page_anchor(page), changed.page_anchor(page));
+        assert_eq!(
+            baseline.capture(page).unwrap(),
+            changed.capture(page).unwrap()
+        );
+    }
     std::fs::remove_file(path).unwrap();
 }

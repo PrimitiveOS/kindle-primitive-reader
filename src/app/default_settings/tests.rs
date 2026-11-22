@@ -28,6 +28,7 @@ fn text_size(app: &mut Reader, size: f32) {
     let settings = app.active.as_ref().unwrap().reading.config.settings;
     app.activate(Action::Text(Settings {
         font_size: size,
+        logical_font_size: None,
         ..settings
     }))
     .unwrap();
@@ -110,6 +111,7 @@ fn reset_reflow_keeps_source_annotations_and_missing_default_fonts_use_device_fo
     let marks = serde_json::to_value(&app.library.state(id).unwrap().highlights).unwrap();
     let mut prefs = app.current_text_preferences().unwrap();
     prefs.font_size = Some(59.);
+    prefs.logical_font_size = None;
     prefs.font_file = Some("Gone.otf".into());
     let mut templates = app.document_defaults.templates.clone();
     templates.reflow = Some(prefs);

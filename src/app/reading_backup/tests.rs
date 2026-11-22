@@ -267,6 +267,7 @@ fn complete_backup_keeps_existing_components_until_selected_and_preserves_local_
     prior
         .activate(Action::Text(crate::Settings {
             font_size: 72.0,
+            logical_font_size: None,
             ..current
         }))
         .unwrap();

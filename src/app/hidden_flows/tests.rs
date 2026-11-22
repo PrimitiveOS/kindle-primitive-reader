@@ -236,6 +236,7 @@ fn custom_flow_markers_skip_source_ranges_and_preserve_explicit_jumps_and_repagi
     let settings = app.active.as_ref().unwrap().reading.config.settings;
     app.activate(Action::Text(Settings {
         font_size: settings.font_size + 8.0,
+        logical_font_size: None,
         ..settings
     }))
     .unwrap();
@@ -542,6 +543,7 @@ fn custom_flow_original_epubs_keep_source_selections_and_resume_after_repaginati
         let settings = reading.config.settings;
         app.activate(Action::Text(Settings {
             font_size: settings.font_size + 6.0,
+            logical_font_size: None,
             ..settings
         }))
         .unwrap();

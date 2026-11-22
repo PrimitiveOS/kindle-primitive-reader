@@ -32,6 +32,7 @@ fn verifier_snapshot_recreates_actual_custom_reader_frames_positions_and_spine_c
     let settings = app.active.as_ref().unwrap().reading.config.settings;
     app.activate(Action::Text(Settings {
         font_size: 96.,
+        logical_font_size: None,
         render_dpi: 123,
         percent_word_spacing: Some(WordSpacePercent {
             scaling: 123,

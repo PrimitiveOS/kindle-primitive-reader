@@ -598,7 +598,13 @@ impl BookStyle {
                     }
                     Property::Border(..) => (),
                     Property::BorderSpacing(value) => {
-                        style.border_spacing = value.unwrap_or(parent.border_spacing)
+                        style.border_spacing = value.map_or(parent.border_spacing, |values| {
+                            if logical.is_some() {
+                                let font = relative_font(style.size_scale);
+                                let root = result.first().map_or(font, |root| relative_font(root.size_scale));
+                                values.map(|value| value.computed(font, root))
+                            } else { values }
+                        })
                     }
                     Property::BorderParts(_) => unreachable!("expanded before cascading"),
                     Property::BorderCollapse(mode) => {

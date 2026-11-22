@@ -147,7 +147,7 @@ impl Reader {
         canvas.button(DECREASE, "-", false, false);
         canvas.button(
             DEFAULT,
-            &format!("Default: {}", self.logical_font_default()),
+            &format!("Default: {:.1}", self.logical_font_default()),
             false,
             false,
         );

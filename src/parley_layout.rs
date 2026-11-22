@@ -229,10 +229,10 @@ impl ParleyChapter {
                 Err(error) => return Err(error),
             }
         };
-        let mut borders = crate::table_borders::Borders::read_with_flow(
+        let mut borders = crate::table_borders::Borders::read_with_settings(
             source,
             styles,
-            settings.font_size,
+            settings,
             &table_flow,
         );
         let mut flow_error = None;

@@ -91,6 +91,7 @@ fn opening_a_synced_source_anchor_survives_a_different_font_and_keeps_return_his
     let remote = remote(&app, remote_position.clone());
     let mut settings = app.active.as_ref().unwrap().reading.config.settings;
     settings.font_size = 68.0;
+    settings.logical_font_size = None;
     app.activate(Action::Text(settings)).unwrap();
     app.open_synced_position(&remote).unwrap();
     let position = app.current_position().unwrap();

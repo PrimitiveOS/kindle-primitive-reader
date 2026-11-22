@@ -81,6 +81,18 @@ impl Borders {
         font: f32,
         flow: &crate::table_layout::TableFlow<'_>,
     ) -> Option<Self> {
+        Self::read_impl(source, styles, font, flow, None)
+    }
+    pub(crate) fn read_with_settings(
+        source: &Source, styles: &[Style], settings: crate::Settings,
+        flow: &crate::table_layout::TableFlow<'_>,
+    ) -> Option<Self> {
+        Self::read_impl(source, styles, settings.font_size, flow, Some(settings))
+    }
+    fn read_impl(
+        source: &Source, styles: &[Style], font: f32,
+        flow: &crate::table_layout::TableFlow<'_>, settings: Option<crate::Settings>,
+    ) -> Option<Self> {
         let has_padding = |index: usize| {
             styles[index]
                 .vertical_padding
@@ -123,7 +135,9 @@ impl Borders {
                             collapsed: styles[i].border_collapse,
                             border: edges(&styles[i], font),
                             spacing: styles[i].border_spacing.map(|s| {
-                                (s.box_pixels(0, font * styles[i].size_scale) as u32).min(64)
+                                (s.box_pixels(0, settings.filter(|s| s.logical_font_size.is_some()).map_or(font * styles[i].size_scale, |cfg| {
+                                    if matches!(s, crate::book_style::CssLength::ComputedEm { .. }) { font } else { cfg.styled_font(styles[i].size_scale) }
+                                })) as u32).min(64)
                             }),
                             painted: styles[i].flow.painted,
                         });

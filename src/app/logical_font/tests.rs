@@ -161,6 +161,36 @@ fn logical_profiles_defaults_backups_roundtrip_raw_size_while_legacy_remains_exa
     app.document_defaults.save(templates).unwrap();
     let bytes = app.reading_backup_bytes().unwrap();
     crate::reading_backup::Envelope::parse(&bytes).unwrap();
+    let target = Fixture::new();
+    let copy = target.root.join(path.file_name().unwrap());
+    fs::copy(&path, &copy).unwrap();
+    let mut restored = Reader::open(&target.root, &target.state, fonts()).unwrap();
+    fs::write(&restored.import_path, &bytes).unwrap();
+    restored.activate(Action::PreviewBackup).unwrap();
+    tap(
+        &mut restored,
+        Rect::new(LIST_X, LIST_Y, WIDTH as i32 - 2 * LIST_X, ROW_HEIGHT),
+    );
+    assert_eq!(
+        restored
+            .document_defaults
+            .templates
+            .reflow
+            .as_ref()
+            .unwrap()
+            .logical_font_size,
+        Some(255.)
+    );
+    restored.open_path(&copy).unwrap();
+    assert_eq!(current(&restored), Some(255.));
+    restored
+        .apply_text_profile(BookPreferences {
+            font_size: Some(42.25),
+            ..Default::default()
+        })
+        .unwrap();
+    restored.activate(Action::ApplyProfile(0)).unwrap();
+    assert_eq!(current(&restored), Some(255.));
     for bad in [f64::NAN, f64::INFINITY, 11., 256.] {
         let prior = app.document_defaults.templates.clone();
         let mut invalid = app.document_defaults.templates.clone();

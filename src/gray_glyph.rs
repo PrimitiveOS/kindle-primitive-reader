@@ -556,3 +556,22 @@ fn rasterize(
         alpha,
     })
 }
+
+#[cfg(test)]
+mod logical_bound_tests {
+    use super::*;
+    #[test]
+    fn excessive_axes_are_explicit_logical_paint_failures_and_legacy_stays_unchanged() {
+        let bytes=std::fs::read(crate::test_fixture("fonts/NotoSans-Regular.ttf")).unwrap();
+        let font=FontData::new(parley::fontique::Blob::new(Arc::new(bytes)),0);
+        for logical in [false,true] {
+            let mut cache=GlyphCache::with_hinting(logical,FontHinting::Off,Arc::default());
+            let style=GlyphStyle{font:&font,size:340.,variations:vec![0;MAX_AXES+1],skew:0.,clockwise:false,strength:0.};
+            let mut frame=vec![255;500*500];cache.begin_paint();
+            cache.draw_positioned(&mut frame,500,&(0..500),style,std::iter::once((1,0.,340.)),false,crate::font_render::NORMAL_GAMMA);
+            assert_eq!(cache.check_paint().is_err(),logical);
+            assert!(frame.iter().all(|&n|n==255));
+            assert_eq!(cache.bytes,0);
+        }
+    }
+}

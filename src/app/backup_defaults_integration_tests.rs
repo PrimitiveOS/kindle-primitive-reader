@@ -74,6 +74,7 @@ fn text_settings(app: &mut Reader, font_size: f32, render_dpi: u16) {
     let settings = app.active.as_ref().unwrap().reading.config.settings;
     app.activate(Action::Text(crate::Settings {
         font_size,
+        logical_font_size: None,
         render_dpi,
         ..settings
     }))

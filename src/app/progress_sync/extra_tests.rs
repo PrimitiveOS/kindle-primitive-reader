@@ -272,6 +272,7 @@ fn identical_source_passages_ignore_layout_pages_but_different_source_offsets_co
     );
     let mut settings = app.active.as_ref().unwrap().reading.config.settings;
     settings.font_size = 76.0;
+    settings.logical_font_size = None;
     app.activate(Action::Text(settings)).unwrap();
     let mut large = app.current_position().unwrap();
     large.anchor = small.anchor.clone();
