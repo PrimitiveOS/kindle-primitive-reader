@@ -95,8 +95,10 @@ Install Reader from PrimitiveOS Store or follow the manual install guide.
   ten pages in paged reading. Default uses the normal refresh behavior.
 - Tap Pages on the reading bar to browse thumbnails across EPUB chapters or
   a fixed-page document. Open a preview and return with Previous location.
-- Open Contents and choose Generated outline to browse EPUB headings or chapter
-  starts when the publisher's contents are missing or incomplete.
+- Open **Contents** from either reading bar. For EPUBs that omit their main table of
+  contents, Reader can show the publisher's landmarks or printed page numbers.
+  Choose **Generated outline** to browse book headings or chapter starts.
+  [Landmark navigation and screenshot](docs/epub-landmarks.md)
 - Long-press a framed panel in a single-page comic view to inspect it at a
   larger size. Done returns to the same page and zoom.
 - At the end of a comic, Next comic opens the following archive in the same

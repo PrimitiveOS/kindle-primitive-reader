@@ -9056,6 +9056,139 @@ mod tests {
     }
 
     #[test]
+    fn publisher_landmarks_open_the_group_target_and_return_without_moving_saved_marks() {
+        let fixture = Fixture::new();
+        fs::write(
+            &fixture.book,
+            include_bytes!("../tests/fixtures/landmark-survey.epub"),
+        )
+        .unwrap();
+        let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+        let fonts = vec![font.clone()];
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        app.open_path(&fixture.book).unwrap();
+        let original = app.current_position().unwrap();
+        let id = app.active.as_ref().unwrap().id;
+        assert_eq!(original.page, 0);
+        assert_eq!(app.active.as_ref().unwrap().reading.chapter, 0);
+        let mut canvas = Canvas::new(WIDTH, HEIGHT, &[font.display().to_string()]).unwrap();
+        let opening = primitive_app::frame(&app, &mut canvas, false);
+        let mut targets = Vec::new();
+        for (index, label) in ["Start the survey", "Reference", "  Source notes"]
+            .iter()
+            .enumerate()
+        {
+            app.open_reading_edge(index != 1, 630.0);
+            if index != 1 && app.top_group != Some(TopGroup::Navigation) {
+                tap_reading_control(&mut app, "Navigation");
+            }
+            assert_eq!(tap_reading_control(&mut app, "Contents"), Change::Partial);
+            if index == 0 {
+                capture_test_screen(&app, &fonts, "READER_LANDMARK_CONTENTS_SCREENSHOT", false);
+            }
+            tap_contents_item(&mut app, label);
+            assert_eq!(app.screen, Screen::Book);
+            assert_eq!(app.active.as_ref().unwrap().reading.chapter, 1);
+            targets.push(app.current_position().unwrap());
+            app.activate(Action::ReturnToLocation).unwrap();
+            assert_eq!(app.current_position(), Some(original.clone()));
+            assert!(primitive_app::frame(&app, &mut canvas, false) == opening);
+        }
+        assert_ne!(targets[0], targets[1]);
+        assert_eq!(targets[1], targets[2]);
+        assert!(app.library.state(id).unwrap().bookmarks.is_empty());
+        app.save().unwrap();
+        drop(app);
+        let mut reopened = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+        reopened.activate(Action::Continue).unwrap();
+        assert_eq!(reopened.current_position(), Some(original));
+    }
+
+    #[test]
+    fn publisher_landmarks_keep_primary_contents_and_printed_pages_independent() {
+        let fixture = Fixture::new();
+        let primary = r#"<nav epub:type="toc"><ol><li><a href="first.xhtml#passage1">Primary</a></li></ol></nav>"#;
+        let landmarks = r#"<nav epub:type="landmarks"><ol><li><span>Reference</span><ol><li><span>Nested</span><ol><li><a href="missing.xhtml">Missing document</a></li><li><a href="first.xhtml#missing">Missing anchor</a></li><li><a href="first.xhtml#passage12">Sources</a></li></ol></li></ol></li><li><span>Empty branch</span><ol><li><a href="https://example.org/">External</a></li></ol></li><li><a href="second.xhtml">Appendix</a></li></ol></nav>"#;
+        let printed = r#"<nav epub:type="page-list"><ol><li><a href="first.xhtml#passage2">10</a></li></ol></nav>"#;
+        let ncx = br#"<ncx><navMap><navPoint><navLabel><text>NCX entry</text></navLabel><content src="second.xhtml"/></navPoint></navMap></ncx>"#;
+        let open = |nav: String| {
+            let nav = format!(
+                r#"<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body>{nav}</body></html>"#
+            );
+            write_outline_fixture(&fixture.book, Some(nav.as_bytes()), Some(ncx));
+            crate::epub::Book::open(&fixture.book).unwrap()
+        };
+        let selected = open(format!("{landmarks}{printed}{primary}"));
+        assert_eq!(selected.toc()[0].label, "Primary");
+        assert_eq!(selected.toc().len(), 1);
+        assert_eq!(selected.printed_pages()[0].label, "10");
+        let landmarks_book = open(format!("{printed}{landmarks}"));
+        let rows = landmarks_book.toc();
+        assert_eq!(rows[0].destination, rows[4].destination);
+        assert_eq!(rows[1].destination, rows[4].destination);
+        assert_eq!(
+            rows[4].destination.as_ref().unwrap().fragment.as_deref(),
+            Some("passage12")
+        );
+        assert_eq!(rows[5].label, "Empty branch");
+        assert!(rows[5].destination.is_none());
+        let pages = open(printed.to_owned());
+        assert_eq!(pages.toc(), pages.printed_pages());
+        let malformed = open(format!(r#"{landmarks}<nav epub:type="toc"><ol/></nav>"#));
+        assert_eq!(malformed.toc()[0].label, "NCX entry");
+    }
+
+    #[test]
+    #[ignore = "compares five independently authored files against the installed KOReader control"]
+    fn publisher_landmarks_match_independent_reference_controls() {
+        let folder = PathBuf::from(std::env::var_os("READER_TEST_PUBLISHER_NAV_VARIANTS").unwrap());
+        for (file, expected) in [
+            (
+                "primary",
+                vec![("Primary entry", 0, "first.xhtml", "start")],
+            ),
+            (
+                "landmarks",
+                vec![
+                    ("Start the survey", 0, "second.xhtml", "body"),
+                    ("Reference", 0, "second.xhtml", "sources"),
+                    ("Source notes", 1, "second.xhtml", "sources"),
+                ],
+            ),
+            (
+                "landmarks-before-ncx",
+                vec![
+                    ("Start the survey", 0, "second.xhtml", "body"),
+                    ("Reference", 0, "second.xhtml", "sources"),
+                    ("Source notes", 1, "second.xhtml", "sources"),
+                ],
+            ),
+            (
+                "pages",
+                vec![
+                    ("10", 0, "first.xhtml", "start"),
+                    ("21", 0, "second.xhtml", "body"),
+                ],
+            ),
+            ("epub2-guide", vec![]),
+        ] {
+            let book = crate::epub::Book::open(&folder.join(format!("{file}.epub"))).unwrap();
+            assert_eq!(book.toc().len(), expected.len());
+            for (row, (label, depth, path, fragment)) in book.toc().iter().zip(expected) {
+                assert_eq!((row.label.as_str(), row.depth), (label, depth));
+                let destination = row.destination.as_ref().unwrap();
+                assert_eq!(destination.path, path);
+                assert_eq!(destination.fragment.as_deref(), Some(fragment));
+            }
+            assert_eq!(book.chapters.len(), 2);
+            assert_eq!(
+                book.printed_pages().len(),
+                if file == "epub2-guide" { 0 } else { 2 }
+            );
+        }
+    }
+
+    #[test]
     fn contents_opens_at_the_current_section_from_either_reading_bar() {
         let fixture = Fixture::new();
         let path = fixture.root.join("Document.epub");
