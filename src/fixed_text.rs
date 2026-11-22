@@ -298,6 +298,14 @@ impl Collector {
         Span::append(&mut self.word, start, bounds);
         Span::append(&mut self.line, start, bounds);
         self.page.text.push(ch);
+        // KOReader's MuPDF text provider appends these characters to the
+        // current word, then starts a fresh rectangle at the following glyph.
+        // Keep adjoining source bytes intact even when their boxes differ.
+        if matches!(ch as u32, 0x2000..=0x206f | 0x3000..=0x303f | 0x3400..=0x4dbf
+            | 0x4e00..=0x9fff | 0xf900..=0xfaff | 0xff01..=0xffee | 0x20000..=0x2a6df)
+        {
+            self.finish_word();
+        }
     }
 
     fn finish_word(&mut self) {

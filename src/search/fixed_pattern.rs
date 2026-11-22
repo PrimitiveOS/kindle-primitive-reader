@@ -150,7 +150,9 @@ impl FixedPattern {
                 window.clear();
             }
             previous = range.end;
-            let split = self.split_cjk && original.chars().any(cjk);
+            // Preserve a provider's actual boxes. Only a transcript without
+            // geometry needs to synthesize CJK tokens for phrase matching.
+            let split = page.words.is_empty() && self.split_cjk && original.chars().any(cjk);
             for (offset, part) in segments(original, split) {
                 let start = range.start + offset;
                 window.push_back((start, normalize(part, self.match_case, self.ignore_accents)));

@@ -833,8 +833,8 @@ mod fixed_tests {
     fn finds_a_printed_ellipsis_with_the_fixed_document_controls() {
         let fixture = Fixture::new();
         let path = fixture.root.join("Harbour timetable.pdf");
-        // U+2026 is 0x85 in the PDF WinAnsi encoding.
-        let content = r"BT /F1 11 Tf 28 440 Td (HARBOUR TIMETABLE) Tj 0 -46 Td /F1 22 Tf (Gate notices) Tj 0 -43 Td /F1 13 Tf (Boarding\205 Please wait at gate four.) Tj 0 -25 Td (Departures resume when the tide turns.) Tj ET";
+        // U+2026 and its adjacent closing quote are 0x85 and 0x94 in PDF WinAnsi.
+        let content = r"BT /F1 11 Tf 28 440 Td (HARBOUR TIMETABLE) Tj 0 -46 Td /F1 22 Tf (Gate notices) Tj 0 -43 Td /F1 13 Tf (Boarding\205\224 Please wait at gate four.) Tj 0 -25 Td (Departures resume when the tide turns.) Tj ET";
         let pdf = crate::fixed::tests::pdf_objects(&[
             "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
             "<< /Type /Pages /Count 1 /Kids [3 0 R] >>".to_owned(),
@@ -852,6 +852,17 @@ mod fixed_tests {
             .iter()
             .find(|w| &text.text[w.bytes.clone()] == "Boarding…")
             .unwrap();
+        let quote = text
+            .words
+            .iter()
+            .find(|w| &text.text[w.bytes.clone()] == "”")
+            .unwrap();
+        assert_eq!(printed.bytes.end, quote.bytes.start);
+        assert!(printed.bounds.x1 <= quote.bounds.x0 + 0.001);
+        assert_eq!(
+            PdfSearch::new("... ", false).unwrap().hits(0, &text, 10)[0].bounds,
+            [printed.bounds]
+        );
         app.show(Screen::Find);
         app.editor.text = "...".chars().collect();
         tap(&mut app, FixedNavigation::Next.entry().0);
