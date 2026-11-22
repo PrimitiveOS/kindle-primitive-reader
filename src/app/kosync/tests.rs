@@ -163,6 +163,23 @@ fn grid_and_masked_form_close_restore_the_exact_book_frame_and_position() {
     app.kosync_command(Command::Edit(Field::Password)).unwrap();
     app.editor.text = "authored secret not visible".chars().collect();
     capture_test_screen(&app, &app.fonts, "READER_KOSYNC_PASSWORD", false);
+    let keyboard = Layout::new(WIDTH, HEIGHT, 4, 5);
+    let key = keyboard.keyboard_keys_with(app.editor.layer, "Save")[0].1;
+    let plain = primitive_app::frame(&app, &mut c, false);
+    let ink = (key.y..key.bottom())
+        .flat_map(|y| (key.x..key.right()).map(move |x| (y as usize * WIDTH as usize + x as usize)))
+        .filter(|&i| plain[i] < 180)
+        .count();
+    assert!(ink > 30, "Document pictures must not cover keyboard glyphs");
+    c.press_at((key.x + key.w / 2) as f32, (key.y + key.h / 2) as f32);
+    let held = primitive_app::frame(&app, &mut c, false);
+    assert_ne!(plain, held);
+    for (i, (a, b)) in plain.iter().zip(&held).enumerate() {
+        if a != b {
+            assert!(key.contains((i % WIDTH as usize) as f32, (i / WIDTH as usize) as f32));
+        }
+    }
+    c.clear_press();
     tap(&mut app, EDIT_BACK);
     app.kosync_command(Command::Open).unwrap();
     tap(&mut app, sheet_back(false));

@@ -476,6 +476,9 @@ impl Reader {
         Ok(())
     }
     pub(super) fn draw_kosync_editor(&self, canvas: &mut Canvas, field: Field) {
+        // Pictures are composited after ordinary fills. Register the keyboard's
+        // picture cover before the form so both keyboard and Back keep their targets.
+        canvas.popup(Layout::new(WIDTH, HEIGHT, 4, 5).keyboard_area());
         canvas.popup(EDIT);
         canvas.text(Rect::new(115, 135, 770, 75), field.title(), BODY.bold());
         canvas.button(EDIT_BACK, "Back", false, false);
