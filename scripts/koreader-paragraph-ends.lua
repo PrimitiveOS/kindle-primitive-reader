@@ -43,6 +43,8 @@ end
 
 local function measure(relaxed, anchors)
     local view = cre.newDocView(1264, 1606, 1)
+    -- Normal KOReader Book mode, set by ReaderTypeset before opening a book.
+    view:setIntProperty("crengine.render.block.rendering.flags", 0x03375131)
     local override = relaxed and "* {orphans:1 !important; widows:1 !important}" or ""
     view:setStyleSheet("./data/epub.css", override)
     view:setVisiblePageCount(1, false)
