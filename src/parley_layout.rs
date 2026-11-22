@@ -1650,7 +1650,7 @@ fn make_paragraph(
         builder.push_default(StyleProperty::OverflowWrap(OverflowWrap::Anywhere));
     }
     builder.push_default(StyleProperty::FontSize(font_size(style)));
-    if settings.word_spacing != 0.0 {
+    if settings.percent_word_spacing.is_none() && settings.word_spacing != 0.0 {
         builder.push_default(StyleProperty::WordSpacing(settings.word_spacing));
     }
     if settings.letter_spacing != 0.0 {
@@ -1726,6 +1726,10 @@ fn make_paragraph(
         builder.push_inline_box(image.clone());
     }
     let mut layout = builder.build(&block.text);
+    if let Some(pair) = settings.percent_word_spacing {
+        let preserved: Vec<_> = block.styled_text.iter().filter(|run| styles[run.element].preformatted_spaces).map(|run| run.bytes.clone()).collect();
+        layout.set_word_spacing_percent(&block.text, pair.scaling, pair.minimum, &preserved);
+    }
     if indent.amount > 0.0 {
         layout.set_text_indent(
             indent.amount,
@@ -3737,3 +3741,7 @@ mod flow_tests;
 
 #[cfg(test)]
 mod media_line_tests;
+
+#[cfg(test)]
+#[path = "parley_layout/word_spacing_cases.rs"]
+mod word_spacing_cases;

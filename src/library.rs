@@ -276,6 +276,8 @@ pub struct BookPreferences {
     pub line_height: Option<f32>,
     pub word_spacing: f32,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub percent_word_spacing: Option<crate::WordSpacePercent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub word_expansion: Option<u8>,
     pub letter_spacing: f32,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -306,6 +308,11 @@ pub struct BookPreferences {
 }
 
 impl BookPreferences {
+    /// Explicit application policy for new books; legacy deserialization stays unchanged.
+    pub(crate) fn for_new_reflow() -> Self {
+        Self { percent_word_spacing: Some(crate::WordSpacePercent::MEDIUM), ..Self::default() }
+    }
+
     pub fn apply_to(&self, settings: Settings) -> Settings {
         let permitted_margin = |margin: &u32| *margin <= settings.width.min(settings.height) / 4;
         let edge = |specific: Option<u32>, inherited: Option<u32>| {
@@ -346,6 +353,8 @@ impl BookPreferences {
             } else {
                 settings.word_spacing
             },
+            // Missing policy is legacy, never an inheritance request.
+            percent_word_spacing: self.percent_word_spacing.filter(|pair| pair.valid()),
             word_expansion: self
                 .word_expansion
                 .filter(|&percent| percent <= 20)

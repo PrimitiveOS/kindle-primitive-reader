@@ -282,6 +282,8 @@ pub(crate) struct Style {
     pub word_break: WordBreak,
     pub hyphens: Hyphens,
     pub writing_mode: WritingMode,
+    /// HTML pre ancestry only; CSS white-space remains unsupported.
+    pub preformatted_spaces: bool,
 }
 
 impl Default for Style {
@@ -317,6 +319,7 @@ impl Default for Style {
             word_break: WordBreak::Normal,
             hyphens: Hyphens::Auto,
             writing_mode: WritingMode::Horizontal,
+            preformatted_spaces: false,
         }
     }
 }
@@ -432,6 +435,7 @@ impl BookStyle {
                 continue;
             }
             let mut style = parent.clone();
+            style.preformatted_spaces |= element.tag == "pre";
             // Display is not inherited. Visibility is inherited independently of
             // ancestor suppression, so a visible descendant can restore paint.
             style.display = Display::native(&element.tag);

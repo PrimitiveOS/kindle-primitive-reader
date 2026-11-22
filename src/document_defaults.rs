@@ -174,6 +174,7 @@ pub(crate) fn validate_preferences(p: &BookPreferences) -> io::Result<()> {
         || p.font_size.is_some_and(|n| !(12.0..=144.0).contains(&n))
         || p.line_height.is_some_and(|n| !(1.0..=3.0).contains(&n))
         || !(-2.0..=12.0).contains(&p.word_spacing)
+        || p.percent_word_spacing.is_some_and(|pair| !pair.valid())
         || !(-1.0..=4.0).contains(&p.letter_spacing)
         || margins.into_iter().flatten().any(|n| n > 1024)
         || p.word_expansion.is_some_and(|n| n > 20)

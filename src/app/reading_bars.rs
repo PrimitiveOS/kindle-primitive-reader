@@ -881,7 +881,7 @@ mod tests {
         assert!(!app.reading_top && app.reading_bottom);
         assert_eq!(tap(&mut app, "Spacing"), Change::Partial);
         assert_eq!(app.reading_panel, Some(BarPanel::TextSpacing));
-        assert_eq!(tap(&mut app, "Wide"), Change::Partial);
+        assert_eq!(tap(&mut app, "Small"), Change::Partial);
         assert_eq!(app.screen, Screen::BookTools);
         assert_eq!(app.reading_panel, Some(BarPanel::TextSpacing));
         assert!(!app.reading_top && app.reading_bottom);
@@ -892,8 +892,8 @@ mod tests {
                 .reading
                 .config
                 .settings
-                .word_spacing,
-            4.0
+                .percent_word_spacing,
+            Some(crate::WordSpacePercent::SMALL)
         );
 
         assert_eq!(tap(&mut app, "Some"), Change::Partial);
@@ -918,8 +918,8 @@ mod tests {
                 .reading
                 .config
                 .settings
-                .word_spacing,
-            4.0
+                .percent_word_spacing,
+            Some(crate::WordSpacePercent::SMALL)
         );
     }
 }
