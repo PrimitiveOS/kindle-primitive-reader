@@ -8,7 +8,7 @@ In horizontal reflow, an EPUB can start a new page at a heading, a figure or an 
 
 The CSS cascade supplies before, after and inside rules for each block. Reader finds its first and last painted lines, including child paragraphs and illustrations. An empty break element uses the next available line. Where neighboring boxes request different breaks, the reference engine gives a request to keep content together priority over a forced break at the same edge. If a group is taller than the screen, its lines can still break across pages. [KOReader engine split flags](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvpagesplitter.cpp#L257-L266) · [Overflow handling](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvpagesplitter.cpp#L542-L655) · [CSS fragmentation](https://www.w3.org/TR/css-break-3/#break-between)
 
-Reader handles forced page breaks, automatic breaks, blocks kept together, adjacent blocks kept together, and explicit inheritance. The modern break properties and the legacy page-break properties share the cascade. Left and right page parity and widow/orphan line counts remain separate layout features.
+Reader handles forced page breaks, automatic breaks, blocks kept together, adjacent blocks kept together, and explicit inheritance. The modern break properties and the legacy page-break properties share the cascade. Horizontal paragraphs also honor inherited widow and orphan line counts. Left and right page parity remains a separate layout feature. [Paragraph line protection](paragraph-ends.md)
 
 ## Original documents
 

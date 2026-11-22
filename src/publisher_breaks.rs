@@ -23,14 +23,74 @@ pub(crate) struct BoxRules {
     rules: Rules,
 }
 
+/// Protect only the opening and closing lines of each formatted paragraph. Taking
+/// each end in its own pass also handles interleaved lines from adjacent table
+/// cells without copying text or retaining an unbounded list of line positions.
+fn protect_paragraph_end<'a>(
+    source: &Source,
+    styles: &[Style],
+    lines: impl Iterator<Item = &'a Line>,
+    minimum: fn(&Style) -> u8,
+    result: &mut Vec<BoxRules>,
+) {
+    if !styles.iter().any(|style| minimum(style) > 1) {
+        return;
+    }
+    let mut ends = vec![(0_u8, None::<Range<f32>>); source.blocks.len()];
+    for line in lines.filter(|line| line.bottom > line.top) {
+        let Ok(i) = source
+            .blocks
+            .binary_search_by_key(&line.block, |block| block.key)
+        else {
+            continue;
+        };
+        let limit = minimum(&styles[source.blocks[i].element]);
+        let (count, extent) = &mut ends[i];
+        if limit > 1 && *count < limit {
+            let extent = extent.get_or_insert(line.top..line.bottom);
+            extent.start = extent.start.min(line.top);
+            extent.end = extent.end.max(line.bottom);
+            *count += 1;
+        }
+    }
+    for (count, extent) in ends {
+        if count > 1
+            && let Some(extent) = extent
+        {
+            result.push(BoxRules {
+                extent,
+                rules: Rules {
+                    keep_together: true,
+                    ..Default::default()
+                },
+            });
+        }
+    }
+}
+
 /// Find the first and last painted lines of each styled block, including wrappers
 /// around other blocks. An empty separator shares the next visible block's edge.
 pub(crate) fn geometry(source: &Source, styles: &[Style], lines: &[Line]) -> Vec<BoxRules> {
+    let mut result = Vec::new();
+    protect_paragraph_end(
+        source,
+        styles,
+        lines.iter(),
+        |style| style.orphans,
+        &mut result,
+    );
+    protect_paragraph_end(
+        source,
+        styles,
+        lines.iter().rev(),
+        |style| style.widows,
+        &mut result,
+    );
     if !styles
         .iter()
         .any(|style| style.page_breaks != Rules::default())
     {
-        return Vec::new();
+        return result;
     }
     let mut boxes = vec![None; styles.len()];
     let extend = |boxes: &mut Vec<Option<Range<f32>>>, index: usize, top: f32, bottom: f32| {
@@ -48,7 +108,6 @@ pub(crate) fn geometry(source: &Source, styles: &[Style], lines: &[Line]) -> Vec
             extend(&mut boxes, p, extent.start, extent.end);
         }
     }
-    let mut result = Vec::new();
     let mut following = None;
     for (i, element) in source.elements.iter().enumerate().rev() {
         if element.selector_only
@@ -248,3 +307,7 @@ fn original_publisher_page_edges_keep_text_positions() {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "publisher_breaks/line_ends_tests.rs"]
+mod line_ends_tests;

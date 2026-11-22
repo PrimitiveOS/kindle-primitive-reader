@@ -170,6 +170,8 @@ pub(crate) struct Style {
     pub text_rise: TextRise,
     pub decoration: TextDecoration,
     pub page_breaks: crate::publisher_breaks::Rules,
+    pub orphans: u8,
+    pub widows: u8,
     pub font_weight: FontWeight,
     pub font_style: FontStyle,
     pub line_height: Option<f32>,
@@ -194,6 +196,8 @@ impl Default for Style {
             text_rise: TextRise::default(),
             decoration: TextDecoration::default(),
             page_breaks: Default::default(),
+            orphans: 1,
+            widows: 1,
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
             line_height: None,
@@ -374,9 +378,18 @@ impl BookStyle {
                     Property::Slant(slant) => style.font_style = *slant,
                     Property::LineBreak(breaking) => style.line_break = *breaking,
                     Property::WordBreak(breaking) => style.word_break = *breaking,
-                    Property::BreakBefore(value) => style.page_breaks.before = value.unwrap_or(parent.page_breaks.before),
-                    Property::BreakAfter(value) => style.page_breaks.after = value.unwrap_or(parent.page_breaks.after),
-                    Property::BreakInside(value) => style.page_breaks.keep_together = value.unwrap_or(parent.page_breaks.keep_together),
+                    Property::Orphans(value) => style.orphans = value.unwrap_or(parent.orphans),
+                    Property::Widows(value) => style.widows = value.unwrap_or(parent.widows),
+                    Property::BreakBefore(value) => {
+                        style.page_breaks.before = value.unwrap_or(parent.page_breaks.before)
+                    }
+                    Property::BreakAfter(value) => {
+                        style.page_breaks.after = value.unwrap_or(parent.page_breaks.after)
+                    }
+                    Property::BreakInside(value) => {
+                        style.page_breaks.keep_together =
+                            value.unwrap_or(parent.page_breaks.keep_together)
+                    }
                     Property::Hyphens(mode) => style.hyphens = *mode,
                     Property::WritingMode(mode) => style.writing_mode = *mode,
                     Property::Width(value) => style.image_width = Some(*value),
@@ -882,7 +895,7 @@ fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
 }
 
 type Priority = (bool, bool, Specificity);
-type Winners<'a> = [Option<(Priority, &'a Property)>; 20];
+type Winners<'a> = [Option<(Priority, &'a Property)>; 22];
 
 fn choose<'a>(
     winners: &mut Winners<'a>,
@@ -912,6 +925,8 @@ fn choose<'a>(
             Property::BreakBefore(_) => 17,
             Property::BreakAfter(_) => 18,
             Property::BreakInside(_) => 19,
+            Property::Orphans(_) => 20,
+            Property::Widows(_) => 21,
             Property::FontSource(_) => continue,
         };
         let priority = (declaration.important, inline, specificity);
@@ -952,6 +967,8 @@ impl Weight {
 }
 
 enum Property {
+    Orphans(Option<u8>),
+    Widows(Option<u8>),
     BreakBefore(Option<crate::publisher_breaks::Edge>),
     BreakAfter(Option<crate::publisher_breaks::Edge>),
     BreakInside(Option<bool>),
@@ -989,6 +1006,8 @@ impl<'i> DeclarationParser<'i> for Properties {
     ) -> CssResult<Declaration> {
         let property = input.parse_until_before(Delimiter::Bang, |input| {
             let property = match name.to_ascii_lowercase().as_ref() {
+                "orphans" => Property::Orphans(line_minimum(input)?),
+                "widows" => Property::Widows(line_minimum(input)?),
                 "page-break-before" | "break-before" => Property::BreakBefore(break_edge(input)?),
                 "page-break-after" | "break-after" => Property::BreakAfter(break_edge(input)?),
                 "page-break-inside" | "break-inside" => Property::BreakInside(match break_edge(input)? {
@@ -1244,6 +1263,20 @@ impl<'i> RuleBodyItemParser<'i, Declaration, ()> for Properties {
     }
 }
 
+fn line_minimum(input: &mut Parser<'_>) -> CssResult<Option<u8>> {
+    if let Ok(value) = input.try_parse(Parser::expect_integer) {
+        return match value {
+            1..=9 => Ok(Some(value as u8)),
+            _ => Err(ParseError::unexpected_token()),
+        };
+    }
+    match input.expect_ident()?.to_ascii_lowercase().as_str() {
+        "initial" => Ok(Some(1)),
+        "inherit" | "unset" | "revert" => Ok(None),
+        _ => Err(ParseError::unexpected_token()),
+    }
+}
+
 fn break_edge(input: &mut Parser<'_>) -> CssResult<Option<crate::publisher_breaks::Edge>> {
     use crate::publisher_breaks::Edge;
     Ok(match input.expect_ident()?.to_ascii_lowercase().as_str() {
@@ -1433,6 +1466,33 @@ mod tests {
         let explicit = style_of("plain");
         assert_eq!(explicit.font_weight, FontWeight::NORMAL);
         assert_eq!(explicit.font_style, FontStyle::Normal);
+    }
+
+    #[test]
+    fn widow_and_orphan_values_follow_the_cascade_and_stock_integer_range() {
+        let (source, styles) = computed(
+            r#"<html><head><style>
+            body {orphans:3;widows:4} .special {widows:5 !important}
+        </style></head><body>
+        <p id="base">Inherited</p>
+        <p id="explicit" class="special" style="orphans:1;widows:9">Explicit</p>
+        <p id="reset" style="widows:initial;orphans:unset">Reset</p>
+        <p id="invalid" style="widows:2;widows:10;orphans:0;orphans:1.5">Invalid</p>
+        </body></html>"#,
+        );
+        for (id, want) in [
+            ("base", (3, 4)),
+            ("explicit", (1, 5)),
+            ("reset", (3, 1)),
+            ("invalid", (3, 2)),
+        ] {
+            let i = source
+                .elements
+                .iter()
+                .position(|e| e.id.as_deref() == Some(id))
+                .unwrap();
+            assert_eq!((styles[i].orphans, styles[i].widows), want, "{id}");
+        }
     }
 
     #[test]
