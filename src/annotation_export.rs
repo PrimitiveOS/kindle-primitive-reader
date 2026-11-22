@@ -98,7 +98,7 @@ fn markdown_text(output: &mut String, value: &str) {
     }
 }
 
-fn html_text(output: &mut String, value: &str) {
+pub(crate) fn html_text(output: &mut String, value: &str) {
     for c in value.chars() {
         match c {
             '<' => output.push_str("&lt;"),

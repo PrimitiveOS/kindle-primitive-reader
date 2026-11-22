@@ -195,6 +195,9 @@ device. [Reading parity and device results](docs/reading-parity-plan.md)
 
 In Library, open Reading data to export or preview and restore a local backup
 of progress, per-book settings, bookmarks and annotations.
+Choose **Reading data › Export highlights** to collect quotations and notes from
+History, selected books or collections. Export KOReader JSON, text, Markdown or
+HTML with source locations and saved creation times. [Library exports](docs/library-highlights-export.md)
 From Highlights, export quotations and notes as text, Markdown or HTML. Reader
 can import visible embedded highlights from supported unencrypted PDFs up to
 16 MiB and save a separate annotated PDF with the original annotations intact.

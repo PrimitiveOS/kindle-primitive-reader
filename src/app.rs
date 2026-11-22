@@ -21,6 +21,7 @@ mod epub_gif_tests;
 mod fixed_results_tests;
 mod sidecar_marks;
 mod library_view;
+mod library_export;
 mod lookup_history;
 mod metadata_save;
 mod nearby_search;
@@ -140,6 +141,7 @@ enum Screen {
     Gestures,
     GestureBinding(Gesture),
     ReadingData,
+    LibraryExport(library_export::Page),
     ClearOcr,
     RestoreBackup,
     ImportAnnotations,
@@ -223,6 +225,7 @@ impl Screen {
             Self::Gestures => "Reading gestures",
             Self::GestureBinding(gesture) => gesture.label(),
             Self::ReadingData => "Reading data",
+            Self::LibraryExport(page) => page.title(),
             Self::ClearOcr => "Clear recognized text?",
             Self::RestoreBackup => "Preview restore",
             Self::ImportAnnotations => "KOReader annotations",
@@ -371,6 +374,7 @@ enum Action {
     EditNote,
     RemoveHighlight,
     ExportHighlights(annotation_export::Format),
+    LibraryExport(library_export::Command),
     FitPage(bool),
     FitHeight,
     SetFixedZoom(usize),
@@ -606,6 +610,7 @@ pub struct Reader {
     copied_address: Option<String>,
     saved_popup: Option<saved_highlight_popup::SavedPopup>,
     exports: PathBuf,
+    library_export: library_export::Export,
     dictionaries: DictionarySources,
     dictionary_preference: PathBuf,
     dictionary_settings: SourcePreferences,
@@ -745,6 +750,7 @@ impl Reader {
             copied_address: None,
             saved_popup: None,
             exports: state.parent().unwrap_or(documents).join("exports"),
+            library_export: library_export::Export::load(data.join("highlight-export.json")),
             dictionaries: DictionarySources::for_reader(documents, data),
             dictionary_preference,
             dictionary_settings,
@@ -1175,6 +1181,7 @@ impl Reader {
     }
 
     fn items(&self) -> Vec<Item> {
+        if let Screen::LibraryExport(page) = self.screen { return self.library_export_items(page); }
         if matches!(self.screen, Screen::CustomContents | Screen::CustomEdits | Screen::CustomBookmarks) ||
              (matches!(self.screen, Screen::Contents | Screen::FixedContents) && self.custom_contents_enabled()) {
             return self.custom_items();
@@ -1283,6 +1290,8 @@ impl Reader {
         if let Screen::DictionaryOptions(i) = self.screen { return self.source_options(i); }
         if self.screen == Screen::ReadingData {
             let mut items = vec![
+                Item::new("Export highlights", Action::LibraryExport(library_export::Command::Open))
+                    .detail("From History, chosen books or collections"),
                 Item::new("Back up reading data", Action::ExportBackup)
                     .detail("Saves progress, bookmarks, highlights, and preferences to exports"),
                 Item::new("Restore a backup", Action::PreviewBackup)
@@ -1910,6 +1919,7 @@ impl Reader {
                 self.library.state_mut(id).ok_or("This book is unavailable")?.hide_nonlinear = enabled;
                 self.mark_book_changed();
             }
+            Action::LibraryExport(command) => self.activate_library_export(command)?,
             Action::Open(entry) => self.open_book(entry)?,
             Action::Browse(directory) => self.browse_to(directory)?,
             Action::OpenTracked(id) => {
@@ -5586,6 +5596,7 @@ impl App for Reader {
     fn input(&mut self, input: Input) -> Change {
         if input == Input::Sleep {
             self.spelling_lookup = None;
+            self.cancel_library_export();
         }
         if input == Input::Sleep && let Some(panel) = &mut self.online && panel.job.take().is_some() {
             panel.message = Some("Lookup cancelled when Reader went to sleep.".into());
@@ -5804,6 +5815,7 @@ impl App for Reader {
             }
             Input::Tap(x, y) if primitive_ui::back_button(WIDTH as i32).contains(x, y) => {
                 match self.screen {
+                    Screen::LibraryExport(page) => self.back_from_library_export(page),
                     Screen::OrganizeLibrary => self.show(Screen::Library),
                     Screen::BookList if matches!(self.book_list, Some(BookList::Author(_))) => {
                         self.book_list = Some(BookList::Authors);
@@ -5941,6 +5953,7 @@ impl App for Reader {
             .and_then(|fixed| fixed.reading.deadline());
         page.into_iter()
             .chain(fixed_page)
+            .chain(self.export_deadline())
             .chain(self.nearby_marks.as_ref().and_then(|import| import.deadline))
             .chain(self.save_at)
             .chain(self.metadata_checkpoint.deadline())
@@ -5998,6 +6011,15 @@ impl App for Reader {
             && error.kind() != io::ErrorKind::WouldBlock
         {
             return self.report(error);
+        }
+        if self.export_deadline().is_some_and(|deadline| deadline <= now) {
+            return match self.step_library_export(now) {
+                Ok(change) => change,
+                Err(error) => {
+                    self.show(Screen::LibraryExport(library_export::Page::Options));
+                    self.report(error)
+                }
+            };
         }
         if self
             .scan_columns
