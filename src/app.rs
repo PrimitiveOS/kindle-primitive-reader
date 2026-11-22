@@ -1030,7 +1030,7 @@ impl Reader {
                 Reading::restore(control, saved.chapter, saved.page, saved.anchor.as_ref())?
             } else { Reading::open(control)? };
             if let Some(anchor) = position.as_ref().and_then(|saved| saved.anchor.as_ref())
-                && checked.probe.page_for(anchor).is_none() {
+                && checked.probe.restore_anchor(anchor).is_none() {
                 return Err(io::Error::other("The saved source anchor is unavailable; this is not a font-fit error").into());
             }
             self.logical_recovery = Some(logical_font::Recovery {

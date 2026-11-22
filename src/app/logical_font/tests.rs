@@ -579,3 +579,79 @@ fn recovering_a_different_book_resets_navigation_and_restores_that_books_numberi
         marks
     );
 }
+
+#[test]
+fn fit_recovery_keeps_restorable_css_hidden_focus_but_rejects_invalid_source_points() {
+    let fixture = Fixture::new();
+    let path = fixture.root.join("Hidden focus.xhtml");
+    let original = "<html><body><p>Before <span style='display:none'>secret focus</span> after visible text.</p></body></html>";
+    fs::write(&path, original).unwrap();
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts()).unwrap();
+    app.open_path(&path).unwrap();
+    let active = app.active.as_ref().unwrap();
+    let id = active.id;
+    let block = active
+        .reading
+        .probe
+        .source
+        .blocks
+        .iter()
+        .find(|b| b.text.contains("secret focus"))
+        .unwrap();
+    let anchor = active
+        .reading
+        .probe
+        .anchor(block.key, block.text.find("secret focus").unwrap());
+    assert_eq!(
+        active.reading.probe.source_presentation(&anchor),
+        Some(crate::SourcePresentation::CssOmitted)
+    );
+    assert!(active.reading.probe.restore_anchor(&anchor).is_some());
+    let bad_preferences = BookPreferences {
+        logical_font_size: Some(255.),
+        line_height: Some(3.),
+        margin_top: Some(350),
+        margin_bottom: Some(350),
+        ..Default::default()
+    };
+    let state = app.library.state_mut(id).unwrap();
+    state.preferences = bad_preferences.clone();
+    state.position = Some(ReadingPosition {
+        chapter: 0,
+        page: 0,
+        anchor: Some(anchor.clone()),
+    });
+    app.library.persist().unwrap();
+    app.open_path(&path).unwrap();
+    assert!(app.logical_recovery.is_some());
+    app.reset_unopened_logical_layout().unwrap();
+    assert_eq!(
+        app.active.as_ref().unwrap().reading.anchor(),
+        Some(anchor.clone())
+    );
+    assert_eq!(
+        app.library
+            .state(id)
+            .unwrap()
+            .position
+            .as_ref()
+            .unwrap()
+            .anchor,
+        Some(anchor.clone())
+    );
+    let mut invalid = anchor;
+    invalid.offset = usize::MAX;
+    let state = app.library.state_mut(id).unwrap();
+    state.preferences = bad_preferences;
+    state.position = Some(ReadingPosition {
+        chapter: 0,
+        page: 0,
+        anchor: Some(invalid),
+    });
+    app.library.persist().unwrap();
+    let before = app.library.bytes().unwrap();
+    assert!(app.open_path(&path).is_err());
+    assert!(app.logical_recovery.is_none());
+    assert_eq!(app.library.bytes().unwrap(), before);
+    assert_eq!(fs::read_to_string(path).unwrap(), original);
+}
