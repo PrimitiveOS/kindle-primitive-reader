@@ -4,6 +4,7 @@
 
 pub(crate) mod borders;
 pub(crate) mod flow;
+mod semantic_type;
 #[cfg(test)]
 mod flow_tests;
 use flow::{Display, Visibility};
@@ -829,6 +830,7 @@ struct Compound {
     tag: Option<String>,
     universal: bool,
     has_href: bool,
+    semantic_types: Vec<semantic_type::Selector>,
     is_link: bool,
     classes: Vec<String>,
     ids: Vec<String>,
@@ -842,6 +844,7 @@ impl Compound {
         self.tag.is_none()
             && !self.universal
             && !self.has_href
+            && self.semantic_types.is_empty()
             && !self.is_link
             && self.classes.is_empty()
             && self.ids.is_empty()
@@ -852,6 +855,7 @@ impl Compound {
     fn matches(&self, element: &Element) -> bool {
         !element.anonymous
             && (!self.has_href || element.has_href)
+            && self.semantic_types.iter().all(|selector| selector.matches(element))
             && (!self.is_link || (element.tag == "a" && element.has_href))
             && (!self.first_child || element.previous_sibling.is_none())
             && (!self.first_of_type || element.first_of_type)
@@ -905,11 +909,10 @@ impl Selector {
                 }
                 Token::Delim('*') if compound.is_empty() => compound.universal = true,
                 Token::SquareBracketBlock => {
-                    input.parse_nested_block(|p| {
-                        p.expect_ident_matching("href")?;
-                        Ok(())
-                    })?;
-                    compound.has_href = true;
+                    match input.parse_nested_block(semantic_type::parse)? {
+                        semantic_type::Attribute::Href => compound.has_href = true,
+                        semantic_type::Attribute::Type(selector) => compound.semantic_types.push(selector),
+                    }
                     specificity.1 = specificity.1.saturating_add(1);
                 }
                 Token::Colon => {

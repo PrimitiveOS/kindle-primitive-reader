@@ -151,6 +151,8 @@ pub(crate) struct Element {
     pub tag: String,
     pub classes: String,
     pub has_href: bool,
+    /// Pinned CRE selectors identify attributes by local name, ignoring prefixes.
+    pub type_attribute: Option<String>,
     pub list_kind: Option<crate::list_marker::MarkerKind>,
     pub id: Option<String>,
     pub inline_style: Option<String>,
@@ -518,6 +520,8 @@ impl Source {
                 tag: node.tag_name().name().to_owned(),
                 list_kind: crate::list_marker::MarkerKind::html(node),
                 has_href: node.has_attribute("href"),
+                type_attribute: node.attributes().find(|a| a.name() == "type")
+                    .map(|a| a.value().to_owned()),
                 classes: node.attribute("class").unwrap_or_default().to_owned(),
                 id: node.attribute("id").map(str::to_owned),
                 inline_style: if selector_only {
