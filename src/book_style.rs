@@ -77,6 +77,7 @@ impl ImageLength {
 pub(crate) enum CssLength {
     Em(f32),
     RootEm(f32),
+    ComputedEm { value: f32, font_scale: f32 },
     Pixels(f32),
     Fraction(f32),
 }
@@ -90,8 +91,14 @@ impl Default for CssLength {
 impl CssLength {
     fn computed(self, font: f32, root_font: f32) -> Self {
         match self {
-            Self::Em(em) => Self::Em(em * font),
-            Self::RootEm(em) => Self::Em(em * root_font),
+            Self::Em(value) => Self::ComputedEm {
+                value,
+                font_scale: font,
+            },
+            Self::RootEm(value) => Self::ComputedEm {
+                value,
+                font_scale: root_font,
+            },
             length => length,
         }
     }
@@ -99,9 +106,27 @@ impl CssLength {
     pub fn pixels(self, width: u32, reader_font: f32) -> f32 {
         match self {
             Self::Em(em) | Self::RootEm(em) => em * reader_font,
+            Self::ComputedEm { value, font_scale } => value * font_scale * reader_font,
             Self::Pixels(px) => px,
             Self::Fraction(ratio) => ratio * width as f32,
         }
+    }
+
+    // CREngine stores CSS numbers as signed units of 1/256 and uses integer
+    // font sizes and container widths when converting a block edge to pixels.
+    pub fn box_pixels(self, width: u32, reader_font: f32) -> f32 {
+        let fixed = |value: f32| (f64::from(value) * 256.).round() / 256.;
+        let pixels = match self {
+            Self::Pixels(px) => (fixed(px) + 127. / 256.).floor(),
+            Self::Fraction(ratio) => (f64::from(width) * fixed(ratio * 100.) / 100.).floor(),
+            Self::Em(value) | Self::RootEm(value) => {
+                (fixed(value) * f64::from(reader_font).floor()).floor()
+            }
+            Self::ComputedEm { value, font_scale } => {
+                (fixed(value) * f64::from(font_scale * reader_font).floor()).floor()
+            }
+        };
+        pixels as f32
     }
 }
 
@@ -133,6 +158,10 @@ impl TextIndent {
 
     pub fn pixels(self, width: u32, reader_font: f32) -> f32 {
         self.length.pixels(width, reader_font)
+    }
+
+    pub fn box_pixels(self, width: u32, reader_font: f32) -> f32 {
+        self.length.box_pixels(width, reader_font)
     }
 }
 

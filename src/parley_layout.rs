@@ -759,10 +759,13 @@ impl LineIndent {
         // available column and shifts the other lines inward (as CREngine does
         // when page overflow is disabled). This also protects adjacent cells.
         let limit = (width as f32 - font.min(width as f32 / 2.0)).max(0.0);
-        let css = style
-            .text_indent
-            .pixels(content_width, font)
-            .clamp(-limit, limit);
+        let requested = style.text_indent.pixels(content_width, font);
+        let css = if requested < 0.0 {
+            style.text_indent.box_pixels(content_width, font)
+        } else {
+            requested
+        }
+        .clamp(-limit, limit);
         let (first, rest) = if style.text_indent.hanging {
             (0.0, marker as f32 + css)
         } else {

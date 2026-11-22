@@ -34,7 +34,7 @@ impl BoxArea {
         style: &Style,
         font: f32,
     ) -> (u32, u32) {
-        let indent = style.text_indent.pixels(self.outer_width, font);
+        let indent = style.text_indent.box_pixels(self.outer_width, font);
         if indent >= 0.0 || self.width == self.outer_width {
             return (self.x, self.width);
         }
@@ -53,8 +53,8 @@ impl BoxArea {
     }
 
     fn pad(&mut self, sides: &[CssLength; 2], font: f32) {
-        let left = sides[0].pixels(self.width, font).round();
-        let right = sides[1].pixels(self.width, font).round();
+        let left = sides[0].box_pixels(self.width, font);
+        let right = sides[1].box_pixels(self.width, font);
         let sum = left + right;
         if sum <= 0. {
             return;
@@ -179,8 +179,8 @@ mod tests {
         let sibling = r("sibling");
         let (first_x, cell_width) = first.cell.unwrap().bounds(800, 9);
         let (second_x, second_width) = second.cell.unwrap().bounds(800, 9);
-        let ten_percent = (cell_width as f32 * 0.1).round() as u32;
-        let nested = ((cell_width - ten_percent) as f32 * 0.1).round() as u32;
+        let ten_percent = (cell_width as f32 * 0.1).floor() as u32;
+        let nested = ((cell_width - ten_percent) as f32 * 0.1).floor() as u32;
         assert_eq!(
             (first.x, first.width),
             (

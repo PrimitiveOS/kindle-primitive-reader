@@ -31,8 +31,8 @@ fn publisher_box_padding_shapes_wrapped_text_and_preserves_source_positions() {
     assert_ne!(plain.capture(0).unwrap(), styled.capture(0).unwrap());
     for (id, phrase, displacement) in [
         ("ordinary", "Harbor lights", 0),
-        ("sheltered", "Inside the sheltered", 53),
-        ("nested", "Nested inside", 89),
+        ("sheltered", "Inside the sheltered", 52),
+        ("nested", "Nested inside", 88),
         ("asymmetric", "Beyond the eastern", 12),
         ("plain", "Back in the open", 0),
     ] {
@@ -139,7 +139,11 @@ fn compares_publisher_padding_in_an_original_document() {
             let shift = (p.x - old.x).round() as i32;
             let changed = p.layout.len() != old.layout.len();
             let measure = p.layout.width() - old.layout.width();
-            if shift == 0 && !changed && measure.abs() < 0.5 {
+            let changed_lines = p.layout.lines().zip(old.layout.lines()).any(|(new, old)| {
+                new.text_range() != old.text_range()
+                    || (new.metrics().offset - old.metrics().offset).abs() > 0.25
+            });
+            if shift == 0 && !changed && !changed_lines && measure.abs() < 0.5 {
                 continue;
             }
             narrower += 1;
@@ -260,4 +264,75 @@ fn negative_first_lines_spend_available_physical_padding_before_shifting_other_l
     let line = rtl.layout.get(0).unwrap();
     let edge = line.metrics().offset + line.metrics().advance;
     assert!((edge - (cfg.text_width() as f32 - 45.)).abs() < 1.);
+}
+
+#[test]
+fn an_inset_paragraph_resolves_its_visible_link_at_the_new_word_position() {
+    let html = r##"<html><body><p style="padding-left:120px"><a href="#destination">Harbor charts</a> and notes.</p><p id="destination">The next landing.</p></body></html>"##;
+    let p = Probe::from_book_content(
+        Book::open(&crate::test_fixture("field-notes-epub3.epub")).unwrap(),
+        Engine::Parley,
+        &[crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+        Settings {
+            width: 640,
+            height: 800,
+            margin: 30,
+            font_size: 26.,
+            ..Default::default()
+        },
+        0,
+        Some(html.into()),
+    )
+    .unwrap();
+    let start = p.matches("Harbor charts").remove(0);
+    let end = crate::Anchor {
+        offset: start.offset + "Harbor".len(),
+        ..start.clone()
+    };
+    let selection = p.select_range(&start, &end).unwrap();
+    let page = p.page_for(&start).unwrap();
+    let bounds = p.selection_rects(page, &selection)[0];
+    let hit = p
+        .link_at(
+            page,
+            (bounds.x + bounds.width / 2) as f32,
+            (bounds.y + bounds.height / 2) as f32,
+        )
+        .unwrap();
+    assert_eq!(hit.fragment.as_deref(), Some("destination"));
+    assert_eq!(p.page_for(&p.fragment("destination").unwrap()), Some(page));
+}
+
+#[test]
+fn fractional_em_padding_matches_signed_fixed_point_lengths_at_both_font_sizes() {
+    let words = "All along the dunes the tide has left small white shells and pebbles. ".repeat(7);
+    let html = format!(
+        r#"<html><body><p id="large" style="padding-left:2.35em;text-indent:-0.65em">{words}</p>
+        <div style="font-size:85%"><p id="small" style="padding-left:2.35em;text-indent:-0.65em">{words}</p></div>
+        </body></html>"#
+    );
+    let p = Probe::from_book_content(
+        Book::open(&crate::test_fixture("field-notes-epub3.epub")).unwrap(),
+        Engine::Parley,
+        &[crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+        Settings {
+            width: 760,
+            height: 1680,
+            margin: 30,
+            font_size: 42.,
+            ..Default::default()
+        },
+        0,
+        Some(html),
+    )
+    .unwrap();
+    let crate::Renderer::Parley(engine) = &p.renderer else {
+        panic!()
+    };
+    for (id, first, rest) in [("large", 70., 98.), ("small", 59., 82.)] {
+        let key = p.fragment(id).unwrap().block;
+        let q = engine.paragraphs.iter().find(|q| q.key == key).unwrap();
+        assert_eq!(q.x + q.layout.get(0).unwrap().metrics().offset, first);
+        assert_eq!(q.x + q.layout.get(1).unwrap().metrics().offset, rest);
+    }
 }
