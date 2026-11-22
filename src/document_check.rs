@@ -50,7 +50,7 @@ fn select_in_picker(app: &mut Reader, library: &Library, relative: &Path) -> Res
     Ok(())
 }
 
-mod spine;
+pub(crate) mod spine;
 mod css_coverage;
 use spine::verify_spine;
 
@@ -130,6 +130,9 @@ pub fn verify(
     {
         return Err("Continue reading changed the saved position".into());
     }
+    // A fresh book can have application defaults that differ from Settings::default.
+    // Keep the resumed session's immutable fonts/styles/rules and geometry inputs.
+    let spine_config = resumed.verification_book_config();
     drop(resumed);
     drop(canvas);
     drop(resumed_frame);
@@ -137,7 +140,7 @@ pub fn verify(
     drop(pixels);
     let spine = match env::var("READER_VERIFY_SPINE") {
         Ok(mode) if matches!(entry.format, DocumentFormat::Epub | DocumentFormat::Mobi) => Some(
-            verify_spine(&saved.absolute_path(&entry.path)?, &fonts, &mode)?,
+            verify_spine(&saved.absolute_path(&entry.path)?, &fonts, &mode, spine_config.as_ref())?,
         ),
         _ => None,
     };

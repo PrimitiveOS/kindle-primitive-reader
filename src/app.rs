@@ -705,6 +705,12 @@ pub struct Reader {
 }
 
 impl Reader {
+    /// Immutable inputs for diagnostics to reproduce this live reflow session.
+    /// Fixed-page documents deliberately have no reflow configuration.
+    pub(crate) fn verification_book_config(&self) -> Option<BookConfig> {
+        self.active.as_ref().map(|active| active.reading.config.clone())
+    }
+
     pub fn open(documents: &Path, state: &Path, fonts: Vec<PathBuf>) -> io::Result<Self> {
         reading_backup::recover(state)?;
         Self::open_data(documents, state, fonts)
@@ -11503,3 +11509,6 @@ mod tests {
         assert_eq!(fixture.app().library.state(id).unwrap().highlights[0].created_at, Some(1_750_000_001));
     }
 }
+
+#[cfg(test)]
+mod spine_configuration_tests;
