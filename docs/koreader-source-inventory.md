@@ -47,7 +47,7 @@ To check coverage, run `python3 scripts/check-koreader-inventory.py /path/to/kor
 | Upstream identifiers | Reader behavior and acceptance |
 | --- | --- |
 | `gestures`, `hotkeys`, `externalkeyboard` | Assignable single-contact gestures and Oasis page buttons have Rust paths. Multi-contact gestures, sequences, external keyboard and hardware remapping require separate evidence. |
-| `autoturn`, `readtimer` | Timed turns use the ordinary paced page handler. A reading alarm is a different workflow. Check pause, sleep, end-of-book and cancellation independently. |
+| `autoturn`, `readtimer` | Timed turns use the ordinary paced page handler. Read timer supports intervals, local alarms, repeat, expiry messages and resume in the normal Tools menu. [Clock semantics and verification](read-timer.md) |
 | `exporter`, `vocabbuilder`, `statistics`, `profiles` | Reader exports annotations, saves vocabulary, time and profiles. Compare export formats, scheduled vocabulary review, calendars, daily histories and action sequences. |
 | `opds`, `calibre`, `kosync`, `cloudstorage`, `wallabag`, `newsdownloader` | Networked reading workflows. Compare discovery, downloading, progress/sync conflict choice, offline cache and user-initiated transmission separately. |
 | `coverbrowser`, `bookshortcuts`, `movetoarchive`, `archiveviewer` | Check browse views, document shortcuts, completed-book filing and supported archive content through Reader and Files. |

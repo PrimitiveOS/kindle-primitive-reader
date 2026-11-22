@@ -352,6 +352,9 @@ impl Reader {
 
     fn document_tool_items(&self) -> Vec<Item> {
         let mut items = self.scan_items();
+        let timer = self.read_alarm.caption(std::time::Instant::now())
+            .unwrap_or_else(|| "Set an interval or alarm".into());
+        items.insert(0, Item::new("Read timer", Action::ReadAlarm).detail(timer));
         if self.searchable_document() {
             items.push(Item::new(
                 "Highlights and notes",

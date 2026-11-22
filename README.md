@@ -58,6 +58,8 @@ Tap a saved passage to read its note. When marks overlap, Reader shows the match
 
 Read with publisher fonts on supported Kindle editions, or find the previous or next matching page directly from the current PDF or DjVu view. [Embedded font support](docs/kf8-publication-fonts.md) · [Fixed-page search](docs/fixed-page-search.md)
 
+The upper **Tools** menu includes **Read timer** for a countdown or a local clock alarm. You can repeat an interval or dismiss the message and return to the same passage. [Read timer controls](docs/read-timer.md)
+
 The reading footer can estimate how long the current chapter or book will take. Superscripts and subscripts follow the publisher's text, keeping footnotes and formulas legible. [Reading time](docs/reading-time-estimates.md) · [Sample reading page](docs/screenshots/inline-scripts.png)
 
 ## Reading on Kindle

@@ -1385,6 +1385,26 @@ impl FixedReading {
         self.draw_with_footer(canvas, notice, marks, selection, paint, false);
     }
 
+    pub(crate) fn page_status(&self) -> String {
+        let physical = self.page + 1;
+        let zoom = (ZOOM[self.view.zoom] * 100.0) as u32;
+        if self.is_spread() {
+            match self.spread_pages() {
+                [Some(first), Some(last)] => {
+                    format!("Pages {}–{} of {}", first + 1, last + 1, self.count())
+                }
+                _ => format!("Page {physical} of {}", self.count()),
+            }
+        } else {
+            match self.page_label(self.page) {
+                Some(label) if label != physical.to_string() => {
+                    format!("Page {label}  ·  {physical}/{}  ·  {zoom}%", self.count())
+                }
+                _ => format!("Page {physical} of {}  ·  {zoom}%", self.count()),
+            }
+        }
+    }
+
     pub(crate) fn draw_with_footer(
         &self,
         canvas: &mut Canvas,
@@ -1417,23 +1437,7 @@ impl FixedReading {
         if !selection.is_empty() {
             return;
         }
-        let physical = self.page + 1;
-        let zoom = (ZOOM[self.view.zoom] * 100.0) as u32;
-        let label = if self.is_spread() {
-            match self.spread_pages() {
-                [Some(first), Some(last)] => {
-                    format!("Pages {}–{} of {}", first + 1, last + 1, self.count())
-                }
-                _ => format!("Page {physical} of {}", self.count()),
-            }
-        } else {
-            match self.page_label(self.page) {
-                Some(label) if label != physical.to_string() => {
-                    format!("Page {label}  ·  {physical}/{}  ·  {zoom}%", self.count())
-                }
-                _ => format!("Page {physical} of {}  ·  {zoom}%", self.count()),
-            }
-        };
+        let label = self.page_status();
         canvas.text(
             Rect::new(38, PAGE_HEIGHT as i32 + 12, SMALLER.x - 60, 48),
             notice.unwrap_or(&label),

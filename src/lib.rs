@@ -442,6 +442,8 @@ enum Renderer {
 
 /// One bounded chapter layout. The renderer and cache are replaced at a chapter turn.
 pub struct Probe {
+    #[cfg(feature = "kindle")]
+    pub(crate) first_series: Option<crate::epub::BookSeries>,
     pub title: String,
     pub author: Option<String>,
     pub chapter: String,
@@ -550,6 +552,8 @@ impl Probe {
         let chapter_label = entry.label.clone();
         let title = book.title.clone();
         let author = book.author.clone();
+        #[cfg(feature = "kindle")]
+        let first_series = book.series().first().cloned();
         let publication = book.revision();
         let spine_rtl = book.spine_rtl;
         let chapters = book.chapters.clone();
@@ -675,6 +679,8 @@ impl Probe {
         Ok(Self {
             title,
             author,
+            #[cfg(feature = "kindle")]
+            first_series,
             chapter: href,
             chapter_label,
             book: publication,

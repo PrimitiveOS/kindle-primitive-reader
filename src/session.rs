@@ -755,6 +755,22 @@ impl Reading {
         std::mem::take(&mut self.end_attempt)
     }
 
+    pub(crate) fn page_status(&self) -> String {
+        let first = first_frame_page(&self.probe, self.page) + 1;
+        let count = self.probe.page_count();
+        let last = self.last_visible_page() + 1;
+        let pages = if first == last {
+            format!("Page {first} of {count}")
+        } else {
+            format!("Pages {first}–{last} of {count}")
+        };
+        format!(
+            "Chapter {} of {}  ·  {pages}",
+            self.chapter + 1,
+            self.probe.chapter_count()
+        )
+    }
+
     pub(crate) fn draw_page(
         &self,
         canvas: &mut Canvas,
@@ -772,19 +788,7 @@ impl Reading {
             return;
         };
         let Some(action) = action else { return };
-        let first = first_frame_page(&self.probe, self.page) + 1;
-        let count = self.probe.page_count();
-        let last = self.last_visible_page() + 1;
-        let pages = if first == last {
-            format!("Page {first} of {count}")
-        } else {
-            format!("Pages {first}–{last} of {count}")
-        };
-        let progress = format!(
-            "Chapter {} of {}  ·  {pages}",
-            self.chapter + 1,
-            self.probe.chapter_count()
-        );
+        let progress = self.page_status();
         canvas.text(
             Rect::new(38, PAGE_HEIGHT as i32 + 12, DONE.x - 60, 48),
             self.error.as_deref().or(notice).unwrap_or(&progress),

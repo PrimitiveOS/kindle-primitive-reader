@@ -10,7 +10,7 @@ description = "Offline book reader for PrimitiveOS on Kindle"
 default = ["kindle"]
 # Independent reference build for pixel comparisons against full JPEG decoding.
 reference-full-dct = ["hayro-interpret/reference-full-dct"]
-kindle = ["dep:primitive-app", "dep:primitive-ui", "dep:unicode-bidi", "dep:ureq", "dep:url", "dep:qrcodegen", "dep:self_cell"]
+kindle = ["dep:primitive-app", "dep:primitive-ui", "dep:unicode-bidi", "dep:ureq", "dep:url", "dep:qrcodegen", "dep:self_cell", "dep:libc", "dep:primitive-device"]
 
 [build-dependencies]
 cc = "=1.11.2"
@@ -38,12 +38,14 @@ icu_normalizer = { version = "=2.4.0", default-features = false, features = ["co
 icu_properties = "=2.4.0"
 icu_segmenter = "=2.4.0"
 image = { version = "=0.25.10", default-features = false, features = ["bmp", "jpeg", "png", "pnm", "webp"] }
+libc = { version = "=0.2.191", optional = true }
 libchm = { path = "vendor/libchm", version = "=0.3.0" }
 lopdf = { version = "=0.47.0", default-features = false }
 md5 = "=0.8.0"
 parley = { version = "=0.12.0", default-features = false, features = ["std"] }
 percent-encoding = "=2.3.2"
 png = "=0.17.16"
+primitive-device = { git = "https://github.com/PrimitiveOS/kindle-primtitive-tools.git", rev = "85095a5f28f50e0e2bb45db65b1b343c2692d560", optional = true }
 primitive-app = { git = "https://github.com/PrimitiveOS/kindle-primtitive-tools.git", rev = "85095a5f28f50e0e2bb45db65b1b343c2692d560", optional = true }
 primitive-ui = { git = "https://github.com/PrimitiveOS/kindle-primtitive-tools.git", rev = "85095a5f28f50e0e2bb45db65b1b343c2692d560", optional = true }
 pulldown-cmark = { version = "=0.13.0", default-features = false, features = ["html"] }

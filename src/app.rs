@@ -25,6 +25,7 @@ mod nearby_search;
 mod online_panel;
 mod quick_display;
 mod reader_timer;
+mod read_alarm;
 mod reading_bars;
 mod result_context;
 mod reading_footer;
@@ -298,6 +299,7 @@ enum Action {
     SetDisplayLevel(DisplayLevel, u32),
     RefreshDisplay,
     AutoTurn(Option<Duration>),
+    ReadAlarm,
     LockTouch,
     ExportBackup,
     ClearOcr,
@@ -556,6 +558,7 @@ pub struct Reader {
     system_theme: Option<SystemTheme>,
     refresh_display: bool,
     auto_turn: AutoTurn,
+    read_alarm: read_alarm::ReadAlarm,
     list_page: usize,
     matches_page: usize,
     result_context: Option<result_context::ResultContext>,
@@ -692,6 +695,7 @@ impl Reader {
             system_theme: SystemTheme::from_env(),
             refresh_display: false,
             auto_turn: AutoTurn::default(),
+            read_alarm: read_alarm::ReadAlarm::open(data.join("read-timer.json")),
             list_page: 0,
             matches_page: 0,
             result_context: None,
@@ -1991,6 +1995,7 @@ impl Reader {
                 self.pages_since_refresh = 0;
                 self.refresh_display = true;
             }
+            Action::ReadAlarm => { self.open_read_alarm(); }
             Action::AutoTurn(interval) => {
                 let now = Instant::now();
                 self.auto_turn.configure(interval, now);
@@ -2994,6 +2999,7 @@ impl Reader {
             && !self.touch_locked
             && self.end_dialog.is_none()
             && self.link_popup.is_none()
+            && !self.read_alarm.modal()
             && self.range_edit.is_none()
             && self.saved_popup.is_none()
             && self.selection.is_none()
@@ -4916,8 +4922,8 @@ impl Reader {
     }
 }
 
-impl App for Reader {
-    fn draw(&self, canvas: &mut Canvas) {
+impl Reader {
+    fn draw_content(&self, canvas: &mut Canvas) {
         // The launcher's theme may have changed (it asks for a redraw when it does).
         if let Some(theme) = &self.system_theme {
             theme.refresh();
@@ -5380,6 +5386,14 @@ impl App for Reader {
         if self.screen == Screen::ClearOnlineHistory { self.draw_clear_online_history(canvas); }
     }
 
+}
+
+impl App for Reader {
+    fn draw(&self, canvas: &mut Canvas) {
+        self.draw_content(canvas);
+        self.read_alarm.draw(canvas, self.screen == Screen::Book);
+    }
+
     fn press_point(&self, input: Input) -> Option<(f32, f32)> {
         match input {
             Input::Tap(x, y)
@@ -5392,6 +5406,7 @@ impl App for Reader {
     }
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
+        if self.read_alarm.modal() { return self.read_alarm_input(input); }
         if self.end_dialog.is_some() { return self.end_dialog_input(input); }
         if self.range_edit.is_some() { return self.range_input(input); }
         if self.saved_popup_over_book() {
@@ -5464,8 +5479,9 @@ impl App for Reader {
             if let Some(flow) = &mut self.text_flow {
                 flow.pause();
             }
-            return Change::None;
+            return if input == Input::Wake { self.poll_read_alarm(Instant::now(), true) } else { Change::None };
         }
+        if self.read_alarm.modal() { return self.read_alarm_input(input); }
         self.sync_auto_turn(Instant::now());
         self.auto_turn.activity(Instant::now());
         if self.end_dialog.is_some() { return self.end_dialog_input(input); }
@@ -5780,6 +5796,7 @@ impl App for Reader {
             .chain(fixed_page)
             .chain(self.nearby_marks.as_ref().and_then(|import| import.deadline))
             .chain(self.save_at)
+            .chain(self.stats_awake.then(|| self.read_alarm.deadline()).flatten())
             .chain(self.search_at)
             .chain(self.nearby.deadline())
             .chain(self.spelling_lookup.as_ref().map(|job| job.deadline))
@@ -5808,6 +5825,10 @@ impl App for Reader {
     }
 
     fn tick(&mut self, now: Instant) -> Change {
+        if self.stats_awake {
+            let alarm = self.poll_read_alarm(now, false);
+            if alarm != Change::None { return alarm; }
+        }
         if let Some(change) = self.poll_spelling_lookup(now) { return change; }
         if let Some(change) = self.poll_online(now) { return change; }
         if self.save_at.is_some_and(|at| at <= now) {
