@@ -26,6 +26,7 @@ pub(crate) struct TableFlow<'a> {
     // Only a transformed grid needs this sparse lookup. In particular, normal
     // chapters allocate neither a dense element index nor a copied cell array.
     remapped: Option<HashMap<Cell, Option<Cell>>>,
+    rows: Option<HashMap<usize, Option<usize>>>,
 }
 
 impl<'a> TableFlow<'a> {
@@ -33,6 +34,7 @@ impl<'a> TableFlow<'a> {
         Self {
             cells: Cow::Borrowed(&source.table_cells),
             remapped: None,
+            rows: None,
         }
     }
     pub(crate) fn is_identity(&self) -> bool {
@@ -50,6 +52,7 @@ impl<'a> TableFlow<'a> {
                     .map(|(_, cell)| (*cell, None))
                     .collect(),
             ),
+            rows: Some(HashMap::new()),
         }
     }
     pub(crate) fn cells(&self) -> &[(usize, Cell)] {
@@ -66,6 +69,13 @@ impl<'a> TableFlow<'a> {
         self.remapped
             .as_ref()
             .map_or(Some(old), |map| map.get(&old).copied().flatten())
+    }
+    /// A retained empty row can be spanned by an earlier cell and still own
+    /// collapsed-edge metadata, even though no cell starts on this row.
+    pub(crate) fn row_index(&self, element: usize, original_row: usize) -> Option<usize> {
+        self.rows.as_ref().map_or(Some(original_row), |rows| {
+            rows.get(&element).copied().flatten()
+        })
     }
 
     pub(crate) fn new(source: &'a Source, styles: &[Style]) -> crate::Result<Self> {
@@ -116,10 +126,22 @@ impl<'a> TableFlow<'a> {
         }
         let mut out = Vec::with_capacity(source.table_cells.len());
         let mut remapped = HashMap::with_capacity(source.table_cells.len());
+        let mut row_indices = HashMap::new();
         for entries in groups.into_values() {
             let table =
                 table_owner[entries[0].0].ok_or("The table cell has no native table owner")?;
             let rows = table_rows.remove(&table).unwrap_or_default();
+            let mut row_map = Vec::with_capacity(rows.len());
+            let mut row_count = 0;
+            for &row in &rows {
+                let mapped = (!styles[row].flow.suppressed && !styles[table].flow.suppressed)
+                    .then_some(row_count);
+                row_map.push(mapped);
+                row_indices.insert(row, mapped);
+                if mapped.is_some() {
+                    row_count += 1;
+                }
+            }
             if styles[table].flow.suppressed
                 || entries.iter().all(|&(i, _)| styles[i].flow.suppressed)
             {
@@ -141,17 +163,6 @@ impl<'a> TableFlow<'a> {
             }
             if columns_hidden && entries.iter().any(|(_, cell)| cell.fractions.is_some()) {
                 return Err(TableFlowError::HintReprojection.into());
-            }
-            let mut row_map = Vec::with_capacity(rows.len());
-            let mut row_count = 0;
-            for &row in &rows {
-                row_map.push(
-                    (!styles[row].flow.suppressed && !styles[table].flow.suppressed)
-                        .then_some(row_count),
-                );
-                if row_map.last().unwrap().is_some() {
-                    row_count += 1;
-                }
             }
             let mut grouped = BTreeMap::<usize, Vec<_>>::new();
             for (element, cell) in entries {
@@ -219,6 +230,7 @@ impl<'a> TableFlow<'a> {
         Ok(Self {
             cells: Cow::Owned(out),
             remapped: Some(remapped),
+            rows: Some(row_indices),
         })
     }
 }
