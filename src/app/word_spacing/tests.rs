@@ -156,8 +156,11 @@ fn pair_draft_steps_defaults_cancel_and_lifecycle_do_not_apply_early() {
 fn invalid_ranges_stale_picker_and_replaced_edition_cannot_change_saved_book() {
     let (fixture, mut app, path) = setup();
     app.save().unwrap();
-    let before = app.library.bytes().unwrap();
     editor(&mut app);
+    // Opening Spacing legitimately remembers the selected lower panel. Freeze
+    // that navigation state before checking rejected mutation requests.
+    app.save().unwrap();
+    let before = app.library.bytes().unwrap();
     for invalid in ["9", "501"] {
         text(&mut app, invalid);
         key(&mut app, primitive_ui::Key::Go);
