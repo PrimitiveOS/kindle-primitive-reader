@@ -102,18 +102,33 @@ SHA-256; this does not establish namespace-selector or rendered-spine parity.
 Exact Mach-O executable hashes, source hashes, build JSON and screenshots are
 retained privately under `build/parity-review/flow-consumer-evidence/`.
 
+## Combined desktop checkpoint
+
+The assembled source `9a5006e2` includes these consumers, immutable styled search,
+the four-case footnote-root correction, custom content DPI and explicit verifier
+intent accounting. It passes 829 library, 14 package and four system tests on
+Mac (847 ordinary cases). Eight original-document defaults, complete-backup and
+DPI runs also pass with unchanged EPUB/PDF/AZW3/MOBI hashes. The verifier keeps
+all canonical characters in its denominator and reports CSS omissions,
+visibility-hidden geometry, fragment-owner intent and layout limitations
+separately. Losing visibility-hidden geometry remains a failure.
+
+Its full-original replay is **not accepted**: original EPUB 053 loses layouts in
+zero-based sections 29, 32 and 46 that the prior style checkpoint could open.
+The failing result and preceding comparison are retained for diagnosis. A
+separate tail replay completes the remaining original editions. These results
+are desktop-only and do not authorize replacing the official 0.1.22 package.
+
 ## Remaining acceptance gates
 
 1. A generated-only visible LI/container with all source children removed needs a
    durable DOM/block-boundary anchor and box geometry. Its source intent remains
    eligible; it must never be relabeled an intentional omission to hide the
    missing geometry.
-2. The pinned native footnote oracle proves a pre-existing popup extraction
-   mismatch: an ID on an inner P exports only P, whereas our semantic-container
-   widening currently also includes its hidden aside ancestor. Inline CSS must
-   stay intact; linked sheets are omitted. A separate focused correction is in
-   progress. The retained authored test documents the current implementation,
-   not acceptance of that mismatch.
+2. The focused correction stops widening an inner-P target to its semantic
+   aside and preserves inline attributes. Exact rendered-final ancestry,
+   including inline targets inside hidden blocks and visible final ancestors,
+   remains a separate source-aware popup integration gate.
 3. Arbitrary non-`none` display box reclassification, namespace attribute selectors
    such as the original 034 EPUB footnote rule, and exact changed fractional grid
    fidelity are not claimed. The table fallback is visibly readable but degraded.

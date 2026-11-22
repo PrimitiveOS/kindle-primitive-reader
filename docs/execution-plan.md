@@ -26,6 +26,15 @@ gap or audit states. The capture is a stock macOS SDL reference, separate from
 Oasis acceptance. Use its remaining contracts to schedule implementation; these
 inventory counts do not measure completed parity.
 
+## Current desktop integration gate
+
+Source `9a5006e2` passes 847 ordinary Mac tests and eight original-document
+settings, backup and DPI workflow runs. Its original EPUB 053 replay exposes
+three failing sections (zero-based 29, 32 and 46), so the current full-layout
+corpus gate remains open. Preserve the failure and verify the repaired chapters
+and aggregate before release. The Kindle is disconnected at the owner's request.
+[Consumer integration and limits](css-flow-consumers.md)
+
 ## Verification on existing Kindle documents
 
 Use the original file, the same view and the same input action in both readers when comparing behavior. Separate opening a document, painting a page, navigating to a passage, resuming after exit and retaining an annotation. A successful open alone did not reveal the lost PDF destinations, chapter-end blank pages or missing list markers found in this collection.
