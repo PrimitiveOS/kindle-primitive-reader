@@ -5702,7 +5702,10 @@ impl App for Reader {
         }
         if self.screen == Screen::Illustration {
             if matches!(input, Input::Tap(x, y) if DONE.contains(x, y)) {
-                self.show(if self.book_details.is_some() {
+                self.show(if self.book_details.as_ref().is_some_and(|details|
+                    details.back == Screen::BookmarkBrowser(bookmark_browser::Page::Book)) {
+                    Screen::BookmarkBrowser(bookmark_browser::Page::Book)
+                } else if self.book_details.is_some() {
                     Screen::BookDetails
                 } else if self.fixed.is_some() {
                     Screen::Fixed
@@ -5954,6 +5957,7 @@ impl App for Reader {
         page.into_iter()
             .chain(fixed_page)
             .chain(self.export_deadline())
+            .chain(self.bookmark_metadata_deadline())
             .chain(self.nearby_marks.as_ref().and_then(|import| import.deadline))
             .chain(self.save_at)
             .chain(self.metadata_checkpoint.deadline())
@@ -6019,6 +6023,12 @@ impl App for Reader {
                     self.show(Screen::LibraryExport(library_export::Page::Options));
                     self.report(error)
                 }
+            };
+        }
+        if self.bookmark_metadata_deadline().is_some_and(|deadline| deadline <= now) {
+            return match self.step_bookmark_metadata(now) {
+                Ok(change) => change,
+                Err(error) => self.report(error),
             };
         }
         if self
@@ -6129,7 +6139,11 @@ impl App for Reader {
         self.save_library()?;
         let now = Instant::now();
         self.stats.checkpoint(&self.stats_path, now, true)?;
-        self.pace.checkpoint(now)
+        self.pace.checkpoint(now)?;
+        if let Err(error) = self.save_bookmark_metadata() {
+            eprintln!("reader metadata_cache_save_failed={error}");
+        }
+        Ok(())
     }
 
     fn storage_returned(&mut self) -> io::Result<()> {

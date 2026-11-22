@@ -85,6 +85,7 @@ impl Format {
 }
 
 pub(crate) struct Document {
+    pub(crate) metadata: crate::publication_metadata::Metadata,
     pub(crate) title: String,
     pub(crate) author: Option<String>,
     pub(crate) chapter_path: String,
@@ -366,7 +367,7 @@ fn read_htmlz(file: File, length: u64, fallback: &str) -> Result<Document> {
     document.chapter_path = chapter_path;
     add_htmlz_contents(&mut document)?;
     if let Some(index) = metadata
-        && let Some((title, author)) =
+        && let Some((title, author, metadata)) =
             htmlz_metadata(&read_htmlz_member(&mut archive, index, MAX_HTMLZ_METADATA)?)
     {
         if let Some(title) = title {
@@ -375,6 +376,7 @@ fn read_htmlz(file: File, length: u64, fallback: &str) -> Result<Document> {
         if let Some(author) = author {
             document.author = Some(author);
         }
+        document.metadata = metadata;
     }
     for (index, name, limit) in resources {
         let bytes = read_htmlz_member(&mut archive, index, limit)?;
@@ -401,7 +403,7 @@ fn read_htmlz_member(
     Ok(bytes)
 }
 
-fn htmlz_metadata(bytes: &[u8]) -> Option<(Option<String>, Option<String>)> {
+fn htmlz_metadata(bytes: &[u8]) -> Option<(Option<String>, Option<String>, crate::publication_metadata::Metadata)> {
     const DC: &str = "http://purl.org/dc/elements/1.1/";
     let xml = decode_document(bytes, Format::Htmlz).ok()?;
     let document = Xml::parse_with_options(
@@ -424,7 +426,7 @@ fn htmlz_metadata(bytes: &[u8]) -> Option<(Option<String>, Option<String>)> {
             .find(|text| !text.is_empty())
             .map(str::to_owned)
     };
-    Some((value("title"), value("creator")))
+    Some((value("title"), value("creator"), crate::publication_metadata::Metadata::opf(metadata)))
 }
 
 fn add_htmlz_contents(document: &mut Document) -> Result<()> {
@@ -549,6 +551,7 @@ fn text_document(input: &str, title: &str) -> Result<Document> {
     }
     Ok(Document {
         title: title.to_owned(),
+        metadata: Default::default(),
         author: None,
         chapter_path: CHAPTER_PATH.to_owned(),
         xhtml: text_as_xhtml(&cleaned)?,
@@ -678,6 +681,7 @@ fn html_document(input: &str, fallback_title: &str) -> Result<Document> {
     Ok(Document {
         title,
         author,
+        metadata: crate::publication_metadata::Metadata::html(html),
         chapter_path: CHAPTER_PATH.to_owned(),
         xhtml: xhtml.into_owned(),
         toc: Vec::new(),
@@ -865,6 +869,7 @@ fn fb2_document(input: &str, fallback_title: &str) -> Result<Document> {
     Ok(Document {
         title,
         author: (!authors.is_empty()).then(|| authors.join(", ")),
+        metadata: info.map(|info| crate::publication_metadata::Metadata::fb2(info,input)).unwrap_or_default(),
         chapter_path: CHAPTER_PATH.to_owned(),
         xhtml: output.xhtml,
         toc: output.toc,

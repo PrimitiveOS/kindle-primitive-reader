@@ -101,6 +101,7 @@ enum Content {
         fonts: Option<crate::epub_font::EmbeddedFonts>,
     },
     Loose {
+        metadata: crate::publication_metadata::Metadata,
         xhtml: BTreeMap<String, String>,
         prior_mobi: BTreeMap<String, Vec<String>>,
         resources: BTreeMap<String, Vec<u8>>,
@@ -427,9 +428,14 @@ impl Book {
         }
     }
 
+    pub(crate) fn publisher_metadata(&self) -> Option<&crate::publication_metadata::Metadata> {
+        match &self.content { Content::Loose { metadata, .. } => Some(metadata), _ => None }
+    }
+
     #[cfg(feature = "kindle")]
     pub(crate) fn from_text(title: String, text: &str) -> Result<Self> {
         Ok(Self::from_loose(loose::Document {
+            metadata: Default::default(),
             title,
             author: None,
             chapter_path: loose::CHAPTER_PATH.to_owned(),
@@ -460,6 +466,7 @@ impl Book {
             printed_pages: Vec::new(),
             printed_source: None,
             content: Content::Loose {
+                metadata: document.metadata,
                 xhtml: BTreeMap::from([(chapter_path, document.xhtml)]),
                 prior_mobi: BTreeMap::new(),
                 resources: document.resources,
@@ -518,6 +525,7 @@ impl Book {
                     current
                 };
                 kf8::Kf8Document {
+                    metadata: document.metadata,
                     language: document.language,
                     title: document.title,
                     author: document.author,
@@ -577,6 +585,7 @@ impl Book {
             series: Vec::new(),
             cover: None,
             content: Content::Loose {
+                metadata: publication.metadata,
                 xhtml,
                 prior_mobi,
                 resources: publication.resources,
@@ -1719,6 +1728,7 @@ mod tests {
         assert_eq!(archive.resource_limited(path, image.len()).unwrap(), image);
 
         let mut loose = Book::from_loose(loose::Document {
+            metadata: Default::default(),
             title: "Package".into(),
             author: None,
             chapter_path: "document.xhtml".into(),

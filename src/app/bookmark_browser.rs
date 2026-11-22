@@ -1,4 +1,6 @@
 //! Browse saved marks across the library without changing an open document.
+mod metadata;
+mod metadata_view;
 use super::{
     Action, Book, Canvas, Change, Editor, HEIGHT, Input, Item, Reader, Rect, Result, Screen, WIDTH,
     with_storage,
@@ -38,6 +40,8 @@ pub(super) enum Page {
     Folder,
     Book,
     Authors,
+    Property(metadata::Property),
+    Description,
 }
 
 impl Page {
@@ -54,6 +58,8 @@ impl Page {
             Self::Folder => "Choose a folder",
             Self::Book => "Book information",
             Self::Authors => "Choose an author",
+            Self::Property(property) => property.title(),
+            Self::Description => "Book description",
         }
     }
 }
@@ -155,6 +161,8 @@ pub(super) enum Command {
     ApplyChoices,
     RestrictBooks,
     SelectAuthor(Option<String>),
+    SelectProperty(metadata::Property, Option<String>),
+    ViewCover,
     SetKind(Option<Kind>),
     SetStyle(Option<HighlightStyle>),
     SortByDate(bool),
@@ -186,6 +194,7 @@ struct Preferences {
 }
 
 pub(super) struct Browser {
+    catalog: metadata::Catalog,
     path: PathBuf,
     default_source: Option<Source>,
     origin: Screen,
@@ -219,6 +228,7 @@ pub(super) struct Browser {
 impl Default for Browser {
     fn default() -> Self {
         Self {
+            catalog: metadata::Catalog::default(),
             path: PathBuf::new(),
             default_source: None,
             origin: Screen::Library,
@@ -268,6 +278,7 @@ impl Browser {
         })()
         .unwrap_or_default();
         Self {
+            catalog: metadata::Catalog::load(path.with_file_name("bookmark-metadata.json")),
             path,
             default_source: preferences.source,
             kind: preferences.kind,
@@ -470,6 +481,8 @@ impl Reader {
                         _ => BTreeSet::new(),
                     };
                 }
+                if matches!(page, Page::Property(_)) { self.queue_bookmark_metadata(); }
+                if page == Page::Description { self.bookmark_browser.text_page = 0; }
                 self.show(Screen::BookmarkBrowser(page));
             }
             Command::Use(source) => {
@@ -482,7 +495,9 @@ impl Reader {
                         .filter_map(|book| {
                             let archived = self.library.absolute_path(&book.path).is_err();
                             source.matches(&self.library, book, archived).then(|| {
-                                let (chapters, fixed) = book_index(&self.library, book, archived);
+                                let (chapters, fixed) = self.bookmark_browser.catalog.get(book.id)
+                                    .map_or_else(|| (HashMap::new(), is_fixed(book)), |snapshot|
+                                        (snapshot.chapters.clone(), snapshot.fixed));
                                 (
                                     fold_search(&author_title(book)),
                                     ListedBook {
@@ -511,6 +526,7 @@ impl Reader {
                     Source::Collections(_) => "Collections".into(),
                 };
                 self.bookmark_browser.source = source;
+                self.queue_bookmark_metadata();
                 self.refresh_bookmark_browser();
                 self.show(Screen::BookmarkBrowser(Page::Results));
             }
@@ -585,6 +601,8 @@ impl Reader {
                 );
                 self.show(Screen::BookmarkBrowser(Page::ChooseBooks));
             }
+            Command::SelectProperty(property, value) => self.select_bookmark_property(property, value),
+            Command::ViewCover => self.view_bookmark_cover()?,
             Command::SelectAuthor(author) => {
                 let browser = &mut self.bookmark_browser;
                 let ids = self
@@ -668,6 +686,7 @@ impl Reader {
             }
             Command::BookInfo(id) => {
                 self.bookmark_browser.book = Some(id);
+                self.bookmark_browser.catalog.queue([id]);
                 self.show(Screen::BookmarkBrowser(Page::Book));
             }
             Command::ViewBook(id) => {
@@ -813,34 +832,6 @@ impl Reader {
             .iter()
             .any(|book| book.id == id && !book.archived)
     }
-}
-
-fn book_index(
-    library: &Library,
-    book: &BookState,
-    archived: bool,
-) -> (HashMap<String, usize>, bool) {
-    let fallback = (HashMap::new(), is_fixed(book));
-    if archived || fallback.1 {
-        return fallback;
-    }
-    let Ok(path) = library.absolute_path(&book.path) else {
-        return fallback;
-    };
-    let Ok(source) = Book::open(&path) else {
-        return fallback;
-    };
-    let chapters = book
-        .highlights
-        .iter()
-        .filter_map(|mark| {
-            let name = &mark.selection.start.chapter;
-            source
-                .chapter_index(name)
-                .map(|chapter| (name.clone(), chapter))
-        })
-        .collect();
-    (chapters, source.is_fixed_layout())
 }
 
 impl Reader {
@@ -1007,6 +998,9 @@ impl Reader {
                         .detail(format!("{} selected", chosen.len())),
                     item("Select or clear all", C::ToggleAllBooks),
                     item("Select by author", C::Go(Page::Authors)),
+                    item("Select by series", C::Go(Page::Property(metadata::Property::Series))),
+                    item("Select by language", C::Go(Page::Property(metadata::Property::Language))),
+                    item("Select by keyword", C::Go(Page::Property(metadata::Property::Keywords))),
                 ];
                 let mut candidates = self
                     .library
@@ -1050,6 +1044,7 @@ impl Reader {
                 );
                 rows
             }
+            Page::Property(property) => self.bookmark_property_rows(property),
             Page::Collections => {
                 let mut rows = vec![
                     item("Apply collections", C::ApplyChoices)
@@ -1095,28 +1090,9 @@ impl Reader {
                 rows
             }
             Page::Book => {
-                let Some(book) = browser.book.and_then(|id| self.library.state(id)) else {
-                    return Vec::new();
-                };
-                let available = self.bookmark_book_available(book.id);
-                let mut rows =
-                    vec![
-                        Item::new(author_title(book), Action::Heading).detail(if available {
-                            "Book"
-                        } else {
-                            "Archived · Source file unavailable"
-                        }),
-                    ];
-                if available {
-                    rows.push(item("Open book", C::ViewBook(book.id)));
-                    rows.push(Item::new("Source file", Action::Heading).detail(
-                        crate::library::display_filename(&book.path.to_string_lossy()),
-                    ));
-                }
-                rows.push(item("Books with matches", C::Go(Page::Books)));
-                rows
+                self.bookmark_metadata_rows()
             }
-            Page::Detail | Page::Search | Page::Results => Vec::new(),
+            Page::Detail | Page::Search | Page::Results | Page::Description => Vec::new(),
         }
     }
 
@@ -1163,6 +1139,10 @@ impl Reader {
             }
             Page::Detail => {
                 self.draw_bookmark_detail(canvas);
+                true
+            }
+            Page::Description => {
+                self.draw_bookmark_description(canvas);
                 true
             }
             _ => false,
@@ -1241,6 +1221,9 @@ impl Reader {
         {
             self.back_from_bookmark_browser(page);
             return Some(Change::Partial);
+        }
+        if page == Page::Description {
+            return Some(self.bookmark_description_input(input));
         }
         if page == Page::Search {
             return Some(self.bookmark_search_input(input));
@@ -1338,7 +1321,8 @@ impl Reader {
             Page::ChooseBooks | Page::Collections | Page::Folder => {
                 self.show(Screen::BookmarkBrowser(Page::Sources));
             }
-            Page::Authors => self.show(Screen::BookmarkBrowser(Page::ChooseBooks)),
+            Page::Authors | Page::Property(_) => self.show(Screen::BookmarkBrowser(Page::ChooseBooks)),
+            Page::Description => self.show(Screen::BookmarkBrowser(Page::Book)),
             _ => self.show(Screen::BookmarkBrowser(Page::Results)),
         }
     }

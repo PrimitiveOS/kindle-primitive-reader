@@ -226,6 +226,11 @@ impl FixedReading {
         Self::with_source(FixedDocument::Image(image), 0, View::default())
     }
 
+    /// Keep a rendered first-page cover in an independent, single-image inspection view.
+    pub(crate) fn into_cover_view(self) -> Result<Self> {
+        Self::inspect_image(ImagePage::from_grayscale(self.frame.width, self.frame.height, self.frame.pixels)?)
+    }
+
     /// Fit the touched panel in a separate viewer, leaving this reading view intact.
     pub(crate) fn inspect_comic_panel(&self, x: f32, y: f32) -> Result<Option<Self>> {
         let FixedDocument::Comic(comic) = &self.source else {

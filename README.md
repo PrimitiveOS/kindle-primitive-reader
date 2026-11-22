@@ -44,7 +44,7 @@ At the end of a book, Reader can show actions, mark the book as finished, open t
 
 Choose when Reader saves your position, bookmarks and notes, or save them immediately from the reading tools. [Save reading data](docs/metadata-save.md)
 
-Browse page bookmarks, highlights and notes across books from **Library › Bookmark browser**. Choose History, collections, selected books, archived records or a folder. Preview a mark, then tap **View in book** to open its passage. [Bookmark browser](docs/bookmark-browser.md)
+Browse page bookmarks, highlights and notes across books from **Library › Bookmark browser**. Choose History, collections, selected books, archived records or a folder. Select books by author, series, language or keyword, and inspect available covers and descriptions. Preview a mark, then tap **View in book** to open its passage. [Bookmark browser](docs/bookmark-browser.md)
 
 EPUB chapters can start a section on a fresh page and keep a heading with its opening paragraph when the publisher requests it. [Publisher page breaks](docs/publisher-page-breaks.md)
 

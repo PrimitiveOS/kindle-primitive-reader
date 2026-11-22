@@ -276,6 +276,17 @@ impl Pdf {
             .and_then(pdf_title)
     }
 
+    #[cfg(feature = "kindle")]
+    pub(crate) fn description_fields(&self) -> (Option<String>, Option<String>, Option<String>) {
+        let metadata = self.document.metadata();
+        let decode = |bytes: &[u8]| pdf_text(&bytes[..bytes.len().min(16 * 1024)]);
+        let xref = self.document.xref();
+        let language = xref.get::<Dict<'_>>(xref.root_id())
+            .and_then(|catalog| catalog.get::<PdfString<'_>>(b"Lang"))
+            .map(|language| decode(language.as_bytes()));
+        (metadata.subject.as_deref().map(decode), metadata.keywords.as_deref().map(decode), language)
+    }
+
     /// The printed label for a zero-based page, if the PDF provides one.
     pub fn page_label(&self, page: usize) -> Option<String> {
         if page >= self.page_count() {

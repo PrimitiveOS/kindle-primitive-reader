@@ -31,6 +31,7 @@ const MAX_XHTML_BYTES: usize = 16 * 1024 * 1024;
 const MAX_XML_NODES: u32 = 240_000;
 
 pub(crate) struct Kf8Document {
+    pub(crate) metadata: crate::publication_metadata::Metadata,
     pub language: Option<parley::Language>,
     pub title: Option<String>,
     pub author: Option<String>,
@@ -242,6 +243,7 @@ fn decode_edition(
     )?;
     let labels = mobi::kf8_labels(bytes, record, header);
     Ok(Kf8Document {
+        metadata: labels.metadata,
         title: labels.title,
         author: labels.author,
         language: labels.language,
