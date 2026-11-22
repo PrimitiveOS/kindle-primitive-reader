@@ -37,6 +37,8 @@ fn run() -> Result<()> {
         print!("{USAGE}");
         return Ok(());
     }
+    #[cfg(feature = "kindle")]
+    if first == "--opds-worker" && args.len() == 0 { return reader::opds::worker(); }
     let engine_name = first
         .into_string()
         .map_err(|_| "The engine name is invalid")?;

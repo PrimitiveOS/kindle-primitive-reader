@@ -92,6 +92,7 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         | Action::OpenPreviousDocument => CLOCK,
         Action::Show(Screen::BookMap) | Action::Overview => GRID,
         Action::ToggleNonlinear => BOOK,
+        Action::Catalog(_) => BOOK,
         Action::Flow(_) | Action::Show(Screen::HiddenFlows) => BOOK,
         Action::Show(Screen::Links) | Action::Wikipedia => LINK,
         Action::TranslatePage => TEXT,

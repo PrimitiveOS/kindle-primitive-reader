@@ -448,6 +448,7 @@ impl Reader {
             Item::new("Browse Documents", Action::Show(Screen::Library)),
             Item::new("Recently read", Action::ListBooks(BookList::Recent)),
             Item::new("Bookmark browser", Action::BookmarkBrowser(super::bookmark_browser::Command::Open)),
+            Item::new("Online catalogs", Action::Catalog(super::opds::Command::Open)),
         ];
         if self.has_previous_document() {
             items.push(Item::new(

@@ -36,6 +36,10 @@ Use the original file, the same view and the same input action in both readers w
 
 Reader now applies CREngine's defined Windows-1252 numeric-reference substitutions without modifying literal controls or CDATA. Desktop regressions cover variable-width saved positions, both older ruby text revisions, normalized attributes, search, selection and painting. A real EPUB chapter is checked with its unchanged source and the same local font stack. The independent Symbol private-use font gap remains open. Kindle acceptance is pending the next combined build. [Implementation and limits](numeric-character-references.md)
 
+## OPDS and calibre acquisition · K21
+
+The development candidate adds explicit configured OPDS catalogs, advertised search, server pagination, publication details, format choice and validated download to a selected Documents folder. Host checks use the real process worker, normal Reader controls and unchanged original EPUB content. The provider gate covers an isolated calibre Content server; wireless transfer and additional provider extensions remain separate. Native acquisition acceptance is pending the next combined Kindle build. [Protocol scope and evidence](opds-acquisition.md)
+
 ## P0.1 Prepare the corpus
 
 Record each fixture's source, redistribution terms, and checksum. Use original

@@ -25,7 +25,7 @@ use crate::mobi::MAX_MOBI_BYTES;
 use crate::selection::TextSelection;
 use crate::{Anchor, Settings, TextAlignment};
 
-const MAX_PATH_DEPTH: usize = 9;
+pub(crate) const MAX_PATH_DEPTH: usize = 9;
 const MAX_SCAN_ENTRIES: usize = 20_000;
 const MAX_BOOKS: usize = 4_096;
 const MAX_BROWSE_ENTRIES: usize = 4_096;

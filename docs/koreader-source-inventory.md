@@ -55,6 +55,8 @@ To check coverage, run `python3 scripts/check-koreader-inventory.py /path/to/kor
 | `autodim`, `autostandby`, `autosuspend`, `autowarmth`, `batterystat`, `coverimage`, `keepalive`, `timesync`, `systemstat` | System capabilities belong to Primitive Launcher. Verify access, return to the same page and device behavior for applicable Kindle workflows. |
 | `SSH`, `terminal`, `httpinspector`, `hello`, `texteditor`, `qrclipboard` | Previously excluded side tools, developer facilities or external utilities. Listed to make the complete upstream plug-in inventory visible. |
 
+The OPDS development candidate follows the pinned browser/parser reading path for Atom and JSON catalogs, advertised search, explicit format/destination selection and cancellable validated acquisition. HTTP Basic is origin-scoped; loan/DRM chains, calibre wireless transfer and additional providers have separate gates. [OPDS source map, UI and evidence](opds-acquisition.md)
+
 ## Reflow controls
 
 | Upstream identifiers | Reader behavior and acceptance |
