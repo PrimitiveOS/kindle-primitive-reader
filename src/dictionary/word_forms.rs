@@ -1,15 +1,31 @@
-//! Ordered English spelling variants used when a dictionary has no direct entry.
+//! Bounded lookup candidates; source wording and anchors are never normalized.
+mod japanese;
 use std::collections::HashMap;
 
 use super::MAX_RESULTS;
 
 #[derive(Default)]
 pub(super) struct WordForms {
-    order: HashMap<String, usize>,
+    pub(super) order: HashMap<String, usize>,
 }
 
 impl WordForms {
     pub(super) fn for_word(word: &str) -> Self {
+        let normalized = icu_normalizer::ComposingNormalizer::new_nfkc().normalize(word);
+        let mut forms = Self::english(&normalized);
+        if normalized != word {
+            for rank in forms.order.values_mut() {
+                *rank += 1;
+            }
+            forms.order.insert(normalized.into_owned(), 0);
+        }
+        for (variant, cost) in japanese::candidates(word) {
+            forms.order.entry(variant).or_insert(cost);
+        }
+        forms
+    }
+
+    fn english(word: &str) -> Self {
         let mut forms = Self::default();
         if word.len() < 2 || !word.is_ascii() {
             return forms;
@@ -166,4 +182,20 @@ fn inflection_order_prefers_a_dictionary_entry_for_the_closest_word_form() {
     }
     assert!(WordForms::for_word("hôtels").order.is_empty());
     assert!(WordForms::for_word("s").order.is_empty());
+}
+
+#[test]
+fn compatibility_normalization_prefers_the_normalized_entry_and_preserves_ambiguity() {
+    let forms = WordForms::for_word("Ｄｏｇｓ");
+    assert_eq!(forms.rank("Dogs"), Some(0));
+    assert!(forms.rank("Dog").unwrap() > forms.rank("Dogs").unwrap());
+    assert_eq!(WordForms::for_word("ｶﾞｸｾｲ").rank("ガクセイ"), Some(0));
+    assert_eq!(
+        WordForms::for_word("か\u{3099}くせい").rank("がくせい"),
+        Some(0)
+    );
+    let forms = WordForms::for_word("読んだ");
+    assert_eq!(forms.rank("読む"), forms.rank("読ぶ"));
+    assert!(forms.rank("読む").is_some());
+    assert!(WordForms::for_word("讀書").order.is_empty());
 }

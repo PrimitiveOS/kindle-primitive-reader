@@ -9,6 +9,7 @@ pub(crate) mod publisher_pages;
 mod character_page_settings;
 use character_page_settings::NumberField;
 mod dictionary_panel;
+mod cjk_selection;
 mod dictionary_sources;
 use dictionary_sources::{SourceAction, SourcePreferences};
 mod end_of_book;
@@ -649,6 +650,7 @@ pub struct Reader {
     definition_expanded: bool,
     dictionary_navigation: dictionary_panel::Navigation,
     spelling_lookup: Option<dictionary_panel::SpellingLookup>,
+    cjk_selection_lookup: Option<cjk_selection::Lookup>,
 }
 
 impl Reader {
@@ -791,6 +793,7 @@ impl Reader {
             definition_expanded: false,
             dictionary_navigation: Default::default(),
             spelling_lookup: None,
+            cjk_selection_lookup: None,
         })
     }
 
@@ -969,6 +972,7 @@ impl Reader {
         self.flow_popup = None;
         self.end_dialog = None;
         if screen != Screen::Definition { self.spelling_lookup = None; }
+        self.cjk_selection_lookup = None;
         self.result_context = None;
         if !matches!(screen, Screen::Footnote | Screen::Definition | Screen::OnlineLookup | Screen::OnlineEdit) {
             self.footnote = None;
@@ -3835,6 +3839,7 @@ impl Reader {
                 return Change::None;
             };
             self.selection = active.reading.word_at(x, y);
+            self.start_cjk_selection();
             self.notice = None;
             return Change::Partial;
         }
@@ -5676,6 +5681,9 @@ impl App for Reader {
     }
 
     fn input(&mut self, input: Input) -> Change {
+        // Any further user action owns the selection; late automatic results
+        // must never replace a manually extended range or an open popup.
+        self.cjk_selection_lookup = None;
         if let Some(change) = self.vocabulary_dialog_input(input) { return change; }
         if input == Input::Sleep {
             self.spelling_lookup = None;
@@ -6053,6 +6061,7 @@ impl App for Reader {
             .chain(self.search_at)
             .chain(self.nearby.deadline())
             .chain(self.spelling_lookup.as_ref().map(|job| job.deadline))
+            .chain(self.cjk_selection_lookup.as_ref().map(|job| job.deadline))
             .chain(self.outline.as_ref().and_then(|outline| outline.deadline))
             .chain(self.numbering_scan.as_ref().map(|scan| scan.deadline))
             .chain(
@@ -6082,6 +6091,7 @@ impl App for Reader {
             let alarm = self.poll_read_alarm(now, false);
             if alarm != Change::None { return alarm; }
         }
+        if let Some(change) = self.poll_cjk_selection(now) { return change; }
         if let Some(change) = self.poll_spelling_lookup(now) { return change; }
         if let Some(change) = self.poll_online(now) { return change; }
         if self.save_at.is_some_and(|at| at <= now)
@@ -6235,6 +6245,7 @@ impl App for Reader {
     }
 
     fn storage_returned(&mut self) -> io::Result<()> {
+        self.cjk_selection_lookup = None;
         self.spelling_lookup = None;
         self.cancel_ocr_selection();
         self.pages_since_refresh = 0;

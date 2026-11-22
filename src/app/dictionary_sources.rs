@@ -9,6 +9,8 @@ pub(super) struct SourcePreferences {
 }
 
 impl SourcePreferences {
+    pub(super) fn paths(&self) -> (&[PathBuf], &[PathBuf]) { (&self.order, &self.disabled) }
+
     pub(super) fn load(path: &Path) -> Self {
         let Ok(bytes) = read_import_file(path, 64 * 1024) else {
             return Self::default();
@@ -52,7 +54,7 @@ fn toggle(paths: &mut Vec<PathBuf>, key: &Path) {
 }
 
 impl Reader {
-    fn book_dictionaries(&self) -> &[PathBuf] {
+    pub(super) fn book_dictionaries(&self) -> &[PathBuf] {
         self.open_book_id()
             .and_then(|id| self.library.state(id))
             .map_or(&[], |book| book.preferred_dictionaries.as_slice())
@@ -62,7 +64,7 @@ impl Reader {
         self.open_book_id().and_then(|id| self.library.state(id)).and_then(|s| s.dictionary_word_forms)
     }
 
-    fn word_forms_enabled(&self) -> bool {
+    pub(super) fn word_forms_enabled(&self) -> bool {
         self.book_word_forms().unwrap_or(!self.dictionary_settings.disable_word_forms)
     }
 

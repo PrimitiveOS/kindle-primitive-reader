@@ -138,3 +138,7 @@ It covers the multilingual, long and vertical-page fixtures and writes one
 software timing and peak-memory record per process. The
 hardware batch still verifies the actual panel, Launcher return and storage
 ownership through the Kindle runtime.
+
+## CJK dictionary selection and Japanese forms
+
+The desktop candidate enables Parley's supported complex-script segmentation models, adds bounded independently authored Japanese lookup forms and NFKC candidates, and checks the longest CJK source prefix through a cancellable background dictionary pass. Grapheme-safe source endpoints retain voicing marks, variation sequences and original anchors. Shared UI fonts now use supplied script fallbacks while preserving ASCII pixels. Authored regressions, real public Japanese passages and an unchanged owner EPUB cover the scoped behavior. Native acceptance, broader lexical classes, honorific/colloquial forms and the reference plugin's complete conversion/settings surface remain open. [Behavior, source comparison and limits](cjk-dictionary-selection.md)

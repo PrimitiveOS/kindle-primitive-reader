@@ -48,6 +48,23 @@ impl Probe {
         Some((before, after))
     }
 
+    /// A bounded automatic-word scan from the original source start. It stops
+    /// at punctuation, inline block boundaries and 20 Unicode scalar values.
+    /// The returned endpoint is an actual source anchor, never a lookup form.
+    pub(crate) fn dictionary_scan(&self, selection: &TextSelection) -> Option<TextSelection> {
+        let spans = self.selection_spans(&selection.start, &selection.end)?;
+        if spans.first != spans.last { return None; }
+        let block = &self.source.blocks[spans.first];
+        let tail = block.text.get(spans.first_byte..)?;
+        let length = tail.char_indices().take(crate::dictionary::MAX_SCAN_CHARACTERS)
+            .take_while(|(_, c)| crate::dictionary::cjk_word_character(*c))
+            .map(|(i, c)| i + c.len_utf8()).last()?;
+        let length = icu_segmenter::GraphemeClusterSegmenter::new().segment_str(tail)
+            .take_while(|end| *end <= length).last().filter(|end| *end > 0)?;
+        self.select_range(&self.anchor(block.key, spans.first_byte),
+            &self.anchor(block.key, spans.first_byte + length))
+    }
+
     /// Select the Unicode word directly under a page coordinate.
     pub fn word_at(&self, page: usize, x: f32, y: f32) -> Option<TextSelection> {
         self.word_in(self.pages.range(page)?, x, y)

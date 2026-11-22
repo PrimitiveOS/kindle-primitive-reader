@@ -36,7 +36,7 @@ At fit page, Reader can decode large print-color PDF photographs at the resoluti
 These captures use Reader's Kindle interface in the desktop simulator. The [current desktop workflow review](docs/simulation-review.md) records the combined tests, updated reading controls and pending Kindle checks.
 [Top navigation](docs/screenshots/navigation.png) · [Bottom page settings](docs/screenshots/page-settings.png) · [Selection popup](docs/screenshots/selection.png)
 
-When you long-press an inflected English word, Reader looks up its base form in each enabled dictionary. If the spelling and word forms have no entry, the popup suggests nearby spellings. You can close the popup while the search runs. Set the library or book preference in Dictionaries. [Dictionary popup and settings](docs/dictionary-word-forms.md)
+When you long-press an inflected English or supported Japanese word, Reader looks up its base form in each enabled dictionary. If the spelling and word forms have no entry, the popup suggests nearby spellings. You can close the popup while the search runs. Set the library or book preference in Dictionaries. [Dictionary popup and settings](docs/dictionary-word-forms.md) · [Japanese and Chinese word selection](docs/cjk-dictionary-selection.md)
 
 **Text › Spacing › Word expansion** redistributes part of the space on a justified line into the words. [Word expansion](docs/word-expansion.md)
 
