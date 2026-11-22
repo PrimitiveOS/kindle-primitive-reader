@@ -16,12 +16,16 @@ The tagged KOReader controls offer a paired horizontal preset plus a detailed le
 
 ## Verification
 
-Two original EPUBs from the Oasis were tested on the Mac. At a recorded source location, the normal bottom controls changed the horizontal margins from 54/54 to 66/42 pixels. The page still had the same content width. Every text and illustration pixel in all 1,606 rows shifted right by exactly 12 pixels. The same source word remained selectable at its new screen coordinates. Both books reopened at the same source location with linked 73-pixel vertical margins. Resetting restored a pixel-identical page. The originals retained their SHA-256 digests.
+Two original EPUBs were tested on the Mac and directly on the Oasis 3. Their Reader measurements matched on both machines. At a recorded source location, the normal bottom controls changed the horizontal margins from 54/54 to 66/42 pixels. The page still had the same content width. Every text and illustration pixel in all 1,606 rows shifted right by exactly 12 pixels. The same source word remained selectable at its new screen coordinates. Both books reopened at the same source location with linked 73-pixel vertical margins. Resetting restored a pixel-identical page. The originals retained their SHA-256 digests.
 
 | Original | Spine item | Translated nonwhite pixels | Matching rows |
 | --- | ---: | ---: | ---: |
 | 035 | 12 | 241,577 | 1,606 of 1,606 |
 | 042 | 15 | 107,651 | 1,606 of 1,606 |
+
+Installed KOReader independently found a unique passage shared with each Reader measurement. At the controlled 1,264 × 1,606 viewport, the passages were on CREngine pages 92 of 466 and 325 of 844. Its seven settings transitions matched the reference. Moving the two horizontal margins translated all 1,606 raster rows by 12 pixels in each book. The first passage occupied one selection rectangle and the second occupied two. Each rectangle moved exactly 12 pixels horizontally and retained its vertical coordinates. Reapplying the original margins restored both KOReader frames byte for byte.
+
+The two native Reader test processes peaked at 37,380 and 27,360 KiB resident memory. Four additional authored scenarios passed on the Oasis. The books, Documents file inventory, user reading state, Browser session and installed Reader retained their original checksums. All isolated device data was removed.
 
 Authored fixtures independently check horizontal illustration hit testing, vertical right-to-left columns, the Blitz renderer, both leaves of a two-page spread and the empty gutter. Other tests check old side-margin records, an explicit zero edge and an invalid saved value. The Mac suite passed 462 library tests, 14 EPUB-package tests and four layout integration tests. Seven opt-in library scenarios require separate fixtures. The screenshots use the authored test book.
 
