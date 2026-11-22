@@ -23,6 +23,12 @@ Four originals from the Oasis library were replayed on the Mac with private, iso
 | 042, EPUB | Spine item 15, layout page 5 | 28 | About 493 | 16 min | About 4 hr 47 min |
 | 054, PDF | Physical page 544 | 18 | 522 | 10 min | 5 hr 4 min |
 
+Apple PDFKit independently counted all 229 and 1,066 physical pages in the two PDFs and followed their publisher outlines. Both chapter boundaries and both remaining book counts agreed with Reader. The Mac suite passed 441 library tests, 14 EPUB-package tests and four layout integration tests. Five opt-in library scenarios require separate fixtures.
+
+On the Oasis 3, the installed KOReader found a unique line of text from Reader’s displayed page in EPUB 035. CREngine placed it on page 99 of 466 and counted 14 chapter pages and 367 book pages left. At the shared 35-second pace, these produce 8 min and 3 hr 34 min. Reader showed 7 min and about 3 hr 6 min at the same passage. Substituting Reader’s remaining-page counts into KOReader’s own time function reproduced both Reader durations exactly. This comparison measures the effect of pagination and book-size estimation on the displayed times.
+
+On the same Oasis, Reader and the installed KOReader matched both physical-page and chapter counts in PDFs 030 and 054. The three native replays reproduced the Mac values and preserved all three original digests, the Documents inventory and existing Reader and browser state. The three authored tests passed. The full native replay process peaked at 37,372 KiB for EPUB 035, 20,952 KiB for PDF 030 and 36,576 KiB for PDF 054. The private test profiles were removed after verification. These runs used background CPU priority while other verification was active.
+
 To replay the authored book and generate the screenshot, run the library test in the normal Reader checkout.
 
 ```sh

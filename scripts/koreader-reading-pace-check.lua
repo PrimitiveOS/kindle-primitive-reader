@@ -35,6 +35,7 @@ db:exec("CREATE TABLE page_stat(id_book INTEGER, page INTEGER, duration INTEGER)
 db:exec("INSERT INTO page_stat VALUES (1,1,20),(1,2,40),(1,2,10),(2,1,120)")
 local visited, seconds = db:rowexec(string.format(sql, 120, 1))
 db:close()
+visited, seconds = tonumber(visited), tonumber(seconds)
 assert(visited == 2 and seconds == 70)
 local rate = seconds / visited
 local time_left = method(stats, "ReaderStatistics:getTimeForPages", {
