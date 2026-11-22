@@ -413,6 +413,8 @@ fn legacy_records_profiles_defaults_and_typed_backup_preserve_both_modes() {
             .word_spacing,
         4.0
     );
+    restored.activate(Action::ResetText).unwrap();
+    assert_eq!(current(&restored), Some(WordSpacePercent::MEDIUM));
 }
 
 #[test]
