@@ -7,9 +7,9 @@ whole numbers from **0 to 300 dpi**. The baseline default is 96. This scales pub
 independently of the font size chosen by the reader. It is a reflow control;
 PDF/image zoom remains in the fixed-document controls.
 
-![Content scaling controls](screenshots/content-scale.png)
+![Content scaling controls with a custom value](screenshots/content-scale-custom.png)
 
-[Large controls in dark mode](screenshots/content-scale-dark.png)
+[Custom content zoom picker with large controls in dark mode](screenshots/content-scale-custom-picker-dark.png)
 
 ## Pinned reference
 
@@ -102,10 +102,22 @@ The ordinary suite and original-file results are recorded in the private
 `build/parity-review/render-dpi-evidence` receipts. No Kindle execution, physical
 e-ink acceptance, publication, or release is claimed by this desktop slice.
 
-The custom-picker follow-up adds seven ordinary workflows for real keyboard input
-at 72 and 123 dpi, draft steps/default/cancel and sleep/wake, invalid/stale
-editions and same-length on-disk replacements, failed layout and atomic save rollback/retry, profile/default/v2 backup
-restore, and compact/large light/dark capture targets. The existing original-file
-opt-in workflow also checks 72 and 123 alongside every preset. Its separate
-`custom-content-dpi-evidence` receipts identify actual executed tests and captures;
-the older preset results above do not establish new custom-picker acceptance.
+The custom-picker follow-up was verified at source `73a70a8`. Exact-source
+[GitHub CI](https://github.com/PrimitiveOS/kindle-primitive-reader/actions/runs/45010613371)
+and the Mac native reflow path each passed **791 library, 14 package and 4 layout
+tests**; 62 opt-in tests were excluded from the ordinary suites. The additional
+desktop checks were run separately:
+
+| Check | Result |
+| --- | --- |
+| Seven new ordinary workflows | Actual keyboard entry at 72/123 dpi; step/hold/default; Back and physical back preserve position/selection; sleep/wake; invalid/stale editions; same-length on-disk replacement; failed layout/save rollback and retry; profiles/defaults/v2 backup restore. |
+| Authorized original EPUB, AZW3 and MOBI | Each passed rendering at 72/123 and all presets, source selections, unchanged file SHA and final 96-DPI raster equality. These use the settings action; keyboard and transaction behavior are covered by the authored workflows above. |
+| Eight screenshot targets | Compact/large and light/dark Rendering panels and numeric pickers generated and visually inspected. |
+| Independent screenshot checks | 24/24 preset labels recognized, all four complete guidance blocks recognized, all four minus glyphs verified against their pixel bounds. |
+
+The public screenshots use the authored Field Notes fixture. Original documents
+and their detailed receipts remain private in
+`build/parity-review/custom-content-dpi-evidence`. The final component binaries,
+test logs and screenshot hashes identify the exact tested source. This desktop
+checkpoint does not establish combined-candidate, native Kindle or physical
+e-ink acceptance.
