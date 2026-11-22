@@ -15,6 +15,7 @@ pub enum SidecarMark {
     Highlight {
         created_at: Option<i64>,
         style: crate::highlight_style::HighlightStyle,
+        color: crate::highlight_style::HighlightColor,
         start: String,
         end: String,
         text: String,
@@ -89,10 +90,16 @@ fn mark(record: &[u8]) -> Result<Option<SidecarMark>, SidecarError> {
     ];
     let mut values: [Option<String>; 7] = Default::default();
     let mut seen = 0u8;
+    let mut color = crate::highlight_style::HighlightColor::default();
+    let mut color_seen = false;
     let mut date_seen = false;
     let mut created_at = None;
     let mut supported = true;
     fields(record, &mut |key, value| {
+        if key.as_deref() == Some(b"color") {
+            if !color_seen && let Value::String(bytes)=value && bytes.len()<=128 && let Ok(name)=std::str::from_utf8(&bytes) {color=crate::highlight_style::HighlightColor::from_name(name);}
+            color_seen=true;return Ok(());
+        }
         if key.as_deref() == Some(b"datetime") {
             // A bad or repeated date must not discard an otherwise usable annotation.
             created_at = match value {
@@ -144,6 +151,7 @@ fn mark(record: &[u8]) -> Result<Option<SidecarMark>, SidecarError> {
         (Some(drawer), Some(start), Some(end)) if pointer(&start) && pointer(&end) => text
             .filter(|s| !s.trim().is_empty())
             .map(|text| SidecarMark::Highlight {
+                color,
                 created_at,
                 style: crate::highlight_style::HighlightStyle::from_drawer(&drawer),
                 start,
@@ -190,7 +198,7 @@ mod tests {
         let result = parse_annotations(data).unwrap();
         assert_eq!(result.unavailable, 3);
         assert!(
-            matches!(&result.marks[..], [SidecarMark::Bookmark {pointer,label:Some(label),created_at:None}, SidecarMark::Highlight{style:crate::highlight_style::HighlightStyle::Underline,start,end,text,note:Some(note),created_at:None}] if pointer=="/node" && label=="Chapter one" && start=="/a" && end=="/b" && text=="Some text" && note=="Remember")
+            matches!(&result.marks[..], [SidecarMark::Bookmark {pointer,label:Some(label),created_at:None}, SidecarMark::Highlight{color:crate::highlight_style::HighlightColor::Gray,style:crate::highlight_style::HighlightStyle::Underline,start,end,text,note:Some(note),created_at:None}] if pointer=="/node" && label=="Chapter one" && start=="/a" && end=="/b" && text=="Some text" && note=="Remember")
         );
         assert!(parse_annotations(b"return {annotations={{page=foo()}}}").is_err());
         assert!(parse_annotations(b"return {annotations={},annotations={}}").is_err());

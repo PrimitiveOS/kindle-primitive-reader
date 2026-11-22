@@ -58,7 +58,7 @@ Tap a PDF web link to inspect its address over the current page. **Copy** makes 
 
 Publisher styling can keep a paragraph’s first or last lines together at a page break. [Paragraph settings and two-page comparison](docs/paragraph-ends.md)
 
-Use **Settings › Highlight style** to set how new passages appear. Tap a saved highlight and choose **Style** under its actions to change that passage. [Four highlight styles on a reading page](docs/highlight-drawing-styles.md)
+Use **Settings › Highlight style** to set how new passages appear. Tap a saved highlight and choose **Style** under its actions to change that passage. [Four highlight styles on a reading page](docs/highlight-drawing-styles.md) · [Named colors and margin note markers](docs/highlight-colors-and-note-markers.md)
 
 Tap a saved passage to read its note. When marks overlap, Reader shows the matching passages so you can choose one. In **Find**, the arrows start at your current passage. [Overlapping highlights](docs/screenshots/overlapping-highlights.png) · [Note on the page](docs/screenshots/tapped-note.png) · [Find from this passage](docs/screenshots/nearby-find.png)
 

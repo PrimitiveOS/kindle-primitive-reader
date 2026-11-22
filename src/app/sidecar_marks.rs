@@ -147,7 +147,7 @@ impl Reader {
             }
             (
                 SidecarMark::Highlight {
-                    text, note, style, created_at, ..
+                    text, note, style, color, created_at, ..
                 },
                 Ok(Resolved::Range(a, b)),
             ) => {
@@ -158,6 +158,7 @@ impl Reader {
                     .filter(|quote| quote.text.split_whitespace().eq(text.split_whitespace()));
                 if let Some(selection) = selection {
                     import.highlights.push(Highlight {
+                        color: *color,
                         created_at: *created_at,
                         style: *style,
                         selection,

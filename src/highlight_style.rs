@@ -45,6 +45,106 @@ impl HighlightStyle {
     }
 }
 
+/// Named annotation colors retained for interoperable exports on a grayscale screen.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HighlightColor {
+    Red,
+    Orange,
+    Yellow,
+    Green,
+    Olive,
+    Cyan,
+    Blue,
+    Purple,
+    #[default]
+    #[serde(other)]
+    Gray,
+}
+impl HighlightColor {
+    pub const ALL: [Self; 9] = [
+        Self::Red,
+        Self::Orange,
+        Self::Yellow,
+        Self::Green,
+        Self::Olive,
+        Self::Cyan,
+        Self::Blue,
+        Self::Purple,
+        Self::Gray,
+    ];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Red => "Red",
+            Self::Orange => "Orange",
+            Self::Yellow => "Yellow",
+            Self::Green => "Green",
+            Self::Olive => "Olive",
+            Self::Cyan => "Cyan",
+            Self::Blue => "Blue",
+            Self::Purple => "Purple",
+            Self::Gray => "Gray",
+        }
+    }
+    pub(crate) fn from_name(name: &str) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|c| c.label().eq_ignore_ascii_case(name))
+            .unwrap_or_default()
+    }
+    pub(crate) fn is_default(&self) -> bool {
+        *self == Self::Gray
+    }
+    pub(crate) fn rgb(self) -> Option<(u32, u32, u32)> {
+        Some(match self {
+            Self::Red => (255, 51, 0),
+            Self::Orange => (255, 136, 0),
+            Self::Yellow => (255, 255, 51),
+            Self::Green => (0, 170, 102),
+            Self::Olive => (136, 255, 119),
+            Self::Cyan => (0, 255, 238),
+            Self::Blue => (0, 102, 255),
+            Self::Purple => (238, 0, 255),
+            Self::Gray => return None,
+        })
+    }
+    pub(crate) fn night_gray(self) -> Option<u8> {
+        let (r, g, b) = self.rgb()?;
+        Some(((4898 * (255 - r) + 9618 * (255 - g) + 1869 * (255 - b)) >> 14) as u8)
+    }
+    pub(crate) fn gray(self) -> Option<u8> {
+        let (r, g, b) = self.rgb()?;
+        Some(((4898 * r + 9618 * g + 1869 * b) >> 14) as u8)
+    }
+}
+
+#[cfg(feature = "kindle")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum NoteMarker {
+    Underline,
+    Sideline,
+    Sidemark,
+    #[default]
+    #[serde(other)]
+    None,
+}
+#[cfg(feature = "kindle")]
+impl NoteMarker {
+    pub const ALL: [Self; 4] = [Self::None, Self::Underline, Self::Sideline, Self::Sidemark];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::None => "None",
+            Self::Underline => "Underline",
+            Self::Sideline => "Side line",
+            Self::Sidemark => "Side mark",
+        }
+    }
+    pub(crate) fn is_default(&self) -> bool {
+        *self == Self::None
+    }
+}
+
 #[cfg(feature = "kindle")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -76,6 +176,13 @@ impl Appearance {
 #[derive(Clone, Copy)]
 pub(crate) enum Paint {
     Saved(HighlightStyle),
+    Annotation {
+        style: HighlightStyle,
+        color: HighlightColor,
+        note: bool,
+        first: bool,
+        night: bool,
+    },
     Selection,
     ReflowSelection,
     Temporary(u8),
@@ -84,6 +191,24 @@ pub(crate) enum Paint {
 #[cfg(feature = "kindle")]
 impl Paint {
     /// KOReader rounds the filled height down, then centers it with the extra pixel above.
+    pub(crate) fn drawer(self) -> Option<HighlightStyle> {
+        match self {
+            Self::Saved(style) | Self::Annotation { style, .. } => Some(style),
+            _ => None,
+        }
+    }
+    pub(crate) fn note(self) -> Option<(HighlightColor, bool, bool)> {
+        match self {
+            Self::Annotation {
+                color,
+                note: true,
+                first,
+                night,
+                ..
+            } => Some((color, first, night)),
+            _ => None,
+        }
+    }
     pub(crate) fn fill_band(
         self,
         top: i32,
@@ -91,10 +216,10 @@ impl Paint {
         percent: u8,
     ) -> Option<std::ops::Range<i32>> {
         if percent >= 100
-            || !matches!(
-                self,
-                Self::Saved(HighlightStyle::Lighten | HighlightStyle::Invert) | Self::Selection
-            )
+            || !(matches!(
+                self.drawer(),
+                Some(HighlightStyle::Lighten | HighlightStyle::Invert)
+            ) || matches!(self, Self::Selection))
         {
             return None;
         }
@@ -110,12 +235,12 @@ impl Paint {
         width: u32,
         fixed: bool,
     ) -> Option<(i32, i32)> {
-        match self {
-            Self::Saved(HighlightStyle::Underline) => {
+        match self.drawer() {
+            Some(HighlightStyle::Underline) => {
                 let thickness = (width * 3).div_ceil(1200).max(1) as i32;
                 Some((y + height - 1, thickness))
             }
-            Self::Saved(HighlightStyle::Strikethrough) => {
+            Some(HighlightStyle::Strikethrough) => {
                 let thickness = width.div_ceil(600).max(1) as i32;
                 Some((y + height / 2 + 1 + if fixed { 2 } else { 0 }, thickness))
             }
@@ -124,6 +249,48 @@ impl Paint {
     }
 
     pub(crate) fn draw_row(self, pixels: &mut [u8], appearance: Appearance) {
+        if let Self::Annotation {
+            style,
+            color,
+            night,
+            ..
+        } = self
+        {
+            if let Some(tone) = color.gray() {
+                let stroke = if night {
+                    color.night_gray().unwrap()
+                } else {
+                    tone
+                };
+                match style {
+                    HighlightStyle::Lighten => {
+                        for pixel in pixels {
+                            *pixel = if night {
+                                let alpha =
+                                    u16::from(appearance.highlight_opacity.min(100)) * 255 / 100;
+                                ((u16::from(*pixel) * (255 - alpha)
+                                    + u16::from(stroke) * alpha
+                                    + 127)
+                                    / 255) as u8
+                            } else {
+                                ((u16::from(*pixel) * u16::from(tone) + 127) / 255) as u8
+                            };
+                        }
+                    }
+                    HighlightStyle::Underline | HighlightStyle::Strikethrough => {
+                        pixels.fill(stroke)
+                    }
+                    HighlightStyle::Invert => {
+                        for pixel in pixels {
+                            *pixel = 255 - *pixel;
+                        }
+                    }
+                }
+                return;
+            }
+            Self::Saved(style).draw_row(pixels, appearance);
+            return;
+        }
         match self {
             Self::Saved(HighlightStyle::Lighten) | Self::Selection | Self::ReflowSelection => {
                 let multiplier = match self {
@@ -144,6 +311,7 @@ impl Paint {
                     *pixel = 255 - *pixel;
                 }
             }
+            Self::Annotation { .. } => unreachable!(),
             Self::Temporary(gray) => {
                 for pixel in pixels {
                     *pixel = (*pixel).min(gray);
@@ -283,6 +451,86 @@ mod tests {
                         }
                     );
                 }
+            }
+        }
+    }
+}
+
+#[cfg(all(test, feature = "kindle"))]
+mod color_tests {
+    use super::*;
+    #[test]
+    fn grayscale_colors_keep_legacy_gray_and_unknown_names_readable() {
+        let values: Vec<_> = HighlightColor::ALL.into_iter().map(|c| c.gray()).collect();
+        assert_eq!(
+            values,
+            [
+                Some(106),
+                Some(156),
+                Some(231),
+                Some(111),
+                Some(203),
+                Some(176),
+                Some(88),
+                Some(100),
+                None
+            ]
+        );
+        assert_eq!(
+            serde_json::from_str::<HighlightColor>("\"future-color\"").unwrap(),
+            HighlightColor::Gray
+        );
+        for style in HighlightStyle::ALL {
+            let mut legacy = [0, 51, 102, 153, 204, 255];
+            let mut modern = legacy;
+            Paint::Saved(style).draw_row(&mut legacy, Appearance::default());
+            Paint::Annotation {
+                style,
+                color: HighlightColor::Gray,
+                note: false,
+                first: false,
+                night: false,
+            }
+            .draw_row(&mut modern, Appearance::default());
+            assert_eq!(legacy, modern);
+        }
+    }
+    #[test]
+    #[ignore = "requires coverage generated by pinned stock C blitbuffer"]
+    fn named_color_blending_matches_the_pinned_stock_blitter() {
+        let raw =
+            std::fs::read(std::env::var_os("READER_COLOR_ORACLE").expect("READER_COLOR_ORACLE"))
+                .unwrap();
+        assert_eq!(raw.len(), 8 * 23 * 256);
+        for (i, color) in HighlightColor::ALL[..8].iter().copied().enumerate() {
+            for (n, style, night, opacity) in
+                std::iter::once((0, HighlightStyle::Lighten, false, 75))
+                    .chain(std::iter::once((1, HighlightStyle::Underline, false, 75)))
+                    .chain(
+                        (0..=20)
+                            .map(|step| (step + 2, HighlightStyle::Lighten, true, step as u8 * 5)),
+                    )
+            {
+                let mut input: Vec<_> = (0..=255).collect();
+                Paint::Annotation {
+                    style,
+                    color,
+                    note: false,
+                    first: false,
+                    night,
+                }
+                .draw_row(
+                    &mut input,
+                    Appearance {
+                        highlight_opacity: opacity,
+                        ..Default::default()
+                    },
+                );
+                assert_eq!(
+                    input.as_slice(),
+                    &raw[(i * 23 + n) * 256..(i * 23 + n + 1) * 256],
+                    "{color:?} night={night} opacity={opacity}"
+                );
             }
         }
     }

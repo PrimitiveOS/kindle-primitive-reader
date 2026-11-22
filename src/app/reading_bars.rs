@@ -544,7 +544,7 @@ impl Reader {
         } else {
             0..height
         };
-        PagePaint { visible, inverted, highlight_appearance: self.controls.highlight_appearance }
+        PagePaint { visible, inverted, highlight_appearance: self.controls.highlight_appearance, note_marker: self.controls.note_marker }
     }
 
     pub(super) fn tools_screen(&self) -> Screen {

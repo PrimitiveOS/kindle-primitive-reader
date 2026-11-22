@@ -320,7 +320,7 @@ fn synthesize_outline(outline: &Outline, strength: f32, clockwise: bool) -> Opti
     Some(Mask { left: left as i32, top: top as i32, width, alpha })
 }
 
-fn curve_mask(path: &[kurbo::PathEl], left: f64, top: f64, width: usize, height: usize) -> Vec<u8> {
+pub(crate) fn curve_mask(path: &[kurbo::PathEl], left: f64, top: f64, width: usize, height: usize) -> Vec<u8> {
     let mut raster = Rasterizer::new(width, height);
     let local = |p: kurbo::Point| point((p.x - left) as f32, (p.y - top) as f32);
     let mut first = point(0.0, 0.0);

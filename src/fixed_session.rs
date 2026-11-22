@@ -962,6 +962,10 @@ impl FixedReading {
         (!rect.is_zero_area()).then_some((quad, rect))
     }
 
+    pub(crate) fn annotation_rectangle(&self,index:usize,bounds:PdfTextRect) -> Option<hayro::kurbo::Rect> {
+        self.projected_region(index,bounds).map(|(quad,_)|quad.bounds())
+    }
+
     pub(crate) fn visible_rectangle(
         &self,
         index: usize,
@@ -1477,6 +1481,14 @@ impl FixedReading {
                     let start = y * WIDTH as usize;
                     paint_style.draw_row(&mut frame.pixels[start + span.start..start + span.end], appearance);
                 }
+            }
+        }
+        for &((index, region), ink) in marks {
+            if let Some((quad,_clip))=self.projected_region(index,region) {
+                let b=quad.bounds();
+                let rect=crate::selection::HighlightRect { x:b.x0.floor() as i32,y:b.y0.floor() as i32,width:b.width().ceil() as i32,height:b.height().ceil() as i32 };
+                let margin=crate::note_marker::margin(WIDTH,0,0,paint.note_marker,true);
+                crate::note_marker::paint(&mut frame,rect,ink,paint.note_marker,margin,paint.highlight_appearance);
             }
         }
         let Some(full) =

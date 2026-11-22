@@ -47,6 +47,7 @@ pub struct PageGeometry {
 
 #[derive(Debug)]
 pub struct ImportedHighlight {
+    pub color: crate::highlight_style::HighlightColor,
     pub style: crate::highlight_style::HighlightStyle,
     pub page: usize,
     pub bounds: Vec<PdfTextRect>,
@@ -81,6 +82,7 @@ pub fn import_highlights(
                 return Err("PDF contains more than 512 importable highlights".into());
             }
             highlights.push(ImportedHighlight {
+                color: pdf_highlight_color(&document,annotation),
                 style: pdf_drawing_style(&document, annotation).unwrap_or_default(),
                 page: page_index,
                 bounds,
@@ -114,6 +116,7 @@ pub fn export_copy(
     for mark in highlights {
         for (page, bounds, text) in mark.parts() {
             by_page.entry(page).or_default().push(PdfHighlight {
+                color: mark.color,
                 created_at: mark.created_at,
                 style: mark.style,
                 page, bounds: bounds.to_vec(), text: text.to_owned(), note: mark.note.clone(), continuation: Vec::new(),
@@ -520,6 +523,22 @@ fn page_annots(document: &Document, page_id: ObjectId) -> Result<&[Object]> {
     Ok(annots)
 }
 
+fn pdf_highlight_color(document: &Document, annotation: &Dictionary) -> crate::highlight_style::HighlightColor {
+    use crate::highlight_style::HighlightColor;
+    if let Some(name)=read_text(document,annotation,b"PrimitiveOSColor",128) { return HighlightColor::from_name(&name); }
+    if let Ok(Object::Array(rgb))=annotation.get(b"C") {
+        if rgb.len()==3 {
+            let values:Option<Vec<f32>>=rgb.iter().map(|value| match value {Object::Integer(n)=>Some(*n as f32), Object::Real(n)=>Some(*n), _=>None}).collect();
+            if let Some(values)=values {
+                for color in HighlightColor::ALL {
+                    if let Some((r,g,b))=color.rgb() && values.iter().zip([r,g,b]).all(|(a,b)|(*a-b as f32/255.).abs()<0.001) { return color; }
+                }
+            }
+        }
+    }
+    HighlightColor::Gray
+}
+
 fn pdf_drawing_style(
     document: &Document,
     annotation: &Dictionary,
@@ -575,6 +594,7 @@ fn new_marks<'a>(
                     bounds,
                     read_text(document, annotation, b"Contents", 4_096),
                     pdf_drawing_style(document, annotation),
+                    pdf_highlight_color(document,annotation),
                 )
             })
         })
@@ -584,8 +604,8 @@ fn new_marks<'a>(
         .filter(|mark| {
             let note = mark.note.as_deref().filter(|note| !note.trim().is_empty());
             let bounds = ordered_bounds(mark.bounds.clone());
-            !existing.iter().any(|(previous, previous_note, style)| {
-                *style == Some(mark.style)
+            !existing.iter().any(|(previous, previous_note, style, color)| {
+                *style == Some(mark.style) && *color == mark.color
                     && previous_note.as_deref() == note
                     && same_bounds(previous, &bounds)
             })
@@ -789,18 +809,18 @@ fn add_annotation(
         HighlightStyle::Strikethrough => "StrikeOut",
         HighlightStyle::Lighten | HighlightStyle::Invert => "Highlight",
     };
-    let appearance = document.add_object(appearance(bounds, &quads, mark.style));
+    let appearance = document.add_object(appearance(bounds, &quads, mark.style, mark.color));
     let quad_points: Vec<_> = quads
         .iter()
         .flatten()
         .flat_map(|point| [real(point.x), real(point.y)])
         .collect();
-    let color: Vec<Object> = match mark.style {
+    let color: Vec<Object> = if let Some((r,g,b))=mark.color.rgb() { [r,g,b].into_iter().map(|channel|Object::Real(channel as f32/255.)).collect() } else { match mark.style {
         HighlightStyle::Lighten => vec![1.into(), 1.into(), 0.into()],
         HighlightStyle::Underline => vec![Object::Real(68.0 / 255.0); 3],
         HighlightStyle::Strikethrough => vec![0.into(); 3],
         HighlightStyle::Invert => vec![1.into(); 3],
-    };
+    }};
     let mut annotation = dictionary! {
         "Type" => "Annot",
         "Subtype" => subtype,
@@ -808,6 +828,7 @@ fn add_annotation(
         "Rect" => pdf_rect(bounds),
         "QuadPoints" => Object::Array(quad_points),
         "C" => Object::Array(color),
+        "PrimitiveOSColor" => text_string(&mark.color.label().to_lowercase()),
         "F" => 4,
         "T" => text_string("Reader"),
         "AP" => dictionary! { "N" => appearance },
@@ -826,6 +847,7 @@ fn appearance(
     bounds: Rect,
     quads: &[[Point; 4]],
     style: crate::highlight_style::HighlightStyle,
+    color: crate::highlight_style::HighlightColor,
 ) -> Stream {
     use crate::highlight_style::HighlightStyle;
     let (initial, blend, alpha) = match style {
@@ -834,7 +856,10 @@ fn appearance(
         HighlightStyle::Underline => ("q /GS gs 0.27 G\n", "Normal", 1.0),
         HighlightStyle::Strikethrough => ("q /GS gs 0 G\n", "Normal", 1.0),
     };
-    let mut data = String::from(initial);
+    let mut data = if let Some((r,g,b))=color.rgb().filter(|_|style!=HighlightStyle::Invert) {
+        format!("q /GS gs {:.6} {:.6} {:.6} {}\n",r as f32/255.,g as f32/255.,b as f32/255., if matches!(style,HighlightStyle::Underline|HighlightStyle::Strikethrough) {"RG"} else {"rg"})
+    } else {String::from(initial)};
+    let alpha=if color.rgb().is_some() {1.0} else {alpha};
     for quad in quads {
         if matches!(
             style,
@@ -983,6 +1008,7 @@ mod tests {
 
     fn mark() -> PdfHighlight {
         PdfHighlight {
+            color: Default::default(),
             created_at: None,
             style: Default::default(),
             continuation: Vec::new(),
@@ -1031,6 +1057,29 @@ mod tests {
         assert_eq!(highlights[1].page, 1);
         assert_eq!(highlights[1].text, None);
         assert_eq!(highlights[1].note.as_deref(), Some("Existing café note"));
+    }
+
+    #[test]
+    fn named_annotation_colors_survive_pdf_copy_streams_reimport_and_deduplication() {
+        use crate::highlight_style::{HighlightColor,HighlightStyle};
+        let original=fixture(false);
+        for style in HighlightStyle::ALL {
+            for color in HighlightColor::ALL {
+                let mut mark=mark();mark.style=style;mark.color=color;
+                let copy=export_copy(&original,std::slice::from_ref(&mark),geometry).unwrap();
+                let marks=import_highlights(&copy,geometry).unwrap();
+                let saved=marks.iter().find(|m|m.text.as_ref()==Some(&mark.text)).unwrap();
+                assert_eq!((saved.style,saved.color),(style,color));assert_eq!(saved.note,mark.note);
+                assert_eq!(export_copy(&copy,std::slice::from_ref(&mark),geometry).unwrap(),copy);
+                let (doc,pages)=load_pdf(&copy).unwrap();
+                let annotations=page_annots(&doc,pages[1]).unwrap();
+                let dict=doc.get_dictionary(annotations.last().unwrap().as_reference().unwrap()).unwrap();
+                if let Some((r,g,b))=color.rgb() {
+                    let actual=dict.get(b"C").unwrap().as_array().unwrap();
+                    for (value,expected) in actual.iter().zip([r,g,b]) {assert!((value.as_float().unwrap()-expected as f32/255.).abs()<0.0001);}
+                }
+            }
+        }
     }
 
     #[test]
@@ -1139,6 +1188,7 @@ mod tests {
         let original = fixture(false);
         let existing = import_highlights(&original, geometry).unwrap().remove(0);
         let external = PdfHighlight {
+            color: Default::default(),
             created_at: None,
             style: Default::default(),
             continuation: Vec::new(),

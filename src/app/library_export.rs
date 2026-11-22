@@ -100,6 +100,7 @@ struct Entry {
     #[serde(skip_serializing_if = "Option::is_none")]
     time: Option<i64>,
     drawer: HighlightStyle,
+    color: crate::highlight_style::HighlightColor,
     #[serde(skip_serializing_if = "Option::is_none")]
     page: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -380,7 +381,7 @@ impl Reader {
                     text: mark.selection.text.clone(),
                     note: mark.note.clone(),
                     time: mark.created_at,
-                    drawer: mark.style,
+                    drawer: mark.style, color: mark.color,
                     page: None,
                     chapter: chapter
                         .and_then(|index| book.as_ref()?.chapters.get(index))
@@ -397,7 +398,7 @@ impl Reader {
         }) {
             marks.push_back((Entry {
                 sort: "highlight", text: mark.text.clone(), note: mark.note.clone(), time: mark.created_at,
-                drawer: mark.style, page: Some(serde_json::json!(mark.page + 1)), chapter: None,
+                drawer: mark.style, color: mark.color, page: Some(serde_json::json!(mark.page + 1)), chapter: None,
                 primitiveos: serde_json::json!({"page": mark.page, "bounds": mark.bounds, "continuation": mark.continuation}),
             }, None));
         }

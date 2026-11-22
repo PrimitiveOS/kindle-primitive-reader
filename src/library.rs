@@ -532,6 +532,8 @@ pub struct Highlight {
         skip_serializing_if = "crate::highlight_style::HighlightStyle::is_default"
     )]
     pub style: crate::highlight_style::HighlightStyle,
+    #[serde(default, skip_serializing_if = "crate::highlight_style::HighlightColor::is_default")]
+    pub color: crate::highlight_style::HighlightColor,
     pub selection: TextSelection,
     pub note: Option<String>,
 }
@@ -554,6 +556,8 @@ pub struct PdfHighlight {
         skip_serializing_if = "crate::highlight_style::HighlightStyle::is_default"
     )]
     pub style: crate::highlight_style::HighlightStyle,
+    #[serde(default, skip_serializing_if = "crate::highlight_style::HighlightColor::is_default")]
+    pub color: crate::highlight_style::HighlightColor,
     pub page: usize,
     pub bounds: Vec<PdfTextRect>,
     pub text: String,
@@ -653,6 +657,8 @@ pub struct BookState {
     pub hide_nonlinear: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub highlight_style: Option<crate::highlight_style::HighlightStyle>,
+    #[serde(default = "legacy_highlight_color", skip_serializing_if = "is_implicit_gray")]
+    pub highlight_color: Option<crate::highlight_style::HighlightColor>,
     pub id: u64,
     pub path: PathBuf,
     pub title: String,
@@ -723,6 +729,7 @@ impl BookState {
     fn new(entry: &LibraryBook, id: u64) -> Self {
         Self {
             highlight_style: None,
+            highlight_color: None,
             hide_nonlinear: false,
             id,
             path: entry.path.clone(),
@@ -779,6 +786,14 @@ impl BookState {
         self.pdf_highlights.push(highlight);
         Ok(())
     }
+}
+
+fn is_implicit_gray(color: &Option<crate::highlight_style::HighlightColor>) -> bool {
+    color.is_some_and(|color| color == crate::highlight_style::HighlightColor::Gray)
+}
+
+fn legacy_highlight_color() -> Option<crate::highlight_style::HighlightColor> {
+    Some(crate::highlight_style::HighlightColor::Gray)
 }
 
 fn is_false(value: &bool) -> bool {
@@ -2491,6 +2506,7 @@ mod tests {
             position: position.clone(),
         });
         first_state.highlights.push(Highlight {
+            color: Default::default(),
             created_at: None,
             style: Default::default(),
             selection: TextSelection {
@@ -2756,6 +2772,7 @@ mod tests {
             y1: 0.4,
         };
         let mark = PdfHighlight {
+            color: Default::default(),
             created_at: None,
             style: Default::default(),
             continuation: Vec::new(),
@@ -2768,6 +2785,7 @@ mod tests {
         assert!(
             saved
                 .add_pdf_highlight(PdfHighlight {
+                    color: Default::default(),
                     bounds: vec![PdfTextRect {
                         x0: f32::NAN,
                         ..bounds
@@ -2779,6 +2797,7 @@ mod tests {
         assert!(
             saved
                 .add_pdf_highlight(PdfHighlight {
+                    color: Default::default(),
                     bounds: vec![bounds; MAX_PDF_HIGHLIGHT_BOUNDS + 1],
                     ..mark.clone()
                 })
@@ -2787,6 +2806,7 @@ mod tests {
         assert!(
             saved
                 .add_pdf_highlight(PdfHighlight {
+                    color: Default::default(),
                     note: Some("x".repeat(MAX_NOTE_BYTES + 1)),
                     ..mark.clone()
                 })
@@ -2820,6 +2840,7 @@ mod tests {
             y1: 0.2,
         }];
         let mut single = PdfHighlight {
+            color: Default::default(),
             created_at: None,
             style: Default::default(),
             page: 5,
@@ -2982,6 +3003,7 @@ mod tests {
             position: position(page, offset),
         };
         let mark = |offset, note: Option<&str>| Highlight {
+            color: Default::default(),
             created_at: None,
             style: Default::default(),
             selection: TextSelection {
@@ -3024,6 +3046,7 @@ mod tests {
         added.fixed_preferences.width_fit = true;
         added
             .add_pdf_highlight(PdfHighlight {
+                color: Default::default(),
                 created_at: Some(15),
                 style: Default::default(),
                 continuation: Vec::new(),
