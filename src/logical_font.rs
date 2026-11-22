@@ -3,6 +3,8 @@ use crate::{Result, Settings};
 
 pub const PRESETS: [u16; 11] = [12, 16, 20, 22, 24, 26, 28, 30, 34, 38, 44];
 pub const DEFAULT: f64 = 22.0;
+/// Below2^24 so every whole-pixel chapter coordinate remains representable.
+pub(crate) const MAX_LOGICAL_HEIGHT: f32 = 16_000_000.0;
 
 pub fn valid(value: f64) -> bool {
     value.is_finite() && (12.0..=255.0).contains(&value)
@@ -66,6 +68,13 @@ impl Settings {
             logical_font_size: Some(value),
             ..self
         })
+    }
+    pub(crate) fn chapter_height_limit(self) -> f32 {
+        if self.logical_font_size.is_some() {
+            MAX_LOGICAL_HEIGHT
+        } else {
+            2_000_000.0
+        }
     }
     pub(crate) fn styled_font(self, scale: f32) -> f32 {
         if self.logical_font_size.is_some() {

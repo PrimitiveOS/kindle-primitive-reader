@@ -67,6 +67,20 @@ holes. Only viewport-intersecting tiles are drawn. Signed stroke masks use the
 same compositing contract; strength is bounded at54 px, covering the supported
 340 px × weight1–1000 domain with26.6 rounding. Nonstandard font data outside
 these bounds produces an explicit paint error rather than an empty valid page.
+Large tiles are transient; they cannot grow the retained cache. Curve flatness
+also requires controls to project within the endpoint chord, so a collinear
+turn-back retains its true extremum before signed stroke expansion.
+
+A large font can exceed the old chapter height even when its text/line counts
+remain modest. Logical mode permits at most16,000,000 px of chapter extent,
+below2^24 so all whole-pixel f32 coordinates remain representable. The legacy
+2,000,000 px limit stays unchanged. The existing512 KiB text,30,000 line,
+90,000 vertical glyph,12,000 column and image limits continue to bound retained
+layout allocations; the higher extent does not allocate a chapter-sized bitmap.
+Page bounds remain bounded by the finite viewport/extent, and each captured
+frame remains one viewport. Parley, vertical layout, table fit preflight and
+final pagination use the same mode-specific extent limit.
+
 Large tiles are transient; they cannot grow the retained cache. Each clipped
 scratch polygon is capped at131,072 vertices before pushing, and one glyph's
 visible clipping shares a16,777,216-vertex visit budget. The256² rasterizer's

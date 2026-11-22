@@ -35,7 +35,6 @@ const MAX_GLYPHS: usize = 90_000;
 const MAX_COLUMNS: usize = 12_000;
 const MAX_FACES: usize = 16;
 const MAX_FONT_BYTES: usize = 32 * 1024 * 1024;
-const MAX_EXTENT: f32 = 2_000_000.0;
 const MAX_SCALE: f32 = 1.4;
 const MAX_RUBY_PER_BLOCK: usize = 128;
 const MAX_RUBY_TEXT: usize = 4_096;
@@ -296,7 +295,7 @@ impl VerticalChapter {
             return Err("The chapter has no vertical reading text".into());
         }
         let extent = reader.columns.len().div_ceil(columns_per_page) as f32 * page_span;
-        if extent > MAX_EXTENT {
+        if !extent.is_finite() || extent > settings.chapter_height_limit() {
             return Err("The chapter exceeds the vertical pagination limit".into());
         }
         Ok((reader, lines, extent))

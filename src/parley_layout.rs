@@ -25,7 +25,6 @@ use parley::{
 
 const MAX_TEXT_BYTES: usize = 512 * 1024;
 const MAX_LINES: usize = 30_000;
-const MAX_HEIGHT: f32 = 2_000_000.0;
 const MAX_IMAGE_BOXES: usize = 2_048;
 const MAX_DISTINCT_IMAGE_READS: usize = 512;
 const MAX_IMAGE_PIXELS: usize = 8 * 1024 * 1024;
@@ -707,7 +706,7 @@ impl ParleyChapter {
                 }
             }
 
-            if y > MAX_HEIGHT {
+            if !y.is_finite() || y > settings.chapter_height_limit() {
                 return Err("The chapter exceeds the Parley height limit".into());
             }
             if let Some(points) = &mut fill_positions {
@@ -763,6 +762,9 @@ impl ParleyChapter {
             )
             .fold(0., f32::max);
         let extent = (row_flow.end(y) - gap).max(painted).max(0.0);
+        if !extent.is_finite() || extent > settings.chapter_height_limit() {
+            return Err("The chapter exceeds the Parley height limit".into());
+        }
         Ok((chapter, lines, extent))
     }
 

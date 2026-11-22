@@ -451,7 +451,10 @@ impl Error for PageContentTooTall {}
 
 impl Pagination {
     fn fixed_stride(height: f32, extent: f32) -> Result<Self> {
-        if !extent.is_finite() || !(0.0..=2_000_000.0).contains(&extent) {
+        Self::fixed_stride_capped(height,extent,2_000_000.0)
+    }
+    fn fixed_stride_capped(height: f32, extent: f32, limit:f32) -> Result<Self> {
+        if !extent.is_finite() || !(0.0..=limit).contains(&extent) {
             return Err("The chapter exceeds the layout height limit".into());
         }
         let pages = (extent / height).ceil().max(1.0) as usize;
@@ -469,9 +472,15 @@ impl Pagination {
     fn with_breaks(
         lines: &[Line],
         height: f32,
-        mut content_height: f32,
+        content_height: f32,
         breaks: &[publisher_breaks::BoxRules],
     ) -> Result<Self> {
+        Self::with_breaks_capped(lines,height,content_height,breaks,2_000_000.0)
+    }
+    fn with_breaks_capped(
+        lines:&[Line],height:f32,mut content_height:f32,
+        breaks:&[publisher_breaks::BoxRules],limit:f32,
+    )->Result<Self> {
         let mut intervals: Vec<Range<f32>> = Vec::new();
         for line in lines {
             if !line.top.is_finite() || !line.bottom.is_finite() || line.top > line.bottom {
@@ -483,7 +492,7 @@ impl Pagination {
                 _ => intervals.push(line.top..line.bottom),
             }
         }
-        if !content_height.is_finite() || !(0.0..=2_000_000.0).contains(&content_height) {
+        if !content_height.is_finite() || !(0.0..=limit).contains(&content_height) {
             return Err("The chapter exceeds the layout height limit".into());
         }
         let boundaries = publisher_breaks::boundaries(&intervals, breaks);
@@ -793,7 +802,7 @@ impl Probe {
                             let grid = lay_out(&source, fonts.clone()).and_then(
                                 |(layout, mut lines, extent)| {
                                     lines.sort_by(|a, b| a.top.total_cmp(&b.top));
-                                    Pagination::new(&lines, settings.text_height() as f32, extent)?;
+                                    Pagination::with_breaks_capped(&lines, settings.text_height() as f32, extent, &[], settings.chapter_height_limit())?;
                                     Ok((layout, lines, extent))
                                 },
                             );
@@ -830,9 +839,9 @@ impl Probe {
         lines.sort_by(|a, b| a.top.total_cmp(&b.top));
         let height = settings.text_height() as f32;
         let mut pages = if matches!(&renderer, Renderer::Vertical(_)) {
-            Pagination::fixed_stride(height, content_height)?
+            Pagination::fixed_stride_capped(height, content_height, settings.chapter_height_limit())?
         } else {
-            Pagination::with_breaks(&lines, height, content_height, &publisher_edges)?
+            Pagination::with_breaks_capped(&lines, height, content_height, &publisher_edges, settings.chapter_height_limit())?
         };
         if pages.len() > 1
             && let Renderer::Parley(chapter) = &renderer

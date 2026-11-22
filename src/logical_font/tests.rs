@@ -207,3 +207,71 @@ fn legacy_context_changes_leave_all_pixels_and_page_anchors_identical() {
     }
     std::fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn large_logical_publication_can_exceed_legacy_height_without_losing_its_last_passage() {
+    let path = sample();
+    let html = format!(
+        "<html><body><p>{}</p><p id='end'>END</p></body></html>",
+        "W<br/>".repeat(5200)
+    );
+    std::fs::write(&path, html).unwrap();
+    let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let mut legacy = Probe::open(&path, Engine::Parley, &fonts, Settings::default(), 0).unwrap();
+    let mut large = Probe::open(
+        &path,
+        Engine::Parley,
+        &fonts,
+        Settings::default().with_logical_font(255.).unwrap(),
+        0,
+    )
+    .unwrap();
+    assert!(large.page_range(large.page_count() - 1).end > 2_000_000.);
+    assert!(large.page_range(large.page_count() - 1).end < MAX_LOGICAL_HEIGHT);
+    let anchor = large.fragment("end").unwrap();
+    assert_eq!(legacy.fragment("end"), Some(anchor.clone()));
+    let mut end = anchor.clone();
+    end.offset += 3;
+    let selection = large.select_range(&anchor, &end).unwrap();
+    assert_eq!(selection.text, "END");
+    let page = large.page_for(&anchor).unwrap();
+    let rects = large.selection_rects(page, &selection);
+    assert!(!rects.is_empty());
+    let rect = &rects[0];
+    assert_eq!(
+        large
+            .word_at(
+                page,
+                (rect.x + rect.width / 2) as f32,
+                (rect.y + rect.height / 2) as f32
+            )
+            .unwrap()
+            .text,
+        "END"
+    );
+    assert!(large.capture(page).unwrap().iter().any(|&n| n < 128));
+    assert!(
+        legacy
+            .capture(legacy.page_for(&anchor).unwrap())
+            .unwrap()
+            .iter()
+            .any(|&n| n < 128)
+    );
+    assert!(crate::Pagination::fixed_stride(1000., 2_000_001.).is_err());
+    assert!(crate::Pagination::with_breaks(&[], 1000., 2_000_001., &[]).is_err());
+    assert!(
+        crate::Pagination::fixed_stride_capped(1000., MAX_LOGICAL_HEIGHT + 1., MAX_LOGICAL_HEIGHT)
+            .is_err()
+    );
+    assert!(
+        crate::Pagination::with_breaks_capped(
+            &[],
+            1000.,
+            MAX_LOGICAL_HEIGHT + 1.,
+            &[],
+            MAX_LOGICAL_HEIGHT
+        )
+        .is_err()
+    );
+    std::fs::remove_file(path).unwrap();
+}

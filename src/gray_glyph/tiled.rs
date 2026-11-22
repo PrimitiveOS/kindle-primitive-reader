@@ -191,7 +191,12 @@ fn near(p: P, a: P, b: P) -> bool {
     if length == 0. {
         (p - a).hypot() <= TOLERANCE
     } else {
-        (v.x * (p.y - a.y) - v.y * (p.x - a.x)).abs() / length <= TOLERANCE
+        // A collinear control outside the chord can still turn back beyond
+        // an endpoint. Keep that extremum for subsequent signed strokes.
+        let projection = (p - a).dot(v);
+        projection >= 0.
+            && projection <= v.hypot2()
+            && (v.x * (p.y - a.y) - v.y * (p.x - a.x)).abs() / length <= TOLERANCE
     }
 }
 fn quad(
@@ -387,6 +392,31 @@ fn clip(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn collinear_curve_overshoot_survives_flattening_and_stroke_expansion() {
+        let path = [
+            PathEl::MoveTo(P::new(0., 0.)),
+            PathEl::QuadTo(P::new(200., 0.), P::new(100., 0.)),
+            PathEl::LineTo(P::new(100., 100.)),
+            PathEl::LineTo(P::new(0., 100.)),
+            PathEl::ClosePath,
+        ];
+        let contours = flatten(&path).unwrap();
+        let furthest = contours.iter().flatten().map(|p| p.x).fold(0., f64::max);
+        assert!(
+            (furthest - 400. / 3.).abs() <= TOLERANCE,
+            "overshoot lost: {furthest}"
+        );
+        let border = bounded_stroke(&contours, 4.).unwrap();
+        assert!(border.bounding_box().x1 > 132.);
+        let strokes = flatten(border.elements()).unwrap();
+        let mask = tile_mask(&strokes, 120, -5, 30, 20, &mut ClipBudget::default()).unwrap();
+        assert!(
+            mask.chunks_exact(30)
+                .any(|row| row[10..15].iter().any(|&n| n > 128))
+        );
+    }
+
     #[test]
     fn scratch_and_total_work_are_rejected_before_growing_beyond_their_caps() {
         let zigzag = (0..MAX_FLAT)
