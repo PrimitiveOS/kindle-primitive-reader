@@ -10,6 +10,7 @@ pub(crate) mod publisher_pages;
 mod character_page_settings;
 use character_page_settings::NumberField;
 mod dictionary_panel;
+mod default_settings;
 mod cjk_selection;
 mod dictionary_sources;
 use dictionary_sources::{SourceAction, SourcePreferences};
@@ -197,6 +198,7 @@ enum Screen {
     Typography,
     ReadingFonts,
     ReadingProfiles,
+    DocumentDefaults,
     ProfileName,
     RemoveProfiles,
     Find,
@@ -291,6 +293,7 @@ impl Screen {
             Self::Typography => "Text settings",
             Self::ReadingFonts => "Reading font",
             Self::ReadingProfiles => "Reading profiles",
+            Self::DocumentDefaults => "Document defaults",
             Self::ProfileName => "Save reading profile",
             Self::RemoveProfiles => "Remove a reading profile",
             Self::Find => "Find in book",
@@ -388,6 +391,7 @@ enum Action {
     ShowFonts,
     ShowDictionaries,
     DictionarySource(SourceAction),
+    DocumentDefaults(default_settings::Command),
     LookUp(String),
     ProgressSync(progress_sync::Command),
     Vocabulary(vocabulary::Command),
@@ -595,6 +599,7 @@ pub struct Reader {
     available_fonts: Vec<String>,
     profiles: Vec<Profile>,
     profiles_path: PathBuf,
+    document_defaults: crate::document_defaults::Store,
     active: Option<ActiveBook>,
     illustration: Option<FixedReading>,
     fixed: Option<ActiveFixed>,
@@ -745,6 +750,7 @@ impl Reader {
             available_fonts: Vec::new(),
             profiles,
             profiles_path,
+            document_defaults: crate::document_defaults::Store::load(data.join(crate::document_defaults::FILE)),
             active: None,
             illustration: None,
             fixed: None,
@@ -859,12 +865,17 @@ impl Reader {
                 Ok((absolute, self.library.identify(&entry)?, None))
             }
         })?;
-        let mut settings = self.device_reading_settings();
-        let mut scroll = false;
-        let mut facing_pages = false;
-        let mut fixed_preferences = FixedPreferences::default();
+        let unseen = self.library.state(id).is_none();
+        let mut initial_preferences = self.document_defaults.templates.reflow.clone().unwrap_or_default();
+        let mut default_font_missing = false;
+        let mut settings = initial_preferences.apply_to(self.device_reading_settings());
+        let mut scroll = initial_preferences.scroll;
+        let mut facing_pages = initial_preferences.facing_pages;
+        let mut fixed_preferences = self.document_defaults.templates.fixed.unwrap_or_default().apply(FixedPreferences::default());
         let position = self.library.state(id).and_then(|state| {
-            settings = state.preferences.apply_to(settings);
+            // A saved state inherits the device baseline, never a newly changed
+            // template, including older records with empty/default preferences.
+            settings = state.preferences.apply_to(self.device_reading_settings());
             scroll = state.preferences.scroll;
             facing_pages = state.preferences.facing_pages;
             fixed_preferences = state.fixed_preferences;
@@ -940,10 +951,13 @@ impl Reader {
             }
             return Ok(());
         }
-        let custom_font = self
-            .library
-            .state(id)
-            .and_then(|state| state.preferences.font_file.as_deref());
+        if unseen && initial_preferences.font_file.is_some()
+            && self.fonts_for(initial_preferences.font_file.as_deref()).is_err() {
+            initial_preferences.font_file = None;
+            default_font_missing = true;
+        }
+        let custom_font = self.library.state(id).map_or(initial_preferences.font_file.as_deref(),
+            |state| state.preferences.font_file.as_deref());
         let fonts = self
             .fonts_for(custom_font)
             .unwrap_or_else(|_| self.fonts.clone());
@@ -978,6 +992,10 @@ impl Reader {
         self.range_edit = None;
         self.saved_popup = None;
         self.active = Some(ActiveBook { entry, id, reading, numbering: None });
+        if unseen {
+            let active = self.active.as_ref().unwrap();
+            self.library.remember(&active.entry, id, &active.reading.probe.title).preferences = initial_preferences;
+        }
         let offer_publisher = self.apply_new_numbering_defaults();
         self.restore_character_pages();
         self.fixed = None;
@@ -989,6 +1007,7 @@ impl Reader {
         self.restore_reading_menus(id);
         self.show(if offer_publisher { Screen::PublisherOffer } else { Screen::Book });
         self.record_position();
+        if default_font_missing { self.notice = Some("Default reading font unavailable; using device fonts".into()); }
         if let Some(active) = &self.active {
             self.library
                 .cache_author(active.id, active.reading.probe.author.as_deref());
@@ -1707,6 +1726,7 @@ impl Reader {
                 );
                 items
             }
+            Screen::DocumentDefaults => Vec::new(),
             Screen::ReadingProfiles => {
                 let mut items = vec![Item::new(
                     "Save current text settings",
@@ -2496,6 +2516,7 @@ impl Reader {
                 self.show(Screen::ReadingProfiles);
             }
             Action::ResetText => self.apply_text_profile(BookPreferences::default())?,
+            Action::DocumentDefaults(command) => self.activate_document_defaults(command)?,
             Action::ReadingMode(scroll) => {
                 let active = self.active.as_mut().ok_or("No open book")?;
                 active.reading.set_scroll(scroll)?;
@@ -2668,44 +2689,7 @@ impl Reader {
     }
 
     fn save_reading_profile(&mut self, name: &str) -> Result<()> {
-        let active = self.active.as_ref().ok_or("Open a book first")?;
-        let config = &active.reading.config;
-        let settings = config.settings;
-        let font_file = self
-            .library
-            .state(active.id)
-            .and_then(|state| state.preferences.font_file.clone());
-        let preferences = BookPreferences {
-            font_size: Some(settings.font_size),
-            margin: Some(settings.margin),
-            margin_sides: settings.margin_sides,
-            margin_left: settings.margin_left,
-            margin_right: settings.margin_right,
-            link_vertical_margins: settings.link_vertical_margins,
-            margin_top: settings.margin_top,
-            margin_bottom: settings.margin_bottom,
-            line_height: Some(settings.line_height),
-            word_spacing: settings.word_spacing,
-            word_expansion: Some(settings.word_expansion),
-            letter_spacing: settings.letter_spacing,
-            cjk_width_percent: (settings.cjk_width_percent != 100).then_some(settings.cjk_width_percent),
-            scroll: config.scroll,
-            facing_pages: config.facing_pages,
-            alignment: settings.alignment,
-            bold_text: settings.bold_text,
-            text_contrast: settings.text_contrast,
-            font_gamma_index: Some(settings.font_gamma_index),
-            font_weight_delta: Some(settings.font_weight_delta),
-            publisher_styles: Some(settings.publisher_styles),
-            font_kerning: Some(settings.font_kerning),
-            font_hinting: settings.font_hinting,
-            smooth_images: Some(settings.smooth_images),
-            invert_night_images: settings.invert_night_images,
-            override_fonts: settings.override_fonts,
-            disable_soft_hyphens: settings.disable_soft_hyphens,
-            automatic_hyphenation: Some(settings.automatic_hyphenation),
-            font_file,
-        };
+        let preferences = self.current_text_preferences()?;
         let mut profiles = self.profiles.clone();
         reading_profiles::insert(&mut profiles, name, preferences)?;
         reading_profiles::save(&self.profiles_path, &profiles)?;
@@ -5154,6 +5138,7 @@ impl Reader {
 
 impl Reader {
     fn draw_content(&self, canvas: &mut Canvas) {
+        if self.screen == Screen::DocumentDefaults { self.draw_document_defaults(canvas); return; }
         if self.draw_reading_history(canvas) { return; }
         if let Screen::Catalog(page) = self.screen && self.draw_catalog(canvas,page) { return; }
         if let Screen::SyncEdit(field) = self.screen { self.draw_sync_editor(canvas, field); return; }
@@ -5750,6 +5735,7 @@ impl App for Reader {
         self.cjk_selection_lookup = None;
         if let Some(change) = self.sync_dialog_input(input) { return change; }
         if let Some(change) = self.vocabulary_dialog_input(input) { return change; }
+        if let Some(change) = self.document_defaults_input(input) { return change; }
         if input == Input::Sleep {
             self.cancel_catalog_for_sleep();
             self.cancel_progress_sync();
@@ -6011,6 +5997,7 @@ impl App for Reader {
                     Screen::FooterSettings | Screen::EndActionSettings | Screen::MetadataSaveSettings => {
                         self.show(Screen::ReadingControls)
                     }
+                    Screen::DocumentDefaults => self.show(Screen::ReadingControls),
                     Screen::ReadingProfiles => self.show(Screen::Typography),
                     Screen::RemoveProfiles => self.show(Screen::ReadingProfiles),
                     Screen::BookDetails => {
@@ -6332,6 +6319,7 @@ impl App for Reader {
     }
 
     fn storage_returned(&mut self) -> io::Result<()> {
+        self.document_defaults.reload();
         self.cancel_progress_sync();
 
         self.cjk_selection_lookup = None;

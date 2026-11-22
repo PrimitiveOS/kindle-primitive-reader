@@ -250,3 +250,7 @@ The original Night Landing EPUB passes EPUBCheck 5.4.0. The desktop workflow tes
 ## CJK dictionary selection and Japanese forms
 
 The desktop candidate enables Parley's supported complex-script segmentation models, adds bounded independently authored Japanese lookup forms and NFKC candidates, and checks the longest CJK source prefix through a cancellable background dictionary pass. Grapheme-safe source endpoints retain voicing marks, variation sequences and original anchors. Shared UI fonts now use supplied script fallbacks while preserving ASCII pixels. Authored regressions, real public Japanese passages and an unchanged owner EPUB cover the scoped behavior. Native acceptance, broader lexical classes, honorific/colloquial forms and the reference plugin's complete conversion/settings surface remain open. [Behavior, source comparison and limits](cjk-dictionary-selection.md)
+
+## Global document defaults
+
+Separate reflow and fixed-page templates now apply only to unseen content. Explicit save/reset/clear controls use the existing icon language. Older saved books retain their settings; reset keeps source position and annotations and retains fixed crop/pan within valid view bounds. Desktop regressions inject reflow/write failures, reopen both formats, preserve unavailable-font recovery and exercise four original EPUB/PDF publications. The optional versioned64KiB configuration shares validators with backup import. Native acceptance remains pending. [Behavior, source comparison and storage](document-defaults.md)

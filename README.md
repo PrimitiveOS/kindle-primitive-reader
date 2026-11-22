@@ -38,6 +38,8 @@ These captures use Reader's Kindle interface in the desktop simulator. The [curr
 
 When you long-press an inflected English or supported Japanese word, Reader looks up its base form in each enabled dictionary. If the spelling and word forms have no entry, the popup suggests nearby spellings. You can close the popup while the search runs. Set the library or book preference in Dictionaries. [Dictionary popup and settings](docs/dictionary-word-forms.md) · [Japanese and Chinese word selection](docs/cjk-dictionary-selection.md)
 
+Save separate text and page settings for new books under **Settings › Document defaults**. Reset the current book explicitly, or clear a template for future books. Existing books retain their saved settings. [Document defaults](docs/document-defaults.md)
+
 **Text › Spacing › Word expansion** redistributes part of the space on a justified line into the words. [Word expansion](docs/word-expansion.md)
 
 At the end of a book, Reader can show actions, mark the book as finished, open the next readable file or return to Library. [End-of-book actions](docs/document-end.md)

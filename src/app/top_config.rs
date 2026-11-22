@@ -235,6 +235,8 @@ impl Reader {
     pub(super) fn reading_settings_items(&self) -> Vec<Item> {
         let current = self.controls;
         let mut items = vec![
+            Item::new("Document defaults", Action::Show(Screen::DocumentDefaults))
+                .detail("Settings for new books; existing books stay unchanged"),
             Item::new("Reading gestures", Action::Show(Screen::Gestures))
                 .detail("Assign taps, holds and swipes"),
             Item::new("At the end of a book", Action::Show(Screen::EndActionSettings))
