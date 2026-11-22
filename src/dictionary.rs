@@ -6,6 +6,8 @@ mod spelling;
 #[cfg(feature = "kindle")]
 pub(crate) use spelling::eligible as spelling_eligible;
 mod word_forms;
+mod cjk_selection;
+pub(crate) use cjk_selection::{MAX_SCAN_CHARACTERS, word_character as cjk_word_character};
 use word_forms::{Ranked, WordForms};
 
 use std::cell::{Cell, RefCell};
@@ -1105,10 +1107,10 @@ pub(crate) mod tests {
 
     use super::*;
 
-    struct TestDirectory(PathBuf);
+    pub(crate) struct TestDirectory(pub(crate) PathBuf);
 
     impl TestDirectory {
-        fn new() -> Self {
+        pub(crate) fn new() -> Self {
             static NEXT: AtomicUsize = AtomicUsize::new(0);
             let path = std::env::temp_dir().join(format!(
                 "reader-stardict-{}-{}",
@@ -1151,7 +1153,7 @@ pub(crate) mod tests {
         fs::write(root.join(format!("{name}.dict")), data).unwrap();
     }
 
-    fn write_synonyms(root: &Path, name: &str, entries: &[(&str, u32)]) {
+    pub(crate) fn write_synonyms(root: &Path, name: &str, entries: &[(&str, u32)]) {
         let path = root.join(format!("{name}.ifo"));
         let mut info = fs::read_to_string(&path).unwrap();
         info.push_str(&format!("synwordcount={}\n", entries.len()));
