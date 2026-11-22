@@ -52,7 +52,7 @@ pub(super) fn validate_version(version: u32, states: &[BookState]) -> io::Result
     }
     if version == BACKUP_VERSION && present(states) {
         return Err(invalid_state(
-            "DOM boundary locations require Reader library format2",
+            "Saved locations do not match the declared library format",
         ));
     }
     validate(states)
@@ -65,7 +65,7 @@ pub(super) fn validate(states: &[BookState]) -> io::Result<()> {
                 || anchor.offset > 64 * 1024 * 1024
             {
                 return Err(invalid_state(
-                    "Reader state contains an invalid DOM boundary location",
+                    "Reader data contains an invalid saved document location",
                 ));
             }
         }
@@ -73,7 +73,7 @@ pub(super) fn validate(states: &[BookState]) -> io::Result<()> {
             mark.selection.start.boundary.is_some() || mark.selection.end.boundary.is_some()
         }) {
             return Err(invalid_state(
-                "A DOM boundary cannot be a text highlight endpoint",
+                "A document location without text cannot be a highlight endpoint",
             ));
         }
     }

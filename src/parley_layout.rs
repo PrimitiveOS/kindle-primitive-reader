@@ -799,6 +799,7 @@ impl ParleyChapter {
         if source.blocks.iter().any(|b| column_for(b).is_some()) {
             chapter.paragraphs.sort_by(|a, b| a.y.total_cmp(&b.y));
         }
+        generated.inline_boundaries(source, flow, &chapter.paragraphs, &mut chapter.boundaries)?;
         let mut maximum = 0.0_f32;
         for p in &mut chapter.paragraphs {
             maximum = maximum.max(p.bottom);
@@ -920,6 +921,13 @@ impl ParleyChapter {
 
     pub(crate) fn boundary(&self, origin: usize) -> Option<generated_boxes::BoundaryGeometry> {
         self.boundaries.get(&origin).copied()
+    }
+
+    pub(crate) fn generated_box_ranges(&self) -> impl Iterator<Item = Range<f32>> + '_ {
+        self.boundaries
+            .values()
+            .filter(|area| area.generated_only && area.bottom > area.top)
+            .map(|area| area.top..area.bottom)
     }
 
     pub(crate) fn boundary_in(

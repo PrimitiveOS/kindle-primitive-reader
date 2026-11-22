@@ -478,13 +478,18 @@ fn original_documents_restore_bookmarks_through_the_browser() {
 #[test]
 fn a_boundary_bookmark_preview_uses_its_label_without_copying_the_fallback_paragraph() {
     let fixture = Fixture::new();
-    let mut app = fixture.app();
+    let mut app = Reader::open(
+        &fixture.root,
+        &fixture.state,
+        vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+    )
+    .unwrap();
     app.open_path(&fixture.book).unwrap();
     let active = app.active.as_ref().unwrap();
     let id = active.id;
     let owner = active.reading.probe.source.blocks[0].element;
     let anchor = active.reading.probe.boundary_anchor(owner).unwrap();
-    let position = ReadingPosition {
+    let position = crate::library::ReadingPosition {
         chapter: 0,
         page: 0,
         anchor: Some(anchor.clone()),

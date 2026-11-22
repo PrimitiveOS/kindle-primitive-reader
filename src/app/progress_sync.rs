@@ -117,7 +117,7 @@ impl Reader {
             .current_position()
             .ok_or("The current page is not ready")?;
         if position.anchor.as_ref().is_some_and(|anchor| anchor.boundary.is_some()) {
-            return Err("This DOM boundary cannot be transferred by progress sync version1".into());
+            return Err("This location cannot be shared by the current sync format".into());
         }
         Ok(Record {
             version: 1,

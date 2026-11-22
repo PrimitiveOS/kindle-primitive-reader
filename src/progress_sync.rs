@@ -104,7 +104,7 @@ impl Config {
     pub fn save(&self, path: &Path) -> io::Result<()> {
         if self.seen.values().any(|seen| seen.position.as_ref().is_some_and(|position|
             position.anchor.as_ref().is_some_and(|anchor| anchor.boundary.is_some()))) {
-            return Err(io::Error::other("DOM boundary sync history is unsupported in version1"));
+            return Err(io::Error::other("The sync history contains an unsupported location"));
         }
         let bytes = serde_json::to_vec(self).map_err(io::Error::other)?;
         if bytes.len() as u64 > CONFIG_LIMIT {
@@ -168,7 +168,7 @@ impl Record {
             return Ok(());
         };
         if position.anchor.as_ref().is_some_and(|anchor| anchor.boundary.is_some()) {
-            return Err("DOM boundary positions are unsupported by progress sync version1".into());
+            return Err("This saved location is unsupported by the current sync format".into());
         }
         if position.chapter > 100_000 || position.page > 10_000_000 {
             return Err("The server position exceeds the reading limits".into());

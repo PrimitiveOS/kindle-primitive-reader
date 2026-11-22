@@ -471,9 +471,29 @@ impl Pagination {
     fn with_breaks(
         lines: &[Line],
         height: f32,
-        mut content_height: f32,
+        content_height: f32,
         breaks: &[publisher_breaks::BoxRules],
     ) -> Result<Self> {
+        Self::with_geometry(lines, height, content_height, breaks, &[])
+    }
+
+    fn with_geometry(
+        lines: &[Line],
+        height: f32,
+        mut content_height: f32,
+        breaks: &[publisher_breaks::BoxRules],
+        spanning_boxes: &[Range<f32>],
+    ) -> Result<Self> {
+        for area in spanning_boxes {
+            if !area.start.is_finite()
+                || !area.end.is_finite()
+                || area.start < 0.
+                || area.start > area.end
+            {
+                return Err("The renderer returned invalid box positions".into());
+            }
+            content_height = content_height.max(area.end);
+        }
         let mut intervals: Vec<Range<f32>> = Vec::new();
         for line in lines {
             if !line.top.is_finite() || !line.bottom.is_finite() || line.top > line.bottom {
@@ -509,10 +529,27 @@ impl Pagination {
                 } else {
                     interval.start
                 };
-                while next >= *bounds.last().unwrap() + 2.0 * height {
-                    bounds.push(bounds.last().unwrap() + height);
+                let mut split_generated_gap = false;
+                loop {
+                    let cut = *bounds.last().unwrap() + height;
+                    let box_crosses_cut = next > cut
+                        && spanning_boxes
+                            .iter()
+                            .any(|area| area.start < next && area.end > cut);
+                    if next < cut + height && !box_crosses_cut {
+                        break;
+                    }
+                    bounds.push(cut);
+                    split_generated_gap |= box_crosses_cut;
                 }
-                if next > *bounds.last().unwrap() {
+                // Generated paint/box geometry can fill a gap before the next
+                // text line. Once split at the viewport edge, keep a following
+                // fitting line on that page instead of jumping over box pixels.
+                if next > *bounds.last().unwrap()
+                    && (!split_generated_gap
+                        || forced
+                        || interval.end > *bounds.last().unwrap() + height)
+                {
                     bounds.push(next);
                 }
             }
@@ -834,7 +871,11 @@ impl Probe {
         let mut pages = if matches!(&renderer, Renderer::Vertical(_)) {
             Pagination::fixed_stride(height, content_height)?
         } else {
-            Pagination::with_breaks(&lines, height, content_height, &publisher_edges)?
+            let boxes = match &renderer {
+                Renderer::Parley(chapter) => chapter.generated_box_ranges().collect::<Vec<_>>(),
+                _ => Vec::new(),
+            };
+            Pagination::with_geometry(&lines, height, content_height, &publisher_edges, &boxes)?
         };
         if pages.len() > 1
             && let Renderer::Parley(chapter) = &renderer
