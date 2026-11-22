@@ -198,8 +198,14 @@ fn ruby_annotation_owner_is_separate_from_the_canonical_base_text() {
     assert_eq!(&block.text[block.ruby[0].bytes.clone()], "日本");
     assert_eq!(block.ruby[0].element, element(&source, "annotation"));
     assert_eq!(block.ruby[0].annotation, "にほん");
-    // Existing ruby extraction does not turn annotation IDs into main-flow
-    // destinations; ownership metadata must not create a new destination.
-    assert!(!source.fragments.contains_key("annotation"));
-    assert!(source.fragment_owner("annotation").is_none());
+    // The existing empty-anchor pass retains an rt ID at the chapter's last
+    // character. Keep that tuple, but remember that its owner is rt, not p.
+    assert_eq!(
+        source.fragments["annotation"],
+        (block.key, block.text.len())
+    );
+    assert_eq!(
+        source.fragment_owner("annotation"),
+        Some(block.ruby[0].element)
+    );
 }
