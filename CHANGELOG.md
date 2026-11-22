@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.17
+
+- Read raised footnote numbers and powers, and lowered subscripts in EPUBs. Links and bookmarks still point to the original text.
+- Show the estimated time left in the current chapter or book using the pace recorded for that book.
+- Use spaces at either end of a PDF search to match word boundaries. Saved searches remember those spaces.
+
 ## 0.1.16
 
 - Generate stable pages for an EPUB from 500 to 3,000 characters per page. Jump to a stable number, show it in the margin or footer and set defaults for new books.
