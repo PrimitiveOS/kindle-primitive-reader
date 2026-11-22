@@ -36,6 +36,10 @@ Use the original file, the same view and the same input action in both readers w
 
 Reader now applies CREngine's defined Windows-1252 numeric-reference substitutions without modifying literal controls or CDATA. Desktop regressions cover variable-width saved positions, both older ruby text revisions, normalized attributes, search, selection and painting. A real EPUB chapter is checked with its unchanged source and the same local font stack. The independent Symbol private-use font gap remains open. Kindle acceptance is pending the next combined build. [Implementation and limits](numeric-character-references.md)
 
+## Private-use source font audit
+
+The remaining 134 private-use characters are already present in an original KF8 source with no font declaration or embedded font. Its reconstructed chapters preserve the exact character sequence. An authored Microsoft Symbol cmap control renders all eight tested values with unchanged source anchors through the existing pipeline. Do not infer the original symbols from low bytes or an unrelated font. Explicit secondary Symbol-map coverage and an actual affected-passage comparison in stock KOReader remain pending device availability. [Provenance and limits](symbol-font-provenance.md)
+
 ## P0.1 Prepare the corpus
 
 Record each fixture's source, redistribution terms, and checksum. Use original

@@ -16,4 +16,4 @@ The authored regressions cover all 27 defined codes and five unassigned codes, d
 
 One unchanged original EPUB chapter previously produced a single missing-glyph cluster for U+0092. With the same fonts and viewport, the numeric-reference conversion removes that cluster. This is a chapter-specific desktop result. It does not establish complete glyph coverage for the collection.
 
-The remaining private-use characters in a separate original book require its matching Symbol font. Reader does not guess a Unicode mapping for those glyphs. Native acceptance of this change is pending the next combined Kindle build.
+The remaining private-use characters in a separate original book require an identified source font or explicit publisher character mapping. Reader does not guess a Unicode mapping for those glyphs. [Source font provenance](symbol-font-provenance.md) Native acceptance of this change is pending the next combined Kindle build.
