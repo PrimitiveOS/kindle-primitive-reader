@@ -365,3 +365,65 @@ fn logical_original_publication_keeps_canonical_selection_and_resumes_large_size
     assert_eq!(fs::read(path).unwrap(), original);
     assert_eq!(fs::read(copy).unwrap(), original);
 }
+
+#[test]
+fn unfit_imported_layout_requires_explicit_reset_backs_up_choices_and_rolls_back_failures() {
+    let (fixture, mut app, path) = setup();
+    let id = app.active.as_ref().unwrap().id;
+    let anchor = app.active.as_ref().unwrap().reading.anchor();
+    let source = fs::read(&path).unwrap();
+    let old = BookPreferences {
+        logical_font_size: Some(255.),
+        line_height: Some(3.),
+        margin_top: Some(350),
+        margin_bottom: Some(350),
+        ..Default::default()
+    };
+    crate::document_defaults::validate_preferences(&old).unwrap();
+    app.library.state_mut(id).unwrap().preferences = old.clone();
+    app.save().unwrap();
+    let bytes = fs::read(&fixture.state).unwrap();
+    let model = app.library.bytes().unwrap();
+    app.open_path(&path).unwrap();
+    assert!(app.logical_recovery.is_some());
+    assert_eq!(app.library.bytes().unwrap(), model);
+    app.input(Input::PageBack);
+    assert!(app.logical_recovery.is_none());
+    assert_eq!(fs::read(&fixture.state).unwrap(), bytes);
+    app.open_path(&path).unwrap();
+    app.input(Input::Sleep);
+    assert!(app.logical_recovery.is_some());
+    app.input(Input::Wake);
+    let folder = app.profiles_path.parent().unwrap().join("layout-recovery");
+    fs::write(&folder, b"blocked").unwrap();
+    assert!(app.reset_unopened_logical_layout().is_err());
+    assert_eq!(fs::read(&fixture.state).unwrap(), bytes);
+    assert_eq!(app.library.bytes().unwrap(), model);
+    fs::remove_file(&folder).unwrap();
+    let saved = fixture.root.join("saved-before-recovery");
+    fs::rename(&fixture.state, &saved).unwrap();
+    fs::create_dir(&fixture.state).unwrap();
+    assert!(app.reset_unopened_logical_layout().is_err());
+    assert_eq!(app.library.bytes().unwrap(), model);
+    fs::remove_dir(&fixture.state).unwrap();
+    fs::rename(&saved, &fixture.state).unwrap();
+    app.reset_unopened_logical_layout().unwrap();
+    assert!(app.logical_recovery.is_none());
+    assert_eq!(current(&app), Some(22.));
+    assert_eq!(app.active.as_ref().unwrap().reading.anchor(), anchor);
+    let files = fs::read_dir(&folder)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect::<Vec<_>>();
+    assert_eq!(files.len(), 1);
+    let archive: serde_json::Value = serde_json::from_slice(&fs::read(&files[0]).unwrap()).unwrap();
+    assert_eq!(
+        serde_json::from_value::<BookPreferences>(archive["preferences"].clone()).unwrap(),
+        old
+    );
+    let mut reopened = Reader::open(&fixture.root, &fixture.state, fonts()).unwrap();
+    reopened.open_path(&path).unwrap();
+    assert_eq!(current(&reopened), Some(22.));
+    assert!(reopened.logical_recovery.is_none());
+    assert_eq!(fs::read(path).unwrap(), source);
+}

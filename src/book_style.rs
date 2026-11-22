@@ -627,7 +627,7 @@ impl BookStyle {
                     Property::Width(value) | Property::Height(value) => {
                         let value = match value {
                             ImageLength::RootEm(value) => {
-                                let root = result.first().map_or_else(|| relative_font(style.size_scale), |root| relative_font(root.size_scale));
+                                let root = result.first().map_or_else(|| if logical.is_some() { relative_font(style.size_scale) } else { style.size_scale }, |root| relative_font(root.size_scale));
                                 ImageLength::RootEm(value * root / relative_font(style.size_scale))
                             }
                             value => *value,

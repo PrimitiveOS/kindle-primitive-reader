@@ -566,7 +566,7 @@ mod logical_bound_tests {
         let font=FontData::new(parley::fontique::Blob::new(Arc::new(bytes)),0);
         for logical in [false,true] {
             let mut cache=GlyphCache::with_hinting(logical,FontHinting::Off,Arc::default());
-            let style=GlyphStyle{font:&font,size:340.,variations:vec![0;MAX_AXES+1],skew:0.,clockwise:false,strength:0.};
+            let style=GlyphStyle{font:&font,size:42.,variations:vec![0;MAX_AXES+1],skew:0.,clockwise:false,strength:0.};
             let mut frame=vec![255;500*500];cache.begin_paint();
             cache.draw_positioned(&mut frame,500,&(0..500),style,std::iter::once((1,0.,340.)),false,crate::font_render::NORMAL_GAMMA);
             assert_eq!(cache.check_paint().is_err(),logical);

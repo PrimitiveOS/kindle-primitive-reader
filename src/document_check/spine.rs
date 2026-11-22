@@ -46,6 +46,11 @@ struct SessionConfiguration {
     requested_width: u32,
     requested_height: u32,
     font_size: f32,
+    font_policy: &'static str,
+    logical_font_size: Option<f64>,
+    requested_font_pixels: Option<u32>,
+    full_screen_short_side: u32,
+    screen_dpi_override: Option<u16>,
     render_dpi: u16,
     percent_word_spacing: Option<crate::WordSpacePercent>,
     font_files: usize,
@@ -63,6 +68,11 @@ impl From<&BookConfig> for SessionConfiguration {
             requested_width: config.settings.width,
             requested_height: config.settings.height,
             font_size: config.settings.font_size,
+            font_policy: if config.settings.logical_font_size.is_some() { "stock_logical" } else { "legacy_pixels" },
+            logical_font_size: config.settings.logical_font_size,
+            requested_font_pixels: config.settings.logical_font_size.and_then(|n| config.settings.font_scale.requested(n).ok()),
+            full_screen_short_side: config.settings.font_scale.short_side(),
+            screen_dpi_override: config.settings.font_scale.dpi_override(),
             render_dpi: config.settings.render_dpi,
             percent_word_spacing: config.settings.percent_word_spacing,
             font_files: config.fonts.len(),
@@ -517,5 +527,28 @@ mod tests {
             .unwrap();
         assert!(error.to_string().contains("different publication"));
         assert!(!error.to_string().contains(&path.display().to_string()));
+    }
+}
+
+#[cfg(test)]
+mod logical_configuration_tests {
+    use super::*;
+    #[test]
+    fn configured_receipt_distinguishes_raw_requested_effective_and_legacy_units_without_paths() {
+        let mut config=BookConfig {
+            user_styles:Default::default(),user_hyphenation:Default::default(),engine:Engine::Parley,
+            book:std::path::PathBuf::from("/private/publication.epub"),fonts:vec![std::path::PathBuf::from("/private/font.ttf")],
+            settings:Settings::default().with_logical_font(255.).unwrap(),scroll:false,facing_pages:true,
+            hide_nonlinear:false,hidden_flows:Default::default(),chapter_offsets:Default::default(),
+        };
+        let json=serde_json::to_value(SessionConfiguration::from(&config)).unwrap();
+        assert_eq!(json["font_policy"],"stock_logical");assert_eq!(json["logical_font_size"],255.);
+        assert_eq!(json["requested_font_pixels"],538);assert_eq!(json["font_size"],340.);
+        assert_eq!(json["full_screen_short_side"],1264);assert!(json["screen_dpi_override"].is_null());
+        assert!(!json.to_string().contains("private"));
+        config.settings=Settings{font_size:42.25,..Settings::default()};
+        let json=serde_json::to_value(SessionConfiguration::from(&config)).unwrap();
+        assert_eq!(json["font_policy"],"legacy_pixels");assert!(json["logical_font_size"].is_null());
+        assert!(json["requested_font_pixels"].is_null());assert_eq!(json["font_size"],42.25);
     }
 }

@@ -158,3 +158,117 @@ impl Reader {
 
 #[cfg(test)]
 mod tests;
+
+/// A viewport failure is recoverable without changing the document or silently
+/// overwriting the imported choice. Reset is an explicit modal transaction.
+#[derive(Clone)]
+pub(super) struct Recovery {
+    pub(super) entry: LibraryBook,
+    pub(super) id: u64,
+    pub(super) config: BookConfig,
+    pub(super) position: Option<ReadingPosition>,
+    pub(super) preferences: BookPreferences,
+}
+impl Reader {
+    fn logical_recovery_sheet() -> primitive_ui::Sheet<'static> {
+        primitive_ui::Sheet::centered(
+            Rect::new(0, 0, WIDTH as i32, HEIGHT as i32),
+            "Text size does not fit",
+            "This book's saved layout cannot fit this screen. Reset text settings to open it? Your previous choices will be backed up. Notes and reading position stay the same.",
+            "Reset text",
+        )
+    }
+    pub(super) fn draw_logical_recovery(&self, canvas: &mut Canvas) {
+        if self.logical_recovery.is_some() {
+            Self::logical_recovery_sheet().draw(canvas, None);
+        }
+    }
+    pub(super) fn logical_recovery_input(&mut self, input: Input) -> Option<Change> {
+        self.logical_recovery.as_ref()?;
+        let reset = match input {
+            Input::Sleep | Input::Wake => return None,
+            Input::PageBack => false,
+            Input::Tap(x, y) => match Self::logical_recovery_sheet().hit(x, y) {
+                Some(primitive_ui::SheetAction::Cancel) => false,
+                Some(primitive_ui::SheetAction::Confirm) => true,
+                None => return Some(Change::None),
+            },
+            _ => return Some(Change::None),
+        };
+        if !reset {
+            self.logical_recovery = None;
+            return Some(Change::Partial);
+        }
+        Some(match self.reset_unopened_logical_layout() {
+            Ok(()) => Change::Partial,
+            Err(error) => self.report(error),
+        })
+    }
+    fn reset_unopened_logical_layout(&mut self) -> Result<()> {
+        let recovery = self
+            .logical_recovery
+            .clone()
+            .ok_or("No saved layout to recover")?;
+        if with_storage(|| self.library.identify(&recovery.entry))? != recovery.id {
+            return Err("The document edition changed; reopen it before resetting text".into());
+        }
+        let preferences = BookPreferences::for_new_reflow();
+        let mut config = recovery.config;
+        config.settings = preferences.apply_to(self.device_reading_settings());
+        config.fonts = self.fonts.clone();
+        config.scroll = false;
+        config.facing_pages = false;
+        let candidate = if let Some(saved) = &recovery.position {
+            Reading::restore(config, saved.chapter, saved.page, saved.anchor.as_ref())?
+        } else {
+            Reading::open(config)?
+        };
+        if with_storage(|| self.library.identify(&recovery.entry))? != recovery.id {
+            return Err("The document edition changed while resetting text".into());
+        }
+        crate::document_defaults::validate_preferences(&recovery.preferences)?;
+        let bytes = serde_json::to_vec(
+            &serde_json::json!({"version":1,"book":recovery.id,"preferences":recovery.preferences}),
+        )?;
+        let fingerprint = crate::library::fingerprint_bytes(&bytes, b"layout-recovery");
+        let folder = self
+            .profiles_path
+            .parent()
+            .ok_or("Reader data folder unavailable")?
+            .join("layout-recovery");
+        let path = folder.join(format!("{:016x}-{fingerprint:016x}.json", recovery.id));
+        with_storage(|| {
+            fs::create_dir_all(&folder)?;
+            if path.exists() {
+                if fs::read(&path)? != bytes {
+                    return Err(io::Error::other(
+                        "A different layout backup already uses this filename",
+                    ));
+                }
+                Ok(())
+            } else {
+                primitive_app::save(&path, &bytes)
+            }
+        })?;
+        self.library.commit_recovered_layout(
+            &recovery.entry,
+            recovery.id,
+            preferences,
+            position(&candidate),
+        )?;
+        self.fixed = None;
+        self.footnote = None;
+        self.selection = None;
+        self.active = Some(ActiveBook {
+            entry: recovery.entry,
+            id: recovery.id,
+            reading: candidate,
+            numbering: None,
+        });
+        self.logical_recovery = None;
+        self.show(Screen::Book);
+        self.record_position();
+        self.notice = Some("Text settings reset. Previous choices backed up.".into());
+        Ok(())
+    }
+}

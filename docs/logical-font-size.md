@@ -67,7 +67,24 @@ holes. Only viewport-intersecting tiles are drawn. Signed stroke masks use the
 same compositing contract; strength is bounded at54 px, covering the supported
 340 px × weight1–1000 domain with26.6 rounding. Nonstandard font data outside
 these bounds produces an explicit paint error rather than an empty valid page.
-Large tiles are transient; they cannot grow the retained cache.
+Large tiles are transient; they cannot grow the retained cache. Each clipped
+scratch polygon is capped at131,072 vertices before pushing, and one glyph's
+visible clipping shares a16,777,216-vertex visit budget. The256² rasterizer's
+coverage scratch is262,160 bytes of f32 in addition to at most two64 KiB alpha
+buffers; these are separate from the retained2 MiB cache. Stroke construction
+first flattens to closed polylines and preflights a conservative
+8×(vertices+contours)+8≤65,536 output bound before calling the pinned line-only
+Miter builder. It cannot invoke curve-stroke subdivision or round caps.
+
+A valid imported logical layout that cannot fit this viewport offers a visible
+Reset text confirmation. Cancel leaves it intact. Reset prepares and paints a
+known device layout at the original source anchor, atomically archives the old
+choices under Reader data/layout-recovery, then saves before swapping the live
+page. Archive or state-save failure keeps the old saved preferences and page.
+It does not reapply a potentially unfit saved global template, and it does not
+catch parser, DRM, missing-file or invalid-anchor failures as layout recovery.
+The recovery archive contains only edition identity and typography preferences;
+normal backup/profile/default validation preserves the active logical value.
 
 Footnotes still use the existing compact18–64 px choice. Stock sends its
 pre-CRE-clamp Screen-scaled request to a separate MuPDF popup and has independent

@@ -1632,6 +1632,21 @@ impl Library {
         Ok(summary)
     }
 
+    #[cfg(feature = "kindle")]
+    pub(crate) fn commit_recovered_layout(&mut self, entry:&LibraryBook, id:u64, preferences:BookPreferences, position:ReadingPosition)->io::Result<()> {
+        let index=self.recent.iter().position(|state|state.id==id);
+        let mut candidate=index.map(|index|self.recent[index].clone()).unwrap_or_else(||BookState::new(entry,id));
+        candidate.preferences=preferences;candidate.position=Some(position);
+        if let Some(index)=index {
+            let prior=std::mem::replace(&mut self.recent[index],candidate);
+            if let Err(error)=self.persist() {self.recent[index]=prior;return Err(error);}
+        } else {
+            self.recent.insert(0,candidate);
+            if let Err(error)=self.persist() {self.recent.remove(0);return Err(error);}
+        }
+        Ok(())
+    }
+
     pub fn save_with(&self, write: impl FnOnce(&Path, &[u8]) -> io::Result<()>) -> io::Result<()> {
         write(&self.state_path, &self.bytes()?)
     }

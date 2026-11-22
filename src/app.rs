@@ -629,6 +629,7 @@ pub struct Reader {
     style_store: crate::user_styles::storage::Store,
     style_view: style_tweaks::View,
     active: Option<ActiveBook>,
+    logical_recovery: Option<logical_font::Recovery>,
     illustration: Option<FixedReading>,
     fixed: Option<ActiveFixed>,
     ocr_assets: Option<OcrAssets>,
@@ -793,6 +794,7 @@ impl Reader {
             style_store: crate::user_styles::storage::Store::load(data.join(crate::user_styles::FILE)),
             style_view: Default::default(),
             active: None,
+            logical_recovery: None,
             illustration: None,
             fixed: None,
             ocr_assets,
@@ -1017,6 +1019,15 @@ impl Reader {
             hidden_flows: self.library.state(id).map(|state| state.hidden_flows.clone())
                 .unwrap_or_default().into(),
         };
+        if config.settings.logical_font_size.is_some() && config.settings.validate().is_err()
+            && (Settings { logical_font_size: None, font_size: 12., ..config.settings }).validate().is_ok() {
+            self.logical_recovery = Some(logical_font::Recovery {
+                entry, id, config, position,
+                preferences: self.library.state(id).map_or(initial_preferences, |state| state.preferences.clone()),
+            });
+            return Ok(());
+        }
+        self.logical_recovery = None;
         let reading = if let Some(position) = position {
             Reading::restore(
                 config.clone(),
@@ -5697,6 +5708,7 @@ impl App for Reader {
         self.draw_vocabulary_dialog(canvas);
         self.draw_catalog_popup(canvas);
         self.draw_sync_dialog(canvas);
+        self.draw_logical_recovery(canvas);
     }
 
     fn press_point(&self, input: Input) -> Option<(f32, f32)> {
@@ -5711,6 +5723,7 @@ impl App for Reader {
     }
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
+        if let Some(change) = self.logical_recovery_input(input) { return change; }
         if let Screen::Catalog(page) = self.screen && let Some(change) = self.catalog_input(page,input) { return change; }
         if let Some(change) = self.sync_dialog_input(input) { return change; }
         if let Some(change) = self.vocabulary_dialog_input(input) { return change; }
@@ -5759,6 +5772,7 @@ impl App for Reader {
     }
 
     fn input(&mut self, input: Input) -> Change {
+        if let Some(change) = self.logical_recovery_input(input) { return change; }
         // Any further user action owns the selection; late automatic results
         // must never replace a manually extended range or an open popup.
         self.cjk_selection_lookup = None;

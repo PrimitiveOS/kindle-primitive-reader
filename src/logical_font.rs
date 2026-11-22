@@ -39,6 +39,12 @@ impl ScaleContext {
             dpi_override: dpi,
         })
     }
+    pub(crate) fn short_side(self) -> u32 {
+        self.short_side
+    }
+    pub(crate) fn dpi_override(self) -> Option<u16> {
+        self.dpi_override
+    }
     pub fn requested(self, logical: f64) -> Result<u32> {
         if !valid(logical) || !(160..=4096).contains(&self.short_side) {
             return Err("Enter a font size from 12 to 255".into());

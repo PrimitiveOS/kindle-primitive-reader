@@ -105,6 +105,28 @@ fn large_stock_fonts_paint_real_ink_and_retain_source_selection_geometry() {
         );
         let page = probe.page_for(&start).unwrap();
         let pixels = probe.capture(page).unwrap();
+        let rects = probe.selection_rects(page, &selected);
+        for rect in &rects {
+            let x0 = rect.x.max(0) as usize;
+            let x1 = (rect.x + rect.width).min(settings.width as i32).max(0) as usize;
+            let y0 = rect.y.max(0) as usize;
+            let y1 = (rect.y + rect.height).min(settings.height as i32).max(0) as usize;
+            assert!(
+                (y0..y1).any(|y| pixels
+                    [y * settings.width as usize + x0..y * settings.width as usize + x1]
+                    .iter()
+                    .any(|&n| n < 128)),
+                "selected glyph ink is outside its hit rectangle at{logical}"
+            );
+        }
+        let rect = &rects[0];
+        let x = (rect.x + rect.width / 2) as f32;
+        let y = (rect.y + rect.height / 2) as f32;
+        let hit = probe.word_at(page, x, y).unwrap();
+        assert_eq!(hit.text, "Harbor");
+        assert_eq!(hit.start.book, start.book);
+        assert_eq!(hit.start.block, start.block);
+
         assert!(
             pixels.iter().filter(|&&n| n < 128).count() > 100,
             "size={logical}"
