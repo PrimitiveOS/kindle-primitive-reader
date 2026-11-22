@@ -7,7 +7,30 @@ use primitive_app::App;
 use std::{fs, path::Path, time::Duration};
 fn pdf(f: &Fixture) -> (Reader, PathBuf) {
     let path = f.root.join("Authored PDF.pdf");
-    fs::write(&path, crate::fixed::tests::document()).unwrap();
+    // Full viewport authored pages keep real document text visible around sheets.
+    let streams = [
+        "BT /F1 38 Tf 80 1480 Td (PrimitiveOS sync field notes) Tj /F1 25 Tf 0 -80 Td (Page one: an unchanged source page across devices.) Tj 0 -70 Td (Open a sheet and return to this same reading view.) Tj 0 -70 Td (Local highlights, zoom and bookmarks stay on this Kindle.) Tj ET\n",
+        "BT /F1 38 Tf 80 1480 Td (A second source page) Tj /F1 25 Tf 0 -80 Td (This is PDF source page two, shared through the server.) Tj 0 -70 Td (The return action leads back to the previous local page.) Tj ET\n",
+    ];
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".into(),
+        "<< /Type /Pages /Count 2 /Kids [3 0 R 4 0 R] /Resources << /Font << /F1 7 0 R >> >> >>"
+            .into(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 1264 1606] /Contents 5 0 R >>".into(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 1264 1606] /Contents 6 0 R >>".into(),
+        format!(
+            "<< /Length {} >>\nstream\n{}endstream",
+            streams[0].len(),
+            streams[0]
+        ),
+        format!(
+            "<< /Length {} >>\nstream\n{}endstream",
+            streams[1].len(),
+            streams[1]
+        ),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".into(),
+    ];
+    fs::write(&path, crate::fixed::tests::pdf_objects(&objects)).unwrap();
     let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
     let mut app = Reader::open(&f.root, &f.state, fonts).unwrap();
     app.open_path(&path).unwrap();
@@ -116,6 +139,10 @@ fn grid_and_masked_form_close_restore_the_exact_book_frame_and_position() {
     let before = app.current_position();
     let mut c = canvas(&app);
     let frame = primitive_app::frame(&app, &mut c, false);
+    assert!(
+        frame[..WIDTH as usize * 400].iter().any(|v| *v < 200),
+        "The authored reading page must be visibly present above the sheet"
+    );
     app.kosync_command(Command::Open).unwrap();
     capture_test_screen(&app, &app.fonts, "READER_KOSYNC_GRID", false);
     capture_test_screen(&app, &app.fonts, "READER_KOSYNC_GRID_DARK", true);
