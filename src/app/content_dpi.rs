@@ -140,7 +140,7 @@ impl Reader {
         ) {
             return;
         }
-        canvas.button(DECREASE, "−", false, false);
+        canvas.button(DECREASE, "-", false, false);
         canvas.button(
             DEFAULT,
             &format!("Default: {} dpi", self.content_dpi_default()),
@@ -148,7 +148,7 @@ impl Reader {
             false,
         );
         canvas.button(INCREASE, "+", false, false);
-        canvas.text(Rect::new(48,LIST_Y+428,1168,150),"0: Off · 96: original pixel scale. Hold −/+ to change by 20 dpi. Text size and screen DPI stay unchanged.",CAPTION);
+        canvas.text(Rect::new(48,LIST_Y+428,1168,150),"0: Off. 96: original pixel scale.\nHold -/+ to change by 20 dpi.\nText size and screen DPI stay unchanged.",CAPTION.lines(3));
     }
 }
 
