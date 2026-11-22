@@ -47,6 +47,8 @@ fn publisher_decoration_preserves_links_selection_and_painted_lines() {
         height: 980,
         font_size: 32.,
         margin: 24,
+        margin_left: Some(52),
+        margin_right: Some(17),
         ..Default::default()
     };
     let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
@@ -117,6 +119,7 @@ fn publisher_decoration_preserves_links_selection_and_painted_lines() {
         .filter(|(_, (a, b))| a != b)
         .collect();
     assert!(changed.len() >= 20);
+    assert!(changed.iter().all(|(i, _)| settings.text_columns().contains(&(i % width))));
     let ymin = changed[0].0 / width;
     let ymax = changed.last().unwrap().0 / width;
     assert!(ymax - ymin <= 4, "Only the link underline should move ink");

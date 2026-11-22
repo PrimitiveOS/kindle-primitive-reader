@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.18
+
+- Set left and right margins separately while reading, or link the top and bottom margins.
+- Jump directly to the first earlier or last later search match in a PDF or DjVu book.
+- Read the publisher's underlines, overlines and strike-throughs in EPUBs. Links can keep their original appearance.
+
 ## 0.1.17
 
 - Open oversampled CMYK print photographs faster at page fit. Detailed zoom uses the full decoder.
