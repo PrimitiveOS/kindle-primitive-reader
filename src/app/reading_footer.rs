@@ -278,17 +278,15 @@ impl Reader {
         );
         if probe.chapter_count() > 1 {
             let ch = reading.chapter;
-            let weights = reading
-                .config
-                .chapter_offsets
-                .get()
-                .map(Vec::as_slice)
-                .unwrap_or_default();
+            let weights = reading.progress_weights();
             // A publication with an unreadable later item can still display the current chapter.
             // An index based on chapter count is the fallback when sizes were unavailable.
             progress.estimated = true;
             progress.book_ticks = Ticks::Bytes(weights);
-            progress.future_pages_estimated = ch + 1 < probe.chapter_count();
+            progress.future_pages_estimated = match (weights.get(ch + 1), weights.last()) {
+                (Some(end), Some(total)) => end < total,
+                _ => ch + 1 < probe.chapter_count(),
+            };
             let later_pages = match (weights.get(ch..=ch + 1), weights.last()) {
                 (Some([start, end]), Some(&total)) if end > start => {
                     ((total - end) as f64 * probe.page_count() as f64 / (end - start) as f64)

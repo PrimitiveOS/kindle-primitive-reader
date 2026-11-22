@@ -93,6 +93,7 @@ pub(crate) struct BookConfig {
     pub(crate) settings: Settings,
     pub(crate) scroll: bool,
     pub(crate) facing_pages: bool,
+    pub(crate) hide_nonlinear: bool,
     // Shared across chapter layouts, previews and font changes for the same open publication.
     pub(crate) chapter_offsets: std::rc::Rc<std::cell::OnceCell<Vec<u64>>>,
 }
@@ -164,11 +165,20 @@ pub(crate) struct Reading {
     prefetch: Option<Instant>,
     turns: PageTurns<ReadingMotion>,
     end_attempt: bool,
+    flow_weights: Vec<u64>,
 }
 
 impl Reading {
     pub(crate) fn open(config: BookConfig) -> Result<Self> {
-        Self::restore(config, 0, 0, None)
+        let chapter = if config.hide_nonlinear && !config.scroll && !config.facing_pages {
+            with_storage(|| {
+                let book = Book::open(&config.book).map_err(io::Error::other)?;
+                Ok(book.chapters.iter().position(|chapter| !chapter.nonlinear).unwrap_or(0))
+            })?
+        } else {
+            0
+        };
+        Self::restore(config, chapter, 0, None)
     }
 
     pub(crate) fn restore(
@@ -207,7 +217,9 @@ impl Reading {
             prefetch: None,
             turns: PageTurns::new(Instant::now()),
             end_attempt: false,
+            flow_weights: Vec::new(),
         };
+        session.refresh_flow_weights();
         session.schedule_prefetch();
         Ok(session)
     }
@@ -234,10 +246,7 @@ impl Reading {
                 .retain(|(index, _)| index.abs_diff(page) == span);
             self.adjacent.push((frame_page, prior));
             self.page = page;
-        } else if let Some(chapter) = self
-            .chapter
-            .checked_add_signed(direction)
-            .filter(|chapter| *chapter < self.probe.chapter_count())
+        } else if let Some(chapter) = self.adjacent_reading_chapter(direction)
         {
             let probe = self.config.chapter(chapter)?;
             self.land_at_chapter_edge(probe, chapter, direction)?;
@@ -252,6 +261,62 @@ impl Reading {
             start.elapsed().as_micros(),
         );
         Ok(Change::Partial)
+    }
+
+    /// Consecutive nonlinear spine items form one flow. A link may enter it;
+    /// ordinary turns then traverse that flow before rejoining linear pages.
+    fn adjacent_reading_chapter(&self, direction: isize) -> Option<usize> {
+        let mut chapter = self.chapter;
+        loop {
+            chapter = chapter.checked_add_signed(direction)?;
+            if chapter >= self.probe.chapter_count() { return None; }
+            if !self.hides_nonlinear() || self.probe.chapter_is_nonlinear(self.chapter)
+                || !self.probe.chapter_is_nonlinear(chapter) {
+                return Some(chapter);
+            }
+        }
+    }
+
+    pub(crate) fn hides_nonlinear(&self) -> bool {
+        self.config.hide_nonlinear && !self.config.scroll && !self.config.facing_pages
+            && self.probe.has_nonlinear_chapters()
+    }
+
+    pub(crate) fn progress_weights(&self) -> &[u64] {
+        if self.hides_nonlinear() { &self.flow_weights }
+        else { self.config.chapter_offsets.get().map(Vec::as_slice).unwrap_or_default() }
+    }
+
+    pub(crate) fn set_hide_nonlinear(&mut self, enabled: bool) {
+        self.config.hide_nonlinear = enabled;
+        self.pause_turns();
+        self.refresh_flow_weights();
+    }
+
+    fn refresh_flow_weights(&mut self) {
+        self.flow_weights.clear();
+        if !self.hides_nonlinear() { return; }
+        let hidden = self.probe.chapter_is_nonlinear(self.chapter);
+        let mut start = self.chapter;
+        let mut end = self.chapter + 1;
+        if hidden {
+            while start > 0 && self.probe.chapter_is_nonlinear(start - 1) { start -= 1; }
+            while end < self.probe.chapter_count() && self.probe.chapter_is_nonlinear(end) { end += 1; }
+        }
+        let weights = self.config.chapter_offsets.get().map(Vec::as_slice).unwrap_or_default();
+        let mut total = 0;
+        self.flow_weights.push(0);
+        for (chapter, span) in weights.windows(2).enumerate() {
+            let belongs_to_flow = if hidden {
+                (start..end).contains(&chapter)
+            } else {
+                !self.probe.chapter_is_nonlinear(chapter)
+            };
+            if belongs_to_flow {
+                total += span[1] - span[0];
+            }
+            self.flow_weights.push(total);
+        }
     }
 
     fn present_page_turns(&mut self, now: Instant) -> Change {
@@ -656,6 +721,7 @@ impl Reading {
         self.page = page;
         self.scroll_top = top;
         self.adjacent.clear();
+        self.refresh_flow_weights();
         Ok(())
     }
 
@@ -681,9 +747,14 @@ impl Reading {
     }
 
     pub(crate) fn jump_progress(&mut self, fraction: f64) -> Result<()> {
+        let hide = self.hides_nonlinear();
         let (chapter, in_chapter, probe) = with_storage(|| {
             let mut book = Book::open(&self.config.book).map_err(io::Error::other)?;
-            let (chapter, in_chapter) = book.progress_target(fraction).map_err(io::Error::other)?;
+            let (chapter, in_chapter) = if hide {
+                book.linear_progress_target(fraction).map_err(io::Error::other)?
+            } else {
+                book.progress_target(fraction).map_err(io::Error::other)?
+            };
             let probe = self
                 .config
                 .layout_chapter(book, chapter)
@@ -722,6 +793,7 @@ impl Reading {
         self.error = None;
         self.adjacent.clear();
         self.turns = PageTurns::new(Instant::now());
+        self.refresh_flow_weights();
         self.schedule_prefetch();
         Ok(())
     }
@@ -1224,6 +1296,7 @@ mod tests {
             },
             scroll: false,
             facing_pages,
+            hide_nonlinear: false,
         })
         .unwrap()
     }
@@ -1692,6 +1765,7 @@ mod tests {
             },
             scroll: true,
             facing_pages: false,
+            hide_nonlinear: false,
         })
         .unwrap();
         assert!(reading.scroll_top.is_some());

@@ -81,6 +81,10 @@ impl Reader {
             ),
         ]);
         if let Some(book) = self.active.as_ref().filter(|book| book.entry.format == crate::library::DocumentFormat::Epub) {
+            if book.reading.probe.has_nonlinear_chapters() && !book.reading.config.scroll && !book.reading.config.facing_pages {
+                items.push(Item::new("Hide non-linear fragments", Action::ToggleNonlinear)
+                    .detail(if book.reading.config.hide_nonlinear { "On" } else { "Off" }));
+            }
             let mode = book.numbering.as_ref().map_or_else(|| if book.reading.probe.printed_pages.is_empty() { "Screen pages".into() } else { "Publisher labels".into() }, |map| format!("{} characters per page", map.stride));
             items.push(Item::new("Page numbering", Action::Show(Screen::PageNumbering)).detail(mode));
         }

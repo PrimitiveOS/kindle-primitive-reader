@@ -639,6 +639,8 @@ fn read_status<'de, D: serde::Deserializer<'de>>(
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BookState {
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub hide_nonlinear: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub highlight_style: Option<crate::highlight_style::HighlightStyle>,
     pub id: u64,
@@ -711,6 +713,7 @@ impl BookState {
     fn new(entry: &LibraryBook, id: u64) -> Self {
         Self {
             highlight_style: None,
+            hide_nonlinear: false,
             id,
             path: entry.path.clone(),
             title: entry.title.clone(),

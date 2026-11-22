@@ -39,6 +39,7 @@ pub struct Chapter {
     pub href: String,
     pub label: String,
     pub(crate) is_svg: bool,
+    pub(crate) nonlinear: bool,
 }
 
 /// A local reading destination with a decoded archive path and optional element ID.
@@ -357,6 +358,7 @@ impl Book {
                 href: item.path.clone(),
                 label,
                 is_svg,
+                nonlinear: reference.attribute("linear") == Some("no"),
             });
         }
         if chapters.is_empty() {
@@ -448,6 +450,7 @@ impl Book {
             cover: None,
             chapters: vec![Chapter {
                 is_svg: false,
+                nonlinear: false,
                 href: chapter_path.clone(),
                 label: document.title.clone(),
             }],
@@ -550,6 +553,7 @@ impl Book {
                 href: chapter.path.clone(),
                 label: chapter.label,
                 is_svg: false,
+                nonlinear: false,
             });
             xhtml.insert(chapter.path, chapter.xhtml);
         }
@@ -748,6 +752,24 @@ impl Book {
             chapter,
             (position - start as f64) / (offsets[chapter + 1] - start) as f64,
         ))
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn linear_progress_target(&mut self, fraction: f64) -> Result<(usize, f64)> {
+        let offsets = self.chapter_offsets()?;
+        let chapters: Vec<_> = self.chapters.iter().enumerate().filter(|(_, chapter)| !chapter.nonlinear)
+            .map(|(index, _)| (index, offsets[index + 1] - offsets[index])).collect();
+        let Some(&(first, _)) = chapters.first() else { return self.progress_target(fraction); };
+        let &(last, _) = chapters.last().unwrap();
+        if fraction <= 0.0 { return Ok((first, 0.0)); }
+        if fraction >= 1.0 { return Ok((last, 1.0)); }
+        let total: u64 = chapters.iter().map(|(_, weight)| weight).sum();
+        let mut target = fraction * total as f64;
+        for (chapter, weight) in chapters {
+            if target < weight as f64 { return Ok((chapter, target / weight as f64)); }
+            target -= weight as f64;
+        }
+        Ok((last, 1.0))
     }
 
     #[cfg(feature = "kindle")]

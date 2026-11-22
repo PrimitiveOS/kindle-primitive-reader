@@ -36,6 +36,8 @@ mod saved_highlight_popup;
 mod user_hyphenation;
 mod footnote_popup;
 mod top_config;
+#[cfg(test)]
+mod nonlinear_tests;
 
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
@@ -295,6 +297,7 @@ enum Action {
     ListBooks(BookList),
     OrganizeCurrent,
     BookmarkBrowser(bookmark_browser::Command),
+    ToggleNonlinear,
     ViewCover,
     Favorite(bool),
     SetStatus(ReadingStatus),
@@ -889,6 +892,7 @@ impl Reader {
             settings,
             scroll,
             facing_pages,
+            hide_nonlinear: self.library.state(id).is_some_and(|state| state.hide_nonlinear),
         };
         let reading = if let Some(position) = position {
             Reading::restore(
@@ -1895,6 +1899,17 @@ impl Reader {
     fn activate(&mut self, action: Action) -> Result<()> {
         match action {
             Action::BookmarkBrowser(command) => self.activate_bookmark_browser(command)?,
+            Action::ToggleNonlinear => {
+                let active = self.active.as_mut().ok_or("Open a book first")?;
+                if active.reading.config.scroll || active.reading.config.facing_pages {
+                    return Err("Use single-page mode to hide non-linear fragments".into());
+                }
+                active.reading.set_hide_nonlinear(!active.reading.config.hide_nonlinear);
+                let id = active.id;
+                let enabled = active.reading.config.hide_nonlinear;
+                self.library.state_mut(id).ok_or("This book is unavailable")?.hide_nonlinear = enabled;
+                self.mark_book_changed();
+            }
             Action::Open(entry) => self.open_book(entry)?,
             Action::Browse(directory) => self.browse_to(directory)?,
             Action::OpenTracked(id) => {
@@ -6523,6 +6538,7 @@ pub fn run_probe(engine: Engine, book: PathBuf, fonts: Vec<PathBuf>, home: &Path
         settings: device_settings(),
         scroll: false,
         facing_pages: false,
+        hide_nonlinear: false,
     })?;
     primitive_app::run(reading, home).map_err(Into::into)
 }

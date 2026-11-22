@@ -729,6 +729,17 @@ impl Probe {
     }
 
     #[cfg(feature = "kindle")]
+    pub(crate) fn has_nonlinear_chapters(&self) -> bool {
+        self.chapters.iter().any(|chapter| chapter.nonlinear)
+            && self.chapters.iter().any(|chapter| !chapter.nonlinear)
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn chapter_is_nonlinear(&self, index: usize) -> bool {
+        self.chapters.get(index).is_some_and(|chapter| chapter.nonlinear)
+    }
+
+    #[cfg(feature = "kindle")]
     pub(crate) fn proportional_anchor(&self, fraction: f64) -> Option<Anchor> {
         let total: usize = self
             .source
