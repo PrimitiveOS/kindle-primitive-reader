@@ -16,7 +16,7 @@ To check coverage, run `python3 scripts/check-koreader-inventory.py /path/to/kor
 | `readerannotation`, `readerbookmark`, `readerdogear`, `readerhighlight` | Reader stores bookmarks, highlights and notes. Check drawing styles, cross-page selection, filters, ordering and export for both reflow and fixed pages. |
 | `readerback`, `readerflipping`, `readergoto`, `readerlink`, `readerthumbnail` | Location history, page jumps, links and thumbnail skimming are available. Check cancellation, forward history after branching, footnote previews and nonlinear flows. |
 | `readerhandmade`, `readerpagemap`, `readertoc` | Publisher, generated and custom contents have dedicated workflows. The print list follows the publisher’s exact targets and exposes per-book footer and margin controls. Character-count maps and alternate-flow editing have separate acceptance checks. [Print page evidence](publisher-page-numbers.md) |
-| `readerdictionary`, `readerwikipedia` | Lookup uses installed dictionaries. Compare lookup history, source changes, morphology, Wikipedia, translation, full articles and offline outcomes. |
+| `readerdictionary`, `readerwikipedia` | Installed dictionary checks cover English inflections, spelling suggestions, per-book source preferences and selection restoration. Compare language-specific candidate generators, vocabulary review, full Wikipedia articles and remote lookup failures separately. [Dictionary evidence](dictionary-word-forms.md) · [Network lookups](online-lookups.md) |
 | `readerfooter`, `readerstatus`, `readeractivityindicator`, `readerdevicestatus` | Check independent footer display, chapter progress, hidden mode and deliberate exit. Compare each device indicator against Launcher ownership. |
 | `readerconfig`, `readermenu` | Compare upper groups, lower format controls, remembered selections, current values, outside dismissal and page-button behavior on both document types. |
 | `readerfont`, `readertypeset`, `readertypography`, `readeruserhyph`, `readerstyletweak` | Reader provides font selection, shaping, publisher CSS and authored hyphens. User hyphenation dictionaries, style-tweak selection and per-language behavior need separate evidence. |
@@ -65,7 +65,8 @@ To check coverage, run `python3 scripts/check-koreader-inventory.py /path/to/kor
 | `font_size`, `font_fine_tune`, `line_spacing`, `word_spacing`, `font_gamma`, `font_base_weight`, `font_hinting`, `font_kerning` | Available typography covers a subset of detailed settings. Compare steps, actual painted pixels and persistence. |
 | `embedded_css`, `embedded_fonts` | Check publisher styles and font override independently in reflow and mixed-script titles. |
 | `status_line` | Reader uses its reading footer. Check displayed information and interaction against the footer workflow. |
-| `block_rendering_mode`, `render_dpi`, `word_expansion`, `cjk_width_scaling` | Compare selectable layout modes, independent content scale, justified word expansion and CJK glyph width individually. |
+| `word_expansion` | Justified paragraphs have the 0–20% expansion control, sampled through live settings and original text anchors. Compare word-space reduction and nested script behavior separately. [Word expansion](word-expansion.md) |
+| `block_rendering_mode`, `render_dpi`, `cjk_width_scaling` | Compare selectable publisher rendering modes, content scale and CJK advance scaling individually. |
 | `smooth_scaling`, `nightmode_images` | Compare standalone and embedded pictures in day/night pages with a diagnostic image and both scaling filters. |
 
 ## Fixed-page controls
