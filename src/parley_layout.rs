@@ -851,7 +851,12 @@ impl ParleyChapter {
             .map(|art| art.y + art.display.1 as f32)
             .chain(self.table_frames.iter().map(|frame| frame.bottom()))
             .chain(self.markers.iter().map(|marker| marker.bottom))
-            .chain(self.boundaries.values().map(|boundary| boundary.bottom))
+            .chain(
+                self.boundaries
+                    .values()
+                    .filter(|boundary| boundary.generated_only)
+                    .map(|boundary| boundary.bottom),
+            )
             .chain(self.padded_backgrounds.iter().map(|f| f.painted_bottom()))
             .fold(0.0, f32::max);
         for paragraph in self.paragraphs.iter().rev() {
