@@ -4,7 +4,7 @@ Reader raises footnote references, powers and superscript spans, and lowers subs
 
 <img src="screenshots/inline-scripts.png" width="350" alt="A reading page with a raised footnote, a lowered numeral in a water molecule, and a squared unit">
 
-KOReader's default EPUB stylesheet sets the size. Its layout engine raises a superscript by one quarter of the parent font height and lowers a subscript by four fifths of the parent descent. Reader computes these distances in its own layout engine. Font choice and pixel rounding can affect the final displacement. [KOReader EPUB stylesheet](https://github.com/koreader/koreader/blob/v2026.07.1/data/epub.css#L120-L121) · [CREngine baseline calculation](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L3700-L3745) · [HTML rendering guidance](https://html.spec.whatwg.org/multipage/rendering.html#phrasing-content-3)
+KOReader's default EPUB stylesheet sets the size. Its layout engine raises a superscript by one quarter of the parent font height and lowers a subscript by four fifths of the parent descent. Reader computes these distances in its own layout engine. Font choice and pixel rounding can affect the final displacement. [KOReader EPUB stylesheet](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/cr3gui/data/epub.css#L120-L121) · [CREngine baseline calculation](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L3700-L3745) · [HTML rendering guidance](https://html.spec.whatwg.org/multipage/rendering.html#phrasing-content-3)
 
 ## Comparison on original books
 

@@ -2,6 +2,7 @@
 
 ## 0.1.17
 
+- Open oversampled CMYK print photographs faster at page fit. Detailed zoom uses the full decoder.
 - Read raised footnote numbers and powers, and lowered subscripts in EPUBs. Links and bookmarks still point to the original text.
 - Show the estimated time left in the current chapter or book using the pace recorded for that book.
 - Use spaces at either end of a PDF search to match word boundaries. Saved searches remember those spaces.
