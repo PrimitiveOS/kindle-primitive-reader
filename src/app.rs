@@ -10864,6 +10864,9 @@ mod tests {
         app.show(Screen::Matches);
         app.pdf_search = Some(PdfSearch::new("pdf", false).unwrap());
         app.step_pdf_search(Instant::now()).unwrap();
+        if let Some(due) = app.search_at {
+            app.tick(due);
+        }
         assert_eq!(app.pdf_hits.len(), 2);
         app.activate(Action::PdfSearchHit(1)).unwrap();
         assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 1);
