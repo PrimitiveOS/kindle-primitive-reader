@@ -264,6 +264,15 @@ fn simple_ruby(node: Node<'_, '_>, limit: usize) -> Option<(Vec<RubyDraft>, Vec<
     (!drafts.is_empty()).then_some((drafts, exclusions))
 }
 
+fn fragment_ids<'a>(
+    node: Node<'a, '_>,
+    navigation: &'a HashMap<NodeId, String>,
+) -> impl Iterator<Item = &'a str> {
+    node.attribute("id")
+        .into_iter()
+        .chain(navigation.get(&node.id()).map(String::as_str))
+}
+
 impl Source {
     pub fn parse(xhtml: &str) -> Result<Self> {
         Self::parse_with_language(xhtml, None)
@@ -273,7 +282,21 @@ impl Source {
         xhtml: &str,
         publication_language: Option<Language>,
     ) -> Result<Self> {
-        Self::parse_document(xhtml, crate::revision(xhtml), None, publication_language)
+        Self::parse_with_kindle_elements(xhtml, publication_language, &BTreeSet::new())
+    }
+
+    pub(crate) fn parse_with_kindle_elements(
+        xhtml: &str,
+        publication_language: Option<Language>,
+        kindle_elements: &BTreeSet<usize>,
+    ) -> Result<Self> {
+        Self::parse_document(
+            xhtml,
+            crate::revision(xhtml),
+            None,
+            publication_language,
+            kindle_elements,
+        )
     }
 
     fn parse_document(
@@ -281,6 +304,7 @@ impl Source {
         original_revision: u64,
         anonymous_boxes: Option<&[usize]>,
         publication_language: Option<Language>,
+        kindle_elements: &BTreeSet<usize>,
     ) -> Result<Self> {
         let options = || ParsingOptions {
             nodes_limit: 100_000,
@@ -338,6 +362,23 @@ impl Source {
             .any(|node| node.ancestors().take(65).count() == 65)
         {
             return Err("The chapter exceeds the nesting limit".into());
+        }
+        let mut navigation_ids = HashMap::new();
+        if !kindle_elements.is_empty() {
+            for (i, node) in root
+                .descendants()
+                .filter(crate::kf8::publisher_contents::html_node)
+                .filter(|node| {
+                    !anonymous_boxes
+                        .is_some_and(|starts| starts.binary_search(&node.range().start).is_ok())
+                })
+                .enumerate()
+            {
+                if kindle_elements.contains(&i) {
+                    navigation_ids
+                        .insert(node.id(), crate::kf8::publisher_contents::element_name(i));
+                }
+            }
         }
         let mut elements: Vec<Element> = Vec::new();
         let mut element_ids = HashMap::new();
@@ -445,7 +486,7 @@ impl Source {
                     }
                     continue;
                 }
-                if let Some(id) = descendant.attribute("id") {
+                for id in fragment_ids(descendant, &navigation_ids) {
                     ids.push((
                         id,
                         text.len()
@@ -601,7 +642,7 @@ impl Source {
             }
             if !text.is_empty() || !images.is_empty() {
                 for parent in node.ancestors().skip(1) {
-                    if let Some(id) = parent.attribute("id") {
+                    for id in fragment_ids(parent, &navigation_ids) {
                         fragments.entry(id.to_owned()).or_insert((key, 0));
                     }
                 }
@@ -659,6 +700,7 @@ impl Source {
                     original_revision,
                     Some(&starts),
                     publication_language,
+                    kindle_elements,
                 )?;
                 parsed.normalized_xhtml = Some(normalized);
                 return Ok(parsed);
@@ -668,12 +710,22 @@ impl Source {
         // A named anchor between paragraphs has no visible glyph of its own. Move to the
         // next rendered block, or to the last visible character for a trailing anchor.
         for anchor in body.descendants().filter(Node::is_element) {
-            let Some(id) = anchor.attribute("id") else { continue; };
-            if !element_ids.contains_key(&anchor.id()) || fragments.contains_key(id) { continue; }
-            let next = blocks.partition_point(|block| block.key < anchor.range().start);
-            let position = blocks.get(next).map(|block| (block.key,0))
-                .or_else(|| blocks.last().map(|block| (block.key,block.text.len())));
-            if let Some(position) = position { fragments.insert(id.into(),position); }
+            if !element_ids.contains_key(&anchor.id()) {
+                continue;
+            }
+            for id in fragment_ids(anchor, &navigation_ids) {
+                if fragments.contains_key(id) {
+                    continue;
+                }
+                let next = blocks.partition_point(|block| block.key < anchor.range().start);
+                let position = blocks
+                    .get(next)
+                    .map(|block| (block.key, 0))
+                    .or_else(|| blocks.last().map(|block| (block.key, block.text.len())));
+                if let Some(position) = position {
+                    fragments.insert(id.into(), position);
+                }
+            }
         }
         // Some publishers insert an intentionally blank side of a leaf. Preserve
         // its spine location while continuing to reject unrenderable artwork.

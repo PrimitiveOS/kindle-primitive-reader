@@ -1,15 +1,14 @@
 //! The legacy MOBI navigation index stores publisher labels in CNCX records
 //! and addresses destinations by byte offset in the original uncompressed text.
-use super::{MobiError, Records, Result, integer, read_index, varint};
+use super::{
+    Records, Result,
+    navigation_index::{read_navigation, single},
+};
 use crate::{
     epub::{Destination, TocEntry},
-    mobi::{self, Addition},
+    mobi::Addition,
 };
 use std::collections::{BTreeMap, BTreeSet};
-
-const MAX_ENTRIES: usize = 4096;
-const MAX_LABEL_BYTES: usize = 2048;
-const MAX_DEPTH: usize = 32;
 
 #[derive(Debug)]
 pub(crate) struct Item {
@@ -27,80 +26,18 @@ pub(crate) struct Contents {
 
 impl Contents {
     pub(crate) fn read(bytes: &[u8], offsets: &[usize], header: &[u8]) -> Result<Self> {
-        if header.get(16..20) != Some(b"MOBI") || integer(header, 20)? < 232 {
-            return Ok(Self::default());
-        }
-        let index = integer(header, 244)?;
-        if index == 0 || index == u32::MAX as usize {
-            return Ok(Self::default());
-        }
-        if index <= usize::from(mobi::u16_at(header, 8)?) {
-            return Err(MobiError::InvalidHeader);
-        }
         let records = Records {
             bytes,
             offsets: offsets.to_vec(),
         };
-        let meta = records.at(index)?;
-        let segments = integer(meta, 24)?;
-        let labels = integer(meta, 52)?;
-        if !(1..=64).contains(&labels) || !(1..=super::MAX_INDEX_RECORDS).contains(&segments) {
-            return Err(MobiError::InvalidHeader);
-        }
-        let label_base = index
-            .checked_add(segments + 1)
-            .ok_or(MobiError::InvalidHeader)?;
-        records.at(label_base
-            .checked_add(labels - 1)
-            .ok_or(MobiError::InvalidHeader)?)?;
-        let encoding = integer(meta, 28)?;
-        let mut items = Vec::new();
-        for row in read_index(&records, index, MAX_ENTRIES)? {
-            let field = |n| {
-                row.tags
-                    .get(&n)
-                    .and_then(|x| match x.as_slice() {
-                        [v] => Some(*v),
-                        _ => None,
-                    })
-                    .ok_or(MobiError::InvalidHeader)
-            };
-            let position = field(1)?;
-            let pointer = field(3)?;
-            let depth = field(4)?;
-            if depth > MAX_DEPTH
-                || items
-                    .last()
-                    .map_or(depth != 0, |last: &Item| depth > last.depth + 1)
-            {
-                return Err(MobiError::InvalidHeader);
-            }
-            let segment = pointer >> 16;
-            if segment >= labels {
-                return Err(MobiError::InvalidHeader);
-            }
-            let record = records.at(label_base + segment)?;
-            let mut text = record
-                .get(pointer & 0xffff..)
-                .ok_or(MobiError::InvalidHeader)?;
-            let size = varint(&mut text)?;
-            if !(1..=MAX_LABEL_BYTES).contains(&size) {
-                return Err(MobiError::InvalidHeader);
-            }
-            let label = mobi::navigation_label(
-                text.get(..size).ok_or(MobiError::InvalidHeader)?,
-                encoding,
-            )?;
-            if label.trim().is_empty() {
-                return Err(MobiError::InvalidHeader);
-            }
-            items.push(Item {
+        let items = read_navigation(&records, header, |label, depth, row| {
+            Ok(Item {
                 label,
                 depth,
-                position,
+                position: single(row, 1)?,
                 fragment: None,
-            });
-        }
+            })
+        })?;
         Ok(Self {
             items,
             insertions: Vec::new(),

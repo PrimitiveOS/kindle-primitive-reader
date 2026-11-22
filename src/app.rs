@@ -8964,6 +8964,43 @@ mod tests {
     }
 
     #[test]
+    fn kf8_publisher_contents_opens_child_entries_and_restores_the_original_frame() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Shoreline.azw3");
+        fs::write(&path, crate::kf8::tests::publisher_contents_fixture()).unwrap();
+        let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+        let mut app = Reader::open(&fixture.root, &fixture.state, vec![font.clone()]).unwrap();
+        app.open_path(&path).unwrap();
+        let original = app.current_position().unwrap();
+        let mut canvas = Canvas::new(WIDTH, HEIGHT, &[font.display().to_string()]).unwrap();
+        let opening = primitive_app::frame(&app, &mut canvas, false);
+
+        for title in ["Arrival", "  Trail directions", "  Elevation figure"] {
+            app.open_reading_edge(true, 630.0);
+            if app.top_group != Some(TopGroup::Navigation) {
+                tap_reading_control(&mut app, "Navigation");
+            }
+            assert_eq!(tap_reading_control(&mut app, "Contents"), Change::Partial);
+            if title == "Arrival" {
+                capture_test_screen(
+                    &app,
+                    std::slice::from_ref(&font),
+                    "READER_KF8_CONTENTS_SCREENSHOT",
+                    false,
+                );
+            }
+            tap_contents_item(&mut app, title);
+            assert_eq!(app.screen, Screen::Book);
+            if title == "Arrival" {
+                assert_eq!(app.active.as_ref().unwrap().reading.chapter, 1);
+            }
+            app.activate(Action::ReturnToLocation).unwrap();
+            assert_eq!(app.current_position(), Some(original.clone()));
+            assert!(opening == primitive_app::frame(&app, &mut canvas, false));
+        }
+    }
+
+    #[test]
     fn contents_opens_at_the_current_section_from_either_reading_bar() {
         let fixture = Fixture::new();
         let path = fixture.root.join("Document.epub");

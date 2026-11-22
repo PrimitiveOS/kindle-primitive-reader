@@ -562,7 +562,11 @@ impl Probe {
             Some(value) => value,
             None => book.chapter(chapter).map_err(|e| e.to_string())?,
         };
-        let mut source = Source::parse_with_language(&xhtml, book.language)?;
+        let mut source = if complete {
+            book.chapter_source(&href, &xhtml)?
+        } else {
+            Source::parse_with_language(&xhtml, book.language)?
+        };
         if complete {
             for previous in book.previous_mobi_chapters(&href) {
                 source.accept_previous_mobi(previous)?;

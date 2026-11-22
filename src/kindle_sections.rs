@@ -246,6 +246,24 @@ pub(crate) fn partition(chapters: Vec<Kf8Chapter>) -> Result<Vec<Kf8Chapter>> {
     retarget(groups)
 }
 
+pub(crate) fn partition_with_contents(
+    chapters: Vec<Kf8Chapter>,
+    contents: &mut crate::kf8::publisher_contents::Navigation,
+) -> Result<Vec<Kf8Chapter>> {
+    let groups = chapters.into_iter().map(|chapter| {
+        let original = chapter.path.clone();
+        let offsets = contents.requested_offsets(&chapter)?;
+        let parts = split(chapter)?;
+        if parts.len() > 1 && !offsets.is_empty() {
+            for part in &parts {
+                contents.map_section(&part.chapter, part.range.clone(), part.prefix, &offsets)?;
+            }
+        }
+        Ok((original, parts.into_iter().map(|p| p.chapter).collect()))
+    });
+    retarget(groups)
+}
+
 /// Previously shipped editions used the bare normalized XHTML and then its
 /// images and links. Keep both location maps when presentation changes a section.
 pub(crate) fn legacy(

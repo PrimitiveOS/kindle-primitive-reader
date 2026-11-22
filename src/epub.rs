@@ -520,12 +520,16 @@ impl Book {
                     title: document.title,
                     author: document.author,
                     resources: document.resources,
+                    contents: Default::default(),
                     font_records: BTreeMap::new(),
                     chapters,
                 }
             }
             kf8::Edition::Kf8(mut edition) => {
-                edition.chapters = crate::kindle_sections::partition(edition.chapters)?;
+                edition.chapters = crate::kindle_sections::partition_with_contents(
+                    edition.chapters,
+                    &mut edition.contents,
+                )?;
                 edition
             }
         };
@@ -552,6 +556,8 @@ impl Book {
         }
         if !publisher_contents.items.is_empty() {
             toc = publisher_contents.entries(&xhtml);
+        } else if !publication.contents.rows.is_empty() {
+            toc = publication.contents.finish(&xhtml);
         }
         let title = publication.title.unwrap_or_else(|| fallback_title.into());
         Ok(Self {
@@ -683,6 +689,25 @@ impl Book {
                 .ok_or_else(|| "That chapter is unavailable".into()),
             Content::Chm(chm) => chm.chapter(&chapter.href),
         }
+    }
+
+    pub(crate) fn chapter_source(
+        &self,
+        href: &str,
+        xhtml: &str,
+    ) -> crate::Result<crate::source::Source> {
+        if !matches!(self.content, Content::Loose { .. }) {
+            return crate::source::Source::parse_with_language(xhtml, self.language);
+        }
+        let ordinals = self
+            .toc
+            .iter()
+            .filter_map(|row| row.destination.as_ref())
+            .filter(|destination| destination.path == href)
+            .filter_map(|destination| destination.fragment.as_deref())
+            .filter_map(crate::kf8::publisher_contents::element_index)
+            .collect();
+        crate::source::Source::parse_with_kindle_elements(xhtml, self.language, &ordinals)
     }
 
     pub(crate) fn previous_mobi_chapters(&self, name: &str) -> &[String] {

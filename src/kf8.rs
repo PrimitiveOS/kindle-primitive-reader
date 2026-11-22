@@ -13,6 +13,8 @@ use crate::mobi::{self, MAX_MOBI_BYTES, MobiError};
 
 pub(crate) mod fonts;
 pub(crate) mod legacy_contents;
+mod navigation_index;
+pub(crate) mod publisher_contents;
 
 type Result<T> = std::result::Result<T, MobiError>;
 
@@ -33,6 +35,7 @@ pub(crate) struct Kf8Document {
     pub title: Option<String>,
     pub author: Option<String>,
     pub chapters: Vec<Kf8Chapter>,
+    pub contents: publisher_contents::Navigation,
     pub resources: BTreeMap<String, Vec<u8>>,
     pub font_records: BTreeMap<usize, Range<usize>>,
 }
@@ -227,7 +230,16 @@ fn decode_edition(
     let (chapters, locations) = reconstruct(flow, &skeletons, &fragments)?;
     let (assets, images, first) =
         shared.unwrap_or((records, integer(header, 0x6c)?, first_nontext));
-    let (chapters, resources) = normalize(chapters, &locations, assets, images, first, &flows)?;
+    let mut contents = publisher_contents::Navigation::read(records, header).unwrap_or_default();
+    let (chapters, resources) = normalize(
+        chapters,
+        &locations,
+        assets,
+        images,
+        first,
+        &flows,
+        &mut contents,
+    )?;
     let labels = mobi::kf8_labels(bytes, record, header);
     Ok(Kf8Document {
         title: labels.title,
@@ -235,6 +247,7 @@ fn decode_edition(
         language: labels.language,
         chapters,
         resources,
+        contents,
         font_records: fonts::index(assets, images, first),
     })
 }
@@ -568,6 +581,7 @@ fn normalize(
     images: usize,
     first: usize,
     flows: &[&[u8]],
+    contents: &mut publisher_contents::Navigation,
 ) -> Result<(Vec<Kf8Chapter>, Assets)> {
     let mut positions = Vec::with_capacity(raw.len());
     let mut normalized_bytes = 0;
@@ -748,6 +762,14 @@ fn normalize(
             });
         }
     }
+    contents.resolve(
+        &raw,
+        &indexed_nodes,
+        locations,
+        &positions,
+        &ids,
+        &generated,
+    );
     let labels: Vec<_> = documents
         .iter()
         .enumerate()
@@ -1240,6 +1262,59 @@ pub(crate) mod tests {
             pdb.extend_from_slice(record);
         }
         pdb
+    }
+
+    /// Two root entries followed by two children in physical record order.
+    pub(crate) fn publisher_contents_fixture() -> Vec<u8> {
+        let original = fixture();
+        let offsets = mobi::record_offsets(&original).unwrap();
+        let mut records: Vec<Vec<u8>> = offsets
+            .windows(2)
+            .map(|range| original[range[0]..range[1]].to_vec())
+            .collect();
+        let navigation_index = records.len();
+        word(&mut records[0], 244, navigation_index);
+        let raw = &records[1];
+        let offset = |needle: &[u8]| {
+            raw.windows(needle.len()).position(|s| s == needle).unwrap() - BASE.len()
+        };
+        let mut names = Vec::new();
+        let labels = [
+            "Shoreline itinerary",
+            "Arrival",
+            "Trail directions",
+            "Elevation figure",
+        ];
+        let mut text = Vec::new();
+        for name in labels {
+            names.push(text.len());
+            encode_varint(name.len(), &mut text);
+            text.extend_from_slice(name.as_bytes());
+        }
+        let schema = [
+            3, 1, 1, 0, 4, 1, 2, 0, 6, 2, 4, 0, 21, 1, 8, 0, 22, 1, 16, 0, 23, 1, 32, 0, 0, 0, 0, 1,
+        ];
+        let [mut meta, data] = table(
+            &schema,
+            &[
+                ("000", 55, &[names[0], 0, 0, 0, 2, 3]),
+                ("001", 7, &[names[1], 0, 1, 0]),
+                ("002", 15, &[names[2], 1, 0, offset(b"<p>Look"), 0]),
+                ("003", 15, &[names[3], 1, 0, offset(b"<p><img"), 0]),
+            ],
+        );
+        word(&mut meta, 28, 65001);
+        word(&mut meta, 52, 1);
+        records.extend([meta, data, text]);
+        let mut output = vec![0; 78 + 8 * records.len()];
+        output[..76].copy_from_slice(&original[..76]);
+        short(&mut output, 76, records.len());
+        for (i, record) in records.iter().enumerate() {
+            let start = output.len();
+            word(&mut output, 78 + 8 * i, start);
+            output.extend_from_slice(record);
+        }
+        output
     }
 
     fn hybrid_fixture(huffman: bool) -> Vec<u8> {

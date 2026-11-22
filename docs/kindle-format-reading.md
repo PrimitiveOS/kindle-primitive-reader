@@ -50,6 +50,22 @@ On the physical Oasis 3, all 206 entries matched the same publisher labels, leve
 
 Reader consumes the legacy edition's INDX rows and CNCX labels. It accepts up to 4,096 headings, 32 levels below the root and 2,048 encoded bytes per label. The normalized reading text keeps its historical section boundaries. An individually unresolvable destination stays visible and disabled. An absent or damaged navigation index leaves the book readable through the existing section list.
 
+## Publisher contents in AZW3
+
+![Reader showing the nested publisher contents of an authored AZW3 itinerary](screenshots/kf8-publisher-contents.png)
+
+Reflowable KF8 editions display the publisher’s headings in **Contents**, including passages within a chapter. The parent, first-child and last-child relationships determine reading order even when all the top-level entries come first in the binary index. A heading made entirely of whitespace appears as **Untitled section**. Books without a publisher index retain their chapter list.
+
+Fourteen of sixteen original standalone AZW3s contained a publisher index. Reader resolved all 664 entries. The two remaining books opened with their chapter lists. Each row was checked against the independently extracted publisher title, depth, chapter and following 24 visible non-whitespace characters, or all available characters at the end of a chapter.
+
+| Source destination | Entries | Verification |
+| --- | ---: | --- |
+| Start of the first fragment in a chapter | 310 | Independent reconstruction showed no text or illustration before the destination. Reader opened the chapter at its beginning. |
+| Nonzero offset inside a fragment | 346 | Reader followed the fragment number and its byte offset in the original UTF-8 markup. These passages matched libmobi’s exported NCX targets. |
+| Start of a later fragment in the same chapter | 8 | Six destinations were H3 headings and two were H2 headings. The index pointed to the opening byte of every heading. The libmobi NCX exporter links a zero offset to the chapter start. Reader and Calibre’s fragment addressing retain the later position. |
+
+The comparison used libmobi’s independent reconstruction of the unmodified original markup for all eight later-fragment cases. In one other entry the source reused an HTML ID. Reader identified the exact element by its source position and retained its location without inserting any extra markup. An independent build of the preceding importer produced the same 492 section paths and identical XML bytes across all 16 books (14,867,040 bytes). The Mac laid out 36 representative destinations, including all eight later-fragment headings, using the normal reading engine. [libmobi NCX export](https://github.com/bfabiszewski/libmobi/blob/85dcfe803fc2a21020ddcf15c3eb66b93d388add/src/opf.c#L598-L634) · [libmobi fragment coordinates](https://github.com/bfabiszewski/libmobi/blob/85dcfe803fc2a21020ddcf15c3eb66b93d388add/src/parse_rawml.c#L407-L443) · [Calibre’s KF8 position resolver](https://github.com/kovidgoyal/calibre/blob/a03eefa6b684af0c08c44b06c9f2d94345c41255/src/calibre/ebooks/mobi/reader/mobi8.py#L298-L339)
+
 ## Legacy publisher alignment and font sizes
 
 ![The centered heading and larger linked text in an illustrated MOBI field guide](screenshots/legacy-mobi-publisher-style.png)
