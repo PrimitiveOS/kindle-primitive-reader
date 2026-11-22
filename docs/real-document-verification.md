@@ -14,27 +14,30 @@ scratch profile, quits and opens Continue reading to compare both the saved posi
 and the rendered page body. This software path can run while another app is in the
 foreground. Physical touch, e-ink timing and sleep are separate checks.
 
-## Reader 0.1.23 candidate on the Oasis
+## Reader 0.1.23 release on the Oasis
 
-On 22 November 2026, the ARMHF candidate was copied to the owner's Oasis 3 and its
-SHA-256 was matched against the Mac build. The device was kept awake during the run.
-The normal picker opened one real EPUB and one real PDF from Documents. The original
-names and contents are intentionally omitted.
+On 22 November 2026, Store staging verified the published ARMHF ZIP and its
+SHA-256 (`49562aae41bab0d5e6e635fa284d71e536e7155cd77c42568e45f5a90130d8b8`).
+The package was installed on the owner's awake Oasis 3 through Store's verified
+install transaction. The installed record now reports version 0.1.23. The normal
+picker opened one real EPUB and one real PDF from Documents. Their names and contents
+are intentionally omitted. The release binary's SHA-256 is
+`5c4b23986cb95dcedb1cc9578062986395731b6cf535017195bed9674ca9fb16`.
 
 | Check | EPUB | PDF |
 | --- | ---: | ---: |
-| First frame | 2,166 ms; visible content | 993 ms; visible content |
+| First frame | 2,087 ms; visible content | 759 ms; visible content |
 | Forward page event | Changed the displayed page | Changed the displayed page |
 | Continue reading after restart | Passed | Passed |
 | Sampled spine | 3 of 24 chapters; 31 pages painted | Not applicable |
 | Source coverage | 24,416 characters mapped; 7/7 page anchors; 1/1 image decoded | Not applicable |
 | Reported issues / missing glyphs | 0 / 0 | No reported error / not measured |
 
-Both diagnostic runs exited successfully. Their scratch profiles and the temporary
-candidate files were removed afterward. This verifies the release executable's
-picker, parsing, layout, rendering and saved-position paths on the actual device;
-it does not claim a physical touch or e-ink timing test. The installed production
-Reader executable was left unchanged during this candidate check.
+Both diagnostic runs exited successfully. Their scratch profiles and temporary
+installer files were removed afterward; Reader's data folder was preserved. This
+verifies the published executable's picker, parsing, layout, rendering and saved-
+position paths on the actual device. It does not claim a physical touch or e-ink
+timing test.
 
 For a single file under an authorized Documents root, run the example with a fresh
 scratch directory and the same Noto Sans fonts as Launcher.
