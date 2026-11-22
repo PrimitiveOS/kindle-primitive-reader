@@ -165,3 +165,37 @@ fn nested_empty_boxes_keep_real_padding_order_and_visibility_only_changes_paint(
     assert!(probe.source.fragments.contains_key("inner"));
     assert!(probe.matches("SOURCE").is_empty());
 }
+
+#[test]
+fn normalized_numeric_ruby_owners_keep_canonical_fallback_keys_and_exact_current_revision() {
+    let html = format!(
+        "<html><body><p>{}<ruby>Base<rt>reading</rt></ruby></p><div id='box' style='padding:40px;background:#ddd'><p style='display:none'>HIDDEN</p></div><p>After.</p></body></html>",
+        "&#146; ".repeat(60)
+    );
+    let probe = open(&html, true, 24.);
+    let plain = open(&html, false, 24.);
+    assert_ne!(probe.source.revision, crate::revision(&html));
+    assert_eq!(probe.source.revision, plain.source.revision);
+    assert_eq!(probe.source.fragments, plain.source.fragments);
+    let anchor = probe.fragment("box").unwrap();
+    assert!(anchor.boundary.is_some());
+    assert_eq!((anchor.block, anchor.offset), probe.source.fragments["box"]);
+    assert!(probe.page_for(&anchor).is_some());
+    assert!(open(&html, true, 32.).page_for(&anchor).is_some());
+    let mut stale = anchor.clone();
+    stale.revision = crate::revision(&html);
+    assert!(probe.page_for(&stale).is_none());
+    assert_eq!(
+        probe
+            .select_source_range(
+                &plain.matches("Base")[0],
+                &Anchor {
+                    offset: plain.matches("Base")[0].offset + 4,
+                    ..plain.matches("Base")[0].clone()
+                }
+            )
+            .unwrap()
+            .text,
+        "Base"
+    );
+}
