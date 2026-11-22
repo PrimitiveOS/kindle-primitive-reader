@@ -127,13 +127,13 @@ impl<'a, B: Brush> Run<'a, B> {
 
     #[inline]
     pub(crate) fn line_spacing(&self) -> EffectiveSpacing<'a> {
+        let layout = &self.layout.data;
         if self.line_data.is_some() {
-            let layout = &self.layout.data;
             let line = &layout.lines[self.line_index as usize];
-            EffectiveSpacing::new(self.data.spacing, line.justification)
+            EffectiveSpacing::new(self.data.spacing, line.justification, &layout.cluster_spacing)
                 .with_expansion(&layout.expanded_gaps[line.expanded_gaps.clone()])
         } else {
-            EffectiveSpacing::new(self.data.spacing, Justification::NONE)
+            EffectiveSpacing::new(self.data.spacing, Justification::NONE, &layout.cluster_spacing)
         }
     }
 

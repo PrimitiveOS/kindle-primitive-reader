@@ -37,10 +37,8 @@ pub(crate) struct Gaps {
     ///
     /// For vertical text, this is to the top.
     ///
-    /// Note: this field is wired up, but it's currently always zero as we follow Blink in assigning
-    /// word and letter spacing to be visually after (see also docs on [`Spacing`]). However, e.g.,
-    /// `text-justify: inter-character` would distribute spacing around graphemes, at which point
-    /// `before` becomes used.
+    /// CSS word and letter spacing go after an atom. Reader uses the leading gap
+    /// when centering a natural glyph within its wider advance.
     pub(crate) before: f32,
 
     /// For horizontal text, additional spacing visually to the right.
@@ -148,6 +146,7 @@ impl Default for Justification {
 /// Additional spacing to apply, including justification (if any).
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct EffectiveSpacing<'a> {
+    cluster_spacing: &'a [u16],
     spacing: Spacing,
     justification: Justification,
     expanded_gaps: &'a [(u32, f32)],
@@ -158,11 +157,16 @@ impl<'a> EffectiveSpacing<'a> {
     ///
     /// To measure text for purposes like line breaking, pass [`Justification::NONE`].
     #[inline(always)]
-    pub(crate) const fn new(spacing: Spacing, justification: Justification) -> Self {
+    pub(crate) const fn new(
+        spacing: Spacing,
+        justification: Justification,
+        cluster_spacing: &'a [u16],
+    ) -> Self {
         Self {
             spacing,
             justification,
             expanded_gaps: &[],
+            cluster_spacing,
         }
     }
 
@@ -176,6 +180,7 @@ impl<'a> EffectiveSpacing<'a> {
         self.spacing.is_zero()
             && self.justification.amount_per_opportunity == 0.
             && self.expanded_gaps.is_empty()
+            && self.cluster_spacing.is_empty()
     }
 
     /// The gaps around `atom`.
@@ -183,6 +188,12 @@ impl<'a> EffectiveSpacing<'a> {
     pub(crate) fn gaps(self, atom: &Atom<'_>) -> Gaps {
         let whitespace = atom.characters()[0].whitespace;
         let mut gaps = self.spacing.gaps(whitespace);
+        let index = atom.shaped_clusters_range().start as usize;
+        if let Some(&extra) = self.cluster_spacing.get(index) {
+            let before = extra / 2;
+            gaps.before += f32::from(before);
+            gaps.after += f32::from(extra - before);
+        }
 
         if is_word_separator(whitespace)
             && atom.shaped_clusters_range().end <= self.justification.justification_end_cluster

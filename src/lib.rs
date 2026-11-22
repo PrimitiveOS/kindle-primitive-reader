@@ -160,6 +160,8 @@ pub struct Settings {
     /// Maximum tracking in justified words, as a percentage of font size.
     pub word_expansion: u8,
     pub letter_spacing: f32,
+    /// Advance of eligible horizontal CJK glyphs, as a percentage of the shaped width.
+    pub cjk_width_percent: u8,
     pub alignment: TextAlignment,
     pub bold_text: bool,
     pub text_contrast: bool,
@@ -192,6 +194,7 @@ impl Default for Settings {
             word_spacing: 0.0,
             word_expansion: 0,
             letter_spacing: 0.0,
+            cjk_width_percent: 100,
             alignment: TextAlignment::Publisher,
             bold_text: false,
             text_contrast: false,
@@ -266,6 +269,7 @@ impl Settings {
             || !(-2.0..=12.0).contains(&self.word_spacing)
             || self.word_expansion > 20
             || !(-1.0..=4.0).contains(&self.letter_spacing)
+            || !(100..=150).contains(&self.cjk_width_percent)
             || self.text_height() as f32 <= self.font_size * self.line_height * 2.0
         {
             return Err("Reading layout settings are out of range".into());

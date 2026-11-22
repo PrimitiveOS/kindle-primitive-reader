@@ -849,5 +849,9 @@ mod tests {
 }
 
 #[cfg(test)]
+#[path = "cjk_width_tests.rs"]
+mod cjk_width_tests;
+
+#[cfg(test)]
 #[path = "reflow_margin_tests.rs"]
 mod margin_tests;

@@ -261,6 +261,8 @@ pub struct BookPreferences {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub word_expansion: Option<u8>,
     pub letter_spacing: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cjk_width_percent: Option<u8>,
     pub scroll: bool,
     pub facing_pages: bool,
     pub alignment: TextAlignment,
@@ -324,6 +326,10 @@ impl BookPreferences {
                 .word_expansion
                 .filter(|&percent| percent <= 20)
                 .unwrap_or(settings.word_expansion),
+            cjk_width_percent: self
+                .cjk_width_percent
+                .filter(|n| (100..=150).contains(n))
+                .unwrap_or(settings.cjk_width_percent),
             letter_spacing: if (-1.0..=4.0).contains(&self.letter_spacing) {
                 self.letter_spacing
             } else {

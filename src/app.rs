@@ -2249,6 +2249,7 @@ impl Reader {
                 preferences.word_spacing = settings.word_spacing;
                 preferences.word_expansion = Some(settings.word_expansion);
                 preferences.letter_spacing = settings.letter_spacing;
+                preferences.cjk_width_percent = (settings.cjk_width_percent != 100).then_some(settings.cjk_width_percent);
                 preferences.scroll = active.reading.config.scroll;
                 preferences.alignment = settings.alignment;
                 preferences.bold_text = settings.bold_text;
@@ -2492,6 +2493,7 @@ impl Reader {
             word_spacing: settings.word_spacing,
             word_expansion: Some(settings.word_expansion),
             letter_spacing: settings.letter_spacing,
+            cjk_width_percent: (settings.cjk_width_percent != 100).then_some(settings.cjk_width_percent),
             scroll: config.scroll,
             facing_pages: config.facing_pages,
             alignment: settings.alignment,

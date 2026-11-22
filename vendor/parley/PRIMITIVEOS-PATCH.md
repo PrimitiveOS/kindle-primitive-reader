@@ -1,4 +1,4 @@
-# PrimitiveOS discretionary hyphens
+# PrimitiveOS text layout changes
 
 This directory contains Parley 0.12.0, from the published Rust crate and
 [upstream revision 6e1143dda817360dd3a2a64f9133c6e5dfabd881](https://github.com/linebender/parley/tree/6e1143dda817360dd3a2a64f9133c6e5dfabd881/parley).
@@ -39,3 +39,9 @@ within words. It uses the original shaping atoms, leaves cursive and ideographic
 text at its normal spacing, and gives layout, selection and painting the same
 adjusted advances. The standard alignment API keeps its upstream behavior.
 [Reader word expansion](../../docs/word-expansion.md)
+
+The ranged builder also accepts an optional per-cluster spacing policy. It
+passes each shaped atom's original text, natural advance and font size to
+the caller. Extra advances are measured before wrapping and shared by line
+measurement, painting and selection. Reader applies this to horizontal CJK
+text. [CJK width and geometry checks](../../docs/cjk-width.md)

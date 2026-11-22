@@ -88,3 +88,6 @@ page. [OpenJPEG](https://www.openjpeg.org/) · [Reader decoder tests](../../src/
 `nearby-search.xhtml` is an original short harbour log with a repeated sentence for directional search and return-to-location checks.
 
 `gif-signals.epub` contains an original semaphore diagram, a transparent GIF in inline and packaged SVG, a GIF cover, a linked full-size illustration and a two-frame GIF. Pillow 12.1 generates the fixture and independently supplies full first-frame pixel digests for comparison. [Fixture generator](../../scripts/generate-gif-epub.py) · [Reference generator](../../scripts/epub-gif-reference.py)
+
+
+`harbour-cjk-width.epub` contains an original horizontal Japanese type specimen, fullwidth and halfwidth forms, Hangul, punctuation, and a Latin width control. The embedded *Harbour Test Gothic* is a renamed subset of Noto Sans CJK JP. FontTools retained the original outlines, UTF-8 mappings and advances for the sample characters. The source font's SIL Open Font License travels inside the EPUB at `META-INF/font-license.txt`. [Original font](https://github.com/notofonts/noto-cjk/blob/523d033d6cb47f4a80c58a35753646f5c3608a78/Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf) · [SIL Open Font License](https://github.com/notofonts/noto-cjk/blob/523d033d6cb47f4a80c58a35753646f5c3608a78/LICENSE)

@@ -1156,7 +1156,11 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                     let slice = run.full_slice();
 
                     // Additional spacing to apply between atoms.
-                    let spacing = EffectiveSpacing::new(run.data.spacing, Justification::NONE);
+                    let spacing = EffectiveSpacing::new(
+                        run.data.spacing,
+                        Justification::NONE,
+                        &self.layout.data.cluster_spacing,
+                    );
 
                     let line_height = run.data.line_height;
 
@@ -1958,6 +1962,7 @@ fn hanging_whitespace<B: Brush>(
                 let effective_spacing = EffectiveSpacing::new(
                     layout.data.runs[line_item.index].spacing,
                     Justification::NONE,
+                    &layout.data.cluster_spacing,
                 );
                 let slice = layout
                     .data

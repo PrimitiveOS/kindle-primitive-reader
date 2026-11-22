@@ -376,6 +376,23 @@ impl Reader {
                                 }),
                             ],
                         ),
+                        ConfigRow::new(
+                            format!("CJK width · {}%", settings.cjk_width_percent),
+                            [("-5%", -5), ("-1%", -1), ("100%", 0), ("+1%", 1), ("+5%", 5)]
+                                .map(|(label, delta)| {
+                                    let value = if delta == 0 {
+                                        100
+                                    } else {
+                                        (i16::from(settings.cjk_width_percent) + delta)
+                                            .clamp(100, 150) as u8
+                                    };
+                                    Choice::option(
+                                        label,
+                                        Action::Text(Settings { cjk_width_percent: value, ..settings }),
+                                        value == settings.cjk_width_percent,
+                                    )
+                                }),
+                        ),
                     ];
                 }
                 BarPanel::TextRendering => {

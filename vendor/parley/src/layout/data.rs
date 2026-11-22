@@ -226,6 +226,8 @@ pub(crate) struct LayoutData<B: Brush> {
     // Output of shaping (input to line breaking)
     pub(crate) shaped_text: ShapedText,
     pub(crate) soft_hyphens: Vec<SoftHyphenOpportunity>,
+    /// Extra advance indexed by the first shaped cluster of an atom. Empty by default.
+    pub(crate) cluster_spacing: Vec<u16>,
     pub(crate) runs: Vec<RunData>,
     pub(crate) items: Vec<LayoutItem>,
 
@@ -273,6 +275,7 @@ impl<B: Brush> Default for LayoutData<B> {
             inline_boxes: Vec::new(),
             shaped_text: ShapedText::new(),
             soft_hyphens: Vec::new(),
+            cluster_spacing: Vec::new(),
             runs: Vec::new(),
             items: Vec::new(),
             lines: Vec::new(),
@@ -304,6 +307,7 @@ impl<B: Brush> LayoutData<B> {
         self.inline_boxes.clear();
         self.shaped_text.clear();
         self.soft_hyphens.clear();
+        self.cluster_spacing.clear();
         self.runs.clear();
         self.items.clear();
         self.lines.clear();
@@ -526,11 +530,12 @@ impl ContentWidthsMeasurer {
                     let can_hang = item.bidi_level == layout_data.base_level;
                     let is_rtl = item.bidi_level.is_rtl();
 
-                    if run_spacing.is_zero() {
+                    if run_spacing.is_zero() && layout_data.cluster_spacing.is_empty() {
                         self.measure_text_run::<B, false>(
                             &layout_data.styles,
                             slice,
                             run_spacing,
+                            &layout_data.cluster_spacing,
                             can_hang,
                             is_rtl,
                         );
@@ -539,6 +544,7 @@ impl ContentWidthsMeasurer {
                             &layout_data.styles,
                             slice,
                             run_spacing,
+                            &layout_data.cluster_spacing,
                             can_hang,
                             is_rtl,
                         );
@@ -602,6 +608,7 @@ impl ContentWidthsMeasurer {
         styles: &[Style<B>],
         slice: ShapedSlice<'_>,
         spacing: Spacing,
+        cluster_spacing: &[u16],
         can_hang: bool,
         is_rtl: bool,
     ) {
@@ -635,7 +642,9 @@ impl ContentWidthsMeasurer {
                     continue;
                 }
                 if SPACED {
-                    gap = spacing.gaps(whitespace).after;
+                    let index = slice.shaped_clusters_range().start as usize + i;
+                    let extra = cluster_spacing.get(index).copied().unwrap_or(0);
+                    gap = spacing.gaps(whitespace).after + f32::from(extra);
                 }
             } else if skip_atom {
                 // The next line starts after the whole newline atom.

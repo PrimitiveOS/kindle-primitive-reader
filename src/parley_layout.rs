@@ -1,3 +1,5 @@
+mod cjk_width;
+
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::sync::Arc;
@@ -1011,6 +1013,10 @@ fn marker_layout(
     size: f32,
 ) -> Layout<TextDecoration> {
     let mut builder = context.ranged_builder(fonts, text, 1.0, true);
+    let cjk_spacing = cjk_width::policy(text, settings.cjk_width_percent);
+    if let Some(policy) = &cjk_spacing {
+        builder.set_cluster_spacing(Some(policy));
+    }
     let family: FontFamily<'_> = if settings.override_fonts {
         GenericFamily::Serif.into()
     } else {
@@ -1040,6 +1046,10 @@ fn make_annotation(
     settings: Settings,
 ) -> Layout<TextDecoration> {
     let mut builder = context.ranged_builder(fonts, text, 1.0, true);
+    let cjk_spacing = cjk_width::policy(text, settings.cjk_width_percent);
+    if let Some(policy) = &cjk_spacing {
+        builder.set_cluster_spacing(Some(policy));
+    }
     if !settings.font_kerning {
         builder.push_default(StyleProperty::FontFeatures((&DISABLE_KERNING).into()));
     }
@@ -1096,6 +1106,10 @@ fn make_paragraph(
     let language = block.language;
     let mut builder = context.ranged_builder(fonts, &block.text, 1.0, true);
     builder.set_automatic_hyphens(&automatic.breaks);
+    let cjk_spacing = cjk_width::policy(&block.text, settings.cjk_width_percent);
+    if let Some(policy) = &cjk_spacing {
+        builder.set_cluster_spacing(Some(policy));
+    }
     if !settings.font_kerning {
         builder.push_default(StyleProperty::FontFeatures((&DISABLE_KERNING).into()));
     }
@@ -3044,3 +3058,6 @@ mod publisher_face_tests;
 #[cfg(test)]
 #[path = "parley_layout/word_expansion_cases.rs"]
 mod word_expansion_cases;
+
+#[cfg(test)]
+mod cjk_width_tests;

@@ -29,6 +29,10 @@ pub enum SoftHyphenAction {
     LeaveBoundary,
 }
 
+/// Extra advance in whole pixels for a shaped atom, given its source, natural advance
+/// and selected font size. The glyphs are centered within the added space.
+pub type ClusterSpacingFn = dyn Fn(&str, f32, f32) -> u16 + Send + Sync;
+
 #[derive(Clone, Copy)]
 pub(crate) struct BuilderOptions<'a> {
     scale: f32,
@@ -36,6 +40,7 @@ pub(crate) struct BuilderOptions<'a> {
     base_direction: BaseDirection,
     line_break_override: Option<&'a LineBreakOverrideFn>,
     automatic_hyphens: &'a [usize],
+    cluster_spacing: Option<&'a ClusterSpacingFn>,
     soft_hyphen_policy: Option<&'a (dyn Fn(usize) -> SoftHyphenAction + Send + Sync)>,
 }
 
@@ -48,6 +53,7 @@ impl BuilderOptions<'_> {
             line_break_override: None,
             soft_hyphen_policy: None,
             automatic_hyphens: &[],
+            cluster_spacing: None,
         }
     }
 }
@@ -116,6 +122,12 @@ impl<'b, B: Brush> RangedBuilder<'b, B> {
         policy: Option<&'b (dyn Fn(usize) -> SoftHyphenAction + Send + Sync)>,
     ) {
         self.options.soft_hyphen_policy = policy;
+    }
+
+    /// Set extra space around selected shaped atoms before line breaking. The
+    /// source is unchanged, including ligatures, combining marks and variations.
+    pub fn set_cluster_spacing(&mut self, policy: Option<&'b ClusterSpacingFn>) {
+        self.options.cluster_spacing = policy;
     }
 
     /// Set sorted UTF-8 source boundaries where a visible hyphen may be appended
@@ -441,6 +453,31 @@ fn build_into_layout<B: Brush>(
             layout,
             &lcx.analysis_data_sources,
         );
+    }
+
+    if let Some(policy) = options.cluster_spacing {
+        let shaped = &layout.data.shaped_text;
+        for (index, run) in shaped.runs().iter().enumerate() {
+            let slice = shaped.run_slice(index as u32);
+            for atom in slice.atoms_start() {
+                if atom.advance() <= 0.0 {
+                    continue;
+                }
+                let bytes = slice.text_byte_range(atom.char_range());
+                // The empty-paragraph shaping sentinel has no source range.
+                let Some(source) = text.get(bytes) else {
+                    continue;
+                };
+                let extra = policy(source, atom.advance(), run.font_size);
+                if extra != 0 {
+                    let cluster = atom.shaped_clusters_range().start as usize;
+                    if cluster >= layout.data.cluster_spacing.len() {
+                        layout.data.cluster_spacing.resize(cluster + 1, 0);
+                    }
+                    layout.data.cluster_spacing[cluster] = extra;
+                }
+            }
+        }
     }
 
     if let Some(policy) = options.soft_hyphen_policy {
