@@ -46,6 +46,8 @@ Open **Contents** in either reading toolbar to see the publisher's section names
 
 The simulator compared the title and level of each of the 206 entries with libmobi, followed the original byte position to its element, and checked the next 24 visible non-whitespace characters and the resulting reading page. Both original books already used these same targets for body links. Regression tests also map previously saved text and image positions in the authored guide after adding navigation-only IDs. [libmobi index fields](https://github.com/bfabiszewski/libmobi/blob/85dcfe803fc2a21020ddcf15c3eb66b93d388add/src/index.h) · [libmobi NCX builder](https://github.com/bfabiszewski/libmobi/blob/85dcfe803fc2a21020ddcf15c3eb66b93d388add/src/opf.c#L566-L684) · [CREngine PDB importer](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/pdbfmt.cpp#L1282-L1355)
 
+On the physical Oasis 3, all 206 entries matched the same publisher labels, levels, text ranges and navigable page positions. The authored toolbar test jumped to the final page and returned to the same opening frame. Its Contents screen was byte-identical to the Mac screenshot. The check verified the two original book hashes, existing Reader data and Browser session before deleting its test files.
+
 Reader consumes the legacy edition's INDX rows and CNCX labels. It accepts up to 4,096 headings, 32 levels below the root and 2,048 encoded bytes per label. The normalized reading text keeps its historical section boundaries. An individually unresolvable destination stays visible and disabled. An absent or damaged navigation index leaves the book readable through the existing section list.
 
 ## Legacy publisher alignment and font sizes
