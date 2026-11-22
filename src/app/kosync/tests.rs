@@ -254,6 +254,11 @@ fn actual_stock_client_and_reader_worker_roundtrip_authored_pdf_source_pages() {
         let status = std::process::Command::new(&lua)
             .arg(&script)
             .current_dir(&stock)
+            .env("KO_HOME", &profile)
+            .env("KO_DYLD_PREFIX", &staging)
+            .env("EMULATE_READER_W", "632")
+            .env("EMULATE_READER_H", "840")
+            .env("EMULATE_READER_DPI", "300")
             .env("KOSYNC_QA_URL", &server.url)
             .env("KOSYNC_QA_DOCUMENT", &book.document)
             .env("KOSYNC_QA_MODE", mode)
@@ -284,4 +289,43 @@ fn actual_stock_client_and_reader_worker_roundtrip_authored_pdf_source_pages() {
     );
     assert!(server.calls() >= 8);
     assert_eq!(app.current_position().unwrap().page, 0);
+}
+#[test]
+fn sleep_usb_and_leaving_provider_cancel_owned_work_without_moving_the_pdf() {
+    let f = Fixture::new();
+    let (mut app, _) = pdf(&f);
+    let server = Server::start();
+    app.kosync.config = server.config();
+    let before = app.current_position();
+    for phase in 0..3 {
+        app.kosync_command(Command::Open).unwrap();
+        let request = Request {
+            config: app.kosync.config.clone(),
+            operation: Operation::Authorize,
+        };
+        let mut process = std::process::Command::new("sleep");
+        process.arg("30");
+        app.kosync.job = Some(Job::spawn(process, &request).unwrap());
+        app.kosync.pending = Some(Pending {
+            epoch: app.kosync.epoch,
+            book: None,
+        });
+        match phase {
+            0 => {
+                app.input(Input::Sleep);
+                assert!(!app.stats_awake);
+                app.input(Input::Wake);
+                assert!(app.stats_awake);
+            }
+            1 => {
+                app.save().unwrap();
+                app.storage_returned().unwrap();
+            }
+            _ => app.show(Screen::Fixed),
+        }
+        assert!(app.kosync.job.is_none());
+        assert!(app.kosync.pending.is_none());
+        assert_eq!(app.current_position(), before);
+    }
+    assert_eq!(server.calls(), 0);
 }

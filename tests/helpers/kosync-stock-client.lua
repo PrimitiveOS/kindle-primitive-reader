@@ -9,7 +9,7 @@ local url=assert(os.getenv("KOSYNC_QA_URL"))
 assert(url:match("^http://127%.0%.0%.1:%d+/[a-z/]*$"),"QA accepts authored loopback only")
 local client=require("KOSyncClient"):new{custom_url=url,service_spec="plugins/kosync.koplugin/api.json"}
 local key=require("ffi/sha2").md5("qa-password")
-assert(client:register("qa",key))
+if os.getenv("KOSYNC_QA_MODE")=="push"then assert(client:register("qa",key))end
 assert(client:authorize("qa",key))
 local document=assert(os.getenv("KOSYNC_QA_DOCUMENT"))
 if os.getenv("KOSYNC_QA_MODE")=="push"then
