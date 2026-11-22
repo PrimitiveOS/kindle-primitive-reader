@@ -16,7 +16,13 @@ workflow and format, with prerequisites and side-by-side acceptance checks.
 | P0 · EPUB feasibility | Test package loading, layout, text positions, and a minimal book view on desktop and Oasis 3. K01–K05. | Corpus results, ARMHF build, device measurements, and a documented engine decision |
 | P1 · Daily EPUB | Build the library, Continue Reading, typography and navigation, bookmarks, highlights, search, and Files integration. K06–K11. | Desktop workflows and an automated Kindle reading session, including reopening a book and returning to Launcher. |
 | P2 · Offline parity | Add the fixed-page PDF workflow and the other offline formats and reading tools in scope. K12–K16. | Documents and annotations verified against format-specific fixtures on desktop and Kindle |
-| P3 · Remaining formats, integrations, and import | Deliver the remaining parity requirements by feature, including advanced PDF, library integrations, and KOReader data import. K17–K24. | Each Kindle workflow has an acceptance result. Import reports matched and unmatched records. |
+| P3 · Advanced reading, formats, and import | Deliver the remaining local-reading and reading-data requirements, including advanced documents, organization, accessibility, and KOReader data import. K17–K20 and K23–K24. | Each in-scope Kindle workflow has an acceptance result. Import reports matched and unmatched records. |
+
+OPDS/calibre acquisition (K21) and remote progress sync (K22) are optional
+reading-adjacent work, not core release gates. A general extension/plugin host,
+Terminal, RSS/news tools, HTTP inspectors or servers, patch management, and
+other unrelated utilities are outside this plan. Keep device-wide controls in
+Launcher. See the [scope checklist](reading-parity-plan.md#scope-and-completion-checklist).
 
 The [pinned native KOReader interface inventory](koreader-sdl-reference.md) adds
 128 complete desktop frames, including six lower configuration tabs, selection
@@ -66,11 +72,11 @@ Reader now applies CREngine's defined Windows-1252 numeric-reference substitutio
 ## Private-use source font audit
 
 The remaining 134 private-use characters are already present in an original KF8 source with no font declaration or embedded font. Its reconstructed chapters preserve the exact character sequence. An authored Microsoft Symbol cmap control renders all eight tested values with unchanged source anchors through the existing pipeline. Do not infer the original symbols from low bytes or an unrelated font. Explicit secondary Symbol-map coverage and an actual affected-passage comparison in stock KOReader remain pending device availability. [Provenance and limits](symbol-font-provenance.md)
-## OPDS and calibre acquisition · K21
+## Optional reading-adjacent: OPDS and calibre acquisition · K21
 
-The development candidate adds explicit configured OPDS catalogs, advertised search, server pagination, publication details, format choice and validated download to a selected Documents folder. Host checks use the real process worker, normal Reader controls and unchanged original EPUB content. The provider gate covers an isolated calibre Content server; wireless transfer and additional provider extensions remain separate. Native acquisition acceptance is pending the next combined Kindle build. [Protocol scope and evidence](opds-acquisition.md)
+The development candidate adds explicit configured OPDS catalogs, advertised search, server pagination, publication details, format choice and validated download to a selected Documents folder. Host checks use the real process worker, normal Reader controls and unchanged original EPUB content. The provider gate covers an isolated calibre Content server; additional provider integrations are optional and do not create an extension-host requirement. Native acquisition acceptance is pending the next combined Kindle build. [Protocol scope and evidence](opds-acquisition.md)
 
-## Opt-in progress sync · K22
+## Optional reading-adjacent: opt-in progress sync · K22
 
 The native candidate uses a documented versioned WebDAV progress record, conditional writes, explicit conflict choice and durable clears. Component tests cover actual process workers, two original books, interrupted replies, account changes, cancellation and local-state recovery. Combined and native acceptance remain separate gates. Annotation sync and KOReader-server interoperability retain their own scope. [Behavior and protocol](progress-sync.md)
 

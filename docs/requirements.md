@@ -8,7 +8,10 @@ Reader is a standalone, Kindle-first PrimitiveOS application. Its goal is to cov
 - Give the reading surface priority. Show compact controls on demand, use touch and the physical page-turn buttons on supported hardware, and keep essential controls reachable in either portrait orientation. Exit back to the correct host and permit normal device sleep.
 - Open local, DRM-free publications and user-provided files. Core reading, search, annotation, and dictionary workflows work offline. Network workflows are opt-in. Ordinary password-protected PDFs have their own support check. The comparison covers books available as local files.
 - Build original code, screens, artwork, and test fixtures. Use KOReader's documented and observable workflows as the reference. Evaluate every dependency, asset, font, dictionary, and OCR data set before distribution. Keep any reference installation and its files separate from Reader. [KOReader guide](https://koreader.rocks/user_guide/) · [KOReader source and license](https://github.com/koreader/koreader)
-- Kindle is the product platform. The desktop simulator supports development and repeatable tests. Android, Kobo, PocketBook, Cervantes, desktop product releases, KOReader's Lua plugin ABI, user patches, and compatibility with the full KOReader plugin catalogue are outside the parity target. Individual workflows can be implemented with Reader's own supported interfaces.
+- Kindle is the product platform. The desktop simulator supports development and repeatable tests. Android, Kobo, PocketBook, Cervantes, desktop product releases, KOReader's Lua plugin ABI, user patches, and compatibility with the full KOReader plugin catalogue are outside the parity target. Individual reading workflows can be implemented natively in Reader without adding a plugin host.
+- Do not build a general extension/plugin runtime, plugin manager, or third-party extension catalogue. File extensions are still used to identify supported reading formats.
+- Terminal and shell access, RSS/news downloading, HTTP inspectors or servers, patch management, and unrelated developer utilities are out of scope. Wi-Fi, battery, clock, sleep, wallpaper, and other Kindle-wide controls remain with Launcher.
+- Prioritize document opening and rendering, reading navigation and layout, search and lookup, bookmarks, notes and highlights, reading progress, offline scan tools, and accessibility. OPDS/calibre acquisition and remote progress sync are optional reading-adjacent work; they do not block the core Reader release.
 
 ## P0 · EPUB feasibility
 
@@ -58,9 +61,11 @@ EPUB interoperability includes books with a correctly identified root `mimetype`
 Reader can open an EPUB with a small zero-filled suffix after its ZIP footer. If the ZIP footer points to a displaced directory and member offsets have shifted, Reader checks the surviving directory against each local header and reconstructs offsets in memory. A missing reflowable chapter displays an explanation and can be turned past. The original spine indexes and progress weights are preserved. Opening a resource still enforces the extraction limit, exact length and CRC. The Library fingerprints the original bytes so repaired books retain reading positions across sessions. KOReader’s engine also retries with local headers when its ordinary archive index fails. [KOReader archive fallback](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstream.cpp#L2626-L2680) · [Reader recovery tests](../tests/epub_package.rs)
 
 
-## P3 · Remaining formats, integrations and import
+## P3 · Advanced reading, formats and import
 
 Expand advanced reading and migration workflows. Use capability-by-capability verification as the basis for parity claims.
+
+K21 book acquisition and K22 remote progress sync are optional reading-adjacent milestones. Complete core local reading first. Do not add a generic extension system or unrelated services to implement these workflows.
 
 | ID | Reader requirement and KOReader workflow | Acceptance evidence |
 | --- | --- | --- |

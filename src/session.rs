@@ -215,7 +215,7 @@ impl Reading {
                 .push(ReadingMotion::Pixels(distance * viewport));
         } else {
             let direction = if distance > 0.0 { 1 } else { -1 };
-            let pages = distance.abs().round().max(1.0) as usize;
+            let pages = distance.abs().ceil().max(1.0) as usize;
             self.turns
                 .pending
                 .extend(std::iter::repeat(ReadingMotion::Page(direction)).take(pages));
@@ -1850,6 +1850,14 @@ mod tests {
         paged.turns.next_refresh = Instant::now();
         assert_eq!(paged.automatic_turn(-20), Change::Partial);
         assert_eq!(paged.page, 0);
+
+        let mut fractional_paged = example("long-chapter.epub", 42.0, false);
+        fractional_paged.turns.next_refresh = Instant::now();
+        assert_eq!(fractional_paged.automatic_turn(11), Change::Partial);
+        assert_eq!(fractional_paged.page, 2);
+        fractional_paged.turns.next_refresh = Instant::now();
+        assert_eq!(fractional_paged.automatic_turn(-11), Change::Partial);
+        assert_eq!(fractional_paged.page, 0);
     }
 
     #[test]

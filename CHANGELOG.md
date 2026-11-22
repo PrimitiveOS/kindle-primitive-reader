@@ -2,7 +2,10 @@
 
 ## Unreleased
 
+## 0.1.23
+
 - Set automatic page turns to a custom interval from 1 second to 24 hours, and adjust signed scroll distance from −20.0 to +20.0 pages. Turning auto-turn off keeps its last interval. These preferences persist across Reader restarts; turns pause when Reader leaves the reading page or the Kindle sleeps.
+- Pan fixed-page documents by KOReader's default 40% overlap before moving to the next row or page, including right-to-left books. Fractional page-turn distances now round away from zero in paged EPUB and fixed-page views.
 
 ## 0.1.22
 

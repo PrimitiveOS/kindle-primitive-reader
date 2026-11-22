@@ -1311,12 +1311,105 @@ impl FixedReading {
                 -distance * (self.frame.height as f32 * 0.9),
             );
         }
+        if !self.is_spread()
+            && let Some((page, view)) = self.automatic_fixed_view(distance)?
+        {
+            self.present(page, view)?;
+            self.end_attempt = false;
+            return Ok(true);
+        }
         let direction = if distance > 0.0 { 1 } else { -1 };
-        let pages = distance.abs().round().max(1.0) as usize;
+        let pages = distance.abs().ceil().max(1.0) as usize;
         self.turns
             .pending
             .extend(std::iter::repeat(direction).take(pages));
         self.tick(Instant::now())
+    }
+
+    /// Apply KOReader's 40% overlap when AutoTurn advances a paginated fixed page.
+    /// It pans along the reading axis first, then advances to the next row/page at an edge.
+    fn automatic_fixed_view(&self, distance: f32) -> Result<Option<(usize, View)>> {
+        const OVERLAP: f32 = 0.4;
+        const EDGE_EPSILON: f32 = 0.5;
+
+        let size = self
+            .visible
+            .iter()
+            .find(|visible| visible.index == self.page)
+            .map(|visible| visible.size)
+            .map(Ok)
+            .unwrap_or_else(|| self.source.page_size(self.page))?;
+        let metrics = view_metrics(size, &self.view, self.frame.height);
+        let x_limit = ((metrics.width - WIDTH as f32) / 2.0).max(0.0);
+        let y_limit = ((metrics.height - self.frame.height as f32) / 2.0).max(0.0);
+        let x_extent = x_limit * 2.0;
+        let y_extent = y_limit * 2.0;
+        let x_direction = distance.signum() * if self.view.right_to_left { -1.0 } else { 1.0 };
+        let y_direction = distance.signum();
+        let x_visible = metrics.width.min(WIDTH as f32);
+        let y_visible = metrics.height.min(self.frame.height as f32);
+        let x_position = (x_limit - self.view.offset_x).clamp(0.0, x_extent);
+        let y_position = (y_limit - self.view.offset_y).clamp(0.0, y_extent);
+        let at_edge = |position: f32, extent: f32, direction: f32| {
+            if direction > 0.0 {
+                position >= extent - EDGE_EPSILON
+            } else {
+                position <= EDGE_EPSILON
+            }
+        };
+
+        // KOReader moves horizontally first. If that axis has no room, or is already
+        // at its reading edge, it moves vertically and resets the horizontal row.
+        if x_limit > EDGE_EPSILON && !at_edge(x_position, x_extent, x_direction) {
+            let next = (x_position + x_direction * x_visible * (1.0 - OVERLAP) * distance.abs())
+                .clamp(0.0, x_extent);
+            if (next - x_position).abs() > EDGE_EPSILON {
+                return Ok(Some((
+                    self.page,
+                    View {
+                        offset_x: x_limit - next,
+                        ..self.view
+                    },
+                )));
+            }
+        }
+
+        let mut view = self.view;
+        if x_limit > EDGE_EPSILON {
+            let row_start = if x_direction > 0.0 { 0.0 } else { x_extent };
+            view.offset_x = x_limit - row_start;
+        }
+        if y_limit > EDGE_EPSILON && !at_edge(y_position, y_extent, y_direction) {
+            let next = (y_position + y_direction * y_visible * (1.0 - OVERLAP) * distance.abs())
+                .clamp(0.0, y_extent);
+            if (next - y_position).abs() > EDGE_EPSILON {
+                view.offset_y = y_limit - next;
+                return Ok(Some((self.page, view)));
+            }
+        }
+
+        let direction = if distance > 0.0 { 1 } else { -1 };
+        let page_steps = distance.abs().ceil().max(1.0) as usize;
+        let mut page = self.page;
+        for _ in 0..page_steps {
+            let Some(next) = self.next_reading_page(page, direction) else {
+                break;
+            };
+            page = next;
+        }
+        if page == self.page {
+            return Ok(None);
+        }
+
+        let next_size = self.source.page_size(page)?;
+        let next_metrics = view_metrics(next_size, &view, self.frame.height);
+        let next_x_limit = ((next_metrics.width - WIDTH as f32) / 2.0).max(0.0);
+        let next_y_limit = ((next_metrics.height - self.frame.height as f32) / 2.0).max(0.0);
+        let next_x_start = if x_direction > 0.0 { 0.0 } else { next_x_limit * 2.0 };
+        let next_y_start = if y_direction > 0.0 { 0.0 } else { next_y_limit * 2.0 };
+        view.offset_x = next_x_limit - next_x_start;
+        view.offset_y = next_y_limit - next_y_start;
+        Ok(Some((page, view)))
     }
 
     fn queue_scroll(&mut self, dx: f32, dy: f32) -> Result<bool> {
@@ -1636,6 +1729,25 @@ impl FixedDocument {
 
     fn supports_comic_spreads(&self) -> bool {
         matches!(self, Self::Comic(comic) if comic.page_count() > 1)
+    }
+
+    fn page_size(&self, page: usize) -> Result<(f32, f32)> {
+        match self {
+            Self::Epub(book) => Ok(with_storage(|| {
+                book.decode_page(page)
+                    .map(|image| image.page_size())
+                    .map_err(io::Error::other)
+            })?),
+            Self::Djvu(book) => Ok(book.page_size(page)?),
+            Self::Pdf(pdf) => Ok(pdf.page_size(page)?),
+            Self::Comic(comic) => Ok(with_storage(|| {
+                comic
+                    .decode_page(page)
+                    .map(|image| image.page_size())
+                    .map_err(io::Error::other)
+            })?),
+            Self::Image(image) => Ok(image.page_size()),
+        }
     }
 
     fn epub_spreads(&self, view: View, viewport_height: u32) -> Option<EpubSpreads> {
@@ -2390,6 +2502,10 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn striped_pdf_bytes(pages: usize) -> Vec<u8> {
+        striped_pdf_sized_bytes(pages, 120, 80)
+    }
+
+    fn striped_pdf_sized_bytes(pages: usize, width: u32, height: u32) -> Vec<u8> {
         let kids = (0..pages)
             .map(|index| format!("{} 0 R", 3 + index * 2))
             .collect::<Vec<_>>()
@@ -2404,15 +2520,21 @@ pub(crate) mod tests {
         ];
         for index in 0..pages {
             let contents = 4 + index * 2;
-            let mut stream = format!("{:.2} g 0 0 120 80 re f\n", (index + 1) as f32 * 0.1);
+            let mut stream = format!(
+                "{:.2} g 0 0 {width} {height} re f\n",
+                (index + 1) as f32 * 0.1
+            );
             let annotation = if index == 1 {
-                stream.push_str("0 g BT /F1 12 Tf 10 63 Td (Second) Tj ET\n");
+                stream.push_str(&format!(
+                    "0 g BT /F1 12 Tf 10 {} Td (Second) Tj ET\n",
+                    height.saturating_sub(17)
+                ));
                 format!("/Annots [{link} 0 R]")
             } else {
                 String::new()
             };
             objects.push(format!(
-                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 120 80] /Contents {contents} 0 R {annotation} >>"
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {width} {height}] /Contents {contents} 0 R {annotation} >>"
             ));
             objects.push(format!(
                 "<< /Length {} >>\nstream\n{stream}endstream",
@@ -2757,6 +2879,78 @@ pub(crate) mod tests {
         reader.turns.next_refresh = Instant::now();
         assert!(reader.automatic_turn(-5).unwrap());
         assert!(reader.preferences().offset_y > middle);
+    }
+
+    #[test]
+    fn automatic_turn_pans_zoomed_fixed_pages_with_koreader_overlap_and_edge_turns() {
+        let mut reader = reading(
+            striped_pdf(3),
+            View {
+                height_fit: true,
+                ..View::default()
+            },
+        );
+        let initial = reader.preferences().offset_x;
+
+        assert!(reader.automatic_turn(5).unwrap());
+        assert_eq!(reader.page(), 0);
+        assert!((reader.preferences().offset_x - (initial - WIDTH as f32 * 0.3)).abs() < 1.0);
+
+        assert!(reader.automatic_turn(-5).unwrap());
+        assert_eq!(reader.page(), 0);
+        assert!((reader.preferences().offset_x - initial).abs() < 1.0);
+
+        assert!(reader.automatic_turn(5).unwrap());
+        assert_eq!(reader.page(), 0);
+        assert!(reader.automatic_turn(5).unwrap());
+        assert_eq!(reader.page(), 0);
+        let right_edge = ((view_metrics((120.0, 80.0), &reader.view, reader.frame.height).width
+            - WIDTH as f32)
+            / 2.0)
+            .max(0.0);
+        assert!((reader.preferences().offset_x + right_edge).abs() < 1.0);
+
+        assert!(reader.automatic_turn(5).unwrap());
+        assert_eq!(reader.page(), 1);
+        assert!((reader.preferences().offset_x - right_edge).abs() < 1.0);
+    }
+
+    #[test]
+    fn automatic_turn_respects_fixed_page_reading_direction() {
+        let mut reader = reading(
+            striped_pdf(2),
+            View {
+                height_fit: true,
+                right_to_left: true,
+                ..View::default()
+            },
+        );
+        assert!(reader.automatic_turn(5).unwrap());
+        assert_eq!(reader.page(), 0);
+        assert!(reader.preferences().offset_x > 0.0);
+    }
+
+    #[test]
+    fn automatic_turn_scrolls_down_a_tall_fixed_page_before_turning() {
+        let pdf = Pdf::open(striped_pdf_sized_bytes(3, 80, 120)).unwrap();
+        let mut reader = reading(
+            pdf,
+            View {
+                width_fit: true,
+                ..View::default()
+            },
+        );
+        let metrics = view_metrics((80.0, 120.0), &reader.view, reader.frame.height);
+        let bottom_offset = (metrics.height - reader.frame.height as f32) / 2.0;
+        assert!(bottom_offset > 0.0);
+
+        assert!(reader.automatic_turn(5).unwrap());
+        assert_eq!(reader.page(), 0);
+        assert!((reader.preferences().offset_y + bottom_offset).abs() < 1.0);
+
+        assert!(reader.automatic_turn(5).unwrap());
+        assert_eq!(reader.page(), 1);
+        assert!((reader.preferences().offset_y - bottom_offset).abs() < 1.0);
     }
 
     #[test]

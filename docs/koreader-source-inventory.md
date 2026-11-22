@@ -52,16 +52,22 @@ inventory counts do not measure completed parity.
 
 ## Bundled plugins
 
+This table is a source-reading aid, not a requirement to reproduce the plug-in
+system. Implement individual reading tasks as native Reader features. Do not
+add a generic Lua/extension runtime, plug-in manager or third-party plug-in
+catalogue. File-format extensions remain part of document support.
+
 | Upstream identifiers | Reader behavior and acceptance |
 | --- | --- |
 | `gestures`, `hotkeys`, `externalkeyboard` | Assignable single-contact gestures and Oasis page buttons have Rust paths. Multi-contact gestures, sequences, external keyboard and hardware remapping require separate evidence. |
 | `autoturn`, `readtimer` | Timed turns use the ordinary paced page handler. Read timer supports intervals, local alarms, repeat, expiry messages and resume in the normal Tools menu. [Clock semantics and verification](read-timer.md) |
 | `exporter`, `vocabbuilder`, `statistics`, `profiles` | Reader exports annotations and retains time and profiles. The vocabulary development candidate adds source context, exact review scheduling, due/book/search filters, explicit existing-word choices and per-word undo. [Vocabulary evidence](vocabulary-review.md). Compare SQLite migration/sync, additional export formats, calendars, daily histories and profile action sequences separately. |
-| `opds`, `calibre`, `kosync`, `cloudstorage`, `wallabag`, `newsdownloader` | Networked reading workflows. The [native progress candidate](progress-sync.md) covers explicit WebDAV progress exchange, versioned clears and conflict choice; it uses a separate protocol from KOReader sync-server. Compare discovery, downloading, provider authentication, annotation sync and user-initiated transmission separately. |
+| `opds`, `calibre`, `kosync`, `cloudstorage`, `wallabag` | Optional reading-adjacent acquisition and progress workflows. Implement only after core local reading, without creating a provider plug-in host. The [native progress candidate](progress-sync.md) covers explicit WebDAV progress exchange, versioned clears and conflict choice; it uses a separate protocol from KOReader sync-server. |
+| `newsdownloader` | RSS/news reading is outside the agreed Reader scope. |
 | `coverbrowser`, `bookshortcuts`, `movetoarchive`, `archiveviewer` | Check browse views, document shortcuts, completed-book filing and supported archive content through Reader and Files. |
 | `japanese`, `perceptionexpander`, `docsettingtweak` | Compare language deinflection, focused reading guides and per-book overrides on synthetic documents. |
 | `autodim`, `autostandby`, `autosuspend`, `autowarmth`, `batterystat`, `coverimage`, `keepalive`, `timesync`, `systemstat` | System capabilities belong to Primitive Launcher. Verify access, return to the same page and device behavior for applicable Kindle workflows. |
-| `SSH`, `terminal`, `httpinspector`, `hello`, `texteditor`, `qrclipboard` | Previously excluded side tools, developer facilities or external utilities. Listed to make the complete upstream plug-in inventory visible. |
+| `SSH`, `terminal`, `httpinspector`, `hello`, `texteditor`, `qrclipboard` | Explicitly excluded shell/terminal, server/inspection, developer, clipboard and unrelated utilities. Listed for inventory completeness only; do not implement them in Reader. |
 
 The OPDS development candidate follows the pinned browser/parser reading path for Atom and JSON catalogs, advertised search, explicit format/destination selection and cancellable validated acquisition. HTTP Basic is origin-scoped; loan/DRM chains, calibre wireless transfer and additional providers have separate gates. [OPDS source map, UI and evidence](opds-acquisition.md)
 
@@ -161,13 +167,13 @@ The K24 backup candidate covers non-secret local reading state beyond the Librar
 
 | Upstream identifiers | Reader behavior and acceptance |
 | --- | --- |
-| `calibre`, `cloudstorage`, `exporter`, `more_tools`, `move_to_archive`, `news_downloader`, `profiles`, `progress_sync`, `qrclipboard`, `read_timer`, `statistics`, `text_editor`, `wallabag` | Compare reading tasks individually, including timed reading, statistics, export, sync and profiles. Test individual commands and enabled conditions before declaring the group matched. |
+| `calibre`, `cloudstorage`, `exporter`, `more_tools`, `move_to_archive`, `news_downloader`, `profiles`, `progress_sync`, `qrclipboard`, `read_timer`, `statistics`, `text_editor`, `wallabag` | Compare reading tasks only: timed reading, statistics, export, profiles, and optional acquisition/sync. Exclude RSS/news, text-editor, clipboard and unrelated utilities. Test included commands and enabled conditions individually. |
 
 ## Menu more_tools
 
 | Upstream identifiers | Reader behavior and acceptance |
 | --- | --- |
-| `auto_frontlight`, `battery_statistics`, `book_shortcuts`, `doc_setting_tweak`, `keep_alive`, `patch_management`, `plugin_management`, `synchronize_time`, `terminal` | Separate reading, shared-system and previously excluded side tools. Test individual commands and enabled conditions before declaring the group matched. |
+| `auto_frontlight`, `battery_statistics`, `book_shortcuts`, `doc_setting_tweak`, `keep_alive`, `patch_management`, `plugin_management`, `synchronize_time`, `terminal` | Route device controls to Launcher; keep reading-related document tweaks in Reader. Exclude patch management, generic plug-in management and Terminal. These menu entries do not add an extension-host milestone. |
 
 ## Menu search
 
