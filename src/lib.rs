@@ -51,6 +51,7 @@ mod parley_layout;
 mod publisher_breaks;
 #[cfg(feature = "kindle")]
 mod pdf_annotations;
+mod publisher_padding;
 #[cfg(feature = "kindle")]
 mod reading_controls;
 #[cfg(feature = "kindle")]

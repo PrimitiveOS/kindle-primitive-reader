@@ -73,24 +73,48 @@ impl ImageLength {
     }
 }
 
-#[derive(Clone, Copy)]
-enum IndentLength {
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum CssLength {
     Em(f32),
     RootEm(f32),
     Pixels(f32),
     Fraction(f32),
 }
 
+impl Default for CssLength {
+    fn default() -> Self {
+        Self::Pixels(0.0)
+    }
+}
+
+impl CssLength {
+    fn computed(self, font: f32, root_font: f32) -> Self {
+        match self {
+            Self::Em(em) => Self::Em(em * font),
+            Self::RootEm(em) => Self::Em(em * root_font),
+            length => length,
+        }
+    }
+
+    pub fn pixels(self, width: u32, reader_font: f32) -> f32 {
+        match self {
+            Self::Em(em) | Self::RootEm(em) => em * reader_font,
+            Self::Pixels(px) => px,
+            Self::Fraction(ratio) => ratio * width as f32,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct TextIndent {
-    length: IndentLength,
+    length: CssLength,
     pub hanging: bool,
 }
 
 impl Default for TextIndent {
     fn default() -> Self {
         Self {
-            length: IndentLength::Pixels(0.0),
+            length: CssLength::Pixels(0.0),
             hanging: false,
         }
     }
@@ -101,20 +125,14 @@ impl TextIndent {
     // change font size inherit the computed length. Percentages stay relative
     // to the width of the block being laid out.
     fn computed(self, font: f32, root_font: f32) -> Self {
-        let length = match self.length {
-            IndentLength::Em(em) => IndentLength::Em(em * font),
-            IndentLength::RootEm(em) => IndentLength::Em(em * root_font),
-            length => length,
-        };
-        Self { length, ..self }
+        Self {
+            length: self.length.computed(font, root_font),
+            ..self
+        }
     }
 
     pub fn pixels(self, width: u32, reader_font: f32) -> f32 {
-        match self.length {
-            IndentLength::Em(em) | IndentLength::RootEm(em) => em * reader_font,
-            IndentLength::Pixels(px) => px,
-            IndentLength::Fraction(ratio) => ratio * width as f32,
-        }
+        self.length.pixels(width, reader_font)
     }
 }
 
@@ -176,6 +194,7 @@ pub(crate) struct Style {
     pub font_style: FontStyle,
     pub line_height: Option<f32>,
     pub text_indent: TextIndent,
+    pub padding: [CssLength; 2],
     pub background: Option<u8>,
     pub marker: crate::list_marker::MarkerKind,
     pub image_width: Option<ImageLength>,
@@ -202,6 +221,7 @@ impl Default for Style {
             font_style: FontStyle::Normal,
             line_height: None,
             text_indent: TextIndent::default(),
+            padding: Default::default(),
             background: None,
             marker: crate::list_marker::MarkerKind::None,
             image_width: None,
@@ -287,6 +307,7 @@ impl BookStyle {
             // A parent's background paints its box. It is not a text property.
             style.background = None;
             style.page_breaks = Default::default();
+            style.padding = Default::default();
             if let Some(kind) = element.list_kind {
                 style.marker = kind;
             }
@@ -360,6 +381,16 @@ impl BookStyle {
                             Size::Root(scale) => root * scale,
                             Size::Reference(scale) => *scale,
                         };
+                    }
+                    Property::Padding(side, length) => {
+                        let font = style.size_scale.clamp(0.125, 8.0);
+                        let root_font = result.first().map_or(font, |root| root.size_scale);
+                        style.padding[*side] = length.map_or(parent.padding[*side], |length| {
+                            length.computed(font, root_font)
+                        });
+                    }
+                    Property::PaddingBoth(_) => {
+                        unreachable!("shorthands are expanded before cascading")
                     }
                     Property::Indent(indent) => {
                         if let Some(indent) = indent {
@@ -889,13 +920,24 @@ struct Declaration {
 }
 
 fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
-    RuleBodyParser::new(input, &mut Properties)
-        .flatten()
-        .collect()
+    let mut result = Vec::new();
+    for decl in RuleBodyParser::new(input, &mut Properties).flatten() {
+        if let Property::PaddingBoth(sides) = decl.property {
+            for (side, length) in sides.into_iter().enumerate() {
+                result.push(Declaration {
+                    property: Property::Padding(side, length),
+                    important: decl.important,
+                });
+            }
+        } else {
+            result.push(decl);
+        }
+    }
+    result
 }
 
 type Priority = (bool, bool, Specificity);
-type Winners<'a> = [Option<(Priority, &'a Property)>; 22];
+type Winners<'a> = [Option<(Priority, &'a Property)>; 24];
 
 fn choose<'a>(
     winners: &mut Winners<'a>,
@@ -927,7 +969,8 @@ fn choose<'a>(
             Property::BreakInside(_) => 19,
             Property::Orphans(_) => 20,
             Property::Widows(_) => 21,
-            Property::FontSource(_) => continue,
+            Property::Padding(side, _) => 22 + side,
+            Property::PaddingBoth(_) | Property::FontSource(_) => continue,
         };
         let priority = (declaration.important, inline, specificity);
         if winners[index].is_none_or(|(current, _)| priority >= current) {
@@ -967,6 +1010,8 @@ impl Weight {
 }
 
 enum Property {
+    Padding(usize, Option<CssLength>),
+    PaddingBoth([Option<CssLength>; 2]),
     Orphans(Option<u8>),
     Widows(Option<u8>),
     BreakBefore(Option<crate::publisher_breaks::Edge>),
@@ -1006,6 +1051,9 @@ impl<'i> DeclarationParser<'i> for Properties {
     ) -> CssResult<Declaration> {
         let property = input.parse_until_before(Delimiter::Bang, |input| {
             let property = match name.to_ascii_lowercase().as_ref() {
+                "padding-left" => Property::Padding(0, parse_padding(input, false)?[0]),
+                "padding-right" => Property::Padding(1, parse_padding(input, false)?[0]),
+                "padding" => Property::PaddingBoth(parse_padding(input, true)?),
                 "orphans" => Property::Orphans(line_minimum(input)?),
                 "widows" => Property::Widows(line_minimum(input)?),
                 "page-break-before" | "break-before" => Property::BreakBefore(break_edge(input)?),
@@ -1295,37 +1343,68 @@ fn parse_indent(input: &mut Parser<'_>) -> CssResult<Option<TextIndent>> {
             "inherit" | "unset" | "revert" => return Ok(None),
             "hanging" => {
                 return Ok(Some(TextIndent {
-                    length: indent_length(input)?,
+                    length: parse_css_length(input)?,
                     hanging: true,
                 }));
             }
             _ => return Err(ParseError::unexpected_token()),
         }
     }
-    let length = indent_length(input)?;
+    let length = parse_css_length(input)?;
     let hanging = input
         .try_parse(|input| input.expect_ident_matching("hanging"))
         .is_ok();
     Ok(Some(TextIndent { length, hanging }))
 }
 
-fn indent_length(input: &mut Parser<'_>) -> CssResult<IndentLength> {
+// The shorthand expands to independent cascading physical sides. Vertical
+// values are still validated so a malformed declaration has no effect.
+fn parse_padding(input: &mut Parser<'_>, shorthand: bool) -> CssResult<[Option<CssLength>; 2]> {
+    if let Ok(keyword) = input.try_parse(Parser::expect_ident_cloned) {
+        return match keyword.to_ascii_lowercase().as_str() {
+            "inherit" => Ok([None; 2]),
+            "initial" | "unset" | "revert" => Ok([Some(CssLength::default()); 2]),
+            _ => Err(ParseError::unexpected_token()),
+        };
+    }
+    let mut values = [CssLength::default(); 4];
+    let mut count = 0;
+    while !input.is_exhausted() {
+        if count == if shorthand { 4 } else { 1 } {
+            return Err(ParseError::unexpected_token());
+        }
+        let length = parse_css_length(input)?;
+        if length.pixels(100, 1.0) < 0.0 {
+            return Err(ParseError::unexpected_token());
+        }
+        values[count] = length;
+        count += 1;
+    }
+    match count {
+        1 => Ok([Some(values[0]); 2]),
+        2 | 3 => Ok([Some(values[1]); 2]),
+        4 => Ok([Some(values[3]), Some(values[1])]),
+        _ => Err(ParseError::unexpected_token()),
+    }
+}
+
+fn parse_css_length(input: &mut Parser<'_>) -> CssResult<CssLength> {
     match input.next()?.clone() {
-        Token::Number { value: 0.0, .. } => Ok(IndentLength::Pixels(0.0)),
+        Token::Number { value: 0.0, .. } => Ok(CssLength::Pixels(0.0)),
         Token::Percentage { unit_value, .. } if unit_value.is_finite() => {
-            Ok(IndentLength::Fraction(unit_value))
+            Ok(CssLength::Fraction(unit_value))
         }
         Token::Dimension { value, unit, .. } if value.is_finite() => {
             Ok(match unit.to_ascii_lowercase().as_str() {
-                "em" => IndentLength::Em(value),
-                "rem" => IndentLength::RootEm(value),
-                "px" => IndentLength::Pixels(value),
-                "pt" => IndentLength::Pixels(value * (96.0 / 72.0)),
-                "pc" => IndentLength::Pixels(value * 16.0),
-                "in" => IndentLength::Pixels(value * 96.0),
-                "cm" => IndentLength::Pixels(value * (96.0 / 2.54)),
-                "mm" => IndentLength::Pixels(value * (96.0 / 25.4)),
-                "q" => IndentLength::Pixels(value * (96.0 / 101.6)),
+                "em" => CssLength::Em(value),
+                "rem" => CssLength::RootEm(value),
+                "px" => CssLength::Pixels(value),
+                "pt" => CssLength::Pixels(value * (96.0 / 72.0)),
+                "pc" => CssLength::Pixels(value * 16.0),
+                "in" => CssLength::Pixels(value * 96.0),
+                "cm" => CssLength::Pixels(value * (96.0 / 2.54)),
+                "mm" => CssLength::Pixels(value * (96.0 / 25.4)),
+                "q" => CssLength::Pixels(value * (96.0 / 101.6)),
                 _ => return Err(ParseError::unexpected_token()),
             })
         }
@@ -1466,6 +1545,37 @@ mod tests {
         let explicit = style_of("plain");
         assert_eq!(explicit.font_weight, FontWeight::NORMAL);
         assert_eq!(explicit.font_style, FontStyle::Normal);
+    }
+
+    #[test]
+    fn horizontal_padding_cascades_independently_from_ancestor_boxes() {
+        let (source, styles) = computed(
+            r#"<html><head><style>
+          div { padding: 0 4px 0 14px; } .card { padding-right: 22px !important }
+        </style></head><body><div id="shell"><p id="normal">Ordinary</p>
+        <p id="child" class="card" style="padding:2px 4px 6px 10%;padding-left:2em;padding-left:-1px">Padded</p>
+        <p id="inherited" style="padding:inherit;padding-right:unset">Inherited</p>
+        <p id="invalid" style="padding-left:8px;padding:2px auto;padding-right:17px 8px">Invalid</p>
+        </div></body></html>"#,
+        );
+        for (id, expected) in [
+            ("shell", [14., 4.]),
+            ("normal", [0., 0.]),
+            ("child", [40., 22.]),
+            ("inherited", [14., 0.]),
+            ("invalid", [8., 0.]),
+        ] {
+            let i = source
+                .elements
+                .iter()
+                .position(|el| el.id.as_deref() == Some(id))
+                .unwrap();
+            assert_eq!(
+                styles[i].padding.map(|p| p.pixels(300, 20.)),
+                expected,
+                "{id}"
+            );
+        }
     }
 
     #[test]

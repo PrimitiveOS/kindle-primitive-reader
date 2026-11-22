@@ -6,6 +6,8 @@ Negative lengths can move the first line outside its normal starting edge. At a 
 
 KOReader v2026.07.1's pinned CREngine parses signed lengths, percentages and the hanging modifier, computes a per-paragraph indent against the available width and protects the page boundary when overflow is disabled. Reader passes line geometry to Parley. The EPUB text, search terms and saved byte offsets stay intact. [CREngine CSS parser](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstsheet.cpp#L4051-L4080) · [Block geometry](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L8854-L8902) · [Line formatting](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvtextfm.cpp#L5935-L5951) · [CSS Text](https://www.w3.org/TR/css-text-3/#text-indent-property)
 
+When the publisher supplies padding around a paragraph, a negative indent can draw into that leading space. The same rule applies at the right edge of RTL text. [Publisher box padding](publisher-box-padding.md)
+
 ## Desktop comparison
 
 Both images are complete 720 × 1000 captures of the same authored file with 31 px text and a 38 px margin. The first paragraph inherits a first-line indent. The second explicitly resets it. The last two exercise percentage and hanging indents. [Source fixture](../tests/fixtures/paragraph-indents.xhtml)

@@ -123,12 +123,23 @@ impl ParleyChapter {
         ));
         let group_insets = list_insets(source, styles, settings.font_size);
         let outer_width = settings.text_width();
+        let publisher_boxes =
+            crate::publisher_padding::layout(source, styles, outer_width, settings.font_size);
         let column_for = |block: &Block| {
+            if let Some(boxes) = &publisher_boxes {
+                return boxes[block.element].cell;
+            }
+
             block.table_cell.filter(|cell| {
                 outer_width as f32 / f32::from(cell.columns) >= 2.5 * settings.font_size
             })
         };
         let bounds_for = |block: &Block| {
+            if let Some(boxes) = &publisher_boxes {
+                let area = boxes[block.element];
+                return (area.x, area.width);
+            }
+
             column_for(block).map_or((0, outer_width), |cell| {
                 cell.bounds(outer_width, (settings.font_size * 0.22).round() as u32)
             })
@@ -246,13 +257,18 @@ impl ParleyChapter {
             }
             if !block.text.is_empty() {
                 let style = &styles[block.element];
+                let (text_x,text_width,indent_base) = publisher_boxes.as_ref().map_or((column_x,width,image_width), |boxes| {
+                    let area=boxes[block.element];
+                    let (x, expanded)=area.paragraph_bounds(block,style,settings.font_size);
+                    (x,width+expanded-area.width,area.outer_width.saturating_sub(gutter))
+                });
                 let indent =
-                    LineIndent::resolve(style, image_width, width, settings.font_size, hanging);
+                    LineIndent::resolve(style, indent_base, text_width, settings.font_size, hanging);
                 let (layout, ruby) = layout_with_images(
                     &mut context,
                     &mut fonts,
                     block,
-                    width - indent.common,
+                    text_width - indent.common,
                     settings,
                     styles,
                     &inline_boxes,
@@ -267,7 +283,7 @@ impl ParleyChapter {
                     .next()
                     .map_or(0.0, |line| line.metrics().content_block_min_coord.min(0.0));
                 rtl = layout.is_rtl();
-                let x = column_x as f32
+                let x = text_x as f32
                     + if rtl {
                         0.0
                     } else {
@@ -318,7 +334,13 @@ impl ParleyChapter {
                 y = bottom + gap;
                 chapter.paragraphs.push(Paragraph {
                     key: block.key,
-                    column: column_x as f32..(column_x + column_width) as f32,
+                    column: publisher_boxes.as_ref().map_or(
+                        column_x as f32..(column_x + column_width) as f32,
+                        |boxes| {
+                            let area = boxes[block.element];
+                            area.outer_x as f32..(area.outer_x + area.outer_width) as f32
+                        },
+                    ),
                     max_bottom: bottom,
                     x,
                     y: origin,
@@ -341,7 +363,7 @@ impl ParleyChapter {
                         missing_glyphs: 0,
                     });
                     image.y = top;
-                    if gutter != 0 || cell.is_some() {
+                    if gutter != 0 || cell.is_some() || column_width != outer_width {
                         let inset = if rtl { 0 } else { gutter };
                         image.x = Some(
                             (column_x + inset + width.saturating_sub(image.display.0) / 2) as usize,
@@ -3061,3 +3083,6 @@ mod word_expansion_cases;
 
 #[cfg(test)]
 mod cjk_width_tests;
+
+#[cfg(test)]
+mod publisher_padding_tests;
