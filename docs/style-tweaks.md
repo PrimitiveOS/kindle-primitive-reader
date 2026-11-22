@@ -147,3 +147,16 @@ prepared style layout. The normal position checkpoint now runs after the
 successful store/frame commit, matching typography changes. All three original
 workflows and the complete suite were rerun after that correction. Earlier
 receipts remain separately identified as preceding the correction.
+
+The subsequent default-style replay at `4649b6ca` passes all 48 cached original
+reflow editions: 1,509 sections, 28,075 painted frames, 28,065 exact page anchors
+and all 33,405 fragment destinations. All 26,592,055 tested non-whitespace source
+characters map to layout, with original hashes unchanged. Every recorded spine
+result matches the earlier `b8ab53a6` baseline. The same 134 undeclared private-use
+glyphs, damaged-book recovery, missing-source-image placeholders and empty
+sections remain documented limitations. This replay begins with an empty user
+style store; the separate focused workflows above actually apply styles.
+
+<img src="screenshots/style-preset.png" width="390" alt="A style preset with per-book choices and the live all-books default">
+<img src="screenshots/style-css-editor.png" width="390" alt="The shared multiline keyboard editing supported book CSS">
+<img src="screenshots/style-css-review-dark.png" width="390" alt="Reviewing CSS and matched elements before applying it in dark mode">
