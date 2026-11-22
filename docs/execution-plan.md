@@ -28,12 +28,22 @@ inventory counts do not measure completed parity.
 
 ## Current desktop integration gate
 
-Source `9a5006e2` passes 847 ordinary Mac tests and eight original-document
-settings, backup and DPI workflow runs. Its original EPUB 053 replay exposes
-three failing sections (zero-based 29, 32 and 46), so the current full-layout
-corpus gate remains open. Preserve the failure and verify the repaired chapters
-and aggregate before release. The Kindle is disconnected at the owner's request.
-[Consumer integration and limits](css-flow-consumers.md)
+Source `e79c7afe` passes 862 ordinary Mac tests, CI and eight original-document
+settings, backup and DPI workflows. It repairs original EPUB053's three rejected
+media-only line ranges. Its full48 replay opens/resumes every edition, checks all
+1,509 sections and28,071frames, and restores all28,061 inspected page anchors.
+The source denominator remains26,592,055 characters:26,591,258 map and797 are
+explicitly omitted by publisherCSS. One eligible fragment in original039,
+zero-based chapter7, remains unresolved alongside eight intentional CSS fragment
+omissions; retain that destination gate until its geometry is repaired.
+
+Paired spacing has separate component verification. The newer verifier captures
+the actual resumed Reader session before checking all sections, so subsequent
+corpus runs exercise the active spacing, font, style and hyphenation settings.
+Aggregate/native acceptance for these newer changes remains open. The Kindle is
+disconnected at the owner's request.
+[Consumer integration and limits](css-flow-consumers.md) ·
+[Session-bound verification](corpus-session-verification.md)
 
 ## Verification on existing Kindle documents
 
