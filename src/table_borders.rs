@@ -148,6 +148,38 @@ impl Borders {
         if table.is_empty() {
             return None;
         }
+        // A retained empty row can still be covered by an earlier rowspan.
+        // Preserve its own border/group metadata even when no cell starts there.
+        let native_tables: HashMap<_, _> = table.iter().map(|(id, t)| (t.element, *id)).collect();
+        let mut table_owners = Vec::with_capacity(source.elements.len());
+        let mut group_owners = Vec::with_capacity(source.elements.len());
+        let mut original_rows = HashMap::<NodeId, usize>::new();
+        for (index, element) in source.elements.iter().enumerate() {
+            let owner = if element.tag == "table" {
+                native_tables.get(&index).copied()
+            } else {
+                element.parent.and_then(|parent| table_owners[parent])
+            };
+            let group = if element.tag == "table" {
+                None
+            } else if matches!(element.tag.as_str(), "thead" | "tbody" | "tfoot") {
+                Some(index)
+            } else {
+                element.parent.and_then(|parent| group_owners[parent])
+            };
+            table_owners.push(owner);
+            group_owners.push(group);
+            if element.tag == "tr"
+                && !element.selector_only
+                && let Some(owner) = owner
+            {
+                let original = original_rows.entry(owner).or_default();
+                if let Some(row) = flow.row_index(index, *original) {
+                    rows.insert((owner, row), (index, group));
+                }
+                *original += 1;
+            }
+        }
         let mut cells = HashMap::new();
         let mut outer = HashMap::new();
         for &(element, cell) in flow.cells() {
@@ -468,6 +500,33 @@ impl Frame {
 #[cfg(test)]
 mod flow_tests {
     use super::*;
+
+    #[test]
+    fn a_retained_empty_row_still_donates_the_ending_edge_to_a_visible_rowspan() {
+        let source=Source::parse("<html><body><table style='border-collapse:collapse;border:1px solid #000'><tr><td id='span' rowspan='2' style='border-bottom:2px solid #000'>Spanning</td><td>B</td></tr><tr style='visibility:hidden;border-bottom:9px solid #000'><td style='display:none'>Removed</td></tr></table></body></html>").unwrap();
+        let mut book = crate::Book::open(&crate::test_fixture("field-notes-epub3.epub")).unwrap();
+        let href = book.chapters[0].href.clone();
+        let styles = crate::book_style::BookStyle::load_for_flow(
+            &mut book,
+            &href,
+            &source,
+            true,
+            &Default::default(),
+        )
+        .unwrap()
+        .compute(&source.elements);
+        let flow = crate::table_layout::TableFlow::new(&source, &styles).unwrap();
+        let owner = source
+            .elements
+            .iter()
+            .position(|e| e.id.as_deref() == Some("span"))
+            .unwrap();
+        let cell = flow.cell(owner).unwrap();
+        assert_eq!((cell.row, cell.after_row), (0, 2));
+        let borders = Borders::read_with_flow(&source, &styles, 40., &flow).unwrap();
+        assert_eq!(borders.cells[&cell].edges[2].width, 9);
+        assert!(borders.cells[&cell].edges[2].gray.is_some());
+    }
 
     #[test]
     fn hidden_cells_keep_collapsed_geometry_but_visible_cells_paint_donated_edges() {

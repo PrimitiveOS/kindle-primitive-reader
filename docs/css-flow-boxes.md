@@ -60,10 +60,10 @@ separator's following-block fallback. `BoxArea::paragraph_bounds_for_text`
 resolves auto direction from projected text, so a removed leading directional
 run cannot select the wrong side for a negative indent.
 
-Twelve ordinary regressions are authored for identity allocation, retained-row
+Thirteen ordinary regressions are authored for identity allocation, retained-row
 spans/colspans, one-column RTL, whole-table removal, typed hint fallback,
 overflow refusal, removed-cell measurement, projected auto direction,
-collapsed geometry versus paint, wrapper padding/fills and page-break rules.
+collapsed geometry versus paint, retained empty-row edge donation, wrapper padding/fills and page-break rules.
 Only source formatting/parsing and diff checks were performed locally during
 the KOReader build resource reservation. CI execution, assembled renderer
 screenshots, original-file workflows, native compilation and Kindle acceptance
