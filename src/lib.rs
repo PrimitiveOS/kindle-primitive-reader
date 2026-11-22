@@ -1302,6 +1302,12 @@ impl Probe {
         if self.page_for(anchor).is_some() {
             return Some(anchor.clone());
         }
+        // A typed DOM location is never a request for its legacy fallback text.
+        // This also keeps custom-flow restoration from reinterpreting a removed
+        // generated box as an unrelated following paragraph.
+        if anchor.boundary.is_some() {
+            return None;
+        }
         if self.source_presentation(anchor)? != SourcePresentation::CssOmitted {
             return None;
         }

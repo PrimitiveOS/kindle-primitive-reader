@@ -236,6 +236,21 @@ fn visible_empty_inline_owner_before_removed_prefix_keeps_its_own_projected_care
 }
 
 #[test]
+fn an_unavailable_typed_boundary_never_snaps_to_its_legacy_text_fallback() {
+    let html = "<html><body><p>Before.</p><div id='point' style='display:none'/><p>Unrelated fallback text.</p></body></html>";
+    let initial = open(html, false, 24.);
+    let point = initial.fragment("point").unwrap();
+    assert!(point.boundary.is_some());
+    let removed = open(html, true, 24.);
+    assert_eq!(initial.source.revision, removed.source.revision);
+    assert!(removed.fragment("point").is_none());
+    assert!(removed.page_for(&point).is_none());
+    assert!(removed.restore_anchor(&point).is_none());
+    assert!(removed.flow_boundary_page(&point).is_none());
+    assert!(initial.page_for(&point).is_some());
+}
+
+#[test]
 fn nested_empty_boxes_keep_real_padding_order_and_visibility_only_changes_paint() {
     let html = "<html><body><div id='outer' style='padding:20px;background:#ddd'><div id='inner' style='padding:30px;border:2px solid black;visibility:hidden'><p style='display:none'>SOURCE</p></div></div><p>After.</p></body></html>";
     let mut probe = open(html, true, 24.);
