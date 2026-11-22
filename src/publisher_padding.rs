@@ -39,6 +39,27 @@ impl BoxArea {
         self.paragraph_bounds_for_text(block.direction, &block.text, style, font)
     }
 
+    /// Compute one generated native empty-box level without changing the
+    /// ordinary/nonempty publisher box plan. Reserve strokes before padding,
+    /// so descendants and percentage padding see the remaining content width.
+    pub(crate) fn generated_child(parent: Self, style: &Style, tag: &str, font: f32) -> Self {
+        let mut area = Self::new(parent.x, parent.width, None);
+        if is_block_tag(tag) {
+            area.add_border(crate::table_borders::generated_box_edges(style, font));
+            area.pad(&style.padding, font);
+        }
+        area
+    }
+
+    pub(crate) fn generated_root(self, style: &Style, tag: &str, font: f32) -> Self {
+        Self::generated_child(
+            Self::new(self.outer_x, self.outer_width, None),
+            style,
+            tag,
+            font,
+        )
+    }
+
     /// The auto direction must use the same text that is shaped. Removed inline
     /// content must not choose the side from which an outdent borrows padding.
     pub(crate) fn paragraph_bounds_for_text(

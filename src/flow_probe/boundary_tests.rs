@@ -199,3 +199,221 @@ fn normalized_numeric_ruby_owners_keep_canonical_fallback_keys_and_exact_current
         "Base"
     );
 }
+
+#[test]
+fn generated_borders_have_an_independent_cascade_and_leave_nonempty_table_contract_unchanged() {
+    use crate::book_style::{BookStyle, borders::Pattern};
+    let html = "<html><body><div id='parent' style='border:6px solid black'><p id='inherited' style='border:inherit'>Words.</p><p id='plain'>Other words.</p><table id='legacy' style='border:inherit'><tr><td>Cell</td></tr></table></div></body></html>";
+    let source = crate::source::Source::parse(html).unwrap();
+    let mut book = Book::open(&crate::test_fixture("field-notes-epub3.epub")).unwrap();
+    let href = book.chapters[0].href.clone();
+    let sheet =
+        BookStyle::load_for_flow(&mut book, &href, &source, true, &Default::default()).unwrap();
+    let styles = sheet.compute_for_dpi(&source.elements, 192);
+    let at = |id| &styles[source.fragment_owner(id).unwrap()];
+    assert!(at("parent").borders.is_none());
+    assert!(at("inherited").borders.is_none());
+    assert!(
+        at("plain").generated_box_borders.is_none(),
+        "borders are not implicitly inherited"
+    );
+    for id in ["parent", "inherited"] {
+        let edge = at(id).generated_box_borders.as_ref().unwrap()[0];
+        assert_eq!(edge.pattern, Pattern::Solid);
+        assert_eq!(edge.width.box_pixels(392, 24.), 12.);
+    }
+    // The pre-existing table-only inheritance path never acquired the DIV's
+    // border. Keep that contract; the scoped empty-box metadata is independent.
+    assert_eq!(
+        at("legacy").borders.as_ref().unwrap()[0].pattern,
+        Pattern::None
+    );
+    assert_eq!(
+        at("legacy").generated_box_borders.as_ref().unwrap()[0].pattern,
+        Pattern::Solid
+    );
+    let mut with = open(
+        "<html><body><div style='border:6px solid black'><p>Nonempty unchanged words.</p></div></body></html>",
+        true,
+        24.,
+    );
+    let mut without = open(
+        "<html><body><div style='border:none'><p>Nonempty unchanged words.</p></div></body></html>",
+        true,
+        24.,
+    );
+    assert_eq!(with.capture(0).unwrap(), without.capture(0).unwrap());
+    assert_eq!(with.coverage(), without.coverage());
+}
+
+#[test]
+fn nested_generated_borders_reserve_space_before_percentage_padding_and_paint_real_edges() {
+    let html = "<html><body><div id='outer' style='border:10px solid black;padding:0 10%'><div id='inner' style='border:3px solid black;padding:40px;background:#ddd'><span style='display:none'>SOURCE</span></div></div></body></html>";
+    let mut probe = open(html, true, 24.);
+    let outer = probe.fragment("outer").unwrap();
+    let inner = probe.fragment("inner").unwrap();
+    assert_eq!(probe.anchor_top(&outer), Some(0.));
+    assert_eq!(probe.anchor_top(&inner), Some(10.));
+    let pixels = probe.capture(0).unwrap();
+    let pixel = |x: usize, y: usize| pixels[y * 440 + x];
+    // Outer content width392 -20 border =372; 10% padding truncates to37.
+    assert_eq!(pixel(24 + 2, 24 + 2), 0);
+    assert_eq!(pixel(24 + 10 + 37, 24 + 10 + 1), 0);
+    assert_eq!(pixel(24 + 10 + 37 + 3 + 1, 24 + 10 + 3 + 1), 221);
+    assert_eq!(probe.coverage(), (0, 6));
+    assert!(probe.matches("SOURCE").is_empty());
+}
+
+#[test]
+#[ignore = "requires private authorized original empty-anchor cases, fonts and a new isolated profile directory"]
+fn original_empty_anchors_survive_library_save_reopen_and_live_reflow_without_source_changes() {
+    use crate::{
+        library::{Bookmark, Library, ReadingPosition},
+        session::{BookConfig, PAGE_HEIGHT, Reading},
+    };
+    use std::{collections::BTreeMap, path::PathBuf};
+    #[derive(serde::Deserialize)]
+    struct Case {
+        book: PathBuf,
+        id: String,
+        chapter: usize,
+        fragment: String,
+    }
+    #[derive(serde::Deserialize)]
+    struct Cases {
+        cases: Vec<Case>,
+    }
+    let cases: Cases = serde_json::from_slice(
+        &std::fs::read(std::env::var_os("READER_BOUNDARY_CASES").unwrap()).unwrap(),
+    )
+    .unwrap();
+    assert!(!cases.cases.is_empty() && cases.cases.len() <= 32);
+    let fonts: Vec<_> =
+        std::env::split_paths(&std::env::var_os("READER_BOUNDARY_FONTS").unwrap()).collect();
+    assert!(!fonts.is_empty());
+    let profile = PathBuf::from(std::env::var_os("READER_BOUNDARY_PROFILE").unwrap());
+    std::fs::create_dir(&profile).unwrap();
+    let mut hashes = BTreeMap::new();
+    let mut rows = Vec::new();
+    let mut boundaries = 0;
+    let digest = |path: &std::path::Path| {
+        ring::digest::digest(&ring::digest::SHA256, &std::fs::read(path).unwrap())
+            .as_ref()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    };
+    for (n, case) in cases.cases.into_iter().enumerate() {
+        hashes
+            .entry(case.book.clone())
+            .or_insert_with(|| digest(&case.book));
+        let config = BookConfig {
+            user_styles: Default::default(),
+            user_hyphenation: Default::default(),
+            engine: Engine::Parley,
+            book: case.book.clone(),
+            fonts: fonts.clone(),
+            settings: Settings {
+                width: primitive_app::WIDTH,
+                height: PAGE_HEIGHT,
+                font_size: 30.,
+                ..Default::default()
+            },
+            scroll: false,
+            facing_pages: false,
+            hide_nonlinear: false,
+            hidden_flows: Default::default(),
+            chapter_offsets: Default::default(),
+        };
+        let mut reading = Reading::restore(config.clone(), case.chapter, 0, None).unwrap();
+        let presentation = reading
+            .probe
+            .fragment_presentation(&case.fragment)
+            .expect("original fragment owner");
+        if presentation == SourcePresentation::CssOmitted {
+            assert!(reading.probe.fragment(&case.fragment).is_none());
+            rows.push(serde_json::json!({"id":case.id,"chapter":case.chapter,"case":n,"css_omitted":true}));
+            continue;
+        }
+        reading.jump(case.chapter, Some(&case.fragment)).unwrap();
+        let anchor = reading.anchor().unwrap();
+        let page = reading.page;
+        assert_eq!(
+            reading.probe.page_for(&anchor),
+            Some(page),
+            "original{} case{n}",
+            case.id
+        );
+        boundaries += usize::from(anchor.boundary.is_some());
+        let position = ReadingPosition {
+            chapter: case.chapter,
+            page,
+            anchor: Some(anchor.clone()),
+        };
+        let state = profile.join(format!("{n}-library.json"));
+        let root = case.book.parent().unwrap();
+        let mut library = Library::open(root, &state).unwrap();
+        let entry = library.resolve(&case.book).unwrap();
+        let id = library.identify(&entry).unwrap();
+        let saved = library.remember(&entry, id, "Original boundary verification");
+        saved.position = Some(position.clone());
+        saved.bookmarks.push(Bookmark {
+            label: "Empty original anchor".into(),
+            created_at: None,
+            position: position.clone(),
+        });
+        library
+            .save_with(|path, bytes| std::fs::write(path, bytes))
+            .unwrap();
+        drop(library);
+        let library = Library::open(root, &state).unwrap();
+        let saved = library.state(id).unwrap();
+        assert_eq!(saved.position.as_ref(), Some(&position));
+        assert_eq!(saved.bookmarks[0].position, position);
+        let mut reopened = Reading::restore(
+            config.clone(),
+            case.chapter,
+            page,
+            saved.position.as_ref().unwrap().anchor.as_ref(),
+        )
+        .unwrap();
+        assert_eq!(reopened.anchor(), Some(anchor.clone()));
+        assert_eq!(reopened.page, page);
+        reopened
+            .reflow(Settings {
+                font_size: 33.,
+                ..config.settings
+            })
+            .unwrap();
+        assert_eq!(reopened.anchor(), Some(anchor.clone()));
+        assert!(reopened.probe.page_for(&anchor).is_some());
+        let mut legacy = anchor.clone();
+        legacy.boundary = None;
+        let legacy_bytes = serde_json::to_vec(&legacy).unwrap();
+        assert!(
+            !std::str::from_utf8(&legacy_bytes)
+                .unwrap()
+                .contains("boundary")
+        );
+        assert_eq!(
+            serde_json::to_vec(&serde_json::from_slice::<Anchor>(&legacy_bytes).unwrap()).unwrap(),
+            legacy_bytes
+        );
+        rows.push(serde_json::json!({"id":case.id,"chapter":case.chapter,"case":n,"new_boundary":anchor.boundary.is_some(),"reopened_page":page,"reflowed_page":reopened.page}));
+    }
+    assert!(
+        boundaries > 0 && rows.len() >= 3,
+        "must validate actual new boundary anchors across original cases"
+    );
+    let mut sources = Vec::new();
+    for (path, before) in hashes {
+        assert_eq!(digest(&path), before);
+        sources.push(serde_json::json!({"id":path.file_stem().unwrap().to_string_lossy(),"sha256":before,"unchanged":true}));
+    }
+    let receipt = serde_json::json!({"new_boundaries":boundaries,"cases":rows,"sources":sources,"source_changes":false});
+    std::fs::write(
+        std::env::var_os("READER_BOUNDARY_RECEIPT").unwrap(),
+        serde_json::to_vec_pretty(&receipt).unwrap(),
+    )
+    .unwrap();
+}

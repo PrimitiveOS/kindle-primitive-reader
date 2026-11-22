@@ -45,6 +45,15 @@ pub(crate) fn edges(style: &Style, font: f32) -> [Stroke; 4] {
         .unwrap_or_default()
 }
 
+/// Only generated empty boxes consume this independent computed border plan.
+pub(crate) fn generated_box_edges(style: &Style, font: f32) -> [Stroke; 4] {
+    style
+        .generated_box_borders
+        .as_ref()
+        .map(|s| s.map(|edge| Stroke::read(edge, font)))
+        .unwrap_or_default()
+}
+
 struct Table {
     element: usize,
     active: bool,
@@ -426,7 +435,7 @@ impl Frame {
         style: &Style,
         font: f32,
     ) {
-        let mut strokes = edges(style, font);
+        let mut strokes = generated_box_edges(style, font);
         if !style.flow.painted {
             for stroke in &mut strokes {
                 stroke.gray = None;

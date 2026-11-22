@@ -270,6 +270,9 @@ pub(crate) struct Style {
     pub vertical_padding: [CssLength; 2],
     pub border_collapse: bool,
     pub borders: Option<Arc<[borders::Border; 4]>>,
+    /// Scoped computed border metadata for the generated-empty-box plan only.
+    /// Normal nonempty box rendering keeps the existing table-only contract.
+    pub generated_box_borders: Option<Arc<[borders::Border; 4]>>,
     pub border_spacing: [CssLength; 2],
     pub background: Option<u8>,
     pub marker: crate::list_marker::MarkerKind,
@@ -305,6 +308,7 @@ impl Default for Style {
             vertical_padding: Default::default(),
             border_collapse: false,
             borders: None,
+            generated_box_borders: None,
             border_spacing: [CssLength::Pixels(1.); 2],
             background: None,
             marker: crate::list_marker::MarkerKind::None,
@@ -406,7 +410,7 @@ impl BookStyle {
             {
                 *edge = edge.for_dpi(dpi);
             }
-            if let Some(borders) = &mut style.borders {
+            for borders in [&mut style.borders, &mut style.generated_box_borders].into_iter().flatten() {
                 for border in Arc::make_mut(borders) {
                     border.width = border.width.for_dpi(dpi);
                 }
@@ -437,6 +441,7 @@ impl BookStyle {
             // A parent's background paints its box. It is not a text property.
             style.background = None;
             style.borders = None;
+            style.generated_box_borders = None;
             style.page_breaks = Default::default();
             style.padding = Default::default();
             style.vertical_padding = Default::default();
@@ -489,6 +494,15 @@ impl BookStyle {
             }
             choose(&mut winners, &inline, true, (0, 0, 0), false);
             for (_, property) in winners.into_iter().flatten() {
+                if let Property::Border(side, value) = property {
+                    let target = style.generated_box_borders
+                        .get_or_insert_with(|| Arc::new([borders::Border::default(); 4]));
+                    let inherited = parent.generated_box_borders.as_ref()
+                        .map(|b| b[*side]).unwrap_or_default();
+                    let font = style.size_scale.clamp(0.125, 8.0);
+                    let root = result.first().map_or(font, |s| s.size_scale);
+                    value.apply(&mut Arc::make_mut(target)[*side], inherited, font, root);
+                }
                 match property {
                     Property::Reset(16, reset) => decoration = user_css::decoration(*reset, parent.decoration),
                     Property::Reset(key, reset) => user_css::apply_reset(&mut style, *key, *reset, parent, &defaults),
