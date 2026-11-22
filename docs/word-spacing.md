@@ -4,6 +4,10 @@ This candidate implements the two independent values in the pinned KOReader
 Word Spacing control. It replaces the lower Spacing panel's additive-pixel
 presets with Small, Medium and Large and a two-field More editor.
 
+![Word spacing presets and current pair](screenshots/word-spacing.png)
+
+[Two-field picker with large controls in dark mode](screenshots/word-spacing-picker-dark.png)
+
 | Preset | Scaling | Reduction: minimum remaining width |
 | --- | --- | --- |
 | Small | 75% | 50% |
@@ -34,7 +38,9 @@ and CREngine `b32a88ffbbf505cf2ea5208c1a49002d70d3609f`.
 | `crengine/src/lvtextfm.cpp:6022–6031` | Engine bounds agree with the UI. |
 
 Reader scales each shaped ordinary space or NBSP using its selected font's
-advance. It keeps the glyph outlines, source text, publication revisions and
+measured advance, including its existing letter spacing. This follows the
+reference's measurement order and keeps Reader's negative-tracking extension
+within nonnegative gap bounds. It keeps the glyph outlines, source text, publication revisions and
 anchor offsets. Permitted shrink enters the greedy line fitter, including its
 saved normal/emergency break states. At line completion only the width actually
 needed is spent; gaps outside the line's hanging suffix contribute no capacity.
@@ -86,6 +92,18 @@ legacy/profile/default/backup round trips, and eight desktop capture targets.
 An opt-in workflow uses original EPUB, AZW3 or MOBI files and preserves their
 bytes while checking anchors, selections and reopening.
 
-These cases are source-ready; execution and visual acceptance have not yet been
-recorded for this candidate. No native Kindle, physical e-ink, release or Store
-acceptance is implied.
+The exact-source `3d60149` desktop checkpoint passed:
+
+| Check | Result |
+| --- | --- |
+| Mac native reflow suites | 850 library, 14 package and 4 layout tests passed; 64 opt-in cases excluded. |
+| [GitHub CI](https://github.com/PrimitiveOS/kindle-primitive-reader/actions/runs/45014514352) | Passed at the same source. |
+| Focused workflows | All 15 new ordinary cases passed, including 100%/100% raster identity on the authored publication, actual two-field keyboard input, conditional condensing and atomic failure behavior. |
+| Original files | Authorized EPUB, AZW3 and MOBI each passed five percentage pairs, canonical selections, saved mode and reopening, with file SHA unchanged. This checks a text-bearing chapter of each original, not every original page. |
+| Desktop UI | Eight raw compact/large light/dark frames generated and visually inspected; 12/12 preset labels, 12/12 numeric field/default labels and all four complete help blocks recognized independently. All four minus glyphs passed pixel-bound checks. |
+
+The screenshots use an authored fixture. Detailed source/binary hashes, private
+original-file results, logs and OCR crops are retained in
+`build/parity-review/word-spacing-evidence`. Combined-candidate integration,
+native Kindle and physical e-ink acceptance remain separate gates; no release
+or Store acceptance is implied by this checkpoint.
