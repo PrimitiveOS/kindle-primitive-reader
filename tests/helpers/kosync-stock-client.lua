@@ -1,0 +1,24 @@
+-- Authored loopback interoperability driver; uses the unchanged pinned stock client.
+require("setupkoenv")
+G_defaults=require("luadefaults"):open()
+G_reader_settings=require("luasettings"):open(require("datastorage"):getDataDir().."/settings.reader.lua")
+local Device=require("device")
+require("document/canvascontext"):init(Device)
+package.path=package.path..";plugins/kosync.koplugin/?.lua"
+local url=assert(os.getenv("KOSYNC_QA_URL"))
+assert(url:match("^http://127%.0%.0%.1:%d+/$"),"QA accepts authored loopback only")
+local client=require("KOSyncClient"):new{custom_url=url,service_spec="plugins/kosync.koplugin/api.json"}
+local key=require("ffi/sha2").md5("qa-password")
+assert(client:register("qa",key))
+assert(client:authorize("qa",key))
+local document=assert(os.getenv("KOSYNC_QA_DOCUMENT"))
+if os.getenv("KOSYNC_QA_MODE")=="push"then
+ local completed=false
+ client:update_progress("qa",key,document,nil,"2",1,"Stock QA","stock-qa",function(ok,status)assert(ok and status==200);completed=true end)
+ assert(completed,"Stock client callback was not completed")
+end
+local result
+client:get_progress("qa",key,document,function(ok,body)assert(ok);result=body end)
+assert(result and result.progress)
+local out=assert(io.open(assert(os.getenv("KOSYNC_QA_OUTPUT")),"w"));out:write(require("json").encode({progress=result.progress,percentage=result.percentage,device=result.device,device_id=result.device_id}));out:close()
+Device:exit()

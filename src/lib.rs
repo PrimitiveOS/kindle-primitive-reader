@@ -65,6 +65,8 @@ mod parley_layout;
 mod pdf_annotations;
 #[cfg(feature = "kindle")]
 pub mod progress_sync;
+#[cfg(feature = "kindle")]
+pub mod kosync;
 mod publication_metadata;
 mod publisher_breaks;
 mod publisher_padding;

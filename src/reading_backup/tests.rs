@@ -220,6 +220,7 @@ fn complete_backup_enum_targets_reject_network_paths_symlinks_duplicates_and_ove
         "../outside",
         "opds",
         "progress_sync",
+        "kosync",
         "online",
         "credentials",
     ] {

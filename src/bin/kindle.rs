@@ -9,6 +9,7 @@ const USAGE: &str = "Usage: reader-kindle [--open <document> | --check-document 
 fn main() -> Result<()> {
     let mut args = env::args_os().skip(1);
     let first = args.next();
+    if first.as_deref() == Some(std::ffi::OsStr::new("--kosync-worker")) && args.len() == 0 { return reader::kosync::worker(); }
     if first
         .as_deref()
         .is_some_and(|arg| arg == "--help" || arg == "-h")

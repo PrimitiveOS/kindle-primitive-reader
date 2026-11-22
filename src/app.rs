@@ -29,6 +29,7 @@ mod library_view;
 mod library_export;
 mod lookup_history;
 mod progress_sync;
+mod kosync;
 mod vocabulary;
 mod metadata_save;
 mod nearby_search;
@@ -232,6 +233,9 @@ enum Screen {
     Vocabulary,
     ProgressSync,
     ProgressSyncSettings,
+    KoSync,
+    KoSyncSettings,
+    KoSyncEdit(kosync::Field),
     SyncEdit(progress_sync::Field),
     VocabularyWord,
     VocabularyContext,
@@ -331,6 +335,9 @@ impl Screen {
             Self::ClearOnlineHistory => "Online lookup history",
             Self::DictionaryHistory => "Dictionary history",
             Self::Vocabulary => "Vocabulary",
+            Self::KoSync => "KOReader sync",
+            Self::KoSyncSettings => "KOReader sync settings",
+            Self::KoSyncEdit(field) => field.title(),
             Self::ProgressSync => "Progress sync",
             Self::ProgressSyncSettings => "Sync settings",
             Self::SyncEdit(field) => field.title(),
@@ -414,6 +421,7 @@ enum Action {
     Style(style_tweaks::Command),
     LookUp(String),
     ProgressSync(progress_sync::Command),
+    KoSync(kosync::Command),
     Vocabulary(vocabulary::Command),
     Wikipedia,
     TranslatePage,
@@ -689,6 +697,7 @@ pub struct Reader {
     lookup_history_path: PathBuf,
     lookup_history: LookupHistory,
     progress_sync: progress_sync::View,
+    kosync: kosync::View,
     vocabulary_view: vocabulary::View,
     online: Option<online_panel::Panel>,
     annotation_search: annotation_search::AnnotationSearch,
@@ -847,6 +856,7 @@ impl Reader {
             lookup_history_path,
             lookup_history,
             progress_sync: progress_sync::View::load(data.join("progress-sync.json")),
+            kosync: kosync::View::load(data.join("kosync.json")),
             vocabulary_view: Default::default(),
             online: None,
             annotation_search: annotation_search::AnnotationSearch::default(),
@@ -1048,6 +1058,7 @@ impl Reader {
 
     fn show(&mut self, screen: Screen) {
         if !matches!(screen,Screen::Catalog(_)) { self.catalog.cancel(); }
+        if !matches!(screen, Screen::KoSync | Screen::KoSyncSettings | Screen::KoSyncEdit(_)) { self.leave_kosync(); }
         if !matches!(screen, Screen::ProgressSync | Screen::ProgressSyncSettings | Screen::SyncEdit(_)) {
             self.leave_progress_sync();
         }
@@ -1316,6 +1327,7 @@ impl Reader {
     fn items(&self) -> Vec<Item> {
         if matches!(self.screen, Screen::StyleTweaks | Screen::StylePreset | Screen::StyleFiles | Screen::StyleReview | Screen::StyleClear | Screen::StyleEditor) { return self.style_items(); }
         if let Screen::ReadingHistory(page) = self.screen { return self.reading_history_items(page); }
+        if matches!(self.screen, Screen::KoSync | Screen::KoSyncSettings) { return self.kosync_items(); }
         if matches!(self.screen, Screen::ProgressSync | Screen::ProgressSyncSettings) { return self.sync_items(); }
         if matches!(self.screen, Screen::Vocabulary | Screen::VocabularyWord | Screen::VocabularyOptions | Screen::VocabularyBooks) { return self.vocabulary_items(); }
         if let Screen::LibraryExport(page) = self.screen { return self.library_export_items(page); }
@@ -1427,7 +1439,8 @@ impl Reader {
             let mut items = vec![
                 Item::new("Export highlights", Action::LibraryExport(library_export::Command::Open))
                     .detail("From History, chosen books or collections"),
-                Item::new("Progress sync", Action::ProgressSync(progress_sync::Command::Open)).detail("Optional WebDAV server"),
+                Item::new("Progress sync", Action::ProgressSync(progress_sync::Command::Open)).detail("WebDAV server"),
+                Item::new("KOReader sync",Action::KoSync(kosync::Command::Open)).detail("Manual PDF source pages"),
                 Item::new("Back up reading data", Action::ExportBackup)
                     .detail("Books, vocabulary, history and chosen local preferences"),
                 Item::new("Restore a backup", Action::PreviewBackup)
@@ -2263,6 +2276,7 @@ impl Reader {
             Action::ToggleOnlineHistory => self.update_lookup_history(|h| h.online_languages.forget_queries = !h.online_languages.forget_queries)?,
             Action::ClearOnlineHistory => {self.update_lookup_history(|h| h.online.clear())?; self.show(Screen::OnlineHistory);},
             Action::LookUp(word) => self.look_up(&word)?,
+            Action::KoSync(command) => self.kosync_command(command)?,
             Action::ProgressSync(command) => self.progress_sync_command(command)?,
             Action::Vocabulary(command) => self.vocabulary_command(command)?,
             Action::RepeatSearch(query) => {
@@ -5133,6 +5147,7 @@ impl Reader {
         if self.screen == Screen::DocumentDefaults { self.draw_document_defaults(canvas); return; }
         if self.draw_reading_history(canvas) { return; }
         if let Screen::Catalog(page) = self.screen && self.draw_catalog(canvas,page) { return; }
+        if self.kosync_screen() && self.active.is_none() && self.fixed.is_none() { canvas.fill(Rect::new(0,0,WIDTH as i32,HEIGHT as i32),255); self.draw_kosync_sheet(canvas); return; }
         if let Screen::SyncEdit(field) = self.screen { self.draw_sync_editor(canvas, field); return; }
         // The launcher's theme may have changed (it asks for a redraw when it does).
         if let Some(theme) = &self.system_theme {
@@ -5214,7 +5229,7 @@ impl Reader {
             draw_toolbar_button(canvas, CANCEL_CROP, "Cancel");
             return;
         }
-        if (matches!(self.screen, Screen::Fixed | Screen::FixedTools | Screen::OnlineLookup)
+        if (matches!(self.screen, Screen::Fixed | Screen::FixedTools | Screen::OnlineLookup) || self.kosync_screen()
             || self.definition_over_book())
             && let Some(fixed) = &self.fixed
         {
@@ -5266,6 +5281,7 @@ impl Reader {
                 self.hidden_overlap_footer(),
             );
             self.draw_footer_track(canvas);
+            if self.kosync_screen() { self.draw_kosync_sheet(canvas); return; }
             if self.saved_popup_over_book() {
                 self.draw_saved_popup(canvas);
                 return;
@@ -5302,7 +5318,7 @@ impl Reader {
         if (matches!(
             self.screen,
             Screen::Footnote | Screen::Book | Screen::BookTools | Screen::OnlineLookup
-        ) || self.definition_over_book())
+        ) || self.kosync_screen() || self.definition_over_book())
             && let Some(active) = &self.active
         {
             let reading = &active.reading;
@@ -5367,6 +5383,7 @@ impl Reader {
             );
             self.draw_publisher_margins(canvas);
             self.draw_footer_track(canvas);
+            if self.kosync_screen() { self.draw_kosync_sheet(canvas); return; }
             if self.saved_popup_over_book() {
                 self.draw_saved_popup(canvas);
                 return;
@@ -5663,6 +5680,7 @@ impl App for Reader {
         self.draw_vocabulary_dialog(canvas);
         self.draw_catalog_popup(canvas);
         self.draw_sync_dialog(canvas);
+        self.draw_kosync_popup(canvas);
     }
 
     fn press_point(&self, input: Input) -> Option<(f32, f32)> {
@@ -5678,6 +5696,8 @@ impl App for Reader {
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
         if let Screen::Catalog(page) = self.screen && let Some(change) = self.catalog_input(page,input) { return change; }
+        if let Some(change) = self.kosync_popup_input(input) { return change; }
+        if let Some(change) = self.kosync_screen_input(input) { return change; }
         if let Some(change) = self.sync_dialog_input(input) { return change; }
         if let Some(change) = self.vocabulary_dialog_input(input) { return change; }
         if self.flow_popup.is_some() { return self.flow_popup_input(input); }
@@ -5728,12 +5748,15 @@ impl App for Reader {
         // Any further user action owns the selection; late automatic results
         // must never replace a manually extended range or an open popup.
         self.cjk_selection_lookup = None;
+        if let Some(change) = self.kosync_popup_input(input) { return change; }
+        if let Some(change) = self.kosync_screen_input(input) { return change; }
         if let Some(change) = self.sync_dialog_input(input) { return change; }
         if let Some(change) = self.vocabulary_dialog_input(input) { return change; }
         if let Some(change) = self.document_defaults_input(input) { return change; }
         if input == Input::Sleep {
             self.cancel_catalog_for_sleep();
             self.cancel_progress_sync();
+        self.cancel_kosync();
             self.spelling_lookup = None;
             self.cancel_library_export();
         }
@@ -5883,6 +5906,7 @@ impl App for Reader {
         if self.screen == Screen::Definition {
             return self.definition_input(input);
         }
+        if let Screen::KoSyncEdit(field) = self.screen { return self.kosync_editor_input(input, field); }
         if let Screen::SyncEdit(field) = self.screen { return self.sync_editor_input(input, field); }
         if self.screen == Screen::VocabularyContext { return self.vocabulary_context_input(input); }
         if matches!(self.screen, Screen::GoToPage | Screen::NumberingValue(_)) {
@@ -6015,6 +6039,8 @@ impl App for Reader {
                     }
                     Screen::ReadingHistory(_) => self.history_back(),
                     Screen::ReadingData => self.show(Screen::Library),
+                    Screen::KoSync => self.show(Screen::ProgressSync),
+                    Screen::KoSyncSettings => self.show(Screen::KoSync),
                     Screen::ProgressSync => self.show(self.tools_screen()),
                     Screen::ProgressSyncSettings => self.show(Screen::ProgressSync),
                     Screen::ReadingControls => self.show(if self.fixed.is_some() {
@@ -6119,6 +6145,7 @@ impl App for Reader {
             .chain(self.catalog.job.as_ref().map(|job| job.poll_at))
             .chain(self.bookmark_metadata_deadline())
             .chain(self.progress_sync.deadline())
+            .chain(self.kosync.deadline())
             .chain(self.nearby_marks.as_ref().and_then(|import| import.deadline))
             .chain(self.save_at)
             .chain(self.metadata_checkpoint.deadline())
@@ -6153,6 +6180,7 @@ impl App for Reader {
     }
 
     fn tick(&mut self, now: Instant) -> Change {
+        if let Some(change) = self.poll_kosync(now) { return change; }
         if let Some(change) = self.poll_progress_sync(now) { return change; }
         if self.stats_awake {
             let alarm = self.poll_read_alarm(now, false);
@@ -6307,6 +6335,7 @@ impl App for Reader {
     fn save(&mut self) -> io::Result<()> {
         self.catalog.cancel();
         self.cancel_progress_sync();
+        self.cancel_kosync();
         self.save_library()?;
         let now = Instant::now();
         self.stats.checkpoint(&self.stats_path, now, true)?;
@@ -6321,6 +6350,7 @@ impl App for Reader {
     fn storage_returned(&mut self) -> io::Result<()> {
         self.document_defaults.reload();
         self.cancel_progress_sync();
+        self.cancel_kosync();
 
         self.cjk_selection_lookup = None;
         self.spelling_lookup = None;

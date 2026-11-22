@@ -33,6 +33,8 @@ fn main() {
 fn run() -> Result<()> {
     let mut args = env::args_os().skip(1);
     let first = args.next().ok_or(USAGE)?;
+    #[cfg(feature = "kindle")]
+    if first == "--kosync-worker" && args.len() == 0 { return reader::kosync::worker(); }
     if first == "--sync-worker" && args.len() == 0 { return reader::progress_sync::worker(); }
     if first == "--help" || first == "-h" {
         print!("{USAGE}");

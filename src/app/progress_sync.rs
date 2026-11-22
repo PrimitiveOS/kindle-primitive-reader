@@ -185,6 +185,7 @@ impl Reader {
             ];
         }
         let mut items = vec![
+            Item::new("KOReader server", Action::KoSync(super::kosync::Command::Open)).detail("Separate account · Manual PDF source pages"),
             Item::new("Sync settings", Action::Show(Screen::ProgressSyncSettings)).detail(
                 if view.config.enabled {
                     "WebDAV · On"

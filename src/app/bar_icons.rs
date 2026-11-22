@@ -101,6 +101,8 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         Action::Catalog(_) => BOOK,
         Action::Flow(_) | Action::Show(Screen::HiddenFlows) => BOOK,
         Action::Show(Screen::Links | Screen::ProgressSync | Screen::ProgressSyncSettings)
+        | Action::KoSync(_)
+        | Action::Show(Screen::KoSync | Screen::KoSyncSettings)
         | Action::ProgressSync(_)
         | Action::Wikipedia => LINK,
         Action::TranslatePage => TEXT,
