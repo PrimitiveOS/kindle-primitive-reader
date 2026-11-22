@@ -301,7 +301,15 @@ pub(crate) fn verify_spine(
     } else {
         let config =
             session.ok_or("Reflow spine verification requires the resumed Reader configuration")?;
-        if config.book != path {
+        // Reader stores the resolved library path, while host diagnostics may
+        // be invoked with the caller's spelling of the same file. On macOS,
+        // for example, `temp_dir()` commonly returns `/var/...` while the
+        // library root is canonicalized to `/private/var/...`. Compare file
+        // identity after resolving aliases so a valid resumed session is not
+        // rejected by a harmless path spelling difference.
+        let configured_book = config.book.canonicalize()?;
+        let requested_book = path.canonicalize()?;
+        if configured_book != requested_book {
             return Err("Reflow spine configuration belongs to a different publication".into());
         }
         Some(config)
