@@ -1,5 +1,11 @@
 Reader ARMHF third-party dependency notices
 
+Nerd Fonts Symbols Subset
+Copyright (C) 2014 Ryan L McIntyre (MIT)
+The unmodified font is installed at reader/fonts/PrimitiveSymbols.ttf to
+render private-use symbols found in Kindle books. See NERDFONTS.txt for the
+complete notice, file hash, and source links.
+
 The index covers the locked Kindle target graph, including build dependencies.
 The listed licences apply to their own components. PrimitiveOS Tools is used
 under its PolyForm Noncommercial 1.0.0 option. The individual source archives

@@ -1564,6 +1564,29 @@ mod firmware_font_tests {
         // Neither test font assigns a glyph to this private-use code point.
         assert_eq!(missing(&mut fonts, "\u{F0000}"), 1);
     }
+
+    #[test]
+    fn bundled_koreader_symbol_subset_covers_seven_observed_private_use_symbols() {
+        let primary = test_fixture("fonts/NotoSans-Regular.ttf");
+        let symbols =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/fonts/PrimitiveSymbols.ttf");
+        let paths = [primary, symbols];
+        let mut fonts = font_context_with_firmware(&paths, Path::new("/missing-firmware")).unwrap();
+        // Eight private-use scalars were observed in original AZW3 002. The
+        // exact KOReader Nerd Fonts subset includes seven and omits U+F0B9.
+        let kindle_symbols = "\u{F028}\u{F029}\u{F03D}\u{F02D}\u{F02B}\u{F0D0}\u{F040}";
+        for scalar in kindle_symbols.chars() {
+            assert_eq!(
+                missing(&mut fonts, &scalar.to_string()),
+                0,
+                "unsupported private-use scalar U+{:04X}",
+                scalar as u32
+            );
+        }
+        assert_eq!(missing(&mut fonts, kindle_symbols), 0);
+        assert_eq!(missing(&mut fonts, &format!("A{kindle_symbols}Ω")), 0);
+        assert_eq!(missing(&mut fonts, "\u{F0B9}"), 1);
+    }
 }
 
 fn grayscale(rgba: &[u8]) -> impl Iterator<Item = u8> + '_ {
