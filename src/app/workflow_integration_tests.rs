@@ -129,12 +129,14 @@ fn run_browser_and_export(epub: Option<&Path>, pdf_original: Option<&Path>, chap
             selection: spanning.clone(),
             note: Some("Spanning reading flow".into()),
             style: crate::highlight_style::HighlightStyle::Underline,
+            color: Default::default(),
             created_at: Some(1_740_777_900),
         },
         Highlight {
             selection: hidden.clone(),
             note: Some("Hidden EPUB passage".into()),
             style: crate::highlight_style::HighlightStyle::Lighten,
+            color: Default::default(),
             created_at: None,
         },
     ]);
@@ -198,6 +200,7 @@ fn run_browser_and_export(epub: Option<&Path>, pdf_original: Option<&Path>, chap
             text: pdf_text.clone(),
             note: Some("Hidden PDF passage".into()),
             style: crate::highlight_style::HighlightStyle::Strikethrough,
+            color: Default::default(),
             created_at: None,
         })
         .unwrap();
