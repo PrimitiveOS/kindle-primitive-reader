@@ -102,12 +102,14 @@ SHA-256; this does not establish namespace-selector or rendered-spine parity.
 Exact Mach-O executable hashes, source hashes, build JSON and screenshots are
 retained privately under `build/parity-review/flow-consumer-evidence/`.
 
-## Remaining acceptance gates
+## Acceptance gates at the consumer checkpoint
 
 1. A generated-only visible LI/container with all source children removed needs a
    durable DOM/block-boundary anchor and box geometry. Its source intent remains
    eligible; it must never be relabeled an intentional omission to hide the
-   missing geometry.
+   missing geometry. The subsequent [generated-target slice](generated-boundary-targets.md)
+   adds a verified bounded horizontal marker/empty-box/inline-caret path and safe
+   persistence. Its listed unsupported box types and aggregate/native gates remain.
 2. The pinned native footnote oracle proves a pre-existing popup extraction
    mismatch: an ID on an inner P exports only P, whereas our semantic-container
    widening currently also includes its hidden aside ancestor. Inline CSS must
