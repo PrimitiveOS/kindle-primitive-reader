@@ -23,6 +23,7 @@ mod sidecar_marks;
 mod library_view;
 mod library_export;
 mod lookup_history;
+mod vocabulary;
 mod metadata_save;
 mod nearby_search;
 mod online_panel;
@@ -206,6 +207,11 @@ enum Screen {
     ClearOnlineHistory,
     DictionaryHistory,
     Vocabulary,
+    VocabularyWord,
+    VocabularyContext,
+    VocabularyOptions,
+    VocabularyBooks,
+    VocabularySearch,
     Dictionaries,
     DictionaryOptions(usize),
 }
@@ -289,6 +295,11 @@ impl Screen {
             Self::ClearOnlineHistory => "Online lookup history",
             Self::DictionaryHistory => "Dictionary history",
             Self::Vocabulary => "Vocabulary",
+            Self::VocabularyWord => "Word review",
+            Self::VocabularyContext => "Reading context",
+            Self::VocabularyOptions => "Vocabulary options",
+            Self::VocabularyBooks => "Vocabulary books",
+            Self::VocabularySearch => "Find a saved word",
             Self::Dictionaries => "Dictionaries",
             Self::DictionaryOptions(_) => "Dictionary settings",
         }
@@ -358,6 +369,7 @@ enum Action {
     ShowDictionaries,
     DictionarySource(SourceAction),
     LookUp(String),
+    Vocabulary(vocabulary::Command),
     Wikipedia,
     TranslatePage,
     RepeatOnline(usize),
@@ -625,6 +637,7 @@ pub struct Reader {
     installed_dictionaries: Vec<InstalledDictionary>,
     lookup_history_path: PathBuf,
     lookup_history: LookupHistory,
+    vocabulary_view: vocabulary::View,
     online: Option<online_panel::Panel>,
     annotation_search: annotation_search::AnnotationSearch,
     definition_word: String,
@@ -766,6 +779,7 @@ impl Reader {
             installed_dictionaries: Vec::new(),
             lookup_history_path,
             lookup_history,
+            vocabulary_view: Default::default(),
             online: None,
             annotation_search: annotation_search::AnnotationSearch::default(),
             definition_word: String::new(),
@@ -1195,6 +1209,7 @@ impl Reader {
     }
 
     fn items(&self) -> Vec<Item> {
+        if matches!(self.screen, Screen::Vocabulary | Screen::VocabularyWord | Screen::VocabularyOptions | Screen::VocabularyBooks) { return self.vocabulary_items(); }
         if let Screen::LibraryExport(page) = self.screen { return self.library_export_items(page); }
         if self.screen == Screen::HiddenFlows { return self.hidden_flow_items(); }
         if matches!(self.screen, Screen::CustomContents | Screen::CustomEdits | Screen::CustomBookmarks) ||
@@ -1238,12 +1253,8 @@ impl Reader {
                     })
                     .collect();
             }
-            Screen::DictionaryHistory | Screen::Vocabulary => {
-                let words = if self.screen == Screen::Vocabulary {
-                    &self.lookup_history.vocabulary
-                } else {
-                    &self.lookup_history.dictionary
-                };
+            Screen::DictionaryHistory => {
+                let words = &self.lookup_history.dictionary;
                 return words
                     .iter()
                     .map(|word| Item::new(word, Action::LookUp(word.clone())))
@@ -2171,6 +2182,7 @@ impl Reader {
             Action::ToggleOnlineHistory => self.update_lookup_history(|h| h.online_languages.forget_queries = !h.online_languages.forget_queries)?,
             Action::ClearOnlineHistory => {self.update_lookup_history(|h| h.online.clear())?; self.show(Screen::OnlineHistory);},
             Action::LookUp(word) => self.look_up(&word)?,
+            Action::Vocabulary(command) => self.vocabulary_command(command)?,
             Action::RepeatSearch(query) => {
                 if query.regular_expression && self.active.is_none() {
                     return Err("Patterns require a reflowable book".into());
@@ -3198,6 +3210,7 @@ impl Reader {
         {
             self.show(match self.screen {
                 Screen::LibraryFind => Screen::Library,
+                Screen::VocabularySearch => Screen::Vocabulary,
                 Screen::EditNote if self.saved_popup.is_some() => {
                     if self.fixed.is_some() { Screen::Fixed } else { Screen::Book }
                 }
@@ -3270,6 +3283,11 @@ impl Reader {
                 self.library_query = query.trim().to_owned();
                 self.browser.first_page();
                 self.show(Screen::Library);
+                return Change::Partial;
+            }
+            if self.screen == Screen::VocabularySearch {
+                self.vocabulary_view.query = query.trim().to_owned();
+                self.show(Screen::Vocabulary);
                 return Change::Partial;
             }
             let result = match self.screen {
@@ -5355,6 +5373,7 @@ impl Reader {
             _ => self.screen.title(),
         };
         header(canvas, title, "Back");
+        if self.screen == Screen::VocabularyContext { self.draw_vocabulary_context(canvas); return; }
         if let Screen::BookmarkBrowser(page) = self.screen
             && self.draw_bookmark_browser_controls(canvas, page)
         {
@@ -5372,6 +5391,7 @@ impl Reader {
             self.screen,
             Screen::Find
                 | Screen::LibraryFind
+                | Screen::VocabularySearch
                 | Screen::DictionaryEntry
                 | Screen::BookmarkFind
                 | Screen::CollectionName
@@ -5385,6 +5405,7 @@ impl Reader {
             let (hint, action) = match self.screen {
                 Screen::Note | Screen::EditNote => ("Note text", "Save"),
                 Screen::LibraryFind => ("Title, author or filename", "Find"),
+                Screen::VocabularySearch => ("Saved word", "Find"),
                 Screen::DictionaryEntry => ("Word or phrase", "Look up"),
                 Screen::BookmarkFind => ("Bookmark, highlighted text, or note", "Find"),
                 Screen::CollectionName => ("Collection name", "Save"),
@@ -5587,6 +5608,7 @@ impl App for Reader {
         self.draw_content(canvas);
         self.draw_flow_popup(canvas);
         self.read_alarm.draw(canvas, self.screen == Screen::Book);
+        self.draw_vocabulary_dialog(canvas);
     }
 
     fn press_point(&self, input: Input) -> Option<(f32, f32)> {
@@ -5601,6 +5623,7 @@ impl App for Reader {
     }
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
+        if let Some(change) = self.vocabulary_dialog_input(input) { return change; }
         if self.flow_popup.is_some() { return self.flow_popup_input(input); }
         if self.read_alarm.modal() { return self.read_alarm_input(input); }
         if self.end_dialog.is_some() { return self.end_dialog_input(input); }
@@ -5644,6 +5667,7 @@ impl App for Reader {
     }
 
     fn input(&mut self, input: Input) -> Change {
+        if let Some(change) = self.vocabulary_dialog_input(input) { return change; }
         if input == Input::Sleep {
             self.spelling_lookup = None;
             self.cancel_library_export();
@@ -5789,6 +5813,7 @@ impl App for Reader {
         if self.screen == Screen::Definition {
             return self.definition_input(input);
         }
+        if self.screen == Screen::VocabularyContext { return self.vocabulary_context_input(input); }
         if matches!(self.screen, Screen::GoToPage | Screen::NumberingValue(_)) {
             return self.handle_page_number(input);
         }
@@ -5817,6 +5842,7 @@ impl App for Reader {
             self.screen,
             Screen::Find
                 | Screen::LibraryFind
+                | Screen::VocabularySearch
                 | Screen::DictionaryEntry
                 | Screen::BookmarkFind
                 | Screen::Note
@@ -5941,6 +5967,8 @@ impl App for Reader {
                     Screen::ImportPdfAnnotations => self.show(Screen::Highlights),
                     Screen::ExportAnnotations => self.show(Screen::Highlights),
                     Screen::RemoveHighlight => self.show(Screen::Annotation),
+                    Screen::VocabularyWord | Screen::VocabularyOptions => self.show(Screen::Vocabulary),
+                    Screen::VocabularyBooks => self.show(Screen::VocabularyOptions),
                     _ if self.fixed.is_some() => self.show(Screen::FixedTools),
                     _ => self.show(Screen::BookTools),
                 }
@@ -9145,7 +9173,7 @@ mod tests {
         assert_eq!(reopened.lookup_history.vocabulary, ["tide"]);
         reopened.open_path(&fixture.book).unwrap();
         reopened.show(Screen::Vocabulary);
-        assert_eq!(reopened.items()[0].title, "tide");
+        assert!(reopened.items().iter().any(|item| item.title == "tide"));
     }
 
     #[test]

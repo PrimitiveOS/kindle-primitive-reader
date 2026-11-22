@@ -28,6 +28,26 @@ pub struct HighlightRect {
 }
 
 impl Probe {
+    /// Up to `words` source words on either side of a selected passage.
+    /// It uses the selection anchors so repeated words elsewhere on the page
+    /// cannot attach their context to a vocabulary entry.
+    pub(crate) fn word_context(&self, selection: &TextSelection, words: usize) -> Option<(String, String)> {
+        let spans = self.selection_spans(&selection.start, &selection.end)?;
+        let mut before = String::new();
+        for (index, block) in self.source.blocks.iter().enumerate().take(spans.first + 1).rev() {
+            let text = if index == spans.first { block.text.get(..spans.first_byte)? } else { &block.text };
+            before = bounded_context(&format!("{} {before}", bounded_context(text, words, true)), words, true);
+            if word_ranges(&before).count() >= words || before.chars().count() == 512 { break; }
+        }
+        let mut after = String::new();
+        for (index, block) in self.source.blocks.iter().enumerate().skip(spans.last) {
+            let text = if index == spans.last { block.text.get(spans.last_byte..)? } else { &block.text };
+            after = bounded_context(&format!("{after} {}", bounded_context(text, words, false)), words, false);
+            if word_ranges(&after).count() >= words || after.chars().count() == 512 { break; }
+        }
+        Some((before, after))
+    }
+
     /// Select the Unicode word directly under a page coordinate.
     pub fn word_at(&self, page: usize, x: f32, y: f32) -> Option<TextSelection> {
         self.word_in(self.pages.range(page)?, x, y)
@@ -302,6 +322,26 @@ pub(crate) fn word_ranges(text: &str) -> impl Iterator<Item = Range<usize>> + '_
             (word_type.is_word_like() || text[range.clone()].chars().any(char::is_alphanumeric))
                 .then_some(range)
         })
+}
+
+/// Unicode word context with a scalar cap for space-free text and long tokens.
+pub(crate) fn bounded_context(text: &str, words: usize, from_end: bool) -> String {
+    if words == 0 { return String::new(); }
+    let text = if from_end {
+        let start = text.char_indices().rev().nth(2047).map_or(0, |(i, _)| i);
+        &text[start..]
+    } else {
+        &text[..text.char_indices().nth(2048).map_or(text.len(), |(i, _)| i)]
+    };
+    let ranges: Vec<_> = word_ranges(text).collect();
+    let Some(first) = ranges.first() else { return String::new(); };
+    let last = ranges.last().unwrap();
+    let range = if from_end { ranges[ranges.len().saturating_sub(words)].start..last.end }
+        else { first.start..ranges[(words - 1).min(ranges.len()-1)].end };
+    let selected = &text[range];
+    if from_end {
+        selected[selected.char_indices().rev().nth(511).map_or(0, |(i, _)| i)..].to_owned()
+    } else { selected.chars().take(512).collect() }
 }
 
 pub(crate) fn word_range(text: &str, offset: usize) -> Option<Range<usize>> {

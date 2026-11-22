@@ -134,6 +134,17 @@ impl PdfSelection {
         &self.document.text[words[self.first].bytes.start..words[self.last].bytes.end]
     }
 
+    pub(crate) fn word_context(&self, count: usize) -> (String, String) {
+        let words = &self.document.words;
+        let before = if self.first == 0 { "" } else {
+            &self.document.text[words[self.first.saturating_sub(count)].bytes.start..words[self.first].bytes.start]
+        };
+        let after = if self.last + 1 == words.len() { "" } else {
+            &self.document.text[words[self.last].bytes.end..words[(self.last + count).min(words.len()-1)].bytes.end]
+        };
+        (crate::selection::bounded_context(before, count, true), crate::selection::bounded_context(after, count, false))
+    }
+
     pub(crate) fn bounds(&self) -> impl Iterator<Item = PdfTextRect> + '_ {
         self.document.words[self.first..=self.last]
             .iter()

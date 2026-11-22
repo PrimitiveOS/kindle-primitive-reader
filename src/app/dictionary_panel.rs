@@ -40,6 +40,7 @@ impl SpellingLookup {
 pub(super) struct Navigation {
     origin: Option<(Screen, usize)>,
     origin_editor: Option<Editor>,
+    review_word: Option<String>,
     trail: Vec<Previous>,
     view: View,
     online_return: Option<usize>,
@@ -268,7 +269,7 @@ impl Reader {
                 .lookup_history
                 .vocabulary
                 .contains(&self.definition_word);
-            let label = if saved { "Word saved" } else { "Save word" };
+            let label = if saved { "Remove word" } else { "Save word" };
             action_button(
                 canvas,
                 rect,
@@ -311,7 +312,19 @@ impl Reader {
         let results = with_storage(|| {
             self.lookup_sources(word)
         })?;
-        self.update_lookup_history(|history| history.lookup(word))?;
+        let entry = self.vocabulary_entry(word);
+        let reviewing = if self.screen == Screen::VocabularyWord {
+            self.vocabulary_view.word.as_deref() == Some(word)
+        } else { nested && self.dictionary_navigation.review_word.as_deref() == Some(word) };
+        let repeated = self.lookup_history.review.automatic && !reviewing
+            && self.lookup_history.review.words.contains_key(word);
+        self.update_lookup_history(|history| {
+            history.lookup(word);
+            if history.review.automatic && !reviewing && !repeated {
+                if !history.vocabulary.iter().any(|saved| saved == word) { history.vocabulary.insert(0, word.to_owned()); }
+                history.review.remember(word, entry.clone(), super::vocabulary::now());
+            }
+        })?;
         if nested {
             self.dictionary_navigation.trail.push(Previous {
                 word: std::mem::take(&mut self.definition_word),
@@ -326,6 +339,7 @@ impl Reader {
                 origin: Some((self.screen, self.list_page)),
                 origin_editor: (self.screen == Screen::DictionaryEntry)
                     .then(|| self.editor.clone()),
+                review_word: (self.screen == Screen::VocabularyWord).then(|| self.vocabulary_view.word.clone()).flatten(),
                 ..Default::default()
             };
         }
@@ -334,6 +348,7 @@ impl Reader {
         self.definition_expanded = false;
         self.definition_results_page = None;
         self.show(Screen::Definition);
+        if repeated { self.vocabulary_view.repeated = Some((word.to_owned(), entry)); }
         self.start_spelling_lookup(word);
         Ok(())
     }
@@ -367,6 +382,9 @@ impl Reader {
             0,
         ));
         let editor = self.dictionary_navigation.origin_editor.take();
+        if back.0 == Screen::VocabularyWord {
+            self.vocabulary_view.word = self.dictionary_navigation.review_word.take();
+        }
         self.dictionary_navigation = Navigation::default();
         self.show(back.0);
         self.list_page = back.1;
@@ -582,7 +600,18 @@ impl Reader {
                 let [save, find, wiki] = action_row(popup);
                 if self.vocabulary_available() && save.contains(x, y) {
                     let word = self.definition_word.clone();
-                    return match self.update_lookup_history(|h| h.save_word(&word)) {
+                    if self.lookup_history.review.words.contains_key(&word) {
+                        self.vocabulary_view.word = Some(word);
+                        return match self.vocabulary_command(super::vocabulary::Command::ConfirmRemove) {
+                            Ok(()) => Change::Partial, Err(error) => self.report(error),
+                        };
+                    }
+                    let entry = self.vocabulary_entry(&word);
+                    return match self.update_lookup_history(|h| {
+                        let added = h.save_word(&word);
+                        if added { h.review.remember(&word, entry, super::vocabulary::now()); }
+                        added
+                    }) {
                         Ok(_) => Change::Partial,
                         Err(e) => self.report(e),
                     };
