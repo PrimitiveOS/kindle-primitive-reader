@@ -69,7 +69,10 @@ fn native_oracle_popup_roots_render_inline_styles_and_preserve_source_page_and_e
     let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
     let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
     app.open_path(&fixture.book).unwrap();
-    app.controls.footnote_popups = true;
+    assert!(
+        app.controls.footnote_popups,
+        "Fresh profiles must enable stock note previews"
+    );
     for (number, case, word, visible) in [
         ("1", "A", "INLINE INNER NOTE A", true),
         ("2", "B", "INLINE ASIDE NOTE B", false),
@@ -138,4 +141,107 @@ fn native_oracle_popup_roots_render_inline_styles_and_preserve_source_page_and_e
     let reading = &mut reopened.active.as_mut().unwrap().reading;
     assert_eq!(reading.probe.capture(reading.page).unwrap(), saved_frame);
     assert_eq!(std::fs::read(&fixture.book).unwrap(), original);
+}
+
+#[test]
+#[ignore = "Requires an authorized unchanged EPUB via READER_FOOTNOTE_ORIGINAL"]
+fn original_document_note_links_open_by_default_and_preserve_source_frame_and_progress() {
+    use std::collections::BTreeSet;
+    let original_path =
+        std::path::PathBuf::from(std::env::var_os("READER_FOOTNOTE_ORIGINAL").unwrap());
+    let original = std::fs::read(&original_path).unwrap();
+    let fixture = Fixture::new();
+    std::fs::copy(&original_path, &fixture.book).unwrap();
+    let fonts = std::env::var_os("READER_FOOTNOTE_ORIGINAL_FONTS")
+        .map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
+        .unwrap_or_else(|| vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")]);
+    let mut book = Book::open(&fixture.book).unwrap();
+    let mut references = Vec::new();
+    let mut destinations = BTreeSet::new();
+    for chapter in 0..book.chapters.len() {
+        let href = book.chapters[chapter].href.clone();
+        let xml = book.chapter(chapter).unwrap();
+        let source = book.chapter_source(&href, &xml).unwrap();
+        for block in &source.blocks {
+            for link in &block.links {
+                if link.note_reference != crate::footnotes::Reference::Explicit
+                    || link.bytes.is_empty()
+                {
+                    continue;
+                }
+                let target = Book::resolve_link(&href, &link.href).unwrap();
+                let Some(fragment) = target.fragment.as_ref() else {
+                    continue;
+                };
+                if book.chapter_index(&target.path).is_none()
+                    || !destinations.insert((target.path.clone(), fragment.clone()))
+                {
+                    continue;
+                }
+                references.push((chapter, block.key, link.bytes.clone(), target));
+            }
+        }
+    }
+    assert!(
+        !references.is_empty(),
+        "The unchanged publication must have real semantic note references"
+    );
+    drop(book);
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+    assert!(app.controls.footnote_popups);
+    app.open_path(&fixture.book).unwrap();
+    for (chapter, key, bytes, target) in &references {
+        let probe = app
+            .active
+            .as_ref()
+            .unwrap()
+            .reading
+            .config
+            .chapter(*chapter)
+            .unwrap();
+        let start = probe.anchor(*key, bytes.start);
+        let end = probe.anchor(*key, bytes.end);
+        let page = probe.page_for(&start).unwrap();
+        app.follow_reflow_page(*chapter, page).unwrap();
+        let reading = &mut app.active.as_mut().unwrap().reading;
+        let selected = reading.probe.select_range(&start, &end).unwrap();
+        let rect = reading.highlight_rects(&selected)[0];
+        let before = position(reading);
+        let source_frame = reading.probe.capture(reading.page).unwrap();
+        let history = app.back.len();
+        app.input(Input::Tap(
+            (rect.x + rect.width / 2) as f32,
+            (rect.y + rect.height / 2) as f32,
+        ));
+        assert_eq!(app.screen, Screen::Footnote);
+        let popup = app.footnote.as_ref().unwrap();
+        assert_eq!(&popup.target, target);
+        assert!(popup.frame.pixels.iter().any(|p| *p < 200));
+        let close = popup.close_button();
+        app.input(Input::Tap(
+            (close.x + close.w / 2) as f32,
+            (close.y + close.h / 2) as f32,
+        ));
+        assert_eq!(app.screen, Screen::Book);
+        assert_eq!(app.back.len(), history);
+        let reading = &mut app.active.as_mut().unwrap().reading;
+        assert_eq!(position(reading), before);
+        assert_eq!(reading.probe.capture(reading.page).unwrap(), source_frame);
+    }
+    let reading = &mut app.active.as_mut().unwrap().reading;
+    let saved = position(reading);
+    let frame = reading.probe.capture(reading.page).unwrap();
+    app.save().unwrap();
+    drop(app);
+    let mut reopened = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+    reopened.open_path(&fixture.book).unwrap();
+    assert_eq!(position(&reopened.active.as_ref().unwrap().reading), saved);
+    let reading = &mut reopened.active.as_mut().unwrap().reading;
+    assert_eq!(reading.probe.capture(reading.page).unwrap(), frame);
+    assert_eq!(std::fs::read(&original_path).unwrap(), original);
+    assert_eq!(std::fs::read(&fixture.book).unwrap(), original);
+    println!(
+        "Original semantic note popups verified: {}",
+        references.len()
+    );
 }

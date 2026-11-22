@@ -430,7 +430,13 @@ impl ReadingControls {
             serde_json::from_slice(&bytes).map_err(io::Error::other)
         })
         .unwrap_or_else(|_| {
-            let mut controls = Self::default();
+            // Fresh profiles match the stock note-preview behavior. Existing
+            // valid files (including an explicit false or sparse legacy file)
+            // were deserialized above and retain their saved choice.
+            let mut controls = Self {
+                footnote_popups: true,
+                ..Self::default()
+            };
             if existing_library {
                 controls.metadata_save = MetadataSave::AfterChange;
             }
@@ -458,6 +464,42 @@ impl ReadingControls {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fresh_note_previews_are_on_and_saved_or_sparse_legacy_choices_are_preserved() {
+        let suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "primitive-note-default-{}-{suffix}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("reading-controls.json");
+        for existing in [false, true] {
+            assert!(ReadingControls::load(&path, existing).footnote_popups);
+        }
+        for enabled in [false, true] {
+            let controls = ReadingControls {
+                footnote_popups: enabled,
+                ..Default::default()
+            };
+            controls.save(&path).unwrap();
+            let before = std::fs::read(&path).unwrap();
+            for existing in [false, true] {
+                assert_eq!(
+                    ReadingControls::load(&path, existing).footnote_popups,
+                    enabled
+                );
+            }
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+        }
+        std::fs::write(&path, b"{}").unwrap();
+        assert!(!ReadingControls::load(&path, true).footnote_popups);
+        assert_eq!(std::fs::read(&path).unwrap(), b"{}");
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn the_system_theme_is_the_launchers_dark_mode() {

@@ -37,3 +37,17 @@ The combined Mac candidate `e79c7afe906e84ed382a417d936e1db1b1bbd7f5` passed tho
 
 <img src="screenshots/footnote-root-inner.png" width="390" alt="Authored Reader popup exports the inner paragraph without inheriting its hidden semantic aside">
 <img src="screenshots/footnote-root-context.png" width="390" alt="Authored Reader popup retains the visible paragraph while its nested display-none inline text stays hidden">
+
+## Fresh-profile behavior and actual-publication check
+
+A new or missing controls file now enables note previews, matching the pinned
+stock default. Valid saved controls keep their on/off value byte for byte;
+sparse older files retain their previous deserialization behavior. This avoids
+turning a saved preference into an implicit migration. The eight-case app test
+uses the real fresh-profile default instead of forcing the option on.
+
+An additional opt-in workflow reads an unchanged authorized EPUB, finds its real
+semantic note links, taps their actual rendered hit targets and checks each
+popup, close, source frame, history and durable reopen. It neither edits the
+publication nor captures its text into public screenshots. This source slice's
+CI and original-file Mac execution are pending its own receipts.
