@@ -29,3 +29,9 @@ On an original three-column table with 1 px solid rules, the installed KOReader 
 | Separate borders, zero spacing | 457, 829, 457, 829, 457 px | 457, 824, 456, 824, 456 px |
 
 To measure actual paint, the comparison captured the pages containing the five passages and changed only the border color to transparent. Reader changed 14,052 pixels in collapsed mode and 27,572 in separate mode. KOReader changed 15,236 and 30,016 pixels respectively. Both produced eight continuous horizontal runs of at least 64 px with collapsed edges and sixteen with separate edges. Both drew a longest horizontal rule of 1,156 px. Font shaping, row height and page break positions affect vertical measurements and total ink. [KOReader in-memory comparison](../scripts/koreader-table-borders.lua) · [Earlier width measurements](table-columns.md)
+
+## Device verification
+
+The Oasis 3 ARMHF build passed all five authored border tests. Its six original-file layouts reproduced every Mac position, frame change count and run length above. The complete headless comparison took 5.5 seconds and peaked at 22,672 KiB resident memory. Reader’s five source passages appeared on one captured page. KOReader’s five appeared on two. Tallies use each engine’s own complete set of captured pages. The original, saved Reader state and Browser session retained their checksums after the temporary device files were removed.
+
+The Mac also passed 509 library tests. In a second original EPUB, 186 word anchors retained their expected table cells across 89 rows, eight column spans and sixteen row spans. Returning to all 17 sampled pages restored their images.
