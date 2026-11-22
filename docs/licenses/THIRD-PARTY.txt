@@ -310,7 +310,7 @@ hayro-postscript 0.2.0 (Apache-2.0 OR MIT)
 https://static.crates.io/crates/hayro-postscript/hayro-postscript-0.2.0.crate
 
 hayro-syntax 0.9.0 (Apache-2.0 OR MIT)
-https://static.crates.io/crates/hayro-syntax/hayro-syntax-0.9.0.crate
+https://github.com/LaurenzV/hayro/tree/3f3825c3e50bb41ed6ec6c3f4b6007978bd13def/hayro-syntax
 
 heck 0.5.0 (MIT OR Apache-2.0)
 https://static.crates.io/crates/heck/heck-0.5.0.crate
@@ -406,16 +406,16 @@ keyboard-types 0.8.3 (MIT OR Apache-2.0)
 https://static.crates.io/crates/keyboard-types/keyboard-types-0.8.3.crate
 
 kl-core 0.1.0 (AGPL-3.0-only OR PolyForm-Noncommercial-1.0.0)
-https://github.com/PrimitiveOS/kindle-primtitive-tools/tree/85095a5f28f50e0e2bb45db65b1b343c2692d560
+https://github.com/PrimitiveOS/kindle-primtitive-tools/tree/202b82e25895dead533f46747eeaa061a6662694
 
 kl-kindle 0.1.0 (AGPL-3.0-only OR PolyForm-Noncommercial-1.0.0)
-https://github.com/PrimitiveOS/kindle-primtitive-tools/tree/85095a5f28f50e0e2bb45db65b1b343c2692d560
+https://github.com/PrimitiveOS/kindle-primtitive-tools/tree/202b82e25895dead533f46747eeaa061a6662694
 
 kl-render 0.1.0 (AGPL-3.0-only OR PolyForm-Noncommercial-1.0.0)
-https://github.com/PrimitiveOS/kindle-primtitive-tools/tree/85095a5f28f50e0e2bb45db65b1b343c2692d560
+https://github.com/PrimitiveOS/kindle-primtitive-tools/tree/202b82e25895dead533f46747eeaa061a6662694
 
 kl-store 0.1.0 (AGPL-3.0-only OR PolyForm-Noncommercial-1.0.0)
-https://github.com/PrimitiveOS/kindle-primtitive-tools/tree/85095a5f28f50e0e2bb45db65b1b343c2692d560
+https://github.com/PrimitiveOS/kindle-primtitive-tools/tree/202b82e25895dead533f46747eeaa061a6662694
 
 kurbo 0.13.1 (Apache-2.0 OR MIT)
 https://static.crates.io/crates/kurbo/kurbo-0.13.1.crate
@@ -574,25 +574,25 @@ precomputed-hash 0.1.1 (MIT)
 https://static.crates.io/crates/precomputed-hash/precomputed-hash-0.1.1.crate
 
 primitive-app 0.1.0 (AGPL-3.0-only OR PolyForm-Noncommercial-1.0.0)
-https://github.com/PrimitiveOS/kindle-primtitive-tools/tree/85095a5f28f50e0e2bb45db65b1b343c2692d560
+https://github.com/PrimitiveOS/kindle-primtitive-tools/tree/202b82e25895dead533f46747eeaa061a6662694
 
 primitive-device 0.1.0 (AGPL-3.0-only OR PolyForm-Noncommercial-1.0.0)
-https://github.com/PrimitiveOS/kindle-primtitive-tools/tree/85095a5f28f50e0e2bb45db65b1b343c2692d560
+https://github.com/PrimitiveOS/kindle-primtitive-tools/tree/202b82e25895dead533f46747eeaa061a6662694
 
 primitive-eink 0.1.0 (AGPL-3.0-only OR PolyForm-Noncommercial-1.0.0)
-https://github.com/PrimitiveOS/kindle-primtitive-tools/tree/85095a5f28f50e0e2bb45db65b1b343c2692d560
+https://github.com/PrimitiveOS/kindle-primtitive-tools/tree/202b82e25895dead533f46747eeaa061a6662694
 
 primitive-input 0.1.0 (AGPL-3.0-only OR PolyForm-Noncommercial-1.0.0)
-https://github.com/PrimitiveOS/kindle-primtitive-tools/tree/85095a5f28f50e0e2bb45db65b1b343c2692d560
+https://github.com/PrimitiveOS/kindle-primtitive-tools/tree/202b82e25895dead533f46747eeaa061a6662694
 
 primitive-keyboard 0.1.0 (AGPL-3.0-only OR PolyForm-Noncommercial-1.0.0)
-https://github.com/PrimitiveOS/kindle-primtitive-tools/tree/85095a5f28f50e0e2bb45db65b1b343c2692d560
+https://github.com/PrimitiveOS/kindle-primtitive-tools/tree/202b82e25895dead533f46747eeaa061a6662694
 
 primitive-quick 0.1.0 (AGPL-3.0-only OR PolyForm-Noncommercial-1.0.0)
-https://github.com/PrimitiveOS/kindle-primtitive-tools/tree/85095a5f28f50e0e2bb45db65b1b343c2692d560
+https://github.com/PrimitiveOS/kindle-primtitive-tools/tree/202b82e25895dead533f46747eeaa061a6662694
 
 primitive-ui 0.1.0 (AGPL-3.0-only OR PolyForm-Noncommercial-1.0.0)
-https://github.com/PrimitiveOS/kindle-primtitive-tools/tree/85095a5f28f50e0e2bb45db65b1b343c2692d560
+https://github.com/PrimitiveOS/kindle-primtitive-tools/tree/202b82e25895dead533f46747eeaa061a6662694
 
 proc-macro2 1.0.107 (MIT OR Apache-2.0)
 https://static.crates.io/crates/proc-macro2/proc-macro2-1.0.107.crate
