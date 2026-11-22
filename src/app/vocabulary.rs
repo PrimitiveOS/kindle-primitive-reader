@@ -674,9 +674,12 @@ fn date(seconds: Option<u64>) -> String {
         }
         local.assume_init()
     };
+    let Some(year) = local.tm_year.checked_add(1900).filter(|year| (0..=9999).contains(year)) else {
+        return "Unknown".into();
+    };
     format!(
         "{:04}-{:02}-{:02} {:02}:{:02}",
-        local.tm_year + 1900,
+        year,
         local.tm_mon + 1,
         local.tm_mday,
         local.tm_hour,

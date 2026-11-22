@@ -60,6 +60,16 @@ fn review_intervals_and_long_streaks_keep_the_stock_schedule() {
 }
 
 #[test]
+fn invalid_or_unrepresentable_saved_dates_stay_unknown() {
+    assert_eq!(date(None), "Unknown");
+    assert_eq!(date(Some(u64::MAX)), "Unknown");
+    assert_eq!(date(Some(67_768_036_160_140_800)), "Unknown");
+    let stamp = date(Some(1_740_777_900));
+    assert!(stamp.starts_with("2025-"));
+    assert_eq!(stamp.len(), 16);
+}
+
+#[test]
 fn repeated_lookups_preserve_supplied_context_and_reset_the_review_streak() {
     let mut vocabulary = Vocabulary::default();
     let entry = Entry {
