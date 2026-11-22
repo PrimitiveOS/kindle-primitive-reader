@@ -261,6 +261,7 @@ fn actual_stock_client_and_reader_worker_roundtrip_authored_pdf_source_pages() {
             .env("EMULATE_READER_DPI", "300")
             .env("KOSYNC_QA_URL", &server.url)
             .env("KOSYNC_QA_DOCUMENT", &book.document)
+            .env("KOSYNC_QA_PDF", &path)
             .env("KOSYNC_QA_MODE", mode)
             .env("KOSYNC_QA_OUTPUT", &output)
             .stdout(std::process::Stdio::null())
@@ -270,7 +271,9 @@ fn actual_stock_client_and_reader_worker_roundtrip_authored_pdf_source_pages() {
         assert!(status.success());
         serde_json::from_slice::<serde_json::Value>(&fs::read(&output).unwrap()).unwrap()
     };
-    assert_eq!(run_stock("push")["progress"], "2");
+    let stock_push = run_stock("push");
+    assert_eq!(stock_push["pdf_pages"], 2);
+    assert_eq!(stock_push["progress"], "2");
     app.kosync_command(Command::Open).unwrap();
     app.kosync_command(Command::Fetch).unwrap();
     settle(&mut app);
