@@ -204,7 +204,9 @@ impl<'a> EffectiveSpacing<'a> {
             gaps.after += extra.after;
         }
 
-        if self.shrink_fraction > 0.0 {
+        if self.shrink_fraction > 0.0
+            && atom.shaped_clusters_range().end <= self.justification.justification_end_cluster
+        {
             gaps.after -= self.shrink_capacities.get(index).copied().unwrap_or(0.0) * self.shrink_fraction;
         }
         if is_word_separator(whitespace)
