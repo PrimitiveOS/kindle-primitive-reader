@@ -518,6 +518,30 @@ mod tests {
         assert!(audit.painted_pages_with_ink > 0);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn canonical_publication_aliases_bind_to_the_same_resumed_session() {
+        let fixture=crate::test_fixture("field-notes-epub3.epub");
+        let fonts=[crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let nonce=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let alias=std::env::temp_dir().join(format!("reader-spine-alias-{}-{nonce}.epub",std::process::id()));
+        std::os::unix::fs::symlink(&fixture,&alias).unwrap();
+        let config=legacy_test_config(&fixture.canonicalize().unwrap(),&fonts);
+        let audit=verify_spine(&alias,&fonts,"sample",Some(&config));
+        std::fs::remove_file(alias).unwrap();assert!(audit.unwrap().failed_indices.is_empty());
+        #[cfg(target_os="macos")]
+        {
+            // Exercise the actual system alias which triggered the host failure,
+            // independently of the process's possibly already canonical TMPDIR.
+            let path=std::path::PathBuf::from(format!("/var/tmp/reader-spine-{}-{nonce}.epub",std::process::id()));
+            std::fs::copy(&fixture,&path).unwrap();let canonical=path.canonicalize().unwrap();
+            assert!(canonical.starts_with("/private/var/tmp"));assert_ne!(path,canonical);
+            let config=legacy_test_config(&canonical,&fonts);
+            let audit=verify_spine(&path,&fonts,"sample",Some(&config));
+            std::fs::remove_file(path).unwrap();assert!(audit.unwrap().failed_indices.is_empty());
+        }
+    }
+
     #[test]
     fn reflow_requires_the_bound_session_and_never_falls_back_to_defaults() {
         let path = crate::test_fixture("field-notes-epub3.epub");
