@@ -448,8 +448,8 @@ fn html_hidden_and_other_structural_omissions_remain_irreversible_source_behavio
 #[test]
 fn provenance_limits_are_explicit_and_the_identity_path_still_works() {
     let source = parse_source(&format!(
-        "<p id='cut'>{}</p>",
-        "a ".repeat(MAX_ORIGIN_EVENTS / 2 + 2)
+        "<p id='whole'><span id='cut'>prefix</span>{}</p>",
+        "<span>a</span> ".repeat(MAX_ORIGIN_EVENTS / 4 + 4)
     ));
     let block = &source.blocks[0];
     assert!(!block.flow_origins.complete());
@@ -461,6 +461,49 @@ fn provenance_limits_are_explicit_and_the_identity_path_still_works() {
         Projection::new(block, &masks(&source, &["cut"], &[], &[])),
         Err(ProjectionError::IncompleteOrigins)
     ));
+    assert!(
+        Projection::new(block, &masks(&source, &["whole"], &[], &[]))
+            .unwrap()
+            .text()
+            .is_empty()
+    );
+}
+
+#[test]
+fn long_same_node_words_compact_without_losing_pending_spaces_or_canonical_maps() {
+    let source = parse_source(&format!("<p id='paint'>{}</p>", " one two ".repeat(40_000)));
+    let block = &source.blocks[0];
+    assert!(block.flow_origins.complete());
+    assert!(block.flow_origins.events.len() <= 4);
+    let projection = Projection::new(block, &masks(&source, &[], &["paint"], &[])).unwrap();
+    assert_eq!(projection.text(), block.text);
+    assert_eq!(
+        projection.source_spans(0..block.text.len()),
+        Some(vec![0..block.text.len()])
+    );
+    let mixed = parse_source("<p>A <span id='cut'>one two three </span>B</p>");
+    assert_eq!(
+        Projection::new(&mixed.blocks[0], &masks(&mixed, &["cut"], &[], &[]))
+            .unwrap()
+            .text(),
+        "A B"
+    );
+}
+
+#[test]
+fn incomplete_unaffected_late_blocks_keep_identity_after_unrelated_header_suppression() {
+    let source = parse_source(&format!(
+        "<p id='cut'>Header</p><p>{}</p><p>Tail</p>",
+        "<span>a</span> ".repeat(MAX_ORIGIN_EVENTS / 4 + 4)
+    ));
+    let flows = masks(&source, &["cut"], &[], &[]);
+    assert!(!source.blocks[1].flow_origins.complete());
+    assert!(!source.blocks[2].flow_origins.complete());
+    for index in [1, 2] {
+        let view = Projection::new(&source.blocks[index], &flows).unwrap();
+        assert!(view.is_identity());
+        assert_eq!(view.text().as_ptr(), source.blocks[index].text.as_ptr());
+    }
 }
 
 #[test]
