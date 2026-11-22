@@ -199,6 +199,11 @@ impl VerticalChapter {
             return Err("Vertical reading currently supports text without illustrations".into());
         }
         let width = settings.text_width() as f32;
+        let largest_scale = if settings.logical_font_size.is_some() {
+            styles.iter().filter(|style| !style.flow.suppressed)
+                .map(|style| settings.styled_font(style.size_scale)/settings.font_size)
+                .fold(1.0_f32, f32::max)
+        } else { MAX_SCALE };
         let ruby_gutter = if source.blocks.iter().any(|block| {
             !styles[block.element].flow.suppressed
                 && block
@@ -206,11 +211,11 @@ impl VerticalChapter {
                     .iter()
                     .any(|ruby| !styles[ruby.element].flow.suppressed)
         }) {
-            settings.font_size * MAX_SCALE * (RUBY_SCALE + 0.20)
+            settings.font_size * largest_scale * (RUBY_SCALE + 0.20)
         } else {
             0.0
         };
-        let pitch = (settings.font_size * settings.line_height * MAX_SCALE).max(12.0) + ruby_gutter;
+        let pitch = (settings.font_size * settings.line_height * largest_scale).max(12.0) + ruby_gutter;
         let columns_per_page = (width / pitch).floor() as usize;
         if columns_per_page == 0 {
             return Err("This viewport is too narrow for a vertical reading column".into());
@@ -226,6 +231,7 @@ impl VerticalChapter {
             ruby_gutter,
             mappings: BTreeMap::new(),
             cache: GlyphCache::with_hinting(
+                settings.logical_font_size.is_some(),
                 settings.font_hinting,
                 styles
                     .first()
@@ -477,6 +483,7 @@ impl VerticalChapter {
     }
 
     pub(crate) fn capture(&mut self, range: Range<f32>, settings: Settings) -> Result<Vec<u8>> {
+        self.cache.begin_paint();
         let stride = settings.width as usize;
         let bounds = settings.text_columns();
         let top = settings.top_margin() as usize;
@@ -508,6 +515,7 @@ impl VerticalChapter {
                 );
             }
         }
+        self.cache.check_paint()?;
         Ok(frame)
     }
 
@@ -673,8 +681,7 @@ fn font_runs(
         } else {
             let style = &styles[element];
             let face = find_face(fonts, faces, style, settings, &format, text)?;
-            let size = (settings.font_size * input.scale * style.size_scale.clamp(0.75, MAX_SCALE))
-                .clamp(1.0, 144.0);
+            let size = if settings.logical_font_size.is_some() { settings.styled_font(input.scale * style.size_scale) } else { (settings.font_size * input.scale * style.size_scale.clamp(0.75, MAX_SCALE)).clamp(1.0, 144.0) };
             let requested = crate::font_render::font_weight(
                 if settings.bold_text {
                     FontWeight::BOLD.value()

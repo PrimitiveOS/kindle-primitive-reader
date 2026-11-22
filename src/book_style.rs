@@ -220,6 +220,14 @@ pub(crate) struct TextRise {
 }
 
 impl TextRise {
+    pub(crate) fn from_block_at(self, block: &Style, settings: crate::Settings) -> parley::VerticalAlign {
+        if settings.logical_font_size.is_none() { return self.from_block(block); }
+        let actual_scale = settings.styled_font(block.size_scale) / settings.font_size;
+        parley::VerticalAlign::new(parley::AlignmentBaseline::Baseline, parley::BaselineShift::FontMetrics {
+            height: (self.height-block.text_rise.height)/actual_scale,
+            descent: (self.descent-block.text_rise.descent)/actual_scale,
+        })
+    }
     pub(crate) fn from_block(self, block: &Style) -> parley::VerticalAlign {
         parley::VerticalAlign::new(
             parley::AlignmentBaseline::Baseline,
@@ -398,7 +406,14 @@ impl BookStyle {
     }
 
     pub fn compute_for_dpi(&self, elements: &[Element], dpi: u16) -> Vec<Style> {
-        let mut styles = self.compute(elements);
+        self.scale_dpi(self.compute(elements), dpi)
+    }
+
+    pub(crate) fn compute_for_settings(&self, elements: &[Element], settings: crate::Settings) -> Vec<Style> {
+        self.scale_dpi(self.compute_with_font(elements, Some(settings)), settings.render_dpi)
+    }
+
+    fn scale_dpi(&self, mut styles: Vec<Style>, dpi: u16) -> Vec<Style> {
         if dpi == 96 {
             return styles;
         }
@@ -422,6 +437,12 @@ impl BookStyle {
     }
 
     pub fn compute(&self, elements: &[Element]) -> Vec<Style> {
+        self.compute_with_font(elements, None)
+    }
+
+    fn compute_with_font(&self, elements: &[Element], settings: Option<crate::Settings>) -> Vec<Style> {
+        let logical = settings.filter(|settings| settings.logical_font_size.is_some());
+        let relative_font = |scale: f32| logical.map_or_else(|| scale.clamp(0.125, 8.0), |settings| settings.styled_font(scale) / settings.font_size);
         let defaults = Style { font_weights: self.font_weights.clone(), ..Style::default() };
         let mut result: Vec<Style> = Vec::with_capacity(elements.len());
         for (index, element) in elements.iter().enumerate() {
@@ -524,8 +545,8 @@ impl BookStyle {
                         };
                     }
                     Property::Padding(side, length) => {
-                        let font = style.size_scale.clamp(0.125, 8.0);
-                        let root_font = result.first().map_or(font, |root| root.size_scale);
+                        let font = relative_font(style.size_scale);
+                        let root_font = result.first().map_or(font, |root| relative_font(root.size_scale));
                         let (target, inherited) = if *side < 2 {
                             (&mut style.padding[*side], parent.padding[*side])
                         } else {
@@ -542,8 +563,8 @@ impl BookStyle {
                     }
                     Property::Indent(indent) => {
                         if let Some(indent) = indent {
-                            let font = style.size_scale.clamp(0.125, 8.0);
-                            let root_font = result.first().map_or(font, |root| root.size_scale);
+                            let font = relative_font(style.size_scale);
+                            let root_font = result.first().map_or(font, |root| relative_font(root.size_scale));
                             style.text_indent = indent.computed(font, root_font);
                         }
                     }
@@ -571,8 +592,8 @@ impl BookStyle {
                             .as_ref()
                             .map(|b| b[*side])
                             .unwrap_or_default();
-                        let font = style.size_scale.clamp(0.125, 8.0);
-                        let root = result.first().map_or(font, |s| s.size_scale);
+                        let font = relative_font(style.size_scale);
+                        let root = result.first().map_or(font, |s| relative_font(s.size_scale));
                         value.apply(&mut Arc::make_mut(target)[*side], inherited, font, root);
                     }
                     Property::Border(..) => (),
@@ -600,8 +621,8 @@ impl BookStyle {
                     Property::Width(value) | Property::Height(value) => {
                         let value = match value {
                             ImageLength::RootEm(value) => {
-                                let root = result.first().map_or(style.size_scale, |root| root.size_scale);
-                                ImageLength::RootEm(value * root / style.size_scale.clamp(0.125, 8.0))
+                                let root = result.first().map_or_else(|| relative_font(style.size_scale), |root| relative_font(root.size_scale));
+                                ImageLength::RootEm(value * root / relative_font(style.size_scale))
                             }
                             value => *value,
                         };
@@ -620,11 +641,11 @@ impl BookStyle {
             // CREngine places superscripts a quarter of the parent font height above
             // baseline and subscripts four fifths of its descent below it.
             match style.image_align.shift {
-                parley::BaselineShift::Super => style.text_rise.height += 0.25 * parent.size_scale,
-                parley::BaselineShift::Sub => style.text_rise.descent -= 0.8 * parent.size_scale,
+                parley::BaselineShift::Super => style.text_rise.height += 0.25 * relative_font(parent.size_scale),
+                parley::BaselineShift::Sub => style.text_rise.descent -= 0.8 * relative_font(parent.size_scale),
                 _ => {}
             }
-            style.size_scale = style.size_scale.clamp(0.125, 8.0);
+            style.size_scale = if logical.is_some() { style.size_scale.clamp(f32::MIN_POSITIVE, f32::MAX) } else { style.size_scale.clamp(0.125, 8.0) };
             style.flow = flow::resolve(parent.flow, style.display, style.visibility);
             result.push(style);
         }

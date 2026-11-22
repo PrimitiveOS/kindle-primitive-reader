@@ -12,6 +12,7 @@ pub(super) enum NumberField {
     DefaultStride,
     MarginSize,
     ContentDpi(u64),
+    LogicalFont(u64),
     WordSpacing(super::word_spacing::Draft),
 }
 
@@ -20,7 +21,7 @@ impl NumberField {
         match self {
             Self::BookStride => Screen::PageNumbering,
             Self::DefaultStride | Self::MarginSize => Screen::NumberingDefaults,
-            Self::ContentDpi(_) | Self::WordSpacing(_) => Screen::Book,
+            Self::ContentDpi(_) | Self::LogicalFont(_) | Self::WordSpacing(_) => Screen::Book,
         }
     }
 }
@@ -182,6 +183,7 @@ impl Reader {
         let mut controls = self.controls;
         match field {
             NumberField::ContentDpi(owner) => return self.apply_content_dpi(owner),
+            NumberField::LogicalFont(owner) => return self.apply_logical_font_input(owner),
             NumberField::WordSpacing(draft) => return self.apply_word_spacing_input(draft),
             NumberField::MarginSize => {
                 controls.numbering.label_size = number

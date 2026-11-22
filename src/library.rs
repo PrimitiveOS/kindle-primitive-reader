@@ -259,6 +259,8 @@ pub struct BookMetadata {
 pub struct BookPreferences {
     pub font_size: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub logical_font_size: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub render_dpi: Option<u16>,
     pub margin: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -310,7 +312,7 @@ pub struct BookPreferences {
 impl BookPreferences {
     /// Explicit application policy for new books; legacy deserialization stays unchanged.
     pub(crate) fn for_new_reflow() -> Self {
-        Self { percent_word_spacing: Some(crate::WordSpacePercent::MEDIUM), ..Self::default() }
+        Self { logical_font_size: Some(crate::logical_font::DEFAULT), percent_word_spacing: Some(crate::WordSpacePercent::MEDIUM), ..Self::default() }
     }
 
     pub fn apply_to(&self, settings: Settings) -> Settings {
@@ -327,7 +329,8 @@ impl BookPreferences {
             })
         };
         let adjusted = Settings {
-            font_size: self.font_size.unwrap_or(settings.font_size),
+            font_size: self.logical_font_size.and_then(|value| settings.font_scale.effective(value).ok()).unwrap_or_else(|| self.font_size.unwrap_or(settings.font_size)),
+            logical_font_size: self.logical_font_size,
             render_dpi: self.render_dpi
                 .filter(|dpi| crate::valid_render_dpi(*dpi))
                 .unwrap_or(settings.render_dpi),
@@ -389,7 +392,8 @@ impl BookPreferences {
                 .unwrap_or(settings.automatic_hyphenation),
             ..settings
         };
-        if adjusted.validate().is_ok() {
+        // Never silently replace an explicit logical choice with another size.
+        if adjusted.logical_font_size.is_some() || adjusted.validate().is_ok() {
             adjusted
         } else {
             settings
@@ -1756,6 +1760,9 @@ fn validate_state(states: &[BookState]) -> io::Result<()> {
         return Err(invalid_state(
             "Reader state contains an invalid PDF highlight",
         ));
+    }
+    if states.iter().any(|state| state.preferences.logical_font_size.is_some_and(|n| !crate::logical_font::valid(n))) {
+        return Err(invalid_state("Reader state contains an invalid logical font size"));
     }
     Ok(())
 }

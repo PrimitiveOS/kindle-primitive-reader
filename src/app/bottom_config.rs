@@ -143,25 +143,19 @@ impl Reader {
             let text = |title, settings: Settings| Choice::live(title, Action::Text(settings));
             match panel {
                 BarPanel::Text => {
-                    let mut rows = vec![ConfigRow::new(
-                        format!("Size · {:.0} px", settings.font_size),
-                        [
-                            text(
-                                "Smaller text",
-                                Settings {
-                                    font_size: (settings.font_size - 4.0).max(20.0),
-                                    ..settings
-                                },
-                            ),
-                            text(
-                                "Larger text",
-                                Settings {
-                                    font_size: (settings.font_size + 4.0).min(100.0),
-                                    ..settings
-                                },
-                            ),
-                        ],
-                    )];
+                    let smaller = settings.logical_font_size.map_or_else(|| Action::Text(Settings {
+                        font_size:(settings.font_size-4.).max(20.),..settings
+                    }), |n| Action::ApplyLogicalFont(active.id,(n-0.5).max(12.)));
+                    let larger = settings.logical_font_size.map_or_else(|| Action::Text(Settings {
+                        font_size:(settings.font_size+4.).min(100.),..settings
+                    }), |n| Action::ApplyLogicalFont(active.id,(n+0.5).min(255.)));
+                    let mut rows = vec![ConfigRow::new(format!("Size · {}",settings.font_label()), [
+                        Choice::live("Smaller text",smaller),Choice::live("Larger text",larger),
+                        Choice::link("More",Action::Show(Screen::NumberingValue(NumberField::LogicalFont(active.id))))])];
+                    for presets in crate::logical_font::PRESETS.chunks(6) {
+                        rows.push(ConfigRow::new("Font size",presets.iter().map(|&value| Choice::option(value.to_string(),
+                            Action::ApplyLogicalFont(active.id,f64::from(value)),settings.logical_font_size==Some(f64::from(value))))));
+                    }
                     if !vertical {
                         rows.push(ConfigRow::new(
                             "Reading mode",

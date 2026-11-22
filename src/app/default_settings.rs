@@ -22,7 +22,8 @@ impl Reader {
             .state(active.id)
             .and_then(|state| state.preferences.font_file.clone());
         Ok(BookPreferences {
-            font_size: Some(settings.font_size),
+            font_size: if settings.logical_font_size.is_some() { self.library.state(active.id).and_then(|state| state.preferences.font_size) } else { Some(settings.font_size) },
+            logical_font_size: settings.logical_font_size,
             render_dpi: Some(settings.render_dpi),
             margin: Some(settings.margin),
             margin_sides: settings.margin_sides,
@@ -256,8 +257,8 @@ impl Reader {
                         || "Device text defaults".into(),
                         |p| {
                             format!(
-                                "Saved text defaults · {:.0} px · {}",
-                                p.font_size.unwrap_or(42.),
+                                "Saved text defaults · {} · {}",
+                                p.logical_font_size.map_or_else(|| format!("{} px", p.font_size.unwrap_or(42.)), |n| format!("{n} logical")),
                                 if p.scroll { "Scroll" } else { "Pages" }
                             )
                         },

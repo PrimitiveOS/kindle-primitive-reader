@@ -33,7 +33,7 @@ pub(crate) fn load(path: &Path) -> Vec<Profile> {
             return Err(invalid());
         }
         let profiles: Vec<Profile> = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
-        if profiles.len() > MAX_PROFILES || profiles.iter().any(|item| !valid_name(&item.name)) {
+        if profiles.len() > MAX_PROFILES || profiles.iter().any(|item| !valid_name(&item.name) || crate::document_defaults::validate_preferences(&item.preferences).is_err()) {
             return Err(invalid());
         }
         Ok(profiles)
@@ -76,6 +76,7 @@ pub(crate) fn insert(
 }
 
 pub(crate) fn save(path: &Path, profiles: &[Profile]) -> io::Result<()> {
+    for profile in profiles { crate::document_defaults::validate_preferences(&profile.preferences)?; }
     let bytes = serde_json::to_vec(profiles).map_err(io::Error::other)?;
     if bytes.len() as u64 > MAX_BYTES {
         return Err(invalid());

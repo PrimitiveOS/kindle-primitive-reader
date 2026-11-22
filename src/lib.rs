@@ -34,6 +34,7 @@ mod flow_projection;
 mod flow_view;
 mod font_render;
 mod font_synthesis;
+pub mod logical_font;
 #[cfg(feature = "kindle")]
 mod generated_contents;
 mod gray_glyph;
@@ -180,6 +181,9 @@ pub struct Settings {
     pub width: u32,
     pub height: u32,
     pub font_size: f32,
+    /// None preserves the original physical-pixel renderer and bounds.
+    pub logical_font_size: Option<f64>,
+    pub font_scale: logical_font::ScaleContext,
     /// Scale CSS absolute lengths and images independently of the reading font.
     pub render_dpi: u16,
     pub margin: u32,
@@ -223,6 +227,8 @@ impl Default for Settings {
             width: 1264,
             height: 1680,
             font_size: 42.0,
+            logical_font_size: None,
+            font_scale: logical_font::ScaleContext::default(),
             render_dpi: 96,
             margin: 54,
             margin_sides: None,
@@ -309,14 +315,17 @@ impl Settings {
             || self.top_margin() > self.height / 4
             || self.bottom_margin() > self.height / 4
             || !valid_render_dpi(self.render_dpi)
-            || !(12.0..=144.0).contains(&self.font_size)
+            || if let Some(logical) = self.logical_font_size {
+                !logical_font::valid(logical)
+                    || self.font_scale.effective(logical).ok() != Some(self.font_size)
+            } else { !(12.0..=144.0).contains(&self.font_size) }
             || !(1.0..=3.0).contains(&self.line_height)
             || !(-2.0..=12.0).contains(&self.word_spacing)
             || self.percent_word_spacing.is_some_and(|pair| !pair.valid())
             || self.word_expansion > 20
             || !(-1.0..=4.0).contains(&self.letter_spacing)
             || !(100..=150).contains(&self.cjk_width_percent)
-            || self.text_height() as f32 <= self.font_size * self.line_height * 2.0
+            || self.text_height() as f32 <= self.font_size * self.line_height * if self.logical_font_size.is_some() { 1.0 } else { 2.0 }
         {
             return Err("Reading layout settings are out of range".into());
         }
@@ -717,7 +726,7 @@ impl Probe {
                     .then(|| book_style::BookStyle::load(&mut book, &href, &source, &mut fonts))
                     .unwrap_or_default()
                     .with_user_css(user_styles)?;
-                let styles = author.compute_for_dpi(&source.elements, settings.render_dpi);
+                let styles = author.compute_for_settings(&source.elements, settings);
                 reading_flow = flow_view::ChapterFlow::from_styles(&source, &styles)?;
                 #[cfg(feature = "kindle")]
                 {

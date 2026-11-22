@@ -9,6 +9,7 @@ mod contents_position;
 pub(crate) mod publisher_pages;
 mod character_page_settings;
 mod content_dpi;
+mod logical_font;
 mod word_spacing;
 use character_page_settings::NumberField;
 mod dictionary_panel;
@@ -281,6 +282,7 @@ impl Screen {
             Self::GoToPage => "Go to page",
             Self::PageNumbering => "Page numbering",
             Self::NumberingValue(NumberField::ContentDpi(_)) => "Content zoom",
+            Self::NumberingValue(NumberField::LogicalFont(_)) => "Font size",
             Self::NumberingValue(NumberField::WordSpacing(_)) => "Word spacing",
             Self::NumberingValue(NumberField::MarginSize) => "Margin label size",
             Self::NumberingValue(_) => "Characters per page",
@@ -410,6 +412,7 @@ enum Action {
     SetUserHyphenation(bool),
     Text(Settings),
     ApplyWordSpacing(u64, crate::WordSpacePercent),
+    ApplyLogicalFont(u64, f64),
     ShowFonts,
     ShowDictionaries,
     DictionarySource(SourceAction),
@@ -1164,6 +1167,7 @@ impl Reader {
         self.link_popup = None;
         self.screen = screen;
         self.prepare_content_dpi_editor();
+        self.prepare_logical_font_editor();
         self.prepare_word_spacing_editor();
         self.map_window = fixed_book_map::MapWindow::default();
         self.sync_auto_turn(Instant::now());
@@ -1687,7 +1691,7 @@ impl Reader {
             Screen::Bookmarks => self.bookmark_items(active.id),
             Screen::Typography => {
                 let settings = reading.config.settings;
-                let mut items = text_items(settings, reading.config.scroll);
+                let mut items = text_items(settings, reading.config.scroll, self.active.as_ref().unwrap().id);
                 if !reading.probe.is_vertical()
                     && settings.hyphenation_mode() == crate::HyphenationMode::Automatic
                 {
@@ -2452,6 +2456,7 @@ impl Reader {
             Action::ToggleBookmark => self.toggle_bookmark()?,
             Action::SetUserHyphenation(enabled) => self.set_user_hyphenation(enabled)?,
             Action::ApplyWordSpacing(owner,value) => self.apply_word_spacing(owner,value)?,
+            Action::ApplyLogicalFont(owner,value) => self.apply_logical_font(owner,value)?,
             Action::Text(settings) => {
                 let active = self.active.as_mut().ok_or("No open book")?;
                 active.reading.reflow(settings)?;
@@ -2459,7 +2464,8 @@ impl Reader {
                     .library
                     .remember(&active.entry, active.id, &active.reading.probe.title)
                     .preferences;
-                preferences.font_size = Some(settings.font_size);
+                if settings.logical_font_size.is_none() { preferences.font_size = Some(settings.font_size); }
+                preferences.logical_font_size = settings.logical_font_size;
                 preferences.render_dpi = Some(settings.render_dpi);
                 preferences.margin = Some(settings.margin);
                 preferences.margin_sides = settings.margin_sides;
@@ -2678,24 +2684,34 @@ impl Reader {
     }
 
     fn apply_text_profile(&mut self, preferences: BookPreferences) -> Result<()> {
+        crate::document_defaults::validate_preferences(&preferences)?;
         let fonts = self.fonts_for(preferences.font_file.as_deref())?;
         let base = self.device_reading_settings();
-        let active = self.active.as_mut().ok_or("Open a book first")?;
-        let position = position(&active.reading);
+        let active = self.active.as_ref().ok_or("Open a book first")?;
+        let id = active.id;
+        if with_storage(|| self.library.identify(&active.entry))? != id {
+            return Err("The document edition changed; reopen it before applying a profile".into());
+        }
+        let location = position(&active.reading);
         let mut config = active.reading.config.clone();
         config.settings = preferences.apply_to(base);
         config.scroll = preferences.scroll;
         config.facing_pages = preferences.facing_pages;
         config.fonts = fonts;
-        active.reading = Reading::restore(
-            config,
-            position.chapter,
-            position.page,
-            position.anchor.as_ref(),
-        )?;
-        self.library
-            .remember(&active.entry, active.id, &active.reading.probe.title)
-            .preferences = preferences;
+        let candidate = Reading::restore(config, location.chapter, location.page, location.anchor.as_ref())?;
+        if candidate.probe.book != active.reading.probe.book
+            || with_storage(|| self.library.identify(&active.entry))? != id {
+            return Err("The document edition changed during profile application".into());
+        }
+        let prior = self.library.state(id).cloned().ok_or("Reading state unavailable")?;
+        let state = self.library.state_mut(id).unwrap();
+        state.preferences = preferences;
+        state.position = Some(position(&candidate));
+        if let Err(error) = self.library.persist() {
+            *self.library.state_mut(id).unwrap() = prior;
+            return Err(error.into());
+        }
+        self.active.as_mut().unwrap().reading = candidate;
         self.show(Screen::Book);
         self.record_position();
         Ok(())
@@ -3424,6 +3440,7 @@ impl Reader {
     }
 
     fn handle_page_number(&mut self, input: Input) -> Change {
+        if let Some(change) = self.logical_font_input(input) { return change; }
         if let Some(change) = self.content_dpi_input(input) { return change; }
         if let Some(change) = self.word_spacing_input(input) { return change; }
         if matches!(input, Input::PageBack)
@@ -5475,6 +5492,7 @@ impl Reader {
                 Screen::ProfileName => ("Profile name", "Save"),
                 Screen::PdfPassword => ("PDF password", "Open"),
                 Screen::NumberingValue(NumberField::ContentDpi(_)) => ("Content zoom: 0 to 300 dpi", "Set"),
+                Screen::NumberingValue(NumberField::LogicalFont(_)) => ("Logical font size: 12 to 255", "Set"),
                 Screen::NumberingValue(NumberField::WordSpacing(draft)) => (match draft.field { word_spacing::Field::Scaling => "Scaling: 10 to 500%", word_spacing::Field::Minimum => "Reduction: 25 to 100%" }, "Set"),
                 Screen::NumberingValue(NumberField::MarginSize) => ("Margin text size from 8 to 20", "Set"),
                 Screen::NumberingValue(_) => ("500 to 3,000 characters per page", "Set"),
@@ -5503,6 +5521,7 @@ impl Reader {
             );
             canvas.keyboard(self.editor.layer, action, None);
             self.draw_content_dpi(canvas);
+            self.draw_logical_font(canvas);
             self.draw_word_spacing(canvas);
             if self.can_paste_address() { external_link::draw_paste(canvas); }
             if self.screen == Screen::BookmarkFind {
@@ -6617,28 +6636,17 @@ fn device_settings() -> Settings {
     }
 }
 
-fn text_size_items(settings: Settings) -> [Item; 2] {
-    let size = format!("Current size {} px", settings.font_size.round());
-    [
-        Item::new(
-            "Larger text",
-            Action::Text(Settings {
-                font_size: (settings.font_size + 4.0).min(100.0),
-                ..settings
-            }),
-        )
-        .detail(&size),
-        Item::new(
-            "Smaller text",
-            Action::Text(Settings {
-                font_size: (settings.font_size - 4.0).max(20.0),
-                ..settings
-            }),
-        ),
-    ]
+fn text_size_items(settings: Settings, owner: u64) -> [Item; 3] {
+    let size = format!("Current size {}", settings.font_label());
+    let change = |delta: f64| settings.logical_font_size.map_or_else(|| Action::Text(Settings {
+        font_size: (settings.font_size + delta as f32 * 8.).clamp(20.,100.), ..settings
+    }), |value| Action::ApplyLogicalFont(owner,(value+delta).clamp(12.,255.)));
+    [Item::new("Larger text",change(0.5)).detail(&size),
+        Item::new("Smaller text",change(-0.5)),
+        Item::new("Set font size",Action::Show(Screen::NumberingValue(NumberField::LogicalFont(owner))))]
 }
 
-fn text_items(settings: Settings, scroll: bool) -> Vec<Item> {
+fn text_items(settings: Settings, scroll: bool, owner: u64) -> Vec<Item> {
     let margin = format!("Current margin {} px", settings.margin);
     let spacing = format!("Current spacing {:.2}×", settings.line_height);
     let (alignment, next_alignment) = match settings.alignment {
@@ -6647,7 +6655,7 @@ fn text_items(settings: Settings, scroll: bool) -> Vec<Item> {
         TextAlignment::Center => ("Centered", TextAlignment::Justify),
         TextAlignment::Justify => ("Justified", TextAlignment::Publisher),
     };
-    let [larger, smaller] = text_size_items(settings);
+    let [larger, smaller, set_size] = text_size_items(settings, owner);
     vec![
         Item::new(
             if scroll {
@@ -6659,6 +6667,7 @@ fn text_items(settings: Settings, scroll: bool) -> Vec<Item> {
         ),
         larger,
         smaller,
+        set_size,
         Item::new(
             "Wider margins",
             Action::Text(Settings {

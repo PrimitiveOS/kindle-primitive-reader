@@ -192,6 +192,7 @@ impl ParleyChapter {
             padded_backgrounds: Vec::new(),
             limitations: Vec::new(),
             glyphs: GlyphCache::with_hinting(
+                settings.logical_font_size.is_some(),
                 settings.font_hinting,
                 styles
                     .first()
@@ -207,7 +208,7 @@ impl ParleyChapter {
             36,
             Luma([225]),
         ));
-        let group_insets = list_insets(source, styles, settings.font_size, flow);
+        let group_insets = list_insets(source, styles, settings, flow);
         let outer_width = settings.text_width();
         let table_flow = if source_order {
             chapter.limitations.push(
@@ -424,7 +425,7 @@ impl ParleyChapter {
                 .filter(|item| marker_hosts.get(&item.element) == Some(&block.key))
                 .and_then(|item| {
                     let style = &styles[item.element];
-                    let size = (settings.font_size * style.size_scale).clamp(12.0, 192.0);
+                    let size = settings.styled_font(style.size_scale);
                     Some((style.marker.label(flow.ordinal(item)?)?, style, size))
                 });
             let literal = marker.as_ref().and_then(|(label, style, size)| {
@@ -969,6 +970,7 @@ impl ParleyChapter {
     }
 
     pub fn capture(&mut self, range: Range<f32>, settings: Settings) -> Result<Vec<u8>> {
+        self.glyphs.begin_paint();
         let visible_height = visible_rows(&range, settings);
         let mut frame = vec![255; (settings.width * settings.height) as usize];
         let stride = settings.width as usize;
@@ -1124,6 +1126,7 @@ impl ParleyChapter {
         for stroke in &self.table_frames {
             stroke.paint(page, stride, &columns, &range);
         }
+        self.glyphs.check_paint()?;
         Ok(frame)
     }
 }
@@ -1404,9 +1407,10 @@ fn draw_bullet(
 fn list_insets(
     source: &Source,
     styles: &[Style],
-    font_size: f32,
+    settings: Settings,
     flow: &ChapterFlow,
 ) -> HashMap<usize, f32> {
+    let font_size = settings.font_size;
     let mut groups = std::collections::BTreeMap::new();
     for block in &source.blocks {
         if let Some(item) = block.list_item.filter(|item| item.first) {
@@ -1420,7 +1424,7 @@ fn list_insets(
                 .and_then(|ordinal| style.marker.label(ordinal))
             {
                 let estimate =
-                    font_size * style.size_scale * (0.76 * label.chars().count() as f32 + 0.46);
+                    if settings.logical_font_size.is_some() { settings.styled_font(style.size_scale) } else { font_size * style.size_scale } * (0.76 * label.chars().count() as f32 + 0.46);
                 *width = width.max(estimate);
             }
         }
@@ -1518,7 +1522,7 @@ fn make_annotation(
         ),
     )));
     builder.push_default(StyleProperty::FontSize(
-        (settings.font_size * style.size_scale * 0.48).clamp(8.0, 84.0),
+        if settings.logical_font_size.is_some() { settings.styled_font(style.size_scale * 0.48) } else { (settings.font_size * style.size_scale * 0.48).clamp(8.0, 84.0) },
     ));
     let mut layout = builder.build(text);
     layout.break_all_lines(None);
@@ -1632,7 +1636,7 @@ fn make_paragraph(
             LineHeight::FontSizeRelative(spacing)
         }
     };
-    let font_size = |style: &Style| (settings.font_size * style.size_scale).clamp(12.0, 192.0);
+    let font_size = |style: &Style| settings.styled_font(style.size_scale);
     let weight = |style: &Style| {
         FontWeight::new(crate::font_render::font_weight(
             if settings.bold_text && style.font_weight < FontWeight::BOLD {
@@ -1687,7 +1691,7 @@ fn make_paragraph(
         }
         if run.text_rise != style.text_rise {
             builder.push(
-                StyleProperty::VerticalAlign(run.text_rise.from_block(style)),
+                StyleProperty::VerticalAlign(run.text_rise.from_block_at(style, settings)),
                 text.bytes.clone(),
             );
         }
@@ -1885,7 +1889,7 @@ impl ImageSizing {
         } else {
             settings.text_height()
         };
-        let font_size = (settings.font_size * style.size_scale).clamp(12.0, 192.0);
+        let font_size = settings.styled_font(style.size_scale);
         let html_scale = if settings.render_dpi == 0 {
             1.
         } else {

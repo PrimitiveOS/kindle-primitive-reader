@@ -1,3 +1,4 @@
+mod tiled;
 use std::collections::{HashMap, hash_map::Entry};
 use std::ops::Range;
 use std::sync::Arc;
@@ -57,6 +58,8 @@ struct Mask {
 /// Horizontal positions retain quarter-pixel phases. Baselines snap to pixels.
 #[derive(Default)]
 pub(crate) struct GlyphCache {
+    large_outlines: bool,
+    paint_error: Option<&'static str>,
     hinting: FontHinting,
     font_weights: Arc<HashMap<u64, f32>>,
     faces: HashMap<FaceKey, HashMap<(u32, u8), Mask>>,
@@ -65,12 +68,18 @@ pub(crate) struct GlyphCache {
 }
 
 impl GlyphCache {
-    pub(crate) fn with_hinting(hinting: FontHinting, font_weights: Arc<HashMap<u64, f32>>) -> Self {
+    pub(crate) fn with_hinting(large_outlines: bool, hinting: FontHinting, font_weights: Arc<HashMap<u64, f32>>) -> Self {
         Self {
+            large_outlines,
             hinting,
             font_weights,
             ..Self::default()
         }
+    }
+
+    pub(crate) fn begin_paint(&mut self) { self.paint_error = None; }
+    pub(crate) fn check_paint(&self) -> crate::Result<()> {
+        match self.paint_error { Some(message) => Err(message.into()), None => Ok(()) }
     }
 
     pub(crate) fn draw_run(
@@ -150,8 +159,9 @@ impl GlyphCache {
             || columns.is_empty()
             || columns.end > stride
             || style.variations.len() > MAX_AXES
-            || !(1.0..=MAX_EDGE as f32).contains(&style.size)
+            || !(1.0..=if self.large_outlines { 340.0 } else { MAX_EDGE as f32 }).contains(&style.size)
         {
+            if self.large_outlines { self.paint_error = Some("A font run exceeds Reader's paint bounds"); }
             return;
         }
         if self.full || self.faces.len() >= MAX_FACES {
@@ -201,8 +211,16 @@ impl GlyphCache {
                     });
                     let hints = hinter
                         .get_or_insert_with(|| hinting_instance(self.hinting, &style, variations));
-                    let mask = rasterize(&style, glyph, phase, variations, hints.as_ref())
-                        .unwrap_or_default();
+                    let mask = match rasterize(&style, glyph, phase, variations, hints.as_ref()) {
+                        Some(mask) => mask,
+                        None if self.large_outlines => {
+                            if let Err(error) = tiled::paint(page,stride,columns,x,baseline,&style,glyph,phase,variations,hints.as_ref(),contrast,gamma) {
+                                self.paint_error = Some(error);
+                            }
+                            continue;
+                        }
+                        None => Mask::default(),
+                    };
                     mask.blend(page, stride, columns, x, baseline, contrast, gamma);
                     let cost = mask.alpha.len() + ENTRY_OVERHEAD;
                     if self.bytes + cost <= CACHE_BYTES {
