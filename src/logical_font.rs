@@ -70,7 +70,7 @@ impl Settings {
     }
     pub(crate) fn font_label(self) -> String {
         self.logical_font_size
-            .map_or_else(|| format!("{} px", self.font_size), |n| format!("{n}"))
+            .map_or_else(|| format!("{} px", self.font_size), |n| format!("{n:.1}"))
     }
 }
 

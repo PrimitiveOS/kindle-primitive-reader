@@ -90,7 +90,7 @@ fn large_stock_fonts_paint_real_ink_and_retain_source_selection_geometry() {
     let path = sample();
     let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
     let mut prior_340 = None;
-    for logical in [12., 22., 80., 120., 160., 255.] {
+    for logical in [12., 22., 80., 120., 160., 170., 255.] {
         let settings = Settings::default().with_logical_font(logical).unwrap();
         let mut probe = Probe::open(&path, Engine::Parley, &fonts, settings, 0).unwrap();
         let start = probe.fragment("start").unwrap();

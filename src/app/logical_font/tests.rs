@@ -245,13 +245,9 @@ fn logical_controls_capture_compact_large_light_dark_without_losing_presets() {
             app.system_theme = None;
             app.open_reading_edge(false, WIDTH as f32 / 2.);
             app.reading_panel = Some(BarPanel::Text);
-            let rows = app.bottom_config_rows(BarPanel::Text);
             for preset in crate::logical_font::PRESETS {
-                assert!(
-                    rows.iter()
-                        .flat_map(|r| &r.choices)
-                        .any(|c| c.title == preset.to_string())
-                );
+                let rect = app.reading_button(&preset.to_string());
+                assert!(rect.w >= 100 && rect.h >= 100);
             }
             let suffix = format!(
                 "{}{}",

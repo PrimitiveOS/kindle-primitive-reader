@@ -163,7 +163,7 @@ impl Reader {
         };
         let reading = &active.reading;
         let settings = reading.config.settings;
-        let mut items = text_items(settings, reading.config.scroll);
+        let mut items = text_items(settings, reading.config.scroll, active.id);
         if reading.probe.is_vertical() {
             items.retain(|item| match item.action {
                 Action::ReadingMode(_) => false,
