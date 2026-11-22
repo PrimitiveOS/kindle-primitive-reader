@@ -153,3 +153,13 @@ The Mac and Oasis each passed 486 automated tests. In two original EPUBs, both R
 Four original PDFs exercised endpoint search. A further 36 Unicode search and case combinations in three original PDFs returned the same 31 word occurrences as installed KOReader. Reader used the same source ranges and coordinates on the Mac and the Oasis. The intersection with each KOReader word rectangle covered at least 98.2 percent of the smaller rectangle. [Fixed-page search](fixed-page-search.md)
 
 The desktop reflow run inspected 1,509 sections and painted 27,741 pages across 48 editions.
+
+## Reader 0.1.19 on the Oasis 3
+
+The Mac and Oasis each passed 501 automated tests. Two original MOBI books exposed 59 embedded illustrations and 1,136 internal links, while all 7,107 previously indexed text blocks retained their positions. Both books opened, turned pages and resumed from the library picker. [Kindle book comparison](kindle-format-reading.md)
+
+Dictionary selections from eight original EPUBs returned the same 77 visible definitions as installed KOReader across 55 inflected-word cases. Footer comparisons used two EPUBs and two PDFs. [Dictionary results](dictionary-word-forms.md) · [Status bar geometry](status-bar-overlap.md)
+
+Reader and installed KOReader returned 360, 1,150, 4,131 and 5,000 results across four original PDFs. The fourth total reached the result limit. All four returned to the original viewport. The 1,066-page document took Reader 319 seconds to finish, compared with 44 seconds in KOReader. The first selectable result appeared in 0.64 seconds. [Search results and word-boundary differences](fixed-page-search.md)
+
+The desktop run checked 1,509 sections and painted 27,779 pages across 48 distinct original reflowable editions.
