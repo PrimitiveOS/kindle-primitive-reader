@@ -1161,7 +1161,7 @@ impl Reader {
             self.editor.caret = self.editor.text.len();
         }
         if matches!(screen, Screen::NumberingValue(_)) {
-            self.editor = Editor::new(4);
+            self.editor = Editor::new(if matches!(screen,Screen::NumberingValue(NumberField::LogicalFont(_))) {24} else {4});
         }
         if screen == Screen::GoToPage {
             self.editor = Editor::new(96);

@@ -37,6 +37,86 @@ fn draft(app: &mut Reader, text: &str) {
     app.editor.caret = app.editor.text.len();
 }
 
+fn keyboard(app: &mut Reader, key: primitive_ui::Key) {
+    let layout = Layout::new(WIDTH, HEIGHT, 4, 5);
+    if !layout
+        .keyboard_keys_with(app.editor.layer, "Set")
+        .iter()
+        .any(|(item, _)| item.key == key)
+    {
+        let layer = [
+            primitive_ui::Layer::Lower,
+            primitive_ui::Layer::Symbols,
+            primitive_ui::Layer::More,
+        ]
+        .into_iter()
+        .find(|&layer| {
+            layout
+                .keyboard_keys_with(layer, "Set")
+                .iter()
+                .any(|(item, _)| item.key == key)
+        })
+        .unwrap();
+        let rect = layout
+            .keyboard_keys_with(app.editor.layer, "Set")
+            .into_iter()
+            .find(|(item, _)| item.key == primitive_ui::Key::Layer(layer))
+            .unwrap()
+            .1;
+        tap(app, rect);
+    }
+    let rect = layout
+        .keyboard_keys_with(app.editor.layer, "Set")
+        .into_iter()
+        .find(|(item, _)| item.key == key)
+        .unwrap()
+        .1;
+    tap(app, rect);
+}
+fn type_number(app: &mut Reader, value: &str) {
+    while !app.editor.text.is_empty() {
+        keyboard(app, primitive_ui::Key::Delete);
+    }
+    for ch in value.chars() {
+        keyboard(app, primitive_ui::Key::Char(ch));
+    }
+    assert_eq!(
+        app.editor.string(),
+        value,
+        "all decimal characters must pass the real keyboard capacity"
+    );
+}
+
+#[test]
+fn real_keyboard_accepts_fifth_decimal_character_and_applies_the_raw_logical_value() {
+    let (_fixture, mut app, _) = setup();
+    for (text, value) in [("12.25", 12.25), ("22.25", 22.25), ("255.0", 255.)] {
+        editor(&mut app);
+        type_number(&mut app, text);
+        keyboard(&mut app, primitive_ui::Key::Go);
+        assert_eq!(current(&app), Some(value));
+        assert_eq!(app.screen, Screen::BookTools);
+        assert_eq!(
+            app.active
+                .as_ref()
+                .unwrap()
+                .reading
+                .config
+                .settings
+                .font_size,
+            app.active
+                .as_ref()
+                .unwrap()
+                .reading
+                .config
+                .settings
+                .font_scale
+                .effective(value)
+                .unwrap()
+        );
+    }
+}
+
 #[test]
 fn draft_steps_typed_decimals_saved_default_and_cancel_preserve_legacy_mode() {
     let (_fixture, mut app, path) = setup();
@@ -79,8 +159,8 @@ fn draft_steps_typed_decimals_saved_default_and_cancel_preserve_legacy_mode() {
         42.25
     );
     editor(&mut app);
-    draft(&mut app, "22.25");
-    app.apply_logical_font_input(id).unwrap();
+    type_number(&mut app, "22.25");
+    keyboard(&mut app, primitive_ui::Key::Go);
     assert_eq!(current(&app), Some(22.25));
     assert_eq!(
         app.library.state(id).unwrap().preferences.font_size,
