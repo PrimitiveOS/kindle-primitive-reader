@@ -58,6 +58,7 @@ impl TableWidths {
         cells: &[Option<Cell>],
         font: f32,
         width: u32,
+        borders: Option<&crate::table_borders::Borders>,
         mut measure: impl FnMut(&Block) -> (u32, u32),
     ) -> BTreeMap<usize, Self> {
         let mut groups: BTreeMap<usize, Vec<&Block>> = BTreeMap::new();
@@ -108,8 +109,11 @@ impl TableWidths {
                 let Some(cell) = cells[owner] else { continue };
                 let col = &mut tracks[usize::from(cell.column)];
                 let style = &styles[owner];
-                let outer_min = intrinsic_width(min, style, font);
-                let outer_max = intrinsic_width(max, style, font);
+                let stroke = borders
+                    .and_then(|b| b.cells.get(&cell))
+                    .map_or(0, |c| c.edges[3].width + c.edges[1].width);
+                let outer_min = intrinsic_width(min.saturating_add(stroke), style, font);
+                let outer_max = intrinsic_width(max.saturating_add(stroke), style, font);
                 col.min = col.min.max(outer_min);
                 col.max = col.max.max(outer_max);
                 col.sum += u64::from(outer_max);

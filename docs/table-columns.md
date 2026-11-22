@@ -30,7 +30,9 @@ One original seven-row, three-column table specifies equal 33% header widths, 10
 
 Turning off the table’s own padding leaves all five positions unchanged in both readers. Turning off the publisher’s 1 px borders in KOReader shifts all five starts left by 1 px. With the publisher’s original declarations, the largest difference between the two renderers is 4 px. The automatic-width control shows a difference of up to 7 px. [Installed KOReader comparison script](../scripts/koreader-table-widths.lua)
 
-Reader measures text for simple publisher-styled tables up to 32 columns, with a chapter budget of 2,048 text blocks and 256 KiB. Measurements preserve original Unicode and inline font changes. Long words remain whole for the purpose of sizing a column and can still wrap at the page edge during final rendering. Larger grids, tables with spanning columns, illustrations, nested tables and explicit column groups continue through their existing rendering paths. Painting CSS table borders and optional Web-mode whole-table sizing remain separate capabilities. [Rust column allocation](../src/table_widths.rs)
+Reader measures text for simple publisher-styled tables up to 32 columns, with a chapter budget of 2,048 text blocks and 256 KiB. Measurements preserve original Unicode and inline font changes. Long words remain whole for the purpose of sizing a column and can still wrap at the page edge during final rendering. Larger grids, tables with spanning columns, illustrations, nested tables and explicit column groups continue through their existing rendering paths. Publisher border painting and its measurements are described in the follow-up. Optional Web-mode whole-table sizing remains separate. [Rust column allocation](../src/table_widths.rs)
+
+[Publisher table borders](publisher-table-borders.md)
 
 ## Verification
 
