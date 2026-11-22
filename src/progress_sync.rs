@@ -167,7 +167,12 @@ impl Record {
             && (anchor.chapter.len() > 4096
                 || anchor.block > 16_000_000
                 || anchor.offset > 16_000_000
-                || anchor.illustration.is_some_and(|n| n > 16_000_000))
+                || anchor.illustration.is_some_and(|n| n > 16_000_000)
+                || anchor.boundary.as_ref().is_some_and(|boundary| {
+                    boundary.origin > 64 * 1024 * 1024
+                        || boundary.relative > 10_000
+                        || anchor.illustration.is_some()
+                }))
         {
             return Err("The server returned an invalid source position".into());
         }

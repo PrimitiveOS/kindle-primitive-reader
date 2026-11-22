@@ -25,6 +25,17 @@ impl Probe {
     /// Resolve a canonical/legacy anchor's presentation intent without changing
     /// its stored location. None means the source anchor itself is unavailable.
     pub fn source_presentation(&self, anchor: &Anchor) -> Option<SourcePresentation> {
+        if anchor.boundary.is_some() {
+            let owner = self.boundary_owner(anchor)?;
+            let flow = self.reading_flow.element(owner).ok()?;
+            return Some(if flow.suppressed {
+                SourcePresentation::CssOmitted
+            } else if !flow.painted {
+                SourcePresentation::VisibilityHidden
+            } else {
+                SourcePresentation::Normal
+            });
+        }
         let (index, offset) = self.project_anchor(anchor)?;
         let block = &self.source.blocks[index];
         if let Some(ordinal) = anchor
@@ -480,3 +491,6 @@ mod tests {
         assert!(!before.contains("TRAP") && !after.contains("TRAP"));
     }
 }
+
+#[cfg(test)]
+mod boundary_tests;

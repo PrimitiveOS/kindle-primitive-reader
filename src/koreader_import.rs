@@ -438,6 +438,7 @@ fn selection(
         quote.push_str(selected);
     }
     let anchor = |index: usize, offset| Anchor {
+        boundary: None,
         illustration: None,
         book,
         chapter: chapter.to_owned(),
@@ -573,6 +574,7 @@ mod tests {
         assert_eq!(
             mark.start,
             Anchor {
+                boundary: None,
                 illustration: None,
                 book: 712,
                 chapter: "shore.xhtml".to_owned(),
@@ -584,6 +586,7 @@ mod tests {
         assert_eq!(
             mark.end,
             Anchor {
+                boundary: None,
                 illustration: None,
                 block: source.blocks[1].key,
                 offset: "مرحبا".len(),

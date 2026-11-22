@@ -128,6 +128,7 @@ impl CharacterPages {
             revision: self.chapters.get(chapter)?.revision,
             block: point.block,
             offset: point.byte,
+            boundary: None,
             illustration: None,
         })
     }

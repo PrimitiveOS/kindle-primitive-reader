@@ -1578,6 +1578,7 @@ pub(crate) mod tests {
                     revision: original.revision,
                     block: b.key,
                     offset,
+                    boundary: None,
                     illustration: None,
                 };
                 let end = crate::Anchor {

@@ -37,7 +37,7 @@ impl Stroke {
         }
     }
 }
-fn edges(style: &Style, font: f32) -> [Stroke; 4] {
+pub(crate) fn edges(style: &Style, font: f32) -> [Stroke; 4] {
     style
         .borders
         .as_ref()
@@ -416,6 +416,25 @@ pub(crate) struct Frame {
     edges: [Stroke; 4],
 }
 impl Frame {
+    /// The same bounded stroke semantics can paint a retained generated block
+    /// box; this does not turn unrelated non-table content into table geometry.
+    pub(crate) fn generated_box(
+        out: &mut Vec<Self>,
+        area: crate::publisher_padding::BoxArea,
+        top: f32,
+        bottom: f32,
+        style: &Style,
+        font: f32,
+    ) {
+        let mut strokes = edges(style, font);
+        if !style.flow.painted {
+            for stroke in &mut strokes {
+                stroke.gray = None;
+            }
+        }
+        Self::push(out, area.outer_x, area.outer_width, top, bottom, strokes);
+    }
+
     fn push(out: &mut Vec<Self>, x: u32, width: u32, top: f32, bottom: f32, edges: [Stroke; 4]) {
         if bottom > top && edges.iter().any(|s| s.width > 0 && s.gray.is_some()) {
             out.push(Self {

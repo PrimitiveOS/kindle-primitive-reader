@@ -162,6 +162,7 @@ impl NearbySearch {
                             revision: source.revision,
                             block: block.key,
                             offset: first.start,
+                            boundary: None,
                             illustration: None,
                         };
                         let end = Anchor {

@@ -17,7 +17,7 @@ pub(crate) struct BoxArea {
 }
 
 impl BoxArea {
-    fn new(x: u32, width: u32, cell: Option<Cell>) -> Self {
+    pub(crate) fn new(x: u32, width: u32, cell: Option<Cell>) -> Self {
         Self {
             x,
             width,
