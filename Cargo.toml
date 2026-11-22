@@ -8,6 +8,8 @@ description = "Offline book reader for PrimitiveOS on Kindle"
 [features]
 # On by default: the release (the shared package workflow) builds the Kindle binary without naming a feature.
 default = ["kindle"]
+# Independent reference build for pixel comparisons against full JPEG decoding.
+reference-full-dct = ["hayro-interpret/reference-full-dct"]
 kindle = ["dep:primitive-app", "dep:primitive-ui", "dep:unicode-bidi", "dep:ureq", "dep:url", "dep:qrcodegen"]
 
 [build-dependencies]
@@ -81,4 +83,8 @@ codegen-units = 4
 
 [[example]]
 name = "verify_document"
+required-features = ["kindle"]
+
+[[example]]
+name = "measure_pdf_page"
 required-features = ["kindle"]

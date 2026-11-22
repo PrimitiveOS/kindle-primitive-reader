@@ -25,6 +25,8 @@ It uses Parley for reflowable books and Hayro for PDF pages. The reading
 workflows and format coverage are being compared with KOReader on the same
 Kindle. [EPUB feasibility results](docs/epub-probe-results.md)
 
+At fit page, Reader can decode large print-color PDF photographs at the resolution needed for the Kindle screen. Zoom selects the resolution again to preserve detail. [PDF image rendering](docs/print-image-decoding.md)
+
 ## Preview
 
 | Documents | Reading | Reading bars | Dictionary |

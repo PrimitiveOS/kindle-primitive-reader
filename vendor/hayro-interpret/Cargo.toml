@@ -30,6 +30,7 @@ resolver = "2"
 [features]
 # PrimitiveOS adds an optional cache for exact printer-color conversions.
 cmyk-cache = []
+reference-full-dct = []
 default = [
     "embed-fonts",
     "embed-cmaps",
@@ -124,3 +125,7 @@ unused_import_braces = "warn"
 unused_lifetimes = "warn"
 unused_macro_rules = "warn"
 unused_qualifications = "warn"
+
+[dependencies.jpeg-decoder]
+version = "=0.3.2"
+default-features = false

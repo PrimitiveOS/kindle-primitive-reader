@@ -1,0 +1,759 @@
+{
+  "criteria": {
+    "mae_max": 0.75,
+    "p99_max": 8,
+    "ssim_min": 0.995,
+    "over_one_shade_percent_max": 0.01,
+    "reference_ssim_loss_max": 0.003
+  },
+  "source_count": 12,
+  "pymupdf": "2.1",
+  "renderer_sha256": "c5a46070c4168d420c30f2ad58b3ba6fe5a5a857e185f1a03b55fe0108aacad3",
+  "full_renderer_sha256": "632460860e7c66e48f1a6e9cfe097e189ed3335aa72dadf702216641d79b8715",
+  "results": [
+    {
+      "source": "imagesharp-cmyk",
+      "source_sha256": "013c1673f618abec6afff4d9b9a69b95e0e8cc1f61aa34993208601c346b5677",
+      "jpeg_sha256": "013c1673f618abec6afff4d9b9a69b95e0e8cc1f61aa34993208601c346b5677",
+      "width": 414,
+      "height": 900,
+      "adobe_transform": 0,
+      "explicit_decode": false,
+      "views": [
+        {
+          "view": "fit",
+          "reduced": 1,
+          "whole_frame_identical": false,
+          "delta": {
+            "mae": 0.4774621212121212,
+            "p99": 5.0,
+            "ssim": 0.9986915187612312,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 1,
+            "pixels": 5280
+          },
+          "full_to_mupdf_ssim": 0.8922609268202797,
+          "reduced_to_mupdf_ssim": 0.898689064610004,
+          "reference_ssim_loss": -0.006428137789724286,
+          "within_criteria": true
+        },
+        {
+          "view": "crop",
+          "reduced": 1,
+          "whole_frame_identical": false,
+          "delta": {
+            "mae": 0.5573089700996677,
+            "p99": 6.0,
+            "ssim": 0.9981633846558197,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 1,
+            "pixels": 4816
+          },
+          "full_to_mupdf_ssim": 0.8826289256798295,
+          "reduced_to_mupdf_ssim": 0.8869908731482608,
+          "reference_ssim_loss": -0.004361947468431215,
+          "within_criteria": true
+        },
+        {
+          "view": "detail",
+          "reduced": 0,
+          "whole_frame_identical": true,
+          "delta": {
+            "mae": 0.0,
+            "p99": 0.0,
+            "ssim": 1.0,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 0,
+            "pixels": 40528
+          },
+          "full_to_mupdf_ssim": 0.9915659628514251,
+          "reduced_to_mupdf_ssim": 0.9915659628514251,
+          "reference_ssim_loss": 0.0,
+          "within_criteria": true
+        }
+      ]
+    },
+    {
+      "source": "imageflow-logo",
+      "source_sha256": "1ebe10e651c34c8cdb42c3559bee1ce5d1918af611d1dc4238dc6dbf1792e550",
+      "jpeg_sha256": "1ebe10e651c34c8cdb42c3559bee1ce5d1918af611d1dc4238dc6dbf1792e550",
+      "width": 1174,
+      "height": 734,
+      "adobe_transform": 2,
+      "explicit_decode": false,
+      "views": [
+        {
+          "view": "fit",
+          "reduced": 0,
+          "whole_frame_identical": true,
+          "delta": {
+            "mae": 0.0,
+            "p99": 0.0,
+            "ssim": 1.0,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 0,
+            "pixels": 12672
+          },
+          "full_to_mupdf_ssim": 0.9554538845857473,
+          "reduced_to_mupdf_ssim": 0.9554538845857473,
+          "reference_ssim_loss": 0.0,
+          "within_criteria": true
+        },
+        {
+          "view": "crop",
+          "reduced": 0,
+          "whole_frame_identical": true,
+          "delta": {
+            "mae": 0.0,
+            "p99": 0.0,
+            "ssim": 1.0,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 0,
+            "pixels": 11375
+          },
+          "full_to_mupdf_ssim": 0.9835276007420014,
+          "reduced_to_mupdf_ssim": 0.9835276007420014,
+          "reference_ssim_loss": 0.0,
+          "within_criteria": true
+        },
+        {
+          "view": "detail",
+          "reduced": 0,
+          "whole_frame_identical": true,
+          "delta": {
+            "mae": 0.0,
+            "p99": 0.0,
+            "ssim": 1.0,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 0,
+            "pixels": 93896
+          },
+          "full_to_mupdf_ssim": 0.9506711878300089,
+          "reduced_to_mupdf_ssim": 0.9506711878300089,
+          "reference_ssim_loss": 0.0,
+          "within_criteria": true
+        }
+      ]
+    },
+    {
+      "source": "twelve-bright",
+      "source_sha256": "24b63971b8bb20cae921e9b1659cf008884bafbcdb68dd366cf1972bcfdbf9fa",
+      "jpeg_sha256": "24b63971b8bb20cae921e9b1659cf008884bafbcdb68dd366cf1972bcfdbf9fa",
+      "width": 4256,
+      "height": 2832,
+      "adobe_transform": 2,
+      "explicit_decode": false,
+      "views": [
+        {
+          "view": "fit",
+          "reduced": 1,
+          "whole_frame_identical": false,
+          "delta": {
+            "mae": 0.45691466552315607,
+            "p99": 4.0,
+            "ssim": 0.9980011238470398,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 1,
+            "pixels": 186560
+          },
+          "full_to_mupdf_ssim": 0.9425553322749901,
+          "reduced_to_mupdf_ssim": 0.947707849466049,
+          "reference_ssim_loss": -0.005152517191058914,
+          "within_criteria": true
+        },
+        {
+          "view": "crop",
+          "reduced": 1,
+          "whole_frame_identical": false,
+          "delta": {
+            "mae": 0.4254025461388056,
+            "p99": 3.0,
+            "ssim": 0.9979741860941589,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 1,
+            "pixels": 163149
+          },
+          "full_to_mupdf_ssim": 0.8113694778773188,
+          "reduced_to_mupdf_ssim": 0.8147251515355667,
+          "reference_ssim_loss": -0.0033556736582478486,
+          "within_criteria": true
+        },
+        {
+          "view": "detail",
+          "reduced": 0,
+          "whole_frame_identical": true,
+          "delta": {
+            "mae": 0.0,
+            "p99": 0.0,
+            "ssim": 1.0,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 0,
+            "pixels": 1190688
+          },
+          "full_to_mupdf_ssim": 0.7030455910792377,
+          "reduced_to_mupdf_ssim": 0.7030455910792377,
+          "reference_ssim_loss": 0.0,
+          "within_criteria": true
+        }
+      ]
+    },
+    {
+      "source": "imagesharp-ycck",
+      "source_sha256": "33e3546a64df7fa1d528441926421b193e399a83490a6307762fb7eee9640bf0",
+      "jpeg_sha256": "33e3546a64df7fa1d528441926421b193e399a83490a6307762fb7eee9640bf0",
+      "width": 512,
+      "height": 512,
+      "adobe_transform": 2,
+      "explicit_decode": false,
+      "views": [
+        {
+          "view": "fit",
+          "reduced": 1,
+          "whole_frame_identical": false,
+          "delta": {
+            "mae": 0.6750780437044746,
+            "p99": 2.0,
+            "ssim": 0.9988766425937893,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 1,
+            "pixels": 3844
+          },
+          "full_to_mupdf_ssim": 0.9924956464264029,
+          "reduced_to_mupdf_ssim": 0.9950984923470307,
+          "reference_ssim_loss": -0.002602845920627872,
+          "within_criteria": true
+        },
+        {
+          "view": "crop",
+          "reduced": 1,
+          "whole_frame_identical": false,
+          "delta": {
+            "mae": 0.5194003527336861,
+            "p99": 1.0,
+            "ssim": 0.9993230154874757,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 1,
+            "pixels": 3402
+          },
+          "full_to_mupdf_ssim": 0.8847628417979198,
+          "reduced_to_mupdf_ssim": 0.8846291829769751,
+          "reference_ssim_loss": 0.00013365882094462656,
+          "within_criteria": true
+        },
+        {
+          "view": "detail",
+          "reduced": 0,
+          "whole_frame_identical": true,
+          "delta": {
+            "mae": 0.0,
+            "p99": 0.0,
+            "ssim": 1.0,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 0,
+            "pixels": 28224
+          },
+          "full_to_mupdf_ssim": 0.9010032022365408,
+          "reduced_to_mupdf_ssim": 0.9010032022365408,
+          "reference_ssim_loss": 0.0,
+          "within_criteria": true
+        }
+      ]
+    },
+    {
+      "source": "zune-cmyk",
+      "source_sha256": "4257eeb390b6a5145ab31046bfb1ebcef690cf80e2fce10b26f988c3cff4084e",
+      "jpeg_sha256": "4257eeb390b6a5145ab31046bfb1ebcef690cf80e2fce10b26f988c3cff4084e",
+      "width": 600,
+      "height": 397,
+      "adobe_transform": 0,
+      "explicit_decode": false,
+      "views": [
+        {
+          "view": "fit",
+          "reduced": 0,
+          "whole_frame_identical": true,
+          "delta": {
+            "mae": 0.0,
+            "p99": 0.0,
+            "ssim": 1.0,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 0,
+            "pixels": 3312
+          },
+          "full_to_mupdf_ssim": 0.8626953209169389,
+          "reduced_to_mupdf_ssim": 0.8626953209169389,
+          "reference_ssim_loss": 0.0,
+          "within_criteria": true
+        },
+        {
+          "view": "crop",
+          "reduced": 0,
+          "whole_frame_identical": true,
+          "delta": {
+            "mae": 0.0,
+            "p99": 0.0,
+            "ssim": 1.0,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 0,
+            "pixels": 3087
+          },
+          "full_to_mupdf_ssim": 0.8476643626497207,
+          "reduced_to_mupdf_ssim": 0.8476643626497207,
+          "reference_ssim_loss": 0.0,
+          "within_criteria": true
+        },
+        {
+          "view": "detail",
+          "reduced": 0,
+          "whole_frame_identical": true,
+          "delta": {
+            "mae": 0.0,
+            "p99": 0.0,
+            "ssim": 1.0,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 0,
+            "pixels": 25740
+          },
+          "full_to_mupdf_ssim": 0.8866214342880876,
+          "reduced_to_mupdf_ssim": 0.8866214342880876,
+          "reference_ssim_loss": 0.0,
+          "within_criteria": true
+        }
+      ]
+    },
+    {
+      "source": "pdfbox-6235",
+      "source_sha256": "47e7506aeacb253253812fb2671bff24c6481d62c4e551dfb86d99a7155604cb",
+      "jpeg_sha256": "47e7506aeacb253253812fb2671bff24c6481d62c4e551dfb86d99a7155604cb",
+      "width": 200,
+      "height": 200,
+      "adobe_transform": 2,
+      "explicit_decode": false,
+      "views": [
+        {
+          "view": "fit",
+          "reduced": 0,
+          "whole_frame_identical": true,
+          "delta": {
+            "mae": 0.0,
+            "p99": 0.0,
+            "ssim": 1.0,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 0,
+            "pixels": 484
+          },
+          "full_to_mupdf_ssim": 0.9688647556872136,
+          "reduced_to_mupdf_ssim": 0.9688647556872136,
+          "reference_ssim_loss": 0.0,
+          "within_criteria": true
+        },
+        {
+          "view": "crop",
+          "reduced": 0,
+          "whole_frame_identical": true,
+          "delta": {
+            "mae": 0.0,
+            "p99": 0.0,
+            "ssim": 1.0,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 0,
+            "pixels": 480
+          },
+          "full_to_mupdf_ssim": 0.965933783789812,
+          "reduced_to_mupdf_ssim": 0.965933783789812,
+          "reference_ssim_loss": 0.0,
+          "within_criteria": true
+        },
+        {
+          "view": "detail",
+          "reduced": 0,
+          "whole_frame_identical": true,
+          "delta": {
+            "mae": 0.0,
+            "p99": 0.0,
+            "ssim": 1.0,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 0,
+            "pixels": 4096
+          },
+          "full_to_mupdf_ssim": 0.9831509093099826,
+          "reduced_to_mupdf_ssim": 0.9831509093099826,
+          "reference_ssim_loss": 0.0,
+          "within_criteria": true
+        }
+      ]
+    },
+    {
+      "source": "pdfjs-cmyk",
+      "source_sha256": "659d6b19912f63db988b0b26b9bde0e6d8100667ef162051a4a84ea8e5b90272",
+      "jpeg_sha256": "f914ffc67e4fbbd4de2a53b7bf8d08aaeace0a8ab8a44140799aa94a493f63dc",
+      "width": 200,
+      "height": 150,
+      "adobe_transform": 0,
+      "explicit_decode": false,
+      "views": [
+        {
+          "view": "fit",
+          "reduced": 0,
+          "whole_frame_identical": true,
+          "delta": {
+            "mae": 0.0,
+            "p99": 0.0,
+            "ssim": 1.0,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 0,
+            "pixels": 352
+          },
+          "full_to_mupdf_ssim": 0.8724910407250934,
+          "reduced_to_mupdf_ssim": 0.8724910407250934,
+          "reference_ssim_loss": 0.0,
+          "within_criteria": true
+        },
+        {
+          "view": "crop",
+          "reduced": 0,
+          "whole_frame_identical": true,
+          "delta": {
+            "mae": 0.0,
+            "p99": 0.0,
+            "ssim": 1.0,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 0,
+            "pixels": 340
+          },
+          "full_to_mupdf_ssim": 0.9912182691472113,
+          "reduced_to_mupdf_ssim": 0.9912182691472113,
+          "reference_ssim_loss": 0.0,
+          "within_criteria": true
+        },
+        {
+          "view": "detail",
+          "reduced": 0,
+          "whole_frame_identical": true,
+          "delta": {
+            "mae": 0.0,
+            "p99": 0.0,
+            "ssim": 1.0,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 0,
+            "pixels": 3072
+          },
+          "full_to_mupdf_ssim": 0.9024967566280359,
+          "reduced_to_mupdf_ssim": 0.9024967566280359,
+          "reference_ssim_loss": 0.0,
+          "within_criteria": true
+        }
+      ]
+    },
+    {
+      "source": "skia-cmyk",
+      "source_sha256": "8d2abbcf9bd9460b54198e1939e518bd2ca92baee234a5767c86461dbe455ec1",
+      "jpeg_sha256": "8d2abbcf9bd9460b54198e1939e518bd2ca92baee234a5767c86461dbe455ec1",
+      "width": 642,
+      "height": 516,
+      "adobe_transform": 0,
+      "explicit_decode": false,
+      "views": [
+        {
+          "view": "fit",
+          "reduced": 1,
+          "whole_frame_identical": false,
+          "delta": {
+            "mae": 0.0206782464846981,
+            "p99": 1.0,
+            "ssim": 0.9997457314582429,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 1,
+            "pixels": 4836
+          },
+          "full_to_mupdf_ssim": 0.8138024156919165,
+          "reduced_to_mupdf_ssim": 0.8134713610061367,
+          "reference_ssim_loss": 0.0003310546857797636,
+          "within_criteria": true
+        },
+        {
+          "view": "crop",
+          "reduced": 1,
+          "whole_frame_identical": false,
+          "delta": {
+            "mae": 0.031020220588235295,
+            "p99": 1.0,
+            "ssim": 0.9996499836223185,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 1,
+            "pixels": 4352
+          },
+          "full_to_mupdf_ssim": 0.8215166380475695,
+          "reduced_to_mupdf_ssim": 0.8208687036566898,
+          "reference_ssim_loss": 0.0006479343908796231,
+          "within_criteria": true
+        },
+        {
+          "view": "detail",
+          "reduced": 0,
+          "whole_frame_identical": true,
+          "delta": {
+            "mae": 0.0,
+            "p99": 0.0,
+            "ssim": 1.0,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 0,
+            "pixels": 36040
+          },
+          "full_to_mupdf_ssim": 0.882692232133369,
+          "reduced_to_mupdf_ssim": 0.882692232133369,
+          "reference_ssim_loss": 0.0,
+          "within_criteria": true
+        }
+      ]
+    },
+    {
+      "source": "imagesharp-sequential",
+      "source_sha256": "96f29bee2175f34b9637d684f8336bc3e5d2bb2711cef352bc9def6ed4424d04",
+      "jpeg_sha256": "96f29bee2175f34b9637d684f8336bc3e5d2bb2711cef352bc9def6ed4424d04",
+      "width": 595,
+      "height": 842,
+      "adobe_transform": 2,
+      "explicit_decode": false,
+      "views": [
+        {
+          "view": "fit",
+          "reduced": 0,
+          "whole_frame_identical": true,
+          "delta": {
+            "mae": 0.0,
+            "p99": 0.0,
+            "ssim": 1.0,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 0,
+            "pixels": 7344
+          },
+          "full_to_mupdf_ssim": 0.9412139312283819,
+          "reduced_to_mupdf_ssim": 0.9412139312283819,
+          "reference_ssim_loss": 0.0,
+          "within_criteria": true
+        },
+        {
+          "view": "crop",
+          "reduced": 0,
+          "whole_frame_identical": true,
+          "delta": {
+            "mae": 0.0,
+            "p99": 0.0,
+            "ssim": 1.0,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 0,
+            "pixels": 6615
+          },
+          "full_to_mupdf_ssim": 0.9119546079012296,
+          "reduced_to_mupdf_ssim": 0.9119546079012296,
+          "reference_ssim_loss": 0.0,
+          "within_criteria": true
+        },
+        {
+          "view": "detail",
+          "reduced": 0,
+          "whole_frame_identical": true,
+          "delta": {
+            "mae": 0.0,
+            "p99": 0.0,
+            "ssim": 1.0,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 0,
+            "pixels": 54488
+          },
+          "full_to_mupdf_ssim": 0.94453127659149,
+          "reduced_to_mupdf_ssim": 0.94453127659149,
+          "reference_ssim_loss": 0.0,
+          "within_criteria": true
+        }
+      ]
+    },
+    {
+      "source": "imagesharp-subsampling",
+      "source_sha256": "ca7c16a2984d14ebc483780d9d1e8c131eca01d89f53512cc7add538c93a38c6",
+      "jpeg_sha256": "ca7c16a2984d14ebc483780d9d1e8c131eca01d89f53512cc7add538c93a38c6",
+      "width": 400,
+      "height": 290,
+      "adobe_transform": 0,
+      "explicit_decode": false,
+      "views": [
+        {
+          "view": "fit",
+          "reduced": 0,
+          "whole_frame_identical": true,
+          "delta": {
+            "mae": 0.0,
+            "p99": 0.0,
+            "ssim": 1.0,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 0,
+            "pixels": 1632
+          },
+          "full_to_mupdf_ssim": 0.9147358935627459,
+          "reduced_to_mupdf_ssim": 0.9147358935627459,
+          "reference_ssim_loss": 0.0,
+          "within_criteria": true
+        },
+        {
+          "view": "crop",
+          "reduced": 0,
+          "whole_frame_identical": true,
+          "delta": {
+            "mae": 0.0,
+            "p99": 0.0,
+            "ssim": 1.0,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 0,
+            "pixels": 1470
+          },
+          "full_to_mupdf_ssim": 0.9281155385802226,
+          "reduced_to_mupdf_ssim": 0.9281155385802226,
+          "reference_ssim_loss": 0.0,
+          "within_criteria": true
+        },
+        {
+          "view": "detail",
+          "reduced": 0,
+          "whole_frame_identical": true,
+          "delta": {
+            "mae": 0.0,
+            "p99": 0.0,
+            "ssim": 1.0,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 0,
+            "pixels": 12220
+          },
+          "full_to_mupdf_ssim": 0.9374076306626055,
+          "reduced_to_mupdf_ssim": 0.9374076306626055,
+          "reference_ssim_loss": 0.0,
+          "within_criteria": true
+        }
+      ]
+    },
+    {
+      "source": "pdfjs-codec",
+      "source_sha256": "d6bac90d35bd5bce1d6f43071ba1fcd56f19189c5c697e37cf40e9dce1f5a0be",
+      "jpeg_sha256": "1529052551a09a426716cbc6bce3ef3db50c262337960d2a98a266423385dfa3",
+      "width": 1800,
+      "height": 2330,
+      "adobe_transform": 0,
+      "explicit_decode": true,
+      "views": [
+        {
+          "view": "fit",
+          "reduced": 0,
+          "whole_frame_identical": true,
+          "delta": {
+            "mae": 0.0,
+            "p99": 0.0,
+            "ssim": 1.0,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 0,
+            "pixels": 63936
+          },
+          "full_to_mupdf_ssim": 0.9928507844589477,
+          "reduced_to_mupdf_ssim": 0.9928507844589477,
+          "reference_ssim_loss": 0.0,
+          "within_criteria": true
+        },
+        {
+          "view": "crop",
+          "reduced": 0,
+          "whole_frame_identical": true,
+          "delta": {
+            "mae": 0.0,
+            "p99": 0.0,
+            "ssim": 1.0,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 0,
+            "pixels": 56549
+          },
+          "full_to_mupdf_ssim": 0.989295488349345,
+          "reduced_to_mupdf_ssim": 0.989295488349345,
+          "reference_ssim_loss": 0.0,
+          "within_criteria": true
+        },
+        {
+          "view": "detail",
+          "reduced": 0,
+          "whole_frame_identical": true,
+          "delta": {
+            "mae": 0.0,
+            "p99": 0.0,
+            "ssim": 1.0,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 0,
+            "pixels": 462852
+          },
+          "full_to_mupdf_ssim": 0.9758765137472926,
+          "reduced_to_mupdf_ssim": 0.9758765137472926,
+          "reference_ssim_loss": 0.0,
+          "within_criteria": true
+        }
+      ]
+    },
+    {
+      "source": "twelve-multichunk",
+      "source_sha256": "f3f71e7cb7bf04d64eb14299d41e000a7252bfb1a54037471a73e425330df4a1",
+      "jpeg_sha256": "f3f71e7cb7bf04d64eb14299d41e000a7252bfb1a54037471a73e425330df4a1",
+      "width": 2707,
+      "height": 3804,
+      "adobe_transform": 2,
+      "explicit_decode": false,
+      "views": [
+        {
+          "view": "fit",
+          "reduced": 1,
+          "whole_frame_identical": false,
+          "delta": {
+            "mae": 0.16295273405972557,
+            "p99": 4.0,
+            "ssim": 0.9995600436697933,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 1,
+            "pixels": 158592
+          },
+          "full_to_mupdf_ssim": 0.9677472954883887,
+          "reduced_to_mupdf_ssim": 0.9682093763016106,
+          "reference_ssim_loss": -0.0004620808132219656,
+          "within_criteria": true
+        },
+        {
+          "view": "crop",
+          "reduced": 1,
+          "whole_frame_identical": false,
+          "delta": {
+            "mae": 0.265941091954023,
+            "p99": 6.0,
+            "ssim": 0.9990258083220834,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 1,
+            "pixels": 139200
+          },
+          "full_to_mupdf_ssim": 0.9611878820941715,
+          "reduced_to_mupdf_ssim": 0.967612310712385,
+          "reference_ssim_loss": -0.0064244286182134624,
+          "within_criteria": true
+        },
+        {
+          "view": "detail",
+          "reduced": 0,
+          "whole_frame_identical": true,
+          "delta": {
+            "mae": 0.0,
+            "p99": 0.0,
+            "ssim": 1.0,
+            "over_one_shade_percent": 0.0,
+            "max_shades": 0,
+            "pixels": 1139400
+          },
+          "full_to_mupdf_ssim": 0.9763129768670854,
+          "reduced_to_mupdf_ssim": 0.9763129768670854,
+          "reference_ssim_loss": 0.0,
+          "within_criteria": true
+        }
+      ]
+    }
+  ]
+}
