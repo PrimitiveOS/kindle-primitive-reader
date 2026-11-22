@@ -160,11 +160,16 @@ pub enum FontHinting {
     Auto,
 }
 
+/// Pinned KOReader content-scale presets. Zero disables physical CSS units.
+pub const RENDER_DPI_PRESETS: [u16; 6] = [0, 48, 96, 167, 212, 300];
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Settings {
     pub width: u32,
     pub height: u32,
     pub font_size: f32,
+    /// Scale CSS absolute lengths and images independently of the reading font.
+    pub render_dpi: u16,
     pub margin: u32,
     pub margin_sides: Option<u32>,
     pub margin_left: Option<u32>,
@@ -204,6 +209,7 @@ impl Default for Settings {
             width: 1264,
             height: 1680,
             font_size: 42.0,
+            render_dpi: 96,
             margin: 54,
             margin_sides: None,
             margin_left: None,
@@ -287,6 +293,7 @@ impl Settings {
             || self.right_margin() > margin_limit
             || self.top_margin() > self.height / 4
             || self.bottom_margin() > self.height / 4
+            || !RENDER_DPI_PRESETS.contains(&self.render_dpi)
             || !(12.0..=144.0).contains(&self.font_size)
             || !(1.0..=3.0).contains(&self.line_height)
             || !(-2.0..=12.0).contains(&self.word_spacing)
@@ -624,7 +631,7 @@ impl Probe {
                         )
                     })
                     .unwrap_or_default();
-                let styles = author.compute(&source.elements);
+                let styles = author.compute_for_dpi(&source.elements, settings.render_dpi);
                 #[cfg(feature = "kindle")]
                 {
                     custom_hyphenation_allowed = styles.iter().map(hyphenation::allows_user_rules).collect();
