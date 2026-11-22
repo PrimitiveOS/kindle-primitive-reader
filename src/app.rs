@@ -25,6 +25,7 @@ mod online_panel;
 mod quick_display;
 mod reader_timer;
 mod reading_bars;
+mod result_context;
 mod reading_footer;
 mod selection_popup;
 mod saved_highlight_popup;
@@ -552,6 +553,8 @@ pub struct Reader {
     auto_turn: AutoTurn,
     list_page: usize,
     matches_page: usize,
+    result_context: Option<result_context::ResultContext>,
+    focused_result: Option<usize>,
     current_contents_row: Option<usize>,
     publisher_label_canvas: std::cell::RefCell<Option<Canvas>>,
     map_window: fixed_book_map::MapWindow,
@@ -685,6 +688,8 @@ impl Reader {
             auto_turn: AutoTurn::default(),
             list_page: 0,
             matches_page: 0,
+            result_context: None,
+            focused_result: None,
             current_contents_row: None,
             publisher_label_canvas: Default::default(),
             map_window: fixed_book_map::MapWindow::default(),
@@ -898,6 +903,7 @@ impl Reader {
 
     fn show(&mut self, screen: Screen) {
         if screen != Screen::Definition { self.spelling_lookup = None; }
+        self.result_context = None;
         if !matches!(screen, Screen::Footnote | Screen::Definition | Screen::OnlineLookup | Screen::OnlineEdit) {
             self.footnote = None;
         }
@@ -3161,6 +3167,7 @@ impl Reader {
         self.nearby.clear();
         self.search_result = None;
         self.matches_page = 0;
+        self.focused_result = None;
         self.show(Screen::Matches);
         self.hits.clear();
         self.pdf_hits.clear();
@@ -5240,7 +5247,7 @@ impl App for Reader {
         let rows: Vec<_> = items
             .iter()
             .map(|item| Row {
-                title: &item.title,
+                title: if self.screen == Screen::Matches { "" } else { &item.title },
                 detail: item.detail.as_deref(),
                 accessory: if matches!(item.action, Action::Heading) {
                     RowAccessory::None
@@ -5249,11 +5256,11 @@ impl App for Reader {
                 },
             })
             .collect();
-        Rows {
-            bounds: list_rect(rows.len()),
-            rows: &rows,
+        let group = Rows { bounds: list_rect(rows.len()), rows: &rows };
+        group.draw(canvas, None);
+        if self.screen == Screen::Matches {
+            self.draw_match_rows(canvas, &group);
         }
-        .draw(canvas, None);
         if rows.is_empty() {
             let empty = match self.screen {
                 Screen::Bookmarks | Screen::FixedBookmarks => "No bookmarks in this book",
@@ -5341,6 +5348,7 @@ impl App for Reader {
                 );
             }
         }
+        if let Some(popup) = &self.result_context { popup.draw(canvas); }
         if self.screen == Screen::ClearOnlineHistory { self.draw_clear_online_history(canvas); }
     }
 
@@ -5561,6 +5569,17 @@ impl App for Reader {
         if self.screen == Screen::Library {
             return self.library_input(input);
         }
+        if let Some(popup) = &mut self.result_context {
+            if let Input::Swipe { dx, dy, .. } = input && dy.abs() > dx.abs() {
+                popup.scroll(dy);
+                return Change::Partial;
+            }
+            if matches!(input, Input::Tap(..) | Input::PageBack | Input::PageForward) {
+                self.result_context = None;
+                return Change::Partial;
+            }
+            return Change::None;
+        }
         let (count, mut items) = self.list_window();
         let broad = self.has_list_shortcuts(count);
         let (prev, next) = if broad {
@@ -5664,6 +5683,15 @@ impl App for Reader {
             }
             Input::Tap(x, y) if prev.contains(x, y) => -1,
             Input::Tap(x, y) if next.contains(x, y) => 1,
+            Input::LongTap(x, y) if self.screen == Screen::Matches => {
+                let Some(index) = list_item_at(self.list_page, count, x, y) else {
+                    return Change::None;
+                };
+                return match self.preview_result(index) {
+                    Ok(()) => Change::Partial,
+                    Err(error) => self.report(error),
+                };
+            }
             Input::LongTap(x, y) if self.screen == Screen::BookList => {
                 let Some(index) = list_item_at(self.list_page, count, x, y) else {
                     return Change::None;
@@ -7641,6 +7669,38 @@ mod tests {
             app.step_character_pages(scan.deadline).unwrap();
         }
         assert!(app.numbering_scan.is_none());
+    }
+
+    #[test]
+    fn result_context_tracks_publisher_and_character_pages_at_the_passage() {
+        let fixture = Fixture::new();
+        let nav = br#"<html><body><nav type="page-list"><ol>
+          <li><a href="first.xhtml#passage2">iii</a></li>
+          <li><a href="first.xhtml#passage5">vii</a></li>
+          <li><a href="second.xhtml">xi</a></li>
+          </ol></nav></body></html>"#;
+        write_outline_fixture(&fixture.book, Some(nav), None);
+        let mut app = fixture.app();
+        app.open_path(&fixture.book).unwrap();
+        app.start_document_search("Passage").unwrap();
+        wait_for_search(&mut app, 14);
+        assert_eq!(app.hits.len(), 14);
+        // CREngine clamps passages before the first marker to its first label.
+        for (row, expected) in [(0, "Page iii"), (1, "Page iii"), (3, "Page iii"), (4, "Page vii")] {
+            app.preview_result(row).unwrap();
+            assert_eq!(app.result_context.as_ref().unwrap().label, expected);
+        }
+
+        app.activate(Action::SetCharacterPages(Some(500))).unwrap();
+        finish_character_numbering(&mut app);
+        app.start_document_search("headings here").unwrap();
+        wait_for_search(&mut app, 1);
+        let last = app.active.as_ref().unwrap().numbering.as_ref().unwrap().count;
+        assert!(last > 14);
+        assert_eq!(app.hits[0].chapter, 1);
+        app.preview_result(0).unwrap();
+        assert_eq!(app.result_context.as_ref().unwrap().label, format!("Page {last}"));
+        assert_eq!(app.active.as_ref().unwrap().reading.chapter, 0);
     }
 
     #[test]

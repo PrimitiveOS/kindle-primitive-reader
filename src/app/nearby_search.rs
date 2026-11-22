@@ -495,6 +495,7 @@ impl Reader {
         self.cancel_search();
         self.search_result = None;
         self.matches_page = 0;
+        self.focused_result = None;
         self.show(Screen::Matches);
         self.hits.clear();
         self.pdf_hits.clear();

@@ -454,6 +454,7 @@ pub(crate) struct PdfSearch {
 pub(crate) struct PdfSearchHit {
     pub(crate) page: usize,
     pub(crate) snippet: String,
+    pub(crate) matched: Range<usize>,
     pub(crate) bounds: Vec<PdfTextRect>,
 }
 
@@ -521,7 +522,7 @@ impl PdfSearch {
         }
         for range in self.ranges(text, limit.saturating_sub(results.len())) {
             let words = matching_words(text, &range);
-            let snippet = snippet(&text.text, range).0;
+            let (snippet, matched) = snippet(&text.text, range);
             let allocation = size_of::<PdfSearchHit>() + snippet.capacity()
                 + words.len() * size_of::<PdfTextRect>();
             if allocation > MAX_FIXED_RESULT_BYTES.saturating_sub(self.retained_bytes) {
@@ -532,6 +533,7 @@ impl PdfSearch {
             results.push(PdfSearchHit {
                 page,
                 snippet,
+                matched,
                 bounds: words.iter().map(|word| word.bounds).collect(),
             });
         }
