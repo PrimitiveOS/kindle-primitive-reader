@@ -27,10 +27,10 @@
     "dictionary_elements": 12,
     "all_control_records": 774,
     "statuses": {
-      "workflow": 130,
+      "workflow": 129,
       "group": 78,
       "open-audit": 53,
-      "partial": 209,
+      "partial": 210,
       "gap": 204,
       "system-owned": 82,
       "excluded": 18
@@ -2114,6 +2114,815 @@
       ]
     }
   },
+  "additional_oracles": {
+    "hidden_footnote_containers": {
+      "run": "footnote-oracle-20261122T095046Z",
+      "receipt_sha256": "d5c993464505fe1022cbbb6080aaa4f42526ed3917d45a4ebbcc610ade926b5a",
+      "fixture_sha256": "90c34122680e29a056c92a591fae62db779d352c801e50a1b81bd5e60c2c52e7",
+      "kindle_native_acceptance": false,
+      "pngs_written": 0,
+      "stock_source_modified": false,
+      "direct_extractions": [
+        {
+          "case": "A",
+          "event": "extraction",
+          "extraction": {
+            "contains_aside": false,
+            "contains_inline_display_none": false,
+            "css_files": {},
+            "extra": "",
+            "html": "<p id=\"_doc_fragment_0_ noteA\">IN\u00adLINE IN\u00adNER NOTE A</p>"
+          },
+          "flags": 4097,
+          "from_final_parent": true,
+          "geometry": {
+            "x": 410,
+            "y": 210
+          },
+          "gesture_link": {
+            "a_xpointer": "/body/DocFragment/body/p[1]/a.0",
+            "from_xpointer": "/body/DocFragment/body/p[1]/a.0",
+            "link_y": 210,
+            "marker_xpointer": "#_doc_fragment_0_ noteA",
+            "xpointer": "#_doc_fragment_0_ noteA"
+          },
+          "normalized_target": "/body/DocFragment/body/aside[1]/p",
+          "page_link": {
+            "a_xpointer": "/body/DocFragment/body/p[1]/a.0",
+            "end_x": 423,
+            "end_y": 210,
+            "section": "#_doc_fragment_0_ noteA",
+            "segments": [
+              {
+                "x0": 397,
+                "x1": 423,
+                "y0": 210,
+                "y1": 274
+              }
+            ],
+            "start_x": 397,
+            "start_y": 210
+          },
+          "source_position": "/body/DocFragment/body/h1/text().0",
+          "target_text": "INLINE INNER NOTE A",
+          "target_xpointer": "#_doc_fragment_0_ noteA"
+        },
+        {
+          "case": "B",
+          "event": "extraction",
+          "extraction": {
+            "contains_aside": true,
+            "contains_inline_display_none": true,
+            "css_files": {},
+            "extra": "",
+            "html": "<aside id=\"_doc_fragment_0_ noteB\" epub:type=\"footnote\" style=\"display:none\"><p>IN\u00adLINE ASIDE NOTE B</p></aside>"
+          },
+          "flags": 4097,
+          "from_final_parent": true,
+          "geometry": {
+            "x": 408,
+            "y": 274
+          },
+          "gesture_link": {
+            "a_xpointer": "/body/DocFragment/body/p[2]/a.0",
+            "from_xpointer": "/body/DocFragment/body/p[2]/a.0",
+            "link_y": 274,
+            "marker_xpointer": "#_doc_fragment_0_ noteB",
+            "xpointer": "#_doc_fragment_0_ noteB"
+          },
+          "normalized_target": "/body/DocFragment/body/aside[2]",
+          "page_link": {
+            "a_xpointer": "/body/DocFragment/body/p[2]/a.0",
+            "end_x": 421,
+            "end_y": 274,
+            "section": "#_doc_fragment_0_ noteB",
+            "segments": [
+              {
+                "x0": 395,
+                "x1": 421,
+                "y0": 274,
+                "y1": 338
+              }
+            ],
+            "start_x": 395,
+            "start_y": 274
+          },
+          "source_position": "/body/DocFragment/body/h1/text().0",
+          "target_text": "INLINE ASIDE NOTE B",
+          "target_xpointer": "#_doc_fragment_0_ noteB"
+        },
+        {
+          "case": "C",
+          "event": "extraction",
+          "extraction": {
+            "contains_aside": false,
+            "contains_inline_display_none": false,
+            "css_files": {},
+            "extra": "",
+            "html": "<p id=\"_doc_fragment_0_ noteC\">LINKED IN\u00adNER NOTE C</p>"
+          },
+          "flags": 4097,
+          "from_final_parent": true,
+          "geometry": {
+            "x": 406,
+            "y": 338
+          },
+          "gesture_link": {
+            "a_xpointer": "/body/DocFragment/body/p[3]/a.0",
+            "from_xpointer": "/body/DocFragment/body/p[3]/a.0",
+            "link_y": 338,
+            "marker_xpointer": "#_doc_fragment_0_ noteC",
+            "xpointer": "#_doc_fragment_0_ noteC"
+          },
+          "normalized_target": "/body/DocFragment/body/aside[3]/p",
+          "page_link": {
+            "a_xpointer": "/body/DocFragment/body/p[3]/a.0",
+            "end_x": 419,
+            "end_y": 338,
+            "section": "#_doc_fragment_0_ noteC",
+            "segments": [
+              {
+                "x0": 393,
+                "x1": 419,
+                "y0": 338,
+                "y1": 402
+              }
+            ],
+            "start_x": 393,
+            "start_y": 338
+          },
+          "source_position": "/body/DocFragment/body/h1/text().0",
+          "target_text": "LINKED INNER NOTE C",
+          "target_xpointer": "#_doc_fragment_0_ noteC"
+        },
+        {
+          "case": "D",
+          "event": "extraction",
+          "extraction": {
+            "contains_aside": true,
+            "contains_inline_display_none": false,
+            "css_files": {},
+            "extra": "",
+            "html": "<aside id=\"_doc_fragment_0_ noteD\" epub:type=\"footnote\" class=\"note\"><p>LINKED ASIDE NOTE D</p></aside>"
+          },
+          "flags": 4097,
+          "from_final_parent": true,
+          "geometry": {
+            "x": 411,
+            "y": 402
+          },
+          "gesture_link": {
+            "a_xpointer": "/body/DocFragment/body/p[4]/a.0",
+            "from_xpointer": "/body/DocFragment/body/p[4]/a.0",
+            "link_y": 402,
+            "marker_xpointer": "#_doc_fragment_0_ noteD",
+            "xpointer": "#_doc_fragment_0_ noteD"
+          },
+          "normalized_target": "/body/DocFragment/body/aside[4]",
+          "page_link": {
+            "a_xpointer": "/body/DocFragment/body/p[4]/a.0",
+            "end_x": 424,
+            "end_y": 402,
+            "section": "#_doc_fragment_0_ noteD",
+            "segments": [
+              {
+                "x0": 398,
+                "x1": 424,
+                "y0": 402,
+                "y1": 466
+              }
+            ],
+            "start_x": 398,
+            "start_y": 402
+          },
+          "source_position": "/body/DocFragment/body/h1/text().0",
+          "target_text": "LINKED ASIDE NOTE D",
+          "target_xpointer": "#_doc_fragment_0_ noteD"
+        }
+      ],
+      "actual_controller_decisions": [
+        {
+          "case": "A",
+          "event": "native-footnote-decision",
+          "extension_reason": "trusted container, no need",
+          "flags": 57214,
+          "is_footnote": true,
+          "max_text_size": 10000,
+          "reason": "source has epub:type=noteref",
+          "source_xpointer": "/body/DocFragment/body/p[1]/a.0",
+          "target_xpointer": "#_doc_fragment_0_ noteA"
+        },
+        {
+          "args": {
+            "1": "#_doc_fragment_0_ noteA",
+            "2": 4097,
+            "3": true,
+            "n": 3
+          },
+          "case": "A",
+          "event": "popup-html-call",
+          "extraction": {
+            "contains_aside": false,
+            "contains_inline_display_none": false,
+            "css_files": {},
+            "extra": "",
+            "html": "<p id=\"_doc_fragment_0_ noteA\">IN\u00adLINE IN\u00adNER NOTE A</p>"
+          },
+          "method": "getHTMLFromXPointer"
+        },
+        {
+          "case": "A",
+          "event": "automatic-popup",
+          "footnote_setting": true,
+          "html_widget_size": {
+            "h": 516,
+            "w": 1260,
+            "x": 0,
+            "y": 1613
+          },
+          "non_reader_widget": true,
+          "popup_html": "<p disabledID=\"_doc_fragment_0_ noteA\">IN\u00adLINE IN\u00adNER NOTE A</p>",
+          "popup_present": true,
+          "popup_size": {
+            "h": 1680,
+            "w": 1264,
+            "x": 0,
+            "y": 0
+          },
+          "position_after": "/body/DocFragment/body/h1/text().0",
+          "position_before": "/body/DocFragment/body/h1/text().0",
+          "prefer_footnotes": false,
+          "tap_return": true
+        },
+        {
+          "case": "B",
+          "event": "native-footnote-decision",
+          "extension_reason": "trusted container, no need",
+          "flags": 57214,
+          "is_footnote": true,
+          "max_text_size": 10000,
+          "reason": "source has epub:type=noteref",
+          "source_xpointer": "/body/DocFragment/body/p[2]/a.0",
+          "target_xpointer": "#_doc_fragment_0_ noteB"
+        },
+        {
+          "args": {
+            "1": "#_doc_fragment_0_ noteB",
+            "2": 4097,
+            "3": true,
+            "n": 3
+          },
+          "case": "B",
+          "event": "popup-html-call",
+          "extraction": {
+            "contains_aside": true,
+            "contains_inline_display_none": true,
+            "css_files": {},
+            "extra": "",
+            "html": "<aside id=\"_doc_fragment_0_ noteB\" epub:type=\"footnote\" style=\"display:none\"><p>IN\u00adLINE ASIDE NOTE B</p></aside>"
+          },
+          "method": "getHTMLFromXPointer"
+        },
+        {
+          "case": "B",
+          "event": "automatic-popup",
+          "footnote_setting": true,
+          "html_widget_size": {
+            "h": 516,
+            "w": 1260,
+            "x": 0,
+            "y": 2147485306
+          },
+          "non_reader_widget": true,
+          "popup_html": "<aside disabledID=\"_doc_fragment_0_ noteB\" epub:type=\"footnote\" style=\"display:none\"><p>IN\u00adLINE ASIDE NOTE B</p></aside>",
+          "popup_present": true,
+          "popup_size": {
+            "h": 1680,
+            "w": 1264,
+            "x": 0,
+            "y": 0
+          },
+          "position_after": "/body/DocFragment/body/h1/text().0",
+          "position_before": "/body/DocFragment/body/h1/text().0",
+          "prefer_footnotes": false,
+          "tap_return": true
+        },
+        {
+          "case": "C",
+          "event": "native-footnote-decision",
+          "extension_reason": "trusted container, no need",
+          "flags": 57214,
+          "is_footnote": true,
+          "max_text_size": 10000,
+          "reason": "source has epub:type=noteref",
+          "source_xpointer": "/body/DocFragment/body/p[3]/a.0",
+          "target_xpointer": "#_doc_fragment_0_ noteC"
+        },
+        {
+          "args": {
+            "1": "#_doc_fragment_0_ noteC",
+            "2": 4097,
+            "3": true,
+            "n": 3
+          },
+          "case": "C",
+          "event": "popup-html-call",
+          "extraction": {
+            "contains_aside": false,
+            "contains_inline_display_none": false,
+            "css_files": {},
+            "extra": "",
+            "html": "<p id=\"_doc_fragment_0_ noteC\">LINKED IN\u00adNER NOTE C</p>"
+          },
+          "method": "getHTMLFromXPointer"
+        },
+        {
+          "case": "C",
+          "event": "automatic-popup",
+          "footnote_setting": true,
+          "html_widget_size": {
+            "h": 516,
+            "w": 1260,
+            "x": 0,
+            "y": 1613
+          },
+          "non_reader_widget": true,
+          "popup_html": "<p disabledID=\"_doc_fragment_0_ noteC\">LINKED IN\u00adNER NOTE C</p>",
+          "popup_present": true,
+          "popup_size": {
+            "h": 1680,
+            "w": 1264,
+            "x": 0,
+            "y": 0
+          },
+          "position_after": "/body/DocFragment/body/h1/text().0",
+          "position_before": "/body/DocFragment/body/h1/text().0",
+          "prefer_footnotes": false,
+          "tap_return": true
+        },
+        {
+          "case": "D",
+          "event": "native-footnote-decision",
+          "extension_reason": "trusted container, no need",
+          "flags": 57214,
+          "is_footnote": true,
+          "max_text_size": 10000,
+          "reason": "source has epub:type=noteref",
+          "source_xpointer": "/body/DocFragment/body/p[4]/a.0",
+          "target_xpointer": "#_doc_fragment_0_ noteD"
+        },
+        {
+          "args": {
+            "1": "#_doc_fragment_0_ noteD",
+            "2": 4097,
+            "3": true,
+            "n": 3
+          },
+          "case": "D",
+          "event": "popup-html-call",
+          "extraction": {
+            "contains_aside": true,
+            "contains_inline_display_none": false,
+            "css_files": {},
+            "extra": "",
+            "html": "<aside id=\"_doc_fragment_0_ noteD\" epub:type=\"footnote\" class=\"note\"><p>LINKED ASIDE NOTE D</p></aside>"
+          },
+          "method": "getHTMLFromXPointer"
+        },
+        {
+          "case": "D",
+          "event": "automatic-popup",
+          "footnote_setting": true,
+          "html_widget_size": {
+            "h": 516,
+            "w": 1260,
+            "x": 0,
+            "y": 1613
+          },
+          "non_reader_widget": true,
+          "popup_html": "<aside disabledID=\"_doc_fragment_0_ noteD\" epub:type=\"footnote\" class=\"note\"><p>LINKED ASIDE NOTE D</p></aside>",
+          "popup_present": true,
+          "popup_size": {
+            "h": 1680,
+            "w": 1264,
+            "x": 0,
+            "y": 0
+          },
+          "position_after": "/body/DocFragment/body/h1/text().0",
+          "position_before": "/body/DocFragment/body/h1/text().0",
+          "prefer_footnotes": false,
+          "tap_return": true
+        }
+      ],
+      "conclusion": "Actual source-geometry taps reached native classification and FootnoteWidget. Inner-P targets export only P; aside targets retain the aside and any inline display:none. Linked CSS is omitted. Widget creation does not prove text visibility."
+    },
+    "render_final_ancestors": {
+      "run": "footnote-oracle-20261122T095415Z",
+      "receipt_sha256": "8896dec6f33731e5bc87088ac73ed965bcb26e97b29e11d6a2c11f91044092a1",
+      "fixture_sha256": "84fff6bd39157018dd1c3a2495996bf6ee95a3cd6edcc1b955612f9874a9b981",
+      "kindle_native_acceptance": false,
+      "pngs_written": 0,
+      "stock_source_modified": false,
+      "cases_run": 8,
+      "new_cases": {
+        "E": "visible inline target inside visible P",
+        "F": "inline target inside P inside display:none block ancestor",
+        "G": "inline target inside display:none inline ancestor inside visible P",
+        "H": "visible inline target inside div containing only inline flow"
+      },
+      "observations": [
+        {
+          "case": "E",
+          "event": "extraction",
+          "extraction": {
+            "contains_aside": false,
+            "contains_inline_display_none": false,
+            "css_files": {},
+            "extra": "",
+            "html": "<p>Vis\u00adi\u00adble be\u00adfore <span id=\"_doc_fragment_0_ noteE\">VIS\u00adI\u00adBLE IN\u00adLINE TAR\u00adGET E</span> vis\u00adi\u00adble af\u00adter.</p>"
+          },
+          "flags": 4097,
+          "from_final_parent": true,
+          "geometry": {
+            "x": 406,
+            "y": 466
+          },
+          "gesture_link": {
+            "a_xpointer": "/body/DocFragment/body/p[5]/a.0",
+            "from_xpointer": "/body/DocFragment/body/p[5]/a.0",
+            "link_y": 466,
+            "marker_xpointer": "#_doc_fragment_0_ noteE",
+            "xpointer": "#_doc_fragment_0_ noteE"
+          },
+          "normalized_target": "/body/DocFragment/body/p[6]/span",
+          "page_link": {
+            "a_xpointer": "/body/DocFragment/body/p[5]/a.0",
+            "end_x": 419,
+            "end_y": 466,
+            "section": "#_doc_fragment_0_ noteE",
+            "segments": [
+              {
+                "x0": 393,
+                "x1": 419,
+                "y0": 466,
+                "y1": 530
+              }
+            ],
+            "start_x": 393,
+            "start_y": 466
+          },
+          "source_position": "/body/DocFragment/body/h1/text().0",
+          "target_text": "VISIBLE INLINE TARGET E",
+          "target_xpointer": "#_doc_fragment_0_ noteE"
+        },
+        {
+          "case": "E",
+          "event": "native-footnote-decision",
+          "extension_reason": "trusted container, no need",
+          "flags": 57214,
+          "is_footnote": true,
+          "max_text_size": 10000,
+          "reason": "source has epub:type=noteref",
+          "source_xpointer": "/body/DocFragment/body/p[5]/a.0",
+          "target_xpointer": "#_doc_fragment_0_ noteE"
+        },
+        {
+          "args": {
+            "1": "#_doc_fragment_0_ noteE",
+            "2": 4097,
+            "3": true,
+            "n": 3
+          },
+          "case": "E",
+          "event": "popup-html-call",
+          "extraction": {
+            "contains_aside": false,
+            "contains_inline_display_none": false,
+            "css_files": {},
+            "extra": "",
+            "html": "<p>Vis\u00adi\u00adble be\u00adfore <span id=\"_doc_fragment_0_ noteE\">VIS\u00adI\u00adBLE IN\u00adLINE TAR\u00adGET E</span> vis\u00adi\u00adble af\u00adter.</p>"
+          },
+          "method": "getHTMLFromXPointer"
+        },
+        {
+          "case": "E",
+          "event": "automatic-popup",
+          "footnote_setting": true,
+          "html_widget_size": {
+            "h": 516,
+            "w": 1260,
+            "x": 0,
+            "y": 1613
+          },
+          "non_reader_widget": true,
+          "popup_html": "<p>Vis\u00adi\u00adble be\u00adfore <span disabledID=\"_doc_fragment_0_ noteE\">VIS\u00adI\u00adBLE IN\u00adLINE TAR\u00adGET E</span> vis\u00adi\u00adble af\u00adter.</p>",
+          "popup_present": true,
+          "popup_size": {
+            "h": 1680,
+            "w": 1264,
+            "x": 0,
+            "y": 0
+          },
+          "position_after": "/body/DocFragment/body/h1/text().0",
+          "position_before": "/body/DocFragment/body/h1/text().0",
+          "prefer_footnotes": false,
+          "tap_return": true
+        },
+        {
+          "case": "F",
+          "event": "extraction",
+          "extraction": {
+            "contains_aside": false,
+            "contains_inline_display_none": false,
+            "css_files": {},
+            "extra": "",
+            "html": "<span id=\"_doc_fragment_0_ noteF\">HID\u00adDEN BLOCK TAR\u00adGET F</span>"
+          },
+          "flags": 4097,
+          "from_final_parent": true,
+          "geometry": {
+            "x": 405,
+            "y": 658
+          },
+          "gesture_link": {
+            "a_xpointer": "/body/DocFragment/body/p[7]/a.0",
+            "from_xpointer": "/body/DocFragment/body/p[7]/a.0",
+            "link_y": 658,
+            "marker_xpointer": "#_doc_fragment_0_ noteF",
+            "xpointer": "#_doc_fragment_0_ noteF"
+          },
+          "normalized_target": "/body/DocFragment/body/div[1]/p/span",
+          "page_link": {
+            "a_xpointer": "/body/DocFragment/body/p[7]/a.0",
+            "end_x": 418,
+            "end_y": 658,
+            "section": "#_doc_fragment_0_ noteF",
+            "segments": [
+              {
+                "x0": 392,
+                "x1": 418,
+                "y0": 658,
+                "y1": 722
+              }
+            ],
+            "start_x": 392,
+            "start_y": 658
+          },
+          "source_position": "/body/DocFragment/body/h1/text().0",
+          "target_text": "HIDDEN BLOCK TARGET F",
+          "target_xpointer": "#_doc_fragment_0_ noteF"
+        },
+        {
+          "case": "F",
+          "event": "native-footnote-decision",
+          "extension_reason": "trusted container, no need",
+          "flags": 57214,
+          "is_footnote": true,
+          "max_text_size": 10000,
+          "reason": "source has epub:type=noteref",
+          "source_xpointer": "/body/DocFragment/body/p[7]/a.0",
+          "target_xpointer": "#_doc_fragment_0_ noteF"
+        },
+        {
+          "args": {
+            "1": "#_doc_fragment_0_ noteF",
+            "2": 4097,
+            "3": true,
+            "n": 3
+          },
+          "case": "F",
+          "event": "popup-html-call",
+          "extraction": {
+            "contains_aside": false,
+            "contains_inline_display_none": false,
+            "css_files": {},
+            "extra": "",
+            "html": "<span id=\"_doc_fragment_0_ noteF\">HID\u00adDEN BLOCK TAR\u00adGET F</span>"
+          },
+          "method": "getHTMLFromXPointer"
+        },
+        {
+          "case": "F",
+          "event": "automatic-popup",
+          "footnote_setting": true,
+          "html_widget_size": {
+            "h": 516,
+            "w": 1260,
+            "x": 0,
+            "y": 1613
+          },
+          "non_reader_widget": true,
+          "popup_html": "<span disabledID=\"_doc_fragment_0_ noteF\">HID\u00adDEN BLOCK TAR\u00adGET F</span>",
+          "popup_present": true,
+          "popup_size": {
+            "h": 1680,
+            "w": 1264,
+            "x": 0,
+            "y": 0
+          },
+          "position_after": "/body/DocFragment/body/h1/text().0",
+          "position_before": "/body/DocFragment/body/h1/text().0",
+          "prefer_footnotes": false,
+          "tap_return": true
+        },
+        {
+          "case": "G",
+          "event": "extraction",
+          "extraction": {
+            "contains_aside": false,
+            "contains_inline_display_none": true,
+            "css_files": {},
+            "extra": "",
+            "html": "<p>Vis\u00adi\u00adble be\u00adfore <span style=\"display:none\"><em id=\"_doc_fragment_0_ noteG\">HID\u00adDEN IN\u00adLINE TAR\u00adGET G</em></span> vis\u00adi\u00adble af\u00adter.</p>"
+          },
+          "flags": 4097,
+          "from_final_parent": true,
+          "geometry": {
+            "x": 411,
+            "y": 722
+          },
+          "gesture_link": {
+            "a_xpointer": "/body/DocFragment/body/p[8]/a.0",
+            "from_xpointer": "/body/DocFragment/body/p[8]/a.0",
+            "link_y": 722,
+            "marker_xpointer": "#_doc_fragment_0_ noteG",
+            "xpointer": "#_doc_fragment_0_ noteG"
+          },
+          "normalized_target": "/body/DocFragment/body/p[9]/span/em",
+          "page_link": {
+            "a_xpointer": "/body/DocFragment/body/p[8]/a.0",
+            "end_x": 424,
+            "end_y": 722,
+            "section": "#_doc_fragment_0_ noteG",
+            "segments": [
+              {
+                "x0": 398,
+                "x1": 424,
+                "y0": 722,
+                "y1": 786
+              }
+            ],
+            "start_x": 398,
+            "start_y": 722
+          },
+          "source_position": "/body/DocFragment/body/h1/text().0",
+          "target_text": "HIDDEN INLINE TARGET G",
+          "target_xpointer": "#_doc_fragment_0_ noteG"
+        },
+        {
+          "case": "G",
+          "event": "native-footnote-decision",
+          "extension_reason": "trusted container, no need",
+          "flags": 57214,
+          "is_footnote": true,
+          "max_text_size": 10000,
+          "reason": "source has epub:type=noteref",
+          "source_xpointer": "/body/DocFragment/body/p[8]/a.0",
+          "target_xpointer": "#_doc_fragment_0_ noteG"
+        },
+        {
+          "args": {
+            "1": "#_doc_fragment_0_ noteG",
+            "2": 4097,
+            "3": true,
+            "n": 3
+          },
+          "case": "G",
+          "event": "popup-html-call",
+          "extraction": {
+            "contains_aside": false,
+            "contains_inline_display_none": true,
+            "css_files": {},
+            "extra": "",
+            "html": "<p>Vis\u00adi\u00adble be\u00adfore <span style=\"display:none\"><em id=\"_doc_fragment_0_ noteG\">HID\u00adDEN IN\u00adLINE TAR\u00adGET G</em></span> vis\u00adi\u00adble af\u00adter.</p>"
+          },
+          "method": "getHTMLFromXPointer"
+        },
+        {
+          "case": "G",
+          "event": "automatic-popup",
+          "footnote_setting": true,
+          "html_widget_size": {
+            "h": 516,
+            "w": 1260,
+            "x": 0,
+            "y": 1613
+          },
+          "non_reader_widget": true,
+          "popup_html": "<p>Vis\u00adi\u00adble be\u00adfore <span style=\"display:none\"><em disabledID=\"_doc_fragment_0_ noteG\">HID\u00adDEN IN\u00adLINE TAR\u00adGET G</em></span> vis\u00adi\u00adble af\u00adter.</p>",
+          "popup_present": true,
+          "popup_size": {
+            "h": 1680,
+            "w": 1264,
+            "x": 0,
+            "y": 0
+          },
+          "position_after": "/body/DocFragment/body/h1/text().0",
+          "position_before": "/body/DocFragment/body/h1/text().0",
+          "prefer_footnotes": false,
+          "tap_return": true
+        },
+        {
+          "case": "H",
+          "event": "extraction",
+          "extraction": {
+            "contains_aside": false,
+            "contains_inline_display_none": false,
+            "css_files": {},
+            "extra": "",
+            "html": "<div>Vis\u00adi\u00adble be\u00adfore <span id=\"_doc_fragment_0_ noteH\">VIS\u00adI\u00adBLE DIV TAR\u00adGET H</span> vis\u00adi\u00adble af\u00adter.</div>"
+          },
+          "flags": 4097,
+          "from_final_parent": true,
+          "geometry": {
+            "x": 414,
+            "y": 850
+          },
+          "gesture_link": {
+            "a_xpointer": "/body/DocFragment/body/p[10]/a.0",
+            "from_xpointer": "/body/DocFragment/body/p[10]/a.0",
+            "link_y": 850,
+            "marker_xpointer": "#_doc_fragment_0_ noteH",
+            "xpointer": "#_doc_fragment_0_ noteH"
+          },
+          "normalized_target": "/body/DocFragment/body/div[2]/span",
+          "page_link": {
+            "a_xpointer": "/body/DocFragment/body/p[10]/a.0",
+            "end_x": 427,
+            "end_y": 850,
+            "section": "#_doc_fragment_0_ noteH",
+            "segments": [
+              {
+                "x0": 401,
+                "x1": 427,
+                "y0": 850,
+                "y1": 914
+              }
+            ],
+            "start_x": 401,
+            "start_y": 850
+          },
+          "source_position": "/body/DocFragment/body/h1/text().0",
+          "target_text": "VISIBLE DIV TARGET H",
+          "target_xpointer": "#_doc_fragment_0_ noteH"
+        },
+        {
+          "case": "H",
+          "event": "native-footnote-decision",
+          "extension_reason": "trusted container, no need",
+          "flags": 57214,
+          "is_footnote": true,
+          "max_text_size": 10000,
+          "reason": "source has epub:type=noteref",
+          "source_xpointer": "/body/DocFragment/body/p[10]/a.0",
+          "target_xpointer": "#_doc_fragment_0_ noteH"
+        },
+        {
+          "args": {
+            "1": "#_doc_fragment_0_ noteH",
+            "2": 4097,
+            "3": true,
+            "n": 3
+          },
+          "case": "H",
+          "event": "popup-html-call",
+          "extraction": {
+            "contains_aside": false,
+            "contains_inline_display_none": false,
+            "css_files": {},
+            "extra": "",
+            "html": "<div>Vis\u00adi\u00adble be\u00adfore <span id=\"_doc_fragment_0_ noteH\">VIS\u00adI\u00adBLE DIV TAR\u00adGET H</span> vis\u00adi\u00adble af\u00adter.</div>"
+          },
+          "method": "getHTMLFromXPointer"
+        },
+        {
+          "case": "H",
+          "event": "automatic-popup",
+          "footnote_setting": true,
+          "html_widget_size": {
+            "h": 516,
+            "w": 1260,
+            "x": 0,
+            "y": 1613
+          },
+          "non_reader_widget": true,
+          "popup_html": "<div>Vis\u00adi\u00adble be\u00adfore <span disabledID=\"_doc_fragment_0_ noteH\">VIS\u00adI\u00adBLE DIV TAR\u00adGET H</span> vis\u00adi\u00adble af\u00adter.</div>",
+          "popup_present": true,
+          "popup_size": {
+            "h": 1680,
+            "w": 1264,
+            "x": 0,
+            "y": 0
+          },
+          "position_after": "/body/DocFragment/body/h1/text().0",
+          "position_before": "/body/DocFragment/body/h1/text().0",
+          "prefer_footnotes": false,
+          "tap_return": true
+        }
+      ],
+      "conclusion": "Nearest text-block widening is not exact: a target in a fully hidden block subtree stays the target, but a hidden inline ancestor does not stop ascent to an otherwise visible final paragraph."
+    }
+  },
   "controls": [
     {"id": "T1-1","surface": "top","tab": 1,"tab_label": "appbar.navigation","submenu_indices": [],"breadcrumb": [],"index": 1,"text": "Table of contents","readable_text": "Table of contents","frame": 2,"frame_file": "frames/stock-sdl__002_top-tab-1-path-page-1.png","page": 1,"page_count": 1,"enabled": true,"literal_submenu": false,"dynamic_submenu": false,"leaf_action": true,"leaf_action_executed": false,"handlers": {"callback": {"kind": "Lua","lastline": 1192,"line": 1190,"source": "@frontend/apps/reader/modules/readertoc.lua"},"text_func": {"kind": "Lua","lastline": 1189,"line": 1187,"source": "@frontend/apps/reader/modules/readertoc.lua"}},"family": "contents","comparison_status": "workflow","comparison": "Publisher/generated/custom contents, current-entry focus and anchored jumps are available.","primary_stock_handler": {"path": "frontend/apps/reader/modules/readertoc.lua","line": 1190,"url": "https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readertoc.lua#L1190"},"primary_stock_handler_role": "callback"},
     {"id": "T1-2","surface": "top","tab": 1,"tab_label": "appbar.navigation","submenu_indices": [],"breadcrumb": [],"index": 2,"text": "Bookmarks","readable_text": "Bookmarks","frame": 2,"frame_file": "frames/stock-sdl__002_top-tab-1-path-page-1.png","page": 1,"page_count": 1,"enabled": true,"literal_submenu": false,"dynamic_submenu": false,"leaf_action": true,"leaf_action_executed": false,"handlers": {"callback": {"kind": "Lua","lastline": 79,"line": 77,"source": "@frontend/apps/reader/modules/readerbookmark.lua"}},"family": "bookmarks","comparison_status": "workflow","comparison": "Book-local bookmarks or the shared annotation-search form opens from the reading bars; source ranges are retained.","primary_stock_handler": {"path": "frontend/apps/reader/modules/readerbookmark.lua","line": 77,"url": "https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerbookmark.lua#L77"},"primary_stock_handler_role": "callback"},
@@ -2407,7 +3216,7 @@
     {"id": "T3-5.6.1","surface": "top","tab": 3,"tab_label": "appbar.settings","submenu_indices": [5,6],"breadcrumb": ["Taps and gestures","Links"],"index": 1,"text": "Tap to follow links","readable_text": "Tap to follow links","frame": 76,"frame_file": "frames/stock-sdl__076_top-tab-3-path-5-6-page-1.png","page": 1,"page_count": 1,"enabled": true,"literal_submenu": false,"dynamic_submenu": false,"leaf_action": true,"leaf_action_executed": false,"handlers": {"callback": {"kind": "Lua","lastline": 523,"line": 520,"source": "@frontend/apps/reader/modules/readerlink.lua"},"checked_func": {"kind": "Lua","lastline": 274,"line": 272,"source": "@frontend/apps/reader/modules/readerlink.lua"}},"family": "links","comparison_status": "partial","comparison": "Ordinary supported internal/external link taps work; independent stock enable/disable preference is not established.","primary_stock_handler": {"path": "frontend/apps/reader/modules/readerlink.lua","line": 520,"url": "https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerlink.lua#L520"},"primary_stock_handler_role": "callback"},
     {"id": "T3-5.6.2","surface": "top","tab": 3,"tab_label": "appbar.settings","submenu_indices": [5,6],"breadcrumb": ["Taps and gestures","Links"],"index": 2,"text": "Allow larger tap area around links","readable_text": "Allow larger tap area around links","frame": 76,"frame_file": "frames/stock-sdl__076_top-tab-3-path-5-6-page-1.png","page": 1,"page_count": 1,"enabled": true,"literal_submenu": false,"dynamic_submenu": false,"leaf_action": true,"leaf_action_executed": false,"handlers": {"callback": {"kind": "Lua","lastline": 598,"line": 595,"source": "@frontend/apps/reader/modules/readerlink.lua"},"checked_func": {"kind": "Lua","lastline": 278,"line": 276,"source": "@frontend/apps/reader/modules/readerlink.lua"},"enabled_func": {"kind": "Lua","lastline": 274,"line": 272,"source": "@frontend/apps/reader/modules/readerlink.lua"}},"family": "links","comparison_status": "open-audit","comparison": "Native link/footnote/history workflows exist; this exact stock swipe, hit-area, external-link or popup-setting control is not matched.","primary_stock_handler": {"path": "frontend/apps/reader/modules/readerlink.lua","line": 595,"url": "https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerlink.lua#L595"},"primary_stock_handler_role": "callback"},
     {"id": "T3-5.6.3","surface": "top","tab": 3,"tab_label": "appbar.settings","submenu_indices": [5,6],"breadcrumb": ["Taps and gestures","Links"],"index": 3,"text": "Ignore external links on tap","readable_text": "Ignore external links on tap","frame": 76,"frame_file": "frames/stock-sdl__076_top-tab-3-path-5-6-page-1.png","page": 1,"page_count": 1,"enabled": true,"literal_submenu": false,"dynamic_submenu": false,"leaf_action": true,"leaf_action_executed": false,"handlers": {"callback": {"kind": "Lua","lastline": 533,"line": 530,"source": "@frontend/apps/reader/modules/readerlink.lua"},"checked_func": {"kind": "Lua","lastline": 282,"line": 280,"source": "@frontend/apps/reader/modules/readerlink.lua"},"enabled_func": {"kind": "Lua","lastline": 274,"line": 272,"source": "@frontend/apps/reader/modules/readerlink.lua"}},"family": "links","comparison_status": "open-audit","comparison": "Native link/footnote/history workflows exist; this exact stock swipe, hit-area, external-link or popup-setting control is not matched.","primary_stock_handler": {"path": "frontend/apps/reader/modules/readerlink.lua","line": 530,"url": "https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerlink.lua#L530"},"primary_stock_handler_role": "callback"},
-    {"id": "T3-5.6.4","surface": "top","tab": 3,"tab_label": "appbar.settings","submenu_indices": [5,6],"breadcrumb": ["Taps and gestures","Links"],"index": 4,"text": "Show footnotes in popup","readable_text": "Show footnotes in popup","frame": 76,"frame_file": "frames/stock-sdl__076_top-tab-3-path-5-6-page-1.png","page": 1,"page_count": 1,"enabled": true,"literal_submenu": false,"dynamic_submenu": false,"leaf_action": true,"leaf_action_executed": false,"handlers": {"callback": {"kind": "Lua","lastline": 319,"line": 316,"source": "@frontend/apps/reader/modules/readerlink.lua"},"checked_func": {"kind": "Lua","lastline": 286,"line": 284,"source": "@frontend/apps/reader/modules/readerlink.lua"},"enabled_func": {"kind": "Lua","lastline": 314,"line": 312,"source": "@frontend/apps/reader/modules/readerlink.lua"}},"family": "links","comparison_status": "workflow","comparison": "Optional marked-note previews retain the source passage and offer opening the note in context.","primary_stock_handler": {"path": "frontend/apps/reader/modules/readerlink.lua","line": 316,"url": "https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerlink.lua#L316"},"primary_stock_handler_role": "callback"},
+    {"id": "T3-5.6.4","surface": "top","tab": 3,"tab_label": "appbar.settings","submenu_indices": [5,6],"breadcrumb": ["Taps and gestures","Links"],"index": 4,"text": "Show footnotes in popup","readable_text": "Show footnotes in popup","frame": 76,"frame_file": "frames/stock-sdl__076_top-tab-3-path-5-6-page-1.png","page": 1,"page_count": 1,"enabled": true,"literal_submenu": false,"dynamic_submenu": false,"leaf_action": true,"leaf_action_executed": false,"handlers": {"callback": {"kind": "Lua","lastline": 319,"line": 316,"source": "@frontend/apps/reader/modules/readerlink.lua"},"checked_func": {"kind": "Lua","lastline": 286,"line": 284,"source": "@frontend/apps/reader/modules/readerlink.lua"},"enabled_func": {"kind": "Lua","lastline": 314,"line": 312,"source": "@frontend/apps/reader/modules/readerlink.lua"}},"family": "links","comparison_status": "partial","comparison": "Optional marked-note previews retain the source passage. The actual stock hidden-note oracle proves target-container extraction differs: an inner-P target must not always widen to its semantic aside.","primary_stock_handler": {"path": "frontend/apps/reader/modules/readerlink.lua","line": 316,"url": "https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerlink.lua#L316"},"primary_stock_handler_role": "callback"},
     {"id": "T3-5.6.5","surface": "top","tab": 3,"tab_label": "appbar.settings","submenu_indices": [5,6],"breadcrumb": ["Taps and gestures","Links"],"index": 5,"text": "Footnote popup settings","readable_text": "Footnote popup settings","frame": 76,"frame_file": "frames/stock-sdl__076_top-tab-3-path-5-6-page-1.png","page": 1,"page_count": 1,"enabled": false,"literal_submenu": true,"dynamic_submenu": false,"leaf_action": false,"leaf_action_executed": false,"handlers": {"enabled_func": {"kind": "Lua","lastline": 462,"line": 459,"source": "@frontend/apps/reader/modules/readerlink.lua"}},"family": "links","comparison_status": "open-audit","comparison": "Native link/footnote/history workflows exist; this exact stock swipe, hit-area, external-link or popup-setting control is not matched.","primary_stock_handler": {"path": "frontend/apps/reader/modules/readerlink.lua","line": 459,"url": "https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerlink.lua#L459"},"primary_stock_handler_role": "enabled_func","navigation_dispatch": {"path": "frontend/ui/widget/touchmenu.lua","line": 856,"url": "https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/touchmenu.lua#L856"}},
     {"id": "T3-5.6.6","surface": "top","tab": 3,"tab_label": "appbar.settings","submenu_indices": [5,6],"breadcrumb": ["Taps and gestures","Links"],"index": 6,"text": "Swipe to go back","readable_text": "Swipe to go back","frame": 76,"frame_file": "frames/stock-sdl__076_top-tab-3-path-5-6-page-1.png","page": 1,"page_count": 1,"enabled": true,"literal_submenu": false,"dynamic_submenu": false,"leaf_action": true,"leaf_action_executed": false,"handlers": {"callback": {"kind": "Lua","lastline": 545,"line": 542,"source": "@frontend/apps/reader/modules/readerlink.lua"},"checked_func": {"kind": "Lua","lastline": 294,"line": 292,"source": "@frontend/apps/reader/modules/readerlink.lua"}},"family": "links","comparison_status": "open-audit","comparison": "Native link/footnote/history workflows exist; this exact stock swipe, hit-area, external-link or popup-setting control is not matched.","primary_stock_handler": {"path": "frontend/apps/reader/modules/readerlink.lua","line": 542,"url": "https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerlink.lua#L542"},"primary_stock_handler_role": "callback"},
     {"id": "T3-5.6.7","surface": "top","tab": 3,"tab_label": "appbar.settings","submenu_indices": [5,6],"breadcrumb": ["Taps and gestures","Links"],"index": 7,"text": "Swipe to follow nearest link","readable_text": "Swipe to follow nearest link","frame": 76,"frame_file": "frames/stock-sdl__076_top-tab-3-path-5-6-page-1.png","page": 1,"page_count": 1,"enabled": true,"literal_submenu": false,"dynamic_submenu": false,"leaf_action": true,"leaf_action_executed": false,"handlers": {"callback": {"kind": "Lua","lastline": 554,"line": 551,"source": "@frontend/apps/reader/modules/readerlink.lua"},"checked_func": {"kind": "Lua","lastline": 298,"line": 296,"source": "@frontend/apps/reader/modules/readerlink.lua"}},"family": "links","comparison_status": "open-audit","comparison": "Native link/footnote/history workflows exist; this exact stock swipe, hit-area, external-link or popup-setting control is not matched.","primary_stock_handler": {"path": "frontend/apps/reader/modules/readerlink.lua","line": 551,"url": "https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerlink.lua#L551"},"primary_stock_handler_role": "callback"},
