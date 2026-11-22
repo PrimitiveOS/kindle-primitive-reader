@@ -30,6 +30,23 @@ if arg[4] == "--word-edges" then
     print(require("json").encode({page=current, word_boxes=counts}))
     return
 end
+if arg[4] == "--endpoints" then
+    local function from_edge(reverse, page)
+        return kopt:findText(doc, query, -1, reverse, true, page)
+    end
+    local tail = assert(from_edge(1, current))
+    assert(not from_edge(1, tail.page))
+    local head = assert(from_edge(0, tail.page))
+    assert(not from_edge(0, head.page))
+    local last = assert(from_edge(1, head.page))
+    pdf:close()
+    print(require("json").encode({
+        pages={current,tail.page,head.page,last.page},
+        boxes={#tail,#head,#last},
+        outside_empty=true,
+    }))
+    return
+end
 local pos = current
 local pages, boxes = {}, {}
 for _, step in ipairs({{0,0},{1,0},{1,1},{1,1}}) do

@@ -3888,6 +3888,9 @@ impl Reader {
         if self.ocr.is_some() {
             return None;
         }
+        if self.fixed_result_navigation() && !self.nearby.searching_direction() {
+            return self.fixed_result_input(x, y);
+        }
         let step = if MATCH_PREV.contains(x, y) {
             -1
         } else if MATCH_NEXT.contains(x, y) {
@@ -3912,6 +3915,7 @@ impl Reader {
             canvas.button(MATCH_PREV, "Cancel", false, false);
             return;
         }
+        if self.draw_fixed_result_navigation(canvas) { return; }
         if self.search_step(-1).is_some() {
             canvas.button(MATCH_PREV, "Previous", false, false);
         }

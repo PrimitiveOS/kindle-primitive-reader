@@ -1,12 +1,14 @@
 # Find a matching PDF or DjVu page
 
-Open **Find in book**, enter a word or phrase and tap **Find previous** or **Find next**. Reader starts with the page on screen. On a matching page it highlights the matching words and shows the physical page number. Use **Previous** or **Next** to reach another matching page in that direction. Return to the previous location to restore the page and its prior viewport. **Find all** continues to open the separate list of individual occurrences from the beginning of the document.
+Open **Find in book**, enter a word or phrase and tap **Previous** or **Next** to start searching on the visible page. **From start** scans forward from page one up to the page before the current page. **From end** scans backward from the last page down to the page after the current page. These searches stop at the current page. If there is no match on the requested side, Reader keeps the current view.
+
+On a matching page, the four footer arrows run the same searches. From left to right they jump to the first earlier match, find the previous matching page, find the next matching page and jump to the last later match. All matching words on that page are highlighted. Return to the previous location restores the original viewport across multiple searches. **Find all** displays individual occurrences from the beginning of the document. [KOReader search dialog and endpoint actions](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readersearch.lua#L545-L588) · [KOReader fixed-page search intervals](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/koptinterface.lua#L1613-L1649)
 
 For a single word, the spaces typed at the ends of the query select which part of a word to match. This also applies to **Find all** and searches repeated from history. For example, entering `sand` anywhere matches *quicksand* and *sandbar*. A space before `sand` matches the start of the word. A space after it matches the end. Spaces on both sides match the whole word. Punctuation belongs to the word box, so a whole-word search for `sand` skips *sand,* but still matches *Sand* when **Match case** is off. Each matching word box counts once, including a word with two occurrences. These switches apply to single-token queries. Multiword and multi-character CJK phrases keep their existing phrase search. [KOReader pattern preparation and word matches](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/koptinterface.lua#L1503-L1565)
 
-| Entering a search | Both matching words on the current page |
+| Entering a search | Last matching page |
 |---|---|
-| ![Search controls on a PDF with Find previous, Find next and Find all](screenshots/fixed-find-pages.png) | ![Search for beacon highlights two separate words on the same PDF page](screenshots/fixed-find-matches.png) |
+| ![PDF Find controls for the beginning, previous, next and end of the search](screenshots/fixed-find-pages.png) | ![The last matching page with its highlighted word and four navigation controls](screenshots/fixed-find-matches.png) |
 
 In the authored coastal guide, the query with a space on both ends selects only the standalone word. The same letters in *sandbar*, *quicksand* and *Sand,* remain visible for comparison. [Simulator screenshot](screenshots/fixed-find-whole-word.png)
 
@@ -42,7 +44,7 @@ The elapsed times include opening the book, rendering the target pages, checking
 
 ### Single-word boundaries on original pages
 
-An independent Poppler extraction, the Mac Reader, the ARM Reader on the Oasis 3 and the installed KOReader KOpt search all agreed on the eight counts below. The check compared **Find all** rectangles with **Find next** overlays on the same page, restored the starting viewport and replayed the original query from a fresh Reader session. When a constrained query had no match on the current page, cancelling the forward search preserved the viewport.
+An independent Poppler extraction, the Mac Reader, the ARM Reader on the Oasis 3 and the installed KOReader KOpt search all agreed on the eight counts below. The check compared **Find all** rectangles with **Next** overlays on the same page, restored the starting viewport and replayed the original query from a fresh Reader session. When a constrained query had no match on the current page, cancelling the forward search preserved the viewport.
 
 | Physical page | Anywhere | Space before | Space after | Spaces on both sides |
 |---|---:|---:|---:|---:|
@@ -50,3 +52,14 @@ An independent Poppler extraction, the Mac Reader, the ARM Reader on the Oasis 3
 | 542 of 1,066 | 1 | 1 | 0 | 0 |
 
 The Oasis check used the two original PDFs in Documents and an isolated Reader profile. The authored tests, both original checksum checks, retrieval of the KOpt counts and the Reader navigation checks completed in 216 seconds. Both source files retained their original checksums. The test removed its temporary state after collecting these results.
+
+### First and last matches on original pages
+
+A full independent Poppler extraction identified the first and last physical pages containing the query. Reader started inside each original PDF, used **From end**, tapped the first-match arrow, returned with the last-match arrow, then restored the original viewport. A repeated request for an earlier first match or a later last match preserved the displayed page and reported the exhausted direction.
+
+| Physical pages | Starting page | First matching page | Last matching page | Pages containing a match |
+|---:|---:|---:|---:|---:|
+| 229 | 115 | 2 | 229 | 225 |
+| 1,041 | 521 | 1 | 1,041 | 1,025 |
+| 1,066 | 542 | 3 | 1,066 | 673 |
+| 41 | 21 | 1 | 41 | 41 |

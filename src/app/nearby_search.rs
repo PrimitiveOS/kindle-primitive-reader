@@ -12,6 +12,56 @@ use std::sync::{
 const PREVIOUS: Rect = Rect::new(LIST_X, LIST_Y + 364, 555, 100);
 const NEXT_HERE: Rect = Rect::new(LIST_X + 579, LIST_Y + 364, 555, 100);
 
+#[derive(Clone, Copy)]
+enum FixedNavigation {
+    First,
+    Previous,
+    Next,
+    Last,
+}
+
+impl FixedNavigation {
+    const ITEMS: [Self; 4] = [Self::First, Self::Previous, Self::Next, Self::Last];
+
+    fn direction(self) -> SearchDirection {
+        match self {
+            Self::First | Self::Next => SearchDirection::Next,
+            Self::Previous | Self::Last => SearchDirection::Previous,
+        }
+    }
+
+    fn from_edge(self) -> bool {
+        matches!(self, Self::First | Self::Last)
+    }
+
+    fn entry(self) -> (Rect, &'static str) {
+        let label = match self {
+            Self::First => "From start",
+            Self::Previous => "Previous",
+            Self::Next => "Next",
+            Self::Last => "From end",
+        };
+        (
+            Rect::new(LIST_X + self as i32 * 294, PREVIOUS.y, 276, PREVIOUS.h),
+            label,
+        )
+    }
+
+    fn button(self) -> Rect {
+        Rect::new(412 + self as i32 * 104, MATCH_PREV.y, 96, MATCH_PREV.h)
+    }
+
+    fn icon(self) -> primitive_ui::Icon {
+        let stroke: &'static [&'static str] = match self {
+            Self::First => &["M5 5 V19", "M17 5 L10 12 L17 19"],
+            Self::Previous => &["M15 5 L8 12 L15 19"],
+            Self::Next => &["M9 5 L16 12 L9 19"],
+            Self::Last => &["M19 5 V19", "M7 5 L14 12 L7 19"],
+        };
+        primitive_ui::Icon { stroke, fill: &[] }
+    }
+}
+
 struct Request {
     engine: NearbySearch,
     path: PathBuf,
@@ -132,6 +182,7 @@ struct FixedPending {
     query: SearchQuery,
     direction: SearchDirection,
     next_page: Option<usize>,
+    stop_before: Option<usize>,
     continuing: bool,
     at: Instant,
 }
@@ -198,6 +249,12 @@ impl Reader {
         if !self.supports_nearby_search() {
             return None;
         }
+        if self.fixed.is_some() && !self.nearby.searching_direction() {
+            let step = FixedNavigation::ITEMS
+                .into_iter()
+                .find(|s| s.entry().0.contains(x, y))?;
+            return Some(self.fixed_navigation(step, false));
+        }
         let direction = if PREVIOUS.contains(x, y) {
             SearchDirection::Previous
         } else if NEXT_HERE.contains(x, y) {
@@ -221,15 +278,83 @@ impl Reader {
         }
         if self.nearby.searching_direction() {
             canvas.button(PREVIOUS, "Cancel search", false, false);
+        } else if self.fixed.is_some() {
+            for step in FixedNavigation::ITEMS {
+                let (rect, label) = step.entry();
+                canvas.button(rect, label, false, false);
+            }
         } else {
             canvas.button(PREVIOUS, "Find previous", false, false);
             canvas.button(NEXT_HERE, "Find next", false, false);
         }
     }
+    fn fixed_navigation(&mut self, step: FixedNavigation, continuing: bool) -> Change {
+        match self.begin_search_from(step.direction(), continuing, step.from_edge()) {
+            Ok(()) => Change::Partial,
+            Err(error) => self.report(error),
+        }
+    }
+
+    pub(super) fn fixed_result_navigation(&self) -> bool {
+        self.fixed.is_some() && self.nearby.result() && self.search_result.is_some()
+    }
+
+    pub(super) fn fixed_result_input(&mut self, x: f32, y: f32) -> Option<Change> {
+        let step = FixedNavigation::ITEMS
+            .into_iter()
+            .find(|s| s.button().contains(x, y))?;
+        Some(
+            if step.from_edge() || self.nearby.can_step(step.direction()) {
+                self.fixed_navigation(step, true)
+            } else {
+                Change::None
+            },
+        )
+    }
+
+    pub(super) fn draw_fixed_result_navigation(&self, canvas: &mut Canvas) -> bool {
+        if !self.fixed_result_navigation() {
+            return false;
+        }
+        for step in FixedNavigation::ITEMS {
+            let rect = step.button();
+            let active = step.from_edge() || self.nearby.can_step(step.direction());
+            let pressed = active && canvas.control_pressed(rect, false);
+            canvas.panel(rect, 12, 2, if pressed { 0 } else { 255 });
+            let ink = if pressed {
+                255
+            } else if active {
+                0
+            } else {
+                150
+            };
+            canvas.icon(
+                Rect::new(
+                    rect.x + (rect.w - 40) / 2,
+                    rect.y + (rect.h - 40) / 2,
+                    40,
+                    40,
+                ),
+                step.icon(),
+                ink,
+            );
+        }
+        true
+    }
+
     pub(super) fn begin_nearby(
         &mut self,
         direction: SearchDirection,
         continuing: bool,
+    ) -> Result<()> {
+        self.begin_search_from(direction, continuing, false)
+    }
+
+    fn begin_search_from(
+        &mut self,
+        direction: SearchDirection,
+        continuing: bool,
+        from_edge: bool,
     ) -> Result<()> {
         let query = if continuing {
             self.nearby.current.clone().ok_or("No current search")?
@@ -248,7 +373,15 @@ impl Reader {
             let search =
                 PdfSearch::with_options(&query.text, query.match_case, query.ignore_accents)?;
             let page = fixed.reading.page();
-            let next_page = if continuing {
+            let stop_before = from_edge.then_some(page);
+            let next_page = if from_edge {
+                // KOpt's origin -1 searches the opposite side of the current page.
+                let edge = match direction {
+                    SearchDirection::Next => 0,
+                    SearchDirection::Previous => fixed.reading.count() - 1,
+                };
+                (edge != page).then_some(edge)
+            } else if continuing {
                 adjacent_page(page, fixed.reading.count(), direction)
             } else {
                 Some(page)
@@ -265,6 +398,7 @@ impl Reader {
                 query,
                 direction,
                 next_page,
+                stop_before,
                 continuing,
                 at: Instant::now(),
             });
@@ -408,11 +542,16 @@ impl Reader {
         if let Some(mut pending) = self.nearby.fixed.take() {
             let fixed = self.fixed.as_ref().ok_or("No open document")?;
             let Some(page) = pending.next_page else {
-                self.nearby.end = Some(pending.direction);
+                let exhausted = match (pending.direction, pending.stop_before.is_some()) {
+                    (SearchDirection::Next, true) => SearchDirection::Previous,
+                    (SearchDirection::Previous, true) => SearchDirection::Next,
+                    (direction, false) => direction,
+                };
+                self.nearby.end = Some(exhausted);
                 let message = if pending.search.skipped > 0 {
                     "No match found. Some pages could not be searched"
                 } else {
-                    match pending.direction {
+                    match exhausted {
                         SearchDirection::Previous => "No earlier matching page",
                         SearchDirection::Next => "No later matching page",
                     }
@@ -430,7 +569,8 @@ impl Reader {
                 }
             };
             let Some(found) = found else {
-                pending.next_page = adjacent_page(page, fixed.reading.count(), pending.direction);
+                pending.next_page = adjacent_page(page, fixed.reading.count(), pending.direction)
+                    .filter(|next| Some(*next) != pending.stop_before);
                 pending.at = now + SEARCH_DELAY;
                 self.nearby.fixed = Some(pending);
                 return Ok(Change::None);
@@ -648,7 +788,10 @@ mod fixed_tests {
                 false,
             );
         }
-        assert_eq!(tap(&mut app, NEXT_HERE), Change::Partial);
+        assert_eq!(
+            tap(&mut app, FixedNavigation::Next.entry().0),
+            Change::Partial
+        );
         settle(&mut app);
         assert_eq!(app.screen, Screen::Fixed);
         let page = |app: &Reader| app.fixed.as_ref().unwrap().reading.page();
@@ -667,9 +810,9 @@ mod fixed_tests {
         let mut visited = vec![origin + 1];
         let mut word_boxes = vec![marks];
         for (button, expected) in [
-            (MATCH_NEXT, after),
-            (MATCH_PREV, origin),
-            (MATCH_PREV, before),
+            (FixedNavigation::Next.button(), after),
+            (FixedNavigation::Previous.button(), origin),
+            (FixedNavigation::Previous.button(), before),
         ] {
             assert_eq!(tap(&mut app, button), Change::Partial);
             settle(&mut app);
@@ -684,6 +827,101 @@ mod fixed_tests {
             let result = serde_json::json!({"visited":visited, "word_boxes":word_boxes,"viewport_restored":true});
             fs::write(file, serde_json::to_vec(&result).unwrap()).unwrap();
         }
+    }
+
+    #[test]
+    fn jumps_from_an_interior_fixed_page_to_the_first_and_last_matching_pages() {
+        let fixture = Fixture::new();
+        let external = std::env::var_os("READER_TEST_MATCH_ENDS_DOCUMENT").map(PathBuf::from);
+        let authored = external.is_none();
+        let path = external.unwrap_or_else(|| {
+            let path = fixture.root.join("Coastal field guide.pdf");
+            fs::write(&path, coastal_guide()).unwrap();
+            path
+        });
+        let term =
+            std::env::var("READER_TEST_MATCH_ENDS_QUERY").unwrap_or_else(|_| "beacon".into());
+        let expected =
+            std::env::var("READER_TEST_MATCH_ENDS_PAGES").unwrap_or_else(|_| "3,1,5,105,1".into());
+        let values: Vec<usize> = expected.split(',').map(|x| x.parse().unwrap()).collect();
+        let [origin, first, last, first_boxes, last_boxes] = values[..] else {
+            panic!("supply the reference pages and rectangle counts")
+        };
+        let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+        let mut app =
+            Reader::open(path.parent().unwrap(), &fixture.state, vec![font.clone()]).unwrap();
+        app.open_path(&path).unwrap();
+        app.fixed
+            .as_mut()
+            .unwrap()
+            .reading
+            .jump(origin - 1)
+            .unwrap();
+        let source = app.current_history_location().unwrap();
+        app.show(Screen::Find);
+        app.editor.text = term.chars().collect();
+        if authored {
+            capture_test_screen(
+                &app,
+                std::slice::from_ref(&font),
+                "READER_MATCH_ENDS_ENTRY",
+                false,
+            );
+        }
+        assert_eq!(
+            tap(&mut app, FixedNavigation::Last.entry().0),
+            Change::Partial
+        );
+        settle(&mut app);
+        let page = |app: &Reader| app.fixed.as_ref().unwrap().reading.page() + 1;
+        assert_eq!(page(&app), last);
+        assert_eq!(app.pdf_result_regions.len(), last_boxes);
+        let tail_view = app.current_history_location();
+        assert_eq!(
+            tap(&mut app, FixedNavigation::Last.button()),
+            Change::Partial
+        );
+        settle(&mut app);
+        assert_eq!(app.current_history_location(), tail_view);
+        assert_eq!(app.notice.as_deref(), Some("No later matching page"));
+        assert!(app.search_step(-1).is_some());
+        assert!(app.search_step(1).is_none());
+        assert_eq!(
+            tap(&mut app, FixedNavigation::First.button()),
+            Change::Partial
+        );
+        settle(&mut app);
+        assert_eq!(page(&app), first);
+        assert_eq!(app.pdf_result_regions.len(), first_boxes);
+        assert_eq!(
+            tap(&mut app, FixedNavigation::First.button()),
+            Change::Partial
+        );
+        settle(&mut app);
+        assert_eq!(page(&app), first);
+        assert_eq!(app.notice.as_deref(), Some("No earlier matching page"));
+        assert!(app.search_step(-1).is_none());
+        assert!(app.search_step(1).is_some());
+        assert_eq!(
+            tap(&mut app, FixedNavigation::Last.button()),
+            Change::Partial
+        );
+        settle(&mut app);
+        assert_eq!(page(&app), last);
+        assert_eq!(app.pdf_result_regions.len(), last_boxes);
+        if authored {
+            capture_test_screen(
+                &app,
+                std::slice::from_ref(&font),
+                "READER_MATCH_ENDS_FOOTER",
+                false,
+            );
+        }
+        app.activate(Action::ReturnToLocation).unwrap();
+        assert_eq!(app.current_history_location(), Some(source));
+        println!(
+            "fixed_match_ends pages={origin},{last},{first},{last} boxes={last_boxes},{first_boxes},{last_boxes} restored=true"
+        );
     }
 
     #[test]
@@ -731,7 +969,10 @@ mod fixed_tests {
             assert!(listed.iter().all(|hit| hit.bounds.len() == 1));
             app.show(Screen::Find);
             app.editor.text = pattern.chars().collect();
-            assert_eq!(tap(&mut app, NEXT_HERE), Change::Partial);
+            assert_eq!(
+                tap(&mut app, FixedNavigation::Next.entry().0),
+                Change::Partial
+            );
             app.poll_nearby(Instant::now()).unwrap();
             if expected == 0 {
                 assert!(app.nearby.searching_direction());
@@ -798,11 +1039,11 @@ mod fixed_tests {
         app.show(Screen::Find);
         app.find_ignore_accents = true;
         app.editor.text = "cafe".chars().collect();
-        tap(&mut app, NEXT_HERE);
+        tap(&mut app, FixedNavigation::Next.entry().0);
         settle(&mut app);
         assert_eq!(app.screen, Screen::Fixed);
         assert_eq!(app.pdf_result_regions, vec![(0, words.words[1].bounds)]);
-        tap(&mut app, MATCH_NEXT);
+        tap(&mut app, FixedNavigation::Next.button());
         settle(&mut app);
         assert_eq!(app.notice.as_deref(), Some("No later matching page"));
     }
@@ -833,10 +1074,10 @@ mod fixed_tests {
         assert!(original.scan_point.is_some());
         app.show(Screen::Find);
         app.editor.text = "beacon".chars().collect();
-        tap(&mut app, NEXT_HERE);
+        tap(&mut app, FixedNavigation::Next.entry().0);
         settle(&mut app);
         assert_eq!(app.pdf_result_regions.len(), 2);
-        tap(&mut app, MATCH_NEXT);
+        tap(&mut app, FixedNavigation::Next.button());
         settle(&mut app);
         app.activate(Action::ReturnToLocation).unwrap();
         let restored = app.current_history_location().unwrap();
@@ -859,16 +1100,16 @@ mod fixed_tests {
         app.open_path(&path).unwrap();
         app.show(Screen::Find);
         app.editor.text = "absent".chars().collect();
-        tap(&mut app, PREVIOUS);
+        tap(&mut app, FixedNavigation::Previous.entry().0);
         assert!(app.nearby.searching_direction());
         tap(&mut app, PREVIOUS);
         assert!(!app.nearby.searching_direction());
         assert_eq!(app.screen, Screen::Find);
         app.editor.text = "beacon".chars().collect();
-        tap(&mut app, PREVIOUS);
+        tap(&mut app, FixedNavigation::Previous.entry().0);
         settle(&mut app);
         assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 0);
-        tap(&mut app, MATCH_PREV);
+        tap(&mut app, FixedNavigation::Previous.button());
         settle(&mut app);
         assert_eq!(app.notice.as_deref(), Some("No earlier matching page"));
         assert!(app.search_step(-1).is_none());
