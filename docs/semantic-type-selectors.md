@@ -30,5 +30,14 @@ rejects display/visibility until the remaining consumer gates are resolved.
 Four authored ordinary tests cover selector matching and an actual rendered
 main-flow/popup comparison. A separate opt-in check reads the unchanged owner
 EPUB 034 and verifies its real semantic note rule through the shared font-free
-cascade. Compilation, original-file execution and combined rendered-spine
-acceptance are pending this source checkpoint's receipts.
+cascade. Source `8572f35` passes 833 library tests on Mac and the full GitHub
+workspace suite (833 library, 14 package and four system cases). All four focused
+ordinary tests pass. The unchanged owner EPUB check finds seven semantic notes
+and 1,175 intentionally omitted source bytes through its actual publisher rule.
+This original check validates the computed rule, while the authored case paints
+the actual reading and popup paths. Full original034 rendered-spine acceptance
+after this selector change remains a separate combined replay gate.
+
+Private source/binary hashes and logs are retained at
+`build/parity-review/semantic-type-evidence/8572f35/proof.json`. No Kindle access,
+package replacement or Store release occurs in this source slice.
