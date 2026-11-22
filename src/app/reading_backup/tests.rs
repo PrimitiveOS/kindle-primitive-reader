@@ -456,6 +456,7 @@ fn complete_backup_original_document_marks_and_state_round_trip_without_changing
 fn backup_v2_gates_boundary_library_before_any_component_write_and_preserves_typed_bookmarks() {
     let fixture = Fixture::new();
     let (mut app, id) = source(&fixture);
+    app.open_path(&fixture.book).unwrap();
     let reading = &app.active.as_ref().unwrap().reading;
     let owner = reading.probe.source.blocks[0].element;
     let anchor = reading.probe.boundary_anchor(owner).unwrap();
@@ -499,6 +500,7 @@ fn forged_or_stale_persisted_boundaries_never_reopen_unrelated_fallback_text() {
     for corrupt in [0, 1, 2] {
         let fixture = Fixture::new();
         let (mut app, id) = source(&fixture);
+        app.open_path(&fixture.book).unwrap();
         let active = app.active.as_ref().unwrap();
         let owner = active.reading.probe.source.blocks[0].element;
         let mut anchor = active.reading.probe.boundary_anchor(owner).unwrap();

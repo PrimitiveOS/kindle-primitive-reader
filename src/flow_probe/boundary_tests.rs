@@ -20,6 +20,19 @@ fn open(html: &str, publisher: bool, font: f32) -> Probe {
     .unwrap()
 }
 
+fn capture_if_requested(probe: &mut Probe, page: usize, name: &str) {
+    let Some(path) = std::env::var_os("READER_BOUNDARY_CAPTURE_DIR") else {
+        return;
+    };
+    let path = std::path::PathBuf::from(path);
+    std::fs::create_dir_all(&path).unwrap();
+    let pixels = probe.capture(page).unwrap();
+    image::GrayImage::from_raw(probe.settings.width, probe.settings.height, pixels)
+        .unwrap()
+        .save(path.join(format!("{name}.png")))
+        .unwrap();
+}
+
 #[test]
 fn legacy_anchor_json_is_unchanged_and_boundary_payloads_are_typed() {
     for raw in [
@@ -120,6 +133,8 @@ fn padded_bordered_generated_boxes_render_and_later_pages_resume_without_aliasin
     let pixels = probe.capture(0).unwrap();
     assert!(pixels.iter().any(|&p| p == 221));
     assert!(pixels.iter().any(|&p| p == 0));
+    capture_if_requested(&mut probe, 0, "generated-box-page1");
+    capture_if_requested(&mut probe, 1, "generated-box-page2");
     let resume = probe.page_anchor(1).unwrap();
     assert_eq!(
         resume.boundary.as_ref().unwrap().origin,
@@ -149,6 +164,78 @@ fn padded_bordered_generated_boxes_render_and_later_pages_resume_without_aliasin
 }
 
 #[test]
+fn generated_geometry_between_viewport_and_next_text_is_never_skipped_by_pagination() {
+    let lines = [
+        crate::Line {
+            block: 1,
+            bytes: 0..1,
+            spans: None,
+            top: 0.,
+            bottom: 100.,
+            missing_glyphs: 0,
+        },
+        crate::Line {
+            block: 2,
+            bytes: 0..1,
+            spans: None,
+            top: 180.,
+            bottom: 190.,
+            missing_glyphs: 0,
+        },
+    ];
+    let legacy = crate::Pagination::with_breaks(&lines, 100., 190., &[]).unwrap();
+    assert_eq!(legacy.bounds, [0., 180., 190.]);
+    for area in [90. ..170., 100. ..170., 110. ..170.] {
+        let pages =
+            crate::Pagination::with_geometry(&lines, 100., 190., &[], &[area.clone()]).unwrap();
+        assert_eq!(pages.bounds, [0., 100., 190.], "{area:?}");
+        for y in [110., 169.] {
+            let range = pages.range(pages.page(y)).unwrap();
+            assert!(range.contains(&y));
+            assert!(y - range.start < 100.);
+        }
+    }
+}
+
+#[test]
+fn visible_empty_inline_owner_before_removed_prefix_keeps_its_own_projected_caret() {
+    let html = "<html><body><p>Before.</p><p id='parent'><span id='point'/><span style='display:none'>REMOVED PREFIX</span>Retained text.</p><p id='hidden' style='display:none'><span id='hidden-point'/>Hidden paragraph.</p><p>After.</p></body></html>";
+    let mut probe = open(html, true, 24.);
+    let point = probe.fragment("point").unwrap();
+    assert!(point.boundary.is_some());
+    assert_eq!(
+        point.boundary.as_ref().unwrap().origin,
+        html.find("<span id='point'").unwrap()
+    );
+    assert_eq!(
+        probe.page_for(&point),
+        probe.page_for(&probe.matches("Retained")[0])
+    );
+    assert_eq!(
+        probe.source_presentation(&point),
+        Some(SourcePresentation::Normal)
+    );
+    assert!(probe.fragment("hidden-point").is_none());
+    let stored: Anchor = serde_json::from_slice(&serde_json::to_vec(&point).unwrap()).unwrap();
+    assert!(open(html, true, 32.).page_for(&stored).is_some());
+    assert!(open(html, false, 24.).page_for(&stored).is_some());
+    assert!(
+        probe
+            .select_range(&point, &probe.matches("Retained")[0])
+            .is_none()
+    );
+    assert_eq!(
+        probe.source.fragments,
+        open(html, false, 24.).source.fragments
+    );
+    assert_eq!(
+        probe.source.revision,
+        open(html, false, 24.).source.revision
+    );
+    capture_if_requested(&mut probe, 0, "inline-caret-before-css-prefix");
+}
+
+#[test]
 fn nested_empty_boxes_keep_real_padding_order_and_visibility_only_changes_paint() {
     let html = "<html><body><div id='outer' style='padding:20px;background:#ddd'><div id='inner' style='padding:30px;border:2px solid black;visibility:hidden'><p style='display:none'>SOURCE</p></div></div><p>After.</p></body></html>";
     let mut probe = open(html, true, 24.);
@@ -164,6 +251,7 @@ fn nested_empty_boxes_keep_real_padding_order_and_visibility_only_changes_paint(
     assert!(pixels.iter().any(|&p| p == 221));
     assert!(probe.source.fragments.contains_key("inner"));
     assert!(probe.matches("SOURCE").is_empty());
+    capture_if_requested(&mut probe, 0, "nested-empty-boxes-visibility");
 }
 
 #[test]

@@ -242,7 +242,7 @@ impl Reading {
         let mut probe = config.chapter(chapter)?;
         if let Some(anchor) = anchor.filter(|anchor| anchor.boundary.is_some()) {
             if probe.boundary_owner(anchor).is_none() || probe.page_for(anchor).is_none() {
-                return Err("The saved DOM boundary is unavailable in this source or layout".into());
+                return Err("This saved location is unavailable in the current document view".into());
             }
         }
         let custom_flows = hidden_flows::Resolved::new(&config, &probe, chapter)?;

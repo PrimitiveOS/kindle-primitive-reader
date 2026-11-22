@@ -36,6 +36,7 @@ struct EmptyBox {
 pub(super) struct GeneratedBoxes {
     boxes: Vec<EmptyBox>,
     slots: BTreeMap<usize, Vec<usize>>,
+    inline_points: Vec<(usize, usize)>,
     pub excluded: Vec<bool>,
     pub limitations: Vec<String>,
 }
@@ -105,6 +106,7 @@ impl GeneratedBoxes {
         let mut result = Self {
             boxes: Vec::new(),
             slots: BTreeMap::new(),
+            inline_points: Vec::new(),
             excluded: vec![false; source.blocks.len()],
             limitations: Vec::new(),
         };
@@ -199,6 +201,7 @@ impl GeneratedBoxes {
                         && source.elements[block.element].source_bytes.end
                             > element.source_bytes.start
                     {
+                        result.inline_points.push((owner, n - 1));
                         continue;
                     }
                 }
@@ -251,6 +254,66 @@ impl GeneratedBoxes {
             result.limitations.push("Some empty generated boxes require unsupported table/list/reclassified or source-empty geometry; their DOM targets remain eligible but unresolved".into());
         }
         Ok(result)
+    }
+
+    /// A visible empty inline owner can precede CSS-removed text inside a
+    /// retained paragraph. Its DOM caret remains eligible even when the legacy
+    /// canonical caret falls in that removed prefix. Resolve only in that same
+    /// immutable paragraph; never manufacture source text or a neighbouring
+    /// block target. A wholly omitted paragraph has no layout and stays absent.
+    pub fn inline_boundaries(
+        &self,
+        source: &Source,
+        flow: &ChapterFlow,
+        paragraphs: &[Paragraph],
+        boundaries: &mut BTreeMap<usize, BoundaryGeometry>,
+    ) -> Result<()> {
+        if self.inline_points.is_empty() {
+            return Ok(());
+        }
+        let paragraphs: std::collections::HashMap<_, _> = paragraphs
+            .iter()
+            .map(|paragraph| (paragraph.key, paragraph))
+            .collect();
+        for &(owner, index) in &self.inline_points {
+            let block = &source.blocks[index];
+            let Some((key, offset)) = source.boundary_position(owner) else {
+                continue;
+            };
+            if key != block.key {
+                continue;
+            }
+            let Some(paragraph) = paragraphs.get(&key) else {
+                continue;
+            };
+            let view = flow
+                .view(source, block)
+                .map_err(|error| error.to_string())?;
+            let Some(caret) = view.project_nearest(offset, crate::flow_projection::Affinity::After)
+            else {
+                continue;
+            };
+            let Some(line) = paragraph.layout.lines().find(|line| {
+                let range = line.text_range();
+                range.contains(&caret) || caret == view.text().len() && range.end == caret
+            }) else {
+                continue;
+            };
+            let top = paragraph.y + line.metrics().content_block_min_coord;
+            let origin = source.elements[owner].source_bytes.start;
+            boundaries.insert(
+                origin,
+                BoundaryGeometry {
+                    origin,
+                    block: key,
+                    offset,
+                    top,
+                    bottom: top,
+                    generated_only: false,
+                },
+            );
+        }
+        Ok(())
     }
 
     pub fn has_slot(&self, slot: usize) -> bool {
