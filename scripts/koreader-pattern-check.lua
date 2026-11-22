@@ -23,6 +23,15 @@ assert(view:loadDocument(document, false))
 view:renderDocument()
 if regex then assert(view:checkRegex(pattern) == 0) end
 local hits = view:findAllText(pattern, mode == "insensitive", regex, limit, true, 0, regex and 1 or (search_type == "accents" and 511 or 255)) or {}
+if arg[7] == "--context" then
+    local hit = assert(hits[limit])
+    local context = dofile(assert(arg[0]:match("^(.*/)")) .. "koreader-result-context.lua")
+    local path = context(view:getToc(), hit.start, view)
+    local page = view:getPageFromXPointer(hit.start)
+    view:close()
+    print("result-context " .. require("json").encode({page=page, labels=path, emphasized_word=require("ffi/sha2").md5((hit.matched_word_prefix or "") .. hit.matched_text .. (hit.matched_word_suffix or ""))}))
+    return
+end
 local a, b, characters = 1, 0, 0
 local function add(byte) a = (a+byte)%65521; b=(b+a)%65521 end
 for i=1,math.min(limit,#hits) do

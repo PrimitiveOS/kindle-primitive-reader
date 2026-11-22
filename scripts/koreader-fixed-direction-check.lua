@@ -16,6 +16,7 @@ local kopt = factory(require("util"), require("ffi/utf8proc"))
 local pdf = require("ffi/mupdf").openDocument(path)
 local doc = {configurable={text_wrap=0}}
 local page_sizes = {}
+function doc:getPageFlow() return 0 end -- Base Document flow for a fixed PDF.
 function doc:getPageCount() return pdf:getPages() end
 function doc:getPageTextBoxes(n)
     local p = pdf:openPage(n)
@@ -75,6 +76,15 @@ if arg[4] == "--find-all" then
     end
     pdf:close()
     print("fixed-all " .. require("json").encode({stock=counts, visible=visible}))
+    return
+end
+if arg[4] == "--context" then
+    local results = assert(kopt:findAllText(doc, query, true, 5, current))
+    local hit = assert(results[current])
+    local context = dofile(assert(arg[0]:match("^(.*/)")) .. "koreader-result-context.lua")
+    local path = context(pdf:getToc(), hit.start, doc)
+    pdf:close()
+    print("result-context " .. require("json").encode({page=hit.start, labels=path, emphasized_word=require("ffi/sha2").md5(hit.matched_text)}))
     return
 end
 if arg[4] == "--unicode" then
