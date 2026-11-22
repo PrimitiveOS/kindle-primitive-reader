@@ -95,7 +95,7 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         Action::Flow(_) | Action::Show(Screen::HiddenFlows) => BOOK,
         Action::Show(Screen::Links) | Action::Wikipedia => LINK,
         Action::TranslatePage => TEXT,
-        Action::ReadAlarm | Action::Show(Screen::OnlineHistory) => CLOCK,
+        Action::ReadAlarm | Action::Show(Screen::OnlineHistory) | Action::ReadingHistory(_) => CLOCK,
         Action::SaveBookData => SAVE,
         Action::HighlightStyle | Action::Show(Screen::Highlights) | Action::ExportHighlights(_) => {
             HIGHLIGHT
