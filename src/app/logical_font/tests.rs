@@ -427,3 +427,63 @@ fn unfit_imported_layout_requires_explicit_reset_backs_up_choices_and_rolls_back
     assert!(reopened.logical_recovery.is_none());
     assert_eq!(fs::read(path).unwrap(), source);
 }
+
+#[test]
+fn recovering_a_different_book_resets_navigation_and_restores_that_books_numbering_and_menus() {
+    let (fixture, mut app, a) = setup();
+    let b = fixture.root.join("Recovered book.epub");
+    fs::copy(crate::test_fixture("field-notes-epub3.epub"), &b).unwrap();
+    app.open_path(&b).unwrap();
+    let id = app.active.as_ref().unwrap().id;
+    let saved = position(&app.active.as_ref().unwrap().reading);
+    app.add_bookmark().unwrap();
+    let marks = serde_json::to_value(&app.library.state(id).unwrap().bookmarks).unwrap();
+    let mut book = Book::open(&b).unwrap();
+    let mut map = crate::synthetic_pages::CharacterPages::new(book.revision(), 500).unwrap();
+    while !map.step(&mut book).unwrap() {}
+    fs::create_dir_all(&app.numbering_directory).unwrap();
+    map.save(&app.numbering_path(id)).unwrap();
+    let state = app.library.state_mut(id).unwrap();
+    state.character_page_stride = Some(500);
+    state.menus.bottom = Some(BarPanel::TextMargins);
+    state.menus.top = Some(TopGroup::Navigation);
+    state.preferences = BookPreferences {
+        logical_font_size: Some(255.),
+        line_height: Some(3.),
+        margin_top: Some(350),
+        margin_bottom: Some(350),
+        ..Default::default()
+    };
+    app.save().unwrap();
+    app.open_path(&a).unwrap();
+    let previous = position(&app.active.as_ref().unwrap().reading);
+    app.back.push(previous.clone().into());
+    app.forward.push(previous.into());
+    app.auto_turn
+        .configure(Some(Duration::from_secs(10)), Instant::now());
+    app.open_path(&b).unwrap();
+    assert!(app.logical_recovery.is_some());
+    app.reset_unopened_logical_layout().unwrap();
+    assert_eq!(app.active.as_ref().unwrap().id, id);
+    assert!(app.back.is_empty() && app.forward.is_empty());
+    assert_eq!(app.auto_turn.interval(), None);
+    assert_eq!(
+        app.active
+            .as_ref()
+            .unwrap()
+            .numbering
+            .as_ref()
+            .unwrap()
+            .stride,
+        500
+    );
+    assert_eq!(app.last_text_panel, BarPanel::TextMargins);
+    assert_eq!(
+        position(&app.active.as_ref().unwrap().reading).anchor,
+        saved.anchor
+    );
+    assert_eq!(
+        serde_json::to_value(&app.library.state(id).unwrap().bookmarks).unwrap(),
+        marks
+    );
+}
