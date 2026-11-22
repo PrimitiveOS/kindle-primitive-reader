@@ -1,117 +1,127 @@
 # Logical document font sizes
 
-This source slice implements the pinned KOReader document size contract while
-retaining the original physical-pixel mode. It is not a whole-interface Screen
-DPI setting or a new footnote/dictionary font preference.
+The development candidate supports **Text › Type** presets and **More** for
+logical sizes 12–255. Tap −/+ for half steps, hold for four units, or type a
+decimal such as 22.25 with the shared keyboard. Existing books keep their saved
+pixel sizes until you explicitly choose a logical value.
 
-## Source contract
+| Type panel | Decimal picker |
+| --- | --- |
+| <img src="screenshots/logical-font-size.png" width="360" alt="Eleven font presets and fine controls over the current page"> | <img src="screenshots/logical-font-picker-dark.png" width="360" alt="Logical font decimal entry with shared keyboard in dark mode"> |
 
-The pinned KOReader tree is `9192014d8bd82a91dc1012473be0f238dedfdb54` and
-CREngine is `b32a88ffbbf505cf2ea5208c1a49002d70d3609f`.
-`readerfont.lua:203–210`, `creoptions.lua:416–454`, and the number picker accept
-finite logical sizes 12–255: eleven presets, half-unit taps, four-unit holds and
-arbitrary typed decimals. Half steps do not quantize typed input.
+## Pinned reference contract
+
+The reference is KOReader `9192014d8bd82a91dc1012473be0f238dedfdb54` with CREngine
+`b32a88ffbbf505cf2ea5208c1a49002d70d3609f`. Its font menu uses eleven presets,
+±0.5 taps, four-unit holds and a 12–255 picker. Half steps do not quantize typed
+decimals. [Font handler](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerfont.lua#L203-L210) · [Controls](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/creoptions.lua#L416-L454)
 
 `Screen:scaleBySize` uses the full screen's shorter edge divided by 600. With an
-explicit Screen DPI override it averages this with override/160; ordinary
-physical device DPI does not enter the Auto formula. The immutable scale context
+explicit Screen DPI override it averages that factor with override/160. Ordinary
+physical device DPI does not enter the Auto formula. The immutable font context
 is captured before facing-page width, footer overlap and content-DPI changes.
-This slice uses Auto in the application; it does not expose a partial global
-Screen DPI control.
+This application uses Auto; it does not expose a partial global Screen DPI
+control. [Pinned Screen function](https://github.com/koreader/koreader-base/blob/6e4bc81af4e04f78d81677a323a780a71b29702a/ffi/framebuffer.lua#L414-L426)
 
-`base/cre.cpp:1849–1862`, `lvdocview.cpp:3861–3882`, and
-`lvrend.cpp:2398–2419` impose 12–340 px for the document base and 8–340 px for
-computed fonts. On a 1264 px short edge, logical22 is47 px. Logical255 requests
-538 px but renders340 px in pinned CRE. The same plateau is intentional here.
-Author absolute font-size interpretation remains the existing limited parser;
-this change does not establish a complete CRE CSS font cascade.
+Pinned CRE clamps the document base to 12–340 physical pixels and every computed
+font to 8–340 pixels. On the Oasis's 1264 px short edge, logical 22 is 47 px.
+Logical 255 requests 538 px but renders 340 px. The same plateau is intentional
+here. The panel prints one decimal, while the editor and saved setting retain
+the entered value. Author absolute font-size interpretation remains the
+existing limited parser; this does not establish a complete CRE CSS cascade.
 
-The committed vector fixture contains 7,380 outputs of the pinned Screen
-function (15 screen/override contexts × 487 half steps and five typed decimals).
-The effective-size column applies the separately inspected CRE clamp. It is
-source-derived evidence, not 7,380 executed CRE renderings.
+The committed [vector fixture](../tests/fixtures/font-scale/pinned-screen-vectors.json)
+contains 7,380 outputs from the actual pinned Screen function: 15 contexts ×
+487 half steps and five additional decimals. Its effective-size column applies
+the separately inspected CRE clamp. These are not 7,380 executed CRE renderings.
 
-## Saved settings and application
+## Saved settings and atomic apply
 
-`logical_font_size: null/missing` stays the legacy pixel mode. Missing values are
-omitted on serialization, preserving old serialized preference shape and the
-existing12–144 px validation,12–192 px shaping and small-mask paint path.
-Existing raw pixel values remain stored while a logical choice is active.
-Unrelated text adjustments and saved profiles retain that raw value rather than
-mistaking a resolved47/340 px value for a logical size.
+A missing `logical_font_size` remains legacy pixel mode. Missing values are
+omitted on serialization, preserving the old preference shape and its 12–144 px
+validation, 12–192 px shaping and compact-mask painting. Inactive pixel values
+remain stored while a logical choice is active. Unrelated adjustments and saved
+profiles retain that value instead of mistaking resolved pixels for logical
+units.
 
-A new, unseen reflowable book without a saved default template explicitly starts
-at logical22. Existing books and templates/profiles missing the field remain
-legacy. Profiles, defaults, library writes and typed backup validation reject
-nonfinite or out-of-range logical values before JSON can turn them into null.
+An unseen reflowable book without a saved default template explicitly starts at
+logical 22. Existing books and templates/profiles without the field remain
+legacy. Library, profile, default and typed backup writes reject nonfinite or
+out-of-range logical values before JSON can turn them into null.
 
-The shared numeric editor prepares a draft, honors the saved logical default or
-22, and restores the Type panel on Cancel. Draft/default changes do not convert a
-legacy book. Apply resolves a candidate at the source anchor, validates the
-edition before and after preparation, paints the candidate, writes state
-atomically, and swaps the live page only after success. Font, layout or save
-failure keeps the old page, position, raw preferences and draft.
+The shared numeric editor prepares a draft and uses a saved logical default or
+22. Cancel restores the Type panel without converting a legacy book. Apply
+resolves and paints a candidate at the source anchor, checks edition identity
+before and after preparation, saves atomically, then swaps the live page.
+Layout or save failure retains the frame, position, preferences and draft.
 
 ## Large glyphs and geometry
 
-Logical mode clamps actual computed text/list/image-em sizes coherently to
-8–340 px, retaining the raw inheritance scale for nested percentages. Legacy
-mode retains its existing clamps. Logical vertical columns reserve the largest
-retained effective font rather than overlapping large runs.
+Logical mode clamps actual text, list and image-em fonts to 8–340 px while
+retaining raw inheritance scales for nested percentages. Vertical columns use
+the font sizes of actual projected text/ruby owners, so a large text-free
+ancestor cannot consume columns. Legacy rendering keeps its original clamps.
 
-The existing compact glyph cache remains bounded at2 MiB. A logical-mode glyph
-which does not fit its300 px/64 KiB mask receives a visible256×256 tile fallback.
-Contours are flattened with explicit segment/depth/coordinate bounds, clipped
-as closed polygons before the small rasterizer sees them, and retain winding
-holes. Only viewport-intersecting tiles are drawn. Signed stroke masks use the
-same compositing contract; strength is bounded at54 px, covering the supported
-340 px × weight1–1000 domain with26.6 rounding. Nonstandard font data outside
-these bounds produces an explicit paint error rather than an empty valid page.
-Large tiles are transient; they cannot grow the retained cache. Curve flatness
-also requires controls to project within the endpoint chord, so a collinear
-turn-back retains its true extremum before signed stroke expansion.
+The compact glyph cache stays bounded at 2 MiB. A logical glyph that exceeds its
+300 px/64 KiB mask uses visible 256×256 tiles. Closed contours are flattened with
+explicit segment, depth and coordinate bounds, then clipped before rasterizing.
+Holes retain winding. Flatness measures distance to the finite endpoint chord,
+so collinear turn-back extrema survive signed stroke expansion.
 
-A large font can exceed the old chapter height even when its text/line counts
-remain modest. Logical mode permits at most16,000,000 px of chapter extent,
-below2^24 so all whole-pixel f32 coordinates remain representable. The legacy
-2,000,000 px limit stays unchanged. The existing512 KiB text,30,000 line,
-90,000 vertical glyph,12,000 column and image limits continue to bound retained
-layout allocations; the higher extent does not allocate a chapter-sized bitmap.
-Page bounds remain bounded by the finite viewport/extent, and each captured
-frame remains one viewport. Parley, vertical layout, table fit preflight and
-final pagination use the same mode-specific extent limit.
+Signed synthesis is bounded at 54 px, covering the supported 340 px × weight
+1–1000 domain with 26.6 rounding. Each clip scratch polygon is capped at 131,072
+vertices, and one glyph's visible clipping shares a 16,777,216-visit budget.
+Each tile uses 262,160 bytes of raster coverage plus at most two 64 KiB alpha
+buffers, separately from the retained cache. Stroke construction first flattens
+to closed polylines and preflights a conservative
+8×(vertices+contours)+8 ≤ 65,536 element bound before the pinned line-only Miter
+builder. It cannot invoke curve-stroke subdivision or round caps. Unsupported
+font data fails explicitly instead of becoming an empty valid page.
 
-Large tiles are transient; they cannot grow the retained cache. Each clipped
-scratch polygon is capped at131,072 vertices before pushing, and one glyph's
-visible clipping shares a16,777,216-vertex visit budget. The256² rasterizer's
-coverage scratch is262,160 bytes of f32 in addition to at most two64 KiB alpha
-buffers; these are separate from the retained2 MiB cache. Stroke construction
-first flattens to closed polylines and preflights a conservative
-8×(vertices+contours)+8≤65,536 output bound before calling the pinned line-only
-Miter builder. It cannot invoke curve-stroke subdivision or round caps.
+Logical chapter extent is capped at 16,000,000 px, below 2^24 so every whole-pixel
+f32 coordinate remains representable. Legacy extent stays capped at 2,000,000 px.
+Existing 512 KiB text, 30,000 line, 90,000 vertical glyph, 12,000 column and image
+bounds still limit retained allocations. No chapter-sized bitmap is allocated;
+frames remain one viewport. Parley, vertical layout, table preflight and final
+pagination use the same mode-specific extent bound.
 
-A valid imported logical layout that cannot fit this viewport offers a visible
-Reset text confirmation. Cancel leaves it intact. Reset prepares and paints a
-known device layout at the original source anchor, atomically archives the old
-choices under Reader data/layout-recovery, then saves before swapping the live
-page. Archive or state-save failure keeps the old saved preferences and page.
-It does not reapply a potentially unfit saved global template, and it does not
-catch parser, DRM, missing-file or invalid-anchor failures as layout recovery.
-The recovery archive contains only edition identity and typography preferences;
-normal backup/profile/default validation preserves the active logical value.
+## Recovering an imported layout
 
-Footnotes still use the existing compact18–64 px choice from the retained pixel baseline, independently of the logical body setting. Stock sends its
-pre-CRE-clamp Screen-scaled request to a separate MuPDF popup and has independent
-absolute/relative preferences; that is a separate remaining scope. Dictionary
-text sizing is also independent.
+If an otherwise readable source has saved logical geometry that cannot fit the
+screen, Reader offers [Reset text](screenshots/font-layout-recovery.png). Cancel
+keeps the settings. Reset prepares a fitting device baseline at the canonical
+source anchor, archives the old choices under Reader data/layout-recovery, then
+saves before swapping. Archive or state-save failure retains the old profile and
+page. The reset avoids a potentially unfit global template, preserves notes and
+restores that book's numbering/menu state while clearing the previous book's
+navigation and timer. CSS-hidden source focus follows ordinary automatic
+restoration; invalid source points and parser/DRM/font errors do not become
+font-fit recovery.
 
-## Verification status
+## Verification and remaining gates
 
-Source and authored tests are prepared. Remote CI, Mac execution, full screenshot
-inspection, original EPUB/AZW3/MOBI workflows, native compilation and physical
-Kindle acceptance are pending. No local Cargo or device operation was run to
-prepare this source slice. The tests cover the vector oracle, exact legacy
-pixel/source behavior, large-font ink, effective size/selection, draft/cancel,
-rollback, edition guards, profiles/defaults/backups, all487 live half-step sizes,
-and eight compact/large/light/dark control captures. This is not yet release
-acceptance.
+Exact source `5afb8029681e367ca1adcb712f40d804dc1404b6` passed
+[Linux CI](https://github.com/PrimitiveOS/kindle-primitive-reader/actions/runs/45023402699)
+and the Mac suite: **888 library + 14 package + 4 layout tests**, with 66 opt-in
+cases ignored. A focused rerun passed 18 font and 6 painting cases. This includes
+all 7,380 stock vectors, all 487 live half-step sizes, actual decimal keyboard
+input, legacy pixel/anchor identity, large-glyph ink inside hit rectangles,
+source→pixel→source selection, curve/tile seams and clipping/stroke budgets,
+profile/default/backup round trips, rollback and recovery.
+
+Ten 1264×1680 authored frames were inspected individually: compact/large Type
+and picker controls in light/dark mode plus both recovery themes. Independent
+OCR recognized all 44 preset labels, complete help/default captions and recovery
+copy. The pictures above come from that exact tested source.
+
+Three unchanged owner-provided EPUB, AZW3 and MOBI files passed normal Reader
+opening, logical sizes 12/22.25/80/160/255, source selections and resume. The AZW3
+first exposed the old 2-million-pixel cap; the corrected bounded implementation
+and a 5,200-line authored regression reach the last passage above that height.
+
+Large-font CJK/RTL original-file acceptance, final aggregate 48-edition replay,
+native compilation/packaging and physical Kindle checks remain pending. No
+Kindle operation, release tag or Store publication occurred for this slice.
+Whole-interface Screen DPI scaling and independent popup size preferences are
+outside it. Footnotes retain the existing compact 18–64 px pixel baseline;
+stock's separate MuPDF popup and dictionary sizing require their own gates.

@@ -42,6 +42,8 @@ Save separate text and page settings for new books under **Settings › Document
 
 **Text › Spacing › Word expansion** redistributes part of the space on a justified line into the words. [Word expansion](docs/word-expansion.md)
 
+The development candidate offers **Text › Type** presets and a decimal **More** picker for logical sizes 12–255. Existing books retain their saved pixel sizes. [Font controls, screenshots and rendering limits](docs/logical-font-size.md)
+
 At the end of a book, Reader can show actions, mark the book as finished, open the next readable file or return to Library. [End-of-book actions](docs/document-end.md)
 
 Choose when Reader saves your position, bookmarks and notes, or save them immediately from the reading tools. [Save reading data](docs/metadata-save.md)
