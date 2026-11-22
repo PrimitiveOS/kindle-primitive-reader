@@ -1,6 +1,6 @@
 # Reader requirements
 
-Reader is a standalone, Kindle-first PrimitiveOS application. Its goal is to cover the reading workflows people use in KOReader, with an original interface built for e-ink and a Rust application core. Each requirement below defines behavior to verify. The stages describe planned scope and carry no implementation, device compatibility, or publication claims. See [architecture](architecture.md) and the [execution plan](execution-plan.md).
+Reader is a standalone, Kindle-first PrimitiveOS application. Its goal is to match KOReader's core Kindle reading workflows with an original e-ink interface and a Rust application core. This means opening and rendering supported documents, reading navigation and layout, search and lookup, annotations, reading progress/data, accessibility, and offline scan workflows. Each requirement below defines behavior to verify. The stages describe planned scope and carry no implementation, device compatibility, or publication claims. See [architecture](architecture.md), the [scope and completion checklist](reading-parity-plan.md#scope-and-completion-checklist), and the [execution plan](execution-plan.md).
 
 ## Product scope
 
@@ -12,6 +12,12 @@ Reader is a standalone, Kindle-first PrimitiveOS application. Its goal is to cov
 - Do not build a general extension/plugin runtime, plugin manager, or third-party extension catalogue. File extensions are still used to identify supported reading formats.
 - Terminal and shell access, RSS/news downloading, HTTP inspectors or servers, patch management, and unrelated developer utilities are out of scope. Wi-Fi, battery, clock, sleep, wallpaper, and other Kindle-wide controls remain with Launcher.
 - Prioritize document opening and rendering, reading navigation and layout, search and lookup, bookmarks, notes and highlights, reading progress, offline scan tools, and accessibility. OPDS/calibre acquisition and remote progress sync are optional reading-adjacent work; they do not block the core Reader release.
+
+**Completion rule:** only the core reading requirements and explicitly optional
+reading-adjacent requirements below are tracked as Reader work. An excluded
+KOReader module or menu item is closed scope, not an open gap or a completion
+blocker. Source inventories and captured menus are evidence for comparison, not
+a requirement to reproduce every listed control.
 
 ## P0 · EPUB feasibility
 
@@ -61,7 +67,7 @@ EPUB interoperability includes books with a correctly identified root `mimetype`
 Reader can open an EPUB with a small zero-filled suffix after its ZIP footer. If the ZIP footer points to a displaced directory and member offsets have shifted, Reader checks the surviving directory against each local header and reconstructs offsets in memory. A missing reflowable chapter displays an explanation and can be turned past. The original spine indexes and progress weights are preserved. Opening a resource still enforces the extraction limit, exact length and CRC. The Library fingerprints the original bytes so repaired books retain reading positions across sessions. KOReader’s engine also retries with local headers when its ordinary archive index fails. [KOReader archive fallback](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstream.cpp#L2626-L2680) · [Reader recovery tests](../tests/epub_package.rs)
 
 
-## P3 · Advanced reading, formats and import
+## P3 · Advanced reading, formats and reading-data import
 
 Expand advanced reading and migration workflows. Use capability-by-capability verification as the basis for parity claims.
 

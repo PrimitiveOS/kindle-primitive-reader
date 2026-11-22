@@ -8,8 +8,10 @@ in the [architecture](architecture.md).
 
 The [EPUB feasibility results](epub-probe-results.md) record the completed
 desktop and Oasis 3 experiments and the remaining acceptance checks.
-The [reading parity plan](reading-parity-plan.md) breaks out each reading
-workflow and format, with prerequisites and side-by-side acceptance checks.
+The [reading parity plan](reading-parity-plan.md) breaks out each in-scope
+reading workflow and format, with prerequisites and side-by-side acceptance
+checks. This plan tracks reading behavior only; matching KOReader does not mean
+recreating its extension system or every item in its utility menus.
 
 | Stage | Work | Exit evidence |
 |---|---|---|
@@ -20,17 +22,20 @@ workflow and format, with prerequisites and side-by-side acceptance checks.
 
 OPDS/calibre acquisition (K21) and remote progress sync (K22) are optional
 reading-adjacent work, not core release gates. A general extension/plugin host,
-Terminal, RSS/news tools, HTTP inspectors or servers, patch management, and
-other unrelated utilities are outside this plan. Keep device-wide controls in
+plugin manager or third-party catalogue; Terminal or shell; RSS/news tools;
+HTTP inspectors or servers; patch management; and unrelated utilities are
+closed scope. Do not implement, test or count these as parity gaps. File
+extensions identify supported document formats. Keep device-wide controls in
 Launcher. See the [scope checklist](reading-parity-plan.md#scope-and-completion-checklist).
 
 The [pinned native KOReader interface inventory](koreader-sdl-reference.md) adds
 128 complete desktop frames, including six lower configuration tabs, selection
 and dictionary popups. Its [774-control matrix](koreader-sdl-reference-controls.json)
 pairs visible controls with pinned source handlers and explicit workflow, partial,
-gap or audit states. The capture is a stock macOS SDL reference, separate from
-Oasis acceptance. Use its remaining contracts to schedule implementation; these
-inventory counts do not measure completed parity.
+gap, excluded or audit states. The capture is a stock macOS SDL reference,
+separate from Oasis acceptance. Schedule only relevant reading controls from
+this inventory; excluded controls are not implementation tasks, and inventory
+counts do not measure completed parity.
 
 ## Current desktop integration gate
 

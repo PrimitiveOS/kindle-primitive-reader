@@ -23,7 +23,11 @@
 Reader is a native Rust book and document reader for PrimitiveOS on Kindle.
 It uses Parley for reflowable books and Hayro for PDF pages. The reading
 workflows and format coverage are being compared with KOReader on the same
-Kindle. [EPUB feasibility results](docs/epub-probe-results.md)
+Kindle. Parity work covers reading workflows; KOReader's general extension
+system and unrelated utilities such as Terminal are outside the goal. The
+[scope checklist](docs/reading-parity-plan.md#scope-and-completion-checklist)
+defines what counts toward completion.
+[EPUB feasibility results](docs/epub-probe-results.md)
 
 At fit page, Reader can decode large print-color PDF photographs at the resolution needed for the Kindle screen. Zoom selects the resolution again to preserve detail. [PDF image rendering](docs/print-image-decoding.md)
 

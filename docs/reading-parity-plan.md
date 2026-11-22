@@ -1,6 +1,6 @@
 # Kindle reading parity implementation plan
 
-Build Reader into a daily replacement for KOReader's reading workflows on Kindle. Use the same publications and device to verify the results, with Reader's own Rust implementation and interface. Keep the product centered on opening and reading documents. The [requirements](requirements.md) define K01–K24. The [execution plan](execution-plan.md) tracks milestones and the [architecture](architecture.md) defines component boundaries.
+**Goal:** deliver feature-by-feature parity with KOReader for the core reading workflows used on Kindle, using PrimitiveOS Reader's own Rust implementation and e-ink interface. The scope is opening and rendering supported documents, navigating and adjusting a reading view, searching and looking up text, annotating, saving and restoring reading data, and offline scan workflows. Use the same publications and device to compare results. The [requirements](requirements.md) define K01–K24; the [execution plan](execution-plan.md) tracks milestones and the [architecture](architecture.md) defines component boundaries.
 
 Compare against the installed KOReader release for hardware measurements. Record the actual edition, format provider, options, and interaction being compared in each run. Use the current guide and provider inventory to plan capabilities introduced since the benchmark release. Keep those additional capabilities in the parity backlog until they have their own verification. [KOReader user guide](https://koreader.rocks/user_guide/) · [KOReader main features](https://github.com/koreader/koreader#main-features)
 
@@ -18,7 +18,7 @@ Use the upstream inventory to identify reading behavior. It is not a request to
 recreate KOReader's extension architecture or every utility in its menus.
 Features that support a reading task can be implemented as native Reader
 modules; the Lua plugin ABI and a general extension host are not part of the
-goal. File extensions remain in scope as document-format identifiers.
+goal. File extensions remain in scope only as document-format identifiers.
 
 | Scope decision | Status |
 | --- | --- |
@@ -28,10 +28,16 @@ goal. File extensions remain in scope as document-format identifiers.
 | Do not implement a general plugin/extension loader or manager, Terminal/shell, RSS/news tools, HTTP inspectors or servers, patch management, or unrelated developer utilities. | Explicitly excluded |
 | Keep battery, Wi-Fi, clock, sleep, wallpaper and other Kindle-wide settings in PrimitiveOS Launcher. | Explicitly excluded from Reader |
 
+Only core and optional reading rows in this table contribute to parity tracking.
+An excluded row is closed scope: it is not an unimplemented feature, release
+blocker, test requirement, or item in the completion denominator. The KOReader
+source and screenshot inventories remain comparison references; their full
+menu and module counts are not Reader requirements.
+
 Completion order: finish the P0–P2 local reading workflow, close the remaining
 in-scope document and reading-data gaps in P3, and validate those workflows on
 the Oasis before taking optional K21–K22 work. Keep the full feature-by-feature
-parity checklist in [requirements](requirements.md) and the [control matrix](koreader-sdl-reference-controls.json).
+reading checklist in [requirements](requirements.md) and use the [control matrix](koreader-sdl-reference-controls.json) only to find and compare relevant controls.
 
 ## Implementation checkpoint
 

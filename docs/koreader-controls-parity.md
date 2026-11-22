@@ -16,6 +16,12 @@ catalogue are excluded. Terminal/shell, RSS/news, HTTP inspector/server
 administration, patch management and unrelated utilities are excluded; device
 settings stay in Launcher.
 
+Rows marked **excluded** in the source inventory or control matrix are closed
+scope. They are retained only to explain the KOReader reference and do not count
+as open work, a release gate, or a gap in the Reader parity checklist. Reading
+features that KOReader happens to package as plug-ins remain eligible for
+native implementation; the plug-in framework itself does not.
+
 | In KOReader | PrimitiveOS Reader | Evidence and remaining work |
 | --- | --- | --- |
 | Open a book, turn pages and resume | The Documents picker distinguishes folders, file types and Library-only entries. Reflow and fixed-page positions survive reopening. | On the Oasis, 117 of 130 original entries opened and resumed. Three protected AZW and ten KFX entries led to Kindle Library. The test collection includes a damaged EPUB with recoverable chapters. [Results by format](real-document-verification.md) |
@@ -65,7 +71,7 @@ The reference captures use KOReader on a Kindle Oasis 3, with a reflowable book 
 
 ## Top menu inventory
 
-The tagged order and `ReaderUI` registrations distinguish reader navigation, document options, device settings, plug-ins, search, the file browser and book management. Reader can surface six labeled groups and keep Exit in the toolbar. Grouping actions is independent of the document implementation. File-browser routing, library history and location history remain separate concepts. [Reference menu order](https://github.com/koreader/koreader/blob/v2026.07.1/frontend/ui/elements/reader_menu_order.lua) · [ReaderUI module registration](https://github.com/koreader/koreader/blob/v2026.07.1/frontend/apps/reader/readerui.lua#L146-L449) · [Reader top groups](../src/app/top_config.rs)
+The tagged order and `ReaderUI` registrations distinguish reading navigation, document options, device settings, reading plug-ins, search, the file browser and book management. Reader's menu should surface only actions that support reading, finding or managing books and reading data. Reproducing KOReader's utility groups or every menu entry is not a requirement. File-browser routing, library history and location history remain separate reading workflows. [Reference menu order](https://github.com/koreader/koreader/blob/v2026.07.1/frontend/ui/elements/reader_menu_order.lua) · [ReaderUI module registration](https://github.com/koreader/koreader/blob/v2026.07.1/frontend/apps/reader/readerui.lua#L146-L449) · [Reader top groups](../src/app/top_config.rs)
 
 | Group | KOReader reference | Reader status and next acceptance |
 | --- | --- | --- |
