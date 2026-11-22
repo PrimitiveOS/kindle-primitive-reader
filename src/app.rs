@@ -8918,6 +8918,52 @@ mod tests {
     }
 
     #[test]
+    fn legacy_mobi_contents_opens_from_the_toolbar_and_returns_to_the_same_passage() {
+        let fixture = Fixture::new();
+        let title = "Coastal field notes.mobi";
+        fs::write(
+            fixture.root.join(title),
+            include_bytes!("../tests/fixtures/mobi/coastal-contents.mobi"),
+        )
+        .unwrap();
+        let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+        let mut app = Reader::open(&fixture.root, &fixture.state, vec![font.clone()]).unwrap();
+        let index = app.items().iter().position(|row| row.title == title).unwrap();
+        let y = library_view::LIBRARY_LIST_Y + index as i32 * ROW_HEIGHT + 32;
+        assert_eq!(app.input(Input::Tap(100.0, y as f32)), Change::Partial);
+        assert_eq!(app.screen, Screen::Book);
+        let initial = app.current_position().unwrap();
+        let mut canvas = Canvas::new(WIDTH, HEIGHT, &[font.display().to_string()]).unwrap();
+        let opening = primitive_app::frame(&app, &mut canvas, false);
+
+        for title in ["Summit notes", "  Survey notes"] {
+            assert_eq!(app.input(Input::Tap(630.0, 25.0)), Change::Partial);
+            if app.top_group != Some(TopGroup::Navigation) {
+                tap_reading_control(&mut app, "Navigation");
+            }
+            assert_eq!(tap_reading_control(&mut app, "Contents"), Change::Partial);
+            assert_eq!(app.screen, Screen::Contents);
+            assert!(app.items().iter().any(|i| i.title == "  Elevation profile"));
+            if title == "Summit notes" {
+                capture_test_screen(
+                    &app,
+                    std::slice::from_ref(&font),
+                    "READER_MOBI_CONTENTS_SCREENSHOT",
+                    false,
+                );
+            }
+            tap_contents_item(&mut app, title);
+            assert_eq!(app.screen, Screen::Book);
+            if title == "Summit notes" {
+                assert!(app.current_position().unwrap().page > initial.page);
+            }
+            app.activate(Action::ReturnToLocation).unwrap();
+            assert_eq!(app.current_position(), Some(initial.clone()));
+            assert!(opening == primitive_app::frame(&app, &mut canvas, false));
+        }
+    }
+
+    #[test]
     fn contents_opens_at_the_current_section_from_either_reading_bar() {
         let fixture = Fixture::new();
         let path = fixture.root.join("Document.epub");

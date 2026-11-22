@@ -477,8 +477,10 @@ impl Book {
         let mut prior_mobi = BTreeMap::new();
         let mut revision = crate::revision_bytes(&bytes);
         let mut small_legacy = false;
+        let mut publisher_contents = crate::kf8::legacy_contents::Contents::default();
         let publication = match kf8::open_edition(&bytes)? {
             kf8::Edition::Legacy(document) => {
+                publisher_contents = document.contents;
                 let label = document
                     .title
                     .clone()
@@ -493,15 +495,23 @@ impl Book {
                     label,
                     xhtml: document.xhtml,
                 };
-                let chapters = if document.additions.is_empty() && document.presentation.is_empty() {
+                let chapters = if document.additions.is_empty()
+                    && document.presentation.is_empty()
+                    && publisher_contents.insertions.is_empty()
+                {
                     if small_legacy {
                         vec![chapter]
                     } else {
                         crate::kindle_sections::partition(vec![chapter])?
                     }
                 } else {
-                    let (current, previous) =
-                        crate::kindle_sections::legacy(chapter, document.additions, document.presentation, !small_legacy)?;
+                    let (current, previous) = crate::kindle_sections::legacy(
+                        chapter,
+                        document.additions,
+                        document.presentation,
+                        &publisher_contents.insertions,
+                        !small_legacy,
+                    )?;
                     prior_mobi = previous;
                     current
                 };
@@ -539,6 +549,9 @@ impl Book {
                 is_svg: false,
             });
             xhtml.insert(chapter.path, chapter.xhtml);
+        }
+        if !publisher_contents.items.is_empty() {
+            toc = publisher_contents.entries(&xhtml);
         }
         let title = publication.title.unwrap_or_else(|| fallback_title.into());
         Ok(Self {

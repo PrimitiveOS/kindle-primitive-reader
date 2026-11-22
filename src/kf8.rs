@@ -12,6 +12,7 @@ use roxmltree::{Document, Node, ParsingOptions};
 use crate::mobi::{self, MAX_MOBI_BYTES, MobiError};
 
 pub(crate) mod fonts;
+pub(crate) mod legacy_contents;
 
 type Result<T> = std::result::Result<T, MobiError>;
 

@@ -1,6 +1,7 @@
 //! Source-backed additions to the historical normalized XHTML. Coordinates here
 //! refer to the old XHTML so its chapter boundaries and saved text can be rebuilt.
 use super::{Encoding, MobiError, escape_xml, safe_tag};
+use crate::kf8::legacy_contents::Contents;
 use html5ever::tokenizer::Tag;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -27,7 +28,11 @@ fn number(text: &str) -> Option<usize> {
 /// Find candidate byte indices before tokenization. Only the HTML tokenizer can
 /// confirm a destination or emit a link, so comments and unrelated attributes
 /// cannot produce live links. Legacy filepos counts source bytes before decoding.
-pub(super) fn destinations(text: &str, encoding: Encoding) -> Vec<(usize, usize)> {
+pub(super) fn destinations(
+    text: &str,
+    encoding: Encoding,
+    contents: &Contents,
+) -> Vec<(usize, usize)> {
     let raw = text.as_bytes();
     let mut targets = BTreeSet::new();
     for (index, _) in text.match_indices(['f', 'F']) {
@@ -56,6 +61,7 @@ pub(super) fn destinations(text: &str, encoding: Encoding) -> Vec<(usize, usize)
             }
         }
     }
+    targets.extend(contents.items.iter().map(|item| item.position));
     match encoding {
         Encoding::Cp1252 => {
             let mut indices = targets.into_iter().peekable();
@@ -76,8 +82,12 @@ pub(super) fn destinations(text: &str, encoding: Encoding) -> Vec<(usize, usize)
 
 /// Confirm the byte belongs to a start tag in the markup, rather than a quoted
 /// attribute, comment or raw-text body. Tokenizer emission validates the tag again.
-pub(super) fn target_tags(text: &str, encoding: Encoding) -> Vec<(usize, usize, usize, &str)> {
-    let requested = destinations(text, encoding);
+pub(super) fn target_tags<'a>(
+    text: &'a str,
+    encoding: Encoding,
+    contents: &Contents,
+) -> Vec<(usize, usize, usize, &'a str)> {
+    let requested = destinations(text, encoding, contents);
     if requested.is_empty() {
         return Vec::new();
     }
@@ -281,12 +291,14 @@ impl Features {
         bytes: &[u8],
         records: &[usize],
         first: Option<usize>,
+        contents: &mut Contents,
     ) -> Result<(Vec<Addition>, BTreeMap<String, Vec<u8>>)> {
         let mut edits = Vec::new();
         let mut names = BTreeMap::new();
         let used: BTreeSet<_> = self.links.iter().map(|&(_, n)| n).collect();
+        let navigation: BTreeSet<_> = contents.items.iter().map(|entry| entry.position).collect();
         for (source, (at, id)) in self.destinations {
-            if !used.contains(&source) {
+            if !used.contains(&source) && !navigation.contains(&source) {
                 continue;
             }
             let id = if let Some(id) = id {
@@ -299,14 +311,23 @@ impl Features {
                 while self.ids.contains_key(&id) {
                     id.push('_');
                 }
-                edits.push(Addition {
+                let edit = Addition {
                     at,
                     xml: format!(" id=\"{id}\""),
-                });
+                };
+                if used.contains(&source) {
+                    edits.push(edit)
+                } else {
+                    contents.insertions.push(edit)
+                }
                 id
             };
             names.insert(source, id);
         }
+        for item in &mut contents.items {
+            item.fragment = names.get(&item.position).cloned();
+        }
+        contents.insertions.sort_by_key(|item| item.at);
         for (at, target) in self.links {
             if let Some(name) = names.get(&target) {
                 let mut xml = " href=\"#".to_owned();

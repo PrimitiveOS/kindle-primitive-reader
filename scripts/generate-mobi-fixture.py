@@ -44,7 +44,59 @@ def byte_dictionary():
     return huff, cdic
 
 
-def publication(huff=False, styled=False):
+def variable(value):
+    encoded = [0x80 | (value & 0x7f)]
+    value >>= 7
+    while value:
+        encoded.append(value & 0x7f)
+        value >>= 7
+    return bytes(reversed(encoded))
+
+
+def navigation(html):
+    # Tag 1 is a source byte offset, tag 3 identifies a CNCX title, and
+    # tags 4, 21, 22 and 23 describe level, parent and child relationships.
+    rows = [
+        ("Coastal field notes", b"<h1", 0, None, (1, 2)),
+        ("Elevation profile", b"<p><img", 1, 0, None),
+        ("Survey notes", b"<p>Survey 1.", 1, 0, None),
+        ("Summit notes", b"<h2>", 0, None, None),
+    ]
+    schema = b"".join(bytes([tag, 1, 1 << bit, 0]) for bit, tag in enumerate((1, 3, 4, 21, 22, 23)))
+    schema += bytes([0, 0, 0, 1])
+    meta = bytearray(192)
+    data = bytearray(192)
+    for header in (meta, data):
+        struct.pack_into(">4sI", header, 0, b"INDX", 192)
+    for at, value in [(24, 1), (28, 65001), (32, 0xffffffff), (36, len(rows)), (52, 1)]:
+        struct.pack_into(">I", meta, at, value)
+    meta.extend(struct.pack(">4sII", b"TAGX", len(schema) + 12, 1) + schema)
+    names, offsets = bytearray(), []
+    for index, (title, marker, depth, parent, children) in enumerate(rows):
+        label = f"{index:03x}".encode()
+        offsets.append(len(data))
+        fields = [html.index(marker), len(names), depth]
+        mask = 7
+        if parent is not None:
+            mask |= 8
+            fields.append(parent)
+        if children:
+            mask |= 48
+            fields.extend(children)
+        data.extend(bytes([len(label)]) + label + bytes([mask]) + b"".join(variable(n) for n in fields))
+        text = title.encode()
+        names.extend(variable(len(text)) + text)
+    struct.pack_into(">II", data, 20, len(data), len(rows))
+    data.extend(b"IDXT" + b"".join(struct.pack(">H", n) for n in offsets))
+    # A metadata IDXT entry identifies the final key and row count for this segment.
+    metadata_key = len(meta)
+    meta.extend(bytes([3]) + b"003" + struct.pack(">H", len(rows)))
+    struct.pack_into(">I", meta, 20, len(meta))
+    meta.extend(b"IDXT" + struct.pack(">H", metadata_key))
+    return meta, data, names
+
+
+def publication(huff=False, styled=False, contents=False):
     opening = ('<html><body><h1>Coastal field notes</h1>'
                '<p>A walking guide to the headland.</p>'
                '<p><img recindex="00001" width="440" height="176" alt="Profile of the headland"/></p>'
@@ -81,6 +133,9 @@ def publication(huff=False, styled=False):
     if huff:
         struct.pack_into(">II", hdr, 112, len(chunks), 2)
         chunks.extend(byte_dictionary())
+    if contents:
+        struct.pack_into(">I", hdr, 244, len(chunks))
+        chunks.extend(navigation(html))
     pdb = bytearray(78 + 8 * len(chunks))
     pdb[:19] = b"Coastal field notes"
     pdb[60:68] = b"BOOKMOBI"
@@ -96,5 +151,6 @@ if __name__ == "__main__":
     args.add_argument("output", type=Path)
     args.add_argument("--huff", action="store_true", help="write HUFF/CDIC text records")
     args.add_argument("--styled", action="store_true", help="include legacy publisher alignment and font sizes")
+    args.add_argument("--contents", action="store_true", help="include a nested publisher navigation index")
     options = args.parse_args()
-    options.output.write_bytes(publication(options.huff, options.styled))
+    options.output.write_bytes(publication(options.huff, options.styled, options.contents))

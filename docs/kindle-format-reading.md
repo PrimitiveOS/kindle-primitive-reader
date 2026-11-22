@@ -1,6 +1,6 @@
 # Reading MOBI, PalmDOC and AZW3
 
-Reader imports DRM-free legacy MOBI with illustrations and internal links, PalmDOC text, and supported reflowable Kindle Format 8 (KF8, commonly stored as AZW3). It uses its Rust importer and the same reading view, page controls and saved-position system as EPUB.
+Reader imports DRM-free legacy MOBI with publisher contents, illustrations and internal links, PalmDOC text, and supported reflowable Kindle Format 8 (KF8, commonly stored as AZW3). It uses its Rust importer and the same reading view, page controls and saved-position system as EPUB.
 
 | Reading feature | Implementation |
 | --- | --- |
@@ -31,6 +31,22 @@ The same controls ran offscreen on an Oasis 3. Earlier saved highlights reselect
 Reader interprets a decimal `recindex` as a one-based image record and checks its signature. Recognized images use JPEG, PNG or GIF. It resolves `filepos` against the original UTF-8 or Windows-1252 byte stream. Destinations at a supported opening element are available. An offset inside text, an attribute, a comment, or a discarded element remains unavailable. Historical chapter boundaries are determined before new markup is applied. A prior highlight translates through matching text blocks in their original order.
 
 The two unmodified hybrid controls in libmobi v0.12 both open from Reader's picker through their primary edition. The secondary-edition verifier reconstructs three chapters from the NCX sample and two from the Unicode sample. The complete visible non-whitespace text matched independent libmobi reconstruction in both secondary editions, amounting to 94 and 23,136 characters respectively. The latter includes a shared JPEG and a lowercase HTML5 doctype. An authored hybrid tests the automatic fallback through the normal opener, including a link between KF8 chapters and an image present only in the primary resource section. The uncompressed Unicode sample also contains an unrelated later `BOUNDARY` record that the importer ignores. Both editions in the pinned HUFF/CDIC sample use the separate decoder covered below. The Kindle collection included sixteen standalone KF8 books and two legacy MOBIs. Hybrid behavior was therefore measured on the public controls. [Pinned sample files](https://github.com/bfabiszewski/libmobi/tree/85dcfe803fc2a21020ddcf15c3eb66b93d388add/tests/samples) · [Boundary lookup](https://github.com/bfabiszewski/libmobi/blob/85dcfe803fc2a21020ddcf15c3eb66b93d388add/src/util.c#L3016-L3036) · [Shared resource index](https://github.com/bfabiszewski/libmobi/blob/85dcfe803fc2a21020ddcf15c3eb66b93d388add/src/util.c#L2915-L2928)
+
+## Legacy publisher contents
+
+![Reader Contents showing two levels of a MOBI field guide](screenshots/legacy-mobi-contents.png)
+
+Open **Contents** in either reading toolbar to see the publisher's section names and their nesting. Selecting an entry opens its passage. **Previous location** returns to the earlier reading position. The illustrated field guide in the screenshot contains four entries. Three of their destinations occur only in the publisher’s navigation index. Regenerate it with `python3 scripts/generate-mobi-fixture.py --styled --contents build/coastal-contents.mobi`. [Fixture generator](../scripts/generate-mobi-fixture.py)
+
+| Publication | Publisher entries | Deepest level, counting the root as 0 | Independent reference |
+| --- | ---: | ---: | --- |
+| Two original legacy books | 168 and 26 | 0 | libmobi supplied all 194 titles and target offsets. The installed KOReader PDB provider returned an empty Contents list for both books. |
+| libmobi NCX, Windows-1252 and Unicode samples | 4, 2 and 2 | 1, 0 and 0 | The legacy edition of each matched its independently reconstructed NCX and HTML. |
+| Authored field guide | 4 | 1 | libmobi reconstructed the published order, labels, hierarchy and all four links. |
+
+The simulator compared the title and level of each of the 206 entries with libmobi, followed the original byte position to its element, and checked the next 24 visible non-whitespace characters and the resulting reading page. Both original books already used these same targets for body links. Regression tests also map previously saved text and image positions in the authored guide after adding navigation-only IDs. [libmobi index fields](https://github.com/bfabiszewski/libmobi/blob/85dcfe803fc2a21020ddcf15c3eb66b93d388add/src/index.h) · [libmobi NCX builder](https://github.com/bfabiszewski/libmobi/blob/85dcfe803fc2a21020ddcf15c3eb66b93d388add/src/opf.c#L566-L684) · [CREngine PDB importer](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/pdbfmt.cpp#L1282-L1355)
+
+Reader consumes the legacy edition's INDX rows and CNCX labels. It accepts up to 4,096 headings, 32 levels below the root and 2,048 encoded bytes per label. The normalized reading text keeps its historical section boundaries. An individually unresolvable destination stays visible and disabled. An absent or damaged navigation index leaves the book readable through the existing section list.
 
 ## Legacy publisher alignment and font sizes
 
