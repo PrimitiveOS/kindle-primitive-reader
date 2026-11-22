@@ -87,6 +87,7 @@ mod tcr;
 mod text_flow;
 mod tiff_image;
 mod vertical_layout;
+mod vertical_padding;
 
 use std::error::Error;
 use std::fs;

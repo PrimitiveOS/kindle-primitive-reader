@@ -52,6 +52,7 @@ struct Table {
     collapsed: bool,
     border: [Stroke; 4],
     spacing: [u32; 2],
+    padding: [u32; 2],
 }
 pub(crate) struct CellBorder {
     pub element: usize,
@@ -66,7 +67,27 @@ pub(crate) struct Borders {
 }
 impl Borders {
     pub(crate) fn read(source: &Source, styles: &[Style], font: f32) -> Option<Self> {
-        if source.table_cells.is_empty() || !styles.iter().any(|s| s.borders.is_some()) {
+        let has_padding = |index: usize| {
+            styles[index]
+                .vertical_padding
+                .iter()
+                .any(|side| side.pixels(100, font) > 0.)
+        };
+        let shaded_cell = |idx: usize| {
+            matches!(source.elements[idx].tag.as_str(), "td" | "th")
+                && styles[idx].background.is_some()
+                && has_padding(idx)
+        };
+        let separate_padding = |index: usize| {
+            !styles[index].border_collapse
+                && source.elements[index].tag == "table"
+                && has_padding(index)
+        };
+        if source.table_cells.is_empty()
+            || !styles.iter().enumerate().any(|(index, s)| {
+                s.borders.is_some() || separate_padding(index) || shaded_cell(index)
+            })
+        {
             return None;
         }
         let mut table = HashMap::new();
@@ -82,7 +103,8 @@ impl Borders {
                     "table" => {
                         let t = table.entry(cell.table).or_insert_with(|| Table {
                             element: i,
-                            active: false,
+                            active: separate_padding(i),
+                            padding: [0, 0],
                             rows: 0,
                             collapsed: styles[i].border_collapse,
                             border: edges(&styles[i], font),
@@ -91,6 +113,7 @@ impl Borders {
                             }),
                         });
                         t.rows = t.rows.max(cell.after_row);
+                        t.active |= shaded_cell(element);
                         t.active |= [Some(i), Some(element), row, group]
                             .into_iter()
                             .flatten()
@@ -184,6 +207,19 @@ impl Borders {
             outer,
         })
     }
+    pub(crate) fn resolve_padding(
+        &mut self,
+        boxes: &[crate::publisher_padding::BoxArea],
+        styles: &[Style],
+        cfg: crate::Settings,
+    ) {
+        for table in self.table.values_mut().filter(|t| !t.collapsed) {
+            let width = boxes[table.element].outer_width;
+            table.padding = styles[table.element].vertical_padding.map(|edge| {
+                (edge.box_pixels(width, cfg.font_size) as u32).min(cfg.text_height() / 2)
+            });
+        }
+    }
     pub(crate) fn outer_edges(&self, elem: usize) -> Option<[Stroke; 4]> {
         self.outer.get(&elem).map(|s| s.0)
     }
@@ -206,13 +242,13 @@ impl Borders {
             c.edges[0].width
                 + c.spacing[1]
                 + if !t.collapsed && cell.row == 0 {
-                    t.border[0].width
+                    t.border[0].width + t.padding[0]
                 } else {
                     0
                 },
             c.edges[2].width
                 + if !t.collapsed && cell.after_row == t.rows {
-                    c.spacing[1] + t.border[2].width
+                    c.spacing[1] + t.border[2].width + t.padding[1]
                 } else {
                     0
                 },
@@ -242,6 +278,8 @@ impl Positions {
         self,
         borders: &Borders,
         boxes: &[crate::publisher_padding::BoxArea],
+        styles: &[Style],
+        backgrounds: &mut Vec<crate::vertical_padding::Fill>,
     ) -> Vec<Frame> {
         let mut frames = Vec::new();
         for (cell, spec) in &borders.cells {
@@ -258,16 +296,30 @@ impl Positions {
             let t = &borders.table[&cell.table];
             let above = spec.spacing[1]
                 + if cell.row == 0 && !t.collapsed {
-                    t.border[0].width
+                    t.border[0].width + t.padding[0]
                 } else {
                     0
                 };
             let below = if cell.after_row == t.rows && !t.collapsed {
-                t.spacing[1] + t.border[2].width
+                t.spacing[1] + t.border[2].width + t.padding[1]
             } else {
                 0
             };
             let bounds = boxes[spec.element];
+            if let Some(gray) = styles[spec.element].background
+                && styles[spec.element]
+                    .vertical_padding
+                    .iter()
+                    .any(|side| *side != crate::book_style::CssLength::default())
+            {
+                backgrounds.push(crate::vertical_padding::Fill::cell(
+                    spec.element,
+                    bounds,
+                    top + above as f32,
+                    end - below as f32,
+                    gray,
+                ));
+            }
             Frame::push(
                 &mut frames,
                 bounds.outer_x,

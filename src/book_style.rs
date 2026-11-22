@@ -226,6 +226,7 @@ pub(crate) struct Style {
     pub line_height: Option<f32>,
     pub text_indent: TextIndent,
     pub padding: [CssLength; 2],
+    pub vertical_padding: [CssLength; 2],
     pub border_collapse: bool,
     pub borders: Option<Arc<[borders::Border; 4]>>,
     pub border_spacing: [CssLength; 2],
@@ -256,6 +257,7 @@ impl Default for Style {
             line_height: None,
             text_indent: TextIndent::default(),
             padding: Default::default(),
+            vertical_padding: Default::default(),
             border_collapse: false,
             borders: None,
             border_spacing: [CssLength::Pixels(1.); 2],
@@ -346,6 +348,7 @@ impl BookStyle {
             style.borders = None;
             style.page_breaks = Default::default();
             style.padding = Default::default();
+            style.vertical_padding = Default::default();
             if let Some(kind) = element.list_kind {
                 style.marker = kind;
             }
@@ -382,7 +385,7 @@ impl BookStyle {
                 .as_deref()
                 .filter(|text| self.author_inline && text.len() <= MAX_INLINE_BYTES)
                 .map_or_else(Vec::new, |text| declarations(&mut Parser::new(text)));
-            let mut winners: Winners = [None; 38];
+            let mut winners: Winners = [None; 40];
             for rule in &self.rules {
                 if let Some(specificity) = rule
                     .selectors
@@ -423,9 +426,16 @@ impl BookStyle {
                     Property::Padding(side, length) => {
                         let font = style.size_scale.clamp(0.125, 8.0);
                         let root_font = result.first().map_or(font, |root| root.size_scale);
-                        style.padding[*side] = length.map_or(parent.padding[*side], |length| {
-                            length.computed(font, root_font)
-                        });
+                        let (target, inherited) = if *side < 2 {
+                            (&mut style.padding[*side], parent.padding[*side])
+                        } else {
+                            (
+                                &mut style.vertical_padding[*side - 2],
+                                parent.vertical_padding[*side - 2],
+                            )
+                        };
+                        *target =
+                            length.map_or(inherited, |length| length.computed(font, root_font));
                     }
                     Property::PaddingBoth(_) => {
                         unreachable!("shorthands are expanded before cascading")
@@ -1006,7 +1016,7 @@ fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
 }
 
 type Priority = (bool, bool, Specificity);
-type Winners<'a> = [Option<(Priority, &'a Property)>; 38];
+type Winners<'a> = [Option<(Priority, &'a Property)>; 40];
 
 fn choose<'a>(
     winners: &mut Winners<'a>,
@@ -1042,7 +1052,13 @@ fn choose<'a>(
             Property::Border(side, part) => 25 + 3 * side + part.component(),
             Property::BorderSpacing(_) => 37,
             Property::BorderParts(_) => continue,
-            Property::Padding(side, _) => 22 + side,
+            Property::Padding(side, _) => {
+                if side < 2 {
+                    22 + side
+                } else {
+                    36 + side
+                }
+            }
             Property::PaddingBoth(_) | Property::FontSource(_) => continue,
         };
         let priority = (declaration.important, inline, specificity);
@@ -1088,7 +1104,7 @@ enum Property {
     BorderSpacing(Option<[CssLength; 2]>),
     BorderCollapse(Option<bool>),
     Padding(usize, Option<CssLength>),
-    PaddingBoth([Option<CssLength>; 2]),
+    PaddingBoth([Option<CssLength>; 4]),
     Orphans(Option<u8>),
     Widows(Option<u8>),
     BreakBefore(Option<crate::publisher_breaks::Edge>),
@@ -1128,6 +1144,8 @@ impl<'i> DeclarationParser<'i> for Properties {
     ) -> CssResult<Declaration> {
         let property = input.parse_until_before(Delimiter::Bang, |input| {
             let property = match name.to_ascii_lowercase().as_ref() {
+                "padding-top" => Property::Padding(2, parse_padding(input, false)?[0]),
+                "padding-bottom" => Property::Padding(3, parse_padding(input, false)?[0]),
                 "padding-left" => Property::Padding(0, parse_padding(input, false)?[0]),
                 "padding-right" => Property::Padding(1, parse_padding(input, false)?[0]),
                 "padding" => Property::PaddingBoth(parse_padding(input, true)?),
@@ -1497,13 +1515,12 @@ fn parse_indent(input: &mut Parser<'_>) -> CssResult<Option<TextIndent>> {
     Ok(Some(TextIndent { length, hanging }))
 }
 
-// The shorthand expands to independent cascading physical sides. Vertical
-// values are still validated so a malformed declaration has no effect.
-fn parse_padding(input: &mut Parser<'_>, shorthand: bool) -> CssResult<[Option<CssLength>; 2]> {
+// Expand CSS top/right/bottom/left into the two horizontal and two vertical sides.
+fn parse_padding(input: &mut Parser<'_>, shorthand: bool) -> CssResult<[Option<CssLength>; 4]> {
     if let Ok(keyword) = input.try_parse(Parser::expect_ident_cloned) {
         return match keyword.to_ascii_lowercase().as_str() {
-            "inherit" => Ok([None; 2]),
-            "initial" | "unset" | "revert" => Ok([Some(CssLength::default()); 2]),
+            "inherit" => Ok([None; 4]),
+            "initial" | "unset" | "revert" => Ok([Some(CssLength::default()); 4]),
             _ => Err(ParseError::unexpected_token()),
         };
     }
@@ -1521,9 +1538,25 @@ fn parse_padding(input: &mut Parser<'_>, shorthand: bool) -> CssResult<[Option<C
         count += 1;
     }
     match count {
-        1 => Ok([Some(values[0]); 2]),
-        2 | 3 => Ok([Some(values[1]); 2]),
-        4 => Ok([Some(values[3]), Some(values[1])]),
+        1 => Ok([Some(values[0]); 4]),
+        2 => Ok([
+            Some(values[1]),
+            Some(values[1]),
+            Some(values[0]),
+            Some(values[0]),
+        ]),
+        3 => Ok([
+            Some(values[1]),
+            Some(values[1]),
+            Some(values[0]),
+            Some(values[2]),
+        ]),
+        4 => Ok([
+            Some(values[3]),
+            Some(values[1]),
+            Some(values[0]),
+            Some(values[2]),
+        ]),
         _ => Err(ParseError::unexpected_token()),
     }
 }

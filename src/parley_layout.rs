@@ -84,6 +84,7 @@ pub(crate) struct ParleyChapter {
     illustrations: Vec<Illustration>,
     markers: Vec<PaintedMarker>,
     table_frames: Vec<crate::table_borders::Frame>,
+    padded_backgrounds: Vec<crate::vertical_padding::Fill>,
     glyphs: GlyphCache,
 }
 
@@ -112,6 +113,7 @@ impl ParleyChapter {
             illustrations: Vec::new(),
             markers: Vec::new(),
             table_frames: Vec::new(),
+            padded_backgrounds: Vec::new(),
             glyphs: GlyphCache::with_hinting(settings.font_hinting),
         };
         let mut context = LayoutContext::new();
@@ -125,7 +127,7 @@ impl ParleyChapter {
         ));
         let group_insets = list_insets(source, styles, settings.font_size);
         let outer_width = settings.text_width();
-        let borders = crate::table_borders::Borders::read(source, styles, settings.font_size);
+        let mut borders = crate::table_borders::Borders::read(source, styles, settings.font_size);
         let publisher_boxes = crate::publisher_padding::layout(
             source,
             styles,
@@ -144,6 +146,11 @@ impl ParleyChapter {
                 (widths.min.ceil() as u32, widths.max.ceil() as u32)
             },
         );
+        if let (Some(b), Some(boxes)) = (&mut borders, &publisher_boxes) {
+            b.resolve_padding(boxes, styles, settings);
+        }
+        let vertical_padding =
+            crate::vertical_padding::layout(source, styles, publisher_boxes.as_deref(), settings);
         let column_for = |block: &Block| {
             if let Some(boxes) = &publisher_boxes {
                 return boxes[block.element].cell;
@@ -198,9 +205,23 @@ impl ParleyChapter {
         let gap = settings.font_size * 0.32;
         let mut row_flow = crate::table_layout::RowFlow::default();
         let mut positions = crate::table_borders::Positions::default();
+        let mut fill_positions = (vertical_padding.is_some()
+            && styles.iter().any(|s| {
+                s.background.is_some()
+                    && s.vertical_padding
+                        .iter()
+                        .any(|v| v.pixels(outer_width, settings.font_size) > 0.)
+            }))
+        .then(|| Vec::with_capacity(source.blocks.len()));
         let mut last_cell = None;
         for (index, block) in source.blocks.iter().enumerate() {
             let cell = column_for(block);
+            let padding = vertical_padding
+                .as_ref()
+                .map_or_else(Default::default, |g| g[index]);
+            if padding.before_grid > 0 {
+                y = row_flow.end(y) + padding.before_grid as f32;
+            }
             y = row_flow.enter(cell, y);
             let start_of_cell = y;
             let decorated = cell.and_then(|cell| Some((cell, borders.as_ref()?.cells.get(&cell)?)));
@@ -210,6 +231,7 @@ impl ParleyChapter {
                 y += borders.as_ref().unwrap().vertical(c).0 as f32;
             }
             last_cell = cell;
+            y += padding.before as f32;
             let (column_x, column_width) = bounds_for(block);
             let gutter = gutter_for(block);
             let image_width = column_width - gutter;
@@ -462,12 +484,19 @@ impl ParleyChapter {
             if y > MAX_HEIGHT {
                 return Err("The chapter exceeds the Parley height limit".into());
             }
+            if let Some(points) = &mut fill_positions {
+                points.push((block_y, (y - gap).max(block_y)));
+            }
+            y += padding.after as f32;
             if let Some((c, _)) = decorated {
                 let following = source.blocks.get(index + 1).and_then(&column_for);
                 if following != Some(c) {
                     y += borders.as_ref().unwrap().vertical(c).1 as f32;
                 }
                 positions.record(c, start_of_cell, (y - gap).max(start_of_cell));
+            }
+            if padding.after_grid > 0 {
+                y = row_flow.end(y) + padding.after_grid as f32;
             }
         }
 
@@ -479,13 +508,30 @@ impl ParleyChapter {
             maximum = maximum.max(p.bottom);
             p.max_bottom = maximum;
         }
+        if let Some(points) = &fill_positions {
+            chapter.padded_backgrounds = crate::vertical_padding::fills(
+                source,
+                styles,
+                publisher_boxes.as_deref(),
+                points,
+                settings,
+            );
+        }
         if let (Some(b), Some(boxes)) = (&borders, &publisher_boxes) {
-            chapter.table_frames = positions.finish(b, boxes);
+            chapter.table_frames =
+                positions.finish(b, boxes, styles, &mut chapter.padded_backgrounds);
+            chapter.padded_backgrounds.sort_by_key(|f| f.element);
         }
         let painted = chapter
             .table_frames
             .iter()
             .map(|f| f.bottom())
+            .chain(
+                chapter
+                    .padded_backgrounds
+                    .iter()
+                    .map(|f| f.painted_bottom()),
+            )
             .fold(0., f32::max);
         let extent = (row_flow.end(y) - gap).max(painted).max(0.0);
         Ok((chapter, lines, extent))
@@ -499,6 +545,7 @@ impl ParleyChapter {
             .iter()
             .map(|art| art.y + art.display.1 as f32)
             .chain(self.table_frames.iter().map(|frame| frame.bottom()))
+            .chain(self.padded_backgrounds.iter().map(|f| f.painted_bottom()))
             .fold(0.0, f32::max);
         for paragraph in self.paragraphs.iter().rev() {
             if paragraph.background.is_some_and(|gray| gray < 255) {
@@ -661,6 +708,9 @@ impl ParleyChapter {
         let margin = columns.start;
         let top = settings.top_margin() as usize;
         let page = &mut frame[top * stride..(top + visible_height) * stride];
+        for fill in &self.padded_backgrounds {
+            fill.paint(page, stride, margin, &range);
+        }
 
         let index = self
             .paragraphs
@@ -3145,3 +3195,5 @@ mod publisher_padding_tests;
 
 #[cfg(test)]
 mod table_border_tests;
+#[cfg(test)]
+mod vertical_padding_tests;

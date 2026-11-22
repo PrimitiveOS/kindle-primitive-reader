@@ -115,6 +115,11 @@ pub(crate) fn layout(
         && !styles.iter().zip(&source.elements).any(|(style, element)| {
             (element.tag == "table" && style.border_collapse)
                 || (matches!(element.tag.as_str(), "th" | "td") && style.image_width.is_some())
+                || (style.background.is_some()
+                    && style
+                        .vertical_padding
+                        .iter()
+                        .any(|edge| edge.pixels(width, font) > 0.))
                 || style
                     .padding
                     .iter()
