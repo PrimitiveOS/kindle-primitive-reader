@@ -357,6 +357,7 @@ impl Reader {
         let timer = self.read_alarm.caption(std::time::Instant::now())
             .unwrap_or_else(|| "Set an interval or alarm".into());
         items.insert(0, Item::new("Read timer", Action::ReadAlarm).detail(timer));
+        items.push(Item::new("Save reading data", Action::SaveBookData));
         if self.searchable_document() {
             items.push(Item::new(
                 "Highlights and notes",

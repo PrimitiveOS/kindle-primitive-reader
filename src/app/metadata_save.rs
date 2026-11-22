@@ -234,6 +234,36 @@ mod tests {
     }
 
     #[test]
+    fn manual_save_from_tools_keeps_the_document_at_its_current_location() {
+        let fixture = Fixture::new();
+        let mut app = setup(&fixture);
+        app.controls.metadata_save = MetadataSave::CloseOrSleep;
+        app.save().unwrap();
+        app.follow_reflow_page(1, 0).unwrap();
+        app.activate(Action::AddBookmark).unwrap();
+        let before = app.current_position().unwrap();
+        let id = app.open_book_id().unwrap();
+        let old = Library::open(&fixture.root, &fixture.state).unwrap();
+        assert!(old.state(id).unwrap().bookmarks.is_empty());
+        assert_eq!(app.open_reading_edge(true, 630.0), Change::Partial);
+        let tap = |rect: primitive_ui::Rect| {
+            Input::Tap((rect.x + rect.w / 2) as f32, (rect.y + rect.h / 2) as f32)
+        };
+        if app.top_group != Some(crate::app::TopGroup::Tools) {
+            app.input(tap(app.reading_button("Tools")));
+        }
+        assert_eq!(
+            app.input(tap(app.reading_button("Save reading data"))),
+            Change::Partial
+        );
+        assert_eq!(app.notice.as_deref(), Some("Reading data saved"));
+        assert_eq!(app.current_position(), Some(before.clone()));
+        let saved = Library::open(&fixture.root, &fixture.state).unwrap();
+        assert_eq!(saved.state(id).unwrap().position, Some(before));
+        assert_eq!(saved.state(id).unwrap().bookmarks.len(), 1);
+    }
+
+    #[test]
     fn existing_reading_settings_keep_their_original_write_cadence() {
         let fixture = Fixture::new();
         let path = fixture.root.join("old-controls.json");

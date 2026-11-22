@@ -42,6 +42,7 @@ const FAVORITE: Icon = line(&[
     "M12 4 L14.4 9.2 L20 9.8 L15.8 13.6 L17 19.2 L12 16.3 L7 19.2 L8.2 13.6 L4 9.8 L9.6 9.2 Z",
 ]);
 const INFO: Icon = line(&["M12 3 A9 9 0 1 0 12 21 A9 9 0 1 0 12 3 Z M12 11 V16 M12 8 V8.1"]);
+const SAVE: Icon = line(&["M4 4 H16 L20 8 V20 H4 Z M8 4 V10 H16 V4 M8 20 V14 H16 V20"]);
 
 pub(super) fn group_icon(group: TopGroup) -> Icon {
     match group {
@@ -92,6 +93,7 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         Action::Show(Screen::Links) | Action::Wikipedia => LINK,
         Action::TranslatePage => TEXT,
         Action::ReadAlarm | Action::Show(Screen::OnlineHistory) => CLOCK,
+        Action::SaveBookData => SAVE,
         Action::Show(Screen::Highlights) | Action::ExportHighlights(_) => HIGHLIGHT,
         Action::Show(Screen::PublisherPages | Screen::PageNumbering | Screen::NumberingValue(_) | Screen::NumberingDefaults | Screen::PublisherOffer) | Action::SetCharacterPages(_) | Action::CharacterPage(_) | Action::AcceptPublisherNumbers | Action::TogglePublisherFooter | Action::TogglePublisherMargins => PAGE,
         Action::Show(Screen::GoToPage) | Action::NextLocation => JUMP,

@@ -303,6 +303,7 @@ enum Action {
     RefreshDisplay,
     AutoTurn(Option<Duration>),
     ReadAlarm,
+    SaveBookData,
     LockTouch,
     ExportBackup,
     ClearOcr,
@@ -2028,6 +2029,10 @@ impl Reader {
                 self.refresh_display = true;
             }
             Action::ReadAlarm => { self.open_read_alarm(); }
+            Action::SaveBookData => {
+                self.save_library()?;
+                self.notice = Some("Reading data saved".into());
+            }
             Action::AutoTurn(interval) => {
                 let now = Instant::now();
                 self.auto_turn.configure(interval, now);
