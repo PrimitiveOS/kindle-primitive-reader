@@ -116,6 +116,9 @@ impl Reader {
         let position = self
             .current_position()
             .ok_or("The current page is not ready")?;
+        if position.anchor.as_ref().is_some_and(|anchor| anchor.boundary.is_some()) {
+            return Err("This DOM boundary cannot be transferred by progress sync version1".into());
+        }
         Ok(Record {
             version: 1,
             edition: wire::edition(id, size),

@@ -214,3 +214,27 @@ fn every_sync_view_renders_without_changing_the_source_and_busy_cancel_reaps_its
     assert!(app.progress_sync.job.is_none());
     assert_eq!(app.current_position(), origin);
 }
+
+#[test]
+fn boundary_location_is_rejected_before_a_sync_worker_or_remote_write_starts() {
+    let fixture = Fixture::new();
+    let (mut app, _) = reader(&fixture);
+    let active = app.active.as_mut().unwrap();
+    let owner = active.reading.probe.source.blocks[0].element;
+    let anchor = active.reading.probe.boundary_anchor(owner).unwrap();
+    active.reading.jump_to_anchor(0, &anchor).unwrap();
+    app.progress_sync.config.enabled = true;
+    app.progress_sync.config.folder = "http://127.0.0.1:9/reading/".into();
+    let before = app.current_position();
+    assert!(app.local_sync_record().is_err());
+    assert!(app.progress_sync_command(Command::Sync).is_err());
+    assert!(app.progress_sync.job.is_none());
+    assert_eq!(app.current_position(), before);
+    assert_eq!(
+        app.library
+            .state(app.active.as_ref().unwrap().id)
+            .unwrap()
+            .position,
+        before
+    );
+}

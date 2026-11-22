@@ -52,3 +52,26 @@ their existing empty fragment targets, persists positions/bookmarks into a new
 isolated library profile, reopens and changes typography through the actual
 reading session. It requires unchanged source SHA-256 checks and exact legacy
 anchor JSON round trips; no original document or owner reading state is written.
+
+## Version and transfer safety
+
+Text-only libraries keep the exact version1 encoding. A local library containing
+a boundary location emits version2; this is checked before writes by the older
+version1 reader. New code accepts both versions, but refuses boundary fields in
+version1 or legacy bare arrays. Shape bounds and text-only highlight endpoints
+are checked on save, load and backup preview. The complete backup-v2 envelope
+validates its inner library format before staging any component writes.
+
+Native progress sync version1 explicitly refuses these locations in both
+directions, including before an outbound worker/request starts. Boundary-bearing
+sync history cannot be saved or reused as a v1 merge base. CFI/KOReader import
+creates ordinary text anchors; highlight exports contain text highlights only.
+Bookmark previews use the stored label/page, never the canonical fallback as an
+invented quote. Boundary-bearing bookmark interchange uses the version2 library
+payload.
+
+A bounded stored location can outlive its source file/revision, so library data
+retains that durable token. It is not declared source-valid merely because JSON
+parses. Applying an invalid, forged or stale boundary fails closed; session restore
+and app reopen do not discard the token and open unrelated fallback text. Tests
+preserve the profile byte-for-byte when reopening is refused.
