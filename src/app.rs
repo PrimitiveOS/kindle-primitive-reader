@@ -1,6 +1,7 @@
 //! The daily reader interface and foreground lifecycle.
 mod annotation_search;
 mod bar_icons;
+mod bookmark_browser;
 mod custom_contents;
 mod contents_position;
 pub(crate) mod publisher_pages;
@@ -125,6 +126,7 @@ enum Screen {
     Library,
     LibraryFind,
     OrganizeLibrary,
+    BookmarkBrowser(bookmark_browser::Page),
     BookList,
     BookDetails,
     CollectionName,
@@ -207,6 +209,7 @@ impl Screen {
             Self::Library => "Reader",
             Self::LibraryFind => "Find a document",
             Self::OrganizeLibrary => "Library organization",
+            Self::BookmarkBrowser(page) => page.title(),
             Self::BookList => "Books",
             Self::BookDetails => "Book details",
             Self::CollectionName => "Collection name",
@@ -291,6 +294,7 @@ enum Action {
     ClearLibraryFilter,
     ListBooks(BookList),
     OrganizeCurrent,
+    BookmarkBrowser(bookmark_browser::Command),
     ViewCover,
     Favorite(bool),
     SetStatus(ReadingStatus),
@@ -509,6 +513,7 @@ pub struct Reader {
     user_hyphenation_path: PathBuf,
     hyphenation_edit: Option<user_hyphenation::Draft>,
     browser: FileBrowser,
+    bookmark_browser: bookmark_browser::Browser,
     library_query: String,
     book_list: Option<BookList>,
     book_details: Option<BookDetails>,
@@ -645,6 +650,7 @@ impl Reader {
             hyphenation_edit: None,
             library,
             browser,
+            bookmark_browser: bookmark_browser::Browser::load(data.join("bookmark-browser.json")),
             library_query: String::new(),
             book_list: None,
             book_details: None,
@@ -1130,6 +1136,9 @@ impl Reader {
 
     fn list_window(&self) -> (usize, Vec<Item>) {
         let first = self.list_page * ROWS_PER_PAGE;
+        if let Screen::BookmarkBrowser(page) = self.screen {
+            return self.bookmark_window(page, first, ROWS_PER_PAGE);
+        }
         if self.screen == Screen::PublisherPages {
             return self.publisher_page_window(first, ROWS_PER_PAGE);
         }
@@ -1708,6 +1717,10 @@ impl Reader {
         match self.screen {
             Screen::OrganizeLibrary => {
                 items.push(Item::new(
+                    "Bookmark browser",
+                    Action::BookmarkBrowser(bookmark_browser::Command::Open),
+                ));
+                items.push(Item::new(
                     "Favorites",
                     Action::ListBooks(BookList::Favorites),
                 ));
@@ -1881,6 +1894,7 @@ impl Reader {
 
     fn activate(&mut self, action: Action) -> Result<()> {
         match action {
+            Action::BookmarkBrowser(command) => self.activate_bookmark_browser(command)?,
             Action::Open(entry) => self.open_book(entry)?,
             Action::Browse(directory) => self.browse_to(directory)?,
             Action::OpenTracked(id) => {
@@ -3343,6 +3357,10 @@ impl Reader {
         {
             self.locked = None;
             self.editor = Editor::new(64);
+            if self.bookmark_browser.after_password.take().is_some() {
+                self.show(Screen::BookmarkBrowser(bookmark_browser::Page::Detail));
+                return Change::Partial;
+            }
             return match self.activate(Action::Show(Screen::Library)) {
                 Ok(()) => Change::Partial,
                 Err(error) => self.report(error),
@@ -3361,7 +3379,9 @@ impl Reader {
             };
             let password = self.editor.string();
             self.editor = Editor::new(64);
-            if let Err(error) = self.open_with_password(entry, Some(&password)) {
+            if let Err(error) = self.open_with_password(entry, Some(&password))
+                .and_then(|_| self.bookmark_after_password())
+            {
                 return self.report(error);
             }
         }
@@ -5260,6 +5280,11 @@ impl Reader {
             _ => self.screen.title(),
         };
         header(canvas, title, "Back");
+        if let Screen::BookmarkBrowser(page) = self.screen
+            && self.draw_bookmark_browser_controls(canvas, page)
+        {
+            return;
+        }
         if self.screen == Screen::BookMap && self.fixed.is_some() {
             self.draw_fixed_book_map(canvas);
             return;
@@ -5382,6 +5407,7 @@ impl Reader {
                 Screen::Bookmarks | Screen::FixedBookmarks => "No bookmarks in this book",
                 Screen::Highlights => "No highlights or notes in this book",
                 Screen::BookmarkMatches => "No matching bookmarks, highlights, or notes",
+                Screen::BookmarkBrowser(bookmark_browser::Page::Results) => "No matching saved marks",
                 Screen::DictionaryHistory => "No lookups yet",
                 Screen::OnlineHistory => "No completed online lookups",
                 Screen::SearchHistory => "No recent searches",
@@ -5494,6 +5520,9 @@ impl App for Reader {
         if self.saved_popup_over_book() {
             return self.saved_popup_input(input);
         }
+        if let Screen::BookmarkBrowser(page) = self.screen {
+            return self.bookmark_browser_input(page, input).unwrap_or_else(|| self.input(input));
+        }
         if self.screen == Screen::PageOverview
             && let Input::Swipe { dx, start_y, .. } = input
             && OVERVIEW_TRACK.contains(start_x, start_y)
@@ -5589,6 +5618,11 @@ impl App for Reader {
         if self.range_edit.is_some() { return self.range_input(input); }
         if self.saved_popup_over_book() {
             return self.saved_popup_input(input);
+        }
+        if let Screen::BookmarkBrowser(page) = self.screen
+            && let Some(change) = self.bookmark_browser_input(page, input)
+        {
+            return change;
         }
         if matches!(self.screen, Screen::Book | Screen::Fixed)
             && let Some(change) = self.overlay_footer_input(input)

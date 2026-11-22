@@ -74,6 +74,7 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         Action::Show(Screen::Library | Screen::OrganizeLibrary) => FOLDER,
         Action::Show(Screen::Contents | Screen::FixedContents) => BOOK,
         Action::Show(Screen::FixedBookmarks | Screen::Bookmarks)
+        | Action::BookmarkBrowser(_)
         | Action::ToggleBookmark
         | Action::AddBookmark => BOOKMARK,
         Action::Show(

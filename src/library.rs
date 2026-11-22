@@ -2022,7 +2022,7 @@ fn search_key(title: &str, author: Option<&str>, path: &Path) -> String {
     ))
 }
 
-fn fold_search(text: &str) -> String {
+pub(crate) fn fold_search(text: &str) -> String {
     if text.is_ascii() {
         return text.to_ascii_lowercase();
     }
