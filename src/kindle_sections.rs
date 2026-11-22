@@ -81,13 +81,13 @@ struct Part {
     // The contiguous slice from the old chapter follows any reopened ancestors.
     range: std::ops::Range<usize>,
     prefix: usize,
-    reopened_links: Vec<(usize, usize)>,
+    reopened_elements: Vec<(usize, usize)>,
 }
 fn whole(chapter: Kf8Chapter) -> Part {
     Part {
         range: 0..chapter.xhtml.len(),
         prefix: 0,
-        reopened_links: Vec::new(),
+        reopened_elements: Vec::new(),
         chapter,
     }
 }
@@ -187,7 +187,7 @@ fn split(chapter: Kf8Chapter) -> Result<Vec<Part>> {
     let mut bytes = 0usize;
     for part in 0..=cuts.len() {
         let mut xhtml = String::new();
-        let mut reopened_links = Vec::new();
+        let mut reopened_elements = Vec::new();
         let start = if part == 0 {
             0
         } else {
@@ -199,9 +199,8 @@ fn split(chapter: Kf8Chapter) -> Result<Vec<Part>> {
                 .take_while(|n| *n != body.parent().unwrap())
                 .collect();
             for node in chain.into_iter().rev() {
-                if node.has_tag_name("a") {
-                    reopened_links.push((node.range().start + 2, xhtml.len() + 2));
-                }
+                let name_end = node.tag_name().name().len() + 1;
+                reopened_elements.push((node.range().start + name_end, xhtml.len() + name_end));
                 reopening(raw, node, &mut xhtml)?;
             }
             cut.offset
@@ -223,7 +222,7 @@ fn split(chapter: Kf8Chapter) -> Result<Vec<Part>> {
         result.push(Part {
             range: start..end,
             prefix,
-            reopened_links,
+            reopened_elements,
             chapter: Kf8Chapter {
                 continued: part > 0,
                 path: path_for(&chapter.path, part),
@@ -247,54 +246,82 @@ pub(crate) fn partition(chapters: Vec<Kf8Chapter>) -> Result<Vec<Kf8Chapter>> {
     retarget(groups)
 }
 
-/// Apply new MOBI image/link markup after choosing historical split points.
-/// Long legacy books keep their exact text in every previously saved chapter.
+/// Previously shipped editions used the bare normalized XHTML and then its
+/// images and links. Keep both location maps when presentation changes a section.
 pub(crate) fn legacy(
     chapter: Kf8Chapter,
     additions: Vec<crate::mobi::Addition>,
+    presentation: crate::mobi::Presentation,
     split_long: bool,
-) -> Result<(Vec<Kf8Chapter>, BTreeMap<String, String>)> {
+) -> Result<(Vec<Kf8Chapter>, BTreeMap<String, Vec<String>>)> {
     let original = chapter.path.clone();
     let parts = if split_long {
         split(chapter)?
     } else {
         vec![whole(chapter)]
     };
-    let mut old = Vec::new();
-    let mut new = Vec::new();
+    let mut bare = Vec::new();
+    let mut illustrated = Vec::new();
+    let mut current = Vec::new();
+    let styled = !presentation.is_empty();
     for part in parts {
-        let raw = &part.chapter.xhtml;
         let start = additions.partition_point(|edit| edit.at < part.range.start);
         let end = additions.partition_point(|edit| edit.at < part.range.end);
-        let mut xhtml = crate::mobi::apply_additions(
-            raw,
-            &additions[start..end],
-            part.range.start,
-            part.prefix,
-        )?;
-        for (original, local) in part.reopened_links.into_iter().rev() {
-            let first = additions.partition_point(|edit| edit.at < original);
-            if let Some(href) = additions[first..]
-                .iter()
-                .take_while(|edit| edit.at == original)
-                .find(|edit| edit.xml.starts_with(" href="))
-            {
-                xhtml.insert_str(local, &href.xml);
+        let base = &additions[start..end];
+        let section = |edits: &[crate::mobi::Addition], with_hints: bool| -> Result<Kf8Chapter> {
+            let mut xhtml = crate::mobi::apply_additions(
+                &part.chapter.xhtml,
+                edits,
+                part.range.start,
+                part.prefix,
+            )?;
+            for &(original, local) in part.reopened_elements.iter().rev() {
+                let first = additions.partition_point(|edit| edit.at < original);
+                if let Some(href) = additions[first..]
+                    .iter()
+                    .take_while(|edit| edit.at == original)
+                    .find(|edit| edit.xml.starts_with(" href="))
+                {
+                    xhtml.insert_str(local, &href.xml);
+                }
+                if with_hints && let Some(align) = presentation.aligned.get(&original) {
+                    xhtml.insert_str(local, &format!(" style=\"text-align:{align}\""));
+                }
+            }
+            Ok(Kf8Chapter {
+                path: part.chapter.path.clone(),
+                label: part.chapter.label.clone(),
+                continued: part.chapter.continued,
+                xhtml,
+            })
+        };
+        if styled {
+            if !additions.is_empty() {
+                illustrated.push(section(base, false)?);
+            }
+            let edits = presentation.edits(part.range.clone(), base);
+            current.push(section(&edits, true)?);
+        } else {
+            current.push(section(base, false)?);
+        }
+        bare.push(part.chapter);
+    }
+    let mut previous = BTreeMap::<String, Vec<String>>::new();
+    for chapters in [bare, illustrated] {
+        for part in retarget([Ok((original.clone(), chapters))])? {
+            let sources = previous.entry(part.path).or_default();
+            if sources.last() != Some(&part.xhtml) {
+                sources.push(part.xhtml);
             }
         }
-        new.push(Kf8Chapter {
-            path: part.chapter.path.clone(),
-            label: part.chapter.label.clone(),
-            continued: part.chapter.continued,
-            xhtml,
-        });
-        old.push(part.chapter);
     }
-    let old = retarget([Ok((original.clone(), old))])?
-        .into_iter()
-        .map(|part| (part.path, part.xhtml))
-        .collect();
-    Ok((retarget([Ok((original, new))])?, old))
+    let mut chapters = retarget([Ok((original, current))])?;
+    for chapter in &mut chapters {
+        if let Some(sources) = previous.get_mut(&chapter.path) {
+            sources.retain(|xml| *xml != chapter.xhtml);
+        }
+    }
+    Ok((chapters, previous))
 }
 fn retarget(
     groups: impl IntoIterator<Item = Result<(String, Vec<Kf8Chapter>)>>,
@@ -403,6 +430,7 @@ mod tests {
                 at,
                 xml: " href=\"#arrival\"".into(),
             }],
+            crate::mobi::Presentation::default(),
             true,
         )
         .unwrap();
@@ -410,7 +438,7 @@ mod tests {
         let last = &parts.last().unwrap().path;
         for part in &parts {
             let doc = parse(&part.xhtml).unwrap();
-            assert_eq!(previous[&part.path].contains("href="), false);
+            assert!(!previous.get(&part.path).into_iter().flatten().any(|chapter| chapter.contains("href=")));
             for link in doc.descendants().filter(|n| n.has_tag_name("a")) {
                 let (prefix, name) = link.attribute("href").unwrap().split_once('#').unwrap();
                 assert_eq!(name, "arrival");

@@ -182,6 +182,7 @@ fn opening(text: &str, at: usize) -> Option<(&str, usize)> {
 
 #[derive(Default)]
 pub(super) struct Features {
+    pub presentation: super::Presentation,
     pub next: Option<(usize, String)>,
     ids: BTreeMap<String, usize>,
     destinations: BTreeMap<usize, (usize, Option<String>)>,
@@ -189,7 +190,7 @@ pub(super) struct Features {
     images: Vec<(usize, usize, String)>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct Addition {
     pub at: usize,
     pub xml: String,

@@ -101,7 +101,7 @@ enum Content {
     },
     Loose {
         xhtml: BTreeMap<String, String>,
-        prior_mobi: BTreeMap<String, String>,
+        prior_mobi: BTreeMap<String, Vec<String>>,
         resources: BTreeMap<String, Vec<u8>>,
         fonts: Option<kf8::fonts::FontSource>,
     },
@@ -493,7 +493,7 @@ impl Book {
                     label,
                     xhtml: document.xhtml,
                 };
-                let chapters = if document.additions.is_empty() {
+                let chapters = if document.additions.is_empty() && document.presentation.is_empty() {
                     if small_legacy {
                         vec![chapter]
                     } else {
@@ -501,7 +501,7 @@ impl Book {
                     }
                 } else {
                     let (current, previous) =
-                        crate::kindle_sections::legacy(chapter, document.additions, !small_legacy)?;
+                        crate::kindle_sections::legacy(chapter, document.additions, document.presentation, !small_legacy)?;
                     prior_mobi = previous;
                     current
                 };
@@ -672,11 +672,15 @@ impl Book {
         }
     }
 
-    pub(crate) fn previous_mobi_chapter(&self, name: &str) -> Option<&str> {
+    pub(crate) fn previous_mobi_chapters(&self, name: &str) -> &[String] {
         match &self.content {
-            Content::Loose { prior_mobi, .. } => prior_mobi.get(name).map(String::as_str),
-            _ => None,
+            Content::Loose { prior_mobi, .. } => prior_mobi.get(name).map(Vec::as_slice).unwrap_or_default(),
+            _ => &[],
         }
+    }
+    #[cfg(test)]
+    pub(crate) fn previous_mobi_chapter(&self, name: &str) -> Option<&str> {
+        self.previous_mobi_chapters(name).first().map(String::as_str)
     }
 
     /// Look up a canonical archive path in the reading spine.

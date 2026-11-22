@@ -32,6 +32,25 @@ Reader interprets a decimal `recindex` as a one-based image record and checks it
 
 The two unmodified hybrid controls in libmobi v0.12 both open from Reader's picker through their primary edition. The secondary-edition verifier reconstructs three chapters from the NCX sample and two from the Unicode sample. The complete visible non-whitespace text matched independent libmobi reconstruction in both secondary editions, amounting to 94 and 23,136 characters respectively. The latter includes a shared JPEG and a lowercase HTML5 doctype. An authored hybrid tests the automatic fallback through the normal opener, including a link between KF8 chapters and an image present only in the primary resource section. The uncompressed Unicode sample also contains an unrelated later `BOUNDARY` record that the importer ignores. Both editions in the pinned HUFF/CDIC sample use the separate decoder covered below. The Kindle collection included sixteen standalone KF8 books and two legacy MOBIs. Hybrid behavior was therefore measured on the public controls. [Pinned sample files](https://github.com/bfabiszewski/libmobi/tree/85dcfe803fc2a21020ddcf15c3eb66b93d388add/tests/samples) · [Boundary lookup](https://github.com/bfabiszewski/libmobi/blob/85dcfe803fc2a21020ddcf15c3eb66b93d388add/src/util.c#L3016-L3036) · [Shared resource index](https://github.com/bfabiszewski/libmobi/blob/85dcfe803fc2a21020ddcf15c3eb66b93d388add/src/util.c#L2915-L2928)
 
+## Legacy publisher alignment and font sizes
+
+![The centered heading and larger linked text in an illustrated MOBI field guide](screenshots/legacy-mobi-publisher-style.png)
+
+Publisher styles retain legacy paragraph alignment and inline HTML font sizes. The screenshot is the original illustrated fixture with the `--styled` option, opened from Reader's normal file picker. Turning off publisher styles restores the unstyled reading layout. Manual alignment in Reader can override a publisher's alignment. [Fixture generator](../scripts/generate-mobi-fixture.py)
+
+Two original legacy MOBIs contain 51 centered paragraphs and 158 inline font elements with sizes 4, 5 or 7. Of the centered paragraphs, 49 contain text and two contain an image. Reader previously discarded these hints during import. A comparative check used the same 17 source passages from these books in Reader and the installed KOReader PDB provider.
+
+| Source controls | Reader with the publisher setting | Installed KOReader |
+| --- | --- | --- |
+| Five centered passages | All five center axes were at x = 632 on a 1,264 px page. | Centers were at x = 656.5–657 with its stock first-line indent. With that indent removed, the same samples centered at x = 631.5–632. |
+| Four size-4 runs | Selected text widened by approximately 1.20×. | Line height rose from 76 to 91 px. |
+| Seven size-5 runs | Selected text widened by 1.48–1.50×. | Line height rose from 76 to 116 px. |
+| One size-7 run | Selected text widened by 3.00×. | Line height rose from 76 to 232 px. |
+
+Absolute sizes follow seven steps relative to the document's base font. Signed sizes use 3 as the starting step. An inner size declaration replaces the outer size, and closing it restores the enclosing size. Reader recognizes the leading digits, clamps the result to steps 1–7 and ignores a declaration without digits. A separate authored negative boundary distinguishes the implementations. At `size="-4"`, Reader uses step 1 as the HTML algorithm specifies. The installed CREngine uses unsigned subtraction at that boundary and rendered the authored text about three times its normal width. [HTML legacy font sizes](https://html.spec.whatwg.org/multipage/rendering.html#rules-for-parsing-a-legacy-font-size) · [Pinned CREngine conversion](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstsheet.cpp#L5002-L5054)
+
+Reader chooses chapter splits from the same normalized source as earlier builds. It projects publisher hints into each resulting section and validates previous text and illustrated block keys against the current words and image offsets. The two original books retained all 59 JPEGs and 1,136 internal links. An authored long paragraph tests font size and alignment across a chapter split.
+
 ## HUFF/CDIC editions
 
 Reader decodes text records with compression ID 17480 in ordinary unencrypted legacy MOBI and reflowable KF8. It reads the edition's HUFF prefix and code-length tables and its CDIC phrase records. A phrase can contain literal bytes or other codes. Decoding writes into the same bounded text buffer as PalmDOC before the normal chapter, image and link import. Each edition has its own dictionary, including in a dual-format file.

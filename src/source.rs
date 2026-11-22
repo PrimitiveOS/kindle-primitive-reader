@@ -131,7 +131,7 @@ pub(crate) struct InlineLink {
 pub(crate) struct Source {
     pub revision: u64,
     legacy_revision: Option<u64>,
-    previous_mobi: Option<(u64, BTreeMap<usize, usize>)>,
+    previous_mobi: BTreeMap<u64, BTreeMap<usize, usize>>,
     pub blocks: Vec<Block>,
     pub fragments: BTreeMap<String, (usize, usize)>,
     pub stylesheets: Vec<Stylesheet>,
@@ -715,7 +715,7 @@ impl Source {
         Ok(Self {
             revision,
             legacy_revision,
-            previous_mobi: None,
+            previous_mobi: BTreeMap::new(),
             blocks,
             fragments,
             stylesheets,
@@ -732,29 +732,34 @@ impl Source {
     /// also disambiguates repeated paragraphs without matching on quotations.
     pub(crate) fn accept_previous_mobi(&mut self, xml: &str) -> Result<()> {
         let previous = Self::parse(xml)?;
-        let mut current = self.blocks.iter().filter(|block| !block.text.is_empty());
+        let with_images = previous.blocks.iter().any(|block| !block.images.is_empty());
+        let relevant =
+            |block: &&Block| !block.text.is_empty() || (with_images && !block.images.is_empty());
+        let mut current = self.blocks.iter().filter(relevant);
         let mut keys = BTreeMap::new();
-        for old in previous
-            .blocks
-            .iter()
-            .filter(|block| !block.text.is_empty())
-        {
+        for old in previous.blocks.iter().filter(relevant) {
             let Some(now) = current.next() else {
                 return Ok(());
             };
-            if old.text != now.text {
+            if old.text != now.text
+                || with_images
+                    && !old
+                        .images
+                        .iter()
+                        .map(|im| (&im.href, im.offset))
+                        .eq(now.images.iter().map(|im| (&im.href, im.offset)))
+            {
                 return Ok(());
             }
             keys.insert(old.key, now.key);
         }
         if current.next().is_none() {
-            self.previous_mobi = Some((previous.revision, keys));
+            self.previous_mobi.insert(previous.revision, keys);
         }
         Ok(())
     }
     pub(crate) fn current_key(&self, key: usize, revision: u64) -> Option<usize> {
-        if let Some((old, keys)) = &self.previous_mobi
-            && *old == revision
+        if let Some(keys) = self.previous_mobi.get(&revision)
             && revision != self.revision
         {
             return keys.get(&key).copied();
@@ -767,12 +772,7 @@ impl Source {
         revision: u64,
         offset: usize,
     ) -> Option<usize> {
-        let current = if revision == self.revision
-            || self
-                .previous_mobi
-                .as_ref()
-                .is_some_and(|(old, _)| *old == revision)
-        {
+        let current = if revision == self.revision || self.previous_mobi.contains_key(&revision) {
             offset
         } else if self.legacy_revision == Some(revision) {
             match &block.legacy {

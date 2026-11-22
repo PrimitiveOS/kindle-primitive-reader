@@ -1413,10 +1413,10 @@ pub(crate) mod tests {
         for ci in 0..book.chapters.len() {
             let xml = book.chapter(ci).unwrap();
             let mut source = crate::source::Source::parse(&xml).unwrap();
-            if let Some(old) = book.previous_mobi_chapter(&book.chapters[ci].href) {
+            for old in book.previous_mobi_chapters(&book.chapters[ci].href) {
                 let old_source = crate::source::Source::parse(old).unwrap();
                 source.accept_previous_mobi(old).unwrap();
-                for old in old_source.blocks.iter().filter(|b| !b.text.is_empty()) {
+                for old in old_source.blocks.iter().filter(|b| !b.text.is_empty() || !b.images.is_empty()) {
                     let key = source
                         .current_key(old.key, old_source.revision)
                         .expect("saved source block");
@@ -1428,6 +1428,9 @@ pub(crate) mod tests {
                         source.blocks[now].text == old.text,
                         "saved block text differs"
                     );
+                    if !old.images.is_empty() {
+                        assert!(source.blocks[now].images.iter().map(|im| (&im.href, im.offset)).eq(old.images.iter().map(|im| (&im.href, im.offset))));
+                    }
                     keys += 1;
                 }
             }

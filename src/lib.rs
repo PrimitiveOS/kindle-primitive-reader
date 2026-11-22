@@ -553,8 +553,10 @@ impl Probe {
             None => book.chapter(chapter).map_err(|e| e.to_string())?,
         };
         let mut source = Source::parse_with_language(&xhtml, book.language)?;
-        if complete && let Some(previous) = book.previous_mobi_chapter(&href) {
-            source.accept_previous_mobi(previous)?;
+        if complete {
+            for previous in book.previous_mobi_chapters(&href) {
+                source.accept_previous_mobi(previous)?;
+            }
         }
         let mut fonts = font_context(fonts)?;
         #[cfg(feature = "kindle")]

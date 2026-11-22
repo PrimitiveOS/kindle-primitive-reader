@@ -44,16 +44,29 @@ def byte_dictionary():
     return huff, cdic
 
 
-def publication(huff=False):
+def publication(huff=False, styled=False):
     opening = ('<html><body><h1>Coastal field notes</h1>'
                '<p>A walking guide to the headland.</p>'
                '<p><img recindex="00001" width="440" height="176" alt="Profile of the headland"/></p>'
                '<p>The profile shows the climb from the shore to the high point.</p>'
                '<p><a filepos="0000000000">Read the summit notes</a></p>')
+    if styled:
+        opening = opening.replace("<h1>", '<h1 align="center">').replace(
+            "<p>A walking guide to the headland.</p>",
+            '<p align="center"><font size="+1">A walking guide to the headland.</font></p>',
+        ).replace("Read the summit notes</a>", '<font size="4">Read the summit notes</font></a>')
     body = "".join(f"<p>Survey {n}. The path follows the sheltered side of the ridge. "
                    "Pause at the clearing to compare the view with the elevation profile.</p>"
                    for n in range(1, 46))
     end = "<h2>Summit notes</h2><p>The highest point overlooks the inlet.</p></body></html>"
+    if styled:
+        # Labels of similar length also serve as reproducible selection targets.
+        scale = [("0", "Shore station"), ("+1", "Dune station"),
+                 ("-1", "Cove station"), ("-4", "Reef station"),
+                 ("+20", "Tide station"), ("5extra", "Gale station"),
+                 ("invalid", "Dock station")]
+        samples = "".join(f'<p><font size="{size}">{label}</font></p>' for size, label in scale)
+        end = end.replace("</body>", samples + "</body>")
     html = (opening.replace("0000000000", f"{len(opening + body):010}") + body + end).encode()
     records = [html[i:i + 4096] for i in range(0, len(html), 4096)]
     hdr = bytearray(264)
@@ -82,5 +95,6 @@ if __name__ == "__main__":
     args = argparse.ArgumentParser()
     args.add_argument("output", type=Path)
     args.add_argument("--huff", action="store_true", help="write HUFF/CDIC text records")
+    args.add_argument("--styled", action="store_true", help="include legacy publisher alignment and font sizes")
     options = args.parse_args()
-    options.output.write_bytes(publication(options.huff))
+    options.output.write_bytes(publication(options.huff, options.styled))

@@ -16,7 +16,9 @@ use html5ever::tokenizer::{
 mod huff;
 pub(crate) use huff::COMPRESSION as HUFF_CDIC;
 mod markup;
+mod presentation;
 pub(crate) use markup::{Addition, apply as apply_additions};
+pub(crate) use presentation::Presentation;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fmt;
@@ -64,6 +66,7 @@ pub struct MobiDocument {
     pub author: Option<String>,
     pub xhtml: String,
     pub(crate) additions: Vec<Addition>,
+    pub(crate) presentation: Presentation,
     pub resources: BTreeMap<String, Vec<u8>>,
 }
 
@@ -141,8 +144,11 @@ pub(crate) struct Labels {
 /// Decode the first, legacy text section of a database. All returned content is local.
 pub fn decode(bytes: &[u8]) -> Result<MobiDocument, MobiError> {
     let mut document = decode_legacy(bytes)?;
-    if !document.additions.is_empty() {
-        document.xhtml = markup::apply(&document.xhtml, &document.additions, 0, 0)?;
+    if !document.additions.is_empty() || !document.presentation.is_empty() {
+        let edits = document
+            .presentation
+            .edits(0..document.xhtml.len(), &document.additions);
+        document.xhtml = markup::apply(&document.xhtml, &edits, 0, 0)?;
         document.additions.clear();
     }
     Ok(document)
@@ -177,23 +183,26 @@ pub(crate) fn decode_legacy(bytes: &[u8]) -> Result<MobiDocument, MobiError> {
     )?;
     let encoding = mobi.as_ref().map_or(Encoding::Auto, |mobi| mobi.encoding);
     let text = decode_text(text, encoding)?;
-    let (xhtml, additions, resources) = if mobi.as_ref().is_none_or(|mobi| mobi.is_plain_text) {
-        (
-            plain_xhtml(text.trim_start_matches('\u{feff}'))?,
-            Vec::new(),
-            BTreeMap::new(),
-        )
-    } else {
-        let first = u32_at(header, 108).ok().map(|n| n as usize).filter(|n| {
-            *n > usize::from(u16_at(header, 8).unwrap_or(u16::MAX)) && *n < records.len() - 1
-        });
-        let (xhtml, features, has_text) = normalize_html(&text, Some(encoding))?;
-        let (additions, resources) = features.finish(bytes, &records, first)?;
-        if !has_text && resources.is_empty() {
-            return Err(MobiError::InvalidText);
-        }
-        (xhtml, additions, resources)
-    };
+    let (xhtml, additions, resources, presentation) =
+        if mobi.as_ref().is_none_or(|mobi| mobi.is_plain_text) {
+            (
+                plain_xhtml(text.trim_start_matches('\u{feff}'))?,
+                Vec::new(),
+                BTreeMap::new(),
+                Presentation::default(),
+            )
+        } else {
+            let first = u32_at(header, 108).ok().map(|n| n as usize).filter(|n| {
+                *n > usize::from(u16_at(header, 8).unwrap_or(u16::MAX)) && *n < records.len() - 1
+            });
+            let (xhtml, mut features, has_text) = normalize_html(&text, Some(encoding))?;
+            let presentation = std::mem::take(&mut features.presentation);
+            let (additions, resources) = features.finish(bytes, &records, first)?;
+            if !has_text && resources.is_empty() {
+                return Err(MobiError::InvalidText);
+            }
+            (xhtml, additions, resources, presentation)
+        };
 
     let labels = mobi.map(|header| header.labels).unwrap_or_default();
     Ok(MobiDocument {
@@ -202,6 +211,7 @@ pub(crate) fn decode_legacy(bytes: &[u8]) -> Result<MobiDocument, MobiError> {
         language: labels.language,
         xhtml,
         additions,
+        presentation,
         resources,
     })
 }
@@ -665,7 +675,17 @@ impl TokenSink for Normalizer {
                 markup.has_text |= text
                     .chars()
                     .any(|ch| !ch.is_whitespace() && !ch.is_control());
-                markup.error = escape_xml(&mut markup.output, &text).err();
+                let start = markup.output.len();
+                let written = escape_xml(&mut markup.output, &text);
+                let end = markup.output.len();
+                markup.error = written
+                    .and_then(|_| {
+                        if let Some(features) = &mut markup.features {
+                            features.presentation.text(start..end)?;
+                        }
+                        Ok(())
+                    })
+                    .err();
             }
             _ => {}
         }
@@ -694,6 +714,12 @@ impl Markup {
                 self.ignore = Some(name);
                 return TokenSinkResult::RawData(state);
             }
+        }
+        if input_name == "font"
+            && let Some(features) = &mut self.features
+        {
+            self.error = features.presentation.font(&tag).err();
+            return TokenSinkResult::Continue;
         }
         if input_name == "img" && tag.kind == TagKind::StartTag {
             if let Some(features) = &mut self.features {
@@ -744,6 +770,9 @@ impl Markup {
         self.output.push_str(name);
         if let Some(features) = &mut self.features {
             features.record(tag, name, self.output.len());
+            features
+                .presentation
+                .alignment(tag, name, self.output.len())?;
         }
         let has_id = tag.attrs.iter().any(|attr| {
             let value = attr.value.trim();
@@ -1073,7 +1102,9 @@ mod tests {
             xhtml: doc.xhtml,
             continued: false,
         };
-        let (parts, _) = crate::kindle_sections::legacy(chapter, doc.additions, false).unwrap();
+        let (parts, _) =
+            crate::kindle_sections::legacy(chapter, doc.additions, doc.presentation, false)
+                .unwrap();
         let xml = roxmltree::Document::parse(&parts[0].xhtml).unwrap();
         let hrefs: Vec<_> = xml
             .descendants()
