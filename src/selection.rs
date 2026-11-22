@@ -311,7 +311,7 @@ pub(crate) fn word_range(text: &str, offset: usize) -> Option<Range<usize>> {
 }
 
 fn visible_span(
-    layout: &Layout<()>,
+    layout: &Layout<impl parley::style::Brush>,
     origin: f32,
     page: &Range<f32>,
     span: Range<usize>,

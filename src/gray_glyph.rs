@@ -76,7 +76,7 @@ impl GlyphCache {
         stride: usize,
         columns: &Range<usize>,
         origin: (f32, f32),
-        glyphs: &GlyphRun<'_, ()>,
+        glyphs: &GlyphRun<'_, impl parley::style::Brush>,
         contrast: bool,
     ) {
         let run = glyphs.run();

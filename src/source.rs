@@ -99,6 +99,7 @@ impl LegacyOffsets {
 pub(crate) struct Element {
     pub tag: String,
     pub classes: String,
+    pub has_href: bool,
     pub list_kind: Option<crate::list_marker::MarkerKind>,
     pub id: Option<String>,
     pub inline_style: Option<String>,
@@ -383,6 +384,7 @@ impl Source {
             elements.push(Element {
                 tag: node.tag_name().name().to_owned(),
                 list_kind: crate::list_marker::MarkerKind::html(node),
+                has_href: node.has_attribute("href"),
                 classes: node.attribute("class").unwrap_or_default().to_owned(),
                 id: node.attribute("id").map(str::to_owned),
                 inline_style: if selector_only { None } else { node.attribute("style").map(str::to_owned) },

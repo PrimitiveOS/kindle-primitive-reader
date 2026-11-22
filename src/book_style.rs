@@ -145,11 +145,30 @@ impl TextRise {
     }
 }
 
+/// A painted text run can carry more than one publisher line.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct TextDecoration {
+    pub underline: bool,
+    pub overline: bool,
+    pub strike: bool,
+}
+
+impl TextDecoration {
+    fn including(self, other: Self) -> Self {
+        Self {
+            underline: self.underline || other.underline,
+            overline: self.overline || other.overline,
+            strike: self.strike || other.strike,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct Style {
     pub font_family: Family,
     pub size_scale: f32,
     pub text_rise: TextRise,
+    pub decoration: TextDecoration,
     pub font_weight: FontWeight,
     pub font_style: FontStyle,
     pub line_height: Option<f32>,
@@ -172,6 +191,7 @@ impl Default for Style {
             font_family: Family::Generic(GenericFamily::Serif),
             size_scale: 1.0,
             text_rise: TextRise::default(),
+            decoration: TextDecoration::default(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
             line_height: None,
@@ -266,6 +286,12 @@ impl BookStyle {
             style.image_width = None;
             style.image_height = None;
             style.image_align = parley::VerticalAlign::BASELINE;
+            let mut decoration = TextDecoration {
+                underline: matches!(element.tag.as_str(), "u" | "ins")
+                    || (element.tag == "a" && element.has_href),
+                strike: matches!(element.tag.as_str(), "s" | "strike" | "del"),
+                ..TextDecoration::default()
+            };
             match element.tag.as_str() {
                 "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
                     style.size_scale *= 1.4;
@@ -350,9 +376,11 @@ impl BookStyle {
                     Property::Width(value) => style.image_width = Some(*value),
                     Property::Height(value) => style.image_height = Some(*value),
                     Property::VerticalAlign(value) => style.image_align = *value,
+                    Property::Decoration(value) => decoration = value.unwrap_or(parent.decoration),
                     Property::FontSource(_) => {}
                 }
             }
+            style.decoration = parent.decoration.including(decoration);
             // CREngine places superscripts a quarter of the parent font height above
             // baseline and subscripts four fifths of its descent below it.
             match style.image_align.shift {
@@ -563,6 +591,8 @@ enum Relation {
 struct Compound {
     tag: Option<String>,
     universal: bool,
+    has_href: bool,
+    is_link: bool,
     classes: Vec<String>,
     ids: Vec<String>,
     first_child: bool,
@@ -574,6 +604,8 @@ impl Compound {
     fn is_empty(&self) -> bool {
         self.tag.is_none()
             && !self.universal
+            && !self.has_href
+            && !self.is_link
             && self.classes.is_empty()
             && self.ids.is_empty()
             && !self.first_child
@@ -582,6 +614,8 @@ impl Compound {
 
     fn matches(&self, element: &Element) -> bool {
         !element.anonymous
+            && (!self.has_href || element.has_href)
+            && (!self.is_link || (element.tag == "a" && element.has_href))
             && (!self.first_child || element.previous_sibling.is_none())
             && (!self.first_of_type || element.first_of_type)
             && self
@@ -633,12 +667,22 @@ impl Selector {
                     specificity.2 += 1;
                 }
                 Token::Delim('*') if compound.is_empty() => compound.universal = true,
+                Token::SquareBracketBlock => {
+                    input.parse_nested_block(|p| {
+                        p.expect_ident_matching("href")?;
+                        Ok(())
+                    })?;
+                    compound.has_href = true;
+                    specificity.1 = specificity.1.saturating_add(1);
+                }
                 Token::Colon => {
                     let Token::Ident(name) = input.next_including_whitespace()? else {
                         return Err(ParseError::unexpected_token());
                     };
                     if name.eq_ignore_ascii_case("first-of-type") {
                         compound.first_of_type = true;
+                    } else if name.eq_ignore_ascii_case("link") || name.eq_ignore_ascii_case("any-link") {
+                        compound.is_link = true;
                     } else if name.eq_ignore_ascii_case("first-child") {
                         compound.first_child = true;
                     } else {
@@ -832,7 +876,7 @@ fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
 }
 
 type Priority = (bool, bool, Specificity);
-type Winners<'a> = [Option<(Priority, &'a Property)>; 16];
+type Winners<'a> = [Option<(Priority, &'a Property)>; 17];
 
 fn choose<'a>(
     winners: &mut Winners<'a>,
@@ -858,6 +902,7 @@ fn choose<'a>(
             Property::VerticalAlign(_) => 13,
             Property::Marker(_) => 14,
             Property::Indent(_) => 15,
+            Property::Decoration(_) => 16,
             Property::FontSource(_) => continue,
         };
         let priority = (declaration.important, inline, specificity);
@@ -898,6 +943,7 @@ impl Weight {
 }
 
 enum Property {
+    Decoration(Option<TextDecoration>),
     Indent(Option<TextIndent>),
     Marker(crate::list_marker::MarkerKind),
     Family(Vec<Family>),
@@ -932,6 +978,34 @@ impl<'i> DeclarationParser<'i> for Properties {
         let property = input.parse_until_before(Delimiter::Bang, |input| {
             let property = match name.to_ascii_lowercase().as_ref() {
                 "text-indent" => Property::Indent(parse_indent(input)?),
+                "text-decoration" | "text-decoration-line" => {
+                    let mut lines = TextDecoration::default();
+                    let mut inherit = false;
+                    let mut exclusive = false;
+                    let mut first = true;
+                    while !input.is_exhausted() {
+                        let word = input.expect_ident()?.to_ascii_lowercase();
+                        if exclusive {
+                            return Err(ParseError::unexpected_token());
+                        }
+                        match word.as_str() {
+                            "underline" => lines.underline = true,
+                            "overline" => lines.overline = true,
+                            "line-through" => lines.strike = true,
+                            "solid" if name.eq_ignore_ascii_case("text-decoration") => {}
+                            "none" | "initial" | "unset" | "inherit" if first => {
+                                inherit = word == "inherit";
+                                exclusive = true;
+                            }
+                            _ => return Err(ParseError::unexpected_token()),
+                        }
+                        first = false;
+                    }
+                    if first {
+                        return Err(ParseError::unexpected_token());
+                    }
+                    Property::Decoration((!inherit).then_some(lines))
+                }
                 "vertical-align" => {
                     use parley::VerticalAlign;
                     Property::VerticalAlign(

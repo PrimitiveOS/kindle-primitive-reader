@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::sync::Arc;
 
-use crate::book_style::Style;
+use crate::book_style::{Style, TextDecoration};
 use crate::comic::ImagePage;
 use crate::epub::Book;
 use crate::gray_glyph::GlyphCache;
@@ -34,7 +34,7 @@ struct Paragraph {
     y: f32,
     bottom: f32,
     background: Option<u8>,
-    layout: Layout<()>,
+    layout: Layout<TextDecoration>,
     ruby: Vec<RubyOverlay>,
 }
 
@@ -46,7 +46,7 @@ struct PaintedMarker {
 }
 
 enum MarkerPaint {
-    Text { y: f32, layout: Layout<()> },
+    Text { y: f32, layout: Layout<TextDecoration> },
     Shape(crate::list_marker::MarkerKind),
 }
 struct RubyOverlay {
@@ -55,12 +55,12 @@ struct RubyOverlay {
     y: f32,
     top: f32,
     bottom: f32,
-    layout: Layout<()>,
+    layout: Layout<TextDecoration>,
 }
 
 struct RubyCandidate {
     bytes: Range<usize>,
-    layout: Layout<()>,
+    layout: Layout<TextDecoration>,
     line_height: f32,
 }
 
@@ -450,7 +450,7 @@ impl ParleyChapter {
             for line in paragraph.layout.lines().rev() {
                 if text[line.text_range()].chars().any(|ch| !ch.is_whitespace())
                     || line.items().any(|item| matches!(item,
-                        PositionedLayoutItem::GlyphRun(run) if run.advance() > 0.0 && run.style().underline.is_some()))
+                        PositionedLayoutItem::GlyphRun(run) if run.advance() > 0.0 && run.style().brush != TextDecoration::default()))
                 {
                     return ruby.max(paragraph.y + line.metrics().content_block_max_coord);
                 }
@@ -573,7 +573,7 @@ impl ParleyChapter {
     pub(crate) fn selection_layouts(
         &self,
         page: Range<f32>,
-    ) -> impl Iterator<Item = (usize, f32, f32, Range<f32>, &Layout<()>)> {
+    ) -> impl Iterator<Item = (usize, f32, f32, Range<f32>, &Layout<TextDecoration>)> {
         let start = self
             .paragraphs
             .partition_point(|paragraph| paragraph.max_bottom <= page.start);
@@ -630,18 +630,23 @@ impl ParleyChapter {
                             &run,
                             settings.text_contrast,
                         );
-                        if run.style().underline.is_some() {
-                            let y =
-                                (paragraph.y - range.start + run.baseline() + 3.0).round() as isize;
-                            let x0 = margin
-                                + ((paragraph.x + run.offset()).floor().max(0.0) as usize)
-                                    .min(columns.len());
-                            let x1 = margin
-                                + ((paragraph.x + run.offset() + run.advance()).ceil().max(0.0)
-                                    as usize)
-                                    .min(columns.len());
-                            for row in y.max(0) as usize..(y + 2).max(0) as usize {
-                                if row < visible_height && x0 < x1 {
+                        let decoration = run.style().brush;
+                        if decoration != TextDecoration::default() {
+                            let metrics = run.run().font_metrics();
+                            let thickness = metrics.underline_size.round().clamp(1.0, 12.0);
+                            let baseline = paragraph.y - range.start + run.baseline();
+                            let rows = [
+                                decoration.underline.then_some(baseline - metrics.underline_offset),
+                                decoration.overline.then_some(baseline - metrics.ascent + thickness),
+                                decoration.strike.then_some(baseline - run.run().font_size() * 2.0 / 7.0),
+                            ];
+                            let limit = columns.len() as f32;
+                            let x0 = margin + (paragraph.x + run.offset()).floor().clamp(0.0, limit) as usize;
+                            let x1 = margin + (paragraph.x + run.offset() + run.advance()).ceil().clamp(0.0, limit) as usize;
+                            for y in rows.into_iter().flatten() {
+                                let start = y.round().clamp(0.0, visible_height as f32) as usize;
+                                let end = (y.round() + thickness).clamp(0.0, visible_height as f32) as usize;
+                                for row in start..end {
                                     page[row * stride + x0..row * stride + x1].fill(48);
                                 }
                             }
@@ -752,13 +757,13 @@ impl LineIndent {
 
 #[cfg(test)]
 fn layout_paragraph(
-    context: &mut LayoutContext<()>,
+    context: &mut LayoutContext<TextDecoration>,
     fonts: &mut FontContext,
     block: &Block,
     width: u32,
     settings: Settings,
     styles: &[Style],
-) -> (Layout<()>, Vec<RubyOverlay>) {
+) -> (Layout<TextDecoration>, Vec<RubyOverlay>) {
     let indent = LineIndent::resolve(&styles[block.element], width, width, settings.font_size, 0);
     layout_with_images(
         context,
@@ -774,7 +779,7 @@ fn layout_paragraph(
 }
 
 fn layout_with_images(
-    context: &mut LayoutContext<()>,
+    context: &mut LayoutContext<TextDecoration>,
     fonts: &mut FontContext,
     block: &Block,
     width: u32,
@@ -783,7 +788,7 @@ fn layout_with_images(
     images: &[parley::InlineBox],
     indent: LineIndent,
     user_rules: &crate::user_hyphenation::Rules,
-) -> (Layout<()>, Vec<RubyOverlay>) {
+) -> (Layout<TextDecoration>, Vec<RubyOverlay>) {
     let automatic = crate::hyphenation::with_user_rules(block, styles, settings, user_rules);
     let mut layout = make_paragraph(
         context,
@@ -910,7 +915,7 @@ fn layout_with_images(
     (layout, overlays)
 }
 
-fn base_geometry(layout: &Layout<()>, bytes: &Range<usize>) -> Option<(BoundingBox, usize)> {
+fn base_geometry(layout: &Layout<TextDecoration>, bytes: &Range<usize>) -> Option<(BoundingBox, usize)> {
     let start = Cursor::from_byte_index(layout, bytes.start, Affinity::Downstream);
     let end = Cursor::from_byte_index(layout, bytes.end, Affinity::Upstream);
     if start.index() != bytes.start || end.index() != bytes.end {
@@ -998,13 +1003,13 @@ fn list_insets(source: &Source, styles: &[Style], font_size: f32) -> HashMap<usi
 }
 
 fn marker_layout(
-    context: &mut LayoutContext<()>,
+    context: &mut LayoutContext<TextDecoration>,
     fonts: &mut FontContext,
     text: &str,
     style: &Style,
     settings: Settings,
     size: f32,
-) -> Layout<()> {
+) -> Layout<TextDecoration> {
     let mut builder = context.ranged_builder(fonts, text, 1.0, true);
     let family: FontFamily<'_> = if settings.override_fonts {
         GenericFamily::Serif.into()
@@ -1027,13 +1032,13 @@ fn marker_layout(
 }
 
 fn make_annotation(
-    context: &mut LayoutContext<()>,
+    context: &mut LayoutContext<TextDecoration>,
     fonts: &mut FontContext,
     text: &str,
     language: Option<Language>,
     style: &Style,
     settings: Settings,
-) -> Layout<()> {
+) -> Layout<TextDecoration> {
     let mut builder = context.ranged_builder(fonts, text, 1.0, true);
     if !settings.font_kerning {
         builder.push_default(StyleProperty::FontFeatures((&DISABLE_KERNING).into()));
@@ -1053,7 +1058,7 @@ fn make_annotation(
     layout
 }
 
-fn overlaps_entire_page(layout: &Layout<()>, page_height: f32) -> bool {
+fn overlaps_entire_page(layout: &Layout<TextDecoration>, page_height: f32) -> bool {
     if layout.len() < 2 {
         return false;
     }
@@ -1075,7 +1080,7 @@ fn overlaps_entire_page(layout: &Layout<()>, page_height: f32) -> bool {
 }
 
 fn make_paragraph(
-    context: &mut LayoutContext<()>,
+    context: &mut LayoutContext<TextDecoration>,
     fonts: &mut FontContext,
     block: &Block,
     width: u32,
@@ -1086,7 +1091,7 @@ fn make_paragraph(
     fit_font_metrics: bool,
     indent: LineIndent,
     automatic: &crate::user_hyphenation::Opportunities,
-) -> Layout<()> {
+) -> Layout<TextDecoration> {
     let style = &styles[block.element];
     let language = block.language;
     let mut builder = context.ranged_builder(fonts, &block.text, 1.0, true);
@@ -1158,6 +1163,7 @@ fn make_paragraph(
     if settings.letter_spacing != 0.0 {
         builder.push_default(StyleProperty::LetterSpacing(settings.letter_spacing));
     }
+    builder.push_default(StyleProperty::Brush(style.decoration));
     builder.push_default(StyleProperty::FontWeight(weight(style)));
     builder.push_default(StyleProperty::FontStyle(style.font_style));
     builder.push_default(StyleProperty::Locale(language));
@@ -1173,6 +1179,9 @@ fn make_paragraph(
         let run_line_break = run.line_break.unwrap_or_else(|| line_break(text.language));
         if run_line_break != paragraph_line_break {
             builder.push(StyleProperty::LineBreak(run_line_break), text.bytes.clone());
+        }
+        if run.decoration != style.decoration {
+            builder.push(StyleProperty::Brush(run.decoration), text.bytes.clone());
         }
         if run.text_rise != style.text_rise {
             builder.push(
@@ -1204,9 +1213,6 @@ fn make_paragraph(
         if run.font_style != style.font_style {
             builder.push(StyleProperty::FontStyle(run.font_style), text.bytes.clone());
         }
-    }
-    for link in &block.links {
-        builder.push(StyleProperty::Underline(true), link.bytes.clone());
     }
     for annotation in ruby {
         builder.push(
@@ -2169,7 +2175,7 @@ mod tests {
         let expected = "Lead 文".len();
         let witness = (20..160).find(|&width| {
             let first_line_end =
-                |context: &mut LayoutContext<()>, fonts: &mut FontContext, block: usize| {
+                |context: &mut LayoutContext<TextDecoration>, fonts: &mut FontContext, block: usize| {
                     let (layout, _) = layout_paragraph(
                         context,
                         fonts,
@@ -2195,7 +2201,7 @@ mod tests {
         for block in source.blocks.iter().take(4) {
             assert_eq!(block.text, "Lead 文〜文.");
         }
-        let layout = |context: &mut LayoutContext<()>, fonts: &mut FontContext, block: usize| {
+        let layout = |context: &mut LayoutContext<TextDecoration>, fonts: &mut FontContext, block: usize| {
             layout_paragraph(
                 context,
                 fonts,
@@ -2935,6 +2941,9 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod decoration_tests;
 
 #[cfg(test)]
 mod inline_baseline_tests;
