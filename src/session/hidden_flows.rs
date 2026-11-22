@@ -57,7 +57,7 @@ impl Resolved {
                     .position
                     .anchor
                     .as_ref()
-                    .map_or(Some(0), |anchor| probe.page_for(anchor));
+                    .map_or(Some(0), |anchor| probe.flow_boundary_page(anchor));
                 if let Some(page) = page {
                     result.points.push((
                         index,

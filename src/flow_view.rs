@@ -172,6 +172,9 @@ impl ChapterFlow {
         let mut ruby = Vec::new();
         if projected.is_some() {
             for annotation in &block.ruby {
+                if self.element(annotation.element)?.suppressed {
+                    continue;
+                }
                 let ranges = view
                     .layout_spans(annotation.bytes.clone())
                     .ok_or("A ruby base has invalid source boundaries")?;
@@ -281,14 +284,20 @@ impl Deref for LayoutImage<'_> {
     }
 }
 
-impl Images<'_> {
+impl<'a> LayoutImage<'a> {
+    pub(crate) fn original(&self) -> &'a EmbeddedImage {
+        self.source
+    }
+}
+
+impl<'a> Images<'a> {
     pub(crate) fn len(&self) -> usize {
         self.projected.map_or(self.source.len(), <[_]>::len)
     }
     pub(crate) fn is_empty(&self) -> bool {
         self.len() == 0
     }
-    pub(crate) fn iter(&self) -> impl Iterator<Item = LayoutImage<'_>> + '_ {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = LayoutImage<'a>> + '_ {
         (0..self.len()).map(|index| {
             let projected = self.projected.map(|images| &images[index]);
             let source_index = projected.map_or(index, |image| image.source_index);
@@ -332,29 +341,39 @@ pub(crate) struct Rubies<'a> {
 
 impl Rubies<'_> {
     pub(crate) fn is_empty(&self) -> bool {
-        self.projected
-            .as_ref()
-            .map_or(self.source.is_empty(), Vec::is_empty)
+        self.iter().next().is_none()
+    }
+    pub(crate) fn len(&self) -> usize {
+        self.iter().count()
     }
     pub(crate) fn iter(&self) -> impl Iterator<Item = LayoutRuby<'_>> + '_ {
         let count = self.projected.as_ref().map_or(self.source.len(), Vec::len);
-        (0..count).map(|index| match &self.projected {
-            Some(ruby) => LayoutRuby {
-                bytes: ruby[index].bytes.clone(),
-                source: ruby[index].source,
-                painted: ruby[index].painted,
-            },
-            None => {
-                let source = &self.source[index];
-                LayoutRuby {
-                    bytes: source.bytes.clone(),
-                    source,
-                    painted: self
-                        .masks
-                        .get(source.element)
-                        .is_none_or(|flow| flow.painted),
-                }
+        (0..count).filter_map(|index| {
+            let owner = self
+                .projected
+                .as_ref()
+                .map_or(self.source[index].element, |items| items[index].element);
+            if self.masks.get(owner).is_some_and(|flow| flow.suppressed) {
+                return None;
             }
+            Some(match &self.projected {
+                Some(ruby) => LayoutRuby {
+                    bytes: ruby[index].bytes.clone(),
+                    source: ruby[index].source,
+                    painted: ruby[index].painted,
+                },
+                None => {
+                    let source = &self.source[index];
+                    LayoutRuby {
+                        bytes: source.bytes.clone(),
+                        source,
+                        painted: self
+                            .masks
+                            .get(source.element)
+                            .is_none_or(|flow| flow.painted),
+                    }
+                }
+            })
         })
     }
 }

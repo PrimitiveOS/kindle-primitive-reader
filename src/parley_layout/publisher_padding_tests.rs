@@ -415,7 +415,7 @@ fn compares_original_table_coordinates_and_source_hits() {
                 let layout = make_paragraph(
                     &mut ctx,
                     &mut fc,
-                    block,
+                    &LayoutBlock::identity(block),
                     None,
                     cfg,
                     &styles,
@@ -533,7 +533,10 @@ fn collapsed_table_uses_its_header_widths_and_preserves_cross_column_word_hits()
     let narrow = render(html.replace("width:95%", "width:60%"));
     // Real bold headers can exceed a percentage track's minimum content width.
     // Keep a separate short normal-weight header case for exact percentages.
-    let percent = render(html.replace("th.depth {", "th.depth {font-weight:normal;").replace("th.buoy {", "th.buoy {font-weight:normal;"));
+    let percent = render(
+        html.replace("th.depth {", "th.depth {font-weight:normal;")
+            .replace("th.buoy {", "th.buoy {font-weight:normal;"),
+    );
     let rect = |p: &Probe, id: &str, word: &str| {
         let start = p.fragment(id).unwrap();
         let end = crate::Anchor {

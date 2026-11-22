@@ -273,6 +273,7 @@ mod tests {
             .map(|i| Line {
                 block: i,
                 bytes: 0..1,
+                spans: None,
                 top: i as f32 * 20.,
                 bottom: i as f32 * 20. + 18.,
                 missing_glyphs: 0,

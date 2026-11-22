@@ -2536,6 +2536,7 @@ impl Reader {
             }
             Action::StepNearby(direction) => self.begin_nearby(direction, true)?,
             Action::SearchHit(index) => {
+                self.ensure_reflow_search_current()?;
                 let hit = self.hits.get(index).ok_or("That result is unavailable")?;
                 let end = hit.end.clone();
                 let previous = position(&self.active.as_ref().ok_or("No open book")?.reading);

@@ -3,7 +3,7 @@
 //! CSS Writing Modes §5.1 and Unicode UAX #50 distinguish upright vertical
 //! shaping from clockwise painting of horizontally shaped sideways runs.
 
-use std::ops::Range;
+use std::{collections::BTreeMap, ops::Range, sync::Arc};
 
 use harfrust::{Direction, Feature, FontRef, ShapeOptions, ShaperData, Tag, UnicodeBuffer};
 use icu_properties::{
@@ -22,6 +22,8 @@ use skrifa::{
 };
 
 use crate::book_style::{Family, Style};
+use crate::flow_projection::{Affinity, OwnedProjection};
+use crate::flow_view::{ChapterFlow, LayoutBlock};
 use crate::gray_glyph::GlyphCache;
 use crate::selection::HighlightRect;
 use crate::source::{Block, Source, StyledText};
@@ -91,6 +93,7 @@ struct Run {
     face: usize,
     size: f32,
     strength: f32,
+    painted: bool,
 }
 
 struct Text<'a> {
@@ -110,6 +113,7 @@ struct Glyph {
     y: f32,
     clockwise: bool,
     strength: f32,
+    painted: bool,
 }
 
 struct Cluster {
@@ -155,14 +159,26 @@ pub(crate) struct VerticalChapter {
     pitch: f32,
     ruby_gutter: f32,
     cache: GlyphCache,
+    mappings: BTreeMap<usize, Arc<OwnedProjection>>,
 }
 
 impl VerticalChapter {
     pub(crate) fn new(
         source: &Source,
         styles: &[Style],
+        fonts: FontContext,
+        settings: Settings,
+    ) -> Result<(Self, Vec<Line>, f32)> {
+        let flow = ChapterFlow::from_styles(source, styles)?;
+        Self::with_flow(source, styles, fonts, settings, &flow)
+    }
+
+    pub(crate) fn with_flow(
+        source: &Source,
+        styles: &[Style],
         mut fonts: FontContext,
         settings: Settings,
+        flow: &ChapterFlow,
     ) -> Result<(Self, Vec<Line>, f32)> {
         if source
             .blocks
@@ -173,11 +189,23 @@ impl VerticalChapter {
         {
             return Err("The chapter exceeds the vertical reading text limit".into());
         }
-        if source.blocks.iter().any(|block| !block.images.is_empty()) {
+        if source.blocks.iter().any(|block| {
+            !styles[block.element].flow.suppressed
+                && block
+                    .images
+                    .iter()
+                    .any(|image| !styles[image.element].flow.suppressed)
+        }) {
             return Err("Vertical reading currently supports text without illustrations".into());
         }
         let width = settings.text_width() as f32;
-        let ruby_gutter = if source.blocks.iter().any(|block| !block.ruby.is_empty()) {
+        let ruby_gutter = if source.blocks.iter().any(|block| {
+            !styles[block.element].flow.suppressed
+                && block
+                    .ruby
+                    .iter()
+                    .any(|ruby| !styles[ruby.element].flow.suppressed)
+        }) {
             settings.font_size * MAX_SCALE * (RUBY_SCALE + 0.20)
         } else {
             0.0
@@ -196,16 +224,31 @@ impl VerticalChapter {
             columns_per_page,
             pitch,
             ruby_gutter,
-            cache: GlyphCache::with_hinting(settings.font_hinting,
-                styles.first().map_or_else(Default::default, |style| style.font_weights.clone())),
+            mappings: BTreeMap::new(),
+            cache: GlyphCache::with_hinting(
+                settings.font_hinting,
+                styles
+                    .first()
+                    .map_or_else(Default::default, |style| style.font_weights.clone()),
+            ),
         };
         let mut lines = Vec::new();
-        for block in source.blocks.iter().filter(|block| !block.text.is_empty()) {
+        for original in &source.blocks {
+            if styles[original.element].flow.suppressed {
+                continue;
+            }
+            let block = flow.layout_block(source, original)?;
+            if block.text.is_empty() {
+                continue;
+            }
+            if let Some(mapping) = flow.shared(original.key) {
+                reader.mappings.insert(original.key, mapping);
+            }
             if block.text.len() > MAX_PARAGRAPH_BYTES {
                 return Err("A paragraph exceeds the vertical reading limit".into());
             }
             let text = Text {
-                value: &block.text,
+                value: block.text,
                 spans: &block.styled_text,
                 element: block.element,
                 language: block.language,
@@ -214,15 +257,20 @@ impl VerticalChapter {
             let runs = font_runs(text, styles, &mut fonts, &mut reader.faces, settings)?;
             let limit = MAX_GLYPHS - reader.glyphs.len();
             let mut shaped = shape_block(
-                &block.text,
+                block.text,
                 &runs,
                 &reader.faces,
                 limit,
                 settings.font_kerning,
             )?;
             let mut overlays =
-                reader.ruby_overlays(block, &mut shaped, styles, &mut fonts, settings, limit)?;
-            reader.place_block(block, &mut shaped, &mut overlays, &mut lines, settings)?;
+                reader.ruby_overlays(&block, &mut shaped, styles, &mut fonts, settings, limit)?;
+            let first_line = lines.len();
+            reader.place_block(&block, &mut shaped, &mut overlays, &mut lines, settings)?;
+            let view = flow.view(source, original)?;
+            for line in &mut lines[first_line..] {
+                line.project(&view, line.bytes.clone())?;
+            }
         }
         if reader.columns.is_empty() {
             return Err("The chapter has no vertical reading text".into());
@@ -236,14 +284,14 @@ impl VerticalChapter {
 
     fn place_block(
         &mut self,
-        block: &Block,
+        block: &LayoutBlock<'_>,
         shaped: &mut Shaped,
         overlays: &mut [RubyOverlay],
         lines: &mut Vec<Line>,
         settings: Settings,
     ) -> Result<()> {
         let segmenter = LineSegmenter::new_for_non_complex_scripts(Default::default());
-        let legal: Vec<_> = segmenter.segment_str(&block.text).collect();
+        let legal: Vec<_> = segmenter.segment_str(block.text).collect();
         let mut start = 0;
         let mut ruby = overlays.iter_mut().peekable();
         while start < shaped.clusters.len() {
@@ -307,6 +355,7 @@ impl VerticalChapter {
             lines.push(Line {
                 block: block.key,
                 bytes: shaped.clusters[start].bytes.start..shaped.clusters[end - 1].bytes.end,
+                spans: None,
                 top: logical_top + slot as f32 * logical_pitch,
                 bottom: logical_end,
                 missing_glyphs: 0,
@@ -318,7 +367,7 @@ impl VerticalChapter {
 
     fn ruby_overlays(
         &mut self,
-        block: &Block,
+        block: &LayoutBlock<'_>,
         base: &mut Shaped,
         styles: &[Style],
         fonts: &mut FontContext,
@@ -338,7 +387,7 @@ impl VerticalChapter {
         let mut result = Vec::with_capacity(block.ruby.len());
         let mut remaining = limit - base.glyphs.len();
         let mut previous = 0;
-        for ruby in &block.ruby {
+        for ruby in block.ruby.iter() {
             let start = base
                 .clusters
                 .partition_point(|cluster| cluster.bytes.end <= ruby.bytes.start);
@@ -370,7 +419,7 @@ impl VerticalChapter {
             let text = Text {
                 value: &ruby.annotation,
                 spans: &[],
-                element: block.element,
+                element: ruby.element,
                 language: ruby.language.or(block.language),
                 scale: RUBY_SCALE,
             };
@@ -382,6 +431,9 @@ impl VerticalChapter {
                 remaining,
                 settings.font_kerning,
             )?;
+            for glyph in &mut annotation.glyphs {
+                glyph.painted &= ruby.painted;
+            }
             remaining -= annotation.glyphs.len();
             let height = annotation
                 .clusters
@@ -434,6 +486,9 @@ impl VerticalChapter {
         let columns = self.column_range(range);
         for column in &self.columns[columns] {
             for glyph in &self.glyphs[column.glyphs.clone()] {
+                if !glyph.painted {
+                    continue;
+                }
                 self.cache.draw_vertical(
                     page,
                     stride,
@@ -449,7 +504,7 @@ impl VerticalChapter {
                         variations: &self.faces[glyph.face].variations,
                     },
                     settings.text_contrast,
-                            settings.font_gamma_index,
+                    settings.font_gamma_index,
                 );
             }
         }
@@ -458,7 +513,10 @@ impl VerticalChapter {
 
     pub(crate) fn source_at(&self, range: Range<f32>, x: f32, y: f32) -> Option<(usize, usize)> {
         let (block, cluster) = self.cluster_at(range, x, y)?;
-        Some((block, cluster.bytes.start))
+        Some((
+            block,
+            self.source_offset(block, cluster.bytes.start, Affinity::After)?,
+        ))
     }
 
     pub(crate) fn caret_at(&self, range: Range<f32>, x: f32, y: f32) -> Option<(usize, usize)> {
@@ -466,11 +524,17 @@ impl VerticalChapter {
         Some((
             block,
             if y - cluster.top < cluster.bottom - y {
-                cluster.bytes.start
+                self.source_offset(block, cluster.bytes.start, Affinity::After)?
             } else {
-                cluster.bytes.end
+                self.source_offset(block, cluster.bytes.end, Affinity::Before)?
             },
         ))
+    }
+
+    fn source_offset(&self, block: usize, offset: usize, affinity: Affinity) -> Option<usize> {
+        self.mappings.get(&block).map_or(Some(offset), |mapping| {
+            mapping.source_offset(offset, affinity)
+        })
     }
 
     fn cluster_at(&self, range: Range<f32>, x: f32, y: f32) -> Option<(usize, &VisibleCluster)> {
@@ -612,16 +676,26 @@ fn font_runs(
             let size = (settings.font_size * input.scale * style.size_scale.clamp(0.75, MAX_SCALE))
                 .clamp(1.0, 144.0);
             let requested = crate::font_render::font_weight(
-                if settings.bold_text { FontWeight::BOLD.value() } else { style.font_weight.value() },
+                if settings.bold_text {
+                    FontWeight::BOLD.value()
+                } else {
+                    style.font_weight.value()
+                },
                 settings.font_weight_delta,
             );
-            let strength = crate::font_synthesis::strength(&faces[face].font, requested, size, &style.font_weights);
+            let strength = crate::font_synthesis::strength(
+                &faces[face].font,
+                requested,
+                size,
+                &style.font_weights,
+            );
             runs.push(Run {
                 bytes: start..end,
                 format,
                 face,
                 size,
                 strength,
+                painted: style.flow.painted,
             });
         }
         start = end;
@@ -672,7 +746,11 @@ fn find_face(
         QueryFamily::Generic(GenericFamily::SansSerif),
     ]);
     let weight = FontWeight::new(crate::font_render::font_weight(
-        if settings.bold_text { FontWeight::BOLD.value() } else { style.font_weight.value() },
+        if settings.bold_text {
+            FontWeight::BOLD.value()
+        } else {
+            style.font_weight.value()
+        },
         settings.font_weight_delta,
     ));
     query.set_attributes(Attributes::new(FontWidth::NORMAL, style.font_style, weight));
@@ -721,10 +799,14 @@ fn find_face(
     })?;
     let data = FontData::new(candidate.blob, candidate.index);
     let font = skrifa::FontRef::from_index(data.data.as_ref(), data.index)?;
-    let variations = font.axes().location(candidate.synthesis.variation_settings().iter().copied())
-        .coords().to_vec();
+    let variations = font
+        .axes()
+        .location(candidate.synthesis.variation_settings().iter().copied())
+        .coords()
+        .to_vec();
     if let Some(index) = faces.iter().position(|face| {
-        face.font.data.id() == data.data.id() && face.font.index == data.index
+        face.font.data.id() == data.data.id()
+            && face.font.index == data.index
             && face.variations == variations
     }) {
         return Ok(index);
@@ -775,7 +857,8 @@ fn shape_block(
     for run in runs {
         let face = &faces[run.face];
         let font = FontRef::from_index(face.font.data.as_ref(), face.font.index)?;
-        let instance = harfrust::ShaperInstance::from_coords(&font, face.variations.iter().copied());
+        let instance =
+            harfrust::ShaperInstance::from_coords(&font, face.variations.iter().copied());
         let shaper = face.shaper.shaper(&font).instance(Some(&instance)).build();
         let mut buffer = UnicodeBuffer::new();
         for (at, ch) in text[run.bytes.clone()].char_indices() {
@@ -839,7 +922,9 @@ fn shape_block(
             };
             let advance = if natural_advance > 0.0 {
                 (natural_advance + run.strength).max(0.0)
-            } else { natural_advance };
+            } else {
+                natural_advance
+            };
             if !advance.is_finite()
                 || !(0.0..=576.0).contains(&advance)
                 || dx.abs() > 4_096.0
@@ -860,6 +945,7 @@ fn shape_block(
                 y,
                 clockwise: sideways,
                 strength: run.strength,
+                painted: run.painted,
             });
             pen += advance;
             let cluster = shaped.clusters.last_mut().unwrap();

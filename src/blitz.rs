@@ -74,7 +74,9 @@ impl ArchiveResources {
             }
             if crate::gif_image::has_signature(&bytes) {
                 let png = crate::gif_image::transparent_png(&bytes).ok()?;
-                if png.len() > MAX_RESOURCE_BYTES - self.bytes { return None; }
+                if png.len() > MAX_RESOURCE_BYTES - self.bytes {
+                    return None;
+                }
                 self.bytes += png.len();
                 return Some(png);
             }
@@ -246,6 +248,7 @@ impl BlitzChapter {
                         } else {
                             0..0
                         },
+                        spans: None,
                         top: origin + metrics.content_block_min_coord,
                         bottom: origin + metrics.content_block_max_coord,
                         missing_glyphs: line
@@ -269,6 +272,7 @@ impl BlitzChapter {
                 lines.push(Line {
                     block: 0,
                     bytes: 0..0,
+                    spans: None,
                     top: y,
                     bottom: y + layout.size.height,
                     missing_glyphs: 0,
