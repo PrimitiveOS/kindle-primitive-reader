@@ -401,6 +401,10 @@ impl Reader {
         continuing: bool,
         from_edge: bool,
     ) -> Result<()> {
+        if continuing && self.active.is_some() {
+            // Validate before consuming the old selection or replacing its key.
+            self.ensure_reflow_search_current()?;
+        }
         let query = if continuing {
             self.nearby.current.clone().ok_or("No current search")?
         } else {
