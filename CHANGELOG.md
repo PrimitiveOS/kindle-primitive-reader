@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.23
+
+- Open password-protected PDFs with a valid reading or owner password, including supported Unicode passwords.
+- Choose Lighten, Underline, Strikethrough or Invert for saved highlights in reflowable and fixed-page books.
+- Set how often Reader saves reading data, save immediately from reading tools, and retain data across sleep and close.
+- Jump to EPUB publisher landmarks such as the cover, table of contents and beginning of the text.
+- Preserve supported publisher table borders in separate and collapsed tables.
+
 ## 0.1.22
 
 - Open publisher contents in supported MOBI and AZW3 books, including nested entries that point inside a chapter.

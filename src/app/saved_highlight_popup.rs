@@ -1,5 +1,6 @@
 //! Tap a painted annotation without leaving the page or losing its viewport.
 use super::*;
+use crate::highlight_style::HighlightStyle;
 use std::cell::Cell;
 
 const PER_PAGE: usize = 4;
@@ -11,6 +12,7 @@ enum View {
     Choices,
     Note(usize),
     Actions(usize),
+    Styles(Option<usize>),
     RemoveNote(usize),
     RemoveMark(usize),
 }
@@ -31,7 +33,9 @@ impl SavedPopup {
                     + if self.hits.len() > PER_PAGE { 114 } else { 12 }
             }
             View::Note(_) => 656,
-            View::Actions(_) => 556,
+            View::Actions(_) => 664,
+            View::Styles(Some(_)) => 380,
+            View::Styles(None) => 498,
             View::RemoveNote(_) | View::RemoveMark(_) => 360,
         };
         let y = if self.anchor_y + 40 + height <= PAGE_HEIGHT as i32 - 28 {
@@ -72,6 +76,22 @@ impl SavedPopup {
         )
     }
 
+    fn style_action(&self) -> Rect {
+        let r = self.manage_button(false);
+        Rect::new(r.x, r.bottom() + 12, self.rect().w - 48, r.h)
+    }
+
+    fn style_cell(&self, index: usize) -> Rect {
+        let r = self.rect();
+        let w = (r.w - 60) / 2;
+        Rect::new(
+            r.x + 24 + (index % 2) as i32 * (w + 12),
+            r.y + 124 + (index / 2) as i32 * 116,
+            w,
+            104,
+        )
+    }
+
     fn body(&self) -> Rect {
         let r = self.rect();
         Rect::new(r.x + 32, r.y + 121, r.w - 64, r.h - 262)
@@ -84,6 +104,63 @@ impl SavedPopup {
 }
 
 impl Reader {
+    pub(super) fn effective_highlight_style(&self) -> HighlightStyle {
+        self.open_book_id()
+            .and_then(|id| self.library.state(id))
+            .and_then(|s| s.highlight_style)
+            .unwrap_or(self.controls.highlight_style)
+    }
+
+    fn mark_style(&self, index: usize) -> Option<HighlightStyle> {
+        let book = self.library.state(self.open_book_id()?)?;
+        if self.fixed.is_some() {
+            book.pdf_highlights.get(index).map(|m| m.style)
+        } else {
+            book.highlights.get(index).map(|m| m.style)
+        }
+    }
+
+    pub(super) fn open_highlight_styles(&mut self, index: Option<usize>) {
+        self.show(self.surface_screen());
+        self.saved_popup = Some(SavedPopup {
+            hits: index.into_iter().collect(),
+            view: View::Styles(index),
+            anchor_y: 380,
+            page: 0,
+            pages: Cell::new(1),
+        });
+        self.sync_auto_turn(Instant::now());
+    }
+
+    fn save_highlight_style(
+        &mut self,
+        index: Option<usize>,
+        style: Option<HighlightStyle>,
+    ) -> Change {
+        let Some(id) = self.open_book_id() else {
+            return Change::None;
+        };
+        let Some(state) = self.library.state_mut(id) else {
+            return Change::None;
+        };
+        if let Some(index) = index {
+            let stored = if self.fixed.is_some() {
+                state.pdf_highlights.get_mut(index).map(|m| &mut m.style)
+            } else {
+                state.highlights.get_mut(index).map(|m| &mut m.style)
+            };
+            let (Some(stored), Some(style)) = (stored, style) else {
+                return Change::None;
+            };
+            *stored = style;
+            self.close_saved_popup();
+        } else {
+            state.highlight_style = style;
+        }
+        self.mark_book_changed();
+        Change::Partial
+    }
+
     fn mark_text(&self, index: usize) -> Option<(&str, Option<&str>)> {
         let state = self.library.state(self.open_book_id()?)?;
         if self.fixed.is_some() {
@@ -225,6 +302,8 @@ impl Reader {
             View::Choices => ("Overlapping highlights", bar_icons::HIGHLIGHT),
             View::Note(_) => ("Note", bar_icons::action_icon(&Action::EditNote)),
             View::Actions(_) => ("Highlight", bar_icons::HIGHLIGHT),
+            View::Styles(Some(_)) => ("Highlight style", bar_icons::HIGHLIGHT),
+            View::Styles(None) => ("New highlights in this book", bar_icons::HIGHLIGHT),
             View::RemoveNote(_) => (
                 "Remove note?",
                 bar_icons::action_icon(&Action::RemoveHighlight),
@@ -341,6 +420,15 @@ impl Reader {
                     false,
                 );
                 canvas.button(popup.manage_button(true), "Extend", false, false);
+                canvas.button(
+                    popup.style_action(),
+                    &format!(
+                        "Style · {}",
+                        self.mark_style(index).unwrap_or_default().label()
+                    ),
+                    false,
+                    false,
+                );
                 buttons(
                     canvas,
                     &[
@@ -348,6 +436,45 @@ impl Reader {
                         "Remove highlight",
                     ],
                 );
+            }
+            View::Styles(index) => {
+                let selected = index
+                    .and_then(|i| self.mark_style(i))
+                    .unwrap_or_else(|| self.effective_highlight_style());
+                for (i, style) in HighlightStyle::ALL.into_iter().enumerate() {
+                    let cell = popup.style_cell(i);
+                    let chosen = (style == selected) != canvas.control_pressed(cell, false);
+                    canvas.panel(cell, 16, 4, if chosen { 0 } else { 255 });
+                    let sample = Rect::new(cell.x + 16, cell.y + 20, 80, 64);
+                    let (paper, ink) = match style {
+                        HighlightStyle::Lighten => (204, 0),
+                        HighlightStyle::Invert => (0, 255),
+                        _ => (255, 0),
+                    };
+                    canvas.fill(sample, paper);
+                    canvas.text(
+                        Rect::new(sample.x, sample.y + 5, sample.w, sample.h - 5),
+                        "Aa",
+                        BODY.center().ink(ink),
+                    );
+                    if style == HighlightStyle::Underline {
+                        canvas.fill(
+                            Rect::new(sample.x + 13, sample.bottom() - 8, sample.w - 26, 4),
+                            68,
+                        );
+                    }
+                    if style == HighlightStyle::Strikethrough {
+                        canvas.fill(Rect::new(sample.x + 13, sample.y + 32, sample.w - 26, 3), 0);
+                    }
+                    canvas.text(
+                        Rect::new(sample.right() + 18, cell.y + 26, cell.w - 124, 64),
+                        style.label(),
+                        BODY.bold().ink(if chosen { 255 } else { 0 }),
+                    );
+                }
+                if index.is_none() {
+                    buttons(canvas, &["Use reader default", "Set reader default"]);
+                }
             }
             View::RemoveNote(_) => {
                 canvas.text(
@@ -451,6 +578,13 @@ impl Reader {
                 View::Actions(index)
             }
             View::Actions(index) => {
+                if p.style_action().contains(x, y) {
+                    self.saved_popup
+                        .as_mut()
+                        .unwrap()
+                        .change_view(View::Styles(Some(index)));
+                    return Change::Partial;
+                }
                 if p.manage_button(false).contains(x, y) {
                     return self.edit_tapped_note(index);
                 }
@@ -468,6 +602,31 @@ impl Reader {
                 } else {
                     return Change::None;
                 }
+            }
+            View::Styles(index) => {
+                if let Some((_, style)) = HighlightStyle::ALL
+                    .iter()
+                    .enumerate()
+                    .find(|(i, _)| p.style_cell(*i).contains(x, y))
+                {
+                    return self.save_highlight_style(index, Some(*style));
+                }
+                if index.is_none() && button(0, 2) {
+                    return self.save_highlight_style(None, None);
+                }
+                if index.is_none() && button(1, 2) {
+                    let controls = ReadingControls {
+                        highlight_style: self.effective_highlight_style(),
+                        ..self.controls
+                    };
+                    if let Err(e) = controls.save(&self.controls_path) {
+                        return self.report(e);
+                    }
+                    self.controls = controls;
+                    self.close_saved_popup();
+                    return Change::Partial;
+                }
+                return Change::None;
             }
             View::RemoveMark(index) | View::RemoveNote(index) => {
                 if button(0, 2) {
@@ -518,3 +677,7 @@ impl Reader {
 #[cfg(test)]
 #[path = "saved_highlight_popup_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "highlight_style_tests.rs"]
+mod style_tests;

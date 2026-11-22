@@ -2,6 +2,8 @@
 //! compound and descendant selectors, author order, inline styles, importance,
 //! and inherited text properties. See https://www.w3.org/TR/css-cascade-5/.
 
+pub(crate) mod borders;
+
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -225,6 +227,8 @@ pub(crate) struct Style {
     pub text_indent: TextIndent,
     pub padding: [CssLength; 2],
     pub border_collapse: bool,
+    pub borders: Option<Arc<[borders::Border; 4]>>,
+    pub border_spacing: [CssLength; 2],
     pub background: Option<u8>,
     pub marker: crate::list_marker::MarkerKind,
     pub image_width: Option<ImageLength>,
@@ -253,6 +257,8 @@ impl Default for Style {
             text_indent: TextIndent::default(),
             padding: Default::default(),
             border_collapse: false,
+            borders: None,
+            border_spacing: [CssLength::Pixels(1.); 2],
             background: None,
             marker: crate::list_marker::MarkerKind::None,
             image_width: None,
@@ -337,6 +343,7 @@ impl BookStyle {
             let mut style = parent.clone();
             // A parent's background paints its box. It is not a text property.
             style.background = None;
+            style.borders = None;
             style.page_breaks = Default::default();
             style.padding = Default::default();
             if let Some(kind) = element.list_kind {
@@ -375,7 +382,7 @@ impl BookStyle {
                 .as_deref()
                 .filter(|text| self.author_inline && text.len() <= MAX_INLINE_BYTES)
                 .map_or_else(Vec::new, |text| declarations(&mut Parser::new(text)));
-            let mut winners = Winners::default();
+            let mut winners: Winners = [None; 38];
             for rule in &self.rules {
                 if let Some(specificity) = rule
                     .selectors
@@ -440,6 +447,29 @@ impl BookStyle {
                     Property::Slant(slant) => style.font_style = *slant,
                     Property::LineBreak(breaking) => style.line_break = *breaking,
                     Property::WordBreak(breaking) => style.word_break = *breaking,
+                    Property::Border(side, value)
+                        if matches!(
+                            element.tag.as_str(),
+                            "td" | "th" | "tr" | "thead" | "tbody" | "tfoot" | "table"
+                        ) =>
+                    {
+                        let target = style
+                            .borders
+                            .get_or_insert_with(|| Arc::new([borders::Border::default(); 4]));
+                        let inherited = parent
+                            .borders
+                            .as_ref()
+                            .map(|b| b[*side])
+                            .unwrap_or_default();
+                        let font = style.size_scale.clamp(0.125, 8.0);
+                        let root = result.first().map_or(font, |s| s.size_scale);
+                        value.apply(&mut Arc::make_mut(target)[*side], inherited, font, root);
+                    }
+                    Property::Border(..) => (),
+                    Property::BorderSpacing(value) => {
+                        style.border_spacing = value.unwrap_or(parent.border_spacing)
+                    }
+                    Property::BorderParts(_) => unreachable!("expanded before cascading"),
                     Property::BorderCollapse(mode) => {
                         style.border_collapse = mode.unwrap_or(parent.border_collapse)
                     }
@@ -963,6 +993,11 @@ fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
                     important: decl.important,
                 });
             }
+        } else if let Property::BorderParts(parts) = decl.property {
+            result.extend(parts.into_iter().map(|(side, part)| Declaration {
+                property: Property::Border(side, part),
+                important: decl.important,
+            }));
         } else {
             result.push(decl);
         }
@@ -971,7 +1006,7 @@ fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
 }
 
 type Priority = (bool, bool, Specificity);
-type Winners<'a> = [Option<(Priority, &'a Property)>; 25];
+type Winners<'a> = [Option<(Priority, &'a Property)>; 38];
 
 fn choose<'a>(
     winners: &mut Winners<'a>,
@@ -1004,6 +1039,9 @@ fn choose<'a>(
             Property::Orphans(_) => 20,
             Property::Widows(_) => 21,
             Property::BorderCollapse(_) => 24,
+            Property::Border(side, part) => 25 + 3 * side + part.component(),
+            Property::BorderSpacing(_) => 37,
+            Property::BorderParts(_) => continue,
             Property::Padding(side, _) => 22 + side,
             Property::PaddingBoth(_) | Property::FontSource(_) => continue,
         };
@@ -1045,6 +1083,9 @@ impl Weight {
 }
 
 enum Property {
+    Border(usize, borders::Value),
+    BorderParts(Vec<(usize, borders::Value)>),
+    BorderSpacing(Option<[CssLength; 2]>),
     BorderCollapse(Option<bool>),
     Padding(usize, Option<CssLength>),
     PaddingBoth([Option<CssLength>; 2]),
@@ -1090,12 +1131,69 @@ impl<'i> DeclarationParser<'i> for Properties {
                 "padding-left" => Property::Padding(0, parse_padding(input, false)?[0]),
                 "padding-right" => Property::Padding(1, parse_padding(input, false)?[0]),
                 "padding" => Property::PaddingBoth(parse_padding(input, true)?),
-                "border-collapse" => Property::BorderCollapse(match input.expect_ident()?.to_ascii_lowercase().as_str() {
-                    "collapse" => Some(true),
-                    "separate" | "initial" => Some(false),
-                    "inherit" | "unset" => None,
-                    _ => return Err(ParseError::unexpected_token()),
-                }),
+                "border-spacing" => Property::BorderSpacing(
+                    if input
+                        .try_parse(|p| p.expect_ident_matching("inherit"))
+                        .is_ok()
+                        || input
+                            .try_parse(|p| p.expect_ident_matching("unset"))
+                            .is_ok()
+                    {
+                        None
+                    } else if input
+                        .try_parse(|p| p.expect_ident_matching("initial"))
+                        .is_ok()
+                        || input
+                            .try_parse(|p| p.expect_ident_matching("revert"))
+                            .is_ok()
+                    {
+                        Some([CssLength::Pixels(0.); 2])
+                    } else {
+                        let h = parse_css_length(input)?;
+                        let v = if input.is_exhausted() {
+                            h
+                        } else {
+                            parse_css_length(input)?
+                        };
+                        if [h, v]
+                            .iter()
+                            .any(|p| matches!(p, CssLength::Fraction(_)) || p.pixels(100, 40.) < 0.)
+                        {
+                            return Err(ParseError::unexpected_token());
+                        }
+                        Some([h, v])
+                    },
+                ),
+                "border"
+                | "border-width"
+                | "border-style"
+                | "border-color"
+                | "border-top"
+                | "border-bottom"
+                | "border-left"
+                | "border-right"
+                | "border-top-width"
+                | "border-top-style"
+                | "border-top-color"
+                | "border-bottom-width"
+                | "border-bottom-style"
+                | "border-bottom-color"
+                | "border-left-width"
+                | "border-left-style"
+                | "border-left-color"
+                | "border-right-width"
+                | "border-right-style"
+                | "border-right-color" => {
+                    Property::BorderParts(borders::parse(&name.to_ascii_lowercase(), input)?)
+                }
+                "border-collapse" => Property::BorderCollapse(
+                    match input.expect_ident()?.to_ascii_lowercase().as_str() {
+                        "collapse" => Some(true),
+                        "separate" | "initial" => Some(false),
+                        "inherit" | "unset" => None,
+                        _ => return Err(ParseError::unexpected_token()),
+                    },
+                ),
                 "orphans" => Property::Orphans(line_minimum(input)?),
                 "widows" => Property::Widows(line_minimum(input)?),
                 "page-break-before" | "break-before" => Property::BreakBefore(break_edge(input)?),

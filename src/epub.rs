@@ -257,18 +257,15 @@ impl Book {
         let navigation = manifest.values().find(|item| item.navigation);
         let ncx = spine.attribute("toc").and_then(|id| manifest.get(id));
         // Optional navigation can be missing or malformed even when the spine is readable.
-        let (mut toc, mut printed_pages) = navigation
+        let (mut toc, mut printed_pages, group_headings) = navigation
             .and_then(|nav| {
                 let xml = xml_entry(&mut archive, &nav.path).ok()?;
                 let xml = loose::without_plain_html_doctype(&xml);
                 let doc = parse_xml(&xml).ok()?;
-                Some((
-                    xhtml_nav(&doc, &nav.path, "toc"),
-                    xhtml_nav(&doc, &nav.path, "page-list"),
-                ))
+                Some(publication_navigation(&doc, &nav.path))
             })
             .unwrap_or_default();
-        if let Some(ncx) = ncx {
+        if ncx.is_some() || !group_headings.is_empty() {
             let mut paths = BTreeMap::new();
             for item in spine
                 .children()
@@ -280,6 +277,7 @@ impl Book {
                 });
                 path.0 += 1;
             }
+            inherit_group_targets(&mut toc, &group_headings, &paths, &mut archive);
             let has_target = |entries: &[TocEntry], print: bool| {
                 entries.iter().any(|entry| {
                     entry.destination.as_ref().is_some_and(|destination| {
@@ -292,6 +290,7 @@ impl Book {
             let needs_toc = !has_target(&toc, false);
             let needs_print = !has_target(&printed_pages, true);
             if (needs_toc || needs_print)
+                && let Some(ncx) = ncx
                 && let Ok(xml) = xml_entry(&mut archive, &ncx.path)
                 && let Ok(doc) = parse_xml(&xml)
             {
@@ -1116,21 +1115,43 @@ fn agreed_hint<T: PartialEq>(mut hints: impl Iterator<Item = T>, conflict: T) ->
 }
 
 // EPUB 3.3 §7.3–7.4: https://www.w3.org/TR/epub-33/#sec-nav-def-model
-fn xhtml_nav(doc: &Document<'_>, base: &str, kind: &str) -> Vec<TocEntry> {
-    let Some(toc) = doc.descendants().find(|node| {
-        node.has_tag_name("nav")
-            && node
-                .attribute(("http://www.idpf.org/2007/ops", "type"))
-                .or_else(|| node.attribute("type"))
-                .is_some_and(|kinds| kinds.split_ascii_whitespace().any(|value| value == kind))
-    }) else {
-        return Vec::new();
+fn publication_navigation(
+    doc: &Document<'_>,
+    base: &str,
+) -> (Vec<TocEntry>, Vec<TocEntry>, Vec<usize>) {
+    let find = |kind: &str| {
+        doc.descendants().find(|node| {
+            node.has_tag_name("nav")
+                && node
+                    .attribute(("http://www.idpf.org/2007/ops", "type"))
+                    .or_else(|| node.attribute("type"))
+                    .is_some_and(|roles| roles.split_ascii_whitespace().any(|role| role == kind))
+        })
     };
+    let mut page_groups = Vec::new();
+    let printed = find("page-list").map_or_else(Vec::new, |node| {
+        xhtml_nav(node, base, true, &mut page_groups)
+    });
+    if let Some(node) = find("toc").or_else(|| find("landmarks")) {
+        let mut groups = Vec::new();
+        let contents = xhtml_nav(node, base, false, &mut groups);
+        (contents, printed, groups)
+    } else {
+        (printed.clone(), printed, page_groups)
+    }
+}
+
+fn xhtml_nav(
+    toc: Node<'_, '_>,
+    base: &str,
+    page_list: bool,
+    groups: &mut Vec<usize>,
+) -> Vec<TocEntry> {
     let mut entries = Vec::new();
     let mut pending = Vec::new();
     push_xhtml_items(&mut pending, toc, 0);
     while let Some((item, depth)) = pending.pop() {
-        if kind == "page-list" && entries.len() == MAX_PAGE_REFERENCES {
+        if page_list && entries.len() == MAX_PAGE_REFERENCES {
             break;
         }
         if let Some(label) = item
@@ -1141,11 +1162,77 @@ fn xhtml_nav(doc: &Document<'_>, base: &str, kind: &str) -> Vec<TocEntry> {
                 .has_tag_name("a")
                 .then(|| label.attribute("href"))
                 .flatten();
-            entries.extend(toc_entry(base, href, label, depth));
+            if let Some(entry) = toc_entry(base, href, label, depth) {
+                if label.has_tag_name("span") {
+                    groups.push(entries.len());
+                }
+                entries.push(entry);
+            }
         }
         push_xhtml_items(&mut pending, item, depth + 1);
     }
     entries
+}
+
+/// A publisher can name a navigation group with a span. CREngine opens its
+/// first reachable child. Only inspect documents needed by a pending group.
+fn inherit_group_targets(
+    entries: &mut [TocEntry],
+    groups: &[usize],
+    spine: &BTreeMap<&str, (usize, bool)>,
+    archive: &mut Archive,
+) {
+    if groups.is_empty() {
+        return;
+    }
+    let mut pending: Vec<usize> = Vec::new();
+    let mut ids: BTreeMap<String, std::collections::BTreeSet<String>> = BTreeMap::new();
+    let mut remaining = MAX_RESOURCE as u64;
+    for index in 0..entries.len() {
+        while pending
+            .last()
+            .is_some_and(|&parent| entries[parent].depth >= entries[index].depth)
+        {
+            pending.pop();
+        }
+        if groups.binary_search(&index).is_ok() {
+            pending.push(index);
+            continue;
+        }
+        if pending.is_empty() {
+            continue;
+        }
+        let Some(dest) = entries[index].destination.as_ref() else {
+            continue;
+        };
+        let Some(&(1, true)) = spine.get(dest.path.as_str()) else {
+            continue;
+        };
+        let Ok(size) = archive.size(&dest.path) else {
+            continue;
+        };
+        if let Some(fragment) = &dest.fragment {
+            let known = ids.entry(dest.path.clone()).or_insert_with(|| {
+                if size > remaining || size > MAX_XML as u64 {
+                    return Default::default();
+                };
+                remaining -= size;
+                let Ok(xml) = xml_entry(archive, &dest.path) else {
+                    return Default::default();
+                };
+                crate::source::Source::parse(&xml)
+                    .map(|source| source.fragments.into_keys().collect())
+                    .unwrap_or_default()
+            });
+            if !known.contains(fragment) {
+                continue;
+            }
+        }
+        let dest = dest.clone();
+        for parent in pending.drain(..) {
+            entries[parent].destination = Some(dest.clone());
+        }
+    }
 }
 
 fn push_xhtml_items<'a, 'input>(

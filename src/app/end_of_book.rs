@@ -120,7 +120,7 @@ impl Reader {
         } else {
             state.set_status(ReadingStatus::Finished);
         }
-        self.mark_dirty();
+        self.mark_book_changed();
     }
 
     fn end_delete_available(&self) -> bool {

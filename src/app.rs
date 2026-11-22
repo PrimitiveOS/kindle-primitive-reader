@@ -21,6 +21,7 @@ mod fixed_results_tests;
 mod sidecar_marks;
 mod library_view;
 mod lookup_history;
+mod metadata_save;
 mod nearby_search;
 mod online_panel;
 mod quick_display;
@@ -131,6 +132,7 @@ enum Screen {
     ReadingControls,
     FooterSettings,
     EndActionSettings,
+    MetadataSaveSettings,
     Gestures,
     GestureBinding(Gesture),
     ReadingData,
@@ -212,6 +214,7 @@ impl Screen {
             Self::ReadingControls => "Reading controls",
             Self::FooterSettings => "Reading status bar",
             Self::EndActionSettings => "At the end of a book",
+            Self::MetadataSaveSettings => "Save reading data",
             Self::Gestures => "Reading gestures",
             Self::GestureBinding(gesture) => gesture.label(),
             Self::ReadingData => "Reading data",
@@ -300,6 +303,8 @@ enum Action {
     RefreshDisplay,
     AutoTurn(Option<Duration>),
     ReadAlarm,
+    SaveBookData,
+    HighlightStyle,
     LockTouch,
     ExportBackup,
     ClearOcr,
@@ -472,7 +477,6 @@ struct ActiveFixed {
     entry: LibraryBook,
     id: u64,
     reading: FixedReading,
-    password_supplied: bool,
 }
 
 struct ActiveOcr {
@@ -571,6 +575,7 @@ pub struct Reader {
     notice: Option<String>,
     dirty: bool,
     save_at: Option<Instant>,
+    metadata_checkpoint: metadata_save::Checkpoint,
     editor: Editor,
     nearby: nearby_search::Nearby,
     find_match_case: bool,
@@ -620,7 +625,7 @@ impl Reader {
         })?;
         let data = state.parent().unwrap_or(documents);
         let controls_path = data.join("reading-controls.json");
-        let controls = ReadingControls::load(&controls_path);
+        let controls = ReadingControls::load(&controls_path, !library.recents().is_empty());
         let stats_path = data.join("reading-stats.json");
         let stats = ReadingStats::load(&stats_path);
         let profiles_path = data.join("reading-profiles.json");
@@ -708,6 +713,7 @@ impl Reader {
             notice: None,
             dirty: false,
             save_at: None,
+            metadata_checkpoint: metadata_save::Checkpoint::new(Instant::now()),
             editor: Editor::new(64),
             nearby: nearby_search::Nearby::default(),
             find_match_case: false,
@@ -809,9 +815,10 @@ impl Reader {
             {
                 self.locked = Some(entry);
                 self.show(Screen::PdfPassword);
-                self.editor = Editor::new(64);
+                self.editor = Editor::new(127);
                 if password.is_some() {
-                    self.notice = Some("Password rejected or encryption unsupported".into());
+                    self.notice =
+                        Some("Password rejected. Enter the document or owner password.".into());
                 }
                 return Ok(());
             }
@@ -834,6 +841,7 @@ impl Reader {
                 entry.title = title;
             }
             entry.author = reading.author();
+            self.save_library()?;
             self.active = None;
             self.pages_since_refresh = 0;
             self.range_edit = None;
@@ -843,7 +851,6 @@ impl Reader {
                 entry,
                 id,
                 reading,
-                password_supplied: password.is_some_and(|value| !value.is_empty()),
             });
             self.pdf_result_regions.clear();
             self.pdf_selection = None;
@@ -889,6 +896,7 @@ impl Reader {
             Reading::open(config)?
         };
         entry.author.clone_from(&reading.probe.author);
+        self.save_library()?;
         self.pages_since_refresh = 0;
         self.range_edit = None;
         self.saved_popup = None;
@@ -1036,22 +1044,33 @@ impl Reader {
     }
 
     fn record_position(&mut self) {
-        self.update_stats_activity(Instant::now());
-        if let Some(fixed) = &self.fixed {
+        self.record_position_at(Instant::now());
+    }
+
+    fn record_position_at(&mut self, now: Instant) {
+        self.update_stats_activity(now);
+        let position_changed = if let Some(fixed) = &self.fixed {
             let saved = self
                 .library
                 .remember(&fixed.entry, fixed.id, &fixed.entry.title);
-            saved.position = Some(fixed_position(&fixed.reading));
+            let position = fixed_position(&fixed.reading);
+            let changed = saved.position.as_ref() != Some(&position);
+            saved.position = Some(position);
             saved.fixed_preferences = fixed.reading.preferences();
             saved.ocr_language.clone_from(&fixed.reading.ocr_language);
-            self.mark_dirty();
+            changed
+        } else if let Some(active) = &self.active {
+            let title = &active.reading.probe.title;
+            let saved = self.library.remember(&active.entry, active.id, title);
+            let position = position(&active.reading);
+            let changed = saved.position.as_ref() != Some(&position);
+            saved.position = Some(position);
+            changed
+        } else {
             return;
-        }
-        let Some(active) = &self.active else { return };
-        let title = &active.reading.probe.title;
-        let saved = self.library.remember(&active.entry, active.id, title);
-        saved.position = Some(position(&active.reading));
-        self.mark_dirty();
+        };
+        self.dirty = true;
+        self.metadata_checkpoint.record(self.controls.metadata_save, position_changed, now);
     }
 
     fn mark_dirty(&mut self) {
@@ -1096,11 +1115,16 @@ impl Reader {
     }
 
     fn save_library(&mut self) -> io::Result<()> {
+        self.save_library_at(Instant::now())
+    }
+
+    fn save_library_at(&mut self, now: Instant) -> io::Result<()> {
         if self.dirty {
             self.library.persist()?;
             self.dirty = false;
         }
         self.save_at = None;
+        self.metadata_checkpoint = metadata_save::Checkpoint::new(now);
         Ok(())
     }
 
@@ -1238,6 +1262,9 @@ impl Reader {
         }
         if self.screen == Screen::EndActionSettings {
             return self.end_action_rows();
+        }
+        if self.screen == Screen::MetadataSaveSettings {
+            return self.metadata_save_items();
         }
         if self.screen == Screen::Dictionaries { return self.source_rows(); }
         if let Screen::DictionaryOptions(i) = self.screen { return self.source_options(i); }
@@ -1421,7 +1448,9 @@ impl Reader {
                                 .map(|mark| (mark.text.as_str(), mark.note.as_deref())),
                         )
                     });
-                    if fixed.entry.format == DocumentFormat::Pdf && !fixed.password_supplied {
+                    if fixed.entry.format == DocumentFormat::Pdf
+                        && !fixed.reading.is_encrypted_pdf()
+                    {
                         items.push(Item::new(
                             "Read embedded annotations",
                             Action::PreviewPdfAnnotations,
@@ -1979,6 +2008,12 @@ impl Reader {
                 {
                     self.refresh_display = true;
                 }
+                if controls.metadata_save != self.controls.metadata_save {
+                    self.metadata_checkpoint.cancel();
+                    if self.dirty {
+                        self.metadata_checkpoint.record(controls.metadata_save, false, Instant::now());
+                    }
+                }
                 self.controls = controls;
             }
             Action::BindGesture(gesture, binding) => {
@@ -1995,7 +2030,12 @@ impl Reader {
                 self.pages_since_refresh = 0;
                 self.refresh_display = true;
             }
+            Action::HighlightStyle => self.open_highlight_styles(None),
             Action::ReadAlarm => { self.open_read_alarm(); }
+            Action::SaveBookData => {
+                self.save_library()?;
+                self.notice = Some("Reading data saved".into());
+            }
             Action::AutoTurn(interval) => {
                 let now = Instant::now();
                 self.auto_turn.configure(interval, now);
@@ -2435,7 +2475,7 @@ impl Reader {
                 } else {
                     state.highlights.remove(index);
                 }
-                self.mark_dirty();
+                self.mark_book_changed();
                 self.show(Screen::Highlights);
                 self.notice = Some("Highlight removed".into());
             }
@@ -2671,7 +2711,7 @@ impl Reader {
                 return Err("This book has reached its bookmark limit".into());
             }
             state.bookmarks.push(Bookmark { label, position });
-            self.mark_dirty();
+            self.mark_book_changed();
         }
         self.show(screen);
         self.notice = Some("Page bookmarked".into());
@@ -2730,7 +2770,7 @@ impl Reader {
                 .remember(&active.entry, active.id, &active.reading.probe.title)
         };
         state.bookmarks.remove(index);
-        self.mark_dirty();
+        self.mark_book_changed();
         self.show(if self.fixed.is_some() {
             Screen::Fixed
         } else {
@@ -3227,7 +3267,7 @@ impl Reader {
         } else {
             state.highlights[index].note = note;
         }
-        self.mark_dirty();
+        self.mark_book_changed();
         if self.saved_popup.is_some() {
             self.saved_note_updated(index);
         } else {
@@ -4587,6 +4627,7 @@ impl Reader {
                 if let Some(outcome) = resolver.step(&mut book).map_err(io::Error::other)? {
                     if let QuoteMatch::Unique(selection) = outcome {
                         import.matched.push(Highlight {
+                            style: entry.drawer,
                             selection,
                             note: entry.note.clone(),
                         });
@@ -4730,12 +4771,15 @@ impl Reader {
                 return Err("This book has reached its highlight limit".into());
             }
             state.highlights.push(Highlight {
+                style: state
+                    .highlight_style
+                    .unwrap_or(self.controls.highlight_style),
                 selection: selection.clone(),
                 note,
             });
         }
         self.selection = None;
-        self.mark_dirty();
+        self.mark_book_changed();
         self.show(Screen::Book);
         self.notice = Some("Highlight saved".into());
         Ok(())
@@ -4771,7 +4815,7 @@ impl Reader {
         if fixed.entry.format != DocumentFormat::Pdf {
             return Err("Open a PDF first".into());
         }
-        if fixed.password_supplied {
+        if fixed.reading.is_encrypted_pdf() {
             return Err("PDF annotation interchange requires an unencrypted document".into());
         }
         if fixed.entry.size > pdf_annotations::MAX_INPUT_BYTES as u64 {
@@ -4805,6 +4849,7 @@ impl Reader {
             .into_iter()
             .filter_map(|annotation| {
                 let mark = PdfHighlight {
+                    style: annotation.style,
                     continuation: Vec::new(),
                     page: annotation.page,
                     bounds: annotation.bounds,
@@ -4907,6 +4952,9 @@ impl Reader {
             }
         } else {
             state.add_pdf_highlight(PdfHighlight {
+                style: state
+                    .highlight_style
+                    .unwrap_or(self.controls.highlight_style),
                 continuation: Vec::new(),
                 page: selection.page(),
                 bounds,
@@ -4915,7 +4963,7 @@ impl Reader {
             })?;
         }
         self.pdf_selection = None;
-        self.mark_dirty();
+        self.mark_book_changed();
         self.show(Screen::Fixed);
         self.notice = Some("Highlight saved".into());
         Ok(())
@@ -5019,11 +5067,23 @@ impl Reader {
                     None => Some(saved),
                     _ => None,
                 })
-                .flat_map(PdfHighlight::parts)
+                .flat_map(|mark| {
+                    mark.parts()
+                        .map(move |(page, rects, _)| (page, rects, mark.style))
+                })
                 .filter(|(index, _, _)| fixed.reading.visible_pages().any(|page| page == *index))
-                .flat_map(|(page, rects, _)| rects.iter().map(move |&bounds| (page, bounds)))
+                .flat_map(|(page, rects, style)| {
+                    rects.iter().map(move |&bounds| {
+                        ((page, bounds), crate::highlight_style::Paint::Saved(style))
+                    })
+                })
                 .collect();
-            marks.extend_from_slice(&self.pdf_result_regions);
+            marks.extend(
+                self.pdf_result_regions
+                    .iter()
+                    .copied()
+                    .map(|rect| (rect, crate::highlight_style::Paint::Temporary(220))),
+            );
             let selection: Vec<_> = self
                 .pdf_selection
                 .as_ref()
@@ -5095,15 +5155,35 @@ impl Reader {
                         .and_then(|edit| match &edit.draft {
                             extend_highlight::Draft::Text {current, ..} => Some(current),
                             _ => None,
-                        }).unwrap_or(&highlight.selection);
-                    reading.highlight_rects(selected)
+                        })
+                        .unwrap_or(&highlight.selection);
+                    reading
+                        .highlight_rects(selected)
+                        .into_iter()
+                        .map(move |rect| {
+                            (rect, crate::highlight_style::Paint::Saved(highlight.style))
+                        })
                 })
                 .collect();
-            if let Some(reference) = self.footnote.as_ref().and_then(|note| note.reference.as_ref()) {
-                highlights.extend(reading.highlight_rects(reference));
+            if let Some(reference) = self
+                .footnote
+                .as_ref()
+                .and_then(|note| note.reference.as_ref())
+            {
+                highlights.extend(
+                    reading
+                        .highlight_rects(reference)
+                        .into_iter()
+                        .map(|r| (r, crate::highlight_style::Paint::Temporary(220))),
+                );
             }
             if let Some(result) = &self.result_selection {
-                highlights.extend(reading.highlight_rects(result));
+                highlights.extend(
+                    reading
+                        .highlight_rects(result)
+                        .into_iter()
+                        .map(|r| (r, crate::highlight_style::Paint::Temporary(220))),
+                );
             }
             let selection = self
                 .selection
@@ -5283,7 +5363,9 @@ impl Reader {
             .map(|item| Row {
                 title: if self.screen == Screen::Matches { "" } else { &item.title },
                 detail: item.detail.as_deref(),
-                accessory: if matches!(item.action, Action::Heading) {
+                accessory: if self.screen == Screen::MetadataSaveSettings
+                    || matches!(item.action, Action::Heading)
+                {
                     RowAccessory::None
                 } else {
                     RowAccessory::Disclosure
@@ -5456,6 +5538,9 @@ impl App for Reader {
         }
         if matches!(input, Input::Sleep | Input::Wake) {
             self.stats_awake = input == Input::Wake;
+            if input == Input::Wake {
+                self.metadata_checkpoint = metadata_save::Checkpoint::new(Instant::now());
+            }
             self.sync_auto_turn(Instant::now());
             self.pages_since_refresh = 0;
             if with_storage(|| Ok(())).is_ok() {
@@ -5679,7 +5764,7 @@ impl App for Reader {
                         self.list_page = i / ROWS_PER_PAGE;
                     }
                     Screen::Dictionaries => self.show(self.dictionary_origin),
-                    Screen::FooterSettings | Screen::EndActionSettings => {
+                    Screen::FooterSettings | Screen::EndActionSettings | Screen::MetadataSaveSettings => {
                         self.show(Screen::ReadingControls)
                     }
                     Screen::ReadingProfiles => self.show(Screen::Typography),
@@ -5796,6 +5881,7 @@ impl App for Reader {
             .chain(fixed_page)
             .chain(self.nearby_marks.as_ref().and_then(|import| import.deadline))
             .chain(self.save_at)
+            .chain(self.metadata_checkpoint.deadline())
             .chain(self.stats_awake.then(|| self.read_alarm.deadline()).flatten())
             .chain(self.search_at)
             .chain(self.nearby.deadline())
@@ -5831,9 +5917,12 @@ impl App for Reader {
         }
         if let Some(change) = self.poll_spelling_lookup(now) { return change; }
         if let Some(change) = self.poll_online(now) { return change; }
-        if self.save_at.is_some_and(|at| at <= now) {
+        if self.save_at.is_some_and(|at| at <= now)
+            || self.metadata_checkpoint.deadline().is_some_and(|at| at <= now)
+        {
             self.save_at = None;
-            if let Err(error) = self.save_library()
+            self.metadata_checkpoint.cancel();
+            if let Err(error) = self.save_library_at(now)
                 && error.kind() != io::ErrorKind::WouldBlock
             {
                 return self.report(error);
@@ -7422,6 +7511,7 @@ mod tests {
         assert_eq!(state.pdf_highlights.len(), 1);
         state
             .add_pdf_highlight(PdfHighlight {
+                style: Default::default(),
                 continuation: Vec::new(),
                 page: 0,
                 bounds: vec![PdfTextRect {
@@ -9056,6 +9146,139 @@ mod tests {
     }
 
     #[test]
+    fn publisher_landmarks_open_the_group_target_and_return_without_moving_saved_marks() {
+        let fixture = Fixture::new();
+        fs::write(
+            &fixture.book,
+            include_bytes!("../tests/fixtures/landmark-survey.epub"),
+        )
+        .unwrap();
+        let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+        let fonts = vec![font.clone()];
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        app.open_path(&fixture.book).unwrap();
+        let original = app.current_position().unwrap();
+        let id = app.active.as_ref().unwrap().id;
+        assert_eq!(original.page, 0);
+        assert_eq!(app.active.as_ref().unwrap().reading.chapter, 0);
+        let mut canvas = Canvas::new(WIDTH, HEIGHT, &[font.display().to_string()]).unwrap();
+        let opening = primitive_app::frame(&app, &mut canvas, false);
+        let mut targets = Vec::new();
+        for (index, label) in ["Start the survey", "Reference", "  Source notes"]
+            .iter()
+            .enumerate()
+        {
+            app.open_reading_edge(index != 1, 630.0);
+            if index != 1 && app.top_group != Some(TopGroup::Navigation) {
+                tap_reading_control(&mut app, "Navigation");
+            }
+            assert_eq!(tap_reading_control(&mut app, "Contents"), Change::Partial);
+            if index == 0 {
+                capture_test_screen(&app, &fonts, "READER_LANDMARK_CONTENTS_SCREENSHOT", false);
+            }
+            tap_contents_item(&mut app, label);
+            assert_eq!(app.screen, Screen::Book);
+            assert_eq!(app.active.as_ref().unwrap().reading.chapter, 1);
+            targets.push(app.current_position().unwrap());
+            app.activate(Action::ReturnToLocation).unwrap();
+            assert_eq!(app.current_position(), Some(original.clone()));
+            assert!(primitive_app::frame(&app, &mut canvas, false) == opening);
+        }
+        assert_ne!(targets[0], targets[1]);
+        assert_eq!(targets[1], targets[2]);
+        assert!(app.library.state(id).unwrap().bookmarks.is_empty());
+        app.save().unwrap();
+        drop(app);
+        let mut reopened = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+        reopened.activate(Action::Continue).unwrap();
+        assert_eq!(reopened.current_position(), Some(original));
+    }
+
+    #[test]
+    fn publisher_landmarks_keep_primary_contents_and_printed_pages_independent() {
+        let fixture = Fixture::new();
+        let primary = r#"<nav epub:type="toc"><ol><li><a href="first.xhtml#passage1">Primary</a></li></ol></nav>"#;
+        let landmarks = r#"<nav epub:type="landmarks"><ol><li><span>Reference</span><ol><li><span>Nested</span><ol><li><a href="missing.xhtml">Missing document</a></li><li><a href="first.xhtml#missing">Missing anchor</a></li><li><a href="first.xhtml#passage12">Sources</a></li></ol></li></ol></li><li><span>Empty branch</span><ol><li><a href="https://example.org/">External</a></li></ol></li><li><a href="second.xhtml">Appendix</a></li></ol></nav>"#;
+        let printed = r#"<nav epub:type="page-list"><ol><li><a href="first.xhtml#passage2">10</a></li></ol></nav>"#;
+        let ncx = br#"<ncx><navMap><navPoint><navLabel><text>NCX entry</text></navLabel><content src="second.xhtml"/></navPoint></navMap></ncx>"#;
+        let open = |nav: String| {
+            let nav = format!(
+                r#"<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body>{nav}</body></html>"#
+            );
+            write_outline_fixture(&fixture.book, Some(nav.as_bytes()), Some(ncx));
+            crate::epub::Book::open(&fixture.book).unwrap()
+        };
+        let selected = open(format!("{landmarks}{printed}{primary}"));
+        assert_eq!(selected.toc()[0].label, "Primary");
+        assert_eq!(selected.toc().len(), 1);
+        assert_eq!(selected.printed_pages()[0].label, "10");
+        let landmarks_book = open(format!("{printed}{landmarks}"));
+        let rows = landmarks_book.toc();
+        assert_eq!(rows[0].destination, rows[4].destination);
+        assert_eq!(rows[1].destination, rows[4].destination);
+        assert_eq!(
+            rows[4].destination.as_ref().unwrap().fragment.as_deref(),
+            Some("passage12")
+        );
+        assert_eq!(rows[5].label, "Empty branch");
+        assert!(rows[5].destination.is_none());
+        let pages = open(printed.to_owned());
+        assert_eq!(pages.toc(), pages.printed_pages());
+        let malformed = open(format!(r#"{landmarks}<nav epub:type="toc"><ol/></nav>"#));
+        assert_eq!(malformed.toc()[0].label, "NCX entry");
+    }
+
+    #[test]
+    #[ignore = "compares five independently authored files against the installed KOReader control"]
+    fn publisher_landmarks_match_independent_reference_controls() {
+        let folder = PathBuf::from(std::env::var_os("READER_TEST_PUBLISHER_NAV_VARIANTS").unwrap());
+        for (file, expected) in [
+            (
+                "primary",
+                vec![("Primary entry", 0, "first.xhtml", "start")],
+            ),
+            (
+                "landmarks",
+                vec![
+                    ("Start the survey", 0, "second.xhtml", "body"),
+                    ("Reference", 0, "second.xhtml", "sources"),
+                    ("Source notes", 1, "second.xhtml", "sources"),
+                ],
+            ),
+            (
+                "landmarks-before-ncx",
+                vec![
+                    ("Start the survey", 0, "second.xhtml", "body"),
+                    ("Reference", 0, "second.xhtml", "sources"),
+                    ("Source notes", 1, "second.xhtml", "sources"),
+                ],
+            ),
+            (
+                "pages",
+                vec![
+                    ("10", 0, "first.xhtml", "start"),
+                    ("21", 0, "second.xhtml", "body"),
+                ],
+            ),
+            ("epub2-guide", vec![]),
+        ] {
+            let book = crate::epub::Book::open(&folder.join(format!("{file}.epub"))).unwrap();
+            assert_eq!(book.toc().len(), expected.len());
+            for (row, (label, depth, path, fragment)) in book.toc().iter().zip(expected) {
+                assert_eq!((row.label.as_str(), row.depth), (label, depth));
+                let destination = row.destination.as_ref().unwrap();
+                assert_eq!(destination.path, path);
+                assert_eq!(destination.fragment.as_deref(), Some(fragment));
+            }
+            assert_eq!(book.chapters.len(), 2);
+            assert_eq!(
+                book.printed_pages().len(),
+                if file == "epub2-guide" { 0 } else { 2 }
+            );
+        }
+    }
+
+    #[test]
     fn contents_opens_at_the_current_section_from_either_reading_bar() {
         let fixture = Fixture::new();
         let path = fixture.root.join("Document.epub");
@@ -9488,6 +9711,7 @@ mod tests {
         let layer = fixed.reading.page_text(0).unwrap();
         let first = layer.words.last().unwrap();
         let initial = PdfHighlight {
+            style: Default::default(),
             page: 0,
             bounds: vec![first.bounds],
             text: layer.text[first.bytes.clone()].into(),
@@ -9588,14 +9812,19 @@ mod tests {
         let fixed = app.fixed.as_ref().unwrap();
         let layer = fixed.reading.page_text(1).unwrap();
         let word = layer.words.first().unwrap();
-        let state = app.library.remember(&fixed.entry, fixed.id, &fixed.entry.title);
-        state.add_pdf_highlight(PdfHighlight {
-            continuation: Vec::new(),
-            page: 1,
-            bounds: vec![word.bounds],
-            text: layer.text[word.bytes.clone()].to_owned(),
-            note: Some("Harbor sounding".into()),
-        }).unwrap();
+        let state = app
+            .library
+            .remember(&fixed.entry, fixed.id, &fixed.entry.title);
+        state
+            .add_pdf_highlight(PdfHighlight {
+                style: Default::default(),
+                continuation: Vec::new(),
+                page: 1,
+                bounds: vec![word.bounds],
+                text: layer.text[word.bytes.clone()].to_owned(),
+                note: Some("Harbor sounding".into()),
+            })
+            .unwrap();
         app.show(Screen::FixedBookmarks);
         tap_contents_item(&mut app, "Find bookmarks");
         submit_annotation_search(&mut app, "harbor");
@@ -9813,7 +10042,7 @@ mod tests {
             assert_eq!(app.input(tap), Change::Partial);
             assert_eq!(app.screen, Screen::Book);
             assert_eq!(app.controls.status_bar, mode);
-            assert_eq!(ReadingControls::load(&app.controls_path).status_bar, mode);
+            assert_eq!(ReadingControls::load(&app.controls_path, true).status_bar, mode);
             match mode {
                 StatusBar::Progress => assert!(app.status_caption().unwrap().ends_with("% of book")),
                 StatusBar::Chapter => assert!(app.status_caption().unwrap().contains("Page 1 of")),
@@ -10207,6 +10436,7 @@ mod tests {
         app.library
             .remember(&fixed.entry, fixed.id, "Signal chart")
             .add_pdf_highlight(PdfHighlight {
+                style: Default::default(),
                 continuation: Vec::new(),
                 page: 1,
                 bounds: top.clone(),
@@ -10635,6 +10865,9 @@ mod tests {
         app.show(Screen::Matches);
         app.pdf_search = Some(PdfSearch::new("pdf", false).unwrap());
         app.step_pdf_search(Instant::now()).unwrap();
+        if let Some(due) = app.search_at {
+            app.tick(due);
+        }
         assert_eq!(app.pdf_hits.len(), 2);
         app.activate(Action::PdfSearchHit(1)).unwrap();
         assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 1);
@@ -10772,6 +11005,102 @@ mod tests {
         }
         assert_eq!(app.text_flow.as_ref().unwrap().document_page(), 1);
         assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 1);
+    }
+
+    #[test]
+    fn protected_pdf_prompt_search_and_resume_preserve_both_location_and_secret() {
+        let fixture = Fixture::new();
+        let bytes = include_bytes!("../tests/fixtures/pdf-password/r6-long.pdf");
+        let path = fixture.root.join("Weather survey.pdf");
+        fs::write(&path, bytes).unwrap();
+        let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+        let fonts = vec![font.clone()];
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        app.open_path(&path).unwrap();
+        assert_eq!(app.screen, Screen::PdfPassword);
+        let press = |app: &mut Reader, target: primitive_ui::Key| {
+            let keys =
+                Layout::new(WIDTH, HEIGHT, 4, 5).keyboard_keys_with(app.editor.layer, "Open");
+            let (_, rect) = keys.into_iter().find(|(key, _)| key.key == target).unwrap();
+            let (x, y) = rectangle_center(rect);
+            assert_eq!(app.input(Input::Tap(x, y)), Change::Partial);
+        };
+        for c in "wrong".chars() {
+            press(&mut app, primitive_ui::Key::Char(c));
+        }
+        press(&mut app, primitive_ui::Key::Go);
+        assert_eq!(app.screen, Screen::PdfPassword);
+        assert!(app.notice.as_deref().unwrap().contains("Password rejected"));
+        let secret = format!("estuary{}river", "n".repeat(88));
+        for (i, c) in secret.chars().enumerate() {
+            press(&mut app, primitive_ui::Key::Char(c));
+            if i == 6 {
+                capture_test_screen(&app, &fonts, "READER_PROTECTED_PDF_SCREENSHOT", false);
+            }
+        }
+        assert_eq!(app.editor.string().len(), secret.len());
+        press(&mut app, primitive_ui::Key::Go);
+        assert_eq!(app.screen, Screen::Fixed);
+        assert!(app.editor.string().is_empty());
+        assert!(app.fixed.as_ref().unwrap().reading.is_encrypted_pdf());
+        let opening = app.current_position().unwrap();
+        app.start_document_search("Wind survey").unwrap();
+        while app.search_at.is_some() {
+            app.step_pdf_search(Instant::now()).unwrap();
+        }
+        assert_eq!(app.pdf_hits.len(), 1);
+        app.activate(Action::PdfSearchHit(0)).unwrap();
+        assert_eq!(app.current_position().unwrap().page, 1);
+        assert!(!app.pdf_result_regions.is_empty());
+        app.activate(Action::ReturnToLocation).unwrap();
+        assert!(app.current_position().as_ref() == Some(&opening));
+        app.input(Input::PageForward);
+        app.tick(Instant::now() + Duration::from_secs(1));
+        let saved = app.current_position().unwrap();
+        assert_eq!(saved.page, 1);
+        app.save().unwrap();
+        drop(app);
+        let mut reopened = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+        reopened.open_path(&path).unwrap();
+        assert_eq!(reopened.screen, Screen::PdfPassword);
+        let entry = reopened.locked.clone().unwrap();
+        reopened.open_with_password(entry, Some(&secret)).unwrap();
+        assert!(reopened.current_position().as_ref() == Some(&saved));
+        assert_eq!(fs::read(&path).unwrap().as_slice(), bytes);
+        assert!(
+            !fs::read_to_string(&fixture.state)
+                .unwrap()
+                .contains(&secret)
+        );
+    }
+
+    #[test]
+    fn protected_pdf_with_an_empty_reading_password_leaves_local_annotations_available() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Weather survey.pdf");
+        fs::write(
+            &path,
+            include_bytes!("../tests/fixtures/pdf-password/r4-owner-only.pdf"),
+        )
+        .unwrap();
+        let mut app = fixture.app();
+        app.open_path(&path).unwrap();
+        assert_eq!(app.screen, Screen::Fixed);
+        assert!(app.fixed.as_ref().unwrap().reading.is_encrypted_pdf());
+        app.show(Screen::Highlights);
+        assert!(!app.items().iter().any(|item| matches!(
+            item.action,
+            Action::PreviewPdfAnnotations | Action::ExportAnnotatedPdf
+        )));
+        assert!(
+            app.verify_pdf_edit_source(app.fixed.as_ref().unwrap())
+                .unwrap_err()
+                .to_string()
+                .contains("unencrypted")
+        );
+        app.show(Screen::Fixed);
+        app.activate(Action::ToggleBookmark).unwrap();
+        assert!(app.page_is_bookmarked());
     }
 
     #[test]

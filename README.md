@@ -42,6 +42,8 @@ When you long-press an inflected English word, Reader looks up its base form in 
 
 At the end of a book, Reader can show actions, mark the book as finished, open the next readable file or return to Library. [End-of-book actions](docs/document-end.md)
 
+Choose when Reader saves your position, bookmarks and notes, or save them immediately from the reading tools. [Save reading data](docs/metadata-save.md)
+
 EPUB chapters can start a section on a fresh page and keep a heading with its opening paragraph when the publisher requests it. [Publisher page breaks](docs/publisher-page-breaks.md)
 
 In fixed-page books, Book map shows where you are and where you saved bookmarks and highlights. Open a group to see individual pages. [Book map on the Oasis display](docs/screenshots/fixed-book-map.png)
@@ -53,6 +55,8 @@ Tap a PDF web link to inspect its address over the current page. **Copy** makes 
 **Controls › Reading status bar › Overlap status bar** lets books, PDFs and comics fill the screen. Tap **Status** to reveal progress over the same page. [Status bar settings and screenshots](docs/status-bar-overlap.md)
 
 Publisher styling can keep a paragraph’s first or last lines together at a page break. [Paragraph settings and two-page comparison](docs/paragraph-ends.md)
+
+Use **Settings › Highlight style** to set how new passages appear. Tap a saved highlight and choose **Style** under its actions to change that passage. [Four highlight styles on a reading page](docs/highlight-drawing-styles.md)
 
 Tap a saved passage to read its note. When marks overlap, Reader shows the matching passages so you can choose one. In **Find**, the arrows start at your current passage. [Overlapping highlights](docs/screenshots/overlapping-highlights.png) · [Note on the page](docs/screenshots/tapped-note.png) · [Find from this passage](docs/screenshots/nearby-find.png)
 
@@ -95,12 +99,17 @@ Install Reader from PrimitiveOS Store or follow the manual install guide.
   ten pages in paged reading. Default uses the normal refresh behavior.
 - Tap Pages on the reading bar to browse thumbnails across EPUB chapters or
   a fixed-page document. Open a preview and return with Previous location.
-- Open Contents and choose Generated outline to browse EPUB headings or chapter
-  starts when the publisher's contents are missing or incomplete.
+- Open **Contents** from either reading bar. For EPUBs that omit their main table of
+  contents, Reader can show the publisher's landmarks or printed page numbers.
+  Choose **Generated outline** to browse book headings or chapter starts.
+  [Landmark navigation and screenshot](docs/epub-landmarks.md)
 - Long-press a framed panel in a single-page comic view to inspect it at a
   larger size. Done returns to the same page and zoom.
 - At the end of a comic, Next comic opens the following archive in the same
   folder in natural filename order.
+- Open a protected PDF with its document or owner password. Reader remembers
+  your reading position and asks for the password again when you reopen the book.
+  [Supported PDF encryption and password prompt](docs/protected-pdf.md)
 - In a PDF or DjVu, search forward or backward from the visible page. **From start** and **From end** jump to the first earlier or last later match. Reader highlights each matching word and can return to the original viewport. **Find all** lists up to 5,000 occurrences, with page buttons and first/last shortcuts. [Fixed-page search](docs/fixed-page-search.md)
 - In **Find all**, matching words appear in bold. Hold a result for its page and chapter path, then dismiss it with a tap or page button to return to the same row. [Result list and context preview](docs/search-result-context.md)
 - Open **Search › Find bookmarks**, or **Bookmarks › Find bookmarks** on the lower bar, to search page marks, highlighted passages and notes. Select the categories you want and switch on **Case sensitive** for an exact-case match. A result opens its passage in an EPUB or PDF.

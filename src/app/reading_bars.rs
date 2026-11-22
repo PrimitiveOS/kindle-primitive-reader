@@ -591,7 +591,7 @@ impl Reader {
         let before = state.menus;
         update(&mut state.menus);
         if state.menus != before {
-            self.mark_dirty();
+            self.mark_book_changed();
         }
     }
 

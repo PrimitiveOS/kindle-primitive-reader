@@ -317,7 +317,11 @@ fn epub_navigation_preserves_depth_order_headings_and_fragments() {
             entry("First tide", 1, Some(destination(shore, Some("tide-a")))),
         ];
         if version == 3 {
-            expected.push(entry("Observations", 1, None));
+            expected.push(entry(
+                "Observations",
+                1,
+                Some(destination(shore, Some("lantern"))),
+            ));
         }
         expected.extend([
             entry("The lantern", 2, Some(destination(shore, Some("lantern")))),

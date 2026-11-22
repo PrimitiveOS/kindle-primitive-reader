@@ -12,6 +12,7 @@ pub enum SidecarMark {
         label: Option<String>,
     },
     Highlight {
+        style: crate::highlight_style::HighlightStyle,
         start: String,
         end: String,
         text: String,
@@ -127,9 +128,10 @@ fn mark(record: &[u8]) -> Result<Option<SidecarMark>, SidecarError> {
     let pointer = |s: &String| s.starts_with('/') && !s.chars().any(char::is_control);
     let note = note.filter(|s| !s.trim().is_empty());
     Ok(match (drawer, start, end) {
-        (Some(_), Some(start), Some(end)) if pointer(&start) && pointer(&end) => text
+        (Some(drawer), Some(start), Some(end)) if pointer(&start) && pointer(&end) => text
             .filter(|s| !s.trim().is_empty())
             .map(|text| SidecarMark::Highlight {
+                style: crate::highlight_style::HighlightStyle::from_drawer(&drawer),
                 start,
                 end,
                 text,
@@ -153,14 +155,14 @@ mod tests {
     fn separates_page_bookmarks_from_ranged_text_and_keeps_unknown_counts() {
         let data = br#"return { annotations = {
             [1]={page="/node", text="Chapter one"},
-            [2]={drawer="lighten",pos0="/a",pos1="/b",text="Some text",note="Remember"},
+            [2]={drawer="underscore",pos0="/a",pos1="/b",text="Some text",note="Remember"},
             [3]={page=2,pos0={x=12,y=3}}, [4]={page="/note",note="Separate note"},
             [5]={page="/a",page="/b"},
         }, nested={annotations={{page="/wrong"}}} }"#;
         let result = parse_annotations(data).unwrap();
         assert_eq!(result.unavailable, 3);
         assert!(
-            matches!(&result.marks[..], [SidecarMark::Bookmark {pointer,label:Some(label)}, SidecarMark::Highlight{start,end,text,note:Some(note)}] if pointer=="/node" && label=="Chapter one" && start=="/a" && end=="/b" && text=="Some text" && note=="Remember")
+            matches!(&result.marks[..], [SidecarMark::Bookmark {pointer,label:Some(label)}, SidecarMark::Highlight{style:crate::highlight_style::HighlightStyle::Underline,start,end,text,note:Some(note)}] if pointer=="/node" && label=="Chapter one" && start=="/a" && end=="/b" && text=="Some text" && note=="Remember")
         );
         assert!(parse_annotations(b"return {annotations={{page=foo()}}}").is_err());
         assert!(parse_annotations(b"return {annotations={},annotations={}}").is_err());

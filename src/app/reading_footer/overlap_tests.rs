@@ -473,6 +473,7 @@ fn exposed_saved_marks_open_while_visible_footer_buttons_stay_in_front() {
     app.library
         .remember(&f.entry, f.id, &f.entry.title)
         .add_pdf_highlight(crate::library::PdfHighlight {
+            style: Default::default(),
             page: 0,
             bounds: vec![crate::fixed_text::PdfTextRect {
                 x0: 0.01,

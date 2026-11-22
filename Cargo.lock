@@ -1033,8 +1033,6 @@ checksum = "bc2d80da85f31c3fdc0366431f44cfd645a9da1e242ed1f4a61f213d9765660f"
 [[package]]
 name = "hayro-syntax"
 version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6ced8279487b029813f6cc05399099fa34df6fa23d8f7b0d41d972c49d5b30d"
 dependencies = [
  "flate2",
  "hayro-ccitt",
@@ -2166,7 +2164,7 @@ dependencies = [
 
 [[package]]
 name = "reader"
-version = "0.1.22"
+version = "0.1.23"
 dependencies = [
  "ab_glyph_rasterizer",
  "anyrender_vello_cpu",

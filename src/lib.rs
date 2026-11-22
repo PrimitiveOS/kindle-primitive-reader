@@ -38,6 +38,7 @@ mod kf8;
 mod kindle_sections;
 pub mod koreader_import;
 pub mod koreader_sidecar;
+pub mod highlight_style;
 pub mod library;
 mod list_marker;
 mod loose;
@@ -77,6 +78,7 @@ mod source;
 #[cfg(feature = "kindle")]
 mod synthetic_pages;
 mod table_layout;
+mod table_borders;
 mod table_widths;
 mod svg_image;
 mod tcr;

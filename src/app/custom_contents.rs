@@ -114,7 +114,7 @@ impl Reader {
             CustomAction::Toggle => {
                 let chapters = self.chapters_mut()?;
                 chapters.enabled = !chapters.enabled;
-                self.mark_dirty();
+                self.mark_book_changed();
                 self.show(self.contents_screen());
                 Ok(())
             }
@@ -237,7 +237,7 @@ impl Reader {
             let title = self.editor.string();
             self.chapters_mut()?.save(position, &title)?;
         }
-        self.mark_dirty();
+        self.mark_book_changed();
         let screen = match back {
             Screen::CustomBookmarks => Screen::CustomContents,
             _ => back,

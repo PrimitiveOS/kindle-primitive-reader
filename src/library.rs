@@ -513,6 +513,11 @@ pub struct Bookmark {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Highlight {
+    #[serde(
+        default,
+        skip_serializing_if = "crate::highlight_style::HighlightStyle::is_default"
+    )]
+    pub style: crate::highlight_style::HighlightStyle,
     pub selection: TextSelection,
     pub note: Option<String>,
 }
@@ -528,6 +533,11 @@ pub struct HighlightPage {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PdfHighlight {
+    #[serde(
+        default,
+        skip_serializing_if = "crate::highlight_style::HighlightStyle::is_default"
+    )]
+    pub style: crate::highlight_style::HighlightStyle,
     pub page: usize,
     pub bounds: Vec<PdfTextRect>,
     pub text: String,
@@ -623,6 +633,8 @@ fn read_status<'de, D: serde::Deserializer<'de>>(
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BookState {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub highlight_style: Option<crate::highlight_style::HighlightStyle>,
     pub id: u64,
     pub path: PathBuf,
     pub title: String,
@@ -692,6 +704,7 @@ fn read_ocr_language<'de, D: serde::Deserializer<'de>>(
 impl BookState {
     fn new(entry: &LibraryBook, id: u64) -> Self {
         Self {
+            highlight_style: None,
             id,
             path: entry.path.clone(),
             title: entry.title.clone(),
@@ -2446,6 +2459,7 @@ mod tests {
             position: position.clone(),
         });
         first_state.highlights.push(Highlight {
+            style: Default::default(),
             selection: TextSelection {
                 start: anchor.clone(),
                 end: Anchor {
@@ -2709,6 +2723,7 @@ mod tests {
             y1: 0.4,
         };
         let mark = PdfHighlight {
+            style: Default::default(),
             continuation: Vec::new(),
             page: 2,
             bounds: vec![bounds],
@@ -2771,6 +2786,7 @@ mod tests {
             y1: 0.2,
         }];
         let mut single = PdfHighlight {
+            style: Default::default(),
             page: 5,
             bounds: bounds.clone(),
             text: "First".into(),
@@ -2930,6 +2946,7 @@ mod tests {
             position: position(page, offset),
         };
         let mark = |offset, note: Option<&str>| Highlight {
+            style: Default::default(),
             selection: TextSelection {
                 start: anchor(offset),
                 end: anchor(offset + 1),
@@ -2966,6 +2983,7 @@ mod tests {
         added.fixed_preferences.width_fit = true;
         added
             .add_pdf_highlight(PdfHighlight {
+                style: Default::default(),
                 continuation: Vec::new(),
                 page: 2,
                 bounds: vec![PdfTextRect {

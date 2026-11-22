@@ -83,6 +83,7 @@ pub(crate) struct ParleyChapter {
     paragraphs: Vec<Paragraph>,
     illustrations: Vec<Illustration>,
     markers: Vec<PaintedMarker>,
+    table_frames: Vec<crate::table_borders::Frame>,
     glyphs: GlyphCache,
 }
 
@@ -110,6 +111,7 @@ impl ParleyChapter {
             paragraphs: Vec::new(),
             illustrations: Vec::new(),
             markers: Vec::new(),
+            table_frames: Vec::new(),
             glyphs: GlyphCache::with_hinting(settings.font_hinting),
         };
         let mut context = LayoutContext::new();
@@ -123,8 +125,14 @@ impl ParleyChapter {
         ));
         let group_insets = list_insets(source, styles, settings.font_size);
         let outer_width = settings.text_width();
+        let borders = crate::table_borders::Borders::read(source, styles, settings.font_size);
         let publisher_boxes = crate::publisher_padding::layout(
-            source, styles, outer_width, settings.font_size, |block| {
+            source,
+            styles,
+            outer_width,
+            settings.font_size,
+            borders.as_ref(),
+            |block| {
                 let indent = LineIndent::resolve(
                     &styles[block.element], outer_width, outer_width, settings.font_size, 0,
                 );
@@ -189,9 +197,19 @@ impl ParleyChapter {
         let mut image_cache = HashMap::new();
         let gap = settings.font_size * 0.32;
         let mut row_flow = crate::table_layout::RowFlow::default();
-        for block in &source.blocks {
+        let mut positions = crate::table_borders::Positions::default();
+        let mut last_cell = None;
+        for (index, block) in source.blocks.iter().enumerate() {
             let cell = column_for(block);
             y = row_flow.enter(cell, y);
+            let start_of_cell = y;
+            let decorated = cell.and_then(|cell| Some((cell, borders.as_ref()?.cells.get(&cell)?)));
+            if let Some((c, _)) = decorated
+                && Some(c) != last_cell
+            {
+                y += borders.as_ref().unwrap().vertical(c).0 as f32;
+            }
+            last_cell = cell;
             let (column_x, column_width) = bounds_for(block);
             let gutter = gutter_for(block);
             let image_width = column_width - gutter;
@@ -444,6 +462,13 @@ impl ParleyChapter {
             if y > MAX_HEIGHT {
                 return Err("The chapter exceeds the Parley height limit".into());
             }
+            if let Some((c, _)) = decorated {
+                let following = source.blocks.get(index + 1).and_then(&column_for);
+                if following != Some(c) {
+                    y += borders.as_ref().unwrap().vertical(c).1 as f32;
+                }
+                positions.record(c, start_of_cell, (y - gap).max(start_of_cell));
+            }
         }
 
         if source.blocks.iter().any(|b| column_for(b).is_some()) {
@@ -454,7 +479,15 @@ impl ParleyChapter {
             maximum = maximum.max(p.bottom);
             p.max_bottom = maximum;
         }
-        let extent = (row_flow.end(y) - gap).max(0.0);
+        if let (Some(b), Some(boxes)) = (&borders, &publisher_boxes) {
+            chapter.table_frames = positions.finish(b, boxes);
+        }
+        let painted = chapter
+            .table_frames
+            .iter()
+            .map(|f| f.bottom())
+            .fold(0., f32::max);
+        let extent = (row_flow.end(y) - gap).max(painted).max(0.0);
         Ok((chapter, lines, extent))
     }
 
@@ -465,6 +498,7 @@ impl ParleyChapter {
             .illustrations
             .iter()
             .map(|art| art.y + art.display.1 as f32)
+            .chain(self.table_frames.iter().map(|frame| frame.bottom()))
             .fold(0.0, f32::max);
         for paragraph in self.paragraphs.iter().rev() {
             if paragraph.background.is_some_and(|gray| gray < 255) {
@@ -745,6 +779,9 @@ impl ParleyChapter {
 
         for illustration in &self.illustrations {
             illustration.draw(page, &range, stride, &columns);
+        }
+        for stroke in &self.table_frames {
+            stroke.paint(page, stride, &columns, &range);
         }
         Ok(frame)
     }
@@ -3105,3 +3142,6 @@ mod cjk_width_tests;
 
 #[cfg(test)]
 mod publisher_padding_tests;
+
+#[cfg(test)]
+mod table_border_tests;

@@ -34,7 +34,15 @@ impl Reader {
             TopGroup::Navigation => self.navigation_items(),
             TopGroup::Appearance if self.fixed.is_some() => self.fixed_display_items(),
             TopGroup::Appearance => self.text_display_items(),
-            TopGroup::Settings => self.reading_settings_items(),
+            TopGroup::Settings => {
+                let mut items = self.reading_settings_items();
+                items.insert(
+                    0,
+                    Item::new("Highlight style", Action::HighlightStyle)
+                        .detail(self.effective_highlight_style().label()),
+                );
+                items
+            }
             TopGroup::Tools => self.document_tool_items(),
             TopGroup::Search => self.document_search_items(),
             TopGroup::Library => self.reading_library_items(),
@@ -221,6 +229,8 @@ impl Reader {
                 .detail("Assign taps, holds and swipes"),
             Item::new("At the end of a book", Action::Show(Screen::EndActionSettings))
                 .detail(current.end_action.label()),
+            Item::new("Save reading data", Action::Show(Screen::MetadataSaveSettings))
+                .detail(current.metadata_save.label()),
         ];
         items.extend(self.quick_display_items());
         // Under Primitive Launcher the pages follow the launcher's theme: no Night pages switch here.
@@ -355,6 +365,7 @@ impl Reader {
         let timer = self.read_alarm.caption(std::time::Instant::now())
             .unwrap_or_else(|| "Set an interval or alarm".into());
         items.insert(0, Item::new("Read timer", Action::ReadAlarm).detail(timer));
+        items.push(Item::new("Save reading data", Action::SaveBookData));
         if self.searchable_document() {
             items.push(Item::new(
                 "Highlights and notes",
