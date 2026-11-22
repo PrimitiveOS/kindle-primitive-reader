@@ -102,3 +102,14 @@ For three originals, every occurrence appeared on the same physical page in both
 Reader reuses parsed PDF resources while it extracts consecutive pages from one open document. The cache is rebuilt after 16 reads, a jump beyond the adjacent page, an extraction error, or a truncated text layer. Reopening starts with an empty cache. Cached resources hold in-memory document data and have no persistent file. [Hayro’s document-scoped interpreter cache](../vendor/hayro-interpret/src/context.rs) · [Reader’s cache lifetime and tests](../src/pdf_text_session.rs)
 
 The Mac comparison used the same executable with caching enabled and disabled for each original PDF. All four runs reproduced every result’s original page, total count, retained search data size, and returning viewport. On the 1,066-page original, the full scan fell from 54.2 to 21.0 seconds. The first usable result arrived in 93 ms without the cache and 119 ms with the cache in those runs. The full scans in the three other originals also completed sooner. On a 64-page interior sample, caches shared across 1, 4, 16 and 64 pages produced identical decoded text, word boxes and line boxes.
+
+The Oasis ran the same paired comparison against all four original PDFs. Each pair used one native binary and the same result screen and scheduler. All per-page result counts, allocations and previous-location checks matched. The elapsed times include yielding to the input loop. Other on-device checks ran during the comparison, so these measurements also reflect the device workload.
+
+| Physical pages | Matches | Fresh resources on each page | Reused resources |
+| ---: | ---: | ---: | ---: |
+| 41 | 360 | 4.49 s | 1.90 s |
+| 229 | 4,131 | 27.26 s | 18.62 s |
+| 1,041 | 5,000 | 55.49 s | 16.49 s |
+| 1,066 | 1,150 | 150.02 s | 36.98 s |
+
+The four original source files, Reader library and Browser session retained their checksums. The temporary verification directories were removed.
