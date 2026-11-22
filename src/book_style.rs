@@ -3,6 +3,10 @@
 //! and inherited text properties. See https://www.w3.org/TR/css-cascade-5/.
 
 pub(crate) mod borders;
+pub(crate) mod flow;
+#[cfg(test)]
+mod flow_tests;
+use flow::{Display, Visibility};
 mod user_css;
 #[cfg(test)]
 mod user_css_tests;
@@ -246,6 +250,10 @@ impl TextDecoration {
 
 #[derive(Clone)]
 pub(crate) struct Style {
+    pub display: Display,
+    pub visibility: Visibility,
+    /// Effective projection masks, not a renderer/user-CSS support declaration.
+    pub flow: crate::flow_projection::ElementFlow,
     pub font_family: Family,
     pub font_weights: Arc<HashMap<u64, f32>>,
     pub size_scale: f32,
@@ -278,6 +286,9 @@ pub(crate) struct Style {
 impl Default for Style {
     fn default() -> Self {
         Self {
+            display: Display::Inline,
+            visibility: Visibility::Visible,
+            flow: Default::default(),
             font_family: Family::Generic(GenericFamily::Serif),
             font_weights: Arc::default(),
             size_scale: 1.0,
@@ -325,19 +336,28 @@ impl BookStyle {
     }
 
     pub fn load(book: &mut Book, chapter: &str, source: &Source, fonts: &mut FontContext) -> Self {
-        let mut styled = Self {
-            author_inline: true,
-            ..Self::default()
-        };
-        styled.families.extend(
-            fonts
-                .collection
-                .family_names()
-                .map(|name| (name.to_ascii_lowercase(), Arc::from(name))),
-        );
-        if source.stylesheets.is_empty() {
-            return styled;
+        let (mut styled, faces) = Self::load_sheets(book, chapter, source);
+        styled.families.extend(fonts.collection.family_names()
+            .map(|name| (name.to_ascii_lowercase(), Arc::from(name))));
+        if !faces.is_empty() {
+            styled.register_fonts(book, &faces, fonts);
         }
+        styled
+    }
+
+    /// The exact same stylesheet selection, caps, cascade and inline handling as
+    /// native layout, without FontContext or font-face resource registration.
+    pub(crate) fn load_for_flow(
+        book: &mut Book, chapter: &str, source: &Source, publisher_styles: bool,
+        user: &crate::user_styles::Snapshot,
+    ) -> crate::Result<Self> {
+        let styled = if publisher_styles { Self::load_sheets(book, chapter, source).0 }
+            else { Self::default() };
+        styled.with_user_css(user)
+    }
+
+    fn load_sheets(book: &mut Book, chapter: &str, source: &Source) -> (Self, Vec<FontFace>) {
+        let mut styled = Self { author_inline: true, ..Self::default() };
         let mut faces = Vec::new();
         let mut remaining = MAX_CSS_BYTES;
         let mut linked = 0;
@@ -370,8 +390,7 @@ impl BookStyle {
                 _ => {}
             }
         }
-        styled.register_fonts(book, &faces, fonts);
-        styled
+        (styled, faces)
     }
 
     pub fn compute_for_dpi(&self, elements: &[Element], dpi: u16) -> Vec<Style> {
@@ -402,12 +421,19 @@ impl BookStyle {
         let defaults = Style { font_weights: self.font_weights.clone(), ..Style::default() };
         let mut result: Vec<Style> = Vec::with_capacity(elements.len());
         for (index, element) in elements.iter().enumerate() {
+            let parent = element.parent.map_or(&defaults, |parent| &result[parent]);
             if element.selector_only {
-                result.push(defaults.clone());
+                let mut style = defaults.clone();
+                style.display = Display::native(&element.tag);
+                style.visibility = parent.visibility;
+                style.flow = flow::resolve(parent.flow, style.display, style.visibility);
+                result.push(style);
                 continue;
             }
-            let parent = element.parent.map_or(&defaults, |parent| &result[parent]);
             let mut style = parent.clone();
+            // Display is not inherited. Visibility is inherited independently of
+            // ancestor suppression, so a visible descendant can restore paint.
+            style.display = Display::native(&element.tag);
             // A parent's background paints its box. It is not a text property.
             style.background = None;
             style.borders = None;
@@ -450,7 +476,7 @@ impl BookStyle {
                 .as_deref()
                 .filter(|text| self.author_inline && text.len() <= MAX_INLINE_BYTES)
                 .map_or_else(Vec::new, |text| declarations(&mut Parser::new(text)));
-            let mut winners: Winners = [None; 40];
+            let mut winners: Winners = [None; 42];
             for (user, rules) in [(true, &self.user_rules), (false, &self.rules)] {
                 for rule in rules {
                     if let Some(specificity) = rule.selectors.iter()
@@ -467,6 +493,8 @@ impl BookStyle {
                     Property::Reset(16, reset) => decoration = user_css::decoration(*reset, parent.decoration),
                     Property::Reset(key, reset) => user_css::apply_reset(&mut style, *key, *reset, parent, &defaults),
                     Property::ResetMany(..) => unreachable!("reset shorthand is expanded before cascading"),
+                    Property::Display(display) => style.display = *display,
+                    Property::Visibility(visibility) => style.visibility = *visibility,
                     Property::Family(families) => {
                         style.font_family = families
                             .iter()
@@ -592,6 +620,7 @@ impl BookStyle {
                 _ => {}
             }
             style.size_scale = style.size_scale.clamp(0.125, 8.0);
+            style.flow = flow::resolve(parent.flow, style.display, style.visibility);
             result.push(style);
         }
         result
@@ -1104,7 +1133,7 @@ fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
 }
 
 type Priority = (u8, bool, Specificity);
-type Winners<'a> = [Option<(Priority, &'a Property)>; 40];
+type Winners<'a> = [Option<(Priority, &'a Property)>; 42];
 
 fn choose<'a>(
     winners: &mut Winners<'a>,
@@ -1117,6 +1146,8 @@ fn choose<'a>(
         let index = match declaration.property {
             Property::Reset(key, _) => key,
             Property::ResetMany(..) => continue,
+            Property::Display(_) => 40,
+            Property::Visibility(_) => 41,
             Property::Family(_) => 0,
             Property::Size(_) => 1,
             Property::LineHeight(_) => 2,
@@ -1191,6 +1222,8 @@ impl Weight {
 }
 
 enum Property {
+    Display(Display),
+    Visibility(Visibility),
     Reset(usize, user_css::Reset),
     ResetMany(Vec<usize>, user_css::Reset),
     Border(usize, borders::Value),
@@ -1244,6 +1277,10 @@ impl<'i> DeclarationParser<'i> for Properties {
             }
             input.reset(&before);
             let property = match name.to_ascii_lowercase().as_ref() {
+                "display" => Property::Display(Display::parse(&input.expect_ident()?.to_ascii_lowercase())
+                    .ok_or_else(ParseError::unexpected_token)?),
+                "visibility" => Property::Visibility(Visibility::parse(&input.expect_ident()?.to_ascii_lowercase())
+                    .ok_or_else(ParseError::unexpected_token)?),
                 "padding-top" => Property::Padding(2, parse_padding(input, false)?[0]),
                 "padding-bottom" => Property::Padding(3, parse_padding(input, false)?[0]),
                 "padding-left" => Property::Padding(0, parse_padding(input, false)?[0]),
