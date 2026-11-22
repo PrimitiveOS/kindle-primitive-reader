@@ -12,6 +12,9 @@ const CONTENT_WIDTH: u32 = PANEL_WIDTH as u32 - 32;
 const CONTENT_HEIGHT: u32 = HEIGHT / 3 - 112;
 const HEADER: i32 = 76;
 
+#[cfg(test)]
+mod tests;
+
 pub(super) struct Footnote {
     target: Destination,
     pub(super) reference: Option<TextSelection>,
@@ -250,13 +253,29 @@ impl Reader {
                 return Ok(None);
             }
             let xhtml = book.chapter(index).map_err(io::Error::other)?;
-            let Some(excerpt) = footnotes::extract(
+            let source = book
+                .chapter_source(&target.path, &xhtml)
+                .map_err(io::Error::other)?;
+            let styles = crate::book_style::BookStyle::load_for_flow(
+                &mut book,
+                &target.path,
+                &source,
+                reading.config.settings.publisher_styles,
+                &reading.config.user_styles,
+            )
+            .map_err(io::Error::other)?
+            .compute(&source.elements);
+            let Some(roots) = footnotes::LayoutRoots::new(&source, &styles) else {
+                return Ok(None);
+            };
+            let Some(excerpt) = footnotes::extract_with_layout(
                 &xhtml,
                 fragment,
                 &context,
                 reading.chapter.cmp(&index),
                 toc_target,
                 self.controls.prefer_footnotes,
+                &roots,
             ) else {
                 return Ok(None);
             };
