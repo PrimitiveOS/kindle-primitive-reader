@@ -191,12 +191,12 @@ fn near(p: P, a: P, b: P) -> bool {
     if length == 0. {
         (p - a).hypot() <= TOLERANCE
     } else {
-        // A collinear control outside the chord can still turn back beyond
-        // an endpoint. Keep that extremum for subsequent signed strokes.
+        // Distance to the finite chord, not its infinite supporting line,
+        // retains turn-back extrema. The same tolerance also terminates
+        // a subpixel extremum at a non-dyadic curve parameter.
         let projection = (p - a).dot(v);
-        projection >= 0.
-            && projection <= v.hypot2()
-            && (v.x * (p.y - a.y) - v.y * (p.x - a.x)).abs() / length <= TOLERANCE
+        let closest = a + v * (projection / v.hypot2()).clamp(0., 1.);
+        (p - closest).hypot() <= TOLERANCE
     }
 }
 fn quad(
