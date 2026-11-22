@@ -56,6 +56,7 @@ impl TableWidths {
         tables: &[Option<usize>],
         owners: &[Option<usize>],
         cells: &[Option<Cell>],
+        flow: &crate::table_layout::TableFlow<'_>,
         font: f32,
         width: u32,
         borders: Option<&crate::table_borders::Borders>,
@@ -63,7 +64,8 @@ impl TableWidths {
     ) -> BTreeMap<usize, Self> {
         let mut groups: BTreeMap<usize, Vec<&Block>> = BTreeMap::new();
         for block in &source.blocks {
-            if block.table_cell.is_some()
+            if !styles[block.element].flow.suppressed
+                && flow.block_cell(block).is_some()
                 && let Some(table) = tables[block.element]
             {
                 groups.entry(table).or_default().push(block);
@@ -76,7 +78,13 @@ impl TableWidths {
             let any_hint = blocks.iter().filter_map(|b| owners[b.element]).any(|i| {
                 matches!(
                     styles[i].image_width,
-                    Some(ImageLength::Fraction(_) | ImageLength::Em(_) | ImageLength::Pixels(_) | ImageLength::Physical(_) | ImageLength::RootEm(_))
+                    Some(
+                        ImageLength::Fraction(_)
+                            | ImageLength::Em(_)
+                            | ImageLength::Pixels(_)
+                            | ImageLength::Physical(_)
+                            | ImageLength::RootEm(_)
+                    )
                 )
             });
             if !any_hint && !styles[table].border_collapse {
@@ -86,7 +94,7 @@ impl TableWidths {
             if blocks.len() > count
                 || text_bytes > bytes
                 || blocks.iter().any(|block| {
-                    let cell = block.table_cell.unwrap();
+                    let cell = flow.block_cell(block).unwrap();
                     cell.span != 1 || cell.has_column_tracks() || !block.images.is_empty()
                 })
             {
@@ -95,7 +103,7 @@ impl TableWidths {
             count -= blocks.len();
             bytes -= text_bytes;
             let mut demands: BTreeMap<usize, (u32, u32)> = BTreeMap::new();
-            let columns = usize::from(blocks[0].table_cell.unwrap().columns);
+            let columns = usize::from(flow.block_cell(blocks[0]).unwrap().columns);
             for block in blocks {
                 if let Some(owner) = owners[block.element] {
                     let (min, max) = measure(block);
