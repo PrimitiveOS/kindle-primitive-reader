@@ -308,12 +308,21 @@ impl Pdf {
 
     /// Read the embedded text and approximate span geometry for a single page.
     pub fn page_text(&self, page: usize) -> Result<PdfPageText, PdfError> {
+        self.page_text_with_cache(page, &hayro_interpret::InterpreterCache::new())
+    }
+
+    pub(crate) fn page_text_with_cache<'a>(
+        &'a self,
+        page: usize,
+        cache: &hayro_interpret::InterpreterCache<'a>,
+    ) -> Result<PdfPageText, PdfError> {
         let page = self
             .document
             .pages()
             .get(page)
             .ok_or(PdfError::MissingPage)?;
-        fixed_text::extract(page).map_err(|error| match error {
+        fixed_text::extract_cached(page, fixed_text::MAX_GLYPHS, cache).map_err(|error| match error
+        {
             PdfTextError::InvalidPageSize => PdfError::InvalidPageSize,
             PdfTextError::InterpretFailed => PdfError::TextExtractionFailed,
         })

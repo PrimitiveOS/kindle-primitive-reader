@@ -13,7 +13,7 @@ use std::fmt;
 use std::ops::Range;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-const MAX_GLYPHS: usize = 24_000;
+pub(crate) const MAX_GLYPHS: usize = 24_000;
 const MAX_TEXT_BYTES: usize = 96 * 1024;
 const MAX_GLYPH_TEXT_BYTES: usize = 512;
 
@@ -92,6 +92,14 @@ pub fn extract(page: &Page<'_>) -> Result<PdfPageText, PdfTextError> {
 }
 
 fn extract_with_glyph_limit(page: &Page<'_>, limit: usize) -> Result<PdfPageText, PdfTextError> {
+    extract_cached(page, limit, &InterpreterCache::new())
+}
+
+pub(crate) fn extract_cached<'a>(
+    page: &Page<'a>,
+    limit: usize,
+    cache: &InterpreterCache<'a>,
+) -> Result<PdfPageText, PdfTextError> {
     let (width, height) = page.render_dimensions();
     if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
         return Err(PdfTextError::InvalidPageSize);
@@ -99,11 +107,10 @@ fn extract_with_glyph_limit(page: &Page<'_>, limit: usize) -> Result<PdfPageText
     let viewport = Rect::new(0.0, 0.0, f64::from(width), f64::from(height));
     catch_unwind(AssertUnwindSafe(|| {
         let mut collector = Collector::new(viewport, limit);
-        let cache = InterpreterCache::new();
         let mut context = Context::new(
             page.initial_transform(true).to_kurbo(),
             viewport,
-            &cache,
+            cache,
             page.xref(),
             InterpreterSettings {
                 render_content: RenderContent::PAGE,
@@ -404,6 +411,42 @@ mod tests {
     use super::*;
     use hayro::hayro_syntax::Pdf;
     use std::io::Write;
+
+    #[test]
+    #[ignore = "Supply an original PDF to compare consecutive extraction timings"]
+    fn compare_shared_pdf_text_cache() {
+        let bytes = std::fs::read(std::env::var_os("READER_CACHE_ORIGINAL").unwrap()).unwrap();
+        let mut reference = None;
+        for group in [1, 4, 16, 64] {
+            let pdf = Pdf::new(bytes.clone()).unwrap();
+            let start = std::time::Instant::now();
+            let mut digest = md5::Context::new();
+            let pages = pdf.pages();
+            let first = std::env::var("READER_CACHE_START")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            let last = (first + 64).min(pages.len());
+            for chunk in (first..last).step_by(group) {
+                let cache = InterpreterCache::new();
+                for i in chunk..(chunk + group).min(last) {
+                    let t = extract_cached(&pages[i], MAX_GLYPHS, &cache).unwrap();
+                    digest.consume(serde_json::to_vec(&t).unwrap());
+                }
+            }
+            let digest = format!("{:x}", digest.finalize());
+            if let Some(r) = &reference {
+                assert_eq!(r, &digest);
+            } else {
+                reference = Some(digest.clone());
+            }
+            eprintln!(
+                "text-cache group={group} pages={} ms={} fingerprint={digest}",
+                last - first,
+                start.elapsed().as_millis()
+            );
+        }
+    }
 
     fn pdf(content: &str, page_properties: &str, unicode_map: Option<&str>) -> Pdf {
         let stream =

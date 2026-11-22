@@ -29,6 +29,10 @@ mod selection_range;
 #[path = "comic_panel.rs"]
 mod comic_panel;
 
+#[path = "pdf_text_session.rs"]
+mod pdf_text_session;
+use pdf_text_session::ReadingPdf;
+
 pub(crate) const SMALLER: Rect = Rect::new(840, PAGE_HEIGHT as i32 + 5, 120, 60);
 const LARGER: Rect = Rect::new(974, PAGE_HEIGHT as i32 + 5, 120, 60);
 const ZOOM: [f32; 5] = [1.0, 1.25, 1.5, 2.0, 3.0];
@@ -141,7 +145,7 @@ impl PdfSelection {
 enum FixedDocument {
     Epub(Box<FixedEpub>),
     Djvu(Box<Djvu>),
-    Pdf(Pdf),
+    Pdf(ReadingPdf),
     Comic(Comic),
     Image(ImagePage),
 }
@@ -194,7 +198,7 @@ impl FixedReading {
                 let pdf = pdf_open_timing("parse", || {
                     Pdf::open_with_password(bytes, password.unwrap_or_default())
                 })?;
-                FixedDocument::Pdf(pdf)
+                FixedDocument::Pdf(pdf.into())
             }
             DocumentFormat::Djvu => {
                 let bytes = with_storage(|| {
@@ -2216,7 +2220,7 @@ mod tests {
     }
 
     fn reading(pdf: Pdf, view: View) -> FixedReading {
-        FixedReading::with_source(FixedDocument::Pdf(pdf), 0, view).unwrap()
+        FixedReading::with_source(FixedDocument::Pdf(pdf.into()), 0, view).unwrap()
     }
 
     #[test]
@@ -2273,7 +2277,7 @@ mod tests {
                 ..View::default()
             };
             let mut reader =
-                FixedReading::with_source(FixedDocument::Pdf(striped_pdf(4)), 0, view).unwrap();
+                FixedReading::with_source(FixedDocument::Pdf(striped_pdf(4).into()), 0, view).unwrap();
             reader.jump_to(1, Some(&target)).unwrap();
             assert_eq!(reader.page(), 1);
             assert_eq!(reader.preferences().crop, Some(crop));
@@ -2346,7 +2350,7 @@ mod tests {
                 ..View::default()
             };
             let mut reader =
-                FixedReading::with_source(FixedDocument::Pdf(pdf), 0, preferences).unwrap();
+                FixedReading::with_source(FixedDocument::Pdf(pdf.into()), 0, preferences).unwrap();
             reader
                 .jump_to(1, link.destination_point.map(FixedJump::LinkPoint).as_ref())
                 .unwrap();
