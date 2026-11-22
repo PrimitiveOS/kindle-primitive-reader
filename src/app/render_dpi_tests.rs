@@ -1,6 +1,7 @@
 use super::*;
 use crate::Settings;
 use crate::app::tests::{Fixture, capture_test_screen};
+use crate::app::NumberField;
 use crate::library::BookPreferences;
 use std::path::PathBuf;
 use std::fs;
@@ -157,4 +158,32 @@ fn dpi_original_publication_keeps_text_anchors_and_selection_across_presets_and_
     }
     app.save().unwrap();
     assert_eq!(fs::read(&path).unwrap(), original);
+}
+
+#[test]
+fn custom_dpi_controls_keep_preset_targets_and_current_custom_value_legible() {
+    let fixture = Fixture::new();
+    let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+    app.open_path(&fixture.book).unwrap();
+    app.activate(Action::Text(Settings {render_dpi:123,..settings(&app)})).unwrap();
+    for large in [false,true] { for dark in [false,true] {
+        app.controls.large_toolbar=large; app.controls.night_pages=dark; app.system_theme=None;
+        app.open_reading_edge(false,WIDTH as f32/2.);
+        if app.reading_panel!=Some(BarPanel::TextRendering) {tap(&mut app,"Rendering");}
+        let bars=app.reading_bars();
+        let row=bars.row_labels.iter().find(|(_,label)|label=="Zoom (dpi)").unwrap().0;
+        for preset in crate::RENDER_DPI_PRESETS {
+            let label=if preset==0 {"Off".into()} else {preset.to_string()};
+            let button=bars.buttons.iter().find(|button|button.label==label && (row.y..row.y+row.h).contains(&(button.rect.y+button.rect.h/2))).unwrap();
+            assert!(button.rect.w>=100 && button.rect.h>=100);
+        }
+        let custom=bars.buttons.iter().find(|button|button.label=="123 dpi").unwrap();
+        assert!(custom.rect.w>=100 && custom.rect.h>=100 && custom.selected);
+        let suffix=format!("{}{}",if large {"_LARGE"} else {""},if dark {"_DARK"} else {""});
+        capture_test_screen(&app,&fonts,&format!("READER_CUSTOM_DPI_PANEL{suffix}_SCREENSHOT"),dark);
+        tap(&mut app,"Set value");
+        assert!(matches!(app.screen,Screen::NumberingValue(NumberField::ContentDpi(_))));
+        capture_test_screen(&app,&fonts,&format!("READER_CUSTOM_DPI_PICKER{suffix}_SCREENSHOT"),dark);
+    }}
 }

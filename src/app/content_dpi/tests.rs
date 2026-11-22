@@ -1,5 +1,5 @@
 use super::*;
-use crate::app::tests::{Fixture, capture_test_screen};
+use crate::app::tests::Fixture;
 use crate::reading_backup::{Envelope, Key as BackupKey};
 
 fn fonts() -> Vec<PathBuf> {
@@ -83,22 +83,7 @@ fn open_picker(app: &mut Reader) {
         let rendering = app.reading_button("Rendering");
         tap(app, rendering);
     }
-    let bars = app.reading_bars();
-    let row = bars
-        .row_labels
-        .iter()
-        .find(|(_, label)| label == "Custom zoom")
-        .unwrap()
-        .0;
-    let button = bars
-        .buttons
-        .iter()
-        .find(|button| {
-            button.label == "Set value"
-                && (row.y..row.y + row.h).contains(&(button.rect.y + button.rect.h / 2))
-        })
-        .unwrap()
-        .rect;
+    let button = app.reading_button("Set value");
     tap(app, button);
     assert!(matches!(
         app.screen,
@@ -279,6 +264,13 @@ fn invalid_or_stale_custom_dpi_cannot_change_model_or_reading() {
 #[test]
 fn custom_dpi_failed_layout_and_atomic_save_keep_frame_anchor_preferences_and_draft() {
     let (fixture, mut app, path) = setup();
+    let temporary_font = fixture.root.join("Private test font.ttf");
+    fs::copy(
+        crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+        &temporary_font,
+    )
+    .unwrap();
+    app.active.as_mut().unwrap().reading.config.fonts = vec![temporary_font.clone()];
     app.save().unwrap();
     open_picker(&mut app);
     text(&mut app, "123");
@@ -293,8 +285,8 @@ fn custom_dpi_failed_layout_and_atomic_save_keep_frame_anchor_preferences_and_dr
         .capture(0)
         .unwrap();
     let original = fs::read(&path).unwrap();
-    let unavailable = fixture.root.join("temporarily-unavailable.xhtml");
-    fs::rename(&path, &unavailable).unwrap();
+    let unavailable = fixture.root.join("temporarily-unavailable.ttf");
+    fs::rename(&temporary_font, &unavailable).unwrap();
     keyboard(&mut app, primitive_ui::Key::Go);
     assert_eq!(dpi(&app), 96);
     assert_eq!(app.library.bytes().unwrap(), before);
@@ -310,7 +302,7 @@ fn custom_dpi_failed_layout_and_atomic_save_keep_frame_anchor_preferences_and_dr
             .unwrap(),
         frame
     );
-    fs::rename(&unavailable, &path).unwrap();
+    fs::rename(&unavailable, &temporary_font).unwrap();
     let rollback = fixture.root.join("saved-library-before-dpi.json");
     fs::rename(&fixture.state, &rollback).unwrap();
     fs::create_dir(&fixture.state).unwrap();
@@ -334,6 +326,50 @@ fn custom_dpi_failed_layout_and_atomic_save_keep_frame_anchor_preferences_and_dr
     keyboard(&mut app, primitive_ui::Key::Go);
     assert_eq!(dpi(&app), 123);
     assert_eq!(fs::read(&path).unwrap(), original);
+}
+
+#[test]
+fn a_valid_same_length_replacement_cannot_commit_into_the_old_edition() {
+    let (_fixture, mut app, path) = setup();
+    open_picker(&mut app);
+    text(&mut app, "123");
+    app.save().unwrap();
+    let model = app.library.bytes().unwrap();
+    let anchor = app.active.as_ref().unwrap().reading.anchor();
+    let frame = app
+        .active
+        .as_mut()
+        .unwrap()
+        .reading
+        .probe
+        .capture(0)
+        .unwrap();
+    let original = fs::read(&path).unwrap();
+    let replaced = String::from_utf8(original.clone())
+        .unwrap()
+        .replace("harbor", "market");
+    assert_eq!(replaced.len(), original.len());
+    assert_ne!(replaced.as_bytes(), original);
+    fs::write(&path, replaced).unwrap();
+    keyboard(&mut app, primitive_ui::Key::Go);
+    assert_eq!(dpi(&app), 96);
+    assert_eq!(app.editor.string(), "123");
+    assert!(app.notice.as_deref().unwrap().contains("edition changed"));
+    assert_eq!(app.library.bytes().unwrap(), model);
+    assert_eq!(app.active.as_ref().unwrap().reading.anchor(), anchor);
+    assert_eq!(
+        app.active
+            .as_mut()
+            .unwrap()
+            .reading
+            .probe
+            .capture(0)
+            .unwrap(),
+        frame
+    );
+    fs::write(&path, &original).unwrap();
+    keyboard(&mut app, primitive_ui::Key::Go);
+    assert_eq!(dpi(&app), 123);
 }
 
 #[test]
@@ -413,69 +449,4 @@ fn custom_dpi_profiles_defaults_and_real_v2_restore_preserve_values_and_reject_3
     assert_eq!(dpi(&reopened), 72);
     reopened.open_path(&unseen).unwrap();
     assert_eq!(dpi(&reopened), 123);
-}
-
-#[test]
-fn custom_dpi_controls_keep_preset_targets_and_current_custom_value_legible() {
-    let (_fixture, mut app, _path) = setup();
-    apply(&mut app, 123);
-    for large in [false, true] {
-        for dark in [false, true] {
-            app.controls.large_toolbar = large;
-            app.controls.night_pages = dark;
-            app.system_theme = None;
-            app.close_content_dpi();
-            let bars = app.reading_bars();
-            let row = bars
-                .row_labels
-                .iter()
-                .find(|(_, label)| label == "Zoom (dpi)")
-                .unwrap()
-                .0;
-            for preset in crate::RENDER_DPI_PRESETS {
-                let label = if preset == 0 {
-                    "Off".into()
-                } else {
-                    preset.to_string()
-                };
-                let button = bars
-                    .buttons
-                    .iter()
-                    .find(|button| {
-                        button.label == label
-                            && (row.y..row.y + row.h).contains(&(button.rect.y + button.rect.h / 2))
-                    })
-                    .unwrap();
-                assert!(button.rect.w >= 100 && button.rect.h >= 100);
-            }
-            let custom = bars
-                .buttons
-                .iter()
-                .find(|button| button.label == "123 dpi")
-                .unwrap();
-            assert!(custom.rect.w >= 100 && custom.rect.h >= 100);
-            assert!(
-                custom.selected,
-                "The current custom value must remain selected"
-            );
-            let suffix = format!(
-                "{}{}",
-                if large { "_LARGE" } else { "" },
-                if dark { "_DARK" } else { "" }
-            );
-            capture_test_screen(
-                &app,
-                &fonts(),
-                &format!("READER_CUSTOM_DPI_PANEL{suffix}_SCREENSHOT"),
-                dark,
-            );
-            open_picker(&mut app);
-            capture_test_screen(
-                &app,
-                &fonts(),
-                &format!("READER_CUSTOM_DPI_PICKER{suffix}_SCREENSHOT"),
-                dark,
-            );
-        }
-    }
 }

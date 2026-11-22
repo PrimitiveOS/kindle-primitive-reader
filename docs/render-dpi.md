@@ -102,9 +102,9 @@ The ordinary suite and original-file results are recorded in the private
 `build/parity-review/render-dpi-evidence` receipts. No Kindle execution, physical
 e-ink acceptance, publication, or release is claimed by this desktop slice.
 
-The custom-picker follow-up adds six ordinary workflows for real keyboard input
+The custom-picker follow-up adds seven ordinary workflows for real keyboard input
 at 72 and 123 dpi, draft steps/default/cancel and sleep/wake, invalid/stale
-editions, failed layout and atomic save rollback/retry, profile/default/v2 backup
+editions and same-length on-disk replacements, failed layout and atomic save rollback/retry, profile/default/v2 backup
 restore, and compact/large light/dark capture targets. The existing original-file
 opt-in workflow also checks 72 and 123 alongside every preset. Its separate
 `custom-content-dpi-evidence` receipts identify actual executed tests and captures;
