@@ -69,3 +69,32 @@ fn discarded_empty_reflow_results_do_not_error_after_leaving_the_document() {
     assert!(app.ensure_reflow_search_current().is_ok());
     assert!(app.nearby.results_context.is_none());
 }
+
+#[test]
+fn stepping_a_completed_directional_match_cannot_rebind_a_stale_style_key() {
+    let (_fixture, mut app) = open();
+    app.editor.text = "Linh".chars().collect();
+    app.editor.caret = app.editor.text.len();
+    app.begin_nearby(SearchDirection::Next, false).unwrap();
+    let started = Instant::now();
+    while app.nearby.pending.is_some() {
+        assert!(started.elapsed() < std::time::Duration::from_secs(15));
+        app.poll_nearby(Instant::now()).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert!(app.nearby.current.is_some());
+    assert!(app.result_selection.is_some());
+    let settings = app.active.as_ref().unwrap().reading.config.settings;
+    app.activate(Action::Text(crate::Settings {
+        publisher_styles: !settings.publisher_styles,
+        ..settings
+    }))
+    .unwrap();
+    let error = app
+        .activate(Action::StepNearby(SearchDirection::Next))
+        .unwrap_err();
+    assert!(error.to_string().contains("search again"));
+    assert!(app.nearby.pending.is_none());
+    assert!(app.nearby.current.is_none());
+    assert!(app.hits.is_empty());
+}

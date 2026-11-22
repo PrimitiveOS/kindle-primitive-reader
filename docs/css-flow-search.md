@@ -26,14 +26,23 @@ obsolete matches. Closing a settings panel does not erase the key while matches
 still exist. The `Action::SearchHit` integration guard is owned by the renderer
 consumer slice and must be assembled before release.
 
+Continuation is validated before using the prior selection or replacing its
+request key; a settings change cannot turn an old result into a new-context
+starting position.
+
 Result memory accounting includes the retained source intervals. Existing query,
 chapter, result-count, cancellation and mailbox bounds remain. Source parsing
 and font-free stylesheet loading occur in the worker's storage lease; matching
-occurs after it is released. Native USB timing remains an acceptance gate.
+occurs after it is released. This stage has no mid-parse cancellation callback:
+the existing 100,000-node chapter and stylesheet limits bound it, and a cancel
+is observed before matching/delivery. Finer loader cancellation and native USB
+timing remain acceptance work.
 
-Eight new regressions cover hidden joins in literal/regex/directional matching,
+Nine new ordinary regressions cover hidden joins in literal/regex/directional matching,
 visibility and ancestor suppression, Unicode/accent boundaries, configuration
 and publication keys, actual worker cancellation and retained-result invalidation.
 They are authored for the staged branch; compilation/execution is recorded by
 its CI and later combined Mac runs. Original-file acceptance and native behavior
-must remain separately identified.
+must remain separately identified. An additional opt-in unchanged-original
+search driver checks projected quotations and canonical spans for the cached
+owner editions; it is not part of the ordinary run.
