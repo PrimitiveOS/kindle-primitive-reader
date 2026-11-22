@@ -55,6 +55,8 @@ mod ocr_job;
 pub mod online_lookup;
 #[cfg(feature = "kindle")]
 pub mod opds;
+#[cfg(feature = "kindle")]
+pub mod progress_sync;
 mod parley_layout;
 mod publisher_breaks;
 #[cfg(feature = "kindle")]

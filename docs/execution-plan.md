@@ -43,6 +43,10 @@ The remaining 134 private-use characters are already present in an original KF8 
 
 The development candidate adds explicit configured OPDS catalogs, advertised search, server pagination, publication details, format choice and validated download to a selected Documents folder. Host checks use the real process worker, normal Reader controls and unchanged original EPUB content. The provider gate covers an isolated calibre Content server; wireless transfer and additional provider extensions remain separate. Native acquisition acceptance is pending the next combined Kindle build. [Protocol scope and evidence](opds-acquisition.md)
 
+## Opt-in progress sync · K22
+
+The native candidate uses a documented versioned WebDAV progress record, conditional writes, explicit conflict choice and durable clears. Component tests cover actual process workers, two original books, interrupted replies, account changes, cancellation and local-state recovery. Combined and native acceptance remain separate gates. Annotation sync and KOReader-server interoperability retain their own scope. [Behavior and protocol](progress-sync.md)
+
 ## P0.1 Prepare the corpus
 
 Record each fixture's source, redistribution terms, and checksum. Use original

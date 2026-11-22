@@ -33,6 +33,7 @@ fn main() {
 fn run() -> Result<()> {
     let mut args = env::args_os().skip(1);
     let first = args.next().ok_or(USAGE)?;
+    if first == "--sync-worker" && args.len() == 0 { return reader::progress_sync::worker(); }
     if first == "--help" || first == "-h" {
         print!("{USAGE}");
         return Ok(());

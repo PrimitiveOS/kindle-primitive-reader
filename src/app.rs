@@ -25,6 +25,7 @@ mod sidecar_marks;
 mod library_view;
 mod library_export;
 mod lookup_history;
+mod progress_sync;
 mod vocabulary;
 mod metadata_save;
 mod nearby_search;
@@ -214,6 +215,9 @@ enum Screen {
     ClearOnlineHistory,
     DictionaryHistory,
     Vocabulary,
+    ProgressSync,
+    ProgressSyncSettings,
+    SyncEdit(progress_sync::Field),
     VocabularyWord,
     VocabularyContext,
     VocabularyOptions,
@@ -304,6 +308,9 @@ impl Screen {
             Self::ClearOnlineHistory => "Online lookup history",
             Self::DictionaryHistory => "Dictionary history",
             Self::Vocabulary => "Vocabulary",
+            Self::ProgressSync => "Progress sync",
+            Self::ProgressSyncSettings => "Sync settings",
+            Self::SyncEdit(field) => field.title(),
             Self::VocabularyWord => "Word review",
             Self::VocabularyContext => "Reading context",
             Self::VocabularyOptions => "Vocabulary options",
@@ -380,6 +387,7 @@ enum Action {
     ShowDictionaries,
     DictionarySource(SourceAction),
     LookUp(String),
+    ProgressSync(progress_sync::Command),
     Vocabulary(vocabulary::Command),
     Wikipedia,
     TranslatePage,
@@ -651,6 +659,7 @@ pub struct Reader {
     installed_dictionaries: Vec<InstalledDictionary>,
     lookup_history_path: PathBuf,
     lookup_history: LookupHistory,
+    progress_sync: progress_sync::View,
     vocabulary_view: vocabulary::View,
     online: Option<online_panel::Panel>,
     annotation_search: annotation_search::AnnotationSearch,
@@ -799,6 +808,7 @@ impl Reader {
             installed_dictionaries: Vec::new(),
             lookup_history_path,
             lookup_history,
+            progress_sync: progress_sync::View::load(data.join("progress-sync.json")),
             vocabulary_view: Default::default(),
             online: None,
             annotation_search: annotation_search::AnnotationSearch::default(),
@@ -984,6 +994,9 @@ impl Reader {
 
     fn show(&mut self, screen: Screen) {
         if !matches!(screen,Screen::Catalog(_)) { self.catalog.cancel(); }
+        if !matches!(screen, Screen::ProgressSync | Screen::ProgressSyncSettings | Screen::SyncEdit(_)) {
+            self.leave_progress_sync();
+        }
         self.flow_popup = None;
         self.end_dialog = None;
         if screen != Screen::Definition { self.spelling_lookup = None; }
@@ -1246,6 +1259,7 @@ impl Reader {
 
     fn items(&self) -> Vec<Item> {
         if let Screen::ReadingHistory(page) = self.screen { return self.reading_history_items(page); }
+        if matches!(self.screen, Screen::ProgressSync | Screen::ProgressSyncSettings) { return self.sync_items(); }
         if matches!(self.screen, Screen::Vocabulary | Screen::VocabularyWord | Screen::VocabularyOptions | Screen::VocabularyBooks) { return self.vocabulary_items(); }
         if let Screen::LibraryExport(page) = self.screen { return self.library_export_items(page); }
         if let Screen::Catalog(page) = self.screen { return self.catalog_items(page); }
@@ -1356,6 +1370,7 @@ impl Reader {
             let mut items = vec![
                 Item::new("Export highlights", Action::LibraryExport(library_export::Command::Open))
                     .detail("From History, chosen books or collections"),
+                Item::new("Progress sync", Action::ProgressSync(progress_sync::Command::Open)).detail("Optional WebDAV server"),
                 Item::new("Back up reading data", Action::ExportBackup)
                     .detail("Saves progress, bookmarks, highlights, and preferences to exports"),
                 Item::new("Restore a backup", Action::PreviewBackup)
@@ -2225,6 +2240,7 @@ impl Reader {
             Action::ToggleOnlineHistory => self.update_lookup_history(|h| h.online_languages.forget_queries = !h.online_languages.forget_queries)?,
             Action::ClearOnlineHistory => {self.update_lookup_history(|h| h.online.clear())?; self.show(Screen::OnlineHistory);},
             Action::LookUp(word) => self.look_up(&word)?,
+            Action::ProgressSync(command) => self.progress_sync_command(command)?,
             Action::Vocabulary(command) => self.vocabulary_command(command)?,
             Action::RepeatSearch(query) => {
                 if query.regular_expression && self.active.is_none() {
@@ -5134,6 +5150,7 @@ impl Reader {
     fn draw_content(&self, canvas: &mut Canvas) {
         if self.draw_reading_history(canvas) { return; }
         if let Screen::Catalog(page) = self.screen && self.draw_catalog(canvas,page) { return; }
+        if let Screen::SyncEdit(field) = self.screen { self.draw_sync_editor(canvas, field); return; }
         // The launcher's theme may have changed (it asks for a redraw when it does).
         if let Some(theme) = &self.system_theme {
             theme.refresh();
@@ -5659,6 +5676,7 @@ impl App for Reader {
         self.read_alarm.draw(canvas, self.screen == Screen::Book);
         self.draw_vocabulary_dialog(canvas);
         self.draw_catalog_popup(canvas);
+        self.draw_sync_dialog(canvas);
     }
 
     fn press_point(&self, input: Input) -> Option<(f32, f32)> {
@@ -5674,6 +5692,7 @@ impl App for Reader {
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
         if let Screen::Catalog(page) = self.screen && let Some(change) = self.catalog_input(page,input) { return change; }
+        if let Some(change) = self.sync_dialog_input(input) { return change; }
         if let Some(change) = self.vocabulary_dialog_input(input) { return change; }
         if self.flow_popup.is_some() { return self.flow_popup_input(input); }
         if self.read_alarm.modal() { return self.read_alarm_input(input); }
@@ -5719,9 +5738,11 @@ impl App for Reader {
     }
 
     fn input(&mut self, input: Input) -> Change {
+        if let Some(change) = self.sync_dialog_input(input) { return change; }
         if let Some(change) = self.vocabulary_dialog_input(input) { return change; }
         if input == Input::Sleep {
             self.cancel_catalog_for_sleep();
+            self.cancel_progress_sync();
             self.spelling_lookup = None;
             self.cancel_library_export();
         }
@@ -5869,6 +5890,7 @@ impl App for Reader {
         if self.screen == Screen::Definition {
             return self.definition_input(input);
         }
+        if let Screen::SyncEdit(field) = self.screen { return self.sync_editor_input(input, field); }
         if self.screen == Screen::VocabularyContext { return self.vocabulary_context_input(input); }
         if matches!(self.screen, Screen::GoToPage | Screen::NumberingValue(_)) {
             return self.handle_page_number(input);
@@ -5995,6 +6017,8 @@ impl App for Reader {
                     }
                     Screen::ReadingHistory(_) => self.history_back(),
                     Screen::ReadingData => self.show(Screen::Library),
+                    Screen::ProgressSync => self.show(self.tools_screen()),
+                    Screen::ProgressSyncSettings => self.show(Screen::ProgressSync),
                     Screen::ReadingControls => self.show(if self.fixed.is_some() {
                         Screen::FixedTools
                     } else if self.active.is_some() {
@@ -6096,6 +6120,7 @@ impl App for Reader {
             .chain(self.export_deadline())
             .chain(self.catalog.job.as_ref().map(|job| job.poll_at))
             .chain(self.bookmark_metadata_deadline())
+            .chain(self.progress_sync.deadline())
             .chain(self.nearby_marks.as_ref().and_then(|import| import.deadline))
             .chain(self.save_at)
             .chain(self.metadata_checkpoint.deadline())
@@ -6129,6 +6154,7 @@ impl App for Reader {
     }
 
     fn tick(&mut self, now: Instant) -> Change {
+        if let Some(change) = self.poll_progress_sync(now) { return change; }
         if self.stats_awake {
             let alarm = self.poll_read_alarm(now, false);
             if alarm != Change::None { return alarm; }
@@ -6280,6 +6306,7 @@ impl App for Reader {
 
     fn save(&mut self) -> io::Result<()> {
         self.catalog.cancel();
+        self.cancel_progress_sync();
         self.save_library()?;
         let now = Instant::now();
         self.stats.checkpoint(&self.stats_path, now, true)?;
@@ -6292,6 +6319,7 @@ impl App for Reader {
     }
 
     fn storage_returned(&mut self) -> io::Result<()> {
+        self.cancel_progress_sync();
         self.spelling_lookup = None;
         self.cancel_ocr_selection();
         self.pages_since_refresh = 0;

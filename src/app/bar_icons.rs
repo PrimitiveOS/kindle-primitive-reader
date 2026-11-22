@@ -94,7 +94,9 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         Action::ToggleNonlinear => BOOK,
         Action::Catalog(_) => BOOK,
         Action::Flow(_) | Action::Show(Screen::HiddenFlows) => BOOK,
-        Action::Show(Screen::Links) | Action::Wikipedia => LINK,
+        Action::Show(Screen::Links | Screen::ProgressSync | Screen::ProgressSyncSettings)
+        | Action::ProgressSync(_)
+        | Action::Wikipedia => LINK,
         Action::TranslatePage => TEXT,
         Action::ReadAlarm | Action::Show(Screen::OnlineHistory) | Action::ReadingHistory(_) => CLOCK,
         Action::SaveBookData => SAVE,

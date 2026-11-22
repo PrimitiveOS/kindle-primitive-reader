@@ -76,6 +76,8 @@ The reading footer can estimate how long the current chapter or book will take. 
 
 Browse configured online book catalogs from **Library › Online catalogs**. Choose a publication format and a destination in Documents, then keep the completed book for offline reading. The development candidate supports OPDS Atom/JSON and direct calibre Content server acquisition. [Protocols, controls and verification](docs/opds-acquisition.md)
 
+Use **Tools › Progress sync** to compare or send the current book’s position through your configured WebDAV folder. Sync starts off and runs only when you request it. Conflicting passages offer a visible choice, and sign-out retains local reading data. [Protocol, controls and verification](docs/progress-sync.md)
+
 ## Reading on Kindle
 
 Install Reader from PrimitiveOS Store or follow the manual install guide.

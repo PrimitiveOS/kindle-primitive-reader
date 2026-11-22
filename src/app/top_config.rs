@@ -390,6 +390,7 @@ impl Reader {
             );
         }
         items.push(Item::new("Reading data", Action::Show(Screen::ReadingData)));
+        items.push(Item::new("Progress sync", Action::ProgressSync(super::progress_sync::Command::Open)));
         items
     }
 

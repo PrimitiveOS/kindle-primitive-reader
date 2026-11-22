@@ -22,6 +22,9 @@ fn main() -> Result<()> {
     if first.as_deref() == Some(std::ffi::OsStr::new("--opds-worker")) && args.len() == 0 {
         return reader::opds::worker();
     }
+    if first.as_deref() == Some(std::ffi::OsStr::new("--sync-worker")) && args.len() == 0 {
+        return reader::progress_sync::worker();
+    }
     let home = env::var_os("PRIMITIVE_READER_HOME")
         .map_or_else(|| PathBuf::from("/mnt/us/reader"), PathBuf::from);
     let documents = env::var_os("PRIMITIVE_READER_DOCUMENTS")
