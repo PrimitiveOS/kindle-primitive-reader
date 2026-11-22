@@ -185,6 +185,7 @@ pub(crate) enum Paint {
     },
     Selection,
     ReflowSelection,
+    SelectionColor { color: HighlightColor, night: bool, reflow: bool },
     Temporary(u8),
 }
 
@@ -219,7 +220,7 @@ impl Paint {
             || !(matches!(
                 self.drawer(),
                 Some(HighlightStyle::Lighten | HighlightStyle::Invert)
-            ) || matches!(self, Self::Selection))
+            ) || matches!(self, Self::Selection | Self::SelectionColor {reflow:false,..}))
         {
             return None;
         }
@@ -249,6 +250,20 @@ impl Paint {
     }
 
     pub(crate) fn draw_row(self, pixels: &mut [u8], appearance: Appearance) {
+        if let Self::SelectionColor {color,night,reflow} = self {
+            if reflow {
+                // CREngine's native selection background uses rgbToGray,
+                // (r+2g+b)/4, rather than the blitbuffer's saved-mark conversion.
+                let tone = color.rgb().map(|(r,g,b)| {
+                    if night {((255-r)+2*(255-g)+(255-b))/4} else {(r+2*g+b)/4}
+                }).unwrap_or_else(||u32::from(reflow_selection_gray(appearance.selection_opacity)));
+                for pixel in pixels { *pixel=((u32::from(*pixel)*tone+127)/255) as u8; }
+            } else {
+                Self::Annotation {style:HighlightStyle::Lighten,color,note:false,first:false,night}
+                    .draw_row(pixels,Appearance {highlight_opacity:appearance.selection_opacity,..appearance});
+            }
+            return;
+        }
         if let Self::Annotation {
             style,
             color,
@@ -311,7 +326,7 @@ impl Paint {
                     *pixel = 255 - *pixel;
                 }
             }
-            Self::Annotation { .. } => unreachable!(),
+            Self::Annotation { .. } | Self::SelectionColor { .. } => unreachable!(),
             Self::Temporary(gray) => {
                 for pixel in pixels {
                     *pixel = (*pixel).min(gray);

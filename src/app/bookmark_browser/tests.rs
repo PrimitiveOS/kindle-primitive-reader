@@ -78,6 +78,172 @@ fn mount_marks(app: &mut Reader, fixture: &Fixture, pdf: &std::path::Path) -> (u
 }
 
 #[test]
+fn named_color_filter_combines_with_kind_and_style_and_survives_reopen_without_coloring_bookmarks()
+{
+    let fixture = Fixture::new();
+    let pdf = fixture.root.join("Survey.pdf");
+    fs::write(&pdf, crate::fixed::tests::document()).unwrap();
+    let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+    let (epub, pdf) = mount_marks(&mut app, &fixture, &pdf);
+    app.library.state_mut(epub).unwrap().highlights[0].color = HighlightColor::Red;
+    let mut blue = app.library.state(pdf).unwrap().pdf_highlights[0].clone();
+    blue.page = 0;
+    blue.color = HighlightColor::Blue;
+    app.library
+        .state_mut(pdf)
+        .unwrap()
+        .add_pdf_highlight(blue)
+        .unwrap();
+    app.mark_book_changed();
+    app.save().unwrap();
+    let state = app.library.bytes().unwrap();
+    let position = app.current_history_location();
+    app.activate_bookmark_browser(Command::Use(Source::History))
+        .unwrap();
+    assert_eq!(app.bookmark_browser.marks.len(), 4);
+    app.activate_bookmark_browser(Command::Go(Page::Filters))
+        .unwrap();
+    choose(&mut app, "Highlight color");
+    for (color, book) in [
+        (HighlightColor::Red, epub),
+        (HighlightColor::Blue, pdf),
+        (HighlightColor::Gray, pdf),
+    ] {
+        let i = HighlightColor::ALL
+            .iter()
+            .position(|candidate| *candidate == color)
+            .unwrap();
+        tap(&mut app, super::super::highlight_palette::cell(i));
+        assert_eq!(app.bookmark_browser.color, Some(color));
+        assert_eq!(app.bookmark_browser.marks.len(), 1);
+        assert_eq!(app.bookmark_browser.marks[0].book, book);
+        assert!(!matches!(
+            app.bookmark_browser.marks[0].locator,
+            Locator::Bookmark(_)
+        ));
+    }
+    capture_test_screen(&app, &fonts, "READER_BOOKMARK_COLOR_FILTER_SCREEN", false);
+    capture_test_screen(
+        &app,
+        &fonts,
+        "READER_BOOKMARK_COLOR_FILTER_DARK_SCREEN",
+        true,
+    );
+    app.activate_bookmark_browser(Command::SetStyle(Some(HighlightStyle::Underline)))
+        .unwrap();
+    assert!(app.bookmark_browser.marks.is_empty());
+    app.activate_bookmark_browser(Command::SetColor(Some(HighlightColor::Red)))
+        .unwrap();
+    assert_eq!(app.bookmark_browser.marks.len(), 1);
+    app.activate_bookmark_browser(Command::SetKind(Some(Kind::Bookmark)))
+        .unwrap();
+    assert!(app.bookmark_browser.marks.is_empty());
+    app.activate_bookmark_browser(Command::SetKind(None))
+        .unwrap();
+    app.save().unwrap();
+    let reopened = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+    assert_eq!(reopened.bookmark_browser.color, Some(HighlightColor::Red));
+    assert_eq!(
+        reopened.bookmark_browser.style,
+        Some(HighlightStyle::Underline)
+    );
+    app.activate_bookmark_browser(Command::ClearFilters)
+        .unwrap();
+    assert!(app.bookmark_browser.color.is_none());
+    assert_eq!(app.bookmark_browser.marks.len(), 4);
+    assert_eq!(app.library.bytes().unwrap(), state);
+    assert_eq!(app.current_history_location(), position);
+}
+
+#[test]
+fn failed_color_filter_save_keeps_its_previous_selection_and_displayed_matches() {
+    let fixture = Fixture::new();
+    let pdf = fixture.root.join("Survey.pdf");
+    fs::write(&pdf, crate::fixed::tests::document()).unwrap();
+    let mut app = Reader::open(
+        &fixture.root,
+        &fixture.state,
+        vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+    )
+    .unwrap();
+    let (epub, _) = mount_marks(&mut app, &fixture, &pdf);
+    app.library.state_mut(epub).unwrap().highlights[0].color = HighlightColor::Red;
+    app.activate_bookmark_browser(Command::Use(Source::History))
+        .unwrap();
+    app.activate_bookmark_browser(Command::SetColor(Some(HighlightColor::Red)))
+        .unwrap();
+    let before = app.bookmark_browser.marks.clone();
+    let path = app.bookmark_browser.path.clone();
+    let saved = fs::read(&path).unwrap();
+    fs::remove_file(&path).unwrap();
+    fs::create_dir(&path).unwrap();
+    assert!(
+        app.activate_bookmark_browser(Command::SetColor(Some(HighlightColor::Blue)))
+            .is_err()
+    );
+    assert_eq!(app.bookmark_browser.color, Some(HighlightColor::Red));
+    assert_eq!(app.bookmark_browser.marks, before);
+    assert!(
+        app.activate_bookmark_browser(Command::ClearFilters)
+            .is_err()
+    );
+    assert_eq!(app.bookmark_browser.color, Some(HighlightColor::Red));
+    assert_eq!(app.bookmark_browser.marks, before);
+    fs::remove_dir(&path).unwrap();
+    fs::write(&path, saved).unwrap();
+}
+
+#[test]
+fn color_filter_grid_has_separate_hundred_pixel_targets_and_local_pressed_feedback_in_both_themes()
+{
+    let fixture = Fixture::new();
+    let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+    app.system_theme = None;
+    let mut canvas = Canvas::new(
+        WIDTH,
+        HEIGHT,
+        &fonts
+            .iter()
+            .map(|font| font.display().to_string())
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    for export in [false, true] {
+        app.show(if export {
+            Screen::LibraryExport(super::super::library_export::Page::Colors)
+        } else {
+            Screen::BookmarkBrowser(Page::Colors)
+        });
+        for dark in [false, true] {
+            canvas.clear_press();
+            let before = primitive_app::frame(&app, &mut canvas, dark);
+            for rect in std::iter::once(super::super::highlight_palette::ALL)
+                .chain((0..9).map(super::super::highlight_palette::cell))
+            {
+                assert!(rect.w >= 100 && rect.h >= 100);
+                let (x, y) = center(rect);
+                assert!(canvas.press_at(x, y));
+                let after = primitive_app::frame(&app, &mut canvas, dark);
+                let mut changes = 0;
+                for (i, (a, b)) in before.iter().zip(&after).enumerate() {
+                    if a != b {
+                        assert!(
+                            rect.contains((i % WIDTH as usize) as f32, (i / WIDTH as usize) as f32)
+                        );
+                        changes += 1;
+                    }
+                }
+                assert!(changes > 100);
+                canvas.clear_press();
+                primitive_app::frame(&app, &mut canvas, dark);
+            }
+        }
+    }
+}
+
+#[test]
 fn browser_covers_sources_date_text_filters_preview_and_exact_return() {
     let fixture = Fixture::new();
     let folder = fixture.root.join("Surveys");

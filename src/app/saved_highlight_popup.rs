@@ -1,6 +1,6 @@
 //! Tap a painted annotation without leaving the page or losing its viewport.
 use super::*;
-use crate::highlight_style::{HighlightStyle, HighlightColor, NoteMarker};
+use crate::highlight_style::{HighlightColor, HighlightStyle, NoteMarker};
 use std::cell::Cell;
 
 const PER_PAGE: usize = 4;
@@ -67,6 +67,11 @@ enum View {
     Adjust(Amount),
     Colors(Option<usize>),
     NoteMarkers,
+    ApplyAll {
+        book: u64,
+        style: HighlightStyle,
+        color: HighlightColor,
+    },
     RemoveNote(usize),
     RemoveMark(usize),
 }
@@ -89,10 +94,11 @@ impl SavedPopup {
             View::Note(_) => 656,
             View::Actions(_) => 664,
             View::Styles(Some(_)) => 504,
-            View::Styles(None) => 760,
+            View::Styles(None) => 872,
             View::Colors(Some(_)) => 504,
             View::Colors(None) => 632,
             View::NoteMarkers => 380,
+            View::ApplyAll { .. } => 480,
             View::Adjust(_) => 395,
             View::RemoveNote(_) | View::RemoveMark(_) => 360,
         };
@@ -151,18 +157,36 @@ impl SavedPopup {
     }
 
     fn color_entry(&self, index: Option<usize>, right: bool) -> Rect {
-        let r=self.rect(); let w=(r.w-60)/2;
-        Rect::new(r.x+24+if right { w+12 } else {0},r.y+if index.is_some() {375} else {497},w,100)
+        let r = self.rect();
+        let w = (r.w - 60) / 2;
+        Rect::new(
+            r.x + 24 + if right { w + 12 } else { 0 },
+            r.y + if index.is_some() { 375 } else { 497 },
+            w,
+            100,
+        )
     }
     fn color_cell(&self, i: usize) -> Rect {
-        let r=self.rect();let w=(r.w-72)/3;
-        Rect::new(r.x+24+(i%3) as i32*(w+12),r.y+124+(i/3) as i32*116,w,104)
+        let r = self.rect();
+        let w = (r.w - 72) / 3;
+        Rect::new(
+            r.x + 24 + (i % 3) as i32 * (w + 12),
+            r.y + 124 + (i / 3) as i32 * 116,
+            w,
+            104,
+        )
     }
 
     fn amount_entry(&self, i: usize) -> Rect {
         let r = self.rect();
         let width = (r.w - 72) / 3;
         Rect::new(r.x + 24 + i as i32 * (width + 12), r.y + 375, width, 105)
+    }
+
+    fn workflow_entry(&self, right: bool) -> Rect {
+        let r = self.rect();
+        let w = (r.w - 60) / 2;
+        Rect::new(r.x + 24 + if right { w + 12 } else { 0 }, r.y + 609, w, 100)
     }
 
     fn adjust(&self, right: bool) -> Rect {
@@ -187,6 +211,40 @@ impl SavedPopup {
 }
 
 impl Reader {
+    fn apply_all_highlight_appearance(
+        &mut self,
+        book: u64,
+        style: HighlightStyle,
+        color: HighlightColor,
+    ) -> Result<usize> {
+        if self.open_book_id() != Some(book) {
+            return Err("The book changed. Open highlight settings again.".into());
+        }
+        let prior = self
+            .library
+            .state(book)
+            .ok_or("This book is no longer tracked")?
+            .clone();
+        let state = self.library.state_mut(book).unwrap();
+        let count = state.highlights.len() + state.pdf_highlights.len();
+        for mark in &mut state.highlights {
+            mark.style = style;
+            mark.color = color;
+        }
+        for mark in &mut state.pdf_highlights {
+            mark.style = style;
+            mark.color = color;
+        }
+        // Commit the whole library through its atomic save before acknowledging
+        // a bulk edit. Restore every field if storage rejects the transaction.
+        if let Err(error) = self.library.persist() {
+            *self.library.state_mut(book).unwrap() = prior;
+            return Err(error.into());
+        }
+        self.mark_book_changed();
+        Ok(count)
+    }
+
     pub(super) fn effective_highlight_style(&self) -> HighlightStyle {
         self.open_book_id()
             .and_then(|id| self.library.state(id))
@@ -195,24 +253,49 @@ impl Reader {
     }
 
     pub(super) fn effective_highlight_color(&self) -> HighlightColor {
-        self.open_book_id().and_then(|id| self.library.state(id))
-            .and_then(|state| state.highlight_color).unwrap_or(self.controls.highlight_color)
+        self.open_book_id()
+            .and_then(|id| self.library.state(id))
+            .and_then(|state| state.highlight_color)
+            .unwrap_or(self.controls.highlight_color)
     }
-    fn mark_color(&self,index:usize) -> Option<HighlightColor> {
-        let state=self.library.state(self.open_book_id()?)?;
-        if self.fixed.is_some() {state.pdf_highlights.get(index).map(|mark|mark.color)}
-        else {state.highlights.get(index).map(|mark|mark.color)}
+    fn mark_color(&self, index: usize) -> Option<HighlightColor> {
+        let state = self.library.state(self.open_book_id()?)?;
+        if self.fixed.is_some() {
+            state.pdf_highlights.get(index).map(|mark| mark.color)
+        } else {
+            state.highlights.get(index).map(|mark| mark.color)
+        }
     }
-    fn save_highlight_color(&mut self,index:Option<usize>,color:Option<HighlightColor>) -> Change {
-        let Some(id)=self.open_book_id() else {return Change::None};
-        let Some(state)=self.library.state_mut(id) else {return Change::None};
-        if let Some(index)=index {
-            let target=if self.fixed.is_some() {state.pdf_highlights.get_mut(index).map(|mark|&mut mark.color)}
-                else {state.highlights.get_mut(index).map(|mark|&mut mark.color)};
-            let (Some(target),Some(color))=(target,color) else {return Change::None};
-            *target=color;self.close_saved_popup();
-        } else {state.highlight_color=Some(color.unwrap_or(self.controls.highlight_color));}
-        self.mark_book_changed(); Change::Partial
+    fn save_highlight_color(
+        &mut self,
+        index: Option<usize>,
+        color: Option<HighlightColor>,
+    ) -> Change {
+        let Some(id) = self.open_book_id() else {
+            return Change::None;
+        };
+        let Some(state) = self.library.state_mut(id) else {
+            return Change::None;
+        };
+        if let Some(index) = index {
+            let target = if self.fixed.is_some() {
+                state
+                    .pdf_highlights
+                    .get_mut(index)
+                    .map(|mark| &mut mark.color)
+            } else {
+                state.highlights.get_mut(index).map(|mark| &mut mark.color)
+            };
+            let (Some(target), Some(color)) = (target, color) else {
+                return Change::None;
+            };
+            *target = color;
+            self.close_saved_popup();
+        } else {
+            state.highlight_color = Some(color.unwrap_or(self.controls.highlight_color));
+        }
+        self.mark_book_changed();
+        Change::Partial
     }
 
     fn mark_style(&self, index: usize) -> Option<HighlightStyle> {
@@ -313,13 +396,35 @@ impl Reader {
                     active
                         .reading
                         .highlight_rects(&mark.selection)
-                        .into_iter().enumerate()
-                        .any(|(i,r)| {
-                            let width=active.reading.probe.settings.width;
-                            let leaf_x=if active.reading.uses_facing_pages() && r.x >= (WIDTH/2) as i32 {WIDTH-width} else {0};
-                            let margin=crate::note_marker::margin(width,active.reading.probe.settings.right_margin(),leaf_x,self.controls.note_marker,false);
-                            Rect::new(r.x,r.y,r.width,r.height).contains(x,y)
-                                || (mark.note.is_some() && crate::note_marker::hit(r,self.controls.note_marker,margin,i==0,WIDTH,x,y))
+                        .into_iter()
+                        .enumerate()
+                        .any(|(i, r)| {
+                            let width = active.reading.probe.settings.width;
+                            let leaf_x = if active.reading.uses_facing_pages()
+                                && r.x >= (WIDTH / 2) as i32
+                            {
+                                WIDTH - width
+                            } else {
+                                0
+                            };
+                            let margin = crate::note_marker::margin(
+                                width,
+                                active.reading.probe.settings.right_margin(),
+                                leaf_x,
+                                self.controls.note_marker,
+                                false,
+                            );
+                            Rect::new(r.x, r.y, r.width, r.height).contains(x, y)
+                                || (mark.note.is_some()
+                                    && crate::note_marker::hit(
+                                        r,
+                                        self.controls.note_marker,
+                                        margin,
+                                        i == 0,
+                                        WIDTH,
+                                        x,
+                                        y,
+                                    ))
                         })
                 })
                 .map(|(i, _)| i)
@@ -335,24 +440,54 @@ impl Reader {
                 return None;
             }
             let p = hayro::kurbo::Point::new(x as f64, y as f64);
-            let hits = book
-                .pdf_highlights
-                .iter()
-                .enumerate()
-                .filter(|(_, mark)| {
-                    mark.parts().any(|(page, rects, _)| {
-                        rects.iter().filter(|r|fixed.reading.visible_rectangle(page,**r).is_some()).enumerate().any(|(i,r)| {
-                            fixed.reading.visible_rectangle(page,*r).is_some_and(|visible| {
-                                let raw=fixed.reading.annotation_rectangle(page,*r).unwrap_or(visible);
-                                let rect=crate::selection::HighlightRect{x:raw.x0.floor() as i32,y:raw.y0.floor() as i32,width:raw.width().ceil() as i32,height:raw.height().ceil() as i32};
-                                let margin=crate::note_marker::margin(WIDTH,0,0,self.controls.note_marker,true);
-                                visible.contains(p) || (mark.note.is_some() && crate::note_marker::hit(rect,self.controls.note_marker,margin,i==0,WIDTH,x,y))
-                            })
+            let hits =
+                book.pdf_highlights
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, mark)| {
+                        mark.parts().any(|(page, rects, _)| {
+                            rects
+                                .iter()
+                                .filter(|r| fixed.reading.visible_rectangle(page, **r).is_some())
+                                .enumerate()
+                                .any(|(i, r)| {
+                                    fixed.reading.visible_rectangle(page, *r).is_some_and(
+                                        |visible| {
+                                            let raw = fixed
+                                                .reading
+                                                .annotation_rectangle(page, *r)
+                                                .unwrap_or(visible);
+                                            let rect = crate::selection::HighlightRect {
+                                                x: raw.x0.floor() as i32,
+                                                y: raw.y0.floor() as i32,
+                                                width: raw.width().ceil() as i32,
+                                                height: raw.height().ceil() as i32,
+                                            };
+                                            let margin = crate::note_marker::margin(
+                                                WIDTH,
+                                                0,
+                                                0,
+                                                self.controls.note_marker,
+                                                true,
+                                            );
+                                            visible.contains(p)
+                                                || (mark.note.is_some()
+                                                    && crate::note_marker::hit(
+                                                        rect,
+                                                        self.controls.note_marker,
+                                                        margin,
+                                                        i == 0,
+                                                        WIDTH,
+                                                        x,
+                                                        y,
+                                                    ))
+                                        },
+                                    )
+                                })
                         })
                     })
-                })
-                .map(|(i, _)| i)
-                .collect::<Vec<_>>();
+                    .map(|(i, _)| i)
+                    .collect::<Vec<_>>();
             if !hits.is_empty() && fixed.reading.link_at(x, y).is_some() {
                 return Some(self.handle_fixed(Input::Tap(x, y)));
             }
@@ -417,8 +552,9 @@ impl Reader {
             View::Styles(Some(_)) => ("Highlight style", bar_icons::HIGHLIGHT),
             View::Styles(None) => ("New highlights in this book", bar_icons::HIGHLIGHT),
             View::Adjust(amount) => (amount.title(), bar_icons::HIGHLIGHT),
-            View::Colors(_) => ("Highlight color",bar_icons::HIGHLIGHT),
-            View::NoteMarkers => ("Note marker",bar_icons::HIGHLIGHT),
+            View::Colors(_) => ("Highlight color", bar_icons::HIGHLIGHT),
+            View::NoteMarkers => ("Note marker", bar_icons::HIGHLIGHT),
+            View::ApplyAll { .. } => ("Update all highlights?", bar_icons::HIGHLIGHT),
             View::RemoveNote(_) => (
                 "Remove note?",
                 bar_icons::action_icon(&Action::RemoveHighlight),
@@ -587,9 +723,31 @@ impl Reader {
                         BODY.bold().ink(if chosen { 255 } else { 0 }),
                     );
                 }
-                canvas.button(popup.color_entry(index,false),&format!("Color · {}",index.and_then(|i|self.mark_color(i)).unwrap_or_else(||self.effective_highlight_color()).label()),false,false);
+                let color_label = format!(
+                    "Color · {}",
+                    index
+                        .and_then(|i| self.mark_color(i))
+                        .unwrap_or_else(|| self.effective_highlight_color())
+                        .label()
+                );
+                if selected == HighlightStyle::Invert {
+                    let r = popup.color_entry(index, false);
+                    canvas.panel(r, 16, 3, 255);
+                    canvas.text(
+                        Rect::new(r.x + 10, r.y + 25, r.w - 20, 60),
+                        &color_label,
+                        CAPTION.center().ink(145),
+                    );
+                } else {
+                    canvas.button(popup.color_entry(index, false), &color_label, false, false);
+                }
                 if index.is_none() {
-                    canvas.button(popup.color_entry(index,true),&format!("Note · {}",self.controls.note_marker.label()),false,false);
+                    canvas.button(
+                        popup.color_entry(index, true),
+                        &format!("Note · {}", self.controls.note_marker.label()),
+                        false,
+                        false,
+                    );
                     for (i, amount) in Amount::ALL.into_iter().enumerate() {
                         let r = popup.amount_entry(i);
                         let active = amount.enabled(selected);
@@ -615,35 +773,95 @@ impl Reader {
                             BODY.bold().center().ink(ink),
                         );
                     }
+                    let selection_active = selected != HighlightStyle::Invert;
+                    let label = if selection_active && self.controls.selection_uses_highlight_color
+                    {
+                        "Selection color · On"
+                    } else {
+                        "Selection color · Off"
+                    };
+                    let r = popup.workflow_entry(false);
+                    if selection_active {
+                        canvas.button(r, label, false, false);
+                    } else {
+                        canvas.panel(r, 16, 3, 255);
+                        canvas.text(
+                            Rect::new(r.x + 10, r.y + 25, r.w - 20, 60),
+                            label,
+                            CAPTION.center().ink(145),
+                        );
+                    }
+                    canvas.button(
+                        popup.workflow_entry(true),
+                        "Apply to all highlights",
+                        false,
+                        false,
+                    );
                     buttons(canvas, &["Use reader default", "Set reader default"]);
                 }
             }
             View::Colors(index) => {
-                let selected=index.and_then(|i|self.mark_color(i)).unwrap_or_else(||self.effective_highlight_color());
-                for (i,color) in HighlightColor::ALL.into_iter().enumerate() {
-                    let r=popup.color_cell(i);let chosen=(color==selected)!=canvas.control_pressed(r,false);
-                    canvas.panel(r,16,4,if chosen {0} else {255});
-                    let sample=Rect::new(r.x+18,r.y+26,48,48);
-                    canvas.panel(sample,4,2,color.gray().unwrap_or(204));
-                    canvas.text(Rect::new(sample.right()+14,r.y+28,r.w-90,60),color.label(),BODY.bold().ink(if chosen {255} else {0}));
+                let selected = index
+                    .and_then(|i| self.mark_color(i))
+                    .unwrap_or_else(|| self.effective_highlight_color());
+                for (i, color) in HighlightColor::ALL.into_iter().enumerate() {
+                    let r = popup.color_cell(i);
+                    let chosen = (color == selected) != canvas.control_pressed(r, false);
+                    canvas.panel(r, 16, 4, if chosen { 0 } else { 255 });
+                    let sample = Rect::new(r.x + 18, r.y + 26, 48, 48);
+                    canvas.panel(sample, 4, 2, color.gray().unwrap_or(204));
+                    canvas.text(
+                        Rect::new(sample.right() + 14, r.y + 28, r.w - 90, 60),
+                        color.label(),
+                        BODY.bold().ink(if chosen { 255 } else { 0 }),
+                    );
                 }
-                if index.is_none() {buttons(canvas,&["Use reader default","Set reader default"]);}
+                if index.is_none() {
+                    buttons(canvas, &["Use reader default", "Set reader default"]);
+                }
             }
             View::NoteMarkers => {
-                for (i,marker) in NoteMarker::ALL.into_iter().enumerate() {
-                    let r=popup.style_cell(i);
-                    let selected=(self.controls.note_marker==marker)!=canvas.control_pressed(r,false);
-                    canvas.panel(r,16,4,if selected {0}else{255});
-                    let ink=if selected {255}else{0};
-                    let sample=Rect::new(r.x+20,r.y+28,48,48);
-                    if marker==NoteMarker::Sidemark {canvas.icon(sample,bar_icons::HIGHLIGHT,ink);}
-                    else {
-                        canvas.text(sample,"Aa",BODY.center().ink(ink));
-                        if marker==NoteMarker::Underline {canvas.fill(Rect::new(sample.x,sample.bottom()-3,sample.w,3),ink);}
-                        if marker==NoteMarker::Sideline {canvas.fill(Rect::new(sample.right()+5,sample.y,3,sample.h),ink);}
+                for (i, marker) in NoteMarker::ALL.into_iter().enumerate() {
+                    let r = popup.style_cell(i);
+                    let selected =
+                        (self.controls.note_marker == marker) != canvas.control_pressed(r, false);
+                    canvas.panel(r, 16, 4, if selected { 0 } else { 255 });
+                    let ink = if selected { 255 } else { 0 };
+                    let sample = Rect::new(r.x + 20, r.y + 28, 48, 48);
+                    if marker == NoteMarker::Sidemark {
+                        canvas.icon(sample, bar_icons::HIGHLIGHT, ink);
+                    } else {
+                        canvas.text(sample, "Aa", BODY.center().ink(ink));
+                        if marker == NoteMarker::Underline {
+                            canvas.fill(Rect::new(sample.x, sample.bottom() - 3, sample.w, 3), ink);
+                        }
+                        if marker == NoteMarker::Sideline {
+                            canvas.fill(Rect::new(sample.right() + 5, sample.y, 3, sample.h), ink);
+                        }
                     }
-                    canvas.text(Rect::new(sample.right()+22,r.y+29,r.w-112,60),marker.label(),BODY.bold().ink(ink));
+                    canvas.text(
+                        Rect::new(sample.right() + 22, r.y + 29, r.w - 112, 60),
+                        marker.label(),
+                        BODY.bold().ink(ink),
+                    );
                 }
+            }
+            View::ApplyAll { book, style, color } => {
+                let count = self
+                    .library
+                    .state(book)
+                    .map_or(0, |s| s.highlights.len() + s.pdf_highlights.len());
+                let body = popup.body();
+                canvas.text(Rect::new(body.x,body.y,body.w,135),&format!("Apply {} and {} to all {count} highlights? Notes, positions and creation dates are kept.",style.label(),color.label()),BODY.lines(3));
+                if let Some(notice) = &self.notice {
+                    canvas.text(
+                        Rect::new(body.x, body.y + 141, body.w, 76),
+                        notice,
+                        CAPTION.lines(2),
+                    );
+                }
+                canvas.button(popup.button(0, 2), "Cancel", false, false);
+                canvas.button(popup.button(1, 2), "Apply", true, false);
             }
             View::Adjust(amount) => {
                 let percent = amount.percent(self.controls.highlight_appearance);
@@ -717,6 +935,13 @@ impl Reader {
         let Some(p) = self.saved_popup.as_ref() else {
             return Change::None;
         };
+        if matches!(p.view, View::ApplyAll { .. }) && input == Input::PageBack {
+            self.saved_popup
+                .as_mut()
+                .unwrap()
+                .change_view(View::Styles(None));
+            return Change::Partial;
+        }
         if let View::Adjust(amount) = p.view {
             let held = matches!(input, Input::LongTap(..));
             if let Input::Tap(x, y) | Input::LongTap(x, y) = input {
@@ -833,11 +1058,26 @@ impl Reader {
                 }
             }
             View::Styles(index) => {
-                if p.color_entry(index,false).contains(x,y) {
-                    self.saved_popup.as_mut().unwrap().change_view(View::Colors(index));return Change::Partial;
+                if p.color_entry(index, false).contains(x, y) {
+                    if index
+                        .and_then(|i| self.mark_style(i))
+                        .unwrap_or_else(|| self.effective_highlight_style())
+                        == HighlightStyle::Invert
+                    {
+                        return Change::None;
+                    }
+                    self.saved_popup
+                        .as_mut()
+                        .unwrap()
+                        .change_view(View::Colors(index));
+                    return Change::Partial;
                 }
-                if index.is_none() && p.color_entry(index,true).contains(x,y) {
-                    self.saved_popup.as_mut().unwrap().change_view(View::NoteMarkers);return Change::Partial;
+                if index.is_none() && p.color_entry(index, true).contains(x, y) {
+                    self.saved_popup
+                        .as_mut()
+                        .unwrap()
+                        .change_view(View::NoteMarkers);
+                    return Change::Partial;
                 }
                 if let Some((_, style)) = HighlightStyle::ALL
                     .iter()
@@ -847,6 +1087,35 @@ impl Reader {
                     return self.save_highlight_style(index, Some(*style));
                 }
                 if index.is_none() {
+                    if p.workflow_entry(false).contains(x, y) {
+                        if self.effective_highlight_style() == HighlightStyle::Invert {
+                            return Change::None;
+                        }
+                        let controls = ReadingControls {
+                            selection_uses_highlight_color: !self
+                                .controls
+                                .selection_uses_highlight_color,
+                            ..self.controls
+                        };
+                        if let Err(error) = controls.save(&self.controls_path) {
+                            return self.report(error);
+                        }
+                        self.controls = controls;
+                        return Change::Partial;
+                    }
+                    if p.workflow_entry(true).contains(x, y) {
+                        let Some(book) = self.open_book_id() else {
+                            return Change::None;
+                        };
+                        let style = self.effective_highlight_style();
+                        let color = self.effective_highlight_color();
+                        self.notice = None;
+                        self.saved_popup
+                            .as_mut()
+                            .unwrap()
+                            .change_view(View::ApplyAll { book, style, color });
+                        return Change::Partial;
+                    }
                     for (i, amount) in Amount::ALL.into_iter().enumerate() {
                         if p.amount_entry(i).contains(x, y)
                             && amount.enabled(self.effective_highlight_style())
@@ -877,24 +1146,63 @@ impl Reader {
                 return Change::None;
             }
             View::Colors(index) => {
-                if let Some((_,color))=HighlightColor::ALL.iter().enumerate().find(|(i,_)|p.color_cell(*i).contains(x,y)) {
-                    return self.save_highlight_color(index,Some(*color));
+                if let Some((_, color)) = HighlightColor::ALL
+                    .iter()
+                    .enumerate()
+                    .find(|(i, _)| p.color_cell(*i).contains(x, y))
+                {
+                    return self.save_highlight_color(index, Some(*color));
                 }
-                if index.is_none() && button(0,2) {return self.save_highlight_color(None,None);}
-                if index.is_none() && button(1,2) {
-                    let controls=ReadingControls {highlight_color:self.effective_highlight_color(),..self.controls};
-                    if let Err(error)=controls.save(&self.controls_path) {return self.report(error);}
-                    self.controls=controls;self.close_saved_popup();return Change::Partial;
+                if index.is_none() && button(0, 2) {
+                    return self.save_highlight_color(None, None);
+                }
+                if index.is_none() && button(1, 2) {
+                    let controls = ReadingControls {
+                        highlight_color: self.effective_highlight_color(),
+                        ..self.controls
+                    };
+                    if let Err(error) = controls.save(&self.controls_path) {
+                        return self.report(error);
+                    }
+                    self.controls = controls;
+                    self.close_saved_popup();
+                    return Change::Partial;
                 }
                 return Change::None;
             }
             View::NoteMarkers => {
-                if let Some((_,marker))=NoteMarker::ALL.iter().enumerate().find(|(i,_)|p.style_cell(*i).contains(x,y)) {
-                    let controls=ReadingControls{note_marker:*marker,..self.controls};
-                    if let Err(error)=controls.save(&self.controls_path) {return self.report(error);}
-                    self.controls=controls;return Change::Partial;
+                if let Some((_, marker)) = NoteMarker::ALL
+                    .iter()
+                    .enumerate()
+                    .find(|(i, _)| p.style_cell(*i).contains(x, y))
+                {
+                    let controls = ReadingControls {
+                        note_marker: *marker,
+                        ..self.controls
+                    };
+                    if let Err(error) = controls.save(&self.controls_path) {
+                        return self.report(error);
+                    }
+                    self.controls = controls;
+                    return Change::Partial;
                 }
                 return Change::None;
+            }
+            View::ApplyAll { book, style, color } => {
+                if button(0, 2) {
+                    View::Styles(None)
+                } else if button(1, 2) {
+                    match self.apply_all_highlight_appearance(book, style, color) {
+                        Ok(count) => {
+                            self.close_saved_popup();
+                            self.notice = Some(format!("Updated {count} highlights"));
+                            return Change::Partial;
+                        }
+                        Err(error) => return self.report(error),
+                    }
+                } else {
+                    return Change::None;
+                }
             }
             View::Adjust(_) => {
                 if button(1, 2) {
@@ -964,3 +1272,7 @@ mod appearance_tests;
 #[cfg(test)]
 #[path = "highlight_color_tests.rs"]
 mod color_tests;
+
+#[cfg(test)]
+#[path = "highlight_workflow_tests.rs"]
+mod workflow_tests;

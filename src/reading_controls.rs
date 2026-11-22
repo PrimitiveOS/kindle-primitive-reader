@@ -20,6 +20,8 @@ pub(crate) struct ReadingControls {
     pub highlight_style: crate::highlight_style::HighlightStyle,
     #[serde(skip_serializing_if = "crate::highlight_style::HighlightColor::is_default")]
     pub highlight_color: crate::highlight_style::HighlightColor,
+    /// Stock's reader-wide opt-in; the current book supplies its saved color.
+    pub selection_uses_highlight_color: bool,
     #[serde(skip_serializing_if = "crate::highlight_style::NoteMarker::is_default")]
     pub note_marker: crate::highlight_style::NoteMarker,
     #[serde(skip_serializing_if = "crate::highlight_style::Appearance::is_default")]

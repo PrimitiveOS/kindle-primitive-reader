@@ -1516,7 +1516,8 @@ impl FixedReading {
             selection
                 .iter()
                 .copied()
-                .map(|r| (r, crate::highlight_style::Paint::Selection)),
+                .map(|r| (r, paint.selection_color.map_or(crate::highlight_style::Paint::Selection,
+                    |color|crate::highlight_style::Paint::SelectionColor {color,night:paint.inverted,reflow:false}))),
         );
         for ((index, region), paint_style) in ink {
             let Some((quad, clip)) = self.projected_region(index, region) else {

@@ -5,7 +5,7 @@ use super::{
     Action, Book, Canvas, Change, Editor, HEIGHT, Input, Item, Reader, Rect, Result, Screen, WIDTH,
     with_storage,
 };
-use crate::highlight_style::HighlightStyle;
+use crate::highlight_style::{HighlightColor, HighlightStyle};
 use crate::library::{BookState, BrowseKind, DocumentFormat, Library, fold_search};
 use crate::search::Query;
 use primitive_ui::{BODY, CAPTION, Layout, Press, keyboard_key};
@@ -32,6 +32,7 @@ pub(super) enum Page {
     Sources,
     Results,
     Filters,
+    Colors,
     Search,
     Detail,
     Books,
@@ -50,6 +51,7 @@ impl Page {
             Self::Sources => "Bookmark sources",
             Self::Results => "Bookmark browser",
             Self::Filters => "Bookmark filters",
+            Self::Colors => "Highlight color filter",
             Self::Search => "Find saved marks",
             Self::Detail => "Saved mark",
             Self::Books => "Books with matches",
@@ -127,6 +129,7 @@ struct Mark<'a> {
     quote: &'a str,
     note: Option<&'a str>,
     style: Option<HighlightStyle>,
+    color: Option<HighlightColor>,
     created_at: Option<i64>,
     location: (usize, f64, f64),
     location_label: String,
@@ -165,6 +168,7 @@ pub(super) enum Command {
     ViewCover,
     SetKind(Option<Kind>),
     SetStyle(Option<HighlightStyle>),
+    SetColor(Option<HighlightColor>),
     SortByDate(bool),
     Reverse,
     ClearFilters,
@@ -189,6 +193,7 @@ struct Preferences {
     source: Option<Source>,
     kind: Option<Kind>,
     style: Option<HighlightStyle>,
+    color: Option<HighlightColor>,
     sort_by_date: bool,
     reverse: bool,
 }
@@ -209,6 +214,7 @@ pub(super) struct Browser {
     case_sensitive: bool,
     kind: Option<Kind>,
     style: Option<HighlightStyle>,
+    color: Option<HighlightColor>,
     sort_by_date: bool,
     reverse: bool,
     restricted: Option<BTreeSet<u64>>,
@@ -243,6 +249,7 @@ impl Default for Browser {
             case_sensitive: false,
             kind: None,
             style: None,
+            color: None,
             sort_by_date: false,
             reverse: false,
             restricted: None,
@@ -283,6 +290,7 @@ impl Browser {
             default_source: preferences.source,
             kind: preferences.kind,
             style: preferences.style,
+            color: preferences.color,
             sort_by_date: preferences.sort_by_date,
             reverse: preferences.reverse,
             ..Self::default()
@@ -294,6 +302,7 @@ impl Browser {
             source: self.default_source.clone(),
             kind: self.kind,
             style: self.style,
+            color: self.color,
             sort_by_date: self.sort_by_date,
             reverse: self.reverse,
         })?;
@@ -339,6 +348,7 @@ fn get_mark<'a>(
                 quote: &mark.label,
                 note: None,
                 style: None,
+                color: None,
                 created_at: mark.created_at,
                 location,
                 location_label: if fixed {
@@ -368,6 +378,7 @@ fn get_mark<'a>(
                 quote: &mark.selection.text,
                 note: mark.note.as_deref(),
                 style: Some(mark.style),
+                color: Some(mark.color),
                 created_at: mark.created_at,
                 location: (
                     chapter.unwrap_or(usize::MAX),
@@ -390,6 +401,7 @@ fn get_mark<'a>(
                 quote: &mark.text,
                 note: mark.note.as_deref(),
                 style: Some(mark.style),
+                color: Some(mark.color),
                 created_at: mark.created_at,
                 location: (mark.page, y, x),
                 location_label: format!("Page {}", mark.page + 1),
@@ -481,8 +493,12 @@ impl Reader {
                         _ => BTreeSet::new(),
                     };
                 }
-                if matches!(page, Page::Property(_)) { self.queue_bookmark_metadata(); }
-                if page == Page::Description { self.bookmark_browser.text_page = 0; }
+                if matches!(page, Page::Property(_)) {
+                    self.queue_bookmark_metadata();
+                }
+                if page == Page::Description {
+                    self.bookmark_browser.text_page = 0;
+                }
                 self.show(Screen::BookmarkBrowser(page));
             }
             Command::Use(source) => {
@@ -495,9 +511,11 @@ impl Reader {
                         .filter_map(|book| {
                             let archived = self.library.absolute_path(&book.path).is_err();
                             source.matches(&self.library, book, archived).then(|| {
-                                let (chapters, fixed) = self.bookmark_browser.catalog.get(book.id)
-                                    .map_or_else(|| (HashMap::new(), is_fixed(book)), |snapshot|
-                                        (snapshot.chapters.clone(), snapshot.fixed));
+                                let (chapters, fixed) =
+                                    self.bookmark_browser.catalog.get(book.id).map_or_else(
+                                        || (HashMap::new(), is_fixed(book)),
+                                        |snapshot| (snapshot.chapters.clone(), snapshot.fixed),
+                                    );
                                 (
                                     fold_search(&author_title(book)),
                                     ListedBook {
@@ -601,7 +619,9 @@ impl Reader {
                 );
                 self.show(Screen::BookmarkBrowser(Page::ChooseBooks));
             }
-            Command::SelectProperty(property, value) => self.select_bookmark_property(property, value),
+            Command::SelectProperty(property, value) => {
+                self.select_bookmark_property(property, value)
+            }
             Command::ViewCover => self.view_bookmark_cover()?,
             Command::SelectAuthor(author) => {
                 let browser = &mut self.bookmark_browser;
@@ -655,6 +675,15 @@ impl Reader {
                 self.refresh_bookmark_browser();
                 self.bookmark_browser.save()?;
             }
+            Command::SetColor(value) => {
+                let prior = self.bookmark_browser.color;
+                self.bookmark_browser.color = value;
+                if let Err(error) = self.bookmark_browser.save() {
+                    self.bookmark_browser.color = prior;
+                    return Err(error);
+                }
+                self.refresh_bookmark_browser();
+            }
             Command::SortByDate(value) => {
                 self.bookmark_browser.sort_by_date = value;
                 self.refresh_bookmark_browser();
@@ -667,13 +696,18 @@ impl Reader {
             }
             Command::ClearFilters => {
                 let browser = &mut self.bookmark_browser;
+                let prior = (browser.kind, browser.style, browser.color);
                 browser.kind = None;
                 browser.style = None;
+                browser.color = None;
+                if let Err(error) = browser.save() {
+                    (browser.kind, browser.style, browser.color) = prior;
+                    return Err(error);
+                }
                 browser.query_text.clear();
                 browser.query = None;
                 browser.restricted = None;
                 self.refresh_bookmark_browser();
-                self.bookmark_browser.save()?;
             }
             Command::GotoBook(id) => {
                 let page = self
@@ -743,6 +777,7 @@ impl Reader {
                 };
                 if browser.kind.is_some_and(|kind| mark.kind() != kind)
                     || browser.style.is_some_and(|style| mark.style != Some(style))
+                    || browser.color.is_some_and(|color| mark.color != Some(color))
                     || browser.query.as_ref().is_some_and(|query| {
                         query.matches(mark.quote, 1).is_empty()
                             && mark
@@ -945,6 +980,8 @@ impl Reader {
                 let style = browser.style.map_or("All styles", HighlightStyle::label);
                 let mut rows = vec![
                     item("Clear filters", C::ClearFilters),
+                    item("Highlight color", C::Go(Page::Colors))
+                        .detail(browser.color.map_or("All colors", HighlightColor::label)),
                     item("Books with matches", C::Go(Page::Books)),
                     item("Filter by book", C::RestrictBooks),
                     item("Sort direction", C::Reverse).detail(if browser.reverse {
@@ -977,6 +1014,7 @@ impl Reader {
                 }));
                 rows
             }
+            Page::Colors => Vec::new(),
             Page::Books => browser
                 .books
                 .iter()
@@ -998,9 +1036,18 @@ impl Reader {
                         .detail(format!("{} selected", chosen.len())),
                     item("Select or clear all", C::ToggleAllBooks),
                     item("Select by author", C::Go(Page::Authors)),
-                    item("Select by series", C::Go(Page::Property(metadata::Property::Series))),
-                    item("Select by language", C::Go(Page::Property(metadata::Property::Language))),
-                    item("Select by keyword", C::Go(Page::Property(metadata::Property::Keywords))),
+                    item(
+                        "Select by series",
+                        C::Go(Page::Property(metadata::Property::Series)),
+                    ),
+                    item(
+                        "Select by language",
+                        C::Go(Page::Property(metadata::Property::Language)),
+                    ),
+                    item(
+                        "Select by keyword",
+                        C::Go(Page::Property(metadata::Property::Keywords)),
+                    ),
                 ];
                 let mut candidates = self
                     .library
@@ -1089,15 +1136,29 @@ impl Reader {
                 }));
                 rows
             }
-            Page::Book => {
-                self.bookmark_metadata_rows()
-            }
+            Page::Book => self.bookmark_metadata_rows(),
             Page::Detail | Page::Search | Page::Results | Page::Description => Vec::new(),
         }
     }
 
     pub(super) fn draw_bookmark_browser_controls(&self, canvas: &mut Canvas, page: Page) -> bool {
         match page {
+            Page::Colors => {
+                super::highlight_palette::draw(
+                    canvas,
+                    self.bookmark_browser.color.is_none(),
+                    |color| self.bookmark_browser.color == Some(color),
+                    false,
+                );
+                if let Some(notice) = &self.notice {
+                    canvas.text(
+                        Rect::new(40, 944, WIDTH as i32 - 80, 180),
+                        notice,
+                        CAPTION.lines(4),
+                    );
+                }
+                true
+            }
             Page::Results => {
                 let browser = &self.bookmark_browser;
                 let books = browser.books.iter().filter(|book| book.count > 0).count();
@@ -1222,6 +1283,19 @@ impl Reader {
             self.back_from_bookmark_browser(page);
             return Some(Change::Partial);
         }
+        if page == Page::Colors {
+            if input == Input::PageBack {
+                self.back_from_bookmark_browser(page);
+                return Some(Change::Partial);
+            }
+            return Some(match input {
+                Input::Tap(x, y) => super::highlight_palette::at(x, y)
+                    .map_or(Change::None, |color| {
+                        self.bookmark_change(Command::SetColor(color))
+                    }),
+                _ => Change::None,
+            });
+        }
         if page == Page::Description {
             return Some(self.bookmark_description_input(input));
         }
@@ -1321,8 +1395,11 @@ impl Reader {
             Page::ChooseBooks | Page::Collections | Page::Folder => {
                 self.show(Screen::BookmarkBrowser(Page::Sources));
             }
-            Page::Authors | Page::Property(_) => self.show(Screen::BookmarkBrowser(Page::ChooseBooks)),
+            Page::Authors | Page::Property(_) => {
+                self.show(Screen::BookmarkBrowser(Page::ChooseBooks))
+            }
             Page::Description => self.show(Screen::BookmarkBrowser(Page::Book)),
+            Page::Colors => self.show(Screen::BookmarkBrowser(Page::Filters)),
             _ => self.show(Screen::BookmarkBrowser(Page::Results)),
         }
     }

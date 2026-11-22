@@ -64,6 +64,8 @@ Publisher styling can keep a paragraph’s first or last lines together at a pag
 
 Use **Settings › Highlight style** to set how new passages appear. Tap a saved highlight and choose **Style** under its actions to change that passage. [Four highlight styles on a reading page](docs/highlight-drawing-styles.md) · [Named colors and margin note markers](docs/highlight-colors-and-note-markers.md)
 
+Use the book's color for temporary selections, or confirm **Apply to all highlights** to restyle its saved passages together. Filter the bookmark browser by color, and choose several colors when exporting highlights. [Selection and highlight workflows](docs/highlight-workflows.md)
+
 Tap a saved passage to read its note. When marks overlap, Reader shows the matching passages so you can choose one. In **Find**, the arrows start at your current passage. [Overlapping highlights](docs/screenshots/overlapping-highlights.png) · [Note on the page](docs/screenshots/tapped-note.png) · [Find from this passage](docs/screenshots/nearby-find.png)
 
 Read with publisher fonts on supported Kindle editions, or find the previous or next matching page directly from the current PDF or DjVu view. [Embedded font support](docs/kf8-publication-fonts.md) · [Fixed-page search](docs/fixed-page-search.md)

@@ -22,6 +22,7 @@ const PREFETCH_DELAY: Duration = Duration::from_millis(480);
 pub(crate) const PAGE_REFRESH_GAP: Duration = Duration::from_millis(450);
 
 pub(crate) struct PagePaint {
+    pub selection_color: Option<crate::highlight_style::HighlightColor>,
     pub highlight_appearance: crate::highlight_style::Appearance,
     pub note_marker: crate::highlight_style::NoteMarker,
     pub visible: Range<u32>,
@@ -31,6 +32,7 @@ pub(crate) struct PagePaint {
 impl PagePaint {
     pub fn full(inverted: bool) -> Self {
         Self {
+            selection_color: None,
             highlight_appearance: Default::default(),
             note_marker: Default::default(),
             visible: 0..PAGE_HEIGHT,
@@ -956,13 +958,20 @@ impl Reading {
                     page.width, &mut page.pixels);
             }
         }
+        // Named rolling selections are part of CREngine's document frame;
+        // ReaderView paints saved annotations over that native selection.
+        if let Some(color)=paint.selection_color {
+            for &rect in selection {
+                draw_highlight_rect(&mut page,rect,crate::highlight_style::Paint::SelectionColor{color,night:paint.inverted,reflow:true},paint.highlight_appearance);
+            }
+        }
         for &(rect, ink) in highlights {
             draw_highlight_rect(&mut page, rect, ink, paint.highlight_appearance);
             let leaf_x=if self.uses_facing_pages() && rect.x >= (WIDTH/2) as i32 {FACING_PAGE_WIDTH+FACING_GUTTER} else {0};
             let margin=crate::note_marker::margin(self.probe.settings.width,self.probe.settings.right_margin(),leaf_x,paint.note_marker,false);
             crate::note_marker::paint(&mut page,rect,ink,paint.note_marker,margin,paint.highlight_appearance);
         }
-        for &rect in selection {
+        for &rect in selection.iter().filter(|_|paint.selection_color.is_none()) {
             draw_highlight_rect(
                 &mut page,
                 rect,
@@ -1128,6 +1137,7 @@ impl App for Reading {
             &[],
             &[],
             PagePaint {
+                selection_color: None,
                 highlight_appearance: Default::default(),
             note_marker: Default::default(),
                 visible: 0..self.frame.height,
