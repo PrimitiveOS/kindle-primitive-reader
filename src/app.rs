@@ -892,6 +892,7 @@ impl Reader {
     }
 
     fn open_with_password(&mut self, mut entry: LibraryBook, password: Option<&str>) -> Result<()> {
+        self.logical_recovery = None;
         let (absolute, id, prepared_pdf) = with_storage(|| {
             let absolute = self.library.absolute_path(&entry.path)?;
             if entry.format == DocumentFormat::Pdf
@@ -1021,6 +1022,17 @@ impl Reader {
         };
         if config.settings.logical_font_size.is_some() && config.settings.validate().is_err()
             && (Settings { logical_font_size: None, font_size: 12., ..config.settings }).validate().is_ok() {
+            // Prove this is an otherwise readable edition before offering a
+            // layout reset. Parser/DRM/font/source-anchor failures propagate.
+            let mut control = config.clone();
+            control.settings = Settings { logical_font_size: None, font_size: 12., ..control.settings };
+            let checked = if let Some(saved) = &position {
+                Reading::restore(control, saved.chapter, saved.page, saved.anchor.as_ref())?
+            } else { Reading::open(control)? };
+            if let Some(anchor) = position.as_ref().and_then(|saved| saved.anchor.as_ref())
+                && checked.probe.page_for(anchor).is_none() {
+                return Err(io::Error::other("The saved source anchor is unavailable; this is not a font-fit error").into());
+            }
             self.logical_recovery = Some(logical_font::Recovery {
                 entry, id, config, position,
                 preferences: self.library.state(id).map_or(initial_preferences, |state| state.preferences.clone()),
