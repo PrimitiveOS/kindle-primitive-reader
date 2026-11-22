@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.19
+
+- Look up inflected English words in installed dictionaries. Set a library default or change the preference for the current book.
+- Read below the status bar in reflowable books, with compact controls to show reading status or exit.
+- Browse up to 5,000 PDF and DjVu search results, jump to the first or last page of results, and cancel a scan while it runs.
+
 ## 0.1.18
 
 - Set left and right margins separately while reading, or link the top and bottom margins.
