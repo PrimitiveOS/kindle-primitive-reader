@@ -2423,6 +2423,7 @@ impl Reader {
                     .remember(&active.entry, active.id, &active.reading.probe.title)
                     .preferences;
                 preferences.font_size = Some(settings.font_size);
+                preferences.render_dpi = Some(settings.render_dpi);
                 preferences.margin = Some(settings.margin);
                 preferences.margin_sides = settings.margin_sides;
                 preferences.margin_left = settings.margin_left;

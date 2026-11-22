@@ -931,3 +931,7 @@ mod cjk_width_tests;
 #[cfg(test)]
 #[path = "reflow_margin_tests.rs"]
 mod margin_tests;
+
+#[cfg(test)]
+#[path = "render_dpi_tests.rs"]
+mod render_dpi_tests;

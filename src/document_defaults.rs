@@ -170,7 +170,8 @@ pub(crate) fn validate_preferences(p: &BookPreferences) -> io::Result<()> {
         p.margin_top,
         p.margin_bottom,
     ];
-    if p.font_size.is_some_and(|n| !(12.0..=144.0).contains(&n))
+    if p.render_dpi.is_some_and(|n| !crate::RENDER_DPI_PRESETS.contains(&n))
+        || p.font_size.is_some_and(|n| !(12.0..=144.0).contains(&n))
         || p.line_height.is_some_and(|n| !(1.0..=3.0).contains(&n))
         || !(-2.0..=12.0).contains(&p.word_spacing)
         || !(-1.0..=4.0).contains(&p.letter_spacing)

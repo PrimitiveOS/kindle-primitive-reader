@@ -3,6 +3,8 @@
 //! and inherited text properties. See https://www.w3.org/TR/css-cascade-5/.
 
 pub(crate) mod borders;
+#[cfg(test)]
+mod dpi_tests;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -60,17 +62,31 @@ pub(crate) enum WritingMode {
 pub(crate) enum ImageLength {
     Auto,
     Pixels(f32),
+    /// Physical CSS units normalized to pixels at 96 DPI.
+    Physical(f32),
     Fraction(f32),
     Em(f32),
+    RootEm(f32),
 }
 
 impl ImageLength {
+    fn for_dpi(self, dpi: u16) -> Self {
+        match self {
+            // CRE ignores physical image constraints when render DPI is off.
+            Self::Physical(_) if dpi == 0 => Self::Auto,
+            Self::Pixels(px) | Self::Physical(px) if dpi != 0 && dpi != 96 => {
+                Self::Pixels(px * f32::from(dpi) / 96.)
+            }
+            length => length,
+        }
+    }
+
     pub(crate) fn pixels(self, available: u32, font_size: f32) -> Option<f32> {
         match self {
             Self::Auto => None,
-            Self::Pixels(px) => Some(px),
+            Self::Pixels(px) | Self::Physical(px) => Some(px),
             Self::Fraction(ratio) => Some(ratio * available as f32),
-            Self::Em(scale) => Some(scale * font_size),
+            Self::Em(scale) | Self::RootEm(scale) => Some(scale * font_size),
         }
     }
 }
@@ -81,6 +97,8 @@ pub(crate) enum CssLength {
     RootEm(f32),
     ComputedEm { value: f32, font_scale: f32 },
     Pixels(f32),
+    /// Keep the original 96-DPI float conversion and its physical-unit identity.
+    Physical(f32),
     Fraction(f32),
 }
 
@@ -91,6 +109,16 @@ impl Default for CssLength {
 }
 
 impl CssLength {
+    fn for_dpi(self, dpi: u16) -> Self {
+        match self {
+            Self::Physical(_) if dpi == 0 => Self::Pixels(0.),
+            Self::Pixels(px) | Self::Physical(px) if dpi != 0 && dpi != 96 => {
+                Self::Pixels(px * f32::from(dpi) / 96.)
+            }
+            length => length,
+        }
+    }
+
     fn computed(self, font: f32, root_font: f32) -> Self {
         match self {
             Self::Em(value) => Self::ComputedEm {
@@ -109,7 +137,7 @@ impl CssLength {
         match self {
             Self::Em(em) | Self::RootEm(em) => em * reader_font,
             Self::ComputedEm { value, font_scale } => value * font_scale * reader_font,
-            Self::Pixels(px) => px,
+            Self::Pixels(px) | Self::Physical(px) => px,
             Self::Fraction(ratio) => ratio * width as f32,
         }
     }
@@ -119,7 +147,7 @@ impl CssLength {
     pub fn box_pixels(self, width: u32, reader_font: f32) -> f32 {
         let fixed = |value: f32| (f64::from(value) * 256.).round() / 256.;
         let pixels = match self {
-            Self::Pixels(px) => (fixed(px) + 127. / 256.).floor(),
+            Self::Pixels(px) | Self::Physical(px) => (fixed(px) + 127. / 256.).floor(),
             Self::Fraction(ratio) => (f64::from(width) * fixed(ratio * 100.) / 100.).floor(),
             Self::Em(value) | Self::RootEm(value) => {
                 (fixed(value) * f64::from(reader_font).floor()).floor()
@@ -336,6 +364,30 @@ impl BookStyle {
         styled
     }
 
+    pub fn compute_for_dpi(&self, elements: &[Element], dpi: u16) -> Vec<Style> {
+        let mut styles = self.compute(elements);
+        if dpi == 96 {
+            return styles;
+        }
+        for style in &mut styles {
+            style.text_indent.length = style.text_indent.length.for_dpi(dpi);
+            for edge in style.padding.iter_mut()
+                .chain(style.vertical_padding.iter_mut())
+                .chain(style.border_spacing.iter_mut())
+            {
+                *edge = edge.for_dpi(dpi);
+            }
+            if let Some(borders) = &mut style.borders {
+                for border in Arc::make_mut(borders) {
+                    border.width = border.width.for_dpi(dpi);
+                }
+            }
+            style.image_width = style.image_width.map(|value| value.for_dpi(dpi));
+            style.image_height = style.image_height.map(|value| value.for_dpi(dpi));
+        }
+        styles
+    }
+
     pub fn compute(&self, elements: &[Element]) -> Vec<Style> {
         let defaults = Style { font_weights: self.font_weights.clone(), ..Style::default() };
         let mut result: Vec<Style> = Vec::with_capacity(elements.len());
@@ -500,8 +552,20 @@ impl BookStyle {
                     }
                     Property::Hyphens(mode) => style.hyphens = *mode,
                     Property::WritingMode(mode) => style.writing_mode = *mode,
-                    Property::Width(value) => style.image_width = Some(*value),
-                    Property::Height(value) => style.image_height = Some(*value),
+                    Property::Width(value) | Property::Height(value) => {
+                        let value = match value {
+                            ImageLength::RootEm(value) => {
+                                let root = result.first().map_or(style.size_scale, |root| root.size_scale);
+                                ImageLength::RootEm(value * root / style.size_scale.clamp(0.125, 8.0))
+                            }
+                            value => *value,
+                        };
+                        if matches!(property, Property::Width(_)) {
+                            style.image_width = Some(value);
+                        } else {
+                            style.image_height = Some(value);
+                        }
+                    }
                     Property::VerticalAlign(value) => style.image_align = *value,
                     Property::Decoration(value) => decoration = value.unwrap_or(parent.decoration),
                     Property::FontSource(_) => {}
@@ -1281,19 +1345,19 @@ impl<'i> DeclarationParser<'i> for Properties {
                         {
                             ImageLength::Fraction(unit_value)
                         }
-                        Token::Dimension { unit, value, .. }
-                            if value.is_finite()
-                                && value > 0.0
-                                && unit.eq_ignore_ascii_case("px") =>
-                        {
-                            ImageLength::Pixels(value)
-                        }
-                        Token::Dimension { unit, value, .. }
-                            if value.is_finite()
-                                && value > 0.0
-                                && unit.eq_ignore_ascii_case("em") =>
-                        {
-                            ImageLength::Em(value)
+                        Token::Dimension { unit, value, .. } if value.is_finite() && value > 0.0 => {
+                            match unit.to_ascii_lowercase().as_str() {
+                                "px" => ImageLength::Pixels(value),
+                                "em" => ImageLength::Em(value),
+                                "rem" => ImageLength::RootEm(value),
+                                "pt" => ImageLength::Physical(value * (96.0 / 72.0)),
+                                "pc" => ImageLength::Physical(value * 16.0),
+                                "in" => ImageLength::Physical(value * 96.0),
+                                "cm" => ImageLength::Physical(value * (96.0 / 2.54)),
+                                "mm" => ImageLength::Physical(value * (96.0 / 25.4)),
+                                "q" => ImageLength::Physical(value * (96.0 / 101.6)),
+                                _ => return Err(ParseError::unexpected_token()),
+                            }
                         }
                         _ => return Err(ParseError::unexpected_token()),
                     };
@@ -1580,12 +1644,12 @@ fn parse_css_length(input: &mut Parser<'_>) -> CssResult<CssLength> {
                 "em" => CssLength::Em(value),
                 "rem" => CssLength::RootEm(value),
                 "px" => CssLength::Pixels(value),
-                "pt" => CssLength::Pixels(value * (96.0 / 72.0)),
-                "pc" => CssLength::Pixels(value * 16.0),
-                "in" => CssLength::Pixels(value * 96.0),
-                "cm" => CssLength::Pixels(value * (96.0 / 2.54)),
-                "mm" => CssLength::Pixels(value * (96.0 / 25.4)),
-                "q" => CssLength::Pixels(value * (96.0 / 101.6)),
+                "pt" => CssLength::Physical(value * (96.0 / 72.0)),
+                "pc" => CssLength::Physical(value * 16.0),
+                "in" => CssLength::Physical(value * 96.0),
+                "cm" => CssLength::Physical(value * (96.0 / 2.54)),
+                "mm" => CssLength::Physical(value * (96.0 / 25.4)),
+                "q" => CssLength::Physical(value * (96.0 / 101.6)),
                 _ => return Err(ParseError::unexpected_token()),
             })
         }

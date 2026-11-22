@@ -23,6 +23,7 @@ impl Reader {
             .and_then(|state| state.preferences.font_file.clone());
         Ok(BookPreferences {
             font_size: Some(settings.font_size),
+            render_dpi: Some(settings.render_dpi),
             margin: Some(settings.margin),
             margin_sides: settings.margin_sides,
             margin_left: settings.margin_left,
