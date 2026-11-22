@@ -1,6 +1,28 @@
 use super::*;
-use crate::dictionary::tests::TestDirectory;
 use crate::fixed_text::PdfTextRect;
+
+struct TestDirectory(PathBuf);
+impl TestDirectory {
+    fn new() -> Self {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "reader-document-defaults-{}-{time}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        fs::create_dir(&path).unwrap();
+        Self(path)
+    }
+}
+impl Drop for TestDirectory {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
 
 #[test]
 fn fixed_templates_exclude_geometry_and_reuse_only_the_current_books_geometry() {
