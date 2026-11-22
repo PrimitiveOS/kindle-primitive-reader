@@ -26,6 +26,10 @@ use crate::fixed_text::{PdfPageText, PdfTextRect, PdfTextSpan};
 pub const MAX_SEARCH_HITS: usize = 100;
 /// KOReader's whole-book results list ceiling for rolling documents.
 pub const MAX_REFLOW_SEARCH_HITS: usize = 5_000;
+#[cfg(feature = "kindle")]
+pub(crate) const MAX_FIXED_SEARCH_HITS: usize = 5_000;
+#[cfg(feature = "kindle")]
+const MAX_FIXED_RESULT_BYTES: usize = 20 * 1024 * 1024;
 const MAX_RESULT_BYTES: usize = 8 * 1024 * 1024;
 pub(crate) const MAX_QUERY_BYTES: usize = 256;
 const CONTEXT_CHARACTERS: usize = 28;
@@ -442,6 +446,8 @@ pub(crate) struct PdfSearch {
     pub(crate) next_page: usize,
     pub(crate) text_pages: usize,
     pub(crate) skipped: usize,
+    pub(crate) retained_bytes: usize,
+    pub(crate) memory_limited: bool,
 }
 
 #[cfg(feature = "kindle")]
@@ -484,33 +490,53 @@ impl PdfSearch {
             next_page: 0,
             text_pages: 0,
             skipped: 0,
+            retained_bytes: 0,
+            memory_limited: false,
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn hits(
         &mut self,
         page: usize,
         text: &PdfPageText,
         limit: usize,
     ) -> Vec<PdfSearchHit> {
+        let mut results = Vec::new();
+        self.append_page(page, text, &mut results, limit);
+        results
+    }
+
+    /// Keep one bounded list. An individual page can supply the entire result
+    /// set, so avoid allocating a second list of its snippets and rectangles.
+    pub(crate) fn append_page(
+        &mut self,
+        page: usize,
+        text: &PdfPageText,
+        results: &mut Vec<PdfSearchHit>,
+        limit: usize,
+    ) {
         if !text.text.trim().is_empty() {
             self.text_pages += 1;
         }
-        self.ranges(text, limit)
-            .into_iter()
-            .map(|range| {
-                let bounds = matching_words(text, &range)
-                    .iter()
-                    .map(|word| word.bounds)
-                    .collect();
-                PdfSearchHit {
-                    page,
-                    snippet: snippet(&text.text, range).0,
-                    bounds,
-                }
-            })
-            .collect()
+        for range in self.ranges(text, limit.saturating_sub(results.len())) {
+            let words = matching_words(text, &range);
+            let snippet = snippet(&text.text, range).0;
+            let allocation = size_of::<PdfSearchHit>() + snippet.capacity()
+                + words.len() * size_of::<PdfTextRect>();
+            if allocation > MAX_FIXED_RESULT_BYTES.saturating_sub(self.retained_bytes) {
+                self.memory_limited = true;
+                break;
+            }
+            self.retained_bytes += allocation;
+            results.push(PdfSearchHit {
+                page,
+                snippet,
+                bounds: words.iter().map(|word| word.bounds).collect(),
+            });
+        }
     }
+
     fn ranges(&self, text: &PdfPageText, limit: usize) -> Vec<Range<usize>> {
         self.query.ranges(text, limit)
     }
@@ -967,6 +993,21 @@ mod tests {
             .hits(2, &transcript, 10);
         assert_eq!(exact.len(), 1);
         assert!(exact[0].bounds.is_empty());
+    }
+
+    #[cfg(feature = "kindle")]
+    #[test]
+    fn an_exhausted_fixed_list_budget_keeps_the_previous_rows_intact() {
+        let mut search = PdfSearch::new("tide", false).unwrap();
+        let page = PdfPageText { text: "Tide at the pier".into(), ..Default::default() };
+        let mut hits = Vec::new();
+        search.append_page(0, &page, &mut hits, MAX_FIXED_SEARCH_HITS);
+        assert_eq!(hits.len(), 1);
+        search.retained_bytes = MAX_FIXED_RESULT_BYTES - 1;
+        search.append_page(1, &page, &mut hits, MAX_FIXED_SEARCH_HITS);
+        assert!(search.memory_limited);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].page, 0);
     }
 
     #[cfg(feature = "kindle")]

@@ -7,9 +7,11 @@ local input = assert(io.open("frontend/document/koptinterface.lua", "rb"))
 local source = input:read("*a")
 input:close()
 local start = assert(source:find("function KoptInterface:nativeToPageRectTransform(",1,true))
-local finish = assert(source:find("function KoptInterface:findAllText(",start,true))
+local finish = assert(source:find("function KoptInterface:logReflowDuration(",start,true))
+local context_start = assert(source:find("local function get_prev_text(", 1, true))
+local context_end = assert(source:find("function KoptInterface:getSelectedWordContext(", context_start, true))
 local factory = assert(loadstring("local util, Utf8Proc = ...\nlocal logger={dbg=function() end}\nlocal KoptInterface={}\n"
-    .. source:sub(start,finish-1) .. "\nreturn KoptInterface"))
+    .. source:sub(context_start,context_end-1) .. source:sub(start,finish-1) .. "\nreturn KoptInterface"))
 local kopt = factory(require("util"), require("ffi/utf8proc"))
 local pdf = require("ffi/mupdf").openDocument(path)
 local doc = {configurable={text_wrap=0}}
@@ -19,6 +21,20 @@ function doc:getPageTextBoxes(n)
     local lines = p:getPageText()
     p:close()
     return lines
+end
+if arg[4] == "--find-all" then
+    local results = kopt:findAllText(doc, query, true, 5, 5000) or {}
+    local counts, last = {}, 0
+    for _, item in ipairs(results) do
+        assert(item.start >= last and #item.boxes > 0)
+        assert(item.matched_text and #item.matched_text > 0)
+        last = item.start
+        counts[last] = (counts[last] or 0) + 1
+    end
+    for page = 1, doc:getPageCount() do counts[page] = counts[page] or 0 end
+    pdf:close()
+    print("fixed-all " .. require("json").encode(counts))
+    return
 end
 if arg[4] == "--unicode" then
     local json = require("json")

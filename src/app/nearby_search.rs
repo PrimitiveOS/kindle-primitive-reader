@@ -493,10 +493,11 @@ impl Reader {
         let chapters = active.reading.probe.chapter_count();
         self.update_lookup_history(|h| h.search(pattern, case, accents, regex))?;
         self.cancel_search();
+        self.search_result = None;
+        self.matches_page = 0;
         self.show(Screen::Matches);
         self.hits.clear();
         self.pdf_hits.clear();
-        self.search_result = None;
         if self.nearby.worker.is_none() {
             self.nearby.worker = Some(Worker::start()?);
         }
@@ -774,8 +775,8 @@ mod fixed_tests {
             while app.search_at.is_some() {
                 app.step_pdf_search(Instant::now()).unwrap();
             }
-            assert_eq!(app.pdf_hits.len(), MAX_SEARCH_HITS);
-            assert!(app.pdf_hits.last().unwrap().page < origin);
+            assert!(app.pdf_hits.len() > 100);
+            assert!(app.pdf_hits[99].page < origin);
         }
         app.show(Screen::Find);
         app.editor.text = query.chars().collect();
@@ -1017,7 +1018,7 @@ mod fixed_tests {
         ];
         for (pattern, &expected) in patterns.iter().zip(&counts) {
             let mut search = PdfSearch::new(pattern, false).unwrap();
-            let listed = search.hits(page - 1, &text, MAX_SEARCH_HITS);
+            let listed = search.hits(page - 1, &text, crate::search::MAX_SEARCH_HITS);
             assert_eq!(listed.len(), expected);
             assert!(listed.iter().all(|hit| hit.bounds.len() == 1));
             app.show(Screen::Find);

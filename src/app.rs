@@ -15,6 +15,8 @@ mod extend_highlight;
 mod external_link;
 #[cfg(test)]
 mod epub_gif_tests;
+#[cfg(test)]
+mod fixed_results_tests;
 mod sidecar_marks;
 mod library_view;
 mod lookup_history;
@@ -64,7 +66,7 @@ use crate::reading_controls::{
 use crate::reading_fonts;
 use crate::reading_profiles::{self, Profile};
 use crate::reading_stats::ReadingStats;
-use crate::search::{MAX_SEARCH_HITS, PdfSearch, PdfSearchHit, Search, SearchHit};
+use crate::search::{MAX_FIXED_SEARCH_HITS, PdfSearch, PdfSearchHit, Search, SearchHit};
 use crate::selection::TextSelection;
 use crate::session::{
     BookConfig, DONE, PAGE_HEIGHT, PAGE_REFRESH_GAP, PageThumbnail, PageTurns, Reading, page_thumbnail,
@@ -94,6 +96,9 @@ const PREV: Rect = Rect::new(40, HEIGHT as i32 - 104, 240, 72);
 const NEXT: Rect = Rect::new(WIDTH as i32 - 280, HEIGHT as i32 - 104, 240, 72);
 const SAVE_DELAY: Duration = Duration::from_millis(800);
 const SEARCH_DELAY: Duration = Duration::from_millis(60);
+// Return to the input loop between fixed-page batches. An expensive individual
+// page still owns the provider until its embedded text has been extracted.
+const FIXED_SEARCH_YIELD: Duration = Duration::from_millis(8);
 const SEARCH_REFRESH: Duration = Duration::from_millis(450);
 const UNLOCK_TOUCH: Rect = Rect::new(832, PAGE_HEIGHT as i32 + 5, 258, 60);
 const CANCEL_OCR: Rect = Rect::new(624, PAGE_HEIGHT as i32 + 5, 200, 60);
@@ -546,6 +551,7 @@ pub struct Reader {
     refresh_display: bool,
     auto_turn: AutoTurn,
     list_page: usize,
+    matches_page: usize,
     current_contents_row: Option<usize>,
     publisher_label_canvas: std::cell::RefCell<Option<Canvas>>,
     map_window: fixed_book_map::MapWindow,
@@ -677,6 +683,7 @@ impl Reader {
             refresh_display: false,
             auto_turn: AutoTurn::default(),
             list_page: 0,
+            matches_page: 0,
             current_contents_row: None,
             publisher_label_canvas: Default::default(),
             map_window: fixed_book_map::MapWindow::default(),
@@ -978,6 +985,9 @@ impl Reader {
         if !matches!(screen, Screen::Matches | Screen::Book | Screen::Fixed) {
             self.cancel_search();
         }
+        if self.screen == Screen::Matches && screen != Screen::Matches {
+            self.matches_page = self.list_page;
+        }
         self.link_popup = None;
         self.screen = screen;
         self.map_window = fixed_book_map::MapWindow::default();
@@ -988,7 +998,11 @@ impl Reader {
         } else {
             self.locate_contents_row()
         };
-        self.list_page = self.current_contents_row.unwrap_or_default() / ROWS_PER_PAGE;
+        self.list_page = if screen == Screen::Matches {
+            self.matches_page
+        } else {
+            self.current_contents_row.unwrap_or_default() / ROWS_PER_PAGE
+        };
         self.notice = None;
     }
 
@@ -1071,15 +1085,19 @@ impl Reader {
         if self.screen == Screen::PublisherPages {
             return self.publisher_page_window(first, ROWS_PER_PAGE);
         }
-        if self.screen == Screen::Matches && self.active.is_some() {
-            let items = self
-                .hits
-                .iter()
-                .enumerate()
-                .skip(first)
-                .take(ROWS_PER_PAGE)
-                .map(|(i, hit)| {
-                    Item::new(&hit.snippet, Action::SearchHit(i)).detail(&hit.chapter_title)
+        if self.screen == Screen::Matches {
+            if let Some(fixed) = &self.fixed {
+                let items = self.pdf_hits.iter().enumerate().skip(first).take(ROWS_PER_PAGE)
+                    .map(|(index, hit)| {
+                        Item::new(&hit.snippet, Action::PdfSearchHit(index))
+                            .detail(fixed_page_label(&fixed.reading, hit.page))
+                    })
+                    .collect();
+                return (self.pdf_hits.len(), items);
+            }
+            let items = self.hits.iter().enumerate().skip(first).take(ROWS_PER_PAGE)
+                .map(|(index, hit)| {
+                    Item::new(&hit.snippet, Action::SearchHit(index)).detail(&hit.chapter_title)
                 })
                 .collect();
             return (self.hits.len(), items);
@@ -1092,8 +1110,7 @@ impl Reader {
     }
 
     fn has_list_shortcuts(&self, count: usize) -> bool {
-        matches!(self.screen, Screen::Matches | Screen::PublisherPages)
-            && self.active.is_some() && count > ROWS_PER_PAGE
+        matches!(self.screen, Screen::Matches | Screen::PublisherPages) && count > ROWS_PER_PAGE
     }
 
     fn items(&self) -> Vec<Item> {
@@ -1402,15 +1419,6 @@ impl Reader {
                         )
                     })
                     ).collect(),
-                Screen::Matches => self
-                    .pdf_hits
-                    .iter()
-                    .enumerate()
-                    .map(|(index, hit)| {
-                        Item::new(&hit.snippet, Action::PdfSearchHit(index))
-                            .detail(fixed_page_label(&fixed.reading, hit.page))
-                    })
-                    .collect(),
                 Screen::OcrLanguage => self.ocr_assets.as_ref().map_or_else(Vec::new, |assets| {
                     assets
                         .languages()
@@ -1559,14 +1567,6 @@ impl Reader {
                 .map(|(index, profile)| {
                     Item::new(&profile.name, Action::RemoveProfile(index))
                         .detail("Remove this profile")
-                })
-                .collect(),
-            Screen::Matches => self
-                .hits
-                .iter()
-                .enumerate()
-                .map(|(index, hit)| {
-                    Item::new(&hit.snippet, Action::SearchHit(index)).detail(&hit.chapter_title)
                 })
                 .collect(),
             Screen::Highlights => {
@@ -2316,6 +2316,7 @@ impl Reader {
                     self.push_history(previous);
                 }
                 self.search_result = Some(index);
+                self.matches_page = index / ROWS_PER_PAGE;
             }
             Action::PdfSearchHit(index) => {
                 let hit = self
@@ -2329,6 +2330,7 @@ impl Reader {
                     self.push_history(previous);
                 }
                 self.search_result = Some(index);
+                self.matches_page = index / ROWS_PER_PAGE;
             }
             Action::PdfHighlight(index) => {
                 let fixed = self.fixed.as_ref().ok_or("No open PDF")?;
@@ -3140,12 +3142,13 @@ impl Reader {
         })?;
         self.nearby.clear();
         self.search_result = None;
+        self.matches_page = 0;
         self.show(Screen::Matches);
         self.hits.clear();
         self.pdf_hits.clear();
         self.pdf_search = Some(pdf_search);
         let now = Instant::now();
-        self.search_at = Some(now + SEARCH_DELAY);
+        self.search_at = Some(now);
         self.next_search_refresh = now + SEARCH_REFRESH;
         Ok(())
     }
@@ -3575,27 +3578,30 @@ impl Reader {
         let previous = self.pdf_hits.len();
         let started = Instant::now();
         let stop_page = (search.next_page + 4).min(reading.count());
-        while search.next_page < stop_page && self.pdf_hits.len() < MAX_SEARCH_HITS {
+        while search.next_page < stop_page && self.pdf_hits.len() < MAX_FIXED_SEARCH_HITS {
             let page = search.next_page;
             search.next_page += 1;
             match reading.page_text(page) {
-                Ok(text) => self.pdf_hits.extend(search.hits(
-                    page,
-                    &text,
-                    MAX_SEARCH_HITS - self.pdf_hits.len(),
-                )),
+                Ok(text) => {
+                    search.append_page(page, &text, &mut self.pdf_hits, MAX_FIXED_SEARCH_HITS);
+                }
                 Err(_) => search.skipped += 1,
             }
-            if started.elapsed() >= SEARCH_DELAY {
+            if search.memory_limited || started.elapsed() >= SEARCH_DELAY {
                 break;
             }
         }
-        if search.next_page == reading.count() || self.pdf_hits.len() == MAX_SEARCH_HITS {
+        if search.memory_limited
+            || search.next_page == reading.count()
+            || self.pdf_hits.len() == MAX_FIXED_SEARCH_HITS
+        {
             self.search_at = None;
             self.notice = if self.screen != Screen::Matches {
                 None
-            } else if self.pdf_hits.len() == MAX_SEARCH_HITS {
-                Some("Showing first 100 matches".into())
+            } else if search.memory_limited {
+                Some("Search result memory limit reached".into())
+            } else if self.pdf_hits.len() == MAX_FIXED_SEARCH_HITS {
+                Some("Showing first 5,000 matches".into())
             } else if search.skipped > 0 {
                 Some("Some pages could not be searched".into())
             } else if search.text_pages == 0 {
@@ -3605,8 +3611,8 @@ impl Reader {
             };
             return Ok(Change::Partial);
         }
-        self.search_at = Some(Instant::now() + SEARCH_DELAY);
-        if self.pdf_hits.len() != previous && now >= self.next_search_refresh {
+        self.search_at = Some(Instant::now() + FIXED_SEARCH_YIELD);
+        if self.pdf_hits.len() != previous && (previous == 0 || now >= self.next_search_refresh) {
             self.next_search_refresh = now + SEARCH_REFRESH;
             Ok(Change::Partial)
         } else {
@@ -5290,7 +5296,7 @@ impl App for Reader {
             }
             let first = self.list_page * ROWS_PER_PAGE + 1;
             let last = (first - 1 + ROWS_PER_PAGE).min(count);
-            let more = if self.nearby.searching_all() { "+" } else { "" };
+            let more = if self.nearby.searching_all() || self.search_at.is_some() { "+" } else { "" };
             canvas.text(
                 Rect::new(435, HEIGHT as i32 - 104, WIDTH as i32 - 870, 72),
                 &format!("{first}–{last} of {count}{more}"),

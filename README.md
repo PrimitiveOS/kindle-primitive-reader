@@ -88,7 +88,7 @@ Install Reader from PrimitiveOS Store or follow the manual install guide.
   larger size. Done returns to the same page and zoom.
 - At the end of a comic, Next comic opens the following archive in the same
   folder in natural filename order.
-- In a PDF or DjVu, search forward or backward from the visible page. **From start** and **From end** jump to the first earlier or last later match. Reader highlights the matching words on the page and keeps the original viewport available for return. [Fixed-page search](docs/fixed-page-search.md)
+- In a PDF or DjVu, search forward or backward from the visible page. **From start** and **From end** jump to the first earlier or last later match. Reader highlights each matching word and can return to the original viewport. **Find all** lists up to 5,000 occurrences, with page buttons and first/last shortcuts. [Fixed-page search](docs/fixed-page-search.md)
 - Open **Search › Find bookmarks**, or **Bookmarks › Find bookmarks** on the lower bar, to search page marks, highlighted passages and notes. Select the categories you want and switch on **Case sensitive** for an exact-case match. A result opens its passage in an EPUB or PDF.
 - Hold a word to select it, then tap another word to extend the selection. Tap **Find** to search for the selected words throughout the book. A long selection opens an editable search excerpt.
   Use the selection popup to add a highlight or note, or look up a word in an
