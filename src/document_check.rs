@@ -82,6 +82,9 @@ pub fn verify(
     let ink = pixels.iter().filter(|&&gray| gray < 128).count();
     app.input(Input::PageForward);
     app.tick(Instant::now() + Duration::from_secs(2));
+    // A last-page turn may display the optional end-of-document prompt. It is
+    // transient UI, so dismiss it through Back before comparing durable content.
+    let end_prompt_dismissed = app.dismiss_end_prompt();
     let second = frame(&app, &mut canvas, false);
     let changed = pixels.iter().zip(&second).any(|(a, b)| a != b);
     app.save()?;
@@ -148,7 +151,7 @@ pub fn verify(
     });
     println!(
         "{}",
-        serde_json::json!({"opened":true,"picker":picker,"first_frame_ms": first_ms, "first_frame_ink_pixels":ink, "next_frame_changed":changed, "resumed":true, "peak_kib":peak_kib, "spine":spine})
+        serde_json::json!({"opened":true,"picker":picker,"first_frame_ms": first_ms, "first_frame_ink_pixels":ink, "next_frame_changed":changed, "end_prompt_dismissed":end_prompt_dismissed, "resumed":true, "peak_kib":peak_kib, "spine":spine})
     );
     Ok(())
 }
