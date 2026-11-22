@@ -40,7 +40,7 @@ def publication():
     hdr = bytearray(264)
     struct.pack_into(">HHIHH", hdr, 0, 1, 0, len(html), len(records), 4096)
     hdr[16:20] = b"MOBI"
-    for at, value in [(20, 248), (24, 2), (28, 65001), (36, 6), (108, len(records) + 1)]:
+    for at, value in [(20, 248), (24, 2), (28, 65001), (36, 6), (80, len(records) + 1), (108, len(records) + 1)]:
         struct.pack_into(">I", hdr, at, value)
     chunks = [hdr, *records, bitmap()]
     pdb = bytearray(78 + 8 * len(chunks))
