@@ -102,6 +102,9 @@ fn check_styles(
         app.controls.night_pages = false;
     }
     assert!(checks > 120);
+    if std::env::var_os("READER_VERIFY_HIGHLIGHT_APPEARANCE").is_some() {
+        super::appearance_tests::original_saved_opacity(app,font,rect,fill_rows,original);
+    }
     let id = app.open_book_id().unwrap();
     app.save().unwrap();
     assert_eq!(

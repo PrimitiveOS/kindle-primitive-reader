@@ -1428,7 +1428,7 @@ impl FixedReading {
             selection
                 .iter()
                 .copied()
-                .map(|r| (r, crate::highlight_style::Paint::Temporary(180))),
+                .map(|r| (r, crate::highlight_style::Paint::Selection)),
         );
         for ((index, region), paint_style) in ink {
             let Some((quad, clip)) = self.projected_region(index, region) else {
@@ -1452,13 +1452,13 @@ impl FixedReading {
                 let end = (y + height).min(page.rows.end as i32).max(0) as usize;
                 for row in first..end {
                     let start = row * WIDTH as usize;
-                    paint_style.draw_row(&mut frame.pixels[start + x0..start + x1]);
+                    paint_style.draw_row(&mut frame.pixels[start + x0..start + x1], paint.highlight_appearance);
                 }
             } else {
                 for y in clip.y0.floor() as usize..clip.y1.ceil() as usize {
                     let span = quad.row(y, WIDTH as usize);
                     let start = y * WIDTH as usize;
-                    paint_style.draw_row(&mut frame.pixels[start + span.start..start + span.end]);
+                    paint_style.draw_row(&mut frame.pixels[start + span.start..start + span.end], paint.highlight_appearance);
                 }
             }
         }

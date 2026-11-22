@@ -20,6 +20,7 @@ const PREFETCH_DELAY: Duration = Duration::from_millis(480);
 pub(crate) const PAGE_REFRESH_GAP: Duration = Duration::from_millis(450);
 
 pub(crate) struct PagePaint {
+    pub highlight_appearance: crate::highlight_style::Appearance,
     pub visible: Range<u32>,
     pub inverted: bool,
 }
@@ -27,13 +28,14 @@ pub(crate) struct PagePaint {
 impl PagePaint {
     pub fn full(inverted: bool) -> Self {
         Self {
+            highlight_appearance: Default::default(),
             visible: 0..PAGE_HEIGHT,
             inverted,
         }
     }
 
     pub(crate) fn apply(self, mut page: GrayImage) -> (Rect, GrayImage) {
-        let Self { visible, inverted } = self;
+        let Self { visible, inverted, .. } = self;
         let visible = visible.start.min(page.height)..visible.end.min(page.height);
         if visible != (0..page.height) {
             let rows = (visible.start * WIDTH) as usize..(visible.end * WIDTH) as usize;
@@ -812,13 +814,14 @@ impl Reading {
             }
         }
         for &(rect, ink) in highlights {
-            draw_highlight_rect(&mut page, rect, ink);
+            draw_highlight_rect(&mut page, rect, ink, paint.highlight_appearance);
         }
         for &rect in selection {
             draw_highlight_rect(
                 &mut page,
                 rect,
-                crate::highlight_style::Paint::Temporary(176),
+                crate::highlight_style::Paint::Selection,
+                paint.highlight_appearance,
             );
         }
         if paint.visible != (0..self.frame.height) && !self.probe.is_vertical() {
@@ -862,6 +865,7 @@ fn draw_highlight_rect(
     page: &mut GrayImage,
     rect: HighlightRect,
     ink: crate::highlight_style::Paint,
+    appearance: crate::highlight_style::Appearance,
 ) {
     let (top, height) = ink
         .line_band(rect.y, rect.height, page.width, false)
@@ -879,7 +883,7 @@ fn draw_highlight_rect(
         .skip(y0)
         .take(y1 - y0)
     {
-        ink.draw_row(&mut row[x0..x1]);
+        ink.draw_row(&mut row[x0..x1], appearance);
     }
 }
 
@@ -975,6 +979,7 @@ impl App for Reading {
             &[],
             &[],
             PagePaint {
+                highlight_appearance: Default::default(),
                 visible: 0..self.frame.height,
                 inverted: false,
             },

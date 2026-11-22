@@ -1,4 +1,4 @@
-//! Saved annotation drawers. Selection and search keep their own temporary tones.
+//! Grayscale annotation drawers and their reading preferences.
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,9 +46,35 @@ impl HighlightStyle {
 }
 
 #[cfg(feature = "kindle")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct Appearance {
+    pub highlight_opacity: u8,
+    pub selection_opacity: u8,
+}
+
+#[cfg(feature = "kindle")]
+impl Default for Appearance {
+    fn default() -> Self {
+        Self {
+            highlight_opacity: 20,
+            selection_opacity: 20,
+        }
+    }
+}
+
+#[cfg(feature = "kindle")]
+impl Appearance {
+    pub(crate) fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+#[cfg(feature = "kindle")]
 #[derive(Clone, Copy)]
 pub(crate) enum Paint {
     Saved(HighlightStyle),
+    Selection,
     Temporary(u8),
 }
 
@@ -74,11 +100,16 @@ impl Paint {
         }
     }
 
-    pub(crate) fn draw_row(self, pixels: &mut [u8]) {
+    pub(crate) fn draw_row(self, pixels: &mut [u8], appearance: Appearance) {
         match self {
-            Self::Saved(HighlightStyle::Lighten) => {
+            Self::Saved(HighlightStyle::Lighten) | Self::Selection => {
+                let opacity = match self {
+                    Self::Selection => appearance.selection_opacity,
+                    _ => appearance.highlight_opacity,
+                };
+                let multiplier = 255 - u16::from(opacity.min(100)) * 255 / 100;
                 for pixel in pixels {
-                    *pixel = ((u16::from(*pixel) * 204 + 127) / 255) as u8;
+                    *pixel = ((u16::from(*pixel) * multiplier + 127) / 255) as u8;
                 }
             }
             Self::Saved(HighlightStyle::Underline) => pixels.fill(0x44),
@@ -102,6 +133,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn saved_and_selection_opacities_match_the_installed_256_tone_blending() {
+        for percent in [0, 5, 10, 15, 20, 30, 35, 50, 65, 90, 95, 100] {
+            let gray: Vec<_> = (0..=255u8).collect();
+            let expected: Vec<_> = gray
+                .iter()
+                .map(|&v| {
+                    let alpha = (f64::from(percent) * 255.0 / 100.0).floor();
+                    (f64::from(v) * (255. - alpha) / 255.).round() as u8
+                })
+                .collect();
+            for p in [Paint::Saved(HighlightStyle::Lighten), Paint::Selection] {
+                let a = match p {
+                    Paint::Selection => Appearance {
+                        highlight_opacity: 80,
+                        selection_opacity: percent,
+                    },
+                    _ => Appearance {
+                        highlight_opacity: percent,
+                        selection_opacity: 80,
+                    },
+                };
+                let mut pixels = gray.clone();
+                p.draw_row(&mut pixels, a);
+                assert_eq!(pixels, expected);
+            }
+        }
+    }
+
+    #[test]
     fn six_tones_and_line_positions_agree_with_installed_oasis_drawers() {
         let input = [0, 51, 102, 153, 204, 255];
         for fixed in [false, true] {
@@ -117,7 +177,7 @@ mod tests {
                 for row in 4..24 {
                     let mut pixels = input;
                     if (y..y + h).contains(&row) {
-                        paint.draw_row(&mut pixels);
+                        paint.draw_row(&mut pixels, Appearance::default());
                     }
                     assert_eq!(
                         pixels,

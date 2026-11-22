@@ -28,3 +28,25 @@ for _,fixed in ipairs({false,true}) do
         bb:free()
     end
 end
+
+if arg[1] == "opacity" then
+    local settings = {}
+    env.G_reader_settings.readSetting = function(_, key) return settings[key] end
+    for _, active_selection in ipairs({false, true}) do
+        for _, percent in ipairs({0, 5, 10, 15, 20, 30, 35, 50, 65, 90, 95, 100}) do
+            local alpha = percent / 100
+            local view = { highlight = {
+                lighten_factor = active_selection and 0.8 or alpha,
+                temp = active_selection and {true} or {},
+            }, ui = {} }
+            settings.highlight_selection_lighten_factor = active_selection and alpha or 0.8
+            local bb = BB.new(256, 1, BB.TYPE_BB8)
+            for x = 0, 255 do bb:setPixel(x, 0, BB.Color8(x)) end
+            env.ReaderView.drawHighlightRect(view, bb, 0, 0, { x=0, y=0, w=256, h=1 }, "lighten")
+            local values = {}
+            for x = 0, 255 do values[#values+1] = bb:getPixel(x, 0):getColor8().a end
+            print("opacity", active_selection and "selection" or "saved", percent, table.concat(values, ","))
+            bb:free()
+        end
+    end
+end

@@ -17,6 +17,8 @@ const MAX_FILE_BYTES: u64 = 4096;
 pub(crate) struct ReadingControls {
     #[serde(skip_serializing_if = "crate::highlight_style::HighlightStyle::is_default")]
     pub highlight_style: crate::highlight_style::HighlightStyle,
+    #[serde(skip_serializing_if = "crate::highlight_style::Appearance::is_default")]
+    pub highlight_appearance: crate::highlight_style::Appearance,
     pub night_pages: bool,
     pub footnote_popups: bool,
     pub prefer_footnotes: bool,

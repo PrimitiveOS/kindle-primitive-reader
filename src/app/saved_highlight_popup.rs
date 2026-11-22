@@ -8,11 +8,40 @@ const ROW: i32 = 112;
 const TEXT: primitive_ui::TextStyle = primitive_ui::TextStyle::new(36).lines(7).break_long_words();
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+enum Amount {
+    HighlightOpacity,
+    SelectionOpacity,
+}
+impl Amount {
+    fn title(self) -> &'static str {
+        match self {
+            Self::HighlightOpacity => "Gray highlight opacity",
+            Self::SelectionOpacity => "Gray selection opacity",
+        }
+    }
+    fn percent(self, appearance: crate::highlight_style::Appearance) -> u8 {
+        match self {
+            Self::HighlightOpacity => appearance.highlight_opacity.min(100),
+            Self::SelectionOpacity => appearance.selection_opacity.min(100),
+        }
+    }
+    fn write(self, appearance: &mut crate::highlight_style::Appearance, percent: u8) {
+        match self {
+            Self::HighlightOpacity => appearance.highlight_opacity = percent,
+            Self::SelectionOpacity => appearance.selection_opacity = percent,
+        }
+    }
+    fn step(self, held: bool) -> i16 {
+        if held { 5 } else { 10 }
+    }
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum View {
     Choices,
     Note(usize),
     Actions(usize),
     Styles(Option<usize>),
+    Adjust(Amount),
     RemoveNote(usize),
     RemoveMark(usize),
 }
@@ -35,7 +64,8 @@ impl SavedPopup {
             View::Note(_) => 656,
             View::Actions(_) => 664,
             View::Styles(Some(_)) => 380,
-            View::Styles(None) => 498,
+            View::Styles(None) => 634,
+            View::Adjust(_) => 395,
             View::RemoveNote(_) | View::RemoveMark(_) => 360,
         };
         let y = if self.anchor_y + 40 + height <= PAGE_HEIGHT as i32 - 28 {
@@ -89,6 +119,22 @@ impl SavedPopup {
             r.y + 124 + (index / 2) as i32 * 116,
             w,
             104,
+        )
+    }
+
+    fn amount_entry(&self, i: usize) -> Rect {
+        let r = self.rect();
+        let width = (r.w - 60) / 2;
+        Rect::new(r.x + 24 + i as i32 * (width + 12), r.y + 375, width, 105)
+    }
+
+    fn adjust(&self, right: bool) -> Rect {
+        let r = self.rect();
+        Rect::new(
+            if right { r.right() - 198 } else { r.x + 32 },
+            r.y + 127,
+            166,
+            116,
         )
     }
 
@@ -304,6 +350,7 @@ impl Reader {
             View::Actions(_) => ("Highlight", bar_icons::HIGHLIGHT),
             View::Styles(Some(_)) => ("Highlight style", bar_icons::HIGHLIGHT),
             View::Styles(None) => ("New highlights in this book", bar_icons::HIGHLIGHT),
+            View::Adjust(amount) => (amount.title(), bar_icons::HIGHLIGHT),
             View::RemoveNote(_) => (
                 "Remove note?",
                 bar_icons::action_icon(&Action::RemoveHighlight),
@@ -473,8 +520,66 @@ impl Reader {
                     );
                 }
                 if index.is_none() {
+                    for (i, amount) in [Amount::HighlightOpacity, Amount::SelectionOpacity]
+                        .into_iter()
+                        .enumerate()
+                    {
+                        let r = popup.amount_entry(i);
+                        let active = amount == Amount::SelectionOpacity
+                            || selected == HighlightStyle::Lighten;
+                        let ink = if active { 0 } else { 145 };
+                        if active {
+                            canvas.button(r, "", false, false);
+                        } else {
+                            canvas.panel(r, 16, 3, 255);
+                        }
+                        let ink = if active && canvas.is_control_pressed(r) {
+                            255
+                        } else {
+                            ink
+                        };
+                        canvas.text(
+                            Rect::new(r.x + 10, r.y + 9, r.w - 20, 50),
+                            amount.title(),
+                            CAPTION.center().ink(ink),
+                        );
+                        canvas.text(
+                            Rect::new(r.x + 10, r.y + 49, r.w - 20, 55),
+                            &format!("{}%", amount.percent(self.controls.highlight_appearance)),
+                            BODY.bold().center().ink(ink),
+                        );
+                    }
                     buttons(canvas, &["Use reader default", "Set reader default"]);
                 }
+            }
+            View::Adjust(amount) => {
+                let percent = amount.percent(self.controls.highlight_appearance);
+                let left = popup.adjust(false);
+                let right = popup.adjust(true);
+                for (button, plus) in [(left, false), (right, true)] {
+                    canvas.button(button, "", false, false);
+                    let (x, y) = (button.x + button.w / 2, button.y + button.h / 2);
+                    let ink = if canvas.is_control_pressed(button) {
+                        255
+                    } else {
+                        0
+                    };
+                    canvas.fill(Rect::new(x - 17, y - 2, 34, 5), ink);
+                    if plus {
+                        canvas.fill(Rect::new(x - 2, y - 17, 5, 34), ink);
+                    }
+                }
+                canvas.text(
+                    Rect::new(
+                        left.right() + 20,
+                        left.y + 23,
+                        right.x - left.right() - 40,
+                        74,
+                    ),
+                    &format!("{percent}%"),
+                    primitive_ui::TextStyle::new(48).center().bold(),
+                );
+                buttons(canvas, &["Default", "Back"]);
             }
             View::RemoveNote(_) => {
                 canvas.text(
@@ -519,6 +624,37 @@ impl Reader {
         let Some(p) = self.saved_popup.as_ref() else {
             return Change::None;
         };
+        if let View::Adjust(amount) = p.view {
+            let held = matches!(input, Input::LongTap(..));
+            if let Input::Tap(x, y) | Input::LongTap(x, y) = input {
+                let delta = if p.adjust(false).contains(x, y) {
+                    Some(-amount.step(held))
+                } else if p.adjust(true).contains(x, y) {
+                    Some(amount.step(held))
+                } else {
+                    None
+                };
+                let initial = amount.percent(self.controls.highlight_appearance);
+                let percent = if let Some(delta) = delta {
+                    Some((i16::from(initial) + delta).clamp(0, 100) as u8)
+                } else if !held && p.button(0, 2).contains(x, y) {
+                    Some(amount.percent(Default::default()))
+                } else {
+                    None
+                };
+                if let Some(percent) = percent {
+                    let mut controls = self.controls;
+                    amount.write(&mut controls.highlight_appearance, percent);
+                    if controls != self.controls {
+                        if let Err(error) = controls.save(&self.controls_path) {
+                            return self.report(error);
+                        }
+                        self.controls = controls;
+                    }
+                    return Change::Partial;
+                }
+            }
+        }
         match input {
             Input::PageForward => return self.step_saved_popup(1),
             Input::PageBack => return self.step_saved_popup(-1),
@@ -611,6 +747,23 @@ impl Reader {
                 {
                     return self.save_highlight_style(index, Some(*style));
                 }
+                if index.is_none() {
+                    for (i, amount) in [Amount::HighlightOpacity, Amount::SelectionOpacity]
+                        .into_iter()
+                        .enumerate()
+                    {
+                        if p.amount_entry(i).contains(x, y)
+                            && (amount == Amount::SelectionOpacity
+                                || self.effective_highlight_style() == HighlightStyle::Lighten)
+                        {
+                            self.saved_popup
+                                .as_mut()
+                                .unwrap()
+                                .change_view(View::Adjust(amount));
+                            return Change::Partial;
+                        }
+                    }
+                }
                 if index.is_none() && button(0, 2) {
                     return self.save_highlight_style(None, None);
                 }
@@ -627,6 +780,13 @@ impl Reader {
                     return Change::Partial;
                 }
                 return Change::None;
+            }
+            View::Adjust(_) => {
+                if button(1, 2) {
+                    View::Styles(None)
+                } else {
+                    return Change::None;
+                }
             }
             View::RemoveMark(index) | View::RemoveNote(index) => {
                 if button(0, 2) {
@@ -681,3 +841,7 @@ mod tests;
 #[cfg(test)]
 #[path = "highlight_style_tests.rs"]
 mod style_tests;
+
+#[cfg(test)]
+#[path = "highlight_appearance_tests.rs"]
+mod appearance_tests;

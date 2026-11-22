@@ -528,7 +528,7 @@ impl Reader {
         } else {
             0..height
         };
-        PagePaint { visible, inverted }
+        PagePaint { visible, inverted, highlight_appearance: self.controls.highlight_appearance }
     }
 
     pub(super) fn tools_screen(&self) -> Screen {
