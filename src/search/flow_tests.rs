@@ -201,3 +201,62 @@ fn loaded_chapters_cannot_cross_style_or_publication_request_keys() {
             .contains("publication changed")
     );
 }
+
+#[test]
+#[ignore = "requires READER_FLOW_SEARCH_ORIGINAL pointing to an unchanged authorized reflow book"]
+fn original_publication_search_returns_projected_quotes_with_canonical_spans() {
+    let path = PathBuf::from(std::env::var_os("READER_FLOW_SEARCH_ORIGINAL").unwrap());
+    let before = fs::read(&path).unwrap();
+    let mut book = Book::open(&path).unwrap();
+    let config = FlowConfig::default();
+    let word = (0..book.chapters.len())
+        .find_map(|chapter| {
+            let text = nearby::ChapterText::read_with_flow(&mut book, chapter, &config).ok()?;
+            let source = text.source.as_ref()?;
+            source.blocks.iter().find_map(|block| {
+                let view = text.flow.view(source, block).ok()?;
+                view.text()
+                    .split_whitespace()
+                    .map(|word| word.trim_matches(|c: char| !c.is_alphanumeric()))
+                    .find(|word| {
+                        (4..=16).contains(&word.chars().count())
+                            && word.chars().all(char::is_alphabetic)
+                    })
+                    .map(str::to_owned)
+            })
+        })
+        .expect("The original has no bounded searchable word");
+    let mut search = Search::with_case(&word, true).unwrap().at_most(16);
+    let mut hits = Vec::new();
+    while !search.is_finished() {
+        hits.extend(search.step(&mut book).unwrap());
+    }
+    assert!(!hits.is_empty());
+    for hit in &hits {
+        let text = nearby::ChapterText::read_with_flow(&mut book, hit.chapter, &config).unwrap();
+        let source = text.source.as_ref().unwrap();
+        assert_eq!(source.revision, hit.anchor.revision);
+        let block = source
+            .blocks
+            .iter()
+            .find(|block| block.key == hit.anchor.block)
+            .unwrap();
+        let view = text.flow.view(source, block).unwrap();
+        let quote = hit
+            .source_spans
+            .iter()
+            .map(|span| &block.text[span.clone()])
+            .collect::<String>();
+        assert_eq!(
+            without_soft_hyphens(&quote),
+            &hit.snippet[hit.matched.clone()]
+        );
+        assert!(
+            hit.source_spans
+                .iter()
+                .all(|span| !view.layout_spans(span.clone()).unwrap().is_empty())
+        );
+    }
+    assert_eq!(fs::read(&path).unwrap(), before);
+    eprintln!("Original search checked {} projected quotes", hits.len());
+}
