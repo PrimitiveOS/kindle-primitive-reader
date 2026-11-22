@@ -230,6 +230,12 @@ impl Reader {
         if context.kind == Reference::Ordinary {
             return false;
         }
+        // Logical document units do not introduce a new popup-size preference.
+        // Preserve the prior compact popup's retained pixel baseline.
+        let popup_font = if reading.config.settings.logical_font_size.is_some() {
+            self.library.state(active.id).and_then(|state| state.preferences.font_size)
+                .unwrap_or(Settings::default().font_size)
+        } else { reading.config.settings.font_size };
         let settings = Settings {
             width: CONTENT_WIDTH,
             height: CONTENT_HEIGHT,
@@ -239,7 +245,7 @@ impl Reader {
             margin_right: None,
             margin_top: Some(8),
             margin_bottom: Some(8),
-            font_size: (reading.config.settings.font_size - 2.0).clamp(18.0, 64.0),
+            font_size: (popup_font - 2.0).clamp(18.0, 64.0),
             // The existing compact popup keeps its independent physical-pixel policy.
             logical_font_size: None,
             ..reading.config.settings

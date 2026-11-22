@@ -86,7 +86,7 @@ catch parser, DRM, missing-file or invalid-anchor failures as layout recovery.
 The recovery archive contains only edition identity and typography preferences;
 normal backup/profile/default validation preserves the active logical value.
 
-Footnotes still use the existing compact18–64 px choice. Stock sends its
+Footnotes still use the existing compact18–64 px choice from the retained pixel baseline, independently of the logical body setting. Stock sends its
 pre-CRE-clamp Screen-scaled request to a separate MuPDF popup and has independent
 absolute/relative preferences; that is a separate remaining scope. Dictionary
 text sizing is also independent.
