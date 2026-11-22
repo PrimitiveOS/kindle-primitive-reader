@@ -22,10 +22,15 @@ page, including multiple successive pictures at a paragraph's final text caret.
 Two authored tests cover six one/two/three-picture layouts, a multibyte caption,
 a CSS-removed source prefix, empty caret ranges, coverage, picture ordinals,
 serialized page restore, page/scroll captures and strict invalid-text rejection.
-All pass on the Mac. The three previously failing original chapters also open
-with the identical font stack and unchanged source SHA-256. The immutable full
-library, package/system and whole-original-spine receipts are retained under
-`build/parity-review/projected-line-evidence/` and recorded after completion.
+All pass on the Mac. The full ordinary suites passed 831 library, 14 package and
+4 system tests (849 total; 62 opt-in cases ignored). The three previously failing
+original chapters also open with the identical font stack and unchanged source
+SHA-256. Whole-original replay checked all 49 sections and painted 2074 pages:
+2,102,842 source characters mapped, all 3259 fragments located, all 2073 inspected
+page anchors exact, zero missing glyphs and no failed sections. It still reports
+31 placeholder graphics and one recovered package section, which remain explicit
+fidelity issues. Immutable receipts are retained under
+`build/parity-review/projected-line-evidence/`.
 
 This is a source-range and picture-anchor repair. Generated empty DOM-box targets,
 other CSS fidelity gaps and connected Kindle acceptance are separate gates.
