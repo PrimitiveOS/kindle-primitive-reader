@@ -1,10 +1,18 @@
 # Changelog
 
+## 0.1.22
+
+- Open publisher contents in supported MOBI and AZW3 books, including nested entries that point inside a chapter.
+- Choose what Reader does at the end of a book. Mark it as finished, restart, open the next readable file or return to Library.
+- Set a read timer or an alarm for a local clock time from the reading tools.
+- Preserve publisher table column widths and horizontal cell padding in EPUBs, including collapsed tables.
+
 ## 0.1.21
 
 - Reuse parsed resources across neighboring PDF pages during text extraction and search.
 - Adjust word expansion independently on justified lines in EPUB and supported Kindle books.
 - Honor embedded MOBI alignment and legacy font sizes when Publisher CSS is enabled.
+- Adjust horizontal CJK glyph width and honor supported publisher box padding in EPUBs.
 
 ## 0.1.20
 
