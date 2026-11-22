@@ -3,7 +3,7 @@
 ## 0.1.18
 
 - Set left and right margins separately while reading, or link the top and bottom margins.
-- Jump directly to the first earlier or last later search match in a PDF or DjVu book.
+- Jump directly to the first earlier or last later search match in a PDF or DjVu book. Case-insensitive search recognizes compatible Unicode forms and highlights the original word.
 - Read the publisher's underlines, overlines and strike-throughs in EPUBs. Links can keep their original appearance.
 
 ## 0.1.17
