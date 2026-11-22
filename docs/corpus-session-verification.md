@@ -32,5 +32,8 @@ whole-spine page counts differ from the old baseline, and retains the frozen
 style snapshot even after a later live change. Additional cases reject missing
 or wrong-publication configurations and distinguish unopened/fixed sessions.
 
-Implementation and tests are source-ready. Execution and the next full original
-corpus sweep remain pending; this change makes no device or release claim.
+Exact-source [CI at `99dee54`](https://github.com/PrimitiveOS/kindle-primitive-reader/actions/runs/45016051856)
+passed 853 library, 14 package and 4 layout tests, including all three new
+configuration regressions; 64 opt-in cases were excluded. Mac verification of
+the assembled candidate and the next configured full original-corpus sweep
+remain pending. This change makes no device or release claim.
