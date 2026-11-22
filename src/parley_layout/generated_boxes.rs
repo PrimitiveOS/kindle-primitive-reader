@@ -135,19 +135,53 @@ impl GeneratedBoxes {
             {
                 continue;
             }
-            let area = areas.map_or_else(
-                || BoxArea::new(0, cfg.text_width(), None),
-                |areas| areas[owner],
-            );
+            let mut parent = element.parent;
+            let mut ancestor = None;
+            let mut path = vec![owner];
+            while let Some(current) = parent {
+                if let Some(&index) = owners.get(&current) {
+                    ancestor = Some(index);
+                    break;
+                }
+                path.push(current);
+                parent = source.elements[current].parent;
+            }
+            let area = if let Some(parent) = ancestor {
+                let mut area = result.boxes[parent].area;
+                for &element in path.iter().rev() {
+                    area = BoxArea::generated_child(
+                        area,
+                        &styles[element],
+                        &source.elements[element].tag,
+                        cfg.font_size,
+                    );
+                }
+                area
+            } else {
+                areas
+                    .map_or_else(
+                        || BoxArea::new(0, cfg.text_width(), None),
+                        |areas| areas[owner],
+                    )
+                    .generated_root(style, &element.tag, cfg.font_size)
+            };
             let padding = style.vertical_padding.map(|length| {
                 length
                     .box_pixels(area.outer_width, cfg.font_size)
                     .min((cfg.text_height() / 2) as f32)
             });
-            let edges = crate::table_borders::edges(style, cfg.font_size);
+            let edges = crate::table_borders::generated_box_edges(style, cfg.font_size);
             let before = padding[0] + edges[0].width as f32;
             let after = padding[1] + edges[2].width as f32;
-            let point = before + after <= 0. || !is_block_tag(&element.tag);
+            let real_box = is_block_tag(&element.tag)
+                && (before + after > 0.
+                    || edges.iter().any(|edge| edge.width > 0)
+                    || style.background.is_some()
+                    || style
+                        .padding
+                        .iter()
+                        .any(|length| length.box_pixels(area.outer_width, cfg.font_size) > 0.));
+            let point = !real_box;
             if point && !points.contains(&owner) {
                 continue;
             }
@@ -194,15 +228,6 @@ impl GeneratedBoxes {
                 children: Vec::new(),
                 point,
             });
-            let mut parent = element.parent;
-            let mut ancestor = None;
-            while let Some(current) = parent {
-                if let Some(&index) = owners.get(&current) {
-                    ancestor = Some(index);
-                    break;
-                }
-                parent = source.elements[current].parent;
-            }
             owners.insert(owner, index);
             if let Some(parent) = ancestor {
                 result.boxes[parent].children.push(index);
@@ -245,8 +270,11 @@ impl GeneratedBoxes {
         frames: &mut Vec<crate::table_borders::Frame>,
     ) -> Result<()> {
         for &index in self.slots.get(&slot).into_iter().flatten() {
-            *y = self.emit_box(index, *y, source, styles, cfg, boundaries, fills, frames)?
-                + if self.boxes[index].point { 0. } else { gap };
+            let top = *y;
+            *y = self.emit_box(index, top, source, styles, cfg, boundaries, fills, frames)?;
+            if !self.boxes[index].point && *y > top {
+                *y += gap;
+            }
         }
         Ok(())
     }
