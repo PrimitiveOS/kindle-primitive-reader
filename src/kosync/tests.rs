@@ -383,3 +383,77 @@ fn malformed_truncated_and_oversized_server_data_never_become_empty_progress() {
         assert!(execute(&r).is_err());
     }
 }
+#[test]
+fn partial_digest_matches_nine_actual_pinned_lua_oracle_vectors_and_large_sparse_offsets() {
+    // Factual outputs of unchanged util.partialMD5 on authored QA patterns.
+    // Receipt kosync-protocol-20261122T112450Z; no publisher content involved.
+    let scratch = Scratch::new();
+    let path = scratch.0.join("oracle.bin");
+    for (size, expected) in [
+        (0, "d41d8cd98f00b204e9800998ecf8427e"),
+        (1, "93b885adfe0da089cdf634904fd59f71"),
+        (1023, "7437d7a881387db7c41cf6930ab5e35d"),
+        (1024, "9ee0a0e0c0bc0f1ff29d663d1fdf0743"),
+        (1025, "397653a8fe904d2fadf6a3fce5a49c54"),
+        (2048, "5c1f0285b90cb7e6ed4dafc04bef1d54"),
+        (4096, "5c1f0285b90cb7e6ed4dafc04bef1d54"),
+        (20000, "e8c69207db09e97b119c0fb96c244f1e"),
+        (1073742848, "7f7ad65fb6b7866540bf799836066958"),
+    ] {
+        let mut f = fs::File::create(&path).unwrap();
+        f.set_len(size).unwrap();
+        for (index, offset) in [
+            0, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864, 268435456,
+            1073741824,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if offset >= size {
+                break;
+            }
+            let length = (size - offset).min(1024);
+            let bytes: Vec<u8> = (0..length)
+                .map(|n| ((n + index as u64 * 7) % 251) as u8)
+                .collect();
+            f.seek(SeekFrom::Start(offset)).unwrap();
+            f.write_all(&bytes).unwrap();
+        }
+        drop(f);
+        assert_eq!(
+            document(&path, Matching::Binary).unwrap(),
+            expected,
+            "size {size}"
+        );
+    }
+}
+#[test]
+fn custom_base_paths_stay_on_the_configured_origin_and_cancel_reaps_its_owned_child() {
+    let server = Server::start();
+    let mut r = request(
+        &server,
+        Operation::Fetch {
+            document: "a".repeat(32),
+            count: 2,
+        },
+    );
+    r.config.server = format!("{}compat/", server.url);
+    assert_eq!(
+        r.url().unwrap().path(),
+        format!("/compat/syncs/progress/{}", "a".repeat(32))
+    );
+    let mut command = Command::new("sleep");
+    command.arg("30");
+    let mut job = Job::spawn(command, &r).unwrap();
+    let pid = job.child.id();
+    assert!(job.poll(Instant::now()).is_none());
+    assert!(
+        job.poll(Instant::now() + Duration::from_secs(41))
+            .unwrap()
+            .is_err()
+    );
+    drop(job);
+    #[cfg(unix)]
+    assert_eq!(unsafe { libc::kill(pid as i32, 0) }, -1);
+    assert_eq!(server.calls(), 0);
+}

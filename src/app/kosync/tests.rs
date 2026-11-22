@@ -78,9 +78,15 @@ fn account_changes_hash_password_and_sign_out_preserves_webdav_and_reading_state
     let f = Fixture::new();
     let (mut app, _) = pdf(&f);
     let before = app.current_position();
-    app.progress_sync.config.username = "Existing WebDAV".into();
-    app.progress_sync.config.password = "authored-dav-secret".into();
-    let old = serde_json::to_vec(&app.progress_sync.config).unwrap();
+    let dav_path = f.root.join("progress-sync.json");
+    let dav = crate::progress_sync::Config {
+        username: "Existing WebDAV".into(),
+        password: "authored-dav-secret".into(),
+        ..crate::progress_sync::Config::default()
+    };
+    dav.save(&dav_path).unwrap();
+    app.progress_sync = crate::app::progress_sync::View::load(dav_path.clone());
+    let old = fs::read(&dav_path).unwrap();
     app.kosync.config = Server::start().config();
     app.kosync_command(Command::Open).unwrap();
     app.kosync_command(Command::Edit(Field::Password)).unwrap();
@@ -94,7 +100,7 @@ fn account_changes_hash_password_and_sign_out_preserves_webdav_and_reading_state
     assert!(app.editor.string().is_empty());
     app.kosync_command(Command::SignOut).unwrap();
     assert!(app.kosync.config.key.is_empty());
-    assert_eq!(serde_json::to_vec(&app.progress_sync.config).unwrap(), old);
+    assert_eq!(fs::read(&dav_path).unwrap(), old);
     assert_eq!(app.current_position(), before);
     assert!(
         !fs::read_to_string(&app.kosync.path)
@@ -126,6 +132,7 @@ fn grid_and_masked_form_close_restore_the_exact_book_frame_and_position() {
             }
         }
     }
+    c.clear_press();
     app.kosync_command(Command::Edit(Field::Password)).unwrap();
     app.editor.text = "authored secret not visible".chars().collect();
     capture_test_screen(&app, &app.fonts, "READER_KOSYNC_PASSWORD", false);

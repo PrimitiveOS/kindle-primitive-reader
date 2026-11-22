@@ -6,7 +6,7 @@ local Device=require("device")
 require("document/canvascontext"):init(Device)
 package.path=package.path..";plugins/kosync.koplugin/?.lua"
 local url=assert(os.getenv("KOSYNC_QA_URL"))
-assert(url:match("^http://127%.0%.0%.1:%d+/$"),"QA accepts authored loopback only")
+assert(url:match("^http://127%.0%.0%.1:%d+/[a-z/]*$"),"QA accepts authored loopback only")
 local client=require("KOSyncClient"):new{custom_url=url,service_spec="plugins/kosync.koplugin/api.json"}
 local key=require("ffi/sha2").md5("qa-password")
 assert(client:register("qa",key))
@@ -20,5 +20,11 @@ end
 local result
 client:get_progress("qa",key,document,function(ok,body)assert(ok);result=body end)
 assert(result and result.progress)
-local out=assert(io.open(assert(os.getenv("KOSYNC_QA_OUTPUT")),"w"));out:write(require("json").encode({progress=result.progress,percentage=result.percentage,device=result.device,device_id=result.device_id}));out:close()
+local hashes={}
+local hash_cases=os.getenv("KOSYNC_QA_HASH_CASES")
+if hash_cases then
+ local file=assert(io.open(hash_cases,"r"));local cases=require("json").decode(file:read("*a"));file:close()
+ for _,case in ipairs(cases)do hashes[#hashes+1]={name=case.name,digest=require("util").partialMD5(case.path)}end
+end
+local out=assert(io.open(assert(os.getenv("KOSYNC_QA_OUTPUT")),"w"));out:write(require("json").encode({progress=result.progress,percentage=result.percentage,device=result.device,device_id=result.device_id,hashes=hashes}));out:close()
 Device:exit()
