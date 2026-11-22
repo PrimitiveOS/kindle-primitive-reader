@@ -1397,6 +1397,20 @@ impl FixedReading {
         viewport_height: u32,
         save: impl FnOnce() -> io::Result<()>,
     ) -> Result<()> {
+        self.present_in_saved(page, view, viewport_height, |_, _| save())
+    }
+
+    /// Paint first, persist the effective view, then replace the visible frame.
+    pub(crate) fn restore_view_with(
+        &mut self, view: View, save: impl FnOnce(usize, View) -> io::Result<()>,
+    ) -> Result<()> {
+        self.present_in_saved(self.page, view.normalized(), self.frame.height, save)
+    }
+
+    fn present_in_saved(
+        &mut self, page: usize, view: View, viewport_height: u32,
+        save: impl FnOnce(usize, View) -> io::Result<()>,
+    ) -> Result<()> {
         let new_epub_spreads = if viewport_height != self.frame.height
             || view.epub_spread != self.view.epub_spread
             || view.epub_right_to_left != self.view.epub_right_to_left
@@ -1414,7 +1428,7 @@ impl FixedReading {
             viewport_height,
             self.hidden_flows.as_ref().filter(|flows| flows.has_hidden()),
         )?;
-        save()?;
+        save(page, view)?;
         if new_epub_spreads.is_some() {
             self.epub_spreads = new_epub_spreads;
         }

@@ -91,6 +91,12 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         )
         | Action::OpenPreviousDocument => CLOCK,
         Action::Show(Screen::BookMap) | Action::Overview => GRID,
+        Action::Show(Screen::DocumentDefaults) => SLIDERS,
+        Action::DocumentDefaults(command) => match command {
+            super::default_settings::Command::SaveReflow | super::default_settings::Command::SaveFixed => SAVE,
+            super::default_settings::Command::ResetReflow | super::default_settings::Command::ResetFixed => icons::ROTATE,
+            _ => CLOSE,
+        },
         Action::ToggleNonlinear => BOOK,
         Action::Catalog(_) => BOOK,
         Action::Flow(_) | Action::Show(Screen::HiddenFlows) => BOOK,
