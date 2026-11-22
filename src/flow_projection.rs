@@ -28,6 +28,21 @@ pub(crate) struct Budget {
     chapter: Arc<()>,
 }
 
+/// An opaque parsed-chapter lifetime token. This does not own source text and
+/// does not retain a chapter after its canonical blocks have been dropped.
+#[derive(Clone)]
+pub(crate) struct SourceBinding(Weak<()>);
+
+impl SourceBinding {
+    pub(crate) fn new(block: &Block) -> Self {
+        Self(Arc::downgrade(&block.flow_origins.chapter))
+    }
+
+    pub(crate) fn matches(&self, block: &Block) -> bool {
+        Weak::ptr_eq(&self.0, &Arc::downgrade(&block.flow_origins.chapter))
+    }
+}
+
 impl Budget {
     pub(crate) fn new() -> Self {
         Self {
@@ -272,11 +287,28 @@ impl<'a> Projection<'a> {
     }
 
     pub(crate) fn new(block: &'a Block, flows: &[ElementFlow]) -> Result<Self, ProjectionError> {
-        if flows.iter().all(|flow| *flow == ElementFlow::default()) {
+        if flows.is_empty() {
             return Ok(Self::identity(block));
         }
         if !block.flow_origins.complete {
+            if flows.iter().all(|flow| *flow == ElementFlow::default()) {
+                return Ok(Self::identity(block));
+            }
             return Err(ProjectionError::IncompleteOrigins);
+        }
+        // A chapter can contain many unaffected blocks under one small hidden
+        // subtree. Inspect local origins once instead of rescanning the entire
+        // element mask vector for every paragraph (quadratic in DOM size).
+        let mut changed = false;
+        for event in &block.flow_origins.events {
+            let element = event.element();
+            let flow = flows
+                .get(element)
+                .ok_or(ProjectionError::MissingElement(element))?;
+            changed |= *flow != ElementFlow::default();
+        }
+        if !changed {
+            return Ok(Self::identity(block));
         }
         let mut data = OwnedProjection {
             text: String::new(),
