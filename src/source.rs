@@ -7,9 +7,9 @@ use roxmltree::{Document, Node, NodeId, ParsingOptions};
 use crate::Result;
 
 pub(crate) const SOURCE_ATTRIBUTE: &str = "data-primos-source";
-mod numeric_references;
 #[cfg(test)]
 mod flow_metadata_tests;
+mod numeric_references;
 
 const RUBY_TEXT_MODEL: u64 = 0xe026_92a4_3415_b12f;
 const MAX_RUBY_GROUPS: usize = 1_024;
@@ -148,6 +148,9 @@ impl Default for Extraction {
 }
 
 pub(crate) struct Element {
+    /// Byte range in this immutable normalized chapter XML. This is DOM-owner
+    /// identity for boundary targets, never a character offset or array index.
+    pub source_bytes: Range<usize>,
     pub tag: String,
     pub classes: String,
     pub has_href: bool,
@@ -523,6 +526,7 @@ impl Source {
             };
             languages.push(content_language(node, inherited));
             elements.push(Element {
+                source_bytes: node.range(),
                 tag: node.tag_name().name().to_owned(),
                 list_kind: crate::list_marker::MarkerKind::html(node),
                 has_href: node.has_attribute("href"),
@@ -964,6 +968,54 @@ impl Source {
             expected.as_slice()
                 == ring::digest::digest(&ring::digest::SHA256, xhtml.as_bytes()).as_ref()
         })
+    }
+
+    pub(crate) fn fragment_owner_indices(&self) -> impl Iterator<Item = usize> + '_ {
+        self.fragment_owners.values().copied()
+    }
+
+    pub(crate) fn boundary_element(&self, origin: usize) -> Option<usize> {
+        let index = self
+            .elements
+            .binary_search_by_key(&origin, |element| element.source_bytes.start)
+            .ok()?;
+        let element = &self.elements[index];
+        (!element.selector_only && !element.anonymous).then_some(index)
+    }
+
+    /// Canonical fallback coordinates stay unchanged. Owner identity lives in
+    /// the separate source-origin boundary token, so an empty owner's fallback
+    /// cannot become a request to open its unrelated following paragraph.
+    pub(crate) fn boundary_position(&self, owner: usize) -> Option<(usize, usize)> {
+        let element = self.elements.get(owner)?;
+        if element.selector_only || element.anonymous {
+            return None;
+        }
+        let next = self
+            .blocks
+            .partition_point(|block| block.key < element.source_bytes.start);
+        if let Some(block) = self
+            .blocks
+            .get(next)
+            .filter(|block| block.key < element.source_bytes.end)
+        {
+            return Some((block.key, 0));
+        }
+        if let Some(position) = self.fragment_owners.iter().find_map(|(id, &element)| {
+            (element == owner)
+                .then(|| self.fragments.get(id).copied())
+                .flatten()
+        }) {
+            return Some(position);
+        }
+        self.blocks
+            .get(next)
+            .map(|block| (block.key, 0))
+            .or_else(|| {
+                self.blocks
+                    .last()
+                    .map(|block| (block.key, block.text.len()))
+            })
     }
 
     /// Legacy MOBI block keys were byte offsets in the image/link-stripped XHTML.

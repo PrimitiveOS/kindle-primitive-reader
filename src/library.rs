@@ -1951,6 +1951,7 @@ fn valid_anchor(anchor: &Anchor) -> bool {
     !anchor.chapter.is_empty()
         && anchor.chapter.len() <= MAX_ANCHOR_PATH_BYTES
         && !anchor.chapter.chars().any(char::is_control)
+        && anchor.boundary.as_ref().is_none_or(|boundary| boundary.origin <= 64 * 1024 * 1024 && boundary.relative <= 10_000 && anchor.illustration.is_none())
 }
 
 fn same_position(left: &ReadingPosition, right: &ReadingPosition) -> bool {
@@ -1965,6 +1966,8 @@ fn valid_highlight(mark: &Highlight) -> bool {
     let selection = &mark.selection;
     valid_anchor(&selection.start)
         && valid_anchor(&selection.end)
+        && selection.start.boundary.is_none()
+        && selection.end.boundary.is_none()
         && selection.start.book == selection.end.book
         && (selection.start.chapter != selection.end.chapter
             || (selection.start.revision == selection.end.revision
@@ -2527,6 +2530,7 @@ mod tests {
         assert_ne!(id, other_id);
 
         let anchor = Anchor {
+            boundary: None,
             illustration: None,
             book: 1,
             chapter: "chapter.xhtml".into(),
@@ -3027,6 +3031,7 @@ mod tests {
         let id = target.identify(&target_entry).unwrap();
         assert_eq!(id, source.identify(&source_entry).unwrap());
         let anchor = |offset| Anchor {
+            boundary: None,
             illustration: None,
             book: 1,
             chapter: "chapter.xhtml".into(),

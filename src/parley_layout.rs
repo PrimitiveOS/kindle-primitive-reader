@@ -1,4 +1,5 @@
 mod cjk_width;
+mod generated_boxes;
 #[cfg(test)]
 mod special_glyph_tests;
 
@@ -114,6 +115,7 @@ pub(crate) struct ParleyChapter {
     table_frames: Vec<crate::table_borders::Frame>,
     padded_backgrounds: Vec<crate::vertical_padding::Fill>,
     limitations: Vec<String>,
+    boundaries: std::collections::BTreeMap<usize, generated_boxes::BoundaryGeometry>,
     glyphs: GlyphCache,
 }
 
@@ -191,6 +193,7 @@ impl ParleyChapter {
             table_frames: Vec::new(),
             padded_backgrounds: Vec::new(),
             limitations: Vec::new(),
+            boundaries: Default::default(),
             glyphs: GlyphCache::with_hinting(
                 settings.font_hinting,
                 styles
@@ -290,6 +293,16 @@ impl ParleyChapter {
             settings,
             &table_flow,
         );
+        let generated = generated_boxes::GeneratedBoxes::new(
+            source,
+            styles,
+            flow,
+            publisher_boxes.as_deref(),
+            settings,
+        )?;
+        chapter
+            .limitations
+            .extend(generated.limitations.iter().cloned());
         let column_for = |block: &Block| {
             if let Some(boxes) = &publisher_boxes {
                 return boxes[block.element].cell;
@@ -385,6 +398,26 @@ impl ParleyChapter {
             }
         }
         for (index, source_block) in source.blocks.iter().enumerate() {
+            if generated.has_slot(index) {
+                y = row_flow.end(y);
+                generated.emit(
+                    index,
+                    &mut y,
+                    gap,
+                    source,
+                    styles,
+                    settings,
+                    &mut chapter.boundaries,
+                    &mut chapter.padded_backgrounds,
+                    &mut chapter.table_frames,
+                )?;
+            }
+            if generated.excluded[index] {
+                if let Some(points) = &mut fill_positions {
+                    points.push((y, y));
+                }
+                continue;
+            }
             let marker_host = source_block
                 .list_item
                 .is_some_and(|item| marker_hosts.get(&item.element) == Some(&source_block.key));
@@ -700,6 +733,26 @@ impl ParleyChapter {
                         paint: MarkerPaint::Text { y, layout },
                     }
                 };
+                let marker_top = marker.top.min(block_y);
+                let marker_bottom = marker
+                    .bottom
+                    .max(block_y + size * settings.line_height.max(1.0));
+                if let Some(item) = block.list_item {
+                    if let Some((key, offset)) = source.boundary_position(item.element) {
+                        let origin = source.elements[item.element].source_bytes.start;
+                        chapter.boundaries.insert(
+                            origin,
+                            generated_boxes::BoundaryGeometry {
+                                origin,
+                                block: key,
+                                offset,
+                                top: marker_top,
+                                bottom: marker_bottom,
+                                generated_only: block.text.is_empty() && block.images.is_empty(),
+                            },
+                        );
+                    }
+                }
                 chapter.markers.push(marker);
                 if block.text.is_empty() && block.images.is_empty() {
                     y = y.max(block_y + size * settings.line_height.max(1.0)) + gap;
@@ -728,6 +781,21 @@ impl ParleyChapter {
             }
         }
 
+        if generated.has_slot(source.blocks.len()) {
+            y = row_flow.end(y);
+            generated.emit(
+                source.blocks.len(),
+                &mut y,
+                gap,
+                source,
+                styles,
+                settings,
+                &mut chapter.boundaries,
+                &mut chapter.padded_backgrounds,
+                &mut chapter.table_frames,
+            )?;
+        }
+
         if source.blocks.iter().any(|b| column_for(b).is_some()) {
             chapter.paragraphs.sort_by(|a, b| a.y.total_cmp(&b.y));
         }
@@ -737,19 +805,27 @@ impl ParleyChapter {
             p.max_bottom = maximum;
         }
         if let Some(points) = &fill_positions {
-            chapter.padded_backgrounds = crate::vertical_padding::fills(
-                source,
-                styles,
-                publisher_boxes.as_deref(),
-                points,
-                settings,
-            );
+            chapter
+                .padded_backgrounds
+                .extend(crate::vertical_padding::fills_with_exclusions(
+                    source,
+                    styles,
+                    publisher_boxes.as_deref(),
+                    points,
+                    settings,
+                    &generated.excluded,
+                ));
         }
         if let (Some(b), Some(boxes)) = (&borders, &publisher_boxes) {
-            chapter.table_frames =
-                positions.finish(b, boxes, styles, &mut chapter.padded_backgrounds);
+            chapter.table_frames.extend(positions.finish(
+                b,
+                boxes,
+                styles,
+                &mut chapter.padded_backgrounds,
+            ));
             chapter.padded_backgrounds.sort_by_key(|f| f.element);
         }
+        chapter.padded_backgrounds.sort_by_key(|fill| fill.element);
         let painted = chapter
             .table_frames
             .iter()
@@ -774,6 +850,7 @@ impl ParleyChapter {
             .map(|art| art.y + art.display.1 as f32)
             .chain(self.table_frames.iter().map(|frame| frame.bottom()))
             .chain(self.markers.iter().map(|marker| marker.bottom))
+            .chain(self.boundaries.values().map(|boundary| boundary.bottom))
             .chain(self.padded_backgrounds.iter().map(|f| f.painted_bottom()))
             .fold(0.0, f32::max);
         for paragraph in self.paragraphs.iter().rev() {
@@ -839,6 +916,23 @@ impl ParleyChapter {
             .find(|paragraph| paragraph.key == key)?
             .flow
             .as_deref()
+    }
+
+    pub(crate) fn boundary(&self, origin: usize) -> Option<generated_boxes::BoundaryGeometry> {
+        self.boundaries.get(&origin).copied()
+    }
+
+    pub(crate) fn boundary_in(
+        &self,
+        range: &Range<f32>,
+    ) -> Option<generated_boxes::BoundaryGeometry> {
+        self.boundaries
+            .values()
+            .filter(|boundary| {
+                boundary.generated_only && boundary.bottom > range.start && boundary.top < range.end
+            })
+            .min_by(|a, b| a.top.total_cmp(&b.top))
+            .copied()
     }
 
     pub(crate) fn limitations(&self) -> &[String] {

@@ -274,6 +274,7 @@ impl Search {
                     chapter,
                     chapter_title: text.label.clone(),
                     anchor: Anchor {
+                        boundary: None,
                         illustration: None,
                         book: publication.0,
                         chapter: text.href.clone(),
@@ -282,6 +283,7 @@ impl Search {
                         offset,
                     },
                     end: Anchor {
+                        boundary: None,
                         illustration: None,
                         book: publication.0,
                         chapter: text.href.clone(),

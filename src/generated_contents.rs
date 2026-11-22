@@ -83,6 +83,7 @@ impl GeneratedContents {
                     target: OutlineTarget::Heading(
                         chapter,
                         Anchor {
+                            boundary: None,
                             illustration: None,
                             book,
                             chapter: href.to_owned(),

@@ -159,12 +159,23 @@ pub(crate) fn fills(
     positions: &[(f32, f32)],
     cfg: Settings,
 ) -> Vec<Fill> {
+    fills_with_exclusions(source, styles, boxes, positions, cfg, &[])
+}
+
+pub(crate) fn fills_with_exclusions(
+    source: &Source,
+    styles: &[Style],
+    boxes: Option<&[BoxArea]>,
+    positions: &[(f32, f32)],
+    cfg: Settings,
+    excluded: &[bool],
+) -> Vec<Fill> {
     if positions.is_empty() {
         return Vec::new();
     }
     let mut spans = vec![(f32::INFINITY, f32::NEG_INFINITY); source.elements.len()];
-    for (b, &(top, bottom)) in source.blocks.iter().zip(positions) {
-        if styles[b.element].flow.suppressed {
+    for (index, (b, &(top, bottom))) in source.blocks.iter().zip(positions).enumerate() {
+        if excluded.get(index) == Some(&true) || styles[b.element].flow.suppressed {
             continue;
         }
         let r = &mut spans[b.element];

@@ -368,6 +368,26 @@ pub struct Anchor {
     /// Zero-based picture within a text-empty block holding several illustrations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub illustration: Option<usize>,
+    /// A real DOM box boundary, separately identified from its canonical fallback
+    /// caret. Absent on all legacy/text anchors and never accepted as quote text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boundary: Option<SourceBoundary>,
+}
+
+/// Stable owner identity within an exact revision of normalized chapter XML.
+/// This never stores the transient index of an element in a parsed array.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceBoundary {
+    pub origin: usize,
+    /// Relative position within a generated box, in ten-thousandths. Zero is
+    /// the owner boundary itself; this keeps multi-page blank boxes resumable.
+    #[serde(default, skip_serializing_if = "boundary_zero")]
+    pub relative: u16,
+}
+
+fn boundary_zero(value: &u16) -> bool {
+    *value == 0
 }
 
 struct Line {
@@ -1126,14 +1146,27 @@ impl Probe {
             return None;
         }
         let &(block, offset) = self.source.fragments.get(name)?;
+        let owner = self.source.fragment_owner(name)?;
         let original = self.anchor(block, offset);
-        if self.page_for(&original).is_some() {
-            return Some(original);
+        if let Some(source_block) = self.source.blocks.iter().find(|item| item.key == block) {
+            if (self.element_within(source_block.element, owner)
+                || self.element_within(owner, source_block.element))
+                && self.page_for(&original).is_some()
+            {
+                return Some(original);
+            }
         }
         // Container IDs can begin with a removed inline prefix. Resolve only
         // inside their retained subtree; an explicitly hidden ID never reaches
         // this fallback, even if its old caret aliases a visible neighbour.
-        let owner = self.source.fragment_owner(name)?;
+        if let Some(anchor) = self.first_owned_anchor(owner) {
+            return Some(anchor);
+        }
+        let anchor = self.boundary_anchor(owner)?;
+        self.page_for(&anchor).map(|_| anchor)
+    }
+
+    fn first_owned_anchor(&self, owner: usize) -> Option<Anchor> {
         for block in &self.source.blocks {
             let view = self.reading_flow.view(&self.source, block).ok()?;
             let candidates: Vec<_> = match view.runs() {
@@ -1167,6 +1200,30 @@ impl Probe {
             }
         }
         None
+    }
+
+    fn boundary_anchor(&self, owner: usize) -> Option<Anchor> {
+        let (block, offset) = self.source.boundary_position(owner)?;
+        let mut anchor = self.anchor(block, offset);
+        anchor.boundary = Some(SourceBoundary {
+            origin: self.source.elements.get(owner)?.source_bytes.start,
+            relative: 0,
+        });
+        Some(anchor)
+    }
+
+    fn boundary_owner(&self, anchor: &Anchor) -> Option<usize> {
+        let boundary = anchor.boundary.as_ref()?;
+        if boundary.relative > 10_000
+            || anchor.book != self.book
+            || anchor.chapter != self.chapter
+            || anchor.revision != self.source.revision
+            || anchor.illustration.is_some()
+        {
+            return None;
+        }
+        let owner = self.source.boundary_element(boundary.origin)?;
+        (self.source.boundary_position(owner)? == (anchor.block, anchor.offset)).then_some(owner)
     }
 
     fn element_within(&self, mut element: usize, owner: usize) -> bool {
@@ -1261,6 +1318,30 @@ impl Probe {
     }
 
     pub(crate) fn anchor_top(&self, anchor: &Anchor) -> Option<f32> {
+        if let Some(boundary) = &anchor.boundary {
+            let owner = self.boundary_owner(anchor)?;
+            if self.reading_flow.element(owner).ok()?.suppressed {
+                return None;
+            }
+            if let Renderer::Parley(renderer) = &self.renderer {
+                if let Some(geometry) = renderer.boundary(boundary.origin) {
+                    if (geometry.block, geometry.offset) == (anchor.block, anchor.offset) {
+                        return Some(geometry.position(boundary.relative));
+                    }
+                    return None;
+                }
+            }
+            // A later style reveal resolves inside the very same supported
+            // block owner. Never reinterpret an arbitrary inline/root owner.
+            if !source::is_block_tag(&self.source.elements[owner].tag)
+                && self.source.elements[owner].tag != "li"
+            {
+                return None;
+            }
+            return self
+                .first_owned_anchor(owner)
+                .and_then(|anchor| self.anchor_top(&anchor));
+        }
         let (index, offset) = self.project_anchor(anchor)?;
         let block = &self.source.blocks[index];
         if self.source_presentation(anchor) == Some(SourcePresentation::CssOmitted) {
@@ -1308,6 +1389,9 @@ impl Probe {
     }
 
     fn project_anchor(&self, anchor: &Anchor) -> Option<(usize, usize)> {
+        if anchor.boundary.is_some() {
+            self.boundary_owner(anchor)?;
+        }
         if self.book != anchor.book || self.chapter != anchor.chapter {
             return None;
         }
@@ -1325,7 +1409,8 @@ impl Probe {
     }
 
     pub(crate) fn anchor_in(&self, range: Range<f32>) -> Option<Anchor> {
-        self.lines
+        let line = self
+            .lines
             .iter()
             .find(|line| {
                 !line.bytes.is_empty() && line.bottom > range.start && line.top < range.end
@@ -1334,27 +1419,46 @@ impl Probe {
                 self.lines
                     .iter()
                     .find(|line| line.bottom > range.start && line.top < range.end)
-            })
-            .map(|line| {
-                let mut anchor = self.anchor(line.block, line.bytes.start);
-                if line.bytes.is_empty()
-                    && let Renderer::Parley(renderer) = &self.renderer
-                    && let Some(ordinal) = renderer.image_ordinal(line.block, line.top)
-                {
-                    anchor.offset = 0;
-                    if ordinal != 0
-                        || self
-                            .source
-                            .blocks
-                            .iter()
-                            .find(|block| block.key == line.block)
-                            .is_some_and(|block| !block.text.is_empty())
-                    {
-                        anchor.illustration = Some(ordinal);
+            });
+        if let Renderer::Parley(renderer) = &self.renderer {
+            if let Some(boundary) = renderer.boundary_in(&range) {
+                if line.is_none_or(|line| boundary.top <= line.top) {
+                    let owner = self.source.boundary_element(boundary.origin)?;
+                    let mut anchor = self.boundary_anchor(owner)?;
+                    if range.start > boundary.top && boundary.bottom > boundary.top {
+                        let relative = ((range.start - boundary.top)
+                            / (boundary.bottom - boundary.top)
+                            * 10_000.)
+                            .ceil()
+                            .clamp(0., 10_000.) as u16;
+                        anchor.boundary.as_mut()?.relative = relative;
+                    }
+                    if self.page_for(&anchor).is_some() {
+                        return Some(anchor);
                     }
                 }
-                anchor
-            })
+            }
+        }
+        line.map(|line| {
+            let mut anchor = self.anchor(line.block, line.bytes.start);
+            if line.bytes.is_empty()
+                && let Renderer::Parley(renderer) = &self.renderer
+                && let Some(ordinal) = renderer.image_ordinal(line.block, line.top)
+            {
+                anchor.offset = 0;
+                if ordinal != 0
+                    || self
+                        .source
+                        .blocks
+                        .iter()
+                        .find(|block| block.key == line.block)
+                        .is_some_and(|block| !block.text.is_empty())
+                {
+                    anchor.illustration = Some(ordinal);
+                }
+            }
+            anchor
+        })
     }
 
     #[cfg(feature = "kindle")]
@@ -1425,6 +1529,7 @@ impl Probe {
 
     fn anchor(&self, block: usize, offset: usize) -> Anchor {
         Anchor {
+            boundary: None,
             illustration: None,
             book: self.book,
             chapter: self.chapter.clone(),
