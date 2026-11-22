@@ -121,6 +121,33 @@ fn custom_fixed_page_flows_skip_pages_in_paged_and_continuous_views_and_resume_n
         "READER_CUSTOM_FLOW_MAP_SCREENSHOT",
         false,
     );
+    // The final hidden source page is shorter than a continuous viewport.
+    // Reopening must not save the preceding regular page instead.
+    reopened.activate(Action::Overview).unwrap();
+    reopened.update_overview(None, Some(5)).unwrap();
+    let index = 5 - reopened.overview.as_ref().unwrap().first;
+    let (x, y) = center(super::super::overview_tile(index));
+    reopened.input(Input::LongTap(x, y));
+    confirm(&mut reopened);
+    reopened.follow_fixed(5, None).unwrap();
+    assert_eq!(reopened.fixed.as_ref().unwrap().reading.page(), 5);
+    assert!(reopened.fixed.as_ref().unwrap().reading.is_continuous());
+    reopened.record_position();
+    reopened.save().unwrap();
+    let mut resumed = Reader::open(&fixture.root, &fixture.state, reopened.fonts.clone()).unwrap();
+    resumed.open_path(&path).unwrap();
+    assert_eq!(resumed.fixed.as_ref().unwrap().reading.page(), 5);
+    assert_eq!(
+        resumed
+            .fixed
+            .as_ref()
+            .unwrap()
+            .reading
+            .visible_pages()
+            .collect::<Vec<_>>(),
+        [5]
+    );
+    assert!(resumed.fixed.as_ref().unwrap().reading.is_continuous());
     assert!(
         source == fs::read(&path).unwrap(),
         "Reading changed the source PDF"

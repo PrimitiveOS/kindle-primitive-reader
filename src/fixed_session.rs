@@ -334,14 +334,23 @@ impl FixedReading {
     pub(crate) fn hidden_flow_map(&self) -> Option<&PageFlows> { self.hidden_flows.as_ref() }
 
     pub(crate) fn set_hidden_flows(&mut self, data: &HiddenFlows) -> Result<()> {
+        self.restore_hidden_flows(data, self.page, self.view)
+    }
+
+    pub(crate) fn restore_hidden_flows(&mut self, data: &HiddenFlows, saved_page: usize, saved_view: View) -> Result<()> {
         let next = data.enabled.then(|| PageFlows::new(self.count(), 0, data.points().iter().enumerate()
             .filter(|(_, point)| point.position.chapter == 0 && point.position.anchor.is_none())
             .map(|(index, point)| ResolvedPoint { index, page: point.position.page, hidden: point.hidden }).collect()));
-        if self.hidden_flows == next { return Ok(()); }
-        let redraw = self.hidden_flows.as_ref().is_some_and(PageFlows::has_hidden)
-            || next.as_ref().is_some_and(PageFlows::has_hidden);
+        // Opening an unmasked continuous document can clamp a short last page
+        // back into the preceding source page. Apply the saved source position
+        // and view again under the restored mask, before saving any new state.
+        let masked = next.as_ref().is_some_and(PageFlows::has_hidden);
+        let (page, view) = if masked { (saved_page.min(self.count() - 1), saved_view.normalized()) }
+            else { (self.page, self.view) };
+        if self.hidden_flows == next && page == self.page && view == self.view { return Ok(()); }
+        let redraw = self.hidden_flows.as_ref().is_some_and(PageFlows::has_hidden) || masked;
         let previous = std::mem::replace(&mut self.hidden_flows, next);
-        if redraw && let Err(error) = self.present(self.page, self.view) {
+        if redraw && let Err(error) = self.present(page, view) {
             self.hidden_flows = previous;
             return Err(error);
         }

@@ -858,7 +858,7 @@ impl Reader {
         self.result_selection = None;
         if let Some(mut reading) = fixed {
             let flows = self.library.state(id).map(|state| state.hidden_flows.clone()).unwrap_or_default();
-            reading.set_hidden_flows(&flows)?;
+            reading.restore_hidden_flows(&flows, position.as_ref().map_or(0, |saved| saved.page), fixed_preferences)?;
             reading.set_ocr_path(self.ocr_root.join(format!("{id:016x}")));
             reading.ocr_language = self.library.state(id).and_then(|state| state.ocr_language.clone())
                 .filter(|code| self.ocr_assets.as_ref().is_none_or(|assets| assets.languages().contains(code)));
@@ -4078,7 +4078,8 @@ impl Reader {
             || !fixed
                 .reading
                 .visible_pages()
-                .any(|page| page + 1 == fixed.reading.count())
+                .max()
+                .is_some_and(|page| fixed.reading.next_reading_page(page, 1).is_none())
         {
             return None;
         }
@@ -8960,6 +8961,16 @@ mod tests {
         write_cbz(&next, &["page3.png"]);
         let mut app = fixture.app();
         app.open_path(&first).unwrap();
+        assert!(app.next_comic().is_none());
+        // A hidden rear page is outside the regular reading flow, so the next
+        // volume remains available at the last regular page.
+        let mut flows = crate::library::hidden_flows::HiddenFlows::default();
+        flows.enabled = true;
+        flows.toggle(ReadingPosition { chapter: 0, page: 1, anchor: None }, None).unwrap();
+        app.fixed.as_mut().unwrap().reading.set_hidden_flows(&flows).unwrap();
+        assert_eq!(app.next_comic().unwrap().path, Path::new("Volume 10.cbz"));
+        flows.enabled = false;
+        app.fixed.as_mut().unwrap().reading.set_hidden_flows(&flows).unwrap();
         assert!(app.next_comic().is_none());
         app.activate(Action::FixedPage(1)).unwrap();
         assert_eq!(app.next_comic().unwrap().path, Path::new("Volume 10.cbz"));
