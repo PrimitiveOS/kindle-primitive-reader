@@ -9,7 +9,7 @@ fn shaped(
 ) -> Layout<PaintBrush> {
     let mut fonts =
         crate::font_context(&[crate::test_fixture("fonts/NotoSans-Regular.ttf")]).unwrap();
-    let mut context = LayoutContext::new();
+    let mut context: LayoutContext<PaintBrush> = LayoutContext::new();
     let mut builder = context.ranged_builder(&mut fonts, text, 1.0, true);
     builder.push_default(StyleProperty::FontSize(40.0));
     let mut layout = builder.build(text);
@@ -287,7 +287,7 @@ fn trailing_picture_only_line_keeps_source_caret_and_cannot_borrow_old_space_cap
     let text = "alpha beta gamma delta epsilon";
     let mut fonts =
         crate::font_context(&[crate::test_fixture("fonts/NotoSans-Regular.ttf")]).unwrap();
-    let mut context = LayoutContext::new();
+    let mut context: LayoutContext<PaintBrush> = LayoutContext::new();
     let mut builder = context.ranged_builder(&mut fonts, text, 1.0, true);
     builder.push_default(StyleProperty::FontSize(40.0));
     builder.push_inline_box(parley::InlineBox {
@@ -318,7 +318,7 @@ fn measured_space_scaling_includes_tracking_and_extreme_bounds_keep_gaps_nonnega
     let load = |pair: Option<WordSpacePercent>, width: f32| {
         let mut fonts =
             crate::font_context(&[crate::test_fixture("fonts/NotoSans-Regular.ttf")]).unwrap();
-        let mut context = LayoutContext::new();
+        let mut context: LayoutContext<PaintBrush> = LayoutContext::new();
         let mut builder = context.ranged_builder(&mut fonts, text, 1.0, true);
         builder.push_default(StyleProperty::FontSize(12.0));
         builder.push_default(StyleProperty::LetterSpacing(-1.0));
