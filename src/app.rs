@@ -9,6 +9,7 @@ use character_page_settings::NumberField;
 mod dictionary_panel;
 mod dictionary_sources;
 use dictionary_sources::{SourceAction, SourcePreferences};
+mod end_of_book;
 mod fixed_book_map;
 mod gestures;
 mod extend_highlight;
@@ -128,6 +129,7 @@ enum Screen {
     RemoveCollection,
     ReadingControls,
     FooterSettings,
+    EndActionSettings,
     Gestures,
     GestureBinding(Gesture),
     ReadingData,
@@ -208,6 +210,7 @@ impl Screen {
             Self::RemoveCollection => "Remove collection?",
             Self::ReadingControls => "Reading controls",
             Self::FooterSettings => "Reading status bar",
+            Self::EndActionSettings => "At the end of a book",
             Self::Gestures => "Reading gestures",
             Self::GestureBinding(gesture) => gesture.label(),
             Self::ReadingData => "Reading data",
@@ -392,6 +395,7 @@ struct BookDetails {
     entry: LibraryBook,
     id: u64,
     back: Screen,
+    close_document: bool,
     metadata: Option<BookMetadata>,
 }
 
@@ -512,6 +516,7 @@ pub struct Reader {
     gestures: GestureBindings,
     controls_path: PathBuf,
     controls: ReadingControls,
+    end_dialog: Option<end_of_book::Dialog>,
     pages_since_refresh: u8,
     touch_locked: bool,
     stats: ReadingStats,
@@ -644,6 +649,7 @@ impl Reader {
             rename_collection: None,
             controls_path,
             controls,
+            end_dialog: None,
             pages_since_refresh: 0,
             touch_locked: false,
             stats,
@@ -902,6 +908,7 @@ impl Reader {
     }
 
     fn show(&mut self, screen: Screen) {
+        self.end_dialog = None;
         if screen != Screen::Definition { self.spelling_lookup = None; }
         self.result_context = None;
         if !matches!(screen, Screen::Footnote | Screen::Definition | Screen::OnlineLookup | Screen::OnlineEdit) {
@@ -941,7 +948,9 @@ impl Reader {
         if screen != Screen::ScanColumns {
             self.scan_columns = None;
         }
-        if screen != Screen::ReadFixedText {
+        if !matches!(screen, Screen::ReadFixedText | Screen::BookDetails)
+            && !(screen == Screen::Illustration && self.book_details.is_some())
+        {
             self.text_flow = None;
         }
         if screen != Screen::ImportAnnotations {
@@ -1047,14 +1056,15 @@ impl Reader {
     }
 
     fn update_stats_activity(&mut self, now: Instant) {
+        let reading = self.stats_awake && self.end_dialog.is_none();
         let book = match self.screen {
-            Screen::Book if self.stats_awake => self.active.as_ref().map(|book| book.id),
-            Screen::Illustration if self.stats_awake && self.book_details.is_none() => self
+            Screen::Book if reading => self.active.as_ref().map(|book| book.id),
+            Screen::Illustration if reading && self.book_details.is_none() => self
                 .active
                 .as_ref()
                 .map(|book| book.id)
                 .or_else(|| self.fixed.as_ref().map(|book| book.id)),
-            Screen::Fixed | Screen::ReadFixedText | Screen::ScanColumns if self.stats_awake => {
+            Screen::Fixed | Screen::ReadFixedText | Screen::ScanColumns if reading => {
                 self.fixed.as_ref().map(|book| book.id)
             }
             _ => None,
@@ -1221,6 +1231,9 @@ impl Reader {
                 );
             }
             return items;
+        }
+        if self.screen == Screen::EndActionSettings {
+            return self.end_action_rows();
         }
         if self.screen == Screen::Dictionaries { return self.source_rows(); }
         if let Screen::DictionaryOptions(i) = self.screen { return self.source_options(i); }
@@ -2536,6 +2549,7 @@ impl Reader {
             entry,
             id,
             back,
+            close_document: false,
             metadata,
         });
         Ok(())
@@ -2978,6 +2992,7 @@ impl Reader {
     fn auto_turn_eligible(&self) -> bool {
         self.stats_awake
             && !self.touch_locked
+            && self.end_dialog.is_none()
             && self.link_popup.is_none()
             && self.range_edit.is_none()
             && self.saved_popup.is_none()
@@ -3734,8 +3749,9 @@ impl Reader {
     }
 
     fn finish_book_update(&mut self, change: Change, previous: (usize, usize)) -> Change {
+        let attempted = self.active.as_mut().is_some_and(|active| active.reading.take_end_attempt());
         if change != Change::Partial {
-            return change;
+            return self.finish_end_attempt(attempted, change);
         }
         let page_changed = self.active.as_ref().is_some_and(|active| {
             active.reading.paged_frame_ready()
@@ -3744,7 +3760,8 @@ impl Reader {
         self.notice = None;
         self.clear_stale_selection();
         self.record_position();
-        self.reading_update(page_changed)
+        let change = self.reading_update(page_changed);
+        self.finish_end_attempt(attempted, change)
     }
 
     fn reading_update(&mut self, page_changed: bool) -> Change {
@@ -3898,7 +3915,8 @@ impl Reader {
     }
 
     fn finish_fixed_update(&mut self, result: Result<bool>, previous: usize) -> Change {
-        match result {
+        let attempted = self.fixed.as_mut().is_some_and(|fixed| fixed.reading.take_end_attempt());
+        let change = match result {
             Ok(true) => {
                 let (changed, continuous) = self.fixed.as_ref().map_or((false, false), |fixed| {
                     (
@@ -3918,8 +3936,9 @@ impl Reader {
                 self.reading_update(changed && !continuous)
             }
             Ok(false) => Change::None,
-            Err(error) => self.report(error),
-        }
+            Err(error) => return self.report(error),
+        };
+        self.finish_end_attempt(attempted, change)
     }
 
     fn next_comic(&self) -> Option<&LibraryBook> {
@@ -4029,7 +4048,8 @@ impl Reader {
     }
 
     fn finish_text_flow_update(&mut self, result: Result<bool>) -> Change {
-        match result {
+        let attempted = self.text_flow.as_mut().is_some_and(TextFlow::take_end_attempt);
+        let change = match result {
             Ok(false) => Change::None,
             Ok(true) => {
                 self.notice = None;
@@ -4044,8 +4064,9 @@ impl Reader {
                 }
                 Change::Partial
             }
-            Err(error) => self.report(error),
-        }
+            Err(error) => return self.report(error),
+        };
+        self.finish_end_attempt(attempted, change)
     }
 
     fn open_scan_columns(&mut self) -> Result<()> {
@@ -4934,8 +4955,9 @@ impl App for Reader {
             illustration.draw(canvas, Some(notice), &[], &[], paint);
             return;
         }
-        if let Some(flow) = &self.text_flow {
+        if self.screen == Screen::ReadFixedText && let Some(flow) = &self.text_flow {
             flow.draw(canvas, self.notice.as_deref(), self.uses_night_pages());
+            self.draw_end_dialog(canvas);
             return;
         }
         if self.screen == Screen::FixedCrop
@@ -5046,6 +5068,7 @@ impl App for Reader {
             if self.definition_over_book() {
                 self.draw_definition_popup(canvas);
             }
+            self.draw_end_dialog(canvas);
             return;
         }
         if (matches!(
@@ -5121,6 +5144,7 @@ impl App for Reader {
             if self.definition_over_book() {
                 self.draw_definition_popup(canvas);
             }
+            self.draw_end_dialog(canvas);
             return;
         }
         if self.screen == Screen::OnlineEdit { self.draw_online_editor(canvas); return; }
@@ -5368,6 +5392,7 @@ impl App for Reader {
     }
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
+        if self.end_dialog.is_some() { return self.end_dialog_input(input); }
         if self.range_edit.is_some() { return self.range_input(input); }
         if self.saved_popup_over_book() {
             return self.saved_popup_input(input);
@@ -5443,6 +5468,7 @@ impl App for Reader {
         }
         self.sync_auto_turn(Instant::now());
         self.auto_turn.activity(Instant::now());
+        if self.end_dialog.is_some() { return self.end_dialog_input(input); }
         if self.link_popup.is_some() { return self.link_address_input(input); }
         if self.can_paste_address() && matches!(input, Input::Tap(x, y) if external_link::PASTE.contains(x,y)) {
             return self.paste_address();
@@ -5637,12 +5663,18 @@ impl App for Reader {
                         self.list_page = i / ROWS_PER_PAGE;
                     }
                     Screen::Dictionaries => self.show(self.dictionary_origin),
-                    Screen::FooterSettings => {
+                    Screen::FooterSettings | Screen::EndActionSettings => {
                         self.show(Screen::ReadingControls)
                     }
                     Screen::ReadingProfiles => self.show(Screen::Typography),
                     Screen::RemoveProfiles => self.show(Screen::ReadingProfiles),
                     Screen::BookDetails => {
+                        if self.book_details.as_ref().is_some_and(|book| book.close_document) {
+                            return match self.leave_finished_book() {
+                                Ok(()) => Change::Partial,
+                                Err(error) => self.report(error),
+                            };
+                        }
                         let back = self
                             .book_details
                             .as_ref()
@@ -5873,7 +5905,9 @@ impl App for Reader {
                 Err(error) => { self.numbering_scan = None; self.report(error) }
             };
         }
-        if let (Some(flow), Some(fixed)) = (&mut self.text_flow, &self.fixed) {
+        if self.screen == Screen::ReadFixedText
+            && let (Some(flow), Some(fixed)) = (&mut self.text_flow, &self.fixed)
+        {
             let result = flow.tick(now, &fixed.reading);
             return self.finish_text_flow_update(result);
         }

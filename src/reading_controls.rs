@@ -34,6 +34,51 @@ pub(crate) struct ReadingControls {
     pub skim_on_footer_hold: bool,
     pub menu_activation: MenuActivation,
     pub numbering: NumberingDefaults,
+    pub end_action: EndAction,
+    pub finish_at_end: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum EndAction {
+    #[default]
+    Ask,
+    Stay,
+    Status,
+    Next,
+    Beginning,
+    Library,
+    Finish,
+    StatusThenLibrary,
+    Delete,
+}
+
+impl EndAction {
+    pub const ALL: [Self; 9] = [
+        Self::Ask,
+        Self::Stay,
+        Self::Status,
+        Self::Next,
+        Self::Beginning,
+        Self::Library,
+        Self::Finish,
+        Self::StatusThenLibrary,
+        Self::Delete,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ask => "Show actions",
+            Self::Stay => "Stay on the last page",
+            Self::Status => "Show book status",
+            Self::Next => "Open next file",
+            Self::Beginning => "Go to beginning",
+            Self::Library => "Return to Library",
+            Self::Finish => "Mark as finished",
+            Self::StatusThenLibrary => "Show book status, then Library",
+            Self::Delete => "Ask to delete the file",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]

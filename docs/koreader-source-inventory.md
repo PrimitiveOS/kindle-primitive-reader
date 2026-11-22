@@ -110,7 +110,8 @@ To check coverage, run `python3 scripts/check-koreader-inventory.py /path/to/kor
 
 | Upstream identifiers | Reader behavior and acceptance |
 | --- | --- |
-| `document_auto_save`, `document_end_action`, `document_metadata_arc`, `document_metadata_location`, `language_support`, `partial_rerendering` | Durable metadata, autosave, end-of-document actions and rerender behavior. Test individual commands and enabled conditions before declaring the group matched. |
+| `document_end_action` | End-of-book dialog, automatic or manual reading status, next file, beginning, Library, and confirmed deletion. The same end boundary is checked for paged and continuous reading against original EPUB, AZW3 and PDF files. [Controls and reference tests](document-end.md) |
+| `document_auto_save`, `document_metadata_arc`, `document_metadata_location`, `language_support`, `partial_rerendering` | Durable metadata, autosave and rerender behavior. Test individual commands and enabled conditions before declaring the group matched. |
 
 ## Menu device
 

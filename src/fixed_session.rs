@@ -55,6 +55,7 @@ pub(crate) struct FixedReading {
     epub_spreads: Option<EpubSpreads>,
     turns: PageTurns,
     pending_scroll: (f32, f32),
+    end_attempt: bool,
     outline: Vec<PdfOutlineItem>,
     ocr_path: Option<PathBuf>,
     last_ocr: Option<(usize, CachedRecognition)>,
@@ -305,6 +306,7 @@ impl FixedReading {
             epub_spreads,
             turns: PageTurns::new(Instant::now()),
             pending_scroll: (0.0, 0.0),
+            end_attempt: false,
             outline,
             ocr_path: None,
             last_ocr: None,
@@ -1103,6 +1105,11 @@ impl FixedReading {
     pub(crate) fn pause(&mut self) {
         self.turns = PageTurns::new(Instant::now());
         self.pending_scroll = (0.0, 0.0);
+        self.end_attempt = false;
+    }
+
+    pub(crate) fn take_end_attempt(&mut self) -> bool {
+        std::mem::take(&mut self.end_attempt)
     }
 
     pub(crate) fn deadline(&self) -> Option<Instant> {
@@ -1124,27 +1131,33 @@ impl FixedReading {
             view.offset_x += dx;
             view.offset_y += dy;
             self.present(self.page, view)?;
+            self.end_attempt = dy < -0.5
+                && previous.0 == self.page
+                && previous.1.offset_y == self.view.offset_y
+                && self.visible.last().is_some_and(|page| page.index + 1 == self.count());
             return Ok(previous != (self.page, self.view));
         }
         let count = self.count();
-        let page = self
-            .turns
-            .take_due(now)
-            .into_iter()
-            .fold(self.page, |page, step| {
-                if self.is_spread() {
-                    self.epub_spreads.as_ref().map_or_else(
-                        || comic_spread_step(page, count, step),
-                        |epub| epub.plan.step(page, step),
-                    )
-                } else {
-                    page.saturating_add_signed(step).min(count - 1)
-                }
-            });
+        let mut page = self.page;
+        let mut end_attempt = false;
+        for step in self.turns.take_due(now) {
+            let next = if self.is_spread() {
+                self.epub_spreads.as_ref().map_or_else(
+                    || comic_spread_step(page, count, step),
+                    |epub| epub.plan.step(page, step),
+                )
+            } else {
+                page.saturating_add_signed(step).min(count - 1)
+            };
+            end_attempt = step > 0 && next == page;
+            page = next;
+        }
         if page == self.page {
+            self.end_attempt = end_attempt;
             return Ok(false);
         }
         self.jump(page)?;
+        self.end_attempt = end_attempt;
         Ok(true)
     }
 

@@ -210,6 +210,20 @@ pub struct LibraryBook {
     searchable: String,
 }
 
+impl LibraryBook {
+    pub(crate) fn library_path(&self) -> &Path {
+        if crate::epub_members::is_folder_book(&self.path) {
+            self.path.parent().expect("a folder EPUB has a marker path")
+        } else {
+            &self.path
+        }
+    }
+
+    pub(crate) fn can_delete_file(&self) -> bool {
+        self.library_path() == self.path
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct BrowseList {
     pub entries: Vec<BrowseEntry>,
@@ -617,6 +631,8 @@ pub struct BookState {
     #[serde(default)]
     size: u64,
     pub position: Option<ReadingPosition>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    file_deleted: bool,
     #[serde(
         default,
         deserialize_with = "read_status",
@@ -682,6 +698,7 @@ impl BookState {
             author: entry.author.clone(),
             size: entry.size,
             position: None,
+            file_deleted: false,
             reading_status: None,
             favorite: false,
             publisher_page_footer: false,
@@ -1016,6 +1033,45 @@ impl Library {
         &self.books
     }
 
+    /// Use the same natural filename order and document availability as the folder picker.
+    pub(crate) fn next_book_in_folder(&self, current: &LibraryBook) -> io::Result<Option<LibraryBook>> {
+        let path = current.library_path();
+        let folder = path.parent().unwrap_or_else(|| Path::new(""));
+        let listing = self.browse(folder)?;
+        let next = listing.entries.into_iter()
+            .skip_while(|entry| entry.path != path)
+            .skip(1)
+            .find_map(|entry| match entry.kind {
+                BrowseKind::Readable(book) => Some(book),
+                BrowseKind::Folder => {
+                    let marker = entry.path.join("mimetype");
+                    if crate::epub_members::is_folder_book(&marker) {
+                        self.resolve(&marker).ok()
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            });
+        Ok(next)
+    }
+
+    pub(crate) fn delete_book_file(&mut self, current: &LibraryBook, id: u64) -> io::Result<()> {
+        if !current.can_delete_file() {
+            return Err(io::Error::other("This book is a folder. Manage it in Files."));
+        }
+        let path = self.absolute_path(&current.path)?;
+        if self.identify(current)? != id {
+            return Err(io::Error::other("The file changed. Reopen it before deleting."));
+        }
+        fs::remove_file(path)?;
+        self.books.retain(|entry| entry.path != current.path);
+        if let Some(state) = self.recent.iter_mut().find(|state| state.id == id) {
+            state.file_deleted = true;
+        }
+        Ok(())
+    }
+
     /// Find the next numbered or named comic in the current folder's scanned entries.
     pub fn next_comic_in_folder(&self, current: &LibraryBook) -> Option<&LibraryBook> {
         if !current.format.is_comic() {
@@ -1256,7 +1312,7 @@ impl Library {
 
     /// Filter out organization-only records that have never recorded a reading position.
     pub fn recently_read(&self) -> impl Iterator<Item = &BookState> {
-        self.recent.iter().filter(|book| book.position.is_some())
+        self.recent.iter().filter(|book| book.position.is_some() && !book.file_deleted)
     }
 
     pub fn favorites(&self) -> impl Iterator<Item = &BookState> {
@@ -1269,6 +1325,7 @@ impl Library {
             let book = &mut self.recent[index];
             book.path.clone_from(&entry.path);
             book.size = entry.size;
+            book.file_deleted = false;
             return book;
         }
         self.recent.push(BookState::new(entry, id));
@@ -1295,6 +1352,7 @@ impl Library {
         state.path.clone_from(&entry.path);
         state.title = title;
         state.size = entry.size;
+        state.file_deleted = false;
         self.recent.insert(0, state);
         &mut self.recent[0]
     }

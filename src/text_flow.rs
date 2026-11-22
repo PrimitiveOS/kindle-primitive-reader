@@ -18,6 +18,7 @@ const MIN_SCAN_HEIGHT: u32 = 24;
 const MAX_SCAN_HEIGHT: u32 = 72;
 const SCAN_SIZE_STEP: i32 = 8;
 
+#[derive(Clone)]
 enum FlowStyle {
     Text {
         title: String,
@@ -113,6 +114,7 @@ pub(crate) struct TextFlow {
     frame: GrayImage,
     turns: PageTurns,
     boundary: Option<String>,
+    end_attempt: bool,
 }
 
 impl TextFlow {
@@ -158,11 +160,19 @@ impl TextFlow {
             frame,
             turns: PageTurns::new(Instant::now()),
             boundary: None,
+            end_attempt: false,
         })
     }
 
     pub(crate) fn document_page(&self) -> usize {
         self.document_page
+    }
+
+    pub(crate) fn from_start(&self, document: &FixedReading) -> Result<Self> {
+        let style = self.style.clone();
+        let layout = style.layout_page(document, 0)?
+            .ok_or_else(|| format!("Page 1 {}", style.missing_text()))?;
+        Self::with_layout(0, document.count(), style, layout)
     }
 
     pub(crate) fn deadline(&self) -> Option<Instant> {
@@ -171,6 +181,11 @@ impl TextFlow {
 
     pub(crate) fn pause(&mut self) {
         self.turns = PageTurns::new(Instant::now());
+        self.end_attempt = false;
+    }
+
+    pub(crate) fn take_end_attempt(&mut self) -> bool {
+        std::mem::take(&mut self.end_attempt)
     }
 
     pub(crate) fn input(&mut self, input: Input, document: &FixedReading) -> Result<bool> {
@@ -262,6 +277,7 @@ impl TextFlow {
                 .checked_add_signed(step)
                 .filter(|next| *next < self.document_pages)
             else {
+                self.end_attempt = step > 0;
                 boundary = Some(
                     if step > 0 {
                         "End of document"
