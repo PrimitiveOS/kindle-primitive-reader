@@ -98,6 +98,7 @@ pub(crate) struct VisiblePart {
 
 #[derive(Clone)]
 pub(crate) struct BookConfig {
+    pub(crate) user_styles: crate::user_styles::Snapshot,
     pub(crate) user_hyphenation: std::rc::Rc<crate::user_hyphenation::Rules>,
     pub(crate) engine: Engine,
     pub(crate) book: PathBuf,
@@ -149,7 +150,7 @@ impl BookConfig {
         settings.validate()?;
         let narrow = settings.width == FACING_PAGE_WIDTH;
         match Probe::from_book_with_rules(
-            book, self.engine, &self.fonts, settings, index, None, &self.user_hyphenation,
+            book, self.engine, &self.fonts, settings, index, None, &self.user_hyphenation, &self.user_styles,
         ) {
             Ok(probe) if !narrow || !probe.is_vertical() => Ok(probe),
             Err(error) if !narrow => Err(error),
@@ -158,7 +159,7 @@ impl BookConfig {
                 // that only fits the renderer's bounds at its original width.
                 let book = Book::open(&self.book).map_err(|e| e.to_string())?;
                 Probe::from_book_with_rules(
-                    book, self.engine, &self.fonts, self.settings, index, None, &self.user_hyphenation,
+                    book, self.engine, &self.fonts, self.settings, index, None, &self.user_hyphenation, &self.user_styles,
                 )
             }
         }
@@ -1389,6 +1390,7 @@ mod tests {
     fn example(book: &str, font_size: f32, facing_pages: bool) -> Reading {
         Reading::open(BookConfig {
             user_hyphenation: Default::default(),
+            user_styles: Default::default(),
             chapter_offsets: Default::default(),
             engine: Engine::Parley,
             book: crate::test_fixture(book),
@@ -1896,6 +1898,7 @@ mod tests {
     fn enters_and_leaves_vertical_chapters_with_scroll_preference_preserved() {
         let mut reading = Reading::open(BookConfig {
             user_hyphenation: Default::default(),
+            user_styles: Default::default(),
             chapter_offsets: Default::default(),
             engine: Engine::Parley,
             book: crate::test_fixture("vertical-chapters.epub"),

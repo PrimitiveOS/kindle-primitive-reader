@@ -559,7 +559,9 @@ impl Reader {
         let fonts = self
             .fonts_for(state.preferences.font_file.as_deref())
             .unwrap_or_else(|_| self.fonts.clone());
+        let styles = self.style_store.data.snapshot(id)?;
         let config = book.map(|_| BookConfig {
+            user_styles: styles,
             user_hyphenation: self.user_hyphenation.clone(),
             chapter_offsets: Default::default(),
             engine: Engine::Parley,

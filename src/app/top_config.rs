@@ -244,6 +244,7 @@ impl Reader {
             Item::new("Save reading data", Action::Show(Screen::MetadataSaveSettings))
                 .detail(current.metadata_save.label()),
         ];
+        if self.active.is_some() { items.insert(1, Item::new("Style tweaks", Action::Show(Screen::StyleTweaks)).detail("Supported user CSS and live defaults")); }
         items.extend(self.quick_display_items());
         // Under Primitive Launcher the pages follow the launcher's theme: no Night pages switch here.
         if !self.under_launcher() {

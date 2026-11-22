@@ -158,6 +158,10 @@ fn canonical(key: Key, value: Value) -> io::Result<Value> {
         Key::BookMetadata => bookmark_browser::metadata_backup_value(&bytes),
         Key::Timer => read_alarm::backup_value(&bytes),
         Key::Pace(_) => crate::reading_pace::backup_value(&bytes),
+        Key::StyleTweaks => {
+            crate::user_styles::storage::decode(&bytes)?;
+            Ok(value)
+        }
         Key::DocumentDefaults => {
             crate::document_defaults::validate_backup(&bytes)?;
             Ok(value)

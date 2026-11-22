@@ -3,6 +3,10 @@
 //! and inherited text properties. See https://www.w3.org/TR/css-cascade-5/.
 
 pub(crate) mod borders;
+mod user_css;
+#[cfg(test)]
+mod user_css_tests;
+pub(crate) use user_css::{validate as validate_user_css, matches as user_css_matches};
 #[cfg(test)]
 mod dpi_tests;
 
@@ -309,11 +313,17 @@ impl Default for Style {
 pub(crate) struct BookStyle {
     author_inline: bool,
     rules: Vec<Rule>,
+    user_rules: Vec<Rule>,
     families: HashMap<String, Arc<str>>,
     font_weights: Arc<HashMap<u64, f32>>,
 }
 
 impl BookStyle {
+    pub fn with_user_css(mut self, snapshot: &crate::user_styles::Snapshot) -> crate::Result<Self> {
+        self.user_rules = user_css::parse(snapshot.css())?;
+        Ok(self)
+    }
+
     pub fn load(book: &mut Book, chapter: &str, source: &Source, fonts: &mut FontContext) -> Self {
         let mut styled = Self {
             author_inline: true,
@@ -441,20 +451,22 @@ impl BookStyle {
                 .filter(|text| self.author_inline && text.len() <= MAX_INLINE_BYTES)
                 .map_or_else(Vec::new, |text| declarations(&mut Parser::new(text)));
             let mut winners: Winners = [None; 40];
-            for rule in &self.rules {
-                if let Some(specificity) = rule
-                    .selectors
-                    .iter()
-                    .filter(|selector| selector.matches(elements, index))
-                    .map(|selector| selector.specificity)
-                    .max()
-                {
-                    choose(&mut winners, &rule.declarations, false, specificity);
+            for (user, rules) in [(true, &self.user_rules), (false, &self.rules)] {
+                for rule in rules {
+                    if let Some(specificity) = rule.selectors.iter()
+                        .filter(|selector| selector.matches(elements, index))
+                        .map(|selector| selector.specificity).max()
+                    {
+                        choose(&mut winners, &rule.declarations, false, specificity, user);
+                    }
                 }
             }
-            choose(&mut winners, &inline, true, (0, 0, 0));
+            choose(&mut winners, &inline, true, (0, 0, 0), false);
             for (_, property) in winners.into_iter().flatten() {
                 match property {
+                    Property::Reset(16, reset) => decoration = user_css::decoration(*reset, parent.decoration),
+                    Property::Reset(key, reset) => user_css::apply_reset(&mut style, *key, *reset, parent, &defaults),
+                    Property::ResetMany(..) => unreachable!("reset shorthand is expanded before cascading"),
                     Property::Family(families) => {
                         style.font_family = families
                             .iter()
@@ -1068,7 +1080,11 @@ struct Declaration {
 fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
     let mut result = Vec::new();
     for decl in RuleBodyParser::new(input, &mut Properties).flatten() {
-        if let Property::PaddingBoth(sides) = decl.property {
+        if let Property::ResetMany(keys, reset) = decl.property {
+            result.extend(keys.into_iter().map(|key| Declaration {
+                property: Property::Reset(key, reset), important: decl.important,
+            }));
+        } else if let Property::PaddingBoth(sides) = decl.property {
             for (side, length) in sides.into_iter().enumerate() {
                 result.push(Declaration {
                     property: Property::Padding(side, length),
@@ -1087,7 +1103,7 @@ fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
     result
 }
 
-type Priority = (bool, bool, Specificity);
+type Priority = (u8, bool, Specificity);
 type Winners<'a> = [Option<(Priority, &'a Property)>; 40];
 
 fn choose<'a>(
@@ -1095,9 +1111,12 @@ fn choose<'a>(
     declarations: &'a [Declaration],
     inline: bool,
     specificity: Specificity,
+    user: bool,
 ) {
     for declaration in declarations {
         let index = match declaration.property {
+            Property::Reset(key, _) => key,
+            Property::ResetMany(..) => continue,
             Property::Family(_) => 0,
             Property::Size(_) => 1,
             Property::LineHeight(_) => 2,
@@ -1133,7 +1152,8 @@ fn choose<'a>(
             }
             Property::PaddingBoth(_) | Property::FontSource(_) => continue,
         };
-        let priority = (declaration.important, inline, specificity);
+        let tier = match (user, declaration.important) { (true, false) => 0, (false, false) => 1, (false, true) => 2, (true, true) => 3 };
+        let priority = (tier, inline, specificity);
         if winners[index].is_none_or(|(current, _)| priority >= current) {
             winners[index] = Some((priority, &declaration.property));
         }
@@ -1171,6 +1191,8 @@ impl Weight {
 }
 
 enum Property {
+    Reset(usize, user_css::Reset),
+    ResetMany(Vec<usize>, user_css::Reset),
     Border(usize, borders::Value),
     BorderParts(Vec<(usize, borders::Value)>),
     BorderSpacing(Option<[CssLength; 2]>),
@@ -1215,6 +1237,12 @@ impl<'i> DeclarationParser<'i> for Properties {
         _: &ParserState,
     ) -> CssResult<Declaration> {
         let property = input.parse_until_before(Delimiter::Bang, |input| {
+            let before = input.state();
+            if let Some(reset) = user_css::reset(input, &name.to_ascii_lowercase()) {
+                input.expect_exhausted()?;
+                return Ok(reset);
+            }
+            input.reset(&before);
             let property = match name.to_ascii_lowercase().as_ref() {
                 "padding-top" => Property::Padding(2, parse_padding(input, false)?[0]),
                 "padding-bottom" => Property::Padding(3, parse_padding(input, false)?[0]),

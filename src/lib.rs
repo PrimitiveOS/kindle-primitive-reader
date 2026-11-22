@@ -37,6 +37,7 @@ mod gif_image;
 mod footnotes;
 mod hyphenation;
 mod user_hyphenation;
+mod user_styles;
 mod jpeg2000;
 mod kf8;
 mod kindle_sections;
@@ -552,7 +553,7 @@ impl Probe {
         excerpt: Option<String>,
     ) -> Result<Self> {
         Self::from_book_with_rules(
-            book, engine, fonts, settings, chapter, excerpt, &user_hyphenation::Rules::default(),
+            book, engine, fonts, settings, chapter, excerpt, &user_hyphenation::Rules::default(), &user_styles::Snapshot::default(),
         )
     }
 
@@ -564,12 +565,13 @@ impl Probe {
         chapter: usize,
         excerpt: Option<String>,
         user_rules: &user_hyphenation::Rules,
+        user_styles: &user_styles::Snapshot,
     ) -> Result<Self> {
         if book.is_fixed_layout() {
             return Err("Open this fixed-layout EPUB in Reader".into());
         }
         if engine == Engine::Blitz
-            && (!settings.publisher_styles
+            && (!user_styles.is_empty() || !settings.publisher_styles
                 || !settings.font_kerning
                 || settings.font_hinting != FontHinting::Off
                 || settings.font_gamma_index != font_render::NORMAL_GAMMA
@@ -632,7 +634,8 @@ impl Probe {
                             &mut fonts,
                         )
                     })
-                    .unwrap_or_default();
+                    .unwrap_or_default()
+                    .with_user_css(user_styles)?;
                 let styles = author.compute_for_dpi(&source.elements, settings.render_dpi);
                 #[cfg(feature = "kindle")]
                 {

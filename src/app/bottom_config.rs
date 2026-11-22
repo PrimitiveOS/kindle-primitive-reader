@@ -397,6 +397,7 @@ impl Reader {
                 }
                 BarPanel::TextRendering => {
                     let mut rows = vec![
+                        ConfigRow::new("Style tweaks", [Choice::link("Open", Action::Show(Screen::StyleTweaks))]),
                         ConfigRow::new(
                             "Publisher CSS",
                             [("Off", false), ("On", true)].map(|(title, publisher_styles)| {

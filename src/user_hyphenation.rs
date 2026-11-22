@@ -305,6 +305,7 @@ mod layout_tests {
                 0,
                 Some(source.into()),
                 rules,
+                &crate::user_styles::Snapshot::default(),
             )
             .unwrap()
         };

@@ -46,6 +46,7 @@ mod selection_popup;
 mod saved_highlight_popup;
 mod highlight_palette;
 mod user_hyphenation;
+mod style_tweaks;
 mod footnote_popup;
 #[cfg(test)]
 mod font_render_tests;
@@ -202,6 +203,12 @@ enum Screen {
     ReadingFonts,
     ReadingProfiles,
     DocumentDefaults,
+    StyleTweaks,
+    StylePreset,
+    StyleFiles,
+    StyleReview,
+    StyleEditor,
+    StyleClear,
     ProfileName,
     RemoveProfiles,
     Find,
@@ -297,6 +304,12 @@ impl Screen {
             Self::ReadingFonts => "Reading font",
             Self::ReadingProfiles => "Reading profiles",
             Self::DocumentDefaults => "Document defaults",
+            Self::StyleTweaks => "Style tweaks",
+            Self::StylePreset => "Style tweak",
+            Self::StyleFiles => "Import CSS",
+            Self::StyleReview => "Review CSS",
+            Self::StyleEditor => "Book CSS",
+            Self::StyleClear => "Clear book CSS?",
             Self::ProfileName => "Save reading profile",
             Self::RemoveProfiles => "Remove a reading profile",
             Self::Find => "Find in book",
@@ -396,6 +409,7 @@ enum Action {
     ShowDictionaries,
     DictionarySource(SourceAction),
     DocumentDefaults(default_settings::Command),
+    Style(style_tweaks::Command),
     LookUp(String),
     ProgressSync(progress_sync::Command),
     Vocabulary(vocabulary::Command),
@@ -604,6 +618,8 @@ pub struct Reader {
     profiles: Vec<Profile>,
     profiles_path: PathBuf,
     document_defaults: crate::document_defaults::Store,
+    style_store: crate::user_styles::storage::Store,
+    style_view: style_tweaks::View,
     active: Option<ActiveBook>,
     illustration: Option<FixedReading>,
     fixed: Option<ActiveFixed>,
@@ -760,6 +776,8 @@ impl Reader {
             profiles,
             profiles_path,
             document_defaults: crate::document_defaults::Store::load(data.join(crate::document_defaults::FILE)),
+            style_store: crate::user_styles::storage::Store::load(data.join(crate::user_styles::FILE)),
+            style_view: Default::default(),
             active: None,
             illustration: None,
             fixed: None,
@@ -971,6 +989,7 @@ impl Reader {
             .fonts_for(custom_font)
             .unwrap_or_else(|_| self.fonts.clone());
         let config = BookConfig {
+            user_styles: self.style_store.data.snapshot(id)?,
             user_hyphenation: self.user_hyphenation.clone(),
             chapter_offsets: Default::default(),
             engine: Engine::Parley,
@@ -1001,6 +1020,7 @@ impl Reader {
         self.range_edit = None;
         self.saved_popup = None;
         self.active = Some(ActiveBook { entry, id, reading, numbering: None });
+        self.style_view = Default::default();
         if unseen {
             let active = self.active.as_ref().unwrap();
             self.library.remember(&active.entry, id, &active.reading.probe.title).preferences = initial_preferences;
@@ -1291,6 +1311,7 @@ impl Reader {
     }
 
     fn items(&self) -> Vec<Item> {
+        if matches!(self.screen, Screen::StyleTweaks | Screen::StylePreset | Screen::StyleFiles | Screen::StyleReview | Screen::StyleClear | Screen::StyleEditor) { return self.style_items(); }
         if let Screen::ReadingHistory(page) = self.screen { return self.reading_history_items(page); }
         if matches!(self.screen, Screen::ProgressSync | Screen::ProgressSyncSettings) { return self.sync_items(); }
         if matches!(self.screen, Screen::Vocabulary | Screen::VocabularyWord | Screen::VocabularyOptions | Screen::VocabularyBooks) { return self.vocabulary_items(); }
@@ -1699,7 +1720,7 @@ impl Reader {
                 );
                 items
             }
-            Screen::DocumentDefaults => Vec::new(),
+            Screen::DocumentDefaults | Screen::StyleTweaks | Screen::StylePreset | Screen::StyleFiles | Screen::StyleReview | Screen::StyleClear | Screen::StyleEditor => Vec::new(),
             Screen::ReadingProfiles => {
                 let mut items = vec![Item::new(
                     "Save current text settings",
@@ -2492,6 +2513,7 @@ impl Reader {
             }
             Action::ResetText => self.apply_text_profile(BookPreferences::default())?,
             Action::DocumentDefaults(command) => self.activate_document_defaults(command)?,
+            Action::Style(command) => self.activate_style(command)?,
             Action::ReadingMode(scroll) => {
                 let active = self.active.as_mut().ok_or("No open book")?;
                 active.reading.set_scroll(scroll)?;
@@ -5102,6 +5124,7 @@ impl Reader {
 
 impl Reader {
     fn draw_content(&self, canvas: &mut Canvas) {
+        if self.draw_style_editor(canvas) { self.read_alarm.draw(canvas, false); return; }
         if self.screen == Screen::DocumentDefaults { self.draw_document_defaults(canvas); return; }
         if self.draw_reading_history(canvas) { return; }
         if let Screen::Catalog(page) = self.screen && self.draw_catalog(canvas,page) { return; }
@@ -5652,6 +5675,7 @@ impl App for Reader {
         if let Some(change) = self.vocabulary_dialog_input(input) { return change; }
         if self.flow_popup.is_some() { return self.flow_popup_input(input); }
         if self.read_alarm.modal() { return self.read_alarm_input(input); }
+        if let Some(change) = self.style_editor_input(input) { return change; }
         if let Some(change) = self.reading_history_input(input) { return change; }
         if self.end_dialog.is_some() { return self.end_dialog_input(input); }
         if self.range_edit.is_some() { return self.range_input(input); }
@@ -5744,6 +5768,7 @@ impl App for Reader {
             return if input == Input::Wake { self.poll_read_alarm(Instant::now(), true) } else { Change::None };
         }
         if self.read_alarm.modal() { return self.read_alarm_input(input); }
+        if let Some(change) = self.style_editor_input(input) { return change; }
         if let Some(change) = self.reading_history_input(input) { return change; }
         self.sync_auto_turn(Instant::now());
         if let Screen::Catalog(page) = self.screen && let Some(change) = self.catalog_input(page,input) { return change; }
@@ -5962,6 +5987,10 @@ impl App for Reader {
                         self.show(Screen::ReadingControls)
                     }
                     Screen::DocumentDefaults => self.show(Screen::ReadingControls),
+                    Screen::StyleTweaks => self.show(self.tools_screen()),
+                    Screen::StylePreset | Screen::StyleFiles | Screen::StyleClear => self.show(Screen::StyleTweaks),
+                    Screen::StyleReview => self.show(if self.style_view.editor.is_some() { Screen::StyleEditor } else { Screen::StyleTweaks }),
+                    Screen::StyleEditor => self.show(Screen::StyleTweaks),
                     Screen::ReadingProfiles => self.show(Screen::Typography),
                     Screen::RemoveProfiles => self.show(Screen::ReadingProfiles),
                     Screen::BookDetails => {
@@ -6707,6 +6736,7 @@ pub fn run_reader(
 
 pub fn run_probe(engine: Engine, book: PathBuf, fonts: Vec<PathBuf>, home: &Path) -> Result<()> {
     let reading = Reading::open(BookConfig {
+        user_styles: Default::default(),
         user_hyphenation: Default::default(),
         chapter_offsets: Default::default(),
         engine,
