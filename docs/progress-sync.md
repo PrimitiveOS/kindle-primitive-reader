@@ -35,7 +35,10 @@ The payload limit is 32 KiB. Redirects are not followed. Basic authentication an
 
 The development unit and functional checks cover conditional two-client changes, genuine lost PUT replies, versioned clears, first-sync conflicts, different-font source positions, account changes, wrong-book request rejection, rollback after a fixed-page save failure, malformed and truncated records, credentials, bounds, cancellation, sleep and wake. The opt-in system scenario uses two Reader profiles, the actual subprocess worker, touch controls, a local HTTP server and authorized original EPUB/PDF inputs. It checks unchanged original bytes and reopened positions.
 
-The component passed 642 ordinary library tests, 14 EPUB package tests and four system tests, with 43 opt-in cases omitted from that run. Its focused sync suite passed 18 ordinary cases and the separate two-profile original EPUB/PDF worker scenario. Eleven authored screens were inspected; the conflict dialog was then reduced in height. The combined-candidate run will verify that final layout and its touch controls. Native acceptance and individual production WebDAV provider checks remain pending while the Kindle is disconnected. No server configuration is included in the package.
+The component passed 642 ordinary library tests, 14 EPUB package tests and four system tests, with 43 opt-in cases omitted from that run. Its focused sync suite passed 18 ordinary cases and the separate two-profile original EPUB/PDF worker scenario. Eleven authored screens were inspected. The combined candidate verifies the compact conflict dialog through its actual touch controls and repeats the two-profile original-file scenario. Native acceptance and individual production WebDAV provider checks remain pending while the Kindle is disconnected. No server configuration is included in the package.
 
 <img src="screenshots/progress-sync-settings.png" width="390" alt="Reader sync settings with opt-in controls and no password exposed">
 <img src="screenshots/progress-sync-waiting.png" width="390" alt="Reader showing a cancellable reading-position request">
+
+<img src="screenshots/progress-sync-conflict.png" width="390" alt="Compact position conflict with this-device, server and Cancel choices">
+<img src="screenshots/progress-sync-conflict-dark.png" width="390" alt="The same position choice in dark mode">
