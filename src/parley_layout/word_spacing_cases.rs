@@ -311,3 +311,36 @@ fn trailing_picture_only_line_keeps_source_caret_and_cannot_borrow_old_space_cap
         assert!(range.start <= range.end && range.end <= text.len());
     }
 }
+
+#[test]
+fn measured_space_scaling_includes_tracking_and_extreme_bounds_keep_gaps_nonnegative() {
+    let text = "alpha beta";
+    let load = |pair: Option<WordSpacePercent>, width: f32| {
+        let mut fonts =
+            crate::font_context(&[crate::test_fixture("fonts/NotoSans-Regular.ttf")]).unwrap();
+        let mut context = LayoutContext::new();
+        let mut builder = context.ranged_builder(&mut fonts, text, 1.0, true);
+        builder.push_default(StyleProperty::FontSize(12.0));
+        builder.push_default(StyleProperty::LetterSpacing(-1.0));
+        let mut layout = builder.build(text);
+        if let Some(pair) = pair {
+            layout.set_word_spacing_percent(text, pair.scaling, pair.minimum, &[]);
+        }
+        layout.break_all_lines(Some(width));
+        layout.align(Alignment::Start, AlignmentOptions::default());
+        layout
+    };
+    let old = load(None, 1000.);
+    let pair = WordSpacePercent {
+        scaling: 10,
+        minimum: 25,
+    };
+    let natural = load(Some(pair), 1000.);
+    let at = text.find(' ').unwrap();
+    assert!((advance(&natural, at) - advance(&old, at) * 0.1).abs() < 0.001);
+    let target = natural.get(0).unwrap().metrics().advance - advance(&natural, at) * 0.5;
+    let condensed = load(Some(pair), target);
+    assert_eq!(condensed.len(), 1);
+    assert!(advance(&condensed, at) >= advance(&natural, at) * 0.25 - 0.001);
+    assert!(advance(&condensed, at) >= 0.0);
+}

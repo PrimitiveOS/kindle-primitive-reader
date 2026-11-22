@@ -59,8 +59,16 @@ impl<B: Brush> Layout<B> {
                     .get(cluster)
                     .copied()
                     .unwrap_or(Gaps::ZERO);
-                let natural = (atom.advance() + existing.total()).max(0.0);
-                let scaled = natural * f32::from(scaling) / 100.0;
+                // CRE scales the measured space, whose width already includes
+                // letter spacing. Keep Reader's signed tracking extension safe.
+                let measured =
+                    atom.advance() + existing.total() + self.data.runs[index].spacing.letter;
+                let natural = measured.max(0.0);
+                let scaled = if scaling == 100 {
+                    natural
+                } else {
+                    natural * f32::from(scaling) / 100.0
+                };
                 let lock_at = locked.partition_point(|range| range.end <= bytes.start);
                 let is_locked = locked
                     .get(lock_at)
@@ -73,7 +81,7 @@ impl<B: Brush> Layout<B> {
                 } else {
                     0.0
                 };
-                additions.push((cluster, scaled - natural, capacity));
+                additions.push((cluster, scaled - measured, capacity));
             }
         }
         for (cluster, delta, capacity) in additions {
