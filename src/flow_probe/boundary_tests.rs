@@ -296,6 +296,7 @@ fn original_empty_anchors_survive_library_save_reopen_and_live_reflow_without_so
     let mut hashes = BTreeMap::new();
     let mut rows = Vec::new();
     let mut boundaries = 0;
+    let mut original039_audit = None;
     let digest = |path: &std::path::Path| {
         ring::digest::digest(&ring::digest::SHA256, &std::fs::read(path).unwrap())
             .as_ref()
@@ -326,6 +327,32 @@ fn original_empty_anchors_survive_library_save_reopen_and_live_reflow_without_so
             chapter_offsets: Default::default(),
         };
         let mut reading = Reading::restore(config.clone(), case.chapter, 0, None).unwrap();
+        if case.id == "039" && case.chapter == 7 && original039_audit.is_none() {
+            let mut new_points = 0;
+            let mut eligible = 0;
+            let mut omitted = 0;
+            for name in reading.probe.source.fragments.keys() {
+                if reading.probe.fragment_presentation(name) == Some(SourcePresentation::CssOmitted)
+                {
+                    omitted += 1;
+                    continue;
+                }
+                eligible += 1;
+                let point = reading.probe.fragment(name).unwrap_or_else(|| {
+                    panic!("original039 chapter7 eligible fragment remains unresolved: {name}")
+                });
+                assert!(reading.probe.page_for(&point).is_some());
+                new_points += usize::from(point.boundary.is_some());
+            }
+            assert!(
+                new_points > 0,
+                "the original039 acceptance must exercise new DOM geometry"
+            );
+            original039_audit = Some(
+                serde_json::json!({"chapter":7,"eligible_fragments":eligible,"located_fragments":eligible,"css_omitted_fragments":omitted,"new_boundary_targets":new_points,"unresolved":0}),
+            );
+        }
+
         let presentation = reading
             .probe
             .fragment_presentation(&case.fragment)
@@ -410,7 +437,7 @@ fn original_empty_anchors_survive_library_save_reopen_and_live_reflow_without_so
         assert_eq!(digest(&path), before);
         sources.push(serde_json::json!({"id":path.file_stem().unwrap().to_string_lossy(),"sha256":before,"unchanged":true}));
     }
-    let receipt = serde_json::json!({"new_boundaries":boundaries,"cases":rows,"sources":sources,"source_changes":false});
+    let receipt = serde_json::json!({"new_boundaries":boundaries,"cases":rows,"sources":sources,"source_changes":false,"original039_chapter7":original039_audit});
     std::fs::write(
         std::env::var_os("READER_BOUNDARY_RECEIPT").unwrap(),
         serde_json::to_vec_pretty(&receipt).unwrap(),
