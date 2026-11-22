@@ -2,6 +2,7 @@
 use super::{Action, BarPanel, Reader, Screen};
 use crate::reading_controls::{ReadingOrientation, ScreenPalette};
 use crate::{FontHinting, Settings, TextAlignment};
+use crate::app::NumberField;
 
 pub(super) struct Choice {
     pub(super) title: String,
@@ -428,7 +429,7 @@ impl Reader {
                                     else { format!("{} dpi", settings.render_dpi) },
                                 Action::Heading,
                                 !crate::RENDER_DPI_PRESETS.contains(&settings.render_dpi),
-                            ), Choice::link("Set value", Action::Show(Screen::NumberingValue(super::NumberField::ContentDpi(active.id))))],
+                            ), Choice::link("Set value", Action::Show(Screen::NumberingValue(NumberField::ContentDpi(active.id))))],
                         ),
                         ConfigRow::new(
                             "Font kerning",

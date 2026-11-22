@@ -91,6 +91,11 @@ impl Reader {
             .filter(|active| active.id == owner)
             .ok_or("The open book changed; reopen content zoom before applying")?;
         let value = self.content_dpi_value()?;
+        if with_storage(|| self.library.identify(&active.entry))? != owner {
+            return Err(
+                "The document edition changed; reopen the book before changing content zoom".into(),
+            );
+        }
         let mut config = active.reading.config.clone();
         config.settings.render_dpi = value;
         let location = position(&active.reading);
@@ -101,6 +106,11 @@ impl Reader {
             location.page,
             location.anchor.as_ref(),
         )?;
+        if candidate.probe.book != active.reading.probe.book
+            || with_storage(|| self.library.identify(&active.entry))? != owner
+        {
+            return Err("The document edition changed during content zoom; reopen the book".into());
+        }
         let prior = self
             .library
             .state(owner)
