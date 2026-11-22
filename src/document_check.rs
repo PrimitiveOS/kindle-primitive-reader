@@ -51,6 +51,7 @@ fn select_in_picker(app: &mut Reader, library: &Library, relative: &Path) -> Res
 }
 
 mod spine;
+mod css_coverage;
 use spine::verify_spine;
 
 /// Exercise the regular UI in a new scratch profile. The Kindle's framebuffer,
