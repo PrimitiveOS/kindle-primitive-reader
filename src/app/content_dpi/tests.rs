@@ -185,6 +185,9 @@ fn custom_dpi_steps_hold_default_cancel_and_lifecycle_keep_the_draft_separate() 
     app.activate_document_defaults(default_settings::Command::SaveReflow)
         .unwrap();
     apply(&mut app, 123);
+    let selected = selection(&app);
+    app.selection = Some(selected.clone());
+    let previous_position = app.current_position();
     open_picker(&mut app);
     tap(&mut app, DECREASE);
     assert_eq!(app.editor.string(), "122");
@@ -216,6 +219,15 @@ fn custom_dpi_steps_hold_default_cancel_and_lifecycle_keep_the_draft_separate() 
     tap(&mut app, primitive_ui::back_button(WIDTH as i32));
     assert_eq!(dpi(&app), 123);
     assert_eq!(app.reading_panel, Some(BarPanel::TextRendering));
+    assert_eq!(app.selection.as_ref(), Some(&selected));
+    assert_eq!(app.current_position(), previous_position);
+    open_picker(&mut app);
+    text(&mut app, "72");
+    assert_eq!(app.input(Input::PageBack), Change::Partial);
+    assert_eq!(dpi(&app), 123);
+    assert_eq!(app.reading_panel, Some(BarPanel::TextRendering));
+    assert_eq!(app.selection.as_ref(), Some(&selected));
+    assert_eq!(app.current_position(), previous_position);
     open_picker(&mut app);
     tap(&mut app, DEFAULT);
     keyboard(&mut app, primitive_ui::Key::Go);
