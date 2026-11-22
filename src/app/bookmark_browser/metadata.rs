@@ -58,6 +58,23 @@ pub(super) struct Snapshot {
     pub(super) fixed: bool,
 }
 
+pub(super) fn backup_value(bytes: &[u8]) -> std::io::Result<serde_json::Value> {
+    let books: BTreeMap<u64, Snapshot> = serde_json::from_slice(bytes)?;
+    let text = |s: &String| s.len() <= MAX_VALUE && !s.chars().any(char::is_control);
+    if bytes.len() as u64 > MAX_CACHE_BYTES || books.len() > 16_384
+        || books.values().any(|book| {
+            book.series.len() > MAX_VALUES || book.keywords.len() > MAX_VALUES
+                || !book.series.iter().chain(&book.keywords).all(text)
+                || book.language.as_ref().is_some_and(|s| !text(s))
+                || book.description.as_ref().is_some_and(|s| s.len() > MAX_DESCRIPTION)
+                || book.chapters.len() > 32_768
+                || book.chapters.iter().any(|(path, &index)| path.len() > 4096 || index > 1_000_000)
+        }) {
+        return Err(std::io::Error::other("The retained book metadata backup is invalid"));
+    }
+    serde_json::to_value(books).map_err(std::io::Error::other)
+}
+
 #[derive(Default)]
 pub(super) struct Catalog {
     path: PathBuf,

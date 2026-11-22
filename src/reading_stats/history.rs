@@ -69,6 +69,18 @@ struct Data {
     titles: BTreeMap<u64, String>,
     visits: Vec<Visit>,
 }
+
+pub(crate) fn backup_value(bytes: &[u8]) -> io::Result<serde_json::Value> {
+    if bytes.len() as u64 > MAX_BYTES { return Err(invalid()); }
+    let data: Data = serde_json::from_slice(bytes)?;
+    if data.version != 1 || !data.options.valid()
+        || data.prior.len() > MAX_BOOKS || data.titles.len() > MAX_BOOKS
+        || data.visits.len() > MAX_VISITS || data.titles.values().any(|s| s.len() > 1024)
+        || data.visits.iter().any(|v| v.seconds == 0 || v.seconds > 3600 || v.start.is_some_and(|s| !valid_wall(s))) {
+        return Err(invalid());
+    }
+    serde_json::to_value(data).map_err(io::Error::other)
+}
 #[derive(Clone)]
 struct Part {
     start: Option<i64>,

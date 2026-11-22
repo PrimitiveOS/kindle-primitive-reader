@@ -29,6 +29,14 @@ struct Options {
     message: String,
 }
 
+pub(super) fn backup_value(bytes: &[u8]) -> io::Result<serde_json::Value> {
+    let options: Options = serde_json::from_slice(bytes)?;
+    if options.minutes > MAX_INTERVAL || options.message.chars().count() > MESSAGE_LIMIT {
+        return Err(io::Error::other("The read timer backup is invalid"));
+    }
+    serde_json::to_value(options).map_err(io::Error::other)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
     Interval,

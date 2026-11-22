@@ -68,6 +68,8 @@ mod publication_metadata;
 #[cfg(feature = "kindle")]
 mod reading_controls;
 #[cfg(feature = "kindle")]
+mod reading_backup;
+#[cfg(feature = "kindle")]
 mod reading_fonts;
 #[cfg(feature = "kindle")]
 mod reading_profiles;

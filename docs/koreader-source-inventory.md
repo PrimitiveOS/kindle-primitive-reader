@@ -57,6 +57,8 @@ To check coverage, run `python3 scripts/check-koreader-inventory.py /path/to/kor
 
 The OPDS development candidate follows the pinned browser/parser reading path for Atom and JSON catalogs, advertised search, explicit format/destination selection and cancellable validated acquisition. HTTP Basic is origin-scoped; loan/DRM chains, calibre wireless transfer and additional providers have separate gates. [OPDS source map, UI and evidence](opds-acquisition.md)
 
+The K24 backup candidate covers non-secret local reading state beyond the Library, with per-component preview, strict typed validation and startup recovery for interrupted multi-file writes. It retains existing book/mark merge behavior and accepts library-only v1 input. [Data scope and recovery evidence](reading-data-backups.md)
+
 ## Reflow controls
 
 | Upstream identifiers | Reader behavior and acceptance |

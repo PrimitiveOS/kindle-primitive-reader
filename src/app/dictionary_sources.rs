@@ -9,6 +9,24 @@ pub(super) struct SourcePreferences {
 }
 
 impl SourcePreferences {
+    pub(super) fn backup_value(bytes: &[u8]) -> io::Result<serde_json::Value> {
+        let value: serde_json::Value = serde_json::from_slice(bytes)?;
+        let settings: Self = if value.is_object() {
+            serde_json::from_value(value)?
+        } else {
+            let prior: Option<PathBuf> = serde_json::from_value(value)?;
+            Self { order: prior.into_iter().collect(), ..Self::default() }
+        };
+        if settings.order.len() > 512 || settings.disabled.len() > 512
+            || settings.order.iter().chain(&settings.disabled).any(|path| {
+                path.as_os_str().is_empty() || path.to_str().is_none_or(|s| s.len() > 4096 || s.chars().any(char::is_control))
+                    || path.components().any(|c| matches!(c, std::path::Component::ParentDir | std::path::Component::CurDir))
+            }) {
+            return Err(io::Error::other("The dictionary preferences backup is invalid"));
+        }
+        serde_json::to_value(settings).map_err(io::Error::other)
+    }
+
     pub(super) fn load(path: &Path) -> Self {
         let Ok(bytes) = read_import_file(path, 64 * 1024) else {
             return Self::default();
