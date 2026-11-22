@@ -1,6 +1,6 @@
 # Library highlight exports
 
-Open **Reading data › Export highlights**. Choose History, select individual books, or choose one or more collections. Select highlight styles, then choose KOReader JSON, plain text, Markdown or HTML. The styles remain selected when Reader reopens. The saved file appears under `reader/data/exports/library-highlights` with the chosen extension.
+Open **Reading data › Export highlights**. Choose History, select individual books, or choose one or more collections. Select highlight styles and colors, then choose KOReader JSON, plain text, Markdown or HTML. The filters remain selected when Reader reopens. Color and style restrictions are combined; an empty selection matches no highlights. The saved file appears under `reader/data/exports/library-highlights` with the chosen extension.
 
 Each book keeps its own title, author and source file. Different editions with the same title remain separate. Exports include highlighted quotations and attached notes. Page bookmarks are omitted. Books with no matching highlights are omitted. A source that has disappeared or changed is skipped and included in the completion count.
 
@@ -16,11 +16,12 @@ The reference is KOReader commit `9192014d8bd82a91dc1012473be0f238dedfdb54`.
 |---|---|
 | Export History or selected previously opened books | History, individual books and collection unions select existing tracked documents. |
 | Filter highlight drawers | Choose one or more of Lighten, Underline, Strikethrough and Invert. |
+| Filter highlight colors | Choose one or more named colors; All colors clears this restriction. |
 | Export highlighted text, note, page reference, chapter, creation time and drawer | Those fields are retained or resolved from the saved location. Missing dates or unresolved reflow pages are omitted. |
 | A single book is a JSON object, several books use a `documents` envelope | Both shapes follow the exporter schema and can be read by Reader's KOReader JSON parser. |
 | Human-readable text, Markdown and HTML | The quotation and note remain literal. HTML escapes markup and uses one document containing book sections. |
 
-The stock Kindle exporter also merges Amazon's `My Clippings.txt`. Its color filters and optional book MD5 setting require further implementation in Reader. This increment covers Reader's own saved highlights. [KOReader export actions](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/exporter.koplugin/main.lua), [annotation fields](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/exporter.koplugin/clip.lua), [JSON shapes](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/exporter.koplugin/target/json.lua)
+The stock Kindle exporter also merges Amazon's `My Clippings.txt`. Its optional book MD5 setting requires further implementation in Reader. Named color filters are now available in the desktop candidate; see [selection and color-filter workflows](highlight-workflows.md). This increment covers Reader's own saved highlights. [KOReader export actions](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/exporter.koplugin/main.lua), [annotation fields](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/exporter.koplugin/clip.lua), [JSON shapes](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/exporter.koplugin/target/json.lua)
 
 ## Verification
 

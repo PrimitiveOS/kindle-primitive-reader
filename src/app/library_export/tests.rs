@@ -50,6 +50,166 @@ fn save_reflow_mark(app: &mut Reader, path: &std::path::Path) -> u64 {
 }
 
 #[test]
+fn export_color_filters_migrate_old_preferences_and_preserve_empty_selection_semantics() {
+    let fixture = Fixture::new();
+    let path = fixture.root.join("export-preferences.json");
+    for legacy in ["null", "[]", "[\"underscore\"]"] {
+        fs::write(&path, legacy).unwrap();
+        let mut settings = Export::load(path.clone());
+        let expected: Option<Vec<HighlightStyle>> = serde_json::from_str(legacy).unwrap();
+        assert_eq!(settings.styles, expected);
+        assert!(settings.colors.is_none());
+        settings.colors = Some(vec![HighlightColor::Red, HighlightColor::Blue]);
+        settings.save_preferences().unwrap();
+        let reread = Export::load(path.clone());
+        assert_eq!(reread.styles, expected);
+        assert_eq!(reread.colors, settings.colors);
+    }
+    fs::write(&path, r#"{"styles":[],"colors":[]}"#).unwrap();
+    let settings = Export::load(path);
+    assert_eq!(settings.styles, Some(vec![]));
+    assert_eq!(settings.colors, Some(vec![]));
+}
+
+#[test]
+fn damaged_existing_export_filters_never_fall_back_to_exporting_everything() {
+    let fixture = Fixture::new();
+    let path = fixture.root.join("invalid-export-filters.json");
+    for invalid in [
+        "not json",
+        r#"{"styles":["future-drawer"],"colors":["red"]}"#,
+    ] {
+        fs::write(&path, invalid).unwrap();
+        let prefs = Export::load(path.clone());
+        assert_eq!(prefs.styles, Some(vec![]));
+        assert_eq!(prefs.colors, Some(vec![]));
+    }
+    fs::write(&path,r#"{"styles":["underscore","underscore","underscore","underscore","underscore"],"colors":["red","red","red","red","red","red","red","red","red","red"]}"#).unwrap();
+    let prefs = Export::load(path);
+    assert_eq!(prefs.styles, Some(vec![HighlightStyle::Underline]));
+    assert_eq!(prefs.colors, Some(vec![HighlightColor::Red]));
+}
+
+#[test]
+fn export_multi_color_and_style_filters_intersect_and_preserve_dates_text_and_original_marks() {
+    let fixture = Fixture::new();
+    let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+    let id = save_reflow_mark(&mut app, &fixture.book);
+    app.library.state_mut(id).unwrap().highlights[0].color = HighlightColor::Red;
+    let reading = &mut app.active.as_mut().unwrap().reading;
+    reading.jump(1, Some("door")).unwrap();
+    let start = reading.probe.fragment("door").unwrap();
+    let mut end = start.clone();
+    end.offset += "At dusk the door".len();
+    let selection = reading.probe.select_range(&start, &end).unwrap();
+    app.library
+        .state_mut(id)
+        .unwrap()
+        .highlights
+        .push(Highlight {
+            selection,
+            note: Some("Keep the blue note".into()),
+            created_at: Some(1_730_777_900),
+            style: HighlightStyle::Lighten,
+            color: HighlightColor::Blue,
+        });
+    app.mark_book_changed();
+    app.save().unwrap();
+    let before = app.library.bytes().unwrap();
+    app.activate_library_export(Command::Open).unwrap();
+    app.activate_library_export(Command::History).unwrap();
+    tap_row(&mut app, "Highlight colors");
+    for color in [HighlightColor::Red, HighlightColor::Blue] {
+        let i = HighlightColor::ALL
+            .iter()
+            .position(|candidate| *candidate == color)
+            .unwrap();
+        let rect = super::super::highlight_palette::cell(i);
+        assert_eq!(
+            app.input(Input::Tap((rect.x + 30) as f32, (rect.y + 40) as f32)),
+            Change::Partial
+        );
+    }
+    capture_test_screen(&app, &fonts, "READER_EXPORT_COLOR_FILTER_SCREEN", false);
+    capture_test_screen(&app, &fonts, "READER_EXPORT_COLOR_FILTER_DARK_SCREEN", true);
+    app.activate_library_export(Command::Style(Some(HighlightStyle::Underline)))
+        .unwrap();
+    app.activate_library_export(Command::Start(Format::Json))
+        .unwrap();
+    settle(&mut app);
+    let file = app.exports.join("library-highlights.json");
+    let value: serde_json::Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+    let entries = value["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["color"], "red");
+    assert_eq!(entries[0]["time"], 1_740_777_900i64);
+    assert!(
+        entries[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("copper lantern")
+    );
+    app.activate_library_export(Command::Style(None)).unwrap();
+    app.activate_library_export(Command::Color(Some(HighlightColor::Red)))
+        .unwrap();
+    app.activate_library_export(Command::Start(Format::Json))
+        .unwrap();
+    settle(&mut app);
+    let value: serde_json::Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+    assert_eq!(value["entries"].as_array().unwrap().len(), 1);
+    assert_eq!(value["entries"][0]["color"], "blue");
+    app.activate_library_export(Command::Color(Some(HighlightColor::Blue)))
+        .unwrap();
+    assert_eq!(app.library_export.colors, Some(vec![]));
+    let saved = fs::read(&file).unwrap();
+    app.activate_library_export(Command::Start(Format::Json))
+        .unwrap();
+    settle(&mut app);
+    assert_eq!(
+        fs::read(&file).unwrap(),
+        saved,
+        "empty filter must never broaden to all colors or overwrite an earlier export"
+    );
+    assert!(
+        app.notice
+            .as_deref()
+            .unwrap_or("")
+            .contains("No highlights")
+    );
+    assert_eq!(app.library.bytes().unwrap(), before);
+}
+
+#[test]
+fn export_filter_preferences_roll_back_when_storage_rejects_the_change() {
+    let fixture = Fixture::new();
+    let mut app = Reader::open(
+        &fixture.root,
+        &fixture.state,
+        vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+    )
+    .unwrap();
+    app.activate_library_export(Command::Color(Some(HighlightColor::Blue)))
+        .unwrap();
+    let path = app.library_export.path.clone();
+    let saved = fs::read(&path).unwrap();
+    fs::remove_file(&path).unwrap();
+    fs::create_dir(&path).unwrap();
+    assert!(
+        app.activate_library_export(Command::Color(Some(HighlightColor::Red)))
+            .is_err()
+    );
+    assert_eq!(app.library_export.colors, Some(vec![HighlightColor::Blue]));
+    assert!(
+        app.activate_library_export(Command::Style(Some(HighlightStyle::Underline)))
+            .is_err()
+    );
+    assert!(app.library_export.styles.is_none());
+    fs::remove_dir(&path).unwrap();
+    fs::write(path, saved).unwrap();
+}
+
+#[test]
 fn exports_history_collections_and_selected_books_through_normal_controls() {
     let fixture = Fixture::new();
     let second = fixture.root.join("Earlier edition.epub");

@@ -1,7 +1,7 @@
 //! Export highlights from History, chosen books or collections without moving the reader.
 use super::{Action, Book, BookConfig, Change, Engine, Item, Reader, Result, Screen, with_storage};
-use crate::highlight_style::HighlightStyle;
-use serde::Serialize;
+use crate::highlight_style::{HighlightColor, HighlightStyle};
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, VecDeque};
 use std::time::{Duration, Instant};
 
@@ -11,6 +11,7 @@ pub(super) enum Page {
     Books,
     Collections,
     Options,
+    Colors,
     Formats,
     Running,
 }
@@ -22,6 +23,7 @@ impl Page {
             Self::Books => "Choose books",
             Self::Collections => "Choose collections",
             Self::Options => "Export options",
+            Self::Colors => "Export highlight colors",
             Self::Formats => "Export format",
             Self::Running => "Exporting highlights",
         }
@@ -57,6 +59,7 @@ pub(super) enum Command {
     ToggleAll,
     Apply,
     Style(Option<HighlightStyle>),
+    Color(Option<HighlightColor>),
     Start(Format),
     Cancel,
 }
@@ -67,26 +70,72 @@ pub(super) struct Export {
     books: BTreeSet<u64>,
     collections: BTreeSet<String>,
     styles: Option<Vec<HighlightStyle>>,
+    colors: Option<Vec<HighlightColor>>,
     job: Option<Job>,
     saved: Option<String>,
 }
 
+#[derive(Default, Serialize, Deserialize)]
+#[serde(default)]
+struct Preferences {
+    styles: Option<Vec<HighlightStyle>>,
+    colors: Option<Vec<HighlightColor>>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum StoredPreferences {
+    Legacy(Option<Vec<HighlightStyle>>),
+    Current(Preferences),
+}
+
 impl Export {
     pub(super) fn load(path: std::path::PathBuf) -> Self {
-        let styles: Option<Vec<HighlightStyle>> = super::read_import_file(&path, 4096)
+        let saved: Option<StoredPreferences> = super::read_import_file(&path, 4096)
             .ok()
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .flatten();
-        let styles = styles.filter(|styles| styles.len() <= HighlightStyle::ALL.len());
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok());
+        let saved = match saved {
+            Some(StoredPreferences::Legacy(styles)) => Preferences {
+                styles,
+                colors: None,
+            },
+            Some(StoredPreferences::Current(current)) => current,
+            // A damaged existing filter must not silently export more marks.
+            // The visible All colors/All styles controls explicitly reset it.
+            None if path.exists() => Preferences {
+                styles: Some(Vec::new()),
+                colors: Some(Vec::new()),
+            },
+            None => Preferences::default(),
+        };
+        let styles = saved.styles.map(|styles| {
+            HighlightStyle::ALL
+                .into_iter()
+                .filter(|style| styles.contains(style))
+                .collect()
+        });
+        let colors = saved.colors.map(|colors| {
+            HighlightColor::ALL
+                .into_iter()
+                .filter(|color| colors.contains(color))
+                .collect()
+        });
         Self {
             path,
             styles,
+            colors,
             ..Self::default()
         }
     }
 
     fn save_preferences(&self) -> Result<()> {
-        primitive_app::save(&self.path, &serde_json::to_vec(&self.styles)?)?;
+        primitive_app::save(
+            &self.path,
+            &serde_json::to_vec(&Preferences {
+                styles: self.styles.clone(),
+                colors: self.colors.clone(),
+            })?,
+        )?;
         Ok(())
     }
 }
@@ -151,6 +200,45 @@ fn has_highlights(book: &crate::library::BookState) -> bool {
 }
 
 impl Reader {
+    pub(super) fn draw_export_colors(&self, canvas: &mut primitive_ui::Canvas) {
+        super::highlight_palette::draw(
+            canvas,
+            self.library_export.colors.is_none(),
+            |color| {
+                self.library_export
+                    .colors
+                    .as_ref()
+                    .is_some_and(|colors| colors.contains(&color))
+            },
+            true,
+        );
+        if let Some(notice) = &self.notice {
+            canvas.text(
+                primitive_ui::Rect::new(40, 944, primitive_app::WIDTH as i32 - 80, 180),
+                notice,
+                primitive_ui::CAPTION.lines(4),
+            );
+        }
+    }
+    pub(super) fn export_colors_input(&mut self, input: primitive_ui::Input) -> Change {
+        use primitive_ui::Input;
+        if input == Input::PageBack
+            || matches!(input,Input::Tap(x,y) if primitive_ui::back_button(primitive_app::WIDTH as i32).contains(x,y))
+        {
+            self.show(Screen::LibraryExport(Page::Options));
+            return Change::Partial;
+        }
+        let Input::Tap(x, y) = input else {
+            return Change::None;
+        };
+        let Some(color) = super::highlight_palette::at(x, y) else {
+            return Change::None;
+        };
+        match self.activate_library_export(Command::Color(color)) {
+            Ok(()) => Change::Partial,
+            Err(error) => self.report(error),
+        }
+    }
     pub(super) fn library_export_items(&self, page: Page) -> Vec<Item> {
         use Command as C;
         let export = &self.library_export;
@@ -210,6 +298,12 @@ impl Reader {
                 let mut rows = vec![
                     row("Choose export format", C::Choose(Page::Formats))
                         .detail(format!("{} books", export.books.len())),
+                    row("Highlight colors", C::Choose(Page::Colors)).detail(
+                        export.colors.as_ref().map_or_else(
+                            || "All colors".into(),
+                            |colors| format!("{} selected", colors.len()),
+                        ),
+                    ),
                     selected(
                         "All highlight styles",
                         C::Style(None),
@@ -228,6 +322,7 @@ impl Reader {
                 }));
                 rows
             }
+            Page::Colors => Vec::new(),
             Page::Formats => {
                 let mut rows = Vec::new();
                 if let Some(saved) = &export.saved {
@@ -320,17 +415,42 @@ impl Reader {
                 self.show(Screen::LibraryExport(Page::Options));
             }
             C::Style(None) => {
+                let prior = self.library_export.styles.clone();
                 self.library_export.styles = None;
-                self.library_export.save_preferences()?;
+                if let Err(error) = self.library_export.save_preferences() {
+                    self.library_export.styles = prior;
+                    return Err(error);
+                }
             }
             C::Style(Some(style)) => {
+                let prior = self.library_export.styles.clone();
                 let styles = self.library_export.styles.get_or_insert_with(Vec::new);
                 if let Some(index) = styles.iter().position(|saved| *saved == style) {
                     styles.remove(index);
                 } else {
                     styles.push(style);
                 }
-                self.library_export.save_preferences()?;
+                if let Err(error) = self.library_export.save_preferences() {
+                    self.library_export.styles = prior;
+                    return Err(error);
+                }
+            }
+            C::Color(color) => {
+                let prior = self.library_export.colors.clone();
+                if let Some(color) = color {
+                    let colors = self.library_export.colors.get_or_insert_with(Vec::new);
+                    if let Some(index) = colors.iter().position(|saved| *saved == color) {
+                        colors.remove(index);
+                    } else {
+                        colors.push(color);
+                    }
+                } else {
+                    self.library_export.colors = None;
+                }
+                if let Err(error) = self.library_export.save_preferences() {
+                    self.library_export.colors = prior;
+                    return Err(error);
+                }
             }
             C::Cancel => {
                 self.library_export.job = None;
@@ -366,10 +486,14 @@ impl Reader {
         let book = with_storage(|| Ok(Book::open(&absolute).ok()))?;
         let mut marks = VecDeque::new();
         let styles = &self.library_export.styles;
+        let colors = &self.library_export.colors;
         for mark in state.highlights.iter().filter(|mark| {
             styles
                 .as_ref()
                 .is_none_or(|styles| styles.contains(&mark.style))
+                && colors
+                    .as_ref()
+                    .is_none_or(|colors| colors.contains(&mark.color))
         }) {
             let start = &mark.selection.start;
             let chapter = book
@@ -381,7 +505,8 @@ impl Reader {
                     text: mark.selection.text.clone(),
                     note: mark.note.clone(),
                     time: mark.created_at,
-                    drawer: mark.style, color: mark.color,
+                    drawer: mark.style,
+                    color: mark.color,
                     page: None,
                     chapter: chapter
                         .and_then(|index| book.as_ref()?.chapters.get(index))
@@ -395,6 +520,9 @@ impl Reader {
             styles
                 .as_ref()
                 .is_none_or(|styles| styles.contains(&mark.style))
+                && colors
+                    .as_ref()
+                    .is_none_or(|colors| colors.contains(&mark.color))
         }) {
             marks.push_back((Entry {
                 sort: "highlight", text: mark.text.clone(), note: mark.note.clone(), time: mark.created_at,
@@ -440,7 +568,9 @@ impl Reader {
             settings: state.preferences.apply_to(self.device_reading_settings()),
             scroll: state.preferences.scroll,
             facing_pages: state.preferences.facing_pages,
-            hide_nonlinear: state.hide_nonlinear.unwrap_or(self.controls.hide_nonlinear_default),
+            hide_nonlinear: state
+                .hide_nonlinear
+                .unwrap_or(self.controls.hide_nonlinear_default),
             hidden_flows: std::rc::Rc::new(state.hidden_flows.clone()),
         });
         Ok(PendingBook {
@@ -550,6 +680,7 @@ impl Reader {
             Page::Sources => Screen::ReadingData,
             Page::Books | Page::Collections | Page::Options => Screen::LibraryExport(Page::Sources),
             Page::Formats | Page::Running => Screen::LibraryExport(Page::Options),
+            Page::Colors => Screen::LibraryExport(Page::Options),
         });
     }
 

@@ -40,6 +40,7 @@ mod result_context;
 mod reading_footer;
 mod selection_popup;
 mod saved_highlight_popup;
+mod highlight_palette;
 mod user_hyphenation;
 mod footnote_popup;
 #[cfg(test)]
@@ -5444,6 +5445,7 @@ impl Reader {
             _ => self.screen.title(),
         };
         header(canvas, title, "Back");
+        if self.screen==Screen::LibraryExport(library_export::Page::Colors) {self.draw_export_colors(canvas);return;}
         if self.screen == Screen::VocabularyContext { self.draw_vocabulary_context(canvas); return; }
         if let Screen::BookmarkBrowser(page) = self.screen
             && self.draw_bookmark_browser_controls(canvas, page)
@@ -5823,6 +5825,7 @@ impl App for Reader {
         {
             return change;
         }
+        if self.screen==Screen::LibraryExport(library_export::Page::Colors) {return self.export_colors_input(input);}
         if matches!(self.screen, Screen::Book | Screen::Fixed)
             && let Some(change) = self.overlay_footer_input(input)
         {

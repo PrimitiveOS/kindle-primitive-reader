@@ -544,7 +544,9 @@ impl Reader {
         } else {
             0..height
         };
-        PagePaint { visible, inverted, highlight_appearance: self.controls.highlight_appearance, note_marker: self.controls.note_marker }
+        PagePaint { visible, inverted, highlight_appearance: self.controls.highlight_appearance, note_marker: self.controls.note_marker,
+            selection_color: (self.controls.selection_uses_highlight_color && self.effective_highlight_style() != crate::highlight_style::HighlightStyle::Invert)
+                .then(||self.effective_highlight_color()).filter(|color|!color.is_default()) }
     }
 
     pub(super) fn tools_screen(&self) -> Screen {
