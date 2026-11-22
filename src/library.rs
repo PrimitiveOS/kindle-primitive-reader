@@ -258,6 +258,8 @@ pub struct BookMetadata {
 #[serde(default)]
 pub struct BookPreferences {
     pub font_size: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub render_dpi: Option<u16>,
     pub margin: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub margin_sides: Option<u32>,
@@ -319,6 +321,9 @@ impl BookPreferences {
         };
         let adjusted = Settings {
             font_size: self.font_size.unwrap_or(settings.font_size),
+            render_dpi: self.render_dpi
+                .filter(|dpi| crate::RENDER_DPI_PRESETS.contains(dpi))
+                .unwrap_or(settings.render_dpi),
             margin: self.margin.unwrap_or(settings.margin),
             margin_sides: self
                 .margin_sides

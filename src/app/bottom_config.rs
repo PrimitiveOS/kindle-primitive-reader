@@ -411,6 +411,16 @@ impl Reader {
                             }),
                         ),
                         ConfigRow::new(
+                            "Zoom (dpi)",
+                            crate::RENDER_DPI_PRESETS.map(|render_dpi| {
+                                Choice::option(
+                                    if render_dpi == 0 { "Off".to_string() } else { render_dpi.to_string() },
+                                    Action::Text(Settings { render_dpi, ..settings }),
+                                    settings.render_dpi == render_dpi,
+                                )
+                            }),
+                        ),
+                        ConfigRow::new(
                             "Font kerning",
                             [("Off", false), ("On", true)].map(|(title, font_kerning)| {
                                 Choice::option(

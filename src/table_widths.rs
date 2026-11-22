@@ -76,7 +76,7 @@ impl TableWidths {
             let any_hint = blocks.iter().filter_map(|b| owners[b.element]).any(|i| {
                 matches!(
                     styles[i].image_width,
-                    Some(ImageLength::Fraction(_) | ImageLength::Em(_) | ImageLength::Pixels(_))
+                    Some(ImageLength::Fraction(_) | ImageLength::Em(_) | ImageLength::Pixels(_) | ImageLength::Physical(_) | ImageLength::RootEm(_))
                 )
             });
             if !any_hint && !styles[table].border_collapse {

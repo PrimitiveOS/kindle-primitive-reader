@@ -1462,16 +1462,50 @@ struct ImageSizing {
     height: u32,
     requested_width: Option<f64>,
     requested_height: Option<f64>,
+    render_dpi: u16,
+}
+
+#[cfg(test)]
+mod dpi_tests {
+    use super::*;
+
+    #[test]
+    fn dpi_scales_intrinsic_and_html_images_but_not_relative_constraints_and_bounds_every_target() {
+        let source = Source::parse(r#"<html><body><p><img src="x" width="144" height="96"/></p></body></html>"#).unwrap();
+        let image = &source.blocks[0].images[0];
+        for dpi in crate::RENDER_DPI_PRESETS {
+            let settings = Settings { render_dpi: dpi, ..Settings::default() };
+            let scale = if dpi == 0 { 1. } else { f64::from(dpi) / 96. };
+            let mut sizing = ImageSizing::new(image, settings, &Style::default(), false, 1000);
+            assert_eq!(sizing.target(144, 96), ((144. * scale).round() as u32, (96. * scale).round() as u32));
+            let previous_key = sizing.key("x");
+            sizing.requested_width = None;
+            sizing.requested_height = None;
+            assert_eq!(sizing.target(144, 96), ((144. * scale).round() as u32, (96. * scale).round() as u32));
+            assert_ne!(sizing.key("x"), previous_key);
+            assert!(sizing.target(100_000, 100_000).0 <= 1000);
+            assert!(sizing.target(1, 100_000).0 >= 1);
+            let style = Style { image_width: Some(crate::book_style::ImageLength::Fraction(0.25)), image_height: Some(crate::book_style::ImageLength::Auto), ..Style::default() };
+            let relative = ImageSizing::new(image, settings, &style, false, 1000);
+            assert_eq!(relative.target(144, 96), (250, 167));
+            let style = Style { image_width: Some(crate::book_style::ImageLength::Em(2.)), image_height: Some(crate::book_style::ImageLength::Auto), ..Style::default() };
+            assert_eq!(ImageSizing::new(image, settings, &style, false, 1000).target(144, 96), (84, 56));
+        }
+        let old = ImageSizing::new(image, Settings::default(), &Style::default(), false, 1000);
+        let scaled = ImageSizing::new(image, Settings { render_dpi: 212, ..Settings::default() }, &Style::default(), false, 1000);
+        assert_ne!(old.key("x"), scaled.key("x"));
+    }
 }
 
 impl ImageSizing {
-    fn key<'a>(&self, path: &'a str) -> (&'a str, Option<u64>, Option<u64>, u32, u32) {
+    fn key<'a>(&self, path: &'a str) -> (&'a str, Option<u64>, Option<u64>, u32, u32, u16) {
         (
             path,
             self.requested_width.map(f64::to_bits),
             self.requested_height.map(f64::to_bits),
             self.height,
             self.width,
+            self.render_dpi,
         )
     }
 
@@ -1492,14 +1526,15 @@ impl ImageSizing {
             settings.text_height()
         };
         let font_size = (settings.font_size * style.size_scale).clamp(12.0, 192.0);
+        let html_scale = if settings.render_dpi == 0 { 1. } else { f32::from(settings.render_dpi) / 96. };
         let requested_width = style
             .image_width
-            .map_or(image.width, |value| value.pixels(width, font_size))
+            .map_or_else(|| image.width.map(|px| px * html_scale), |value| value.pixels(width, font_size))
             .filter(|v| v.is_finite())
             .map(f64::from);
         let requested_height = style
             .image_height
-            .map_or(image.height, |value| value.pixels(height, font_size))
+            .map_or_else(|| image.height.map(|px| px * html_scale), |value| value.pixels(height, font_size))
             .filter(|v| v.is_finite())
             .map(f64::from);
         Self {
@@ -1507,7 +1542,22 @@ impl ImageSizing {
             height,
             requested_width,
             requested_height,
+            render_dpi: settings.render_dpi,
         }
+    }
+
+    fn target(&self, original_w: u32, original_h: u32) -> (u32, u32) {
+        let intrinsic_scale = if self.render_dpi == 0 { 1. } else { f64::from(self.render_dpi) / 96. };
+        let ratio = f64::from(original_w) / f64::from(original_h);
+        let w = self.requested_width.unwrap_or_else(|| {
+            self.requested_height.map_or(f64::from(original_w) * intrinsic_scale, |h| h * ratio)
+        });
+        let h = self.requested_height.unwrap_or(w / ratio);
+        let scale = (f64::from(self.width) / w).min(f64::from(self.height) / h).min(1.0);
+        (
+            (w * scale).round().clamp(1.0, f64::from(self.width)) as u32,
+            (h * scale).round().clamp(1.0, f64::from(self.height)) as u32,
+        )
     }
 }
 
@@ -1519,24 +1569,11 @@ fn load_image(
     sizing: ImageSizing,
     cache_pixels: usize,
 ) -> Option<(String, GrayImage, (u32, u32))> {
-    let ImageSizing {
-        width,
-        height,
-        requested_width,
-        requested_height,
-    } = sizing;
-    let target = |original_w: u32, original_h: u32| {
-        let ratio = f64::from(original_w) / f64::from(original_h);
-        let w = requested_width
-            .unwrap_or_else(|| requested_height.map_or(f64::from(original_w), |h| h * ratio));
-        let h = requested_height.unwrap_or(w / ratio);
-        let scale = (f64::from(width) / w).min(f64::from(height) / h).min(1.0);
-        (
-            (w * scale).round().clamp(1.0, f64::from(width)) as u32,
-            (h * scale).round().clamp(1.0, f64::from(height)) as u32,
-        )
-    };
-    let styled_size = (requested_width.is_some() || requested_height.is_some())
+    let width = sizing.width;
+    let height = sizing.height;
+    let target = |original_w, original_h| sizing.target(original_w, original_h);
+    let styled_size = (sizing.requested_width.is_some() || sizing.requested_height.is_some()
+        || !matches!(sizing.render_dpi, 0 | 96))
         .then_some(&target as &dyn Fn(u32, u32) -> (u32, u32));
     let filter = if settings.smooth_images {
         FilterType::Triangle
@@ -2655,6 +2692,43 @@ mod tests {
     }
 
     #[test]
+    fn dpi_decodes_actual_archive_artwork_with_intrinsic_html_css_and_relative_sizes() {
+        let markup = r#"<html><body style="font-size:150%">
+          <p><img src="../images/shore.png"/></p>
+          <p><img src="../images/shore.png" width="72" height="48"/></p>
+          <p><img src="../images/shore.png" style="width:96px;height:auto"/></p>
+          <p><img src="../images/shore.png" style="width:1in;height:auto"/></p>
+          <p><img src="../images/shore.png" style="width:25%;height:auto"/></p>
+          <p><img src="../images/shore.png" style="width:2em;height:auto"/></p>
+          <p><img src="../images/shore.png" style="width:2rem;height:auto"/></p>
+          <p id="location">The original text anchor follows the illustrations.</p>
+          </body></html>"#;
+        let book = replace_opening("dpi-images", markup);
+        let original = std::fs::read(&book.0).unwrap();
+        let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        for dpi in crate::RENDER_DPI_PRESETS {
+            let settings = Settings { render_dpi: dpi, ..Settings::default() };
+            let mut probe = Probe::open(&book.0, Engine::Parley, &fonts, settings, 0).unwrap();
+            let Renderer::Parley(layout) = &probe.renderer else { unreachable!() };
+            let images = &layout.illustrations;
+            assert_eq!(images.len(), 7);
+            let scale = if dpi == 0 { 1. } else { f32::from(dpi) / 96. };
+            let widths = [144. * scale, 72. * scale, 96. * scale,
+                if dpi == 0 { 144. } else { 96. * scale },
+                settings.text_width() as f32 / 4., 126., 84.];
+            for (image, width) in images.iter().zip(widths) {
+                assert_eq!(image.display.0, width.round() as u32, "DPI {dpi}");
+                assert_eq!(image.display.1, (width * 2. / 3.).round() as u32, "DPI {dpi}");
+                assert!(image.pixels.as_raw().iter().any(|v| *v < 128));
+            }
+            let anchor = probe.fragment("location").unwrap();
+            let page = probe.page_for(&anchor).unwrap();
+            assert!(probe.capture(page).unwrap().iter().any(|v| *v < 128));
+        }
+        assert_eq!(std::fs::read(&book.0).unwrap(), original);
+    }
+
+    #[test]
     fn composited_inline_svg_draws_an_archive_picture_in_its_transformed_viewport_and_opens_original()
      {
         let xhtml = r##"<html xmlns="http://www.w3.org/1999/xhtml" xmlns:xlink="http://www.w3.org/1999/xlink"><body>
@@ -2742,6 +2816,7 @@ mod tests {
             height: 1200,
             requested_width: Some(144.0),
             requested_height: Some(96.0),
+            render_dpi: 96,
         };
         let (path, preview, display) =
             load_image(&mut book, &href, image, Settings::default(), sizing, 100).unwrap();
