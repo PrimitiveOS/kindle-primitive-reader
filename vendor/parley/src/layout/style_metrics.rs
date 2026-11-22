@@ -287,6 +287,9 @@ pub(crate) fn shift_from_parent(
     };
     let shift = match align.shift {
         BaselineShift::Length(length) => length,
+        BaselineShift::FontMetrics { height, descent } => {
+            height * (parent.ascent + parent.descent) + descent * parent.descent
+        }
         // Constants as used by WebKit and Blink.
         BaselineShift::Sub => -(parent.font_size / 5.),
         BaselineShift::Super => parent.font_size / 3.,

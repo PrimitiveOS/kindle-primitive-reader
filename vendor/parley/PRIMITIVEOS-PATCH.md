@@ -28,3 +28,8 @@ Run the regression suite with
 `cargo test --manifest-path vendor/parley/tests/Cargo.toml --test soft_hyphen`.
 The Latin tests use the Reader's Silkscreen fixture. The additional macOS bidi
 tests use the system's Arial Unicode MS.
+
+Reader also supports a baseline shift expressed as fractions of the parent font
+height and descent. Paragraph layout uses this for superscripts and subscripts
+and their nested inline content. The existing built-in shift values retain
+their original semantics. [Layout comparison and tests](../../docs/inline-text-baselines.md)

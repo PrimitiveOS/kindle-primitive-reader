@@ -138,6 +138,8 @@ pub enum AlignmentBaseline {
 pub enum BaselineShift {
     /// Raise the box by the given distance (in layout units). Negative values lower it.
     Length(f32),
+    /// Raise by fractions of the parent's font height and descent. Negative values lower it.
+    FontMetrics { height: f32, descent: f32 },
     /// Lower the box to the proper position for subscripts of the parent span.
     Sub,
     /// Raise the box to the proper position for superscripts of the parent span.
@@ -207,6 +209,10 @@ impl VerticalAlign {
         self.alignment == other.alignment
             && match (self.shift, other.shift) {
                 (BaselineShift::Length(a), BaselineShift::Length(b)) => nearly_eq(a, b),
+                (
+                    BaselineShift::FontMetrics { height: a, descent: b },
+                    BaselineShift::FontMetrics { height: c, descent: d },
+                ) => nearly_eq(a, c) && nearly_eq(b, d),
                 (a, b) => a == b,
             }
     }

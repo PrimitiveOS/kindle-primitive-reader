@@ -106,10 +106,61 @@ fn structural_styles(body: Node<'_, '_>) -> bool {
                     r.split_ascii_whitespace()
                         .any(|v| v.eq_ignore_ascii_case("stylesheet"))
                 })
+            || node.attribute(("http://www.w3.org/XML/1998/namespace", "space")) == Some("preserve")
             || node.attribute("style").is_some_and(|s| {
-                let s = s.to_ascii_lowercase();
-                s.contains("white-space") || s.contains("display")
+                may_preserve_spaces(s) || s.to_ascii_lowercase().contains("display")
             })
+    })
+}
+
+/// Structural selectors can change which text node is addressed. Inside an already
+/// resolved node, only a rule that changes whitespace processing can change its offset.
+fn may_preserve_spaces(css: &str) -> bool {
+    // Escaped identifiers and imports need a full cascade. Unknown rules keep the
+    // existing conservative import behavior; ordinary font or color rules do not.
+    css.contains('\\')
+        || css
+            .split(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_')
+            .any(|word| {
+                [
+                    "white-space",
+                    "white-space-collapse",
+                    "white-space-trim",
+                    "all",
+                    "import",
+                ]
+                .iter()
+                .any(|w| word.eq_ignore_ascii_case(w))
+            })
+}
+
+fn uncertain_text_spacing(
+    target: Node<'_, '_>,
+    linked: &mut impl FnMut(&str) -> Option<String>,
+) -> bool {
+    if target.ancestors().any(|n| {
+        n.attribute(("http://www.w3.org/XML/1998/namespace", "space")) == Some("preserve")
+            || n.attribute("style").is_some_and(may_preserve_spaces)
+    }) {
+        return true;
+    }
+    target.document().descendants().any(|node| {
+        if node.has_tag_name("style") {
+            return node
+                .children()
+                .filter_map(|n| n.text())
+                .any(may_preserve_spaces);
+        }
+        let sheet = node.has_tag_name("link")
+            && node.attribute("rel").is_some_and(|r| {
+                r.split_ascii_whitespace()
+                    .any(|word| word.eq_ignore_ascii_case("stylesheet"))
+            });
+        sheet
+            && node
+                .attribute("href")
+                .and_then(&mut *linked)
+                .is_none_or(|css| may_preserve_spaces(&css))
     })
 }
 
@@ -198,6 +249,16 @@ fn text_boundary(raw: &str, requested: usize, styled: bool) -> Result<usize> {
     let mut space = false;
     while cursor < raw.len() {
         if count == requested {
+            if space {
+                while cursor < raw.len() && raw[cursor..].starts_with(xml_space) {
+                    if styled {
+                        return Err(
+                            "Whitespace in this styled KOReader text offset is ambiguous".into(),
+                        );
+                    }
+                    cursor += 1; // XML whitespace is ASCII.
+                }
+            }
             return Ok(cursor);
         }
         let c = raw[cursor..].chars().next().unwrap();
@@ -296,7 +357,18 @@ pub fn resolve(book: &mut Book, value: &str, version: Option<u32>) -> Result<Epu
         return Err("The saved KOReader chapter is missing or ambiguous".into());
     }
     let xhtml = book.chapter(index)?;
-    let (revision, block, offset) = locate_in_chapter(&xhtml, &ptr.steps, ptr.offset)?;
+    let mut remaining = 512 * 1024;
+    let mut sheets = 0;
+    let (revision, block, offset) = locate_in_chapter(&xhtml, &ptr.steps, ptr.offset, |href| {
+        if sheets == 16 || remaining == 0 {
+            return None;
+        }
+        sheets += 1;
+        let name = Book::resolve(&path, href).ok()?;
+        let bytes = book.resource_limited(&name, remaining).ok()?;
+        remaining -= bytes.len();
+        String::from_utf8(bytes).ok()
+    })?;
     Ok(EpubPosition {
         chapter: index,
         anchor: Anchor {
@@ -314,6 +386,7 @@ fn locate_in_chapter(
     xhtml: &str,
     steps: &[Step<'_>],
     offset: usize,
+    mut linked: impl FnMut(&str) -> Option<String>,
 ) -> Result<(u64, usize, usize)> {
     let xml = crate::epub_xml::without_plain_doctype(xhtml);
     let document = Document::parse_with_options(&xml, xml_options())?;
@@ -350,7 +423,16 @@ fn locate_in_chapter(
         return Err("The KOReader position addresses unsupported or hidden content".into());
     }
     let byte = if target.is_text() {
-        target.range().start + text_boundary(&xml[target.range()], offset, styled)?
+        let raw = &xml[target.range()];
+        // Reading the linked stylesheets is only necessary for an ambiguous whitespace run.
+        let byte = match text_boundary(raw, offset, styled) {
+            Ok(byte) => byte,
+            Err(_) if styled && !uncertain_text_spacing(target, &mut linked) => {
+                text_boundary(raw, offset, false)?
+            }
+            Err(err) => return Err(err),
+        };
+        target.range().start + byte
     } else if offset == 0 && target != body {
         target.range().start
     } else if offset == 0 {
@@ -389,7 +471,8 @@ mod tests {
         let xhtml = format!("<html xmlns='{XHTML}'><head/><body>{markup}</body></html>");
         let raw = format!("/body/DocFragment[1]/body{suffix}");
         let pointer = Pointer::parse(&raw)?;
-        let (revision, key, offset) = locate_in_chapter(&xhtml, &pointer.steps, pointer.offset)?;
+        let (revision, key, offset) =
+            locate_in_chapter(&xhtml, &pointer.steps, pointer.offset, |_| None)?;
         let original = Source::parse(&xhtml)?;
         assert_eq!(revision, original.revision);
         Ok((
@@ -430,6 +513,29 @@ mod tests {
         assert_eq!(&text[at..], "rth inlet.");
         let (a, i) = location("<p>North.</p><a/>", "/a.0").unwrap();
         assert_eq!(i, a.len());
+    }
+
+    #[test]
+    fn ordinary_linked_typography_keeps_a_normalized_text_offset_unambiguous() {
+        let xhtml = format!(
+            r#"<html xmlns='{XHTML}'><head><link rel="stylesheet" href="book.css"/></head><body><p>A   B C</p></body></html>"#
+        );
+        let pointer = Pointer::parse("/body/DocFragment[1]/body/p/text().2").unwrap();
+        let regular = locate_in_chapter(&xhtml, &pointer.steps, 2, |_| {
+            Some("p { display: block; font-family: serif; }".into())
+        })
+        .unwrap();
+        assert_eq!(regular.2, 2);
+        for css in [
+            None,
+            Some("p { white-space: pre-wrap }"),
+            Some("@import url(other.css)"),
+            Some("p { all: revert }"),
+        ] {
+            assert!(
+                locate_in_chapter(&xhtml, &pointer.steps, 2, |_| css.map(str::to_owned)).is_err()
+            );
+        }
     }
 
     #[test]

@@ -1177,6 +1177,12 @@ fn make_paragraph(
         if run_line_break != paragraph_line_break {
             builder.push(StyleProperty::LineBreak(run_line_break), text.bytes.clone());
         }
+        if run.text_rise != style.text_rise {
+            builder.push(
+                StyleProperty::VerticalAlign(run.text_rise.from_block(style)),
+                text.bytes.clone(),
+            );
+        }
         if run.word_break != style.word_break {
             builder.push(StyleProperty::WordBreak(run.word_break), text.bytes.clone());
         }
@@ -2944,6 +2950,9 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod inline_baseline_tests;
 
 #[cfg(test)]
 mod publisher_face_tests;

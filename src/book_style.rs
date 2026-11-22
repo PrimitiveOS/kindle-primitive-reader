@@ -125,10 +125,31 @@ pub(crate) enum Hyphens {
     Auto,
 }
 
+/// Source spans are flattened into paragraph byte ranges. Carry the summed parent-relative
+/// shifts so emphasis or a link inside a script stays on the script's baseline.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct TextRise {
+    height: f32,
+    descent: f32,
+}
+
+impl TextRise {
+    pub(crate) fn from_block(self, block: &Style) -> parley::VerticalAlign {
+        parley::VerticalAlign::new(
+            parley::AlignmentBaseline::Baseline,
+            parley::BaselineShift::FontMetrics {
+                height: (self.height - block.text_rise.height) / block.size_scale,
+                descent: (self.descent - block.text_rise.descent) / block.size_scale,
+            },
+        )
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct Style {
     pub font_family: Family,
     pub size_scale: f32,
+    pub text_rise: TextRise,
     pub font_weight: FontWeight,
     pub font_style: FontStyle,
     pub line_height: Option<f32>,
@@ -150,6 +171,7 @@ impl Default for Style {
         Self {
             font_family: Family::Generic(GenericFamily::Serif),
             size_scale: 1.0,
+            text_rise: TextRise::default(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
             line_height: None,
@@ -253,6 +275,14 @@ impl BookStyle {
                     style.font_weight = Weight::Bolder.resolve(parent.font_weight)
                 }
                 "em" | "i" => style.font_style = FontStyle::Italic,
+                "sup" | "sub" => {
+                    style.size_scale *= 0.7;
+                    style.image_align = if element.tag == "sup" {
+                        parley::VerticalAlign::SUPER
+                    } else {
+                        parley::VerticalAlign::SUB
+                    };
+                }
                 _ => {}
             }
             let inline = element
@@ -322,6 +352,13 @@ impl BookStyle {
                     Property::VerticalAlign(value) => style.image_align = *value,
                     Property::FontSource(_) => {}
                 }
+            }
+            // CREngine places superscripts a quarter of the parent font height above
+            // baseline and subscripts four fifths of its descent below it.
+            match style.image_align.shift {
+                parley::BaselineShift::Super => style.text_rise.height += 0.25 * parent.size_scale,
+                parley::BaselineShift::Sub => style.text_rise.descent -= 0.8 * parent.size_scale,
+                _ => {}
             }
             style.size_scale = style.size_scale.clamp(0.125, 8.0);
             result.push(style);
@@ -947,6 +984,8 @@ impl<'i> DeclarationParser<'i> for Properties {
                 }
                 "font-size" => {
                     let size = match input.next()?.clone() {
+                        Token::Ident(name) if name.eq_ignore_ascii_case("smaller") => Size::Parent(1.0 / 1.2),
+                        Token::Ident(name) if name.eq_ignore_ascii_case("larger") => Size::Parent(1.2),
                         Token::Percentage { unit_value, .. } => Size::Parent(unit_value),
                         Token::Dimension { value, unit, .. } if unit.eq_ignore_ascii_case("em") => {
                             Size::Parent(value)

@@ -6,6 +6,7 @@ The [manifest](manifest.json) records the expected reading order, locations, lin
 | --- | --- |
 | `field-notes-epub2.epub` | EPUB 2 NCX navigation, chapter order, publisher CSS, grayscale PNG, local and cross-chapter links, and multilingual text |
 | `field-notes-epub3.epub` | EPUB 3 navigation, semantic footnote and back link, embedded font, and the same reading passages as the EPUB 2 book |
+| `inline-scripts.xhtml` | Raised footnote links and exponents, lowered formula indices, source navigation and font resizing. |
 | `publisher-faces.epub` | Two OFL fonts assigned to four styles and two CSS families. Compare the normal, emphasized and imprint lettering, then restore the source anchor. [Reading checks](../../docs/embedded-font-families.md) |
 | `night-landing.epub` | A short and a multi-page endnote in a separate chapter, two inline references, a link back to the passage and an ordinary heading link. Each note has original sample text. |
 | `english-hyphenation.epub` | Compare Automatic and Authored modes on identical English text. The language comes from the OPF. Check both fragments of a split word and restore its source anchor. [Simulator comparison](../../docs/english-hyphenation.md) |
