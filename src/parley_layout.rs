@@ -100,6 +100,8 @@ struct Illustration {
     // Inline boxes provide x once the paragraph's line breaks and alignment are known.
     x: Option<usize>,
     y: f32,
+    // Preserve exact layout-line ownership separately from rounded paint Y.
+    line_top: Option<f32>,
     pixels: Arc<GrayImage>,
     display: (u32, u32),
 }
@@ -528,6 +530,7 @@ impl ParleyChapter {
                     label: image.label.clone(),
                     x: None,
                     y: 0.0,
+                    line_top: None,
                     pixels,
                     display,
                 });
@@ -597,6 +600,7 @@ impl ParleyChapter {
                             };
                             image.x = Some((x + position.x + after_gap).round().max(0.0) as usize);
                             image.y = (origin + position.y).round();
+                            image.line_top = Some(origin + line.metrics().content_block_min_coord);
                         }
                     }
                     let metrics = line.metrics();
@@ -662,6 +666,7 @@ impl ParleyChapter {
                         missing_glyphs: 0,
                     });
                     image.y = top;
+                    image.line_top = Some(top);
                     if gutter != 0 || cell.is_some() || column_width != outer_width {
                         let inset = if rtl { 0 } else { gutter };
                         image.x = Some(
@@ -944,7 +949,12 @@ impl ParleyChapter {
     pub(crate) fn image_ordinal(&self, key: usize, top: f32) -> Option<usize> {
         self.illustrations
             .iter()
-            .find(|image| image.block == key && (image.y - top).abs() < 0.01)
+            .find(|image| {
+                image.block == key
+                    && image
+                        .line_top
+                        .is_some_and(|line_top| (line_top - top).abs() < 0.01)
+            })
             .map(|image| image.source_index)
     }
 
@@ -3329,6 +3339,7 @@ mod tests {
             label: String::new(),
             x: Some(0),
             y: 0.0,
+            line_top: None,
             pixels: Arc::new(preview),
             display,
         };
@@ -3817,3 +3828,6 @@ mod vertical_padding_tests;
 
 #[cfg(test)]
 mod flow_tests;
+
+#[cfg(test)]
+mod media_line_tests;
