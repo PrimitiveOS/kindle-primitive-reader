@@ -145,3 +145,11 @@ The Mac and Oasis each passed 478 automated tests. Four original EPUBs provided 
 Eight searches on two original PDFs matched the installed KOReader word-box counts. Two PDF reading-time checks agreed on remaining physical pages. At one EPUB passage, each reader reported its own reflowed page counts and agreed on the pace calculation. Four original PDFs exercised the print-image route or its full-decoding fallback. [Word boundaries](fixed-page-search.md) · [Reading time](reading-time-estimates.md) · [Print images](print-image-decoding.md)
 
 The desktop sweep painted 27,741 pages in 1,509 sections across 48 editions.
+
+## Reader 0.1.18 on the Oasis 3
+
+The Mac and Oasis each passed 486 automated tests. In two original EPUBs, both Reader and installed KOReader moved all 1,606 rows of page content exactly 12 pixels after adjusting the horizontal margins. In five original EPUBs, the two readers agreed on the line decoration at all 36 sampled passages. [Page margins](reflow-page-margins.md) · [Publisher text decoration](publisher-text-decoration.md)
+
+Four original PDFs exercised endpoint search. A further 36 Unicode search and case combinations in three original PDFs returned the same 31 word occurrences as installed KOReader. Reader used the same source ranges and coordinates on the Mac and the Oasis. The intersection with each KOReader word rectangle covered at least 98.2 percent of the smaller rectangle. [Fixed-page search](fixed-page-search.md)
+
+The desktop reflow run inspected 1,509 sections and painted 27,741 pages across 48 editions.
