@@ -1,6 +1,8 @@
 //! Browse saved marks across the library without changing an open document.
-use super::{Action, Book, Canvas, Change, Editor, HEIGHT, Input, Item, Reader, Rect, Result,
-    Screen, WIDTH, with_storage};
+use super::{
+    Action, Book, Canvas, Change, Editor, HEIGHT, Input, Item, Reader, Rect, Result, Screen, WIDTH,
+    with_storage,
+};
 use crate::highlight_style::HighlightStyle;
 use crate::library::{BookState, BrowseKind, DocumentFormat, Library, fold_search};
 use crate::search::Query;
@@ -8,7 +10,7 @@ use primitive_ui::{BODY, CAPTION, Layout, Press, keyboard_key};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 const TEXT: Rect = Rect::new(40, 258, WIDTH as i32 - 80, HEIGHT as i32 - 538);
 const SOURCES: Rect = Rect::new(40, HEIGHT as i32 - 198, 386, 72);
@@ -35,6 +37,7 @@ pub(super) enum Page {
     Collections,
     Folder,
     Book,
+    Authors,
 }
 
 impl Page {
@@ -50,6 +53,7 @@ impl Page {
             Self::Collections => "Choose collections",
             Self::Folder => "Choose a folder",
             Self::Book => "Book information",
+            Self::Authors => "Choose an author",
         }
     }
 }
@@ -71,9 +75,14 @@ impl Source {
             Self::Folder(path, true) => !archived && book.path.starts_with(path),
             Self::Folder(path, false) => !archived && book.path.parent() == Some(path),
             Self::Books(ids) => ids.contains(&book.id),
-            Self::Collections(names) => !archived && names.iter().any(|name| {
-                library.collection(name).is_some_and(|set| set.contains(book.id))
-            }),
+            Self::Collections(names) => {
+                !archived
+                    && names.iter().any(|name| {
+                        library
+                            .collection(name)
+                            .is_some_and(|set| set.contains(book.id))
+                    })
+            }
         }
     }
 }
@@ -112,6 +121,7 @@ struct Mark<'a> {
     quote: &'a str,
     note: Option<&'a str>,
     style: Option<HighlightStyle>,
+    created_at: Option<i64>,
     location: (usize, f64, f64),
     location_label: String,
 }
@@ -144,8 +154,10 @@ pub(super) enum Command {
     ToggleAllBooks,
     ApplyChoices,
     RestrictBooks,
+    SelectAuthor(Option<String>),
     SetKind(Option<Kind>),
     SetStyle(Option<HighlightStyle>),
+    SortByDate(bool),
     Reverse,
     ClearFilters,
     GotoBook(u64),
@@ -160,6 +172,7 @@ struct ListedBook {
     archived: bool,
     count: usize,
     chapters: HashMap<String, usize>,
+    fixed: bool,
 }
 
 #[derive(Clone, Default, Deserialize, Serialize)]
@@ -168,6 +181,7 @@ struct Preferences {
     source: Option<Source>,
     kind: Option<Kind>,
     style: Option<HighlightStyle>,
+    sort_by_date: bool,
     reverse: bool,
 }
 
@@ -186,6 +200,7 @@ pub(super) struct Browser {
     case_sensitive: bool,
     kind: Option<Kind>,
     style: Option<HighlightStyle>,
+    sort_by_date: bool,
     reverse: bool,
     restricted: Option<BTreeSet<u64>>,
     picking: Option<BTreeSet<u64>>,
@@ -218,6 +233,7 @@ impl Default for Browser {
             case_sensitive: false,
             kind: None,
             style: None,
+            sort_by_date: false,
             reverse: false,
             restricted: None,
             picking: None,
@@ -240,15 +256,23 @@ impl Browser {
         const LIMIT: usize = 1024 * 1024;
         let preferences: Preferences = (|| {
             let mut bytes = Vec::new();
-            std::fs::File::open(&path).ok()?.take((LIMIT + 1) as u64).read_to_end(&mut bytes).ok()?;
-            if bytes.len() > LIMIT { return None; }
+            std::fs::File::open(&path)
+                .ok()?
+                .take((LIMIT + 1) as u64)
+                .read_to_end(&mut bytes)
+                .ok()?;
+            if bytes.len() > LIMIT {
+                return None;
+            }
             serde_json::from_slice(&bytes).ok()
-        })().unwrap_or_default();
+        })()
+        .unwrap_or_default();
         Self {
             path,
             default_source: preferences.source,
             kind: preferences.kind,
             style: preferences.style,
+            sort_by_date: preferences.sort_by_date,
             reverse: preferences.reverse,
             ..Self::default()
         }
@@ -259,6 +283,7 @@ impl Browser {
             source: self.default_source.clone(),
             kind: self.kind,
             style: self.style,
+            sort_by_date: self.sort_by_date,
             reverse: self.reverse,
         })?;
         with_storage(|| primitive_app::save(&self.path, &bytes))?;
@@ -273,7 +298,8 @@ fn has_marks(book: &BookState) -> bool {
 fn is_fixed(book: &BookState) -> bool {
     !book.pdf_highlights.is_empty()
         || DocumentFormat::for_path(&book.path).is_some_and(|format| {
-            format.is_still_image() || format.is_comic()
+            format.is_still_image()
+                || format.is_comic()
                 || matches!(format, DocumentFormat::Pdf | DocumentFormat::Djvu)
         })
 }
@@ -282,22 +308,36 @@ fn get_mark<'a>(
     book: &'a BookState,
     locator: Locator,
     chapter_for: impl Fn(&str) -> Option<usize>,
+    fixed: bool,
 ) -> Option<Mark<'a>> {
     Some(match locator {
         Locator::Bookmark(index) => {
             let mark = book.bookmarks.get(index)?;
             let position = &mark.position;
-            let location = if is_fixed(book) {
+            let location = if fixed {
                 (position.page, 0.0, 0.0)
             } else {
-                position.anchor.as_ref().map_or((position.chapter, position.page as f64, 0.0),
-                    |anchor| (position.chapter, anchor.block as f64, anchor.offset as f64))
+                position
+                    .anchor
+                    .as_ref()
+                    .map_or((position.chapter, position.page as f64, 0.0), |anchor| {
+                        (position.chapter, anchor.block as f64, anchor.offset as f64)
+                    })
             };
-            Mark { quote: &mark.label, note: None, style: None, location,
-                location_label: if is_fixed(book) {
+            Mark {
+                quote: &mark.label,
+                note: None,
+                style: None,
+                created_at: mark.created_at,
+                location,
+                location_label: if fixed {
                     format!("Page {}", position.page + 1)
                 } else {
-                    format!("Chapter {} · Page {}", position.chapter + 1, position.page + 1)
+                    format!(
+                        "Chapter {} · Page {}",
+                        position.chapter + 1,
+                        position.page + 1
+                    )
                 },
             }
         }
@@ -306,24 +346,42 @@ fn get_mark<'a>(
             let anchor = &mark.selection.start;
             let chapter = chapter_for(&anchor.chapter).or_else(|| {
                 book.bookmarks.iter().find_map(|mark| {
-                    mark.position.anchor.as_ref()
+                    mark.position
+                        .anchor
+                        .as_ref()
                         .filter(|candidate| candidate.chapter == anchor.chapter)
                         .map(|_| mark.position.chapter)
                 })
             });
-            Mark { quote: &mark.selection.text, note: mark.note.as_deref(), style: Some(mark.style),
-                location: (chapter.unwrap_or(usize::MAX), anchor.block as f64, anchor.offset as f64),
+            Mark {
+                quote: &mark.selection.text,
+                note: mark.note.as_deref(),
+                style: Some(mark.style),
+                created_at: mark.created_at,
+                location: (
+                    chapter.unwrap_or(usize::MAX),
+                    anchor.block as f64,
+                    anchor.offset as f64,
+                ),
                 location_label: chapter.map_or_else(
-                    || "Saved text location".into(), |n| format!("Chapter {}", n + 1),
+                    || "Saved text location".into(),
+                    |n| format!("Chapter {}", n + 1),
                 ),
             }
         }
         Locator::Fixed(index) => {
             let mark = book.pdf_highlights.get(index)?;
-            let (y, x) = mark.bounds.first().map_or((0.0, 0.0),
-                |rect| (f64::from(rect.y0), f64::from(rect.x0)));
-            Mark { quote: &mark.text, note: mark.note.as_deref(), style: Some(mark.style),
-                location: (mark.page, y, x), location_label: format!("Page {}", mark.page + 1),
+            let (y, x) = mark
+                .bounds
+                .first()
+                .map_or((0.0, 0.0), |rect| (f64::from(rect.y0), f64::from(rect.x0)));
+            Mark {
+                quote: &mark.text,
+                note: mark.note.as_deref(),
+                style: Some(mark.style),
+                created_at: mark.created_at,
+                location: (mark.page, y, x),
+                location_label: format!("Page {}", mark.page + 1),
             }
         }
     })
@@ -334,12 +392,39 @@ fn item(text: impl Into<String>, action: Command) -> Item {
 }
 
 fn excerpt(text: &str) -> String {
-    text.split_whitespace().take(22).collect::<Vec<_>>().join(" ")
+    text.split_whitespace()
+        .take(22)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn mark_count(count: usize) -> String {
+    format!("{count} {}", if count == 1 { "mark" } else { "marks" })
+}
+
+// The compact controls have the same 100 px minimum touch height as standard rows.
+fn contains(control: Rect, x: f32, y: f32) -> bool {
+    let extra = (100 - control.h).max(0);
+    Rect::new(
+        control.x,
+        control.y - extra / 2,
+        control.w,
+        control.h + extra,
+    )
+    .contains(x, y)
 }
 
 fn author_title(book: &BookState) -> String {
-    book.author.as_deref().map_or_else(|| book.title.clone(),
-        |author| format!("{} · {}", author.lines().next().unwrap_or(author), book.title))
+    book.author.as_deref().map_or_else(
+        || book.title.clone(),
+        |author| {
+            format!(
+                "{} · {}",
+                author.lines().next().unwrap_or(author),
+                book.title
+            )
+        },
+    )
 }
 
 impl Reader {
@@ -389,16 +474,28 @@ impl Reader {
             }
             Command::Use(source) => {
                 let mut books = with_storage(|| {
-                    Ok(self.library.recents().iter().filter(|book| has_marks(book)).filter_map(|book| {
-                        let archived = self.library.absolute_path(&book.path).is_err();
-                        source.matches(&self.library, book, archived).then(|| {
-                            (fold_search(&author_title(book)), ListedBook {
-                                id: book.id, archived, count: 0,
-                                chapters: if archived { HashMap::new() }
-                                    else { chapter_order(&self.library, book) },
+                    Ok(self
+                        .library
+                        .recents()
+                        .iter()
+                        .filter(|book| has_marks(book))
+                        .filter_map(|book| {
+                            let archived = self.library.absolute_path(&book.path).is_err();
+                            source.matches(&self.library, book, archived).then(|| {
+                                let (chapters, fixed) = book_index(&self.library, book, archived);
+                                (
+                                    fold_search(&author_title(book)),
+                                    ListedBook {
+                                        id: book.id,
+                                        archived,
+                                        count: 0,
+                                        chapters,
+                                        fixed,
+                                    },
+                                )
                             })
                         })
-                    }).collect::<Vec<_>>())
+                        .collect::<Vec<_>>())
                 })?;
                 books.sort_by(|(left, _), (right, _)| left.cmp(right));
                 self.bookmark_browser.books = books.into_iter().map(|(_, book)| book).collect();
@@ -407,9 +504,9 @@ impl Reader {
                     Source::History => "History".into(),
                     Source::Archive => "Archived books".into(),
                     Source::Folder(path, _) if path.as_os_str().is_empty() => "Documents".into(),
-                    Source::Folder(path, _) => crate::library::display_filename(
-                        &path.to_string_lossy(),
-                    ),
+                    Source::Folder(path, _) => {
+                        crate::library::display_filename(&path.to_string_lossy())
+                    }
                     Source::Books(_) => "Selected books".into(),
                     Source::Collections(_) => "Collections".into(),
                 };
@@ -425,40 +522,95 @@ impl Reader {
                     browser.default_source = previous;
                     return Err(error);
                 }
+                self.notice = Some(if browser.default_source.is_some() {
+                    "Default bookmark source saved".into()
+                } else {
+                    "Default bookmark source cleared".into()
+                });
             }
             Command::OpenFolder(path, recursive) => {
                 let listing = with_storage(|| self.library.browse(&path))?;
                 let browser = &mut self.bookmark_browser;
-                browser.subfolders = listing.entries.into_iter()
+                browser.subfolders = listing
+                    .entries
+                    .into_iter()
                     .filter(|entry| matches!(entry.kind, BrowseKind::Folder))
-                    .map(|entry| entry.path).collect();
+                    .map(|entry| entry.path)
+                    .collect();
                 browser.folder = path;
                 browser.recursive = recursive;
                 self.show(Screen::BookmarkBrowser(Page::Folder));
             }
             Command::ToggleBook(id) => {
                 let browser = &mut self.bookmark_browser;
-                let chosen = browser.picking.as_mut().unwrap_or(&mut browser.picked_books);
-                if !chosen.remove(&id) { chosen.insert(id); }
+                let chosen = browser
+                    .picking
+                    .as_mut()
+                    .unwrap_or(&mut browser.picked_books);
+                if !chosen.remove(&id) {
+                    chosen.insert(id);
+                }
             }
             Command::ToggleCollection(name) => {
                 let chosen = &mut self.bookmark_browser.picked_collections;
-                if !chosen.remove(&name) { chosen.insert(name); }
+                if !chosen.remove(&name) {
+                    chosen.insert(name);
+                }
             }
             Command::ToggleAllBooks => {
                 let browser = &mut self.bookmark_browser;
                 let ids: BTreeSet<_> = if browser.picking.is_some() {
                     browser.books.iter().map(|book| book.id).collect()
                 } else {
-                    self.library.recents().iter().filter(|book| has_marks(book)).map(|book| book.id).collect()
+                    self.library
+                        .recents()
+                        .iter()
+                        .filter(|book| has_marks(book))
+                        .map(|book| book.id)
+                        .collect()
                 };
-                let chosen = browser.picking.as_mut().unwrap_or(&mut browser.picked_books);
+                let chosen = browser
+                    .picking
+                    .as_mut()
+                    .unwrap_or(&mut browser.picked_books);
                 *chosen = if *chosen == ids { BTreeSet::new() } else { ids };
             }
             Command::RestrictBooks => {
                 let browser = &mut self.bookmark_browser;
-                browser.picking = Some(browser.restricted.clone().unwrap_or_else(||
-                    browser.books.iter().map(|book| book.id).collect()));
+                browser.picking = Some(
+                    browser
+                        .restricted
+                        .clone()
+                        .unwrap_or_else(|| browser.books.iter().map(|book| book.id).collect()),
+                );
+                self.show(Screen::BookmarkBrowser(Page::ChooseBooks));
+            }
+            Command::SelectAuthor(author) => {
+                let browser = &mut self.bookmark_browser;
+                let ids = self
+                    .library
+                    .recents()
+                    .iter()
+                    .filter(|book| has_marks(book))
+                    .filter(|book| {
+                        browser.picking.is_none() || browser.books.iter().any(|b| b.id == book.id)
+                    })
+                    .filter(|book| match &author {
+                        None => book
+                            .author
+                            .as_deref()
+                            .is_none_or(|name| name.trim().is_empty()),
+                        Some(author) => book
+                            .author
+                            .as_deref()
+                            .is_some_and(|names| names.lines().any(|name| name.trim() == author)),
+                    })
+                    .map(|book| book.id)
+                    .collect();
+                *browser
+                    .picking
+                    .as_mut()
+                    .unwrap_or(&mut browser.picked_books) = ids;
                 self.show(Screen::BookmarkBrowser(Page::ChooseBooks));
             }
             Command::ApplyChoices => {
@@ -485,6 +637,11 @@ impl Reader {
                 self.refresh_bookmark_browser();
                 self.bookmark_browser.save()?;
             }
+            Command::SortByDate(value) => {
+                self.bookmark_browser.sort_by_date = value;
+                self.refresh_bookmark_browser();
+                self.bookmark_browser.save()?;
+            }
             Command::Reverse => {
                 self.bookmark_browser.reverse = !self.bookmark_browser.reverse;
                 self.refresh_bookmark_browser();
@@ -501,7 +658,11 @@ impl Reader {
                 self.bookmark_browser.save()?;
             }
             Command::GotoBook(id) => {
-                let page = self.bookmark_browser.rows.iter().position(|r| *r == RowKey::Book(id));
+                let page = self
+                    .bookmark_browser
+                    .rows
+                    .iter()
+                    .position(|r| *r == RowKey::Book(id));
                 self.show(Screen::BookmarkBrowser(Page::Results));
                 self.list_page = page.unwrap_or(0) / super::ROWS_PER_PAGE;
             }
@@ -514,7 +675,11 @@ impl Reader {
                     let entry = self.locate_tracked(id)?;
                     self.open_book(entry)?;
                 } else {
-                    self.show(if self.fixed.is_some() { Screen::Fixed } else { Screen::Book });
+                    self.show(if self.fixed.is_some() {
+                        Screen::Fixed
+                    } else {
+                        Screen::Book
+                    });
                 }
             }
             Command::Inspect(key) => {
@@ -533,35 +698,80 @@ impl Reader {
         browser.marks.clear();
         for listed in &mut browser.books {
             listed.count = 0;
-            if browser.restricted.as_ref().is_some_and(|ids| !ids.contains(&listed.id)) {
+            if browser
+                .restricted
+                .as_ref()
+                .is_some_and(|ids| !ids.contains(&listed.id))
+            {
                 continue;
             }
-            let Some(book) = self.library.state(listed.id) else { continue; };
+            let Some(book) = self.library.state(listed.id) else {
+                continue;
+            };
             let mut marks = Vec::new();
-            for locator in (0..book.bookmarks.len()).map(Locator::Bookmark)
+            for locator in (0..book.bookmarks.len())
+                .map(Locator::Bookmark)
                 .chain((0..book.highlights.len()).map(Locator::Reflow))
                 .chain((0..book.pdf_highlights.len()).map(Locator::Fixed))
             {
-                let Some(mark) = get_mark(book, locator, |p| listed.chapters.get(p).copied())
-                else { continue };
+                let Some(mark) = get_mark(
+                    book,
+                    locator,
+                    |p| listed.chapters.get(p).copied(),
+                    listed.fixed,
+                ) else {
+                    continue;
+                };
                 if browser.kind.is_some_and(|kind| mark.kind() != kind)
                     || browser.style.is_some_and(|style| mark.style != Some(style))
-                    || browser.query.as_ref().is_some_and(|query|
-                        query.matches(mark.quote, 1).is_empty() &&
-                        mark.note.is_none_or(|note| query.matches(note, 1).is_empty()))
+                    || browser.query.as_ref().is_some_and(|query| {
+                        query.matches(mark.quote, 1).is_empty()
+                            && mark
+                                .note
+                                .is_none_or(|note| query.matches(note, 1).is_empty())
+                    })
                 {
                     continue;
                 }
-                marks.push((mark.location, MarkKey { book: book.id, locator }));
+                marks.push((
+                    mark.location,
+                    mark.created_at,
+                    MarkKey {
+                        book: book.id,
+                        locator,
+                    },
+                ));
             }
-            marks.sort_by(|(left, _), (right, _)| left.0.cmp(&right.0)
-                .then_with(|| left.1.total_cmp(&right.1))
-                .then_with(|| left.2.total_cmp(&right.2)));
-            if browser.reverse { marks.reverse(); }
+            marks.sort_by(|(left, left_date, _), (right, right_date, _)| {
+                let location = || {
+                    left.0
+                        .cmp(&right.0)
+                        .then_with(|| left.1.total_cmp(&right.1))
+                        .then_with(|| left.2.total_cmp(&right.2))
+                };
+                let directed = |order: std::cmp::Ordering| {
+                    if browser.reverse {
+                        order.reverse()
+                    } else {
+                        order
+                    }
+                };
+                if browser.sort_by_date {
+                    match (left_date, right_date) {
+                        (Some(left), Some(right)) => directed(left.cmp(right).then_with(location)),
+                        _ => right_date
+                            .is_some()
+                            .cmp(&left_date.is_some())
+                            .then_with(|| directed(location())),
+                    }
+                } else {
+                    directed(location())
+                }
+            });
             if !marks.is_empty() {
                 listed.count = marks.len();
                 browser.rows.push(RowKey::Book(listed.id));
-                for (_, mark) in marks {
+                for (_, _, mark) in marks {
                     browser.rows.push(RowKey::Mark(mark));
                     browser.marks.push(mark);
                 }
@@ -589,76 +799,156 @@ impl Reader {
     }
 
     pub(super) fn bookmark_after_password(&mut self) -> Result<()> {
-        if self.screen != Screen::PdfPassword && let Some(key) = self.bookmark_browser.after_password.take() {
+        if self.screen != Screen::PdfPassword
+            && let Some(key) = self.bookmark_browser.after_password.take()
+        {
             self.view_bookmark_in_book(key)?;
         }
         Ok(())
     }
 
     fn bookmark_book_available(&self, id: u64) -> bool {
-        self.bookmark_browser.books.iter().any(|book| book.id == id && !book.archived)
+        self.bookmark_browser
+            .books
+            .iter()
+            .any(|book| book.id == id && !book.archived)
     }
 }
 
-fn chapter_order(library: &Library, book: &BookState) -> HashMap<String, usize> {
-    if book.highlights.is_empty() { return HashMap::new(); }
-    let Ok(path) = library.absolute_path(&book.path) else { return HashMap::new(); };
-    let Ok(source) = Book::open(&path) else { return HashMap::new(); };
-    book.highlights.iter().filter_map(|mark| {
-        let name = &mark.selection.start.chapter;
-        source.chapter_index(name).map(|chapter| (name.clone(), chapter))
-    }).collect()
+fn book_index(
+    library: &Library,
+    book: &BookState,
+    archived: bool,
+) -> (HashMap<String, usize>, bool) {
+    let fallback = (HashMap::new(), is_fixed(book));
+    if archived || fallback.1 {
+        return fallback;
+    }
+    let Ok(path) = library.absolute_path(&book.path) else {
+        return fallback;
+    };
+    let Ok(source) = Book::open(&path) else {
+        return fallback;
+    };
+    let chapters = book
+        .highlights
+        .iter()
+        .filter_map(|mark| {
+            let name = &mark.selection.start.chapter;
+            source
+                .chapter_index(name)
+                .map(|chapter| (name.clone(), chapter))
+        })
+        .collect();
+    (chapters, source.is_fixed_layout())
 }
 
 impl Reader {
-    pub(super) fn bookmark_window(&self, page: Page, first: usize, count: usize) -> (usize, Vec<Item>) {
+    pub(super) fn bookmark_window(
+        &self,
+        page: Page,
+        first: usize,
+        count: usize,
+    ) -> (usize, Vec<Item>) {
         if page == Page::Results {
-            return (self.bookmark_browser.rows.len(), self.bookmark_browser.rows.iter()
-                .skip(first).take(count).filter_map(|key| self.bookmark_result_row(*key)).collect());
+            return (
+                self.bookmark_browser.rows.len(),
+                self.bookmark_browser
+                    .rows
+                    .iter()
+                    .skip(first)
+                    .take(count)
+                    .filter_map(|key| self.bookmark_result_row(*key))
+                    .collect(),
+            );
         }
         let rows = self.bookmark_rows(page);
-        (rows.len(), rows.into_iter().skip(first).take(count).collect())
+        (
+            rows.len(),
+            rows.into_iter().skip(first).take(count).collect(),
+        )
     }
 
     fn bookmark_result_row(&self, key: RowKey) -> Option<Item> {
         match key {
             RowKey::Book(id) => {
                 let book = self.library.state(id)?;
-                let listed = self.bookmark_browser.books.iter().find(|book| book.id == id)?;
-                let detail = if listed.archived { format!("{} marks · Archived", listed.count) }
-                    else { format!("{} marks", listed.count) };
+                let listed = self
+                    .bookmark_browser
+                    .books
+                    .iter()
+                    .find(|book| book.id == id)?;
+                let detail = if listed.archived {
+                    format!("{} · Archived", mark_count(listed.count))
+                } else {
+                    mark_count(listed.count)
+                };
                 Some(item(author_title(book), Command::BookInfo(id)).detail(detail))
             }
             RowKey::Mark(key) => {
                 let mark = self.bookmark_mark(key)?;
                 let title = mark.note.unwrap_or(mark.quote);
-                Some(item(excerpt(title), Command::Inspect(key))
-                    .detail(format!("{} · {}", mark.kind().label(), mark.location_label)))
+                Some(item(excerpt(title), Command::Inspect(key)).detail(format!(
+                    "{} · {}",
+                    mark.kind().label(),
+                    mark.location_label
+                )))
             }
         }
     }
 
     fn bookmark_mark(&self, key: MarkKey) -> Option<Mark<'_>> {
         let state = self.library.state(key.book)?;
-        let listed = self.bookmark_browser.books.iter().find(|book| book.id == key.book)?;
-        get_mark(state, key.locator, |name| listed.chapters.get(name).copied())
+        let listed = self
+            .bookmark_browser
+            .books
+            .iter()
+            .find(|book| book.id == key.book)?;
+        get_mark(
+            state,
+            key.locator,
+            |name| listed.chapters.get(name).copied(),
+            listed.fixed,
+        )
     }
 
     fn bookmark_rows(&self, page: Page) -> Vec<Item> {
         let browser = &self.bookmark_browser;
         use Command as C;
         match page {
-            Page::Sources => vec![
-                item("History", C::Use(Source::History)),
-                item("Collections", C::Go(Page::Collections)),
-                item("Selected books", C::Go(Page::ChooseBooks)),
-                item("Archived books", C::Use(Source::Archive)),
-                item("Documents", C::Use(Source::Folder(PathBuf::new(), false))),
-                item("Documents and subfolders", C::Use(Source::Folder(PathBuf::new(), true))),
-                item("Choose a folder", C::OpenFolder(PathBuf::new(), false)),
-                item("Choose a folder with subfolders", C::OpenFolder(PathBuf::new(), true)),
-                Item::new("Hold a source to make it the default", Action::Heading),
-            ],
+            Page::Sources => {
+                let mut rows = vec![
+                    item("History", C::Use(Source::History)),
+                    item("Collections", C::Go(Page::Collections)),
+                    item("Selected books", C::Go(Page::ChooseBooks)),
+                    item("Archived books", C::Use(Source::Archive)),
+                    item("Documents", C::Use(Source::Folder(PathBuf::new(), false))),
+                    item(
+                        "Documents and subfolders",
+                        C::Use(Source::Folder(PathBuf::new(), true)),
+                    ),
+                    item("Choose a folder", C::OpenFolder(PathBuf::new(), false)),
+                    item(
+                        "Choose a folder with subfolders",
+                        C::OpenFolder(PathBuf::new(), true),
+                    ),
+                    Item::new("Hold a source to make it the default", Action::Heading),
+                ];
+                for row in &mut rows {
+                    if let Action::BookmarkBrowser(C::Use(source)) = &row.action
+                        && browser.default_source.as_ref() == Some(source)
+                    {
+                        row.detail = Some("Default source".into());
+                    }
+                }
+                if let Some(source) = &browser.default_source {
+                    rows.push(item(
+                        "Clear default source",
+                        C::ToggleDefault(source.clone()),
+                    ));
+                }
+                rows
+            }
             Page::Filters => {
                 let kind = browser.kind.map_or("All types", Kind::label);
                 let style = browser.style.map_or("All styles", HighlightStyle::label);
@@ -666,64 +956,162 @@ impl Reader {
                     item("Clear filters", C::ClearFilters),
                     item("Books with matches", C::Go(Page::Books)),
                     item("Filter by book", C::RestrictBooks),
-                    item("Reading order", C::Reverse)
-                        .detail(if browser.reverse { "Reverse" } else { "Forward" }),
+                    item("Sort direction", C::Reverse).detail(if browser.reverse {
+                        "Reverse"
+                    } else {
+                        "Forward"
+                    }),
+                    selection_row("Reading order", C::SortByDate(false), !browser.sort_by_date),
+                    selection_row("Date added", C::SortByDate(true), browser.sort_by_date),
                     item("All types", C::SetKind(None)).detail(kind),
                 ];
-                rows.extend([Kind::Bookmark, Kind::Highlight, Kind::Note].into_iter().map(|kind|
-                    selection_row(kind.label(), C::SetKind(Some(kind)), browser.kind == Some(kind))));
+                rows.extend(
+                    [Kind::Bookmark, Kind::Highlight, Kind::Note]
+                        .into_iter()
+                        .map(|kind| {
+                            selection_row(
+                                kind.label(),
+                                C::SetKind(Some(kind)),
+                                browser.kind == Some(kind),
+                            )
+                        }),
+                );
                 rows.push(item("All styles", C::SetStyle(None)).detail(style));
-                rows.extend(HighlightStyle::ALL.into_iter().map(|style|
-                    selection_row(style.label(), C::SetStyle(Some(style)), browser.style == Some(style))));
+                rows.extend(HighlightStyle::ALL.into_iter().map(|style| {
+                    selection_row(
+                        style.label(),
+                        C::SetStyle(Some(style)),
+                        browser.style == Some(style),
+                    )
+                }));
                 rows
             }
-            Page::Books => browser.books.iter().filter(|book| book.count > 0)
-                .filter_map(|book| Some(item(author_title(self.library.state(book.id)?),
-                    C::GotoBook(book.id)).detail(format!("{} marks", book.count)))).collect(),
+            Page::Books => browser
+                .books
+                .iter()
+                .filter(|book| book.count > 0)
+                .filter_map(|book| {
+                    Some(
+                        item(
+                            author_title(self.library.state(book.id)?),
+                            C::GotoBook(book.id),
+                        )
+                        .detail(mark_count(book.count)),
+                    )
+                })
+                .collect(),
             Page::ChooseBooks => {
                 let chosen = browser.picking.as_ref().unwrap_or(&browser.picked_books);
                 let mut rows = vec![
-                    item("Apply book selection", C::ApplyChoices).detail(format!("{} selected", chosen.len())),
+                    item("Apply book selection", C::ApplyChoices)
+                        .detail(format!("{} selected", chosen.len())),
                     item("Select or clear all", C::ToggleAllBooks),
+                    item("Select by author", C::Go(Page::Authors)),
                 ];
-                let mut candidates = self.library.recents().iter().filter(|book| has_marks(book))
-                    .filter(|book| browser.picking.is_none() ||
-                        browser.books.iter().any(|listed| listed.id == book.id)).collect::<Vec<_>>();
+                let mut candidates = self
+                    .library
+                    .recents()
+                    .iter()
+                    .filter(|book| has_marks(book))
+                    .filter(|book| {
+                        browser.picking.is_none()
+                            || browser.books.iter().any(|listed| listed.id == book.id)
+                    })
+                    .collect::<Vec<_>>();
                 candidates.sort_by_key(|book| fold_search(&author_title(book)));
-                rows.extend(candidates.into_iter().map(|book|
-                    selection_row(author_title(book), C::ToggleBook(book.id), chosen.contains(&book.id))));
+                rows.extend(candidates.into_iter().map(|book| {
+                    selection_row(
+                        author_title(book),
+                        C::ToggleBook(book.id),
+                        chosen.contains(&book.id),
+                    )
+                }));
+                rows
+            }
+            Page::Authors => {
+                let authors: BTreeSet<_> = self
+                    .library
+                    .recents()
+                    .iter()
+                    .filter(|book| has_marks(book))
+                    .filter(|book| {
+                        browser.picking.is_none() || browser.books.iter().any(|b| b.id == book.id)
+                    })
+                    .flat_map(|book| book.author.as_deref().unwrap_or("").lines())
+                    .map(str::trim)
+                    .filter(|author| !author.is_empty())
+                    .map(str::to_owned)
+                    .collect();
+                let mut rows = vec![item("Unknown author", C::SelectAuthor(None))];
+                rows.extend(
+                    authors
+                        .into_iter()
+                        .map(|author| item(&author, C::SelectAuthor(Some(author.clone())))),
+                );
                 rows
             }
             Page::Collections => {
-                let mut rows = vec![item("Apply collections", C::ApplyChoices)
-                    .detail(format!("{} selected", browser.picked_collections.len()))];
-                rows.extend(self.library.collections().iter().map(|collection|
-                    selection_row(&collection.name, C::ToggleCollection(collection.name.clone()),
-                        browser.picked_collections.contains(&collection.name))));
+                let mut rows = vec![
+                    item("Apply collections", C::ApplyChoices)
+                        .detail(format!("{} selected", browser.picked_collections.len())),
+                ];
+                rows.extend(self.library.collections().iter().map(|collection| {
+                    selection_row(
+                        &collection.name,
+                        C::ToggleCollection(collection.name.clone()),
+                        browser.picked_collections.contains(&collection.name),
+                    )
+                }));
                 rows
             }
             Page::Folder => {
-                let mut rows = vec![item(
-                    if browser.recursive { "Use this folder and subfolders" } else { "Use this folder" },
-                    C::Use(Source::Folder(browser.folder.clone(), browser.recursive)),
-                ).detail(crate::library::display_filename(&browser.folder.to_string_lossy()))];
+                let mut rows = vec![
+                    item(
+                        if browser.recursive {
+                            "Use this folder and subfolders"
+                        } else {
+                            "Use this folder"
+                        },
+                        C::Use(Source::Folder(browser.folder.clone(), browser.recursive)),
+                    )
+                    .detail(crate::library::display_filename(
+                        &browser.folder.to_string_lossy(),
+                    )),
+                ];
                 if let Some(parent) = browser.folder.parent() {
-                    rows.push(item("Up", C::OpenFolder(parent.to_owned(), browser.recursive)));
+                    rows.push(item(
+                        "Up",
+                        C::OpenFolder(parent.to_owned(), browser.recursive),
+                    ));
                 }
-                rows.extend(browser.subfolders.iter().map(|path|
-                    item(crate::library::display_filename(&path.file_name().unwrap_or_default().to_string_lossy()),
-                        C::OpenFolder(path.clone(), browser.recursive))));
+                rows.extend(browser.subfolders.iter().map(|path| {
+                    item(
+                        crate::library::display_filename(
+                            &path.file_name().unwrap_or_default().to_string_lossy(),
+                        ),
+                        C::OpenFolder(path.clone(), browser.recursive),
+                    )
+                }));
                 rows
             }
             Page::Book => {
-                let Some(book) = browser.book.and_then(|id| self.library.state(id)) else { return Vec::new(); };
+                let Some(book) = browser.book.and_then(|id| self.library.state(id)) else {
+                    return Vec::new();
+                };
                 let available = self.bookmark_book_available(book.id);
-                let mut rows = vec![Item::new(author_title(book), Action::Heading)
-                    .detail(if available { "Book" } else { "Archived · Source file unavailable" })];
+                let mut rows =
+                    vec![
+                        Item::new(author_title(book), Action::Heading).detail(if available {
+                            "Book"
+                        } else {
+                            "Archived · Source file unavailable"
+                        }),
+                    ];
                 if available {
                     rows.push(item("Open book", C::ViewBook(book.id)));
-                    rows.push(Item::new("Source file", Action::Heading)
-                        .detail(crate::library::display_filename(&book.path.to_string_lossy())));
+                    rows.push(Item::new("Source file", Action::Heading).detail(
+                        crate::library::display_filename(&book.path.to_string_lossy()),
+                    ));
                 }
                 rows.push(item("Books with matches", C::Go(Page::Books)));
                 rows
@@ -735,15 +1123,41 @@ impl Reader {
     pub(super) fn draw_bookmark_browser_controls(&self, canvas: &mut Canvas, page: Page) -> bool {
         match page {
             Page::Results => {
+                let browser = &self.bookmark_browser;
+                let books = browser.books.iter().filter(|book| book.count > 0).count();
+                let suffix = if browser.marks.len() == 1 {
+                    "mark"
+                } else {
+                    "marks"
+                };
+                let book_suffix = if books == 1 { "book" } else { "books" };
+                canvas.text(
+                    Rect::new(40, HEIGHT as i32 - 246, WIDTH as i32 - 80, 40),
+                    &format!(
+                        "{} · {} {suffix} in {books} {book_suffix}",
+                        browser.source_label,
+                        browser.marks.len()
+                    ),
+                    CAPTION,
+                );
                 canvas.button(SOURCES, "Sources", false, false);
                 canvas.button(FILTERS, "Filters", false, false);
                 canvas.button(FIND, "Find", false, false);
                 false
             }
             Page::Search => {
-                canvas.single_line_field(Rect::new(40, 154, WIDTH as i32 - 80, 130), &self.editor,
-                    "Bookmark, highlighted text or note", false);
-                canvas.button(CASE, "Match case", self.bookmark_browser.case_sensitive, false);
+                canvas.single_line_field(
+                    Rect::new(40, 154, WIDTH as i32 - 80, 130),
+                    &self.editor,
+                    "Bookmark, highlighted text or note",
+                    false,
+                );
+                canvas.button(
+                    CASE,
+                    "Match case",
+                    self.bookmark_browser.case_sensitive,
+                    false,
+                );
                 canvas.keyboard(self.editor.layer, "Find", None);
                 true
             }
@@ -757,12 +1171,33 @@ impl Reader {
 
     fn draw_bookmark_detail(&self, canvas: &mut Canvas) {
         let browser = &self.bookmark_browser;
-        let Some(key) = browser.focus else { return; };
+        let Some(key) = browser.focus else {
+            return;
+        };
         let (Some(book), Some(mark)) = (self.library.state(key.book), self.bookmark_mark(key))
-        else { return; };
-        let index = browser.marks.iter().position(|item| *item == key).unwrap_or(0);
-        let title = format!("{} · {} · {}", book.title, mark.kind().label(), mark.location_label);
-        canvas.text(Rect::new(272, 152, WIDTH as i32 - 544, 94), &title, CAPTION.center().lines(2));
+        else {
+            return;
+        };
+        let index = browser
+            .marks
+            .iter()
+            .position(|item| *item == key)
+            .unwrap_or(0);
+        let mut title = format!(
+            "{} · {} · {}",
+            book.title,
+            mark.kind().label(),
+            mark.location_label
+        );
+        if let Some(date) = mark.created_at.and_then(crate::mark_time::local_date) {
+            title.push_str(" · ");
+            title.push_str(&date);
+        }
+        canvas.text(
+            Rect::new(272, 152, WIDTH as i32 - 544, 94),
+            &title,
+            CAPTION.center().lines(2),
+        );
         if index > 0 {
             canvas.button(FIRST_MARK, "First", false, false);
             canvas.button(PREV_MARK, "Previous mark", false, false);
@@ -776,8 +1211,10 @@ impl Reader {
         } else {
             canvas.text(READ, "Archived mark", CAPTION.center());
         }
-        let text = mark.note.map_or_else(|| mark.quote.to_owned(),
-            |note| format!("{}\n\n{}", note, mark.quote));
+        let text = mark.note.map_or_else(
+            || mark.quote.to_owned(),
+            |note| format!("{}\n\n{}", note, mark.quote),
+        );
         let style = BODY.lines(19).break_long_words();
         let pages = canvas.text_pages(TEXT, &text, style);
         browser.text_pages.set(pages.len());
@@ -785,15 +1222,23 @@ impl Reader {
             canvas.text(TEXT, &text[range.clone()], style);
         }
         if pages.len() > 1 {
-            if browser.text_page > 0 { canvas.button(PREV_TEXT, "Previous text", false, false); }
-            if browser.text_page + 1 < pages.len() { canvas.button(NEXT_TEXT, "Next text", false, false); }
-            canvas.text(Rect::new(450, PREV_TEXT.y + 15, 364, 55),
-                &format!("{} of {}", browser.text_page + 1, pages.len()), CAPTION.center());
+            if browser.text_page > 0 {
+                canvas.button(PREV_TEXT, "Previous text", false, false);
+            }
+            if browser.text_page + 1 < pages.len() {
+                canvas.button(NEXT_TEXT, "Next text", false, false);
+            }
+            canvas.text(
+                Rect::new(450, PREV_TEXT.y + 15, 364, 55),
+                &format!("{} of {}", browser.text_page + 1, pages.len()),
+                CAPTION.center(),
+            );
         }
     }
 
     pub(super) fn bookmark_browser_input(&mut self, page: Page, input: Input) -> Option<Change> {
-        if matches!(input, Input::Tap(x, y) if primitive_ui::back_button(WIDTH as i32).contains(x, y)) {
+        if matches!(input, Input::Tap(x, y) if primitive_ui::back_button(WIDTH as i32).contains(x, y))
+        {
             self.back_from_bookmark_browser(page);
             return Some(Change::Partial);
         }
@@ -804,39 +1249,55 @@ impl Reader {
             return Some(self.bookmark_detail_input(input));
         }
         if let Input::LongTap(x, y) = input {
-            let (count, mut rows) = self.list_window();
+            let (count, rows) = self.list_window();
             let row = super::list_item_at(self.list_page, count, x, y)? % super::ROWS_PER_PAGE;
-            let source = match rows.get_mut(row).map(|item| &item.action) {
+            let source = match rows.get(row).map(|item| &item.action) {
                 Some(Action::BookmarkBrowser(Command::Use(source))) => Some(source.clone()),
-                Some(Action::BookmarkBrowser(Command::ApplyChoices)) if page == Page::Collections => {
-                    Some(Source::Collections(self.bookmark_browser.picked_collections.clone()))
+                Some(Action::BookmarkBrowser(Command::ApplyChoices))
+                    if page == Page::Collections =>
+                {
+                    Some(Source::Collections(
+                        self.bookmark_browser.picked_collections.clone(),
+                    ))
                 }
-                Some(Action::BookmarkBrowser(Command::ApplyChoices)) if page == Page::ChooseBooks
-                    && self.bookmark_browser.picking.is_none() => {
+                Some(Action::BookmarkBrowser(Command::ApplyChoices))
+                    if page == Page::ChooseBooks && self.bookmark_browser.picking.is_none() =>
+                {
                     Some(Source::Books(self.bookmark_browser.picked_books.clone()))
                 }
                 _ => None,
             }?;
             return Some(self.bookmark_change(Command::ToggleDefault(source)));
         }
-        if page == Page::Results && let Input::Tap(x, y) = input {
-            let page = if SOURCES.contains(x, y) { Page::Sources }
-                else if FILTERS.contains(x, y) { Page::Filters }
-                else if FIND.contains(x, y) { Page::Search }
-                else { return None; };
+        if page == Page::Results
+            && let Input::Tap(x, y) = input
+        {
+            let page = if contains(SOURCES, x, y) {
+                Page::Sources
+            } else if contains(FILTERS, x, y) {
+                Page::Filters
+            } else if contains(FIND, x, y) {
+                Page::Search
+            } else {
+                return None;
+            };
             return Some(self.bookmark_change(Command::Go(page)));
         }
         None
     }
 
     fn bookmark_search_input(&mut self, input: Input) -> Change {
-        let Input::Tap(x, y) = input else { return Change::None; };
-        if CASE.contains(x, y) {
+        let Input::Tap(x, y) = input else {
+            return Change::None;
+        };
+        if contains(CASE, x, y) {
             self.bookmark_browser.case_sensitive = !self.bookmark_browser.case_sensitive;
             return Change::Partial;
         }
         let layout = Layout::new(WIDTH, HEIGHT, 4, 5);
-        let Some(key) = keyboard_key(&layout, &self.editor, "Find", x, y) else { return Change::None; };
+        let Some(key) = keyboard_key(&layout, &self.editor, "Find", x, y) else {
+            return Change::None;
+        };
         if matches!(self.editor.press(key), Press::Go) {
             let text = self.editor.string();
             let query = text.trim();
@@ -862,8 +1323,12 @@ impl Reader {
             }
             Page::Sources | Page::Results => self.show(self.bookmark_browser.origin),
             Page::Detail => {
-                let row = self.bookmark_browser.focus.and_then(|key|
-                    self.bookmark_browser.rows.iter().position(|value| *value == RowKey::Mark(key)));
+                let row = self.bookmark_browser.focus.and_then(|key| {
+                    self.bookmark_browser
+                        .rows
+                        .iter()
+                        .position(|value| *value == RowKey::Mark(key))
+                });
                 self.show(Screen::BookmarkBrowser(Page::Results));
                 self.list_page = row.unwrap_or(0) / super::ROWS_PER_PAGE;
             }
@@ -873,43 +1338,66 @@ impl Reader {
             Page::ChooseBooks | Page::Collections | Page::Folder => {
                 self.show(Screen::BookmarkBrowser(Page::Sources));
             }
+            Page::Authors => self.show(Screen::BookmarkBrowser(Page::ChooseBooks)),
             _ => self.show(Screen::BookmarkBrowser(Page::Results)),
         }
     }
 
     fn bookmark_detail_input(&mut self, input: Input) -> Change {
-        let Some(key) = self.bookmark_browser.focus else { return Change::None; };
-        let Some(index) = self.bookmark_browser.marks.iter().position(|value| *value == key)
-        else { return Change::None; };
+        let Some(key) = self.bookmark_browser.focus else {
+            return Change::None;
+        };
+        let Some(index) = self
+            .bookmark_browser
+            .marks
+            .iter()
+            .position(|value| *value == key)
+        else {
+            return Change::None;
+        };
         let last = self.bookmark_browser.marks.len().saturating_sub(1);
         let mut target = index;
         match input {
             Input::PageBack => target = index.saturating_sub(1),
             Input::PageForward => target = (index + 1).min(last),
             Input::Swipe { dx, dy, .. } if dx.abs() > dy.abs() => {
-                target = if dx < 0.0 { (index + 1).min(last) } else { index.saturating_sub(1) };
+                target = if dx < 0.0 {
+                    (index + 1).min(last)
+                } else {
+                    index.saturating_sub(1)
+                };
             }
-            Input::Swipe { dy, .. } => return self.step_bookmark_text(if dy < 0.0 { 1 } else { -1 }),
-            Input::Tap(x, y) if READ.contains(x, y) && self.bookmark_book_available(key.book) => {
+            Input::Swipe { dy, .. } => {
+                return self.step_bookmark_text(if dy < 0.0 { 1 } else { -1 });
+            }
+            Input::Tap(x, y) if contains(READ, x, y) && self.bookmark_book_available(key.book) => {
                 return self.bookmark_change(Command::ViewMark(key));
             }
-            Input::Tap(x, y) if PREV_MARK.contains(x, y) => target = index.saturating_sub(1),
-            Input::Tap(x, y) if NEXT_MARK.contains(x, y) => target = (index + 1).min(last),
-            Input::Tap(x, y) if FIRST_MARK.contains(x, y) => target = 0,
-            Input::Tap(x, y) if LAST_MARK.contains(x, y) => target = last,
-            Input::Tap(x, y) if PREV_TEXT.contains(x, y) => return self.step_bookmark_text(-1),
-            Input::Tap(x, y) if NEXT_TEXT.contains(x, y) => return self.step_bookmark_text(1),
+            Input::Tap(x, y) if contains(PREV_MARK, x, y) => target = index.saturating_sub(1),
+            Input::Tap(x, y) if contains(NEXT_MARK, x, y) => target = (index + 1).min(last),
+            Input::Tap(x, y) if contains(FIRST_MARK, x, y) => target = 0,
+            Input::Tap(x, y) if contains(LAST_MARK, x, y) => target = last,
+            Input::Tap(x, y) if contains(PREV_TEXT, x, y) => return self.step_bookmark_text(-1),
+            Input::Tap(x, y) if contains(NEXT_TEXT, x, y) => return self.step_bookmark_text(1),
             _ => {}
         }
-        if target == index { return Change::None; }
+        if target == index {
+            return Change::None;
+        }
         self.bookmark_change(Command::Inspect(self.bookmark_browser.marks[target]))
     }
 
     fn step_bookmark_text(&mut self, step: isize) -> Change {
         let browser = &mut self.bookmark_browser;
         let previous = browser.text_page;
-        browser.text_page = previous.saturating_add_signed(step).min(browser.text_pages.get().saturating_sub(1));
-        if previous == browser.text_page { Change::None } else { Change::Partial }
+        browser.text_page = previous
+            .saturating_add_signed(step)
+            .min(browser.text_pages.get().saturating_sub(1));
+        if previous == browser.text_page {
+            Change::None
+        } else {
+            Change::Partial
+        }
     }
 
     fn bookmark_change(&mut self, action: Command) -> Change {
@@ -922,5 +1410,12 @@ impl Reader {
 
 fn selection_row(label: impl Into<String>, action: Command, selected: bool) -> Item {
     let row = item(label, action);
-    if selected { row.detail("Selected") } else { row }
+    if selected {
+        row.detail("Selected")
+    } else {
+        row
+    }
 }
+
+#[cfg(test)]
+mod tests;

@@ -173,3 +173,7 @@ Dictionary lookups found all 82 definitions from installed sdcv across nine spel
 Eight Kindle-format controls opened, turned pages and resumed in the native picker. The 58 distinct public HUFF/CDIC text records matched independent libmobi output. [Compressed Kindle reading](kindle-format-reading.md)
 
 The desktop run inspected 1,509 sections and painted 27,911 pages across 48 distinct original reflowable editions.
+
+## Cross-book saved marks
+
+Reader adds a grouped browser for page bookmarks, highlights and notes across History, collections, selected books, archived records and chosen folders. Its simulator checks cover the normal source chooser, author selection, case-sensitive and Unicode searches, per-book date order, full-text previews, password retry and cancel, and saved source locations. Two original EPUBs and two original PDFs passed bookmark navigation and return checks in isolated Mac profiles. Twenty checks against the installed KOReader data and preview methods confirmed reference filtering, sorting, navigation and history-before-jump behavior. The Mac suite passed 558 library, 14 integration and four system tests. The full comparison retains open color and metadata filtering requirements. [Bookmark browser behavior and remaining gaps](bookmark-browser.md)
