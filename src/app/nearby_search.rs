@@ -2,7 +2,7 @@
 //! reuse the open document and yield between physical pages.
 use super::*;
 use crate::Anchor;
-use crate::search::{ChapterText, NearbySearch, SearchDirection};
+use crate::search::{ChapterText, FlowConfig, NearbySearch, SearchDirection};
 use std::sync::{
     Arc, Condvar, Mutex,
     atomic::{AtomicBool, Ordering},
@@ -68,15 +68,17 @@ struct Request {
     chapters: usize,
     chapter: usize,
     anchor: Anchor,
+    flow: FlowConfig,
     cancelled: Arc<AtomicBool>,
     output: mpsc::Sender<Result<Option<SearchHit>>>,
 }
 
-fn load_text(path: &Path, ci: usize) -> Result<ChapterText> {
-    // Only owned text escapes the storage lease; matching never holds the device storage lock.
+fn load_text(path: &Path, ci: usize, flow: &FlowConfig) -> Result<ChapterText> {
+    // Owned source and font-free CSS leave the storage lease. Matching never
+    // holds the device storage lock or registers publisher font resources.
     Ok(with_storage(|| {
         let mut book = Book::open(path).map_err(io::Error::other)?;
-        ChapterText::read(&mut book, ci).map_err(io::Error::other)
+        ChapterText::read_with_flow(&mut book, ci, flow).map_err(io::Error::other)
     })?)
 }
 
@@ -87,7 +89,7 @@ impl Request {
             &self.anchor,
             &self.cancelled,
             self.chapters,
-            |ci| load_text(&self.path, ci),
+            |ci| load_text(&self.path, ci, &self.flow),
         );
         if !self.cancelled.load(Ordering::Relaxed) {
             let _ = self.output.send(found);
@@ -153,6 +155,13 @@ enum AllEvent {
         skipped: bool,
     },
 }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ReflowContext {
+    edition: u64,
+    publication: u64,
+    flow: FlowConfig,
+}
 struct PendingAll {
     cancel: Arc<AtomicBool>,
     result: mpsc::Receiver<Result<AllEvent>>,
@@ -202,6 +211,9 @@ pub(super) struct Nearby {
     all: Option<PendingAll>,
     current: Option<SearchQuery>,
     end: Option<SearchDirection>,
+    // Retain this even after a completed/cancelled job while hits still exist.
+    // Closing a panel must not make old-style results current again.
+    results_context: Option<ReflowContext>,
 }
 
 impl Nearby {
@@ -237,6 +249,39 @@ impl Nearby {
 }
 
 impl Reader {
+    fn current_reflow_context(&self) -> Option<ReflowContext> {
+        self.active.as_ref().map(|active| ReflowContext {
+            edition: active.id,
+            publication: active.reading.probe.book,
+            flow: FlowConfig {
+                publisher_styles: active.reading.config.settings.publisher_styles,
+                user_styles: active.reading.config.user_styles.clone(),
+            },
+        })
+    }
+
+    /// Call before accepting a worker delivery or activating a retained hit.
+    pub(super) fn ensure_reflow_search_current(&mut self) -> Result<()> {
+        if self.hits.is_empty() && self.nearby.pending.is_none() && self.nearby.all.is_none() {
+            self.nearby.results_context = None;
+            return Ok(());
+        }
+        if self
+            .nearby
+            .results_context
+            .as_ref()
+            .is_some_and(|saved| Some(saved) != self.current_reflow_context().as_ref())
+        {
+            self.nearby.clear();
+            self.nearby.results_context = None;
+            self.hits.clear();
+            self.result_selection = None;
+            self.search_result = None;
+            return Err("Reading styles or the book changed; search again".into());
+        }
+        Ok(())
+    }
+
     fn supports_nearby_search(&self) -> bool {
         self.active.is_some()
             || self
@@ -406,6 +451,7 @@ impl Reader {
             return Ok(());
         }
         let active = self.active.as_ref().ok_or("Open a book first")?;
+        let context = self.current_reflow_context().ok_or("Open a book first")?;
         let engine = if query.regular_expression {
             NearbySearch::with_regular_expression(&query.text, query.match_case, direction)?
         } else {
@@ -415,7 +461,8 @@ impl Reader {
                 query.ignore_accents,
                 direction,
             )?
-        };
+        }
+        .with_flow_config(context.flow.clone());
         let anchor = if continuing {
             let selection = self
                 .result_selection
@@ -439,6 +486,7 @@ impl Reader {
             chapter: active.reading.chapter,
             chapters: active.reading.probe.chapter_count(),
             anchor,
+            flow: context.flow.clone(),
             cancelled: Arc::clone(&cancelled),
             output: tx,
         };
@@ -457,6 +505,7 @@ impl Reader {
         if self.nearby.worker.is_none() {
             self.nearby.worker = Some(Worker::start()?);
         }
+        self.nearby.results_context = Some(context);
         self.nearby.pending = Some(Pending {
             query,
             direction,
@@ -489,8 +538,14 @@ impl Reader {
             Search::with_options(pattern, case, accents)?
         };
         let active = self.active.as_ref().ok_or("Open a reflowable book first")?;
+        let context = self
+            .current_reflow_context()
+            .ok_or("Open a reflowable book first")?;
         let path = active.reading.config.book.clone();
         let chapters = active.reading.probe.chapter_count();
+        search = search
+            .with_flow_config(context.flow.clone())
+            .for_publication(context.publication, chapters);
         self.update_lookup_history(|h| h.search(pattern, case, accents, regex))?;
         self.cancel_search();
         self.search_result = None;
@@ -504,6 +559,7 @@ impl Reader {
         }
         let (tx, result) = mpsc::sync_channel(1);
         let cancelled = Arc::new(AtomicBool::new(false));
+        self.nearby.results_context = Some(context.clone());
         self.nearby.all = Some(PendingAll {
             cancel: Arc::clone(&cancelled),
             result,
@@ -515,8 +571,11 @@ impl Reader {
                     if cancelled.load(Ordering::Relaxed) || search.is_finished() {
                         break;
                     }
-                    let results =
-                        search.step_loaded(load_text(&path, ci)?, chapters, &cancelled)?;
+                    let results = search.step_loaded(
+                        load_text(&path, ci, &context.flow)?,
+                        chapters,
+                        &cancelled,
+                    )?;
                     let mut hits = results.into_iter().peekable();
                     // At most one delivery waits in the mailbox. Dropping the
                     // receiver when leaving Find releases a blocked sender.
@@ -541,6 +600,7 @@ impl Reader {
     }
 
     pub(super) fn poll_nearby(&mut self, now: Instant) -> Result<Change> {
+        self.ensure_reflow_search_current()?;
         if let Some(mut pending) = self.nearby.fixed.take() {
             let fixed = self.fixed.as_ref().ok_or("No open document")?;
             let Some(page) = pending.next_page else {
@@ -670,6 +730,10 @@ impl Reader {
         Ok(Change::Partial)
     }
 }
+
+#[cfg(test)]
+#[path = "nearby_flow_tests.rs"]
+mod flow_tests;
 
 #[cfg(test)]
 mod fixed_tests {
