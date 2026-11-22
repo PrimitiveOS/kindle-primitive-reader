@@ -78,6 +78,10 @@ impl WordForms {
         forms
     }
 
+    pub(super) fn spellings(&self) -> impl Iterator<Item = (&str, usize)> {
+        self.order.iter().map(|(word, rank)| (word.as_str(), *rank))
+    }
+
     pub(super) fn rank(&self, headword: &str) -> Option<usize> {
         self.order.get(headword).copied()
     }

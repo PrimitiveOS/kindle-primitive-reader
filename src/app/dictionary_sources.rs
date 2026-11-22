@@ -77,6 +77,23 @@ impl Reader {
         )
     }
 
+    pub(super) fn start_spelling_lookup(&mut self, word: &str) {
+        self.spelling_lookup = None;
+        if !self.definitions.is_empty() || !self.word_forms_enabled() || !dictionary::spelling_eligible(word) {
+            return;
+        }
+        let sources = self.dictionaries.clone();
+        let word = word.to_owned();
+        let book = self.book_dictionaries().to_vec();
+        let settings = self.dictionary_settings.clone();
+        match dictionary_panel::SpellingLookup::start(move |cancel| {
+            sources.suggested_definitions(&word, &book, &settings.order, &settings.disabled, cancel)
+        }) {
+            Ok(job) => self.spelling_lookup = Some(job),
+            Err(error) => self.notice = Some(format!("Could not start dictionary search ({error})")),
+        }
+    }
+
     fn sort_dictionaries(&mut self) {
         self.installed_dictionaries.sort_by(|a, b| {
             let rank = |key: &Path| {
@@ -139,7 +156,7 @@ impl Reader {
         }
         if !self.installed_dictionaries.is_empty() {
             rows.push(Item::new("Word forms by default", Action::DictionarySource(SourceAction::DefaultWordForms))
-                .detail(if self.dictionary_settings.disable_word_forms { "Off" } else { "On" }));
+                .detail(if self.dictionary_settings.disable_word_forms { "Off" } else { "On · inflections and similar words" }));
             if self.open_book_id().is_some() {
                 let state = match (self.word_forms_enabled(), self.book_word_forms().is_none()) {
                     (true, true) => "On · default", (false, true) => "Off · default",
@@ -349,6 +366,82 @@ mod tests {
         ));
     }
 
+    fn select_for_dictionary(app: &mut Reader, word: &str) {
+        let reading = &app.active.as_ref().unwrap().reading;
+        let block = reading.probe.source.blocks.iter().find(|b| b.text.contains(word)).unwrap();
+        let offset = block.text.find(word).unwrap();
+        let range = reading.probe.select_range(
+            &reading.probe.anchor(block.key, offset),
+            &reading.probe.anchor(block.key, offset + word.len()),
+        ).unwrap();
+        let bounds = reading.highlight_rects(&range)[0];
+        app.input(Input::LongTap(
+            (bounds.x + bounds.width / 2) as f32,
+            (bounds.y + bounds.height / 2) as f32,
+        ));
+        assert_eq!(app.selection.as_ref().unwrap().text, word);
+        let rect = app.selection_button(selection_popup::SelectionAction::Dictionary);
+        app.input(Input::Tap((rect.x + rect.w / 2) as f32, (rect.y + rect.h / 2) as f32));
+    }
+
+    #[test]
+    fn suggestions_arrive_in_the_open_popup_and_can_be_dismissed() {
+        let fixture = Fixture::new();
+        let dir = fixture.root.join("dictionaries");
+        fs::create_dir(&dir).unwrap();
+        crate::dictionary::tests::write_dictionary(&dir, "Beacon",
+            "sametypesequence=m\n", &[("stone", b"A fragment of rock."), ("store", b"A supply.")]);
+        let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+        let mut reader = Reader::open(&fixture.root, &fixture.state, vec![font.clone()]).unwrap();
+        let passage = fixture.root.join("Cliff path.xhtml");
+        fs::write(&passage, r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Field notebook</title></head><body>
+            <h1>Field notebook</h1><p>The signal lamp stood beside the cliff path. A narrow band of quartz crossed its foundation.</p>
+            <p>The surveyor had pencilled a note on the map: “Check the sotne at low tide.”</p>
+            </body></html>"#).unwrap();
+        reader.open_path(&passage).unwrap();
+        let origin = reader.current_history_location();
+        select_for_dictionary(&mut reader, "sotne");
+        assert_eq!(reader.screen, Screen::Definition);
+        assert!(reader.spelling_lookup.is_some());
+        assert!(reader.definitions.is_empty());
+        let until = Instant::now() + Duration::from_secs(10);
+        while reader.spelling_lookup.is_some() && Instant::now() < until {
+            reader.tick(Instant::now());
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(reader.definitions.first().unwrap().word, "stone");
+        crate::app::tests::capture_test_screen(
+            &reader, std::slice::from_ref(&font), "READER_SPELLING_POPUP_SCREEN", false,
+        );
+        let dismiss = |reader: &mut Reader| {
+            let done = reader.definition_layout().1;
+            reader.input(Input::Tap((done.x + done.w / 2) as f32, (done.y + done.h / 2) as f32));
+        };
+        dismiss(&mut reader);
+        assert_eq!(reader.screen, Screen::Book);
+        reader.look_up("stnoe").unwrap();
+        assert!(reader.spelling_lookup.is_some());
+        dismiss(&mut reader);
+        assert!(reader.spelling_lookup.is_none());
+        reader.look_up("store").unwrap();
+        assert!(reader.spelling_lookup.is_none());
+        assert_eq!(reader.definitions.first().unwrap().word, "store");
+        reader.tick(Instant::now()+Duration::from_secs(2));
+        assert_eq!(reader.definitions.first().unwrap().word, "store");
+        dismiss(&mut reader);
+        reader.look_up("sotne").unwrap();
+        reader.look_up("store").unwrap();
+        assert!(reader.spelling_lookup.is_none());
+        dismiss(&mut reader);
+        assert_eq!(reader.definition_word, "sotne");
+        assert!(reader.spelling_lookup.is_some());
+        reader.input(Input::Sleep);
+        assert!(reader.spelling_lookup.is_none());
+        reader.input(Input::Wake);
+        dismiss(&mut reader);
+        assert_eq!(reader.current_history_location(), origin);
+    }
+
     #[test]
     fn inflection_preferences_follow_the_open_book_and_survive_reopening() {
         let f = Fixture::new();
@@ -385,18 +478,7 @@ mod tests {
         let before = app.lookup_history.vocabulary.clone();
         back(&mut app);
         assert_eq!(app.screen, Screen::Book);
-        let reading = &app.active.as_ref().unwrap().reading;
-        let block = reading.probe.source.blocks.iter().find(|b| b.text.contains("carried")).unwrap();
-        let offset = block.text.find("carried").unwrap();
-        let word = reading.probe.select_range(
-            &reading.probe.anchor(block.key, offset),
-            &reading.probe.anchor(block.key, offset + "carried".len()),
-        ).unwrap();
-        let bounds = reading.highlight_rects(&word)[0];
-        app.input(Input::LongTap((bounds.x + bounds.width / 2) as f32, (bounds.y + bounds.height / 2) as f32));
-        assert_eq!(app.selection.as_ref().unwrap().text, "carried");
-        let rect = app.selection_button(selection_popup::SelectionAction::Dictionary);
-        app.input(Input::Tap((rect.x + rect.w / 2) as f32, (rect.y + rect.h / 2) as f32));
+        select_for_dictionary(&mut app, "carried");
         assert!(app.definition_over_book());
         assert_eq!(app.definition_word, "carried");
         assert_eq!(app.definitions[0].word, "carry");

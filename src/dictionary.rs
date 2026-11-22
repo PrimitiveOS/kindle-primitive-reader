@@ -1,6 +1,10 @@
 //! Offline StarDict 2.4.2 and 3.0.0 lookup from a configured directory.
 //! Stream StarDict indexes and seek definition slices in plain or dictzip data.
 
+#[cfg(any(feature = "kindle", test))]
+mod spelling;
+#[cfg(feature = "kindle")]
+pub(crate) use spelling::eligible as spelling_eligible;
 mod word_forms;
 use word_forms::{Ranked, WordForms};
 
@@ -56,6 +60,7 @@ pub(crate) struct InstalledDictionary {
 }
 
 /// Search a Reader installation and the two standard KOReader dictionary directories.
+#[derive(Clone)]
 pub(crate) struct DictionarySources {
     local: PathBuf,
     shared_storage: Option<PathBuf>,
@@ -150,6 +155,24 @@ impl DictionarySources {
         self.lookup_ordered(word, &[], &first, &[])
     }
 
+    fn enabled(&self, book_order: &[PathBuf], order: &[PathBuf], disabled: &[PathBuf])
+        -> io::Result<(Vec<(DictionaryFile, Info)>, Option<io::Error>)> {
+        let mut first_error = None;
+        let mut sources = Vec::new();
+        for file in self.files()? {
+            if disabled.contains(&file.key) && !book_order.contains(&file.key) { continue; }
+            match open_dictionary_file(&file.root, &file.path).and_then(Info::load) {
+                Ok(info) => sources.push((file, info)),
+                Err(error) => { first_error.get_or_insert(error); }
+            }
+        }
+        sources.sort_by_cached_key(|(file, info)| {
+            let rank = book_order.iter().chain(order).position(|key| key == &file.key).unwrap_or(usize::MAX);
+            (rank, info.title.to_lowercase(), file.key.is_absolute(), file.key.clone())
+        });
+        Ok((sources, first_error))
+    }
+
     pub(crate) fn lookup_ordered(&self, word: &str, book_order: &[PathBuf], order: &[PathBuf],
                                  disabled: &[PathBuf]) -> io::Result<Vec<Definition>> {
         self.lookup_configured(word, book_order, order, disabled, false)
@@ -166,19 +189,7 @@ impl DictionarySources {
         if term.is_empty() {
             return Ok(Vec::new());
         }
-        let mut first_error = None;
-        let mut sources = Vec::new();
-        for file in self.files()? {
-            if disabled.contains(&file.key) && !book_order.contains(&file.key) { continue; }
-            match open_dictionary_file(&file.root, &file.path).and_then(Info::load) {
-                Ok(info) => sources.push((file, info)),
-                Err(error) => { first_error.get_or_insert(error); }
-            }
-        }
-        sources.sort_by_cached_key(|(file, info)| {
-            let rank = book_order.iter().chain(order).position(|key| key == &file.key).unwrap_or(usize::MAX);
-            (rank, info.title.to_lowercase(), file.key.is_absolute(), file.key.clone())
-        });
+        let (sources, mut first_error) = self.enabled(book_order, order, disabled)?;
         let folded = CaseMapper::new().fold_string(term);
         let forms = with_word_forms.then(|| WordForms::for_word(term));
         let query = Query {
@@ -442,13 +453,8 @@ struct IndexMatch {
     size: usize,
 }
 
-fn lookup_dictionary(
-    root: &Path,
-    path: &Path,
-    info: &Info,
-    query: IndexQuery<'_>,
-    budget: &mut LookupBudget,
-) -> io::Result<Hits<Definition>> {
+fn open_index_and_data(root: &Path, path: &Path, info: &Info, budget: &mut LookupBudget)
+    -> io::Result<(Box<dyn Read>, Data)> {
     let (index, gzip) = open_variant(root, path, "idx", "idx.gz")?;
     let file_size = index.metadata()?.len();
     if gzip && file_size > MAX_COMPRESSED_INDEX_BYTES {
@@ -468,43 +474,48 @@ fn lookup_dictionary(
     }
     budget.index_bytes -= info.index_size;
     let (file, dictzip) = open_variant(root, path, "dict", "dict.dz")?;
-    let mut data = if dictzip {
+    let data = if dictzip {
         Data::DictZip(DictZip::open(file)?)
     } else {
         Data::Plain(file)
     };
-    let data_size = data.len()?;
-    let matches = if gzip {
-        scan_index(
-            MultiGzDecoder::new(index.take(file_size)),
-            info,
-            query,
-            data_size,
-        )?
-    } else {
-        scan_index(index, info, query, data_size)?
-    };
-    let mut read_hits = |matches: Vec<IndexMatch>| -> io::Result<Vec<Definition>> {
-        let mut definitions = Vec::new();
-        for matched in matches {
-            let text = if matched.size == 0 {
-                // Some bilingual indexes intentionally contain headword-only entries.
-                Some(String::new())
-            } else {
-                let bytes = data.read(matched.offset, matched.size, &mut budget.dictzip_bytes)?;
-                definition(&bytes, info.fields.as_deref())
-            };
-            if let Some(text) = text {
-                definitions.push(Definition {
-                    dictionary: info.title.clone(),
-                    word: matched.word,
-                    text,
-                });
-            }
+    let index: Box<dyn Read> = if gzip { Box::new(MultiGzDecoder::new(index.take(file_size))) } else { Box::new(index) };
+    Ok((index,data))
+}
+
+fn read_definitions(data: &mut Data, info: &Info, budget: &mut LookupBudget,
+    matches: Vec<IndexMatch>) -> io::Result<Vec<Definition>> {
+    let mut definitions = Vec::new();
+    for matched in matches {
+        let text = if matched.size == 0 {
+            // Some bilingual indexes intentionally contain headword-only entries.
+            Some(String::new())
+        } else {
+            let bytes = data.read(matched.offset, matched.size, &mut budget.dictzip_bytes)?;
+            definition(&bytes, info.fields.as_deref())
+        };
+        if let Some(text) = text {
+            definitions.push(Definition {
+                dictionary: info.title.clone(),
+                word: matched.word,
+                text,
+            });
         }
-        definitions.sort_by_key(|entry| entry.text.is_empty());
-        Ok(definitions)
-    };
+    }
+    definitions.sort_by_key(|entry| entry.text.is_empty());
+    Ok(definitions)
+}
+
+fn lookup_dictionary(
+    root: &Path,
+    path: &Path,
+    info: &Info,
+    query: IndexQuery<'_>,
+    budget: &mut LookupBudget,
+) -> io::Result<Hits<Definition>> {
+    let (index, mut data) = open_index_and_data(root, path, info, budget)?;
+    let matches = scan_index(index, info, query, data.len()?)?;
+    let mut read_hits = |hits| read_definitions(&mut data, info, budget, hits);
     let exact = read_hits(matches.exact)?;
     let fallback = if exact.is_empty() {
         read_hits(matches.fallback)?
@@ -764,20 +775,14 @@ fn dictzip_table(mut extra: &[u8]) -> io::Result<(u64, Vec<u16>)> {
     })
 }
 
-fn synonym_targets(
-    root: &Path,
-    path: &Path,
-    info: &Info,
-    query: Query<'_>,
-    budget: &mut LookupBudget,
-) -> io::Result<Aliases> {
-    let mut hits = Aliases::default();
+fn visit_synonyms(root: &Path, path: &Path, info: &Info, budget: &mut LookupBudget,
+    mut visit: impl FnMut(&str, usize) -> io::Result<()>) -> io::Result<()> {
     let Some(count) = info.synonyms else {
-        return Ok(hits);
+        return Ok(());
     };
     let file = match open_dictionary_file(root, &path.with_extension("syn")) {
         Ok(file) => file,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(hits),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error),
     };
     let size = file.metadata()?.len();
@@ -792,7 +797,6 @@ fn synonym_targets(
     let mut word = Vec::with_capacity(MAX_WORD_BYTES + 1);
     let mut ordinal = [0; 4];
     let mut bytes_read = 0;
-    let mapper = CaseMapper::new();
     for _ in 0..count {
         word.clear();
         bytes_read += (&mut index)
@@ -811,6 +815,26 @@ fn synonym_targets(
                 "A dictionary synonym references an absent index entry",
             ));
         }
+        visit(word, target)?;
+    }
+    if bytes_read as u64 != size || !index.fill_buf()?.is_empty() {
+        return Err(invalid(
+            "The dictionary synonym count does not match its index",
+        ));
+    }
+    Ok(())
+}
+
+fn synonym_targets(
+    root: &Path,
+    path: &Path,
+    info: &Info,
+    query: Query<'_>,
+    budget: &mut LookupBudget,
+) -> io::Result<Aliases> {
+    let mut hits = Aliases::default();
+    let mapper = CaseMapper::new();
+    visit_synonyms(root, path, info, budget, |word, target| {
         let matches = if word == query.word {
             &mut hits.direct.exact
         } else if hits.direct.fallback.len() < MAX_RESULTS && query.caseless(word, mapper) {
@@ -821,17 +845,13 @@ fn synonym_targets(
             {
                 hits.forms.record(rank, || target);
             }
-            continue;
+            return Ok(());
         };
         if matches.len() < MAX_RESULTS && !matches.contains(&target) {
             matches.push(target);
         }
-    }
-    if bytes_read as u64 != size || !index.fill_buf()?.is_empty() {
-        return Err(invalid(
-            "The dictionary synonym count does not match its index",
-        ));
-    }
+        Ok(())
+    })?;
     hits.direct.exact.sort_unstable();
     hits.direct.fallback.sort_unstable();
     hits.forms.values.sort_unstable();
@@ -839,20 +859,13 @@ fn synonym_targets(
     Ok(hits)
 }
 
-fn scan_index(
-    index: impl Read,
-    info: &Info,
-    query: IndexQuery<'_>,
-    data_size: u64,
-) -> io::Result<Hits<IndexMatch>> {
+fn visit_index(index: impl Read, info: &Info, data_size: u64,
+    mut visit: impl FnMut(usize, &str, u64, u32) -> io::Result<()>) -> io::Result<()> {
     let mut index = BufReader::new(index.take(info.index_size as u64 + 1));
-    let mut hits = Hits::new();
-    let mut forms = Ranked::default();
     let mut headword = Vec::with_capacity(MAX_WORD_BYTES + 1);
     let mut position = [0; 12];
     let record_size = info.offset_bytes + 4;
     let mut bytes_read = 0;
-    let mapper = CaseMapper::new();
     for ordinal in 0..info.words {
         headword.clear();
         bytes_read += (&mut index)
@@ -880,6 +893,26 @@ fn scan_index(
         if size as usize > MAX_ENTRY_BYTES {
             continue;
         }
+        visit(ordinal, headword, offset, size)?;
+    }
+    if bytes_read != info.index_size || !index.fill_buf()?.is_empty() {
+        return Err(invalid(
+            "The dictionary word count does not match its index",
+        ));
+    }
+    Ok(())
+}
+
+fn scan_index(
+    index: impl Read,
+    info: &Info,
+    query: IndexQuery<'_>,
+    data_size: u64,
+) -> io::Result<Hits<IndexMatch>> {
+    let mut hits = Hits::new();
+    let mut forms = Ranked::default();
+    let mapper = CaseMapper::new();
+    visit_index(index, info, data_size, |ordinal, headword, offset, size| {
         let exact = headword == query.headword.word || query.aliases.direct.exact.binary_search(&ordinal).is_ok();
         let fallback = !exact && hits.fallback.len() < MAX_RESULTS
             && (query.aliases.direct.fallback.binary_search(&ordinal).is_ok() || query.headword.caseless(headword, mapper));
@@ -896,12 +929,8 @@ fn scan_index(
                 forms.record(best, entry);
             }
         }
-    }
-    if bytes_read != info.index_size || !index.fill_buf()?.is_empty() {
-        return Err(invalid(
-            "The dictionary word count does not match its index",
-        ));
-    }
+        Ok(())
+    })?;
     if hits.exact.is_empty() && hits.fallback.is_empty() { hits.fallback = forms.values; }
     Ok(hits)
 }

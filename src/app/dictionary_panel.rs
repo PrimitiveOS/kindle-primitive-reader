@@ -9,6 +9,33 @@ const DEFINITION_TEXT: primitive_ui::TextStyle =
 const LINE: i32 = 47;
 const MAX_DEPTH: usize = 8;
 
+/// One job belongs to one popup. Dropping the popup cancels its storage work
+/// and disconnects its result channel before another selected word can receive it.
+pub(super) struct SpellingLookup {
+    receiver: std::sync::mpsc::Receiver<io::Result<Vec<dictionary::Definition>>>,
+    cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub(super) deadline: Instant,
+}
+
+impl Drop for SpellingLookup {
+    fn drop(&mut self) { self.cancelled.store(true, std::sync::atomic::Ordering::Relaxed); }
+}
+
+impl SpellingLookup {
+    pub(super) fn start(
+        work: impl FnOnce(&std::sync::atomic::AtomicBool) -> io::Result<Vec<dictionary::Definition>>
+            + Send + 'static,
+    ) -> io::Result<Self> {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = cancelled.clone();
+        std::thread::Builder::new().name("dictionary-spelling".into()).spawn(move || {
+            let _ = sender.send(work(&flag));
+        })?;
+        Ok(Self { receiver, cancelled, deadline: Instant::now() + Duration::from_millis(150) })
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Navigation {
     origin: Option<(Screen, usize)>,
@@ -22,6 +49,7 @@ struct Previous {
     definitions: Vec<dictionary::Definition>,
     index: usize,
     expanded: bool,
+    suggestions_pending: bool,
     view: View,
 }
 #[derive(Default)]
@@ -251,6 +279,26 @@ impl Reader {
         }
     }
 
+    pub(super) fn poll_spelling_lookup(&mut self, now: Instant) -> Option<Change> {
+        use std::sync::mpsc::TryRecvError;
+        let job = self.spelling_lookup.as_mut()?;
+        if now < job.deadline { return None; }
+        match job.receiver.try_recv() {
+            Err(TryRecvError::Empty) => {
+                job.deadline = now + Duration::from_millis(150);
+                return None;
+            }
+            Ok(Ok(definitions)) => {
+                self.definitions = definitions;
+                self.dictionary_navigation.view = View::default();
+            }
+            Ok(Err(error)) => self.notice = Some(error.to_string()),
+            Err(TryRecvError::Disconnected) => self.notice = Some("Dictionary search ended early".into()),
+        }
+        self.spelling_lookup = None;
+        Some(Change::Partial)
+    }
+
     pub(super) fn look_up(&mut self, word: &str) -> Result<()> {
         let nested = self.screen == Screen::Definition;
         let word = word.trim();
@@ -270,6 +318,7 @@ impl Reader {
                 definitions: std::mem::take(&mut self.definitions),
                 index: self.list_page,
                 expanded: self.definition_expanded,
+                suggestions_pending: self.spelling_lookup.is_some(),
                 view: std::mem::take(&mut self.dictionary_navigation.view),
             });
         } else {
@@ -285,6 +334,7 @@ impl Reader {
         self.definition_expanded = false;
         self.definition_results_page = None;
         self.show(Screen::Definition);
+        self.start_spelling_lookup(word);
         Ok(())
     }
 
@@ -294,6 +344,7 @@ impl Reader {
         }
     }
     fn return_from_definition(&mut self) {
+        self.spelling_lookup = None;
         self.notice = None;
         if let Some(previous) = self.dictionary_navigation.trail.pop() {
             self.definition_word = previous.word;
@@ -302,6 +353,9 @@ impl Reader {
             self.definition_expanded = previous.expanded;
             self.definition_results_page = None;
             self.dictionary_navigation.view = previous.view;
+            if previous.suggestions_pending {
+                self.start_spelling_lookup(&self.definition_word.clone());
+            }
             return;
         }
         let back = self.dictionary_navigation.origin.take().unwrap_or((
@@ -710,7 +764,12 @@ impl Reader {
                 canvas.fill(Rect::new(rect.right() + 8, rect.y + at, 8, height), 50);
             }
         } else {
-            canvas.text(rect, "No matches in installed dictionaries", BODY.lines(2));
+            let message = if self.spelling_lookup.is_some() {
+                "Searching for similar words"
+            } else {
+                "No matches in installed dictionaries"
+            };
+            canvas.text(rect, message, BODY.lines(2));
         }
         self.draw_vocabulary_action(canvas, save);
         if !self.definitions.is_empty() {

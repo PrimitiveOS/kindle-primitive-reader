@@ -596,6 +596,7 @@ pub struct Reader {
     definition_results_page: Option<usize>,
     definition_expanded: bool,
     dictionary_navigation: dictionary_panel::Navigation,
+    spelling_lookup: Option<dictionary_panel::SpellingLookup>,
 }
 
 impl Reader {
@@ -728,6 +729,7 @@ impl Reader {
             definition_results_page: None,
             definition_expanded: false,
             dictionary_navigation: Default::default(),
+            spelling_lookup: None,
         })
     }
 
@@ -895,6 +897,7 @@ impl Reader {
     }
 
     fn show(&mut self, screen: Screen) {
+        if screen != Screen::Definition { self.spelling_lookup = None; }
         if !matches!(screen, Screen::Footnote | Screen::Definition | Screen::OnlineLookup | Screen::OnlineEdit) {
             self.footnote = None;
         }
@@ -5390,6 +5393,9 @@ impl App for Reader {
     }
 
     fn input(&mut self, input: Input) -> Change {
+        if input == Input::Sleep {
+            self.spelling_lookup = None;
+        }
         if input == Input::Sleep && let Some(panel) = &mut self.online && panel.job.take().is_some() {
             panel.message = Some("Lookup cancelled when Reader went to sleep.".into());
         }
@@ -5712,6 +5718,7 @@ impl App for Reader {
             .chain(self.save_at)
             .chain(self.search_at)
             .chain(self.nearby.deadline())
+            .chain(self.spelling_lookup.as_ref().map(|job| job.deadline))
             .chain(self.outline.as_ref().and_then(|outline| outline.deadline))
             .chain(self.numbering_scan.as_ref().map(|scan| scan.deadline))
             .chain(
@@ -5737,6 +5744,7 @@ impl App for Reader {
     }
 
     fn tick(&mut self, now: Instant) -> Change {
+        if let Some(change) = self.poll_spelling_lookup(now) { return change; }
         if let Some(change) = self.poll_online(now) { return change; }
         if self.save_at.is_some_and(|at| at <= now) {
             self.save_at = None;
@@ -5865,6 +5873,7 @@ impl App for Reader {
     }
 
     fn storage_returned(&mut self) -> io::Result<()> {
+        self.spelling_lookup = None;
         self.cancel_ocr_selection();
         self.pages_since_refresh = 0;
         self.auto_turn.activity(Instant::now());
@@ -10257,6 +10266,12 @@ mod tests {
             tap_selection_action(&mut app, selection_popup::SelectionAction::Dictionary);
             assert_eq!(app.screen, Screen::Definition);
             assert!(app.definition_over_book());
+            let deadline = Instant::now() + Duration::from_secs(180);
+            while app.spelling_lookup.is_some() {
+                assert!(Instant::now() < deadline, "Dictionary suggestions exceeded three minutes");
+                app.tick(Instant::now());
+                if app.spelling_lookup.is_some() { std::thread::sleep(Duration::from_millis(20)); }
+            }
             assert_eq!(app.definitions.len(), case.results.len(), "dictionary result count for case {looked_up}");
             let mut remaining: Vec<_> = app.definitions.iter().collect();
             for (dictionary, word, visible_digest) in case.results {
