@@ -28,6 +28,8 @@ pub(crate) struct Block {
     pub text: String,
     pub element: usize,
     pub styled_text: Vec<StyledText>,
+    /// Layout-only origins. These never participate in canonical text or revisions.
+    pub flow_origins: crate::flow_projection::Origins,
     pub list_item: Option<crate::list_marker::ListItem>,
     #[cfg(test)]
     pub emphasis: Vec<(Range<usize>, Emphasis)>,
@@ -529,6 +531,7 @@ impl Source {
         let mut insertions = Vec::new();
         let mut ruby_exclusions = Vec::new();
         let mut available_ruby = MAX_RUBY_GROUPS;
+        let mut flow_budget = crate::flow_projection::Budget::new();
         for node in body.descendants().filter(Node::is_element) {
             if !is_block(node)
                 || hidden(node)
@@ -542,6 +545,7 @@ impl Source {
             let key = node.range().start;
             let mut text = String::new();
             let mut styled_text: Vec<StyledText> = Vec::new();
+            let mut flow_origins = crate::flow_projection::Origins::new(&flow_budget);
             #[cfg(test)]
             let mut emphasis: Vec<(Range<usize>, Emphasis)> = Vec::new();
             let mut links: Vec<InlineLink> = Vec::new();
@@ -585,7 +589,9 @@ impl Source {
                         legacy.spaces = false;
                         legacy.offsets.record(at..at + 1, text.len());
                     }
+                    let at = text.len();
                     text.push('\n');
+                    flow_origins.hard_break(at, element_ids[&descendant.id()], &mut flow_budget);
                     spaces = false;
                 }
                 let external = illustration_href(descendant);
@@ -604,6 +610,11 @@ impl Source {
                     };
                     image_after_space = (spaces && !text.is_empty() && !text.ends_with('\n'))
                         .then_some(images.len());
+                    flow_origins.image(
+                        images.len(),
+                        element_ids[&descendant.id()],
+                        &mut flow_budget,
+                    );
                     images.push(EmbeddedImage {
                         href: external.map(str::to_owned).unwrap_or_else(|| {
                             format!("reader-inline-svg:{}", descendant.range().start)
@@ -639,10 +650,27 @@ impl Source {
                     images[index].space_after = content.starts_with(char::is_whitespace);
                 }
                 let start = text.len();
+                let flow_element = descendant
+                    .parent()
+                    .and_then(|parent| element_ids.get(&parent.id()).copied())
+                    .ok_or("The chapter's text has no style element")?;
+                flow_origins.text_node(
+                    content.starts_with(char::is_whitespace),
+                    flow_element,
+                    &mut flow_budget,
+                );
                 if let Some(legacy) = &mut legacy {
                     for c in content.chars() {
                         let old = emit(&mut legacy.text, &mut legacy.spaces, c);
+                        let before = text.len();
                         let current = emit(&mut text, &mut spaces, c);
+                        flow_origins.character(
+                            c,
+                            flow_element,
+                            before,
+                            text.len(),
+                            &mut flow_budget,
+                        );
                         if let (Some(old), Some(current)) = (old, current) {
                             let length = old.len().min(current.len());
                             legacy
@@ -660,7 +688,15 @@ impl Source {
                     }
                 } else {
                     content.chars().for_each(|c| {
+                        let before = text.len();
                         emit(&mut text, &mut spaces, c);
+                        flow_origins.character(
+                            c,
+                            flow_element,
+                            before,
+                            text.len(),
+                            &mut flow_budget,
+                        );
                     });
                 }
                 if start < text.len() {
@@ -749,6 +785,7 @@ impl Source {
                 text,
                 element: element_ids[&node.id()],
                 styled_text,
+                flow_origins,
                 list_item: list_items.block(node),
                 #[cfg(test)]
                 emphasis,

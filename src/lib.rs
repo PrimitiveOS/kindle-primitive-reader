@@ -32,6 +32,7 @@ mod generated_contents;
 mod gray_glyph;
 mod font_render;
 mod font_synthesis;
+mod flow_projection;
 mod gif_image;
 #[cfg(feature = "kindle")]
 mod footnotes;
