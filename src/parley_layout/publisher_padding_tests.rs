@@ -336,3 +336,288 @@ fn fractional_em_padding_matches_signed_fixed_point_lengths_at_both_font_sizes()
         assert_eq!(q.x + q.layout.get(1).unwrap().metrics().offset, rest);
     }
 }
+
+#[test]
+#[ignore = "Supply an original EPUB and private source passage list"]
+fn compares_original_table_coordinates_and_source_hits() {
+    use crate::{Pagination, Renderer, book_style::BookStyle};
+    use std::path::PathBuf;
+    let path = PathBuf::from(std::env::var_os("READER_TABLE_BOOK").unwrap());
+    let entries =
+        std::fs::read_to_string(std::env::var_os("READER_TABLE_PASSAGES").unwrap()).unwrap();
+    let chapter = entries
+        .lines()
+        .next()
+        .unwrap()
+        .split('\t')
+        .next()
+        .unwrap()
+        .parse::<usize>()
+        .unwrap()
+        - 1;
+    let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let cfg = Settings {
+        width: 1264,
+        height: 1606,
+        margin: 54,
+        font_size: 42.,
+        ..Default::default()
+    };
+    let mut result = Vec::new();
+    let mut anchors = Vec::new();
+    for mode in [
+        "published",
+        "table_unpadded",
+        "cells_unpadded",
+        "unpadded",
+        "auto_cells",
+        "separate",
+        "legacy",
+        "legacy_unpadded",
+    ] {
+        let mut book = Book::open(&path).unwrap();
+        let mut probe = Probe::open(&path, Engine::Parley, &fonts, cfg, chapter).unwrap();
+        let mut fc = crate::font_context(&fonts).unwrap();
+        let mut styles = BookStyle::load(&mut book, &probe.chapter, &probe.source, &mut fc)
+            .compute(&probe.source.elements);
+        for (element, style) in probe.source.elements.iter().zip(&mut styles) {
+            let cell = matches!(element.tag.as_str(), "th" | "td");
+            if mode == "unpadded"
+                || mode == "legacy_unpadded"
+                || (mode == "cells_unpadded" && cell)
+                || (mode == "table_unpadded" && element.tag == "table")
+            {
+                style.padding = Default::default();
+            }
+            if cell && (mode == "auto_cells" || mode.starts_with("legacy")) {
+                style.image_width = None;
+            }
+            if element.tag == "table" && (mode == "separate" || mode.starts_with("legacy")) {
+                style.border_collapse = false;
+            }
+        }
+        if let Some(dest) = std::env::var_os("READER_TABLE_INTRINSICS")
+            && mode == "published"
+        {
+            let mut ctx = LayoutContext::new();
+            let mut rows = Vec::new();
+            for block in &probe.source.blocks {
+                let Some(cell) = block.table_cell else {
+                    continue;
+                };
+                let indent = LineIndent::resolve(
+                    &styles[block.element],
+                    cfg.text_width(),
+                    cfg.text_width(),
+                    cfg.font_size,
+                    0,
+                );
+                let layout = make_paragraph(
+                    &mut ctx,
+                    &mut fc,
+                    block,
+                    None,
+                    cfg,
+                    &styles,
+                    &[],
+                    &[],
+                    false,
+                    indent,
+                    &Default::default(),
+                );
+                let demand = layout.calculate_content_widths();
+                rows.push(serde_json::json!({"r":cell.row,"c":cell.column,"chars":block.text.chars().count(),"longest":block.text.split_whitespace().map(|s|s.chars().count()).max(),"size":cfg.font_size*styles[block.element].size_scale,"min":demand.min,"max":demand.max}));
+            }
+            std::fs::write(dest, serde_json::to_vec(&rows).unwrap()).unwrap();
+        }
+        let (layout, mut lines, height) = ParleyChapter::new(
+            &mut book,
+            &probe.chapter,
+            &probe.source,
+            fc,
+            cfg,
+            &styles,
+            &Default::default(),
+        )
+        .unwrap();
+        let edges = crate::publisher_breaks::geometry(&probe.source, &styles, &lines);
+        lines.sort_by(|a, b| a.top.total_cmp(&b.top));
+        probe.pages =
+            Pagination::with_breaks(&lines, cfg.text_height() as f32, height, &edges).unwrap();
+        probe
+            .pages
+            .trim_unpainted_tail(layout.last_paint_bottom(&probe.source));
+        probe.lines = lines;
+        probe.renderer = Renderer::Parley(layout);
+        let mut placements = Vec::new();
+        for (i, entry) in entries.lines().enumerate() {
+            let phrase = entry.splitn(3, '\t').nth(2).unwrap();
+            let mut hits = probe.matches(phrase);
+            assert_eq!(hits.len(), 1, "Source passage {}", i + 1);
+            let start = hits.remove(0);
+            let word = phrase.split_whitespace().next().unwrap();
+            let end = crate::Anchor {
+                offset: start.offset + word.len(),
+                ..start.clone()
+            };
+            if mode == "published" {
+                anchors.push((start.clone(), end.clone()));
+            }
+            assert_eq!((&start, &end), (&anchors[i].0, &anchors[i].1));
+            let selection = probe.select_range(&start, &end).unwrap();
+            assert_eq!(selection.text, word);
+            let page = probe.page_for(&start).unwrap();
+            let rect = probe.selection_rects(page, &selection)[0];
+            let hit = probe
+                .word_at(
+                    page,
+                    (rect.x + rect.width / 2) as f32,
+                    (rect.y + rect.height / 2) as f32,
+                )
+                .unwrap();
+            // A selection can include opening quotation marks omitted by word hit testing.
+            assert_eq!(hit.start.block, start.block);
+            assert!(hit.start.offset < end.offset && hit.end.offset > start.offset);
+            let block = &probe.source.blocks[probe
+                .source
+                .blocks
+                .binary_search_by_key(&start.block, |b| b.key)
+                .unwrap()];
+            let cell = block.table_cell.unwrap();
+            let Renderer::Parley(renderer) = &probe.renderer else {
+                panic!()
+            };
+            let p = renderer
+                .paragraphs
+                .iter()
+                .find(|p| p.key == start.block)
+                .unwrap();
+            placements.push(serde_json::json!({"row":cell.row,"col":cell.column,"source":[start.block,start.offset,end.offset],"page":page,"x":rect.x,"column":[p.column.start,p.column.end],"paragraph_x":p.x}));
+        }
+        result.push(serde_json::json!({"mode":mode,"placements":placements}));
+    }
+    std::fs::write(
+        std::env::var_os("READER_TABLE_REPORT").unwrap(),
+        serde_json::to_vec(&result).unwrap(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn collapsed_table_uses_its_header_widths_and_preserves_cross_column_word_hits() {
+    let html = std::fs::read_to_string(crate::test_fixture("column-widths.xhtml")).unwrap();
+    let render = |source: String| {
+        Probe::from_book_content(
+            Book::open(&crate::test_fixture("field-notes-epub3.epub")).unwrap(),
+            Engine::Parley,
+            &[crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+            Settings {
+                width: 900,
+                height: 1000,
+                margin: 30,
+                font_size: 30.,
+                ..Default::default()
+            },
+            0,
+            Some(source),
+        )
+        .unwrap()
+    };
+    let mut published = render(html.clone());
+    let zero = render(html.replace("padding:0 2em", "padding:0"));
+    let mut auto = render(
+        html.replace("width:68%", "width:auto")
+            .replace("width:20%", "width:auto")
+            .replace("width:12%", "width:auto"),
+    );
+    let narrow = render(html.replace("width:95%", "width:60%"));
+    let rect = |p: &Probe, id: &str, word: &str| {
+        let start = p.fragment(id).unwrap();
+        let end = crate::Anchor {
+            offset: start.offset + word.len(),
+            ..start.clone()
+        };
+        let selection = p.select_range(&start, &end).unwrap();
+        assert_eq!(selection.text, word);
+        let page = p.page_for(&start).unwrap();
+        let r = p.selection_rects(page, &selection)[0];
+        let hit = p
+            .word_at(
+                page,
+                (r.x + r.width / 2) as f32,
+                (r.y + r.height / 2) as f32,
+            )
+            .unwrap();
+        assert_eq!(hit.start, start);
+        assert_eq!(hit.end, end);
+        r
+    };
+    for (id, word) in [
+        ("buoy-note", "Whitecaps"),
+        ("buoy-name", "North"),
+        ("sample-depth", "8"),
+    ] {
+        let p = rect(&published, id, word);
+        assert_eq!(rect(&zero, id, word), p);
+        assert_eq!(rect(&narrow, id, word), p);
+        if id == "buoy-name" {
+            assert!((p.x - (30 + 840 * 68 / 100 + 8)).abs() < 4);
+            assert!(p.x.abs_diff(rect(&auto, id, word).x) > 8);
+        }
+    }
+    if let Some(dir) = std::env::var_os("READER_TABLE_SCREENSHOTS") {
+        for (name, probe) in [("published", &mut published), ("automatic", &mut auto)] {
+            image::save_buffer(
+                std::path::PathBuf::from(&dir).join(format!("table-{name}.png")),
+                &probe.capture(0).unwrap(),
+                900,
+                1000,
+                image::ColorType::L8,
+            )
+            .unwrap();
+        }
+    }
+}
+
+#[test]
+fn intrinsic_measurement_reserves_an_entire_word_across_inline_formatting() {
+    let html = r#"<html><body><table style="border-collapse:collapse"><tr><td id="long">Inter<em>continental</em></td><td id="short">One word. Several short words.</td></tr></table></body></html>"#;
+    let cfg = Settings {
+        width: 630,
+        height: 900,
+        font_size: 33.,
+        margin: 30,
+        ..Default::default()
+    };
+    let p = Probe::from_book_content(
+        Book::open(&crate::test_fixture("field-notes-epub3.epub")).unwrap(),
+        Engine::Parley,
+        &[crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+        cfg,
+        0,
+        Some(html.into()),
+    )
+    .unwrap();
+    let start = p.fragment("long").unwrap();
+    let end = crate::Anchor {
+        offset: "Intercontinental".len(),
+        ..start.clone()
+    };
+    let selection = p.select_range(&start, &end).unwrap();
+    assert_eq!(selection.text, "Intercontinental");
+    let page = p.page_for(&start).unwrap();
+    let r = p.selection_rects(page, &selection);
+    assert_eq!(r.len(), 1, "The unbreakable word fits on one line");
+    let next = p.fragment("short").unwrap();
+    let crate::Renderer::Parley(renderer) = &p.renderer else {
+        panic!()
+    };
+    let col = renderer
+        .paragraphs
+        .iter()
+        .find(|q| q.key == next.block)
+        .unwrap()
+        .x;
+    assert!(r[0].x + r[0].width <= cfg.margin as i32 + col.round() as i32);
+    assert!(col > cfg.font_size * 4.);
+}

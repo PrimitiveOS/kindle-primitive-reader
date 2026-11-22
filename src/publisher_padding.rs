@@ -98,18 +98,22 @@ pub(crate) fn layout(
     styles: &[Style],
     width: u32,
     font: f32,
+    measure: impl FnMut(&crate::source::Block) -> (u32, u32),
 ) -> Option<Vec<BoxArea>> {
-    if !styles.iter().any(|style| {
-        style
-            .padding
-            .iter()
-            .any(|edge| edge.pixels(width, font) > 0.0)
+    if !styles.iter().zip(&source.elements).any(|(style, element)| {
+        (element.tag == "table" && style.border_collapse)
+            || (matches!(element.tag.as_str(), "th" | "td") && style.image_width.is_some())
+            || style
+                .padding
+                .iter()
+                .any(|edge| edge.pixels(width, font) > 0.0)
     }) {
         return None;
     }
     // The source attaches its row/column metadata to text blocks. Identify
     // each cell's element once so child paragraphs share the correct box.
     let mut owners = Vec::with_capacity(source.elements.len());
+    let mut tables = Vec::with_capacity(source.elements.len());
     for (idx, element) in source.elements.iter().enumerate() {
         let owner = if matches!(element.tag.as_str(), "td" | "th") {
             Some(idx)
@@ -117,6 +121,11 @@ pub(crate) fn layout(
             element.parent.and_then(|p| owners[p])
         };
         owners.push(owner);
+        tables.push(if element.tag == "table" {
+            Some(idx)
+        } else {
+            element.parent.and_then(|p| tables[p])
+        });
     }
     let mut cells = vec![None; owners.len()];
     for block in &source.blocks {
@@ -124,22 +133,40 @@ pub(crate) fn layout(
             cells[owner] = Some(cell);
         }
     }
+    let mut widths = crate::table_widths::TableWidths::collect(
+        source, styles, &tables, &owners, &cells, font, width, measure,
+    );
     let page = BoxArea::new(0, width, None);
     let mut boxes: Vec<BoxArea> = Vec::with_capacity(styles.len());
     for (idx, element) in source.elements.iter().enumerate() {
+        let table = tables[idx];
         let parent = element.parent.map_or(page, |i| boxes[i]);
         let mut area = BoxArea::new(parent.x, parent.width, parent.cell);
         if let Some(cell) = cells[idx]
             && area.width as f32 / f32::from(cell.columns) >= 2.5 * font
         {
-            let (start, width) = cell.bounds(area.width, (font * 0.22).round() as u32);
+            let inset = if table.is_some_and(|id| styles[id].border_collapse) {
+                0
+            } else {
+                (font * 0.22).round() as u32
+            };
+            let (start, width) = table
+                .and_then(|id| widths.get(&id))
+                .and_then(|s| s.bounds(cell, area.width, inset))
+                .unwrap_or_else(|| cell.bounds(area.width, inset));
             area = BoxArea::new(area.x + start, width, Some(cell));
         }
         if !element.selector_only
+            && !(element.tag == "table" && styles[idx].border_collapse)
             && (is_block_tag(&element.tag)
                 || matches!(element.tag.as_str(), "html" | "dl" | "ul" | "ol" | "table"))
         {
             area.pad(&styles[idx].padding, font);
+        }
+        if let Some(tracks) = widths.get_mut(&idx)
+            && area.width >= 32
+        {
+            tracks.resolve(area.width);
         }
         boxes.push(area);
     }
@@ -165,7 +192,7 @@ mod tests {
             crate::font_context(&[crate::test_fixture("fonts/NotoSans-Regular.ttf")]).unwrap();
         let styles =
             BookStyle::load(&mut book, &href, &source, &mut fonts).compute(&source.elements);
-        let boxes = layout(&source, &styles, 1000, 40.).unwrap();
+        let boxes = layout(&source, &styles, 1000, 40., |_| (0, 0)).unwrap();
         let r = |id| {
             boxes[source
                 .elements

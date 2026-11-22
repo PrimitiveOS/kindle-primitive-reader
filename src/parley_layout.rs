@@ -123,8 +123,19 @@ impl ParleyChapter {
         ));
         let group_insets = list_insets(source, styles, settings.font_size);
         let outer_width = settings.text_width();
-        let publisher_boxes =
-            crate::publisher_padding::layout(source, styles, outer_width, settings.font_size);
+        let publisher_boxes = crate::publisher_padding::layout(
+            source, styles, outer_width, settings.font_size, |block| {
+                let indent = LineIndent::resolve(
+                    &styles[block.element], outer_width, outer_width, settings.font_size, 0,
+                );
+                let layout = make_paragraph(
+                    &mut context, &mut fonts, block, None, settings, styles,
+                    &[], &[], false, indent, &Default::default(),
+                );
+                let widths = layout.calculate_content_widths();
+                (widths.min.ceil() as u32, widths.max.ceil() as u32)
+            },
+        );
         let column_for = |block: &Block| {
             if let Some(boxes) = &publisher_boxes {
                 return boxes[block.element].cell;
@@ -821,7 +832,7 @@ fn layout_with_images(
         context,
         fonts,
         block,
-        width,
+        Some(width),
         settings,
         styles,
         &[],
@@ -839,7 +850,7 @@ fn layout_with_images(
             context,
             fonts,
             block,
-            width,
+            Some(width),
             settings,
             styles,
             &[],
@@ -905,7 +916,7 @@ fn layout_with_images(
         context,
         fonts,
         block,
-        width,
+        Some(width),
         settings,
         styles,
         &candidates,
@@ -1118,7 +1129,7 @@ fn make_paragraph(
     context: &mut LayoutContext<TextDecoration>,
     fonts: &mut FontContext,
     block: &Block,
-    width: u32,
+    width: Option<u32>,
     settings: Settings,
     styles: &[Style],
     ruby: &[RubyCandidate],
@@ -1194,7 +1205,11 @@ fn make_paragraph(
         }
     };
     builder.push_default(StyleProperty::LineHeight(line_height(style)));
-    builder.push_default(StyleProperty::OverflowWrap(OverflowWrap::Anywhere));
+    // An emergency break keeps a placed word within a narrow reading column.
+    // Intrinsic table sizing must still see the word's whole natural width.
+    if width.is_some() {
+        builder.push_default(StyleProperty::OverflowWrap(OverflowWrap::Anywhere));
+    }
     builder.push_default(StyleProperty::FontSize(font_size(style)));
     if settings.word_spacing != 0.0 {
         builder.push_default(StyleProperty::WordSpacing(settings.word_spacing));
@@ -1272,6 +1287,7 @@ fn make_paragraph(
             },
         );
     }
+    let Some(width) = width else { return layout };
     layout.break_all_lines(Some(width as f32));
     let alignment = match settings.alignment {
         crate::TextAlignment::Publisher => style.alignment.unwrap_or(Alignment::Start),

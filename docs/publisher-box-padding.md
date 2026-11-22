@@ -50,3 +50,5 @@ Installed KOReader in Book mode located 43 source passages in four original EPUB
 | 069, nested lists | 8 of 8 | 63 or 189 px in both engines |
 
 All five differences came from the second and third columns of the same three-column table. The original specifies both 10 px cell padding and a padded outer table with a width of 95%. Reader places the cells using its assigned column fractions. CREngine also sizes the table and columns from their contents. These measurements leave a 2–7 px difference in those columns. The full-width table in another chapter had zero outer padding. [Reader cell positioning](../src/table_layout.rs) · [CREngine column sizing](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L1064-L1341)
+
+The follow-up column comparison tests the five positions inside that table in both engines. [Publisher column widths](table-columns.md)
