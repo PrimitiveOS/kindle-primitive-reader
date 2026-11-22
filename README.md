@@ -88,7 +88,8 @@ Install Reader from PrimitiveOS Store or follow the manual install guide.
 - Swipe up from the bottom edge to reopen the last formatting panel for the
   current format. Text controls include font size, line and word spacing,
   [CJK character width](docs/cjk-width.md),
-  [independent page margins](docs/reflow-page-margins.md), facing pages, weight, screen settings, and font profiles. Fixed-page
+  [independent page margins](docs/reflow-page-margins.md), facing pages,
+  [numeric contrast and weight](docs/font-contrast-and-weight.md), screen settings, and font profiles. Fixed-page
   controls include fit, zoom, rotation, scroll mode, and available scan tools.
   Make adjustments with the page visible. Tap the upper center to show both
   bars. Tap the page to dismiss them. **Exit** returns to Launcher.

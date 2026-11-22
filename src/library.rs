@@ -283,6 +283,10 @@ pub struct BookPreferences {
     pub bold_text: bool,
     pub text_contrast: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_gamma_index: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_weight_delta: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub publisher_styles: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub font_kerning: Option<bool>,
@@ -352,6 +356,12 @@ impl BookPreferences {
             alignment: self.alignment,
             bold_text: self.bold_text,
             text_contrast: self.text_contrast,
+            font_gamma_index: self.font_gamma_index
+                .filter(|&index| usize::from(index) < crate::font_render::GAMMA_LEVELS.len())
+                .unwrap_or(settings.font_gamma_index),
+            font_weight_delta: self.font_weight_delta
+                .filter(|delta| (-3.0..=5.5).contains(delta))
+                .unwrap_or(settings.font_weight_delta),
             publisher_styles: self.publisher_styles.unwrap_or(settings.publisher_styles),
             font_kerning: self.font_kerning.unwrap_or(settings.font_kerning),
             font_hinting: self.font_hinting,
