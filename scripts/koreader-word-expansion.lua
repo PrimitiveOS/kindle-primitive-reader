@@ -21,6 +21,7 @@ end
 assert(#cases > 0)
 local function measure(expansion)
     local view = cre.newDocView(1264, 1606, 1)
+    view:setIntProperty("crengine.render.block.rendering.flags", 0x03375131) -- ReaderTypeset Book mode.
     view:setStyleSheet("./data/epub.css", "* { text-align: justify !important; hyphens: none !important }")
     view:setIntProperty("crengine.doc.embedded.fonts.enabled", 1)
     view:setIntProperty("crengine.style.max.added.letter.spacing.percent", expansion)
