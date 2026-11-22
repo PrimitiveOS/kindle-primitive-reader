@@ -98,8 +98,7 @@ mod tests {
     use super::*;
     fn selected(selector: &str, xml: &str) -> Vec<String> {
         let source = Source::parse(xml).unwrap();
-        let mut input = cssparser::ParserInput::new(selector);
-        let selector = super::super::Selector::parse(&mut Parser::new(&mut input)).unwrap();
+        let selector = super::super::Selector::parse(&mut Parser::new(selector)).unwrap();
         source
             .elements
             .iter()
@@ -143,9 +142,8 @@ mod tests {
             "[href=value]",
             "[epub|]",
         ] {
-            let mut input = cssparser::ParserInput::new(selector);
             assert!(
-                super::super::Selector::parse(&mut Parser::new(&mut input)).is_err(),
+                super::super::Selector::parse(&mut Parser::new(selector)).is_err(),
                 "{selector}"
             );
         }
