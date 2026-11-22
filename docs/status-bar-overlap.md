@@ -14,12 +14,14 @@ KOReader's status settings offer a choice to reclaim the height of a hidden foot
 
 ## Verification
 
-The Mac workflow opened two original EPUBs, selected a word on actual ink in the additional 74 rows, revealed the footer through its on-page control, exited and reopened the book at the same source position. All 75,776 unoccluded pixels in the added band matched the underlying page. The hidden controls were independently verified as visible in the rendered framebuffer. Both screenshots use an authored fixture.
+The same workflow on the Mac and Oasis 3 opened two original EPUBs, selected a word on actual ink in the additional 74 rows, revealed the footer through its on-page control, exited and reopened the book at the same source position. All 75,776 unoccluded pixels in the added band matched the underlying page. The hidden controls were independently verified as visible in the rendered framebuffer. Both screenshots use an authored fixture.
 
 | Original | Spine item | Reserved / full-height chapter pages | Newly visible nonwhite pixels on tested page |
 | --- | ---: | ---: | ---: |
 | 035 | 12 | 19 / 18 | 289 |
 | 042 | 15 | 33 / 30 | 6,329 |
+
+On the Oasis, installed KOReader used the same 74-pixel reserve and independently located a unique passage in each book. Removing the reserve changed the first whole book from 448 pages to 426 and the second from 808 to 777. The passages moved from page 103 to 100 and 319 to 305, respectively. Each still had two source rectangles. The newly available band contained 5,369 and 5,340 nonwhite pixels in the stock renderer. Restoring the reserve reproduced the entire original stock frame in both books. Reader’s separate native test processes peaked at 42,388 and 33,848 KiB. Source files, Documents inventory, the installed Reader, library, reading statistics and Browser session retained their checksums, and the temporary profiles were removed.
 
 The same workflow tests failure to save the setting, the footer tap lock, continuous scrolling and a two-page spread. The installed KOReader script independently aligns a private source passage, measures the change in pagination and verifies restoration of the original frame. Its controlled 74-pixel footer allows comparison with Reader's physical geometry. [Reader integration tests](../src/app/reading_footer/overlap_tests.rs) · [KOReader comparison](../scripts/koreader-status-overlap-check.lua)
 
