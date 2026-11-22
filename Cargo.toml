@@ -16,6 +16,7 @@ kindle = ["dep:primitive-app", "dep:primitive-ui", "dep:unicode-bidi", "dep:ureq
 cc = "=1.11.2"
 
 [dependencies]
+kurbo = "=0.13.1"
 ab_glyph_rasterizer = "=0.1.10"
 anyrender_vello_cpu = "=0.18.0"
 base64 = "=0.23.1"

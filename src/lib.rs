@@ -28,6 +28,8 @@ pub mod fixed_text;
 #[cfg(feature = "kindle")]
 mod generated_contents;
 mod gray_glyph;
+mod font_render;
+mod font_synthesis;
 mod gif_image;
 #[cfg(feature = "kindle")]
 mod footnotes;
@@ -172,6 +174,10 @@ pub struct Settings {
     pub alignment: TextAlignment,
     pub bold_text: bool,
     pub text_contrast: bool,
+    /// Index into the 57-level reflow glyph contrast scale. Index 15 is neutral.
+    pub font_gamma_index: u8,
+    /// Delta from regular weight, in 100-weight-class units. Range -3 to +5.5.
+    pub font_weight_delta: f32,
     pub override_fonts: bool,
     pub disable_soft_hyphens: bool,
     pub automatic_hyphenation: bool,
@@ -205,6 +211,8 @@ impl Default for Settings {
             alignment: TextAlignment::Publisher,
             bold_text: false,
             text_contrast: false,
+            font_gamma_index: font_render::NORMAL_GAMMA,
+            font_weight_delta: 0.0,
             override_fonts: false,
             disable_soft_hyphens: false,
             automatic_hyphenation: true,
@@ -545,9 +553,11 @@ impl Probe {
             && (!settings.publisher_styles
                 || !settings.font_kerning
                 || settings.font_hinting != FontHinting::Off
+                || settings.font_gamma_index != font_render::NORMAL_GAMMA
+                || settings.font_weight_delta != 0.0
                 || settings.word_expansion != 0)
         {
-            return Err("Publisher style, kerning, hinting and word expansion controls require Parley".into());
+            return Err("Publisher style, font rendering and word expansion controls require Parley".into());
         }
         let entry = book
             .chapters

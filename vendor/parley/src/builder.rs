@@ -33,6 +33,9 @@ pub enum SoftHyphenAction {
 /// and selected font size. The glyphs are centered within the added space.
 pub type ClusterSpacingFn = dyn Fn(&str, f32, f32) -> u16 + Send + Sync;
 
+/// Signed advance for a requested font weight, after font selection.
+pub type FontWeightSpacingFn = dyn Fn(&crate::FontData, f32, f32) -> f32 + Send + Sync;
+
 #[derive(Clone, Copy)]
 pub(crate) struct BuilderOptions<'a> {
     scale: f32,
@@ -41,6 +44,7 @@ pub(crate) struct BuilderOptions<'a> {
     line_break_override: Option<&'a LineBreakOverrideFn>,
     automatic_hyphens: &'a [usize],
     cluster_spacing: Option<&'a ClusterSpacingFn>,
+    font_weight_spacing: Option<&'a FontWeightSpacingFn>,
     soft_hyphen_policy: Option<&'a (dyn Fn(usize) -> SoftHyphenAction + Send + Sync)>,
 }
 
@@ -54,6 +58,7 @@ impl BuilderOptions<'_> {
             soft_hyphen_policy: None,
             automatic_hyphens: &[],
             cluster_spacing: None,
+            font_weight_spacing: None,
         }
     }
 }
@@ -128,6 +133,11 @@ impl<'b, B: Brush> RangedBuilder<'b, B> {
     /// source is unchanged, including ligatures, combining marks and variations.
     pub fn set_cluster_spacing(&mut self, policy: Option<&'b ClusterSpacingFn>) {
         self.options.cluster_spacing = policy;
+    }
+
+    /// Apply font-weight synthesis advances to layout and hit testing.
+    pub fn set_font_weight_spacing(&mut self, policy: Option<&'b FontWeightSpacingFn>) {
+        self.options.font_weight_spacing = policy;
     }
 
     /// Set sorted UTF-8 source boundaries where a visible hyphen may be appended
@@ -472,10 +482,34 @@ fn build_into_layout<B: Brush>(
                 if extra != 0 {
                     let cluster = atom.shaped_clusters_range().start as usize;
                     if cluster >= layout.data.cluster_spacing.len() {
-                        layout.data.cluster_spacing.resize(cluster + 1, 0);
+                        layout.data.cluster_spacing.resize(cluster + 1, crate::layout::Gaps::ZERO);
                     }
-                    layout.data.cluster_spacing[cluster] = extra;
+                    layout.data.cluster_spacing[cluster] = crate::layout::Gaps {
+                        before: f32::from(extra / 2),
+                        after: f32::from(extra - extra / 2),
+                    };
                 }
+            }
+        }
+    }
+
+    if let Some(policy) = options.font_weight_spacing {
+        let shaped = &layout.data.shaped_text;
+        for (index, run) in shaped.runs().iter().enumerate() {
+            let font = &shaped.fonts()[run.font_index].font;
+            let requested = layout.data.runs[index].font_attrs.weight.value();
+            let extra = policy(font, requested, run.font_size);
+            if !extra.is_finite() || extra == 0.0 || extra.abs() > 32.0 {
+                continue;
+            }
+            let slice = shaped.run_slice(index as u32);
+            for atom in slice.atoms_start() {
+                if atom.advance() <= 0.0 { continue; }
+                let cluster = atom.shaped_clusters_range().start as usize;
+                if cluster >= layout.data.cluster_spacing.len() {
+                    layout.data.cluster_spacing.resize(cluster + 1, crate::layout::Gaps::ZERO);
+                }
+                layout.data.cluster_spacing[cluster].after += extra.max(-atom.advance());
             }
         }
     }

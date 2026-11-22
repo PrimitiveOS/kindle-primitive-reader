@@ -114,7 +114,8 @@ impl ParleyChapter {
             markers: Vec::new(),
             table_frames: Vec::new(),
             padded_backgrounds: Vec::new(),
-            glyphs: GlyphCache::with_hinting(settings.font_hinting),
+            glyphs: GlyphCache::with_hinting(settings.font_hinting,
+                styles.first().map_or_else(Default::default, |style| style.font_weights.clone())),
         };
         let mut context = LayoutContext::new();
         let mut lines = Vec::new();
@@ -748,6 +749,7 @@ impl ParleyChapter {
                             (paragraph.x, paragraph.y - range.start),
                             &run,
                             settings.text_contrast,
+                            settings.font_gamma_index,
                         );
                         let decoration = run.style().brush;
                         if decoration != TextDecoration::default() {
@@ -791,6 +793,7 @@ impl ParleyChapter {
                             ),
                             &run,
                             settings.text_contrast,
+                            settings.font_gamma_index,
                         );
                     }
                 }
@@ -812,6 +815,7 @@ impl ParleyChapter {
                                 (marker.x, *y - range.start),
                                 &run,
                                 settings.text_contrast,
+                            settings.font_gamma_index,
                             );
                         }
                     }
@@ -1136,6 +1140,11 @@ fn marker_layout(
     size: f32,
 ) -> Layout<TextDecoration> {
     let mut builder = context.ranged_builder(fonts, text, 1.0, true);
+    let font_weights = style.font_weights.clone();
+    let weight_spacing = move |font: &parley::FontData, requested: f32, size: f32| {
+        crate::font_synthesis::strength(font, requested, size, &font_weights)
+    };
+    builder.set_font_weight_spacing(Some(&weight_spacing));
     let cjk_spacing = cjk_width::policy(text, settings.cjk_width_percent);
     if let Some(policy) = &cjk_spacing {
         builder.set_cluster_spacing(Some(policy));
@@ -1148,11 +1157,14 @@ fn marker_layout(
     builder.push_default(StyleProperty::FontFamily(family));
     builder.push_default(StyleProperty::FontSize(size));
     builder.push_default(StyleProperty::FontWeight(
-        if settings.bold_text && style.font_weight < FontWeight::BOLD {
-            FontWeight::BOLD
-        } else {
-            style.font_weight
-        },
+        FontWeight::new(crate::font_render::font_weight(
+            if settings.bold_text && style.font_weight < FontWeight::BOLD {
+                FontWeight::BOLD.value()
+            } else {
+                style.font_weight.value()
+            },
+            settings.font_weight_delta,
+        )),
     ));
     builder.push_default(StyleProperty::FontStyle(style.font_style));
     let mut layout = builder.build(text);
@@ -1169,6 +1181,11 @@ fn make_annotation(
     settings: Settings,
 ) -> Layout<TextDecoration> {
     let mut builder = context.ranged_builder(fonts, text, 1.0, true);
+    let font_weights = style.font_weights.clone();
+    let weight_spacing = move |font: &parley::FontData, requested: f32, size: f32| {
+        crate::font_synthesis::strength(font, requested, size, &font_weights)
+    };
+    builder.set_font_weight_spacing(Some(&weight_spacing));
     let cjk_spacing = cjk_width::policy(text, settings.cjk_width_percent);
     if let Some(policy) = &cjk_spacing {
         builder.set_cluster_spacing(Some(policy));
@@ -1183,6 +1200,16 @@ fn make_annotation(
     };
     builder.push_default(StyleProperty::FontFamily(family));
     builder.push_default(StyleProperty::Locale(language));
+    builder.push_default(StyleProperty::FontWeight(FontWeight::new(
+        crate::font_render::font_weight(
+            if settings.bold_text {
+                style.font_weight.value().max(FontWeight::BOLD.value())
+            } else {
+                style.font_weight.value()
+            },
+            settings.font_weight_delta,
+        ),
+    )));
     builder.push_default(StyleProperty::FontSize(
         (settings.font_size * style.size_scale * 0.48).clamp(8.0, 84.0),
     ));
@@ -1228,6 +1255,11 @@ fn make_paragraph(
     let style = &styles[block.element];
     let language = block.language;
     let mut builder = context.ranged_builder(fonts, &block.text, 1.0, true);
+    let font_weights = style.font_weights.clone();
+    let weight_spacing = move |font: &parley::FontData, requested: f32, size: f32| {
+        crate::font_synthesis::strength(font, requested, size, &font_weights)
+    };
+    builder.set_font_weight_spacing(Some(&weight_spacing));
     builder.set_automatic_hyphens(&automatic.breaks);
     let cjk_spacing = cjk_width::policy(&block.text, settings.cjk_width_percent);
     if let Some(policy) = &cjk_spacing {
@@ -1285,11 +1317,14 @@ fn make_paragraph(
     };
     let font_size = |style: &Style| (settings.font_size * style.size_scale).clamp(12.0, 192.0);
     let weight = |style: &Style| {
-        if settings.bold_text && style.font_weight < FontWeight::BOLD {
-            FontWeight::BOLD
-        } else {
-            style.font_weight
-        }
+        FontWeight::new(crate::font_render::font_weight(
+            if settings.bold_text && style.font_weight < FontWeight::BOLD {
+                FontWeight::BOLD.value()
+            } else {
+                style.font_weight.value()
+            },
+            settings.font_weight_delta,
+        ))
     };
     builder.push_default(StyleProperty::LineHeight(line_height(style)));
     // An emergency break keeps a placed word within a narrow reading column.

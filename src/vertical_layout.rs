@@ -17,7 +17,7 @@ use parley::{
 };
 use skrifa::{
     MetadataProvider,
-    instance::{LocationRef, Size},
+    instance::{LocationRef, NormalizedCoord, Size},
     raw::TableProvider,
 };
 
@@ -47,6 +47,8 @@ pub(crate) struct PaintGlyph<'a> {
     pub x: f32,
     pub y: f32,
     pub clockwise: bool,
+    pub strength: f32,
+    pub variations: &'a [NormalizedCoord],
 }
 
 struct Face {
@@ -55,6 +57,7 @@ struct Face {
     shaper: ShaperData,
     em: f32,
     horizontal_center: f32,
+    variations: Vec<NormalizedCoord>,
 }
 
 impl Face {
@@ -87,6 +90,7 @@ struct Run {
     format: Format,
     face: usize,
     size: f32,
+    strength: f32,
 }
 
 struct Text<'a> {
@@ -105,6 +109,7 @@ struct Glyph {
     x: f32,
     y: f32,
     clockwise: bool,
+    strength: f32,
 }
 
 struct Cluster {
@@ -191,7 +196,8 @@ impl VerticalChapter {
             columns_per_page,
             pitch,
             ruby_gutter,
-            cache: GlyphCache::with_hinting(settings.font_hinting),
+            cache: GlyphCache::with_hinting(settings.font_hinting,
+                styles.first().map_or_else(Default::default, |style| style.font_weights.clone())),
         };
         let mut lines = Vec::new();
         for block in source.blocks.iter().filter(|block| !block.text.is_empty()) {
@@ -439,8 +445,11 @@ impl VerticalChapter {
                         x: glyph.x,
                         y: glyph.y - top as f32,
                         clockwise: glyph.clockwise,
+                        strength: glyph.strength,
+                        variations: &self.faces[glyph.face].variations,
                     },
                     settings.text_contrast,
+                            settings.font_gamma_index,
                 );
             }
         }
@@ -602,11 +611,17 @@ fn font_runs(
             let face = find_face(fonts, faces, style, settings, &format, text)?;
             let size = (settings.font_size * input.scale * style.size_scale.clamp(0.75, MAX_SCALE))
                 .clamp(1.0, 144.0);
+            let requested = crate::font_render::font_weight(
+                if settings.bold_text { FontWeight::BOLD.value() } else { style.font_weight.value() },
+                settings.font_weight_delta,
+            );
+            let strength = crate::font_synthesis::strength(&faces[face].font, requested, size, &style.font_weights);
             runs.push(Run {
                 bytes: start..end,
                 format,
                 face,
                 size,
+                strength,
             });
         }
         start = end;
@@ -656,11 +671,10 @@ fn find_face(
         QueryFamily::Generic(GenericFamily::Serif),
         QueryFamily::Generic(GenericFamily::SansSerif),
     ]);
-    let weight = if settings.bold_text {
-        FontWeight::BOLD
-    } else {
-        style.font_weight
-    };
+    let weight = FontWeight::new(crate::font_render::font_weight(
+        if settings.bold_text { FontWeight::BOLD.value() } else { style.font_weight.value() },
+        settings.font_weight_delta,
+    ));
     query.set_attributes(Attributes::new(FontWidth::NORMAL, style.font_style, weight));
     let script = if format.orientation == Orientation::Upright {
         *b"Hani"
@@ -705,8 +719,13 @@ fn find_face(
             "No available font covers this sideways text"
         }
     })?;
+    let data = FontData::new(candidate.blob, candidate.index);
+    let font = skrifa::FontRef::from_index(data.data.as_ref(), data.index)?;
+    let variations = font.axes().location(candidate.synthesis.variation_settings().iter().copied())
+        .coords().to_vec();
     if let Some(index) = faces.iter().position(|face| {
-        face.font.data.id() == candidate.blob.id() && face.font.index == candidate.index
+        face.font.data.id() == data.data.id() && face.font.index == data.index
+            && face.variations == variations
     }) {
         return Ok(index);
     }
@@ -715,22 +734,20 @@ fn find_face(
     }
     let max_bytes = faces
         .iter()
-        .filter(|face| face.font.data.id() != candidate.blob.id())
+        .filter(|face| face.font.data.id() != data.data.id())
         .map(|face| face.font.data.len())
         .sum::<usize>()
-        + candidate.blob.len();
+        + data.data.len();
     if max_bytes > MAX_FONT_BYTES {
         return Err("The chapter exceeds the vertical font storage limit".into());
     }
-    let data = FontData::new(candidate.blob, candidate.index);
-    let font = FontRef::from_index(data.data.as_ref(), data.index)?;
-    let metrics = font.metrics(Size::unscaled(), LocationRef::default());
+    let metrics = font.metrics(Size::unscaled(), LocationRef::new(&variations));
     let em = f32::from(metrics.units_per_em);
     if em < 16.0 {
         return Err("A vertical font has invalid metrics".into());
     }
     let horizontal_center = (metrics.ascent + metrics.descent) / (2.0 * em);
-    let shaper = ShaperData::new(&font);
+    let shaper = ShaperData::new(&FontRef::from_index(data.data.as_ref(), data.index)?);
     let index = faces.len();
     faces.push(Face {
         font: data,
@@ -738,6 +755,7 @@ fn find_face(
         shaper,
         em,
         horizontal_center,
+        variations,
     });
     Ok(index)
 }
@@ -757,7 +775,8 @@ fn shape_block(
     for run in runs {
         let face = &faces[run.face];
         let font = FontRef::from_index(face.font.data.as_ref(), face.font.index)?;
-        let shaper = face.shaper.shaper(&font).build();
+        let instance = harfrust::ShaperInstance::from_coords(&font, face.variations.iter().copied());
+        let shaper = face.shaper.shaper(&font).instance(Some(&instance)).build();
         let mut buffer = UnicodeBuffer::new();
         for (at, ch) in text[run.bytes.clone()].char_indices() {
             buffer.add(ch, (run.bytes.start + at) as u32);
@@ -813,11 +832,14 @@ fn shape_block(
             }
             let dx = pos.x_offset as f32 * scale;
             let dy = pos.y_offset as f32 * scale;
-            let advance = if sideways {
+            let natural_advance = if sideways {
                 pos.x_advance as f32 * scale
             } else {
                 -(pos.y_advance as f32) * scale
             };
+            let advance = if natural_advance > 0.0 {
+                (natural_advance + run.strength).max(0.0)
+            } else { natural_advance };
             if !advance.is_finite()
                 || !(0.0..=576.0).contains(&advance)
                 || dx.abs() > 4_096.0
@@ -837,6 +859,7 @@ fn shape_block(
                 x,
                 y,
                 clockwise: sideways,
+                strength: run.strength,
             });
             pen += advance;
             let cluster = shaped.clusters.last_mut().unwrap();

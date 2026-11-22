@@ -476,30 +476,58 @@ impl Reader {
                 }
                 BarPanel::TextStyle => {
                     let mut rows = vec![ConfigRow::new(
-                        "Text weight",
-                        [false, true].map(|bold_text| {
+                        "Font weight",
+                        [-1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 3.0].map(|delta| {
                             Choice::option(
-                                if bold_text { "Bold" } else { "Regular" },
+                                format!("{delta:+.2}"),
                                 Action::Text(Settings {
-                                    bold_text,
+                                    font_weight_delta: delta,
+                                    bold_text: false,
                                     ..settings
                                 }),
-                                settings.bold_text == bold_text,
+                                settings.font_weight_delta == delta && !settings.bold_text,
                             )
                         }),
                     )];
                     rows.push(ConfigRow::new(
-                        "Text contrast",
-                        [false, true].map(|text_contrast| {
+                        format!("Fine tune · {:+.2}", settings.font_weight_delta),
+                        [("-1", -1.0), ("-0.25", -0.25), ("0", 0.0), ("+0.25", 0.25), ("+1", 1.0)]
+                            .map(|(label, step)| text(label, Settings {
+                                font_weight_delta: if step == 0.0 { 0.0 }
+                                    else { (settings.font_weight_delta + step).clamp(-3.0, 5.5) },
+                                bold_text: false,
+                                ..settings
+                            })),
+                    ));
+                    rows.push(ConfigRow::new(
+                        "Font contrast",
+                        crate::font_render::GAMMA_PRESETS.map(|index| {
                             Choice::option(
-                                if text_contrast { "Darker" } else { "Normal" },
+                                crate::font_render::gamma_label(index),
                                 Action::Text(Settings {
-                                    text_contrast,
+                                    font_gamma_index: index,
+                                    text_contrast: false,
                                     ..settings
                                 }),
-                                settings.text_contrast == text_contrast,
+                                settings.font_gamma_index == index && !settings.text_contrast,
                             )
                         }),
+                    ));
+                    rows.push(ConfigRow::new(
+                        format!("Fine tune · {}", crate::font_render::gamma_label(settings.font_gamma_index)),
+                        [("-", -1), ("1.00", 0), ("+", 1)]
+                            .map(|(label, step)| {
+                                let index = if step == 0 {
+                                    crate::font_render::NORMAL_GAMMA
+                                } else {
+                                    (i16::from(settings.font_gamma_index) + step).clamp(0, 56) as u8
+                                };
+                                text(label, Settings {
+                                    font_gamma_index: index,
+                                    text_contrast: false,
+                                    ..settings
+                                })
+                            }),
                     ));
                     if !vertical {
                         rows.push(ConfigRow::new(

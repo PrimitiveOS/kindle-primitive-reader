@@ -45,3 +45,11 @@ passes each shaped atom's original text, natural advance and font size to
 the caller. Extra advances are measured before wrapping and shared by line
 measurement, painting and selection. Reader applies this to horizontal CJK
 text. [CJK width and geometry checks](../../docs/cjk-width.md)
+
+The ranged builder accepts an optional signed font-weight advance callback.
+Reader supplies the remaining weight difference after face selection, including
+a publisher's declared face class. Fractional advances use the same before/after
+cluster-spacing representation as CJK widths. Wrapping, intrinsic table widths,
+caret positions, painting and word hits consume those shared gaps. Zero-advance
+marks retain their original geometry. With no callback, upstream behavior is
+unchanged. [Numeric contrast and weight](../../docs/font-contrast-and-weight.md)

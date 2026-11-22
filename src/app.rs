@@ -36,6 +36,8 @@ mod selection_popup;
 mod saved_highlight_popup;
 mod user_hyphenation;
 mod footnote_popup;
+#[cfg(test)]
+mod font_render_tests;
 mod top_config;
 #[cfg(test)]
 mod nonlinear_tests;
@@ -2351,6 +2353,8 @@ impl Reader {
                 preferences.alignment = settings.alignment;
                 preferences.bold_text = settings.bold_text;
                 preferences.text_contrast = settings.text_contrast;
+                preferences.font_gamma_index = Some(settings.font_gamma_index);
+                preferences.font_weight_delta = Some(settings.font_weight_delta);
                 preferences.publisher_styles = Some(settings.publisher_styles);
                 preferences.font_kerning = Some(settings.font_kerning);
                 preferences.font_hinting = settings.font_hinting;
@@ -2596,6 +2600,8 @@ impl Reader {
             alignment: settings.alignment,
             bold_text: settings.bold_text,
             text_contrast: settings.text_contrast,
+            font_gamma_index: Some(settings.font_gamma_index),
+            font_weight_delta: Some(settings.font_weight_delta),
             publisher_styles: Some(settings.publisher_styles),
             font_kerning: Some(settings.font_kerning),
             font_hinting: settings.font_hinting,

@@ -370,6 +370,32 @@ impl Reading {
 
     pub(crate) fn reflow(&mut self, settings: Settings) -> Result<()> {
         if (Settings {
+            font_gamma_index: settings.font_gamma_index,
+            text_contrast: settings.text_contrast,
+            ..self.config.settings
+        }) == settings
+            && settings != self.config.settings
+        {
+            let previous = self.probe.settings;
+            self.probe.settings = Settings {
+                font_gamma_index: settings.font_gamma_index,
+                text_contrast: settings.text_contrast,
+                ..previous
+            };
+            let frame = match capture(&mut self.probe, self.chapter, self.page, self.scroll_top) {
+                Ok(frame) => frame,
+                Err(error) => {
+                    self.probe.settings = previous;
+                    return Err(error);
+                }
+            };
+            self.config.settings = settings;
+            self.frame = frame;
+            self.adjacent.clear();
+            self.schedule_prefetch();
+            return Ok(());
+        }
+        if (Settings {
             invert_night_images: settings.invert_night_images,
             link_vertical_margins: settings.link_vertical_margins,
             ..self.config.settings
@@ -1452,6 +1478,42 @@ mod tests {
         assert!(rects.iter().all(|rect| rect.x + rect.width <= WIDTH as i32));
         let thumbnail = page_thumbnail(&mut reading.probe, 1).unwrap();
         assert_eq!(thumbnail.light.width, FACING_PAGE_WIDTH * 280 / PAGE_HEIGHT);
+    }
+
+    #[test]
+    fn contrast_repaints_both_facing_leaves_and_scroll_without_replacing_their_geometry() {
+        let mut reading = example("long-chapter.epub", 42.0, true);
+        let (x, y, word) = first_hit(|x, y| reading.probe.word_at(1, x, y)).unwrap();
+        let right = (FACING_PAGE_WIDTH + FACING_GUTTER) as f32;
+        let anchor = reading.anchor();
+        let lines = reading.probe.lines.as_ptr();
+        let before = reading.frame.pixels.clone();
+        let pages = reading.probe.page_count();
+        reading.reflow(Settings {font_gamma_index:25, ..reading.config.settings}).unwrap();
+        assert_eq!(reading.probe.settings.width, FACING_PAGE_WIDTH);
+        assert_eq!(reading.config.settings.width, WIDTH);
+        assert_eq!(reading.last_visible_page(), 1);
+        assert_eq!(reading.probe.page_count(), pages);
+        assert_eq!(reading.probe.lines.as_ptr(), lines);
+        assert_eq!(reading.anchor(), anchor);
+        assert_eq!(reading.word_at(x + right, y), Some(word));
+        assert_ne!(reading.frame.pixels, before);
+        reading.reflow(Settings {font_gamma_index:15, ..reading.config.settings}).unwrap();
+        assert_eq!(reading.frame.pixels, before);
+
+        reading.set_scroll(true).unwrap();
+        reading.scroll(reading.scroll_top.unwrap(), 185.0).unwrap();
+        let top = reading.scroll_top;
+        let anchor = reading.anchor();
+        let lines = reading.probe.lines.as_ptr();
+        let before = reading.frame.pixels.clone();
+        reading.reflow(Settings {font_gamma_index:25, ..reading.config.settings}).unwrap();
+        assert_eq!(reading.scroll_top, top);
+        assert_eq!(reading.anchor(), anchor);
+        assert_eq!(reading.probe.lines.as_ptr(), lines);
+        assert_ne!(reading.frame.pixels, before);
+        reading.reflow(Settings {font_gamma_index:15, ..reading.config.settings}).unwrap();
+        assert_eq!(reading.frame.pixels, before);
     }
 
     #[test]

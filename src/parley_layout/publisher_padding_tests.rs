@@ -531,6 +531,9 @@ fn collapsed_table_uses_its_header_widths_and_preserves_cross_column_word_hits()
             .replace("width:12%", "width:auto"),
     );
     let narrow = render(html.replace("width:95%", "width:60%"));
+    // Real bold headers can exceed a percentage track's minimum content width.
+    // Keep a separate short normal-weight header case for exact percentages.
+    let percent = render(html.replace("th.depth {", "th.depth {font-weight:normal;").replace("th.buoy {", "th.buoy {font-weight:normal;"));
     let rect = |p: &Probe, id: &str, word: &str| {
         let start = p.fragment(id).unwrap();
         let end = crate::Anchor {
@@ -561,7 +564,9 @@ fn collapsed_table_uses_its_header_widths_and_preserves_cross_column_word_hits()
         assert_eq!(rect(&zero, id, word), p);
         assert_eq!(rect(&narrow, id, word), p);
         if id == "buoy-name" {
-            assert!((p.x - (30 + 840 * 68 / 100 + 8)).abs() < 4);
+            let proportional = rect(&percent, id, word);
+            assert!((proportional.x - (30 + 840 * 68 / 100 + 8)).abs() < 4);
+            assert!(p.x <= proportional.x);
             assert!(p.x.abs_diff(rect(&auto, id, word).x) > 8);
         }
     }

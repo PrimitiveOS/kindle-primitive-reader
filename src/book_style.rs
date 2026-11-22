@@ -215,6 +215,7 @@ impl TextDecoration {
 #[derive(Clone)]
 pub(crate) struct Style {
     pub font_family: Family,
+    pub font_weights: Arc<HashMap<u64, f32>>,
     pub size_scale: f32,
     pub text_rise: TextRise,
     pub decoration: TextDecoration,
@@ -246,6 +247,7 @@ impl Default for Style {
     fn default() -> Self {
         Self {
             font_family: Family::Generic(GenericFamily::Serif),
+            font_weights: Arc::default(),
             size_scale: 1.0,
             text_rise: TextRise::default(),
             decoration: TextDecoration::default(),
@@ -280,6 +282,7 @@ pub(crate) struct BookStyle {
     author_inline: bool,
     rules: Vec<Rule>,
     families: HashMap<String, Arc<str>>,
+    font_weights: Arc<HashMap<u64, f32>>,
 }
 
 impl BookStyle {
@@ -334,11 +337,11 @@ impl BookStyle {
     }
 
     pub fn compute(&self, elements: &[Element]) -> Vec<Style> {
-        let defaults = Style::default();
+        let defaults = Style { font_weights: self.font_weights.clone(), ..Style::default() };
         let mut result: Vec<Style> = Vec::with_capacity(elements.len());
         for (index, element) in elements.iter().enumerate() {
             if element.selector_only {
-                result.push(Style::default());
+                result.push(defaults.clone());
                 continue;
             }
             let parent = element.parent.map_or(&defaults, |parent| &result[parent]);
@@ -575,6 +578,10 @@ impl BookStyle {
                     let Some(data) = assets.load(book, path) else {
                         continue;
                     };
+                    // Each CSS face has its own identity even when several roles
+                    // share one font resource. The wrapper shares the original bytes.
+                    let data = Blob::new(Arc::new(data));
+                    let font_id = data.id();
                     let overrides = FontInfoOverride {
                         family_name: Some(&internal),
                         weight: Some(face.weight),
@@ -586,6 +593,7 @@ impl BookStyle {
                         .register_fonts(data, Some(overrides))
                         .is_empty()
                     {
+                        Arc::make_mut(&mut self.font_weights).insert(font_id, face.weight.value());
                         registered.push(descriptor);
                         break;
                     }
@@ -1665,6 +1673,20 @@ mod tests {
         let styles =
             BookStyle::load(&mut book, &chapter, &source, &mut fonts).compute(&source.elements);
         (source, styles)
+    }
+
+    #[test]
+    fn shared_embedded_bytes_keep_distinct_declared_font_weight_roles() {
+        let mut book = Book::open(&crate::test_fixture("publisher-faces.epub")).unwrap();
+        let href = book.chapters[0].href.clone();
+        let source = Source::parse(&book.chapter(0).unwrap()).unwrap();
+        let mut context = crate::font_context(&[crate::test_fixture("fonts/NotoSans-Regular.ttf")]).unwrap();
+        let sheet = BookStyle::load(&mut book, &href, &source, &mut context);
+        assert_eq!(sheet.font_weights.len(), 5);
+        assert_eq!(sheet.font_weights.values().filter(|&&weight| weight == 400.0).count(), 3);
+        assert_eq!(sheet.font_weights.values().filter(|&&weight| weight == 700.0).count(), 2);
+        let styles = sheet.compute(&source.elements);
+        assert!(styles.iter().all(|style| Arc::ptr_eq(&style.font_weights, &sheet.font_weights)));
     }
 
     #[test]

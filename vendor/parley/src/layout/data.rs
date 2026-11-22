@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
 use crate::inline_box::{InlineBox, LayoutInlineBox};
-use crate::layout::spacing::{Justification, Spacing};
+use crate::layout::spacing::{Gaps, Justification, Spacing};
 use crate::layout::style_metrics::{BoxMetrics, StyleMetrics};
 use crate::layout::whitespace::whitespace_hangs;
 use crate::layout::{ContentWidths, LineMetrics, Style};
@@ -227,7 +227,7 @@ pub(crate) struct LayoutData<B: Brush> {
     pub(crate) shaped_text: ShapedText,
     pub(crate) soft_hyphens: Vec<SoftHyphenOpportunity>,
     /// Extra advance indexed by the first shaped cluster of an atom. Empty by default.
-    pub(crate) cluster_spacing: Vec<u16>,
+    pub(crate) cluster_spacing: Vec<Gaps>,
     pub(crate) runs: Vec<RunData>,
     pub(crate) items: Vec<LayoutItem>,
 
@@ -608,7 +608,7 @@ impl ContentWidthsMeasurer {
         styles: &[Style<B>],
         slice: ShapedSlice<'_>,
         spacing: Spacing,
-        cluster_spacing: &[u16],
+        cluster_spacing: &[Gaps],
         can_hang: bool,
         is_rtl: bool,
     ) {
@@ -643,8 +643,8 @@ impl ContentWidthsMeasurer {
                 }
                 if SPACED {
                     let index = slice.shaped_clusters_range().start as usize + i;
-                    let extra = cluster_spacing.get(index).copied().unwrap_or(0);
-                    gap = spacing.gaps(whitespace).after + f32::from(extra);
+                    let extra = cluster_spacing.get(index).copied().unwrap_or(Gaps::ZERO);
+                    gap = spacing.gaps(whitespace).after + extra.total();
                 }
             } else if skip_atom {
                 // The next line starts after the whole newline atom.
