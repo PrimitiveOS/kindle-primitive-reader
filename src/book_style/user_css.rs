@@ -23,7 +23,7 @@ impl Reset {
             || matches!(self, Self::Unset)
                 && matches!(
                     key,
-                    0 | 1 | 2 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 14 | 15 | 20 | 21 | 24 | 37
+                    0 | 1 | 2 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 14 | 15 | 20 | 21 | 24 | 37 | 41
                 )
     }
 }
@@ -36,6 +36,8 @@ pub(super) fn reset(input: &mut Parser<'_>, name: &str) -> Option<Property> {
         _ => return None,
     };
     let keys = match name {
+        "display" => vec![40],
+        "visibility" => vec![41],
         "font-family" => vec![0],
         "font-size" => vec![1],
         "line-height" => vec![2],
@@ -75,6 +77,10 @@ pub(super) fn apply_reset(
 ) {
     let value = if reset.parent(key) { parent } else { initial };
     match key {
+        // Pinned CRE explicitly leaves display inheritance unimplemented and
+        // treats inherit like inline; initial/unset are inline as well.
+        40 => style.display = Display::Inline,
+        41 => style.visibility = value.visibility,
         0 => style.font_family = value.font_family.clone(),
         1 => style.size_scale = value.size_scale,
         2 => style.line_height = value.line_height,
@@ -123,6 +129,12 @@ impl<'i> DeclarationParser<'i> for StrictProperties {
         let before = input.state();
         let reset = input.try_parse(Parser::expect_ident_cloned).ok();
         input.reset(&before);
+        if name.eq_ignore_ascii_case("display") || name.eq_ignore_ascii_case("visibility") {
+            return Err(error(
+                input,
+                format!("Unsupported user CSS until reading consumers are migrated: {name}"),
+            ));
+        }
         if name.eq_ignore_ascii_case("src")
             || reset.is_some_and(|s| {
                 s.eq_ignore_ascii_case("revert") || s.eq_ignore_ascii_case("revert-layer")
