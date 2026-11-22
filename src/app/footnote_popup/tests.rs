@@ -3,9 +3,25 @@ use crate::app::{position, tests::Fixture};
 use primitive_app::App;
 
 fn source_point(app: &mut Reader, label: &str) -> (f32, f32) {
-    let reading = &mut app.active.as_mut().unwrap().reading;
+    let reading = &app.active.as_ref().unwrap().reading;
     let first = reading.probe.matches(label).into_iter().next().unwrap();
-    reading.jump_to_anchor(0, &first).unwrap();
+    let page = reading.probe.page_for(&first).unwrap();
+    let budget = reading.probe.page_count().saturating_add(1);
+    // Prepare the actual page through ordinary input. A direct jump installs a
+    // transient passage caret even when the displayed page has not changed.
+    for _ in 0..budget {
+        let current = app.active.as_ref().unwrap().reading.page;
+        if current == page {
+            break;
+        }
+        app.input(if current < page {
+            Input::PageForward
+        } else {
+            Input::PageBack
+        });
+    }
+    let reading = &app.active.as_ref().unwrap().reading;
+    assert_eq!(reading.page, page);
     let mut end = first.clone();
     end.offset += label.len();
     let selected = reading.probe.select_range(&first, &end).unwrap();
@@ -112,10 +128,14 @@ fn native_oracle_popup_roots_render_inline_styles_and_preserve_source_page_and_e
         );
     }
     let saved = position(&app.active.as_ref().unwrap().reading);
+    let reading = &mut app.active.as_mut().unwrap().reading;
+    let saved_frame = reading.probe.capture(reading.page).unwrap();
     app.save().unwrap();
     drop(app);
     let mut reopened = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
     reopened.open_path(&fixture.book).unwrap();
     assert_eq!(position(&reopened.active.as_ref().unwrap().reading), saved);
+    let reading = &mut reopened.active.as_mut().unwrap().reading;
+    assert_eq!(reading.probe.capture(reading.page).unwrap(), saved_frame);
     assert_eq!(std::fs::read(&fixture.book).unwrap(), original);
 }

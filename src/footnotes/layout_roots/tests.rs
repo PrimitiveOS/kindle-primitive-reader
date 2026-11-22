@@ -188,6 +188,8 @@ fn stale_layout_wrong_duplicate_owner_and_incomplete_styles_cannot_redirect_the_
 fn numeric_reference_ruby_and_empty_inline_targets_keep_true_parent_identity() {
     let xml = "<html><body><p>Before &#146; <ruby>Base<rt>reading</rt></ruby> <span id='n'></span> actual note after.</p><p>Other paragraph</p></body></html>";
     let (source, styles) = computed(xml, true);
+    assert_ne!(source.revision, crate::revision(xml));
+    assert!(source.matches_input(xml));
     let original = source.fragments.clone();
     let html = excerpt(xml, &source, &styles, "n").unwrap();
     assert!(
@@ -197,6 +199,21 @@ fn numeric_reference_ruby_and_empty_inline_targets_keep_true_parent_identity() {
     );
     assert!(!html.contains("Other paragraph"));
     assert_eq!(source.fragments, original);
+}
+
+#[test]
+fn exact_raw_source_binding_survives_ruby_numeric_and_anonymous_parse_stages() {
+    for xml in [
+        "<html><body><p id='n'>Target</p></body></html>",
+        "<html><body><p id='n'><ruby>Target<rt>reading</rt></ruby></p></body></html>",
+        "<html><body><p id='n'>Target &#146;</p></body></html>",
+        "<html><body><p id='n'><ruby>Target<rt>reading</rt></ruby> &#146;</p></body></html>",
+        "<html><body>Loose <span id='n'>Target</span><p>Following block</p></body></html>",
+    ] {
+        let source = Source::parse(xml).unwrap();
+        assert!(source.matches_input(xml));
+        assert!(!source.matches_input(&xml.replace("Target", "Other")));
+    }
 }
 
 #[test]
