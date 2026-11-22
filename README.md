@@ -46,6 +46,8 @@ Choose when Reader saves your position, bookmarks and notes, or save them immedi
 
 Browse page bookmarks, highlights and notes across books from **Library › Bookmark browser**. Choose History, collections, selected books, archived records or a folder. Select books by author, series, language or keyword, and inspect available covers and descriptions. Preview a mark, then tap **View in book** to open its passage. [Bookmark browser](docs/bookmark-browser.md)
 
+Publisher numeric references for quotation marks and dashes follow CREngine's compatibility table while preserving older saved positions. [Numeric character references](docs/numeric-character-references.md)
+
 EPUB chapters can start a section on a fresh page and keep a heading with its opening paragraph when the publisher requests it. [Publisher page breaks](docs/publisher-page-breaks.md)
 
 Use **Navigation › Custom hidden flows** to skip long notes or other source ranges while keeping links and explicit jumps available. Boundaries follow source locations when typography changes. [Controls, screenshots and comparison](docs/custom-hidden-flows.md)

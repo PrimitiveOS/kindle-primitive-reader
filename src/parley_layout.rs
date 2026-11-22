@@ -1,4 +1,6 @@
 mod cjk_width;
+#[cfg(test)]
+mod special_glyph_tests;
 
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;

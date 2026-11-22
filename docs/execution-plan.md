@@ -32,6 +32,10 @@ Use the original file, the same view and the same input action in both readers w
 | Resume a book previously read in KOReader | Six original EPUBs with saved CREngine positions reopened at the passages identified by the installed KOReader. All twelve surrounding text samples matched. Adjacent PDF metadata uses the original page count and edition fingerprint. | Check other saved DOM versions and fixed-page metadata from additional editions. [Position comparison](real-document-verification.md#restoring-koreader-epub-positions) |
 | DjVu Contents | Chapter names, nesting and named page destinations matched 391 headings in five distributed DjVuLibre documents. The Oasis exercised the outline and returned to the previous scan. | Test independent editions with external indexes. The personal Documents collection contained no DjVu files. [DjVu contents](reading-control-evidence.md) |
 
+## Numeric-reference compatibility
+
+Reader now applies CREngine's defined Windows-1252 numeric-reference substitutions without modifying literal controls or CDATA. Desktop regressions cover variable-width saved positions, both older ruby text revisions, normalized attributes, search, selection and painting. A real EPUB chapter is checked with its unchanged source and the same local font stack. The independent Symbol private-use font gap remains open. Kindle acceptance is pending the next combined build. [Implementation and limits](numeric-character-references.md)
+
 ## P0.1 Prepare the corpus
 
 Record each fixture's source, redistribution terms, and checksum. Use original
