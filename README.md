@@ -36,7 +36,9 @@ At fit page, Reader can decode large print-color PDF photographs at the resoluti
 These captures use Reader's Kindle interface in the desktop simulator.
 [Top navigation](docs/screenshots/navigation.png) · [Bottom page settings](docs/screenshots/page-settings.png) · [Selection popup](docs/screenshots/selection.png)
 
-When you long-press an inflected English word, Reader can show the entry for its base form in each enabled dictionary. Set the default in Dictionaries or choose a different preference for the open book. [Dictionary popup and settings](docs/dictionary-word-forms.md)
+When you long-press an inflected English word, Reader looks up its base form in each enabled dictionary. If the spelling and word forms have no entry, the popup suggests nearby spellings. You can close the popup while the search runs. Set the library or book preference in Dictionaries. [Dictionary popup and settings](docs/dictionary-word-forms.md)
+
+EPUB chapters can start a section on a fresh page and keep a heading with its opening paragraph when the publisher requests it. [Publisher page breaks](docs/publisher-page-breaks.md)
 
 In fixed-page books, Book map shows where you are and where you saved bookmarks and highlights. Open a group to see individual pages. [Book map on the Oasis display](docs/screenshots/fixed-book-map.png)
 

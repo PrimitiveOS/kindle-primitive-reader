@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.20
+
+- Honor publisher page breaks and requests to keep paragraphs or adjacent blocks together in horizontal reflow.
+- Suggest similar dictionary headwords after a spelling or word-form lookup misses. Close the popup at any time to return to reading.
+
 ## 0.1.19
 
 - Look up inflected English words in installed dictionaries. Set a library default or change the preference for the current book.
