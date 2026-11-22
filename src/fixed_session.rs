@@ -2146,12 +2146,15 @@ pub(crate) mod tests {
     struct ComicFixture(PathBuf);
 
     impl ComicFixture {
+        fn owned_path(kind: &str) -> PathBuf {
+            static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            let index = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            std::env::temp_dir().join(format!("reader-{kind}-test-{}-{index}.cbz", std::process::id()))
+        }
         fn panels() -> Self {
             use comic_panel::tests::{HEIGHT, WIDTH, grid};
 
-            let fixture = Self(
-                std::env::temp_dir().join(format!("reader-panel-test-{}.cbz", std::process::id(),)),
-            );
+            let fixture = Self(Self::owned_path("panel"));
             let mut archive = zip::ZipWriter::new(File::create(&fixture.0).unwrap());
             let pixels = grid();
             for index in 0..2 {
@@ -2169,9 +2172,7 @@ pub(crate) mod tests {
         }
 
         fn striped() -> Self {
-            let fixture = Self(
-                std::env::temp_dir().join(format!("reader-spread-test-{}.cbz", std::process::id())),
-            );
+            let fixture = Self(Self::owned_path("spread"));
             let mut archive = zip::ZipWriter::new(File::create(&fixture.0).unwrap());
             for (index, intensity) in [32, 64, 128, 192].into_iter().enumerate() {
                 archive
