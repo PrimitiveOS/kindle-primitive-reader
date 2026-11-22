@@ -11,6 +11,13 @@ desktop and Oasis 3 experiments and the remaining acceptance checks.
 The [reading parity plan](reading-parity-plan.md) breaks out each reading
 workflow and format, with prerequisites and side-by-side acceptance checks.
 
+The current [generated document-location follow-up](generated-boundary-targets.md)
+adds durable empty-owner targets, real box pagination and version-gated local
+reading data. Its exact component Mac and CI suites pass 832 library, 14 package
+and 4 system tests. Targeted save/reopen/reflow checks cover 28 existing locations
+in 10 unchanged original EPUB editions; full aggregate and native acceptance
+remain separate milestone gates.
+
 | Stage | Work | Exit evidence |
 |---|---|---|
 | P0 · EPUB feasibility | Test package loading, layout, text positions, and a minimal book view on desktop and Oasis 3. K01–K05. | Corpus results, ARMHF build, device measurements, and a documented engine decision |

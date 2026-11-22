@@ -113,25 +113,37 @@ all canonical characters in its denominator and reports CSS omissions,
 visibility-hidden geometry, fragment-owner intent and layout limitations
 separately. Losing visibility-hidden geometry remains a failure.
 
-Its full-original replay is **not accepted**: original EPUB 053 loses layouts in
-zero-based sections 29, 32 and 46 that the prior style checkpoint could open.
-The failing result and preceding comparison are retained for diagnosis. A
-separate tail replay completes the remaining original editions. These results
-are desktop-only and do not authorize replacing the official 0.1.22 package.
+The `9a5006e2` replay exposed three rejected media-only lines in original EPUB
+053. The subsequent `e79c7afe` aggregate repairs them and passes 862 ordinary Mac
+tests. It opens/resumes all 48 unchanged editions and checks all 1,509 sections,
+28,071 frames and 28,061 inspected page anchors. All 26,591,258 retained source
+characters map; publisher CSS intentionally omits 797 out of the unchanged
+26,592,055-character denominator. Its fragment audit leaves one eligible target
+in original039 chapter7, alongside eight intentional omissions.
+
+The subsequent [generated-target component](generated-boundary-targets.md)
+resolves all 38 eligible destinations in that original chapter and passes 28
+save/reopen/reflow cases across ten unchanged editions. Integration with paired
+spacing and the actual resumed-session verifier still needs its next aggregate.
+These are desktop results; the official package remains 0.1.22.
 
 ## Remaining acceptance gates
 
 1. A generated-only visible LI/container with all source children removed needs a
    durable DOM/block-boundary anchor and box geometry. Its source intent remains
    eligible; it must never be relabeled an intentional omission to hide the
-   missing geometry.
-2. The focused correction stops widening an inner-P target to its semantic
-   aside and preserves inline attributes. Exact rendered-final ancestry,
-   including inline targets inside hidden blocks and visible final ancestors,
-   remains a separate source-aware popup integration gate.
-3. Arbitrary non-`none` display box reclassification, namespace attribute selectors
-   such as the original 034 EPUB footnote rule, and exact changed fractional grid
-   fidelity are not claimed. The table fallback is visibly readable but degraded.
+   missing geometry. The bounded horizontal marker/empty-box/inline-caret path
+   now has component verification; unsupported table/vertical/fixed-height-only
+   geometry and nested custom-flow ordering remain listed separately.
+2. [Source-aware popup roots](footnote-export-roots.md) pass eight native-oracle
+   cases, nine Mac checks, 16 authored captures and seven actual note links from
+   unchanged original034. Arbitrary CSS box reclassification and anonymous
+   final-box ownership remain conservative refusals, with broader native cases
+   outside this bounded slice.
+3. Arbitrary non-`none` display box reclassification, broader attribute selectors
+   and exact changed fractional grid fidelity are not claimed. The supported
+   [semantic-type selector](semantic-type-selectors.md) matches original034's
+   actual note rule. The table fallback remains readable but degraded.
 4. Partial affected provenance that exceeds the bounded complete map is rejected
    explicitly; unaffected/identity chapters and fully suppressed blocks remain
    usable. Same-text-node whitespace compaction avoids exhausting the event cap
