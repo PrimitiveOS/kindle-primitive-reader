@@ -88,6 +88,22 @@ fn defaults_are_optional_distinct_atomic_and_retained_across_reopening() {
     assert_eq!(Store::load(path.clone()).templates, templates);
     let bytes = fs::read(&path).unwrap();
     validate_backup(&bytes).unwrap();
+    // Serde JSON may turn nonfinite floats into null. Validate every typed
+    // floating field before serialization and preserve the existing file/model.
+    for field in 0..5 {
+        let mut invalid = templates.clone();
+        let prefs = invalid.reflow.as_mut().unwrap();
+        match field {
+            0 => prefs.font_size = Some(f32::NAN),
+            1 => prefs.line_height = Some(f32::INFINITY),
+            2 => prefs.word_spacing = f32::NAN,
+            3 => prefs.letter_spacing = f32::NEG_INFINITY,
+            _ => prefs.font_weight_delta = Some(f32::NAN),
+        }
+        assert!(store.save(invalid).is_err());
+        assert_eq!(store.templates, templates);
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+    }
     // A failure at the final destination must not commit new in-memory defaults.
     fs::remove_file(&path).unwrap();
     fs::create_dir(&path).unwrap();
