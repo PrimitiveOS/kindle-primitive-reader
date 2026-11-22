@@ -165,3 +165,9 @@ Separate reflow and fixed-page templates now apply only to unseen content. Expli
 ## Combined desktop and compiler checkpoint · 31612701
 
 The aggregate passes 724 ordinary library tests, 14 package tests and four system tests, plus separate original-file/process workflows for backup, defaults, DPI, sync, lookup and acquisition. Static ARM32 hard-float production and five test executables compile; the private draft package verifies 26 files and 325 notices. Native execution, foreground/USB/power behavior, performance, the corrected 37-file resume sweep and release/Store publication remain pending while the owner is offline. User style origins/tweaks and CSS display/visibility projection retain separate implementation worktrees. [Current evidence and limits](simulation-review.md)
+
+## User-style and source-projection desktop checkpoints
+
+The supported style-tweak slice at `4649b6ca` passes 739 library, 14 package and four system tests. Fifteen focused cases cover user/author precedence, all 18 presets, strict diagnostics, editing/import, failure recovery and retained state. Three unchanged original EPUB/AZW3/MOBI workflows verify actual ink changes, chapter retention on reopen and restoration of baseline pixels. A full 48-edition default-style replay is running separately. [Supported behavior and limits](style-tweaks.md)
+
+The independent `70f3b0e8` projection foundation passes 739 library, 14 package and four system tests, with 15 focused cases and a private-original semantic-footnote check. It records bounded layout provenance while preserving canonical bytes, revisions and saved anchors. It does not yet change rendering, search or selection, and exposes no hiding controls. The combined source at `464dc69a` is published for integration testing; do not add the two component test totals or describe them as a combined run.
