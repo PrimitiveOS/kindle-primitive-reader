@@ -464,7 +464,6 @@ impl Source {
         let mut element_ids = HashMap::new();
         let mut element_origins = Vec::new();
         let mut languages = Vec::new();
-        let structural = !stylesheets.is_empty();
         let mut selector_only_nodes = Vec::new();
         let mut seen_types = HashSet::new();
         let mut last_children = HashMap::new();
@@ -490,12 +489,13 @@ impl Source {
             // identity but never expose their text, IDs, list items or cells to Reader.
             let selector_only = (parent == Some(0) && node != body) || hidden_element(node);
             if selector_only {
-                if !structural {
-                    continue;
-                }
                 selector_only_nodes.push(node.id());
             }
-            let structural_element = structural && !anonymous;
+            // User-origin CSS can be enabled later, even when the publisher
+            // supplies no sheet or publisher CSS is disabled. Keep real sibling
+            // metadata independently of stylesheet presence. Anonymous layout
+            // wrappers still do not acquire publisher DOM relationships.
+            let structural_element = !anonymous;
             let previous_sibling = if structural_element {
                 parent.and_then(|i| last_children.insert(i, elements.len()))
             } else {
