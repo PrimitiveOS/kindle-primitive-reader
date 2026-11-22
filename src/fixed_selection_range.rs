@@ -99,6 +99,7 @@ impl FixedReading {
             return Ok(saved.clone());
         }
         let mut result = PdfHighlight {
+            style: saved.style,
             page: first.0,
             bounds: Vec::new(),
             text: String::new(),

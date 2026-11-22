@@ -777,7 +777,7 @@ impl Reading {
         action: Option<&str>,
         hidden_status: bool,
         notice: Option<&str>,
-        highlights: &[HighlightRect],
+        highlights: &[(HighlightRect, crate::highlight_style::Paint)],
         selection: &[HighlightRect],
         paint: PagePaint,
     ) {
@@ -801,7 +801,7 @@ impl Reading {
 
     fn marked_frame(
         &self,
-        highlights: &[HighlightRect],
+        highlights: &[(HighlightRect, crate::highlight_style::Paint)],
         selection: &[HighlightRect],
         paint: &PagePaint,
     ) -> GrayImage {
@@ -811,23 +811,15 @@ impl Reading {
                 preinvert_images(&self.probe, range, x, page.width, &mut page.pixels);
             }
         }
-        for (rects, gray) in [(highlights, 220_u8), (selection, 176_u8)] {
-            for rect in rects {
-                let (x, y) = (rect.x as usize, rect.y as usize);
-                let (width, height) = (rect.width as usize, rect.height as usize);
-                for row in page
-                    .pixels
-                    .as_chunks_mut::<{ WIDTH as usize }>()
-                    .0
-                    .iter_mut()
-                    .skip(y)
-                    .take(height)
-                {
-                    for pixel in &mut row[x..x + width] {
-                        *pixel = (*pixel).min(gray);
-                    }
-                }
-            }
+        for &(rect, ink) in highlights {
+            draw_highlight_rect(&mut page, rect, ink);
+        }
+        for &rect in selection {
+            draw_highlight_rect(
+                &mut page,
+                rect,
+                crate::highlight_style::Paint::Temporary(176),
+            );
         }
         if paint.visible != (0..self.frame.height) && !self.probe.is_vertical() {
             self.clear_lines_cut_by_tools(&mut page, &paint.visible);
@@ -863,6 +855,31 @@ impl Reading {
                 }
             }
         }
+    }
+}
+
+fn draw_highlight_rect(
+    page: &mut GrayImage,
+    rect: HighlightRect,
+    ink: crate::highlight_style::Paint,
+) {
+    let (top, height) = ink
+        .line_band(rect.y, rect.height, page.width, false)
+        .unwrap_or((rect.y, rect.height));
+    let x0 = rect.x.clamp(0, page.width as i32) as usize;
+    let x1 = (rect.x + rect.width).clamp(0, page.width as i32) as usize;
+    let y0 = top.clamp(0, page.height as i32) as usize;
+    let y1 = (top + height).clamp(0, page.height as i32) as usize;
+    if x1 <= x0 || y1 <= y0 {
+        return;
+    }
+    for row in page
+        .pixels
+        .chunks_exact_mut(page.width as usize)
+        .skip(y0)
+        .take(y1 - y0)
+    {
+        ink.draw_row(&mut row[x0..x1]);
     }
 }
 

@@ -144,7 +144,12 @@ impl Reader {
                 });
                 true
             }
-            (SidecarMark::Highlight { text, note, .. }, Ok(Resolved::Range(a, b))) => {
+            (
+                SidecarMark::Highlight {
+                    text, note, style, ..
+                },
+                Ok(Resolved::Range(a, b)),
+            ) => {
                 let selection = active
                     .reading
                     .anchored_quote(&a.anchor, &b.anchor)
@@ -152,6 +157,7 @@ impl Reader {
                     .filter(|quote| quote.text.split_whitespace().eq(text.split_whitespace()));
                 if let Some(selection) = selection {
                     import.highlights.push(Highlight {
+                        style: *style,
                         selection,
                         note: note.clone(),
                     });

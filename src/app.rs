@@ -304,6 +304,7 @@ enum Action {
     AutoTurn(Option<Duration>),
     ReadAlarm,
     SaveBookData,
+    HighlightStyle,
     LockTouch,
     ExportBackup,
     ClearOcr,
@@ -2028,6 +2029,7 @@ impl Reader {
                 self.pages_since_refresh = 0;
                 self.refresh_display = true;
             }
+            Action::HighlightStyle => self.open_highlight_styles(None),
             Action::ReadAlarm => { self.open_read_alarm(); }
             Action::SaveBookData => {
                 self.save_library()?;
@@ -4624,6 +4626,7 @@ impl Reader {
                 if let Some(outcome) = resolver.step(&mut book).map_err(io::Error::other)? {
                     if let QuoteMatch::Unique(selection) = outcome {
                         import.matched.push(Highlight {
+                            style: entry.drawer,
                             selection,
                             note: entry.note.clone(),
                         });
@@ -4767,6 +4770,9 @@ impl Reader {
                 return Err("This book has reached its highlight limit".into());
             }
             state.highlights.push(Highlight {
+                style: state
+                    .highlight_style
+                    .unwrap_or(self.controls.highlight_style),
                 selection: selection.clone(),
                 note,
             });
@@ -4842,6 +4848,7 @@ impl Reader {
             .into_iter()
             .filter_map(|annotation| {
                 let mark = PdfHighlight {
+                    style: annotation.style,
                     continuation: Vec::new(),
                     page: annotation.page,
                     bounds: annotation.bounds,
@@ -4944,6 +4951,9 @@ impl Reader {
             }
         } else {
             state.add_pdf_highlight(PdfHighlight {
+                style: state
+                    .highlight_style
+                    .unwrap_or(self.controls.highlight_style),
                 continuation: Vec::new(),
                 page: selection.page(),
                 bounds,
@@ -5056,11 +5066,23 @@ impl Reader {
                     None => Some(saved),
                     _ => None,
                 })
-                .flat_map(PdfHighlight::parts)
+                .flat_map(|mark| {
+                    mark.parts()
+                        .map(move |(page, rects, _)| (page, rects, mark.style))
+                })
                 .filter(|(index, _, _)| fixed.reading.visible_pages().any(|page| page == *index))
-                .flat_map(|(page, rects, _)| rects.iter().map(move |&bounds| (page, bounds)))
+                .flat_map(|(page, rects, style)| {
+                    rects.iter().map(move |&bounds| {
+                        ((page, bounds), crate::highlight_style::Paint::Saved(style))
+                    })
+                })
                 .collect();
-            marks.extend_from_slice(&self.pdf_result_regions);
+            marks.extend(
+                self.pdf_result_regions
+                    .iter()
+                    .copied()
+                    .map(|rect| (rect, crate::highlight_style::Paint::Temporary(220))),
+            );
             let selection: Vec<_> = self
                 .pdf_selection
                 .as_ref()
@@ -5132,15 +5154,35 @@ impl Reader {
                         .and_then(|edit| match &edit.draft {
                             extend_highlight::Draft::Text {current, ..} => Some(current),
                             _ => None,
-                        }).unwrap_or(&highlight.selection);
-                    reading.highlight_rects(selected)
+                        })
+                        .unwrap_or(&highlight.selection);
+                    reading
+                        .highlight_rects(selected)
+                        .into_iter()
+                        .map(move |rect| {
+                            (rect, crate::highlight_style::Paint::Saved(highlight.style))
+                        })
                 })
                 .collect();
-            if let Some(reference) = self.footnote.as_ref().and_then(|note| note.reference.as_ref()) {
-                highlights.extend(reading.highlight_rects(reference));
+            if let Some(reference) = self
+                .footnote
+                .as_ref()
+                .and_then(|note| note.reference.as_ref())
+            {
+                highlights.extend(
+                    reading
+                        .highlight_rects(reference)
+                        .into_iter()
+                        .map(|r| (r, crate::highlight_style::Paint::Temporary(220))),
+                );
             }
             if let Some(result) = &self.result_selection {
-                highlights.extend(reading.highlight_rects(result));
+                highlights.extend(
+                    reading
+                        .highlight_rects(result)
+                        .into_iter()
+                        .map(|r| (r, crate::highlight_style::Paint::Temporary(220))),
+                );
             }
             let selection = self
                 .selection
@@ -7468,6 +7510,7 @@ mod tests {
         assert_eq!(state.pdf_highlights.len(), 1);
         state
             .add_pdf_highlight(PdfHighlight {
+                style: Default::default(),
                 continuation: Vec::new(),
                 page: 0,
                 bounds: vec![PdfTextRect {
@@ -9667,6 +9710,7 @@ mod tests {
         let layer = fixed.reading.page_text(0).unwrap();
         let first = layer.words.last().unwrap();
         let initial = PdfHighlight {
+            style: Default::default(),
             page: 0,
             bounds: vec![first.bounds],
             text: layer.text[first.bytes.clone()].into(),
@@ -9767,14 +9811,19 @@ mod tests {
         let fixed = app.fixed.as_ref().unwrap();
         let layer = fixed.reading.page_text(1).unwrap();
         let word = layer.words.first().unwrap();
-        let state = app.library.remember(&fixed.entry, fixed.id, &fixed.entry.title);
-        state.add_pdf_highlight(PdfHighlight {
-            continuation: Vec::new(),
-            page: 1,
-            bounds: vec![word.bounds],
-            text: layer.text[word.bytes.clone()].to_owned(),
-            note: Some("Harbor sounding".into()),
-        }).unwrap();
+        let state = app
+            .library
+            .remember(&fixed.entry, fixed.id, &fixed.entry.title);
+        state
+            .add_pdf_highlight(PdfHighlight {
+                style: Default::default(),
+                continuation: Vec::new(),
+                page: 1,
+                bounds: vec![word.bounds],
+                text: layer.text[word.bytes.clone()].to_owned(),
+                note: Some("Harbor sounding".into()),
+            })
+            .unwrap();
         app.show(Screen::FixedBookmarks);
         tap_contents_item(&mut app, "Find bookmarks");
         submit_annotation_search(&mut app, "harbor");
@@ -10386,6 +10435,7 @@ mod tests {
         app.library
             .remember(&fixed.entry, fixed.id, "Signal chart")
             .add_pdf_highlight(PdfHighlight {
+                style: Default::default(),
                 continuation: Vec::new(),
                 page: 1,
                 bounds: top.clone(),

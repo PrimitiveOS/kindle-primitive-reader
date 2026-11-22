@@ -34,7 +34,15 @@ impl Reader {
             TopGroup::Navigation => self.navigation_items(),
             TopGroup::Appearance if self.fixed.is_some() => self.fixed_display_items(),
             TopGroup::Appearance => self.text_display_items(),
-            TopGroup::Settings => self.reading_settings_items(),
+            TopGroup::Settings => {
+                let mut items = self.reading_settings_items();
+                items.insert(
+                    0,
+                    Item::new("Highlight style", Action::HighlightStyle)
+                        .detail(self.effective_highlight_style().label()),
+                );
+                items
+            }
             TopGroup::Tools => self.document_tool_items(),
             TopGroup::Search => self.document_search_items(),
             TopGroup::Library => self.reading_library_items(),

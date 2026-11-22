@@ -1382,7 +1382,12 @@ impl FixedReading {
         selection: &[(usize, PdfTextRect)],
         paint: PagePaint,
     ) {
-        self.draw_with_footer(canvas, notice, marks, selection, paint, false);
+        let transient: Vec<_> = marks
+            .iter()
+            .copied()
+            .map(|r| (r, crate::highlight_style::Paint::Temporary(220)))
+            .collect();
+        self.draw_with_footer(canvas, notice, &transient, selection, paint, false);
     }
 
     pub(crate) fn page_status(&self) -> String {
@@ -1409,23 +1414,47 @@ impl FixedReading {
         &self,
         canvas: &mut Canvas,
         notice: Option<&str>,
-        marks: &[(usize, PdfTextRect)],
+        marks: &[((usize, PdfTextRect), crate::highlight_style::Paint)],
         selection: &[(usize, PdfTextRect)],
         paint: PagePaint,
         hidden_status: bool,
     ) {
         let mut frame = self.display_frame(paint.visible.clone());
-        for (regions, gray) in [(marks, 220), (selection, 180)] {
-            for (quad, clip) in regions
+        let ink = marks.iter().copied().chain(
+            selection
                 .iter()
-                .filter_map(|&(page, bounds)| self.projected_region(page, bounds))
-            {
+                .copied()
+                .map(|r| (r, crate::highlight_style::Paint::Temporary(180))),
+        );
+        for ((index, region), paint_style) in ink {
+            let Some((quad, clip)) = self.projected_region(index, region) else {
+                continue;
+            };
+            let bounds = quad.bounds();
+            if let Some((y, height)) = paint_style.line_band(
+                bounds.y0.floor() as i32,
+                bounds.height().ceil() as i32,
+                WIDTH,
+                true,
+            ) {
+                let page = self
+                    .visible
+                    .iter()
+                    .find(|page| page.index == index)
+                    .unwrap();
+                let x0 = clip.x0.floor().max(0.) as usize;
+                let x1 = clip.x1.ceil().min(f64::from(WIDTH)) as usize;
+                let first = y.max(page.rows.start as i32).max(0) as usize;
+                let end = (y + height).min(page.rows.end as i32).max(0) as usize;
+                for row in first..end {
+                    let start = row * WIDTH as usize;
+                    paint_style.draw_row(&mut frame.pixels[start + x0..start + x1]);
+                }
+            } else {
                 for y in clip.y0.floor() as usize..clip.y1.ceil() as usize {
                     let span = quad.row(y, WIDTH as usize);
                     let start = y * WIDTH as usize;
-                    for pixel in &mut frame.pixels[start + span.start..start + span.end] {
-                        *pixel = (*pixel).min(gray);
-                    }
+                    paint_style.draw_row(&mut frame.pixels[start + span.start..start + span.end]);
                 }
             }
         }
