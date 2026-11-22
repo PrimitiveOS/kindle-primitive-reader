@@ -10,6 +10,8 @@ mod chm;
 pub mod comic;
 pub mod dictionary;
 #[cfg(feature = "kindle")]
+mod document_defaults;
+#[cfg(feature = "kindle")]
 pub mod document_check;
 pub mod djvu;
 mod docx;
