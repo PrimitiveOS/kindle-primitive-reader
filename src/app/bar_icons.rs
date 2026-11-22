@@ -93,7 +93,9 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         Action::Show(Screen::BookMap) | Action::Overview => GRID,
         Action::ToggleNonlinear => BOOK,
         Action::Flow(_) | Action::Show(Screen::HiddenFlows) => BOOK,
-        Action::Show(Screen::Links) | Action::Wikipedia => LINK,
+        Action::Show(Screen::Links | Screen::ProgressSync | Screen::ProgressSyncSettings)
+        | Action::ProgressSync(_)
+        | Action::Wikipedia => LINK,
         Action::TranslatePage => TEXT,
         Action::ReadAlarm | Action::Show(Screen::OnlineHistory) => CLOCK,
         Action::SaveBookData => SAVE,

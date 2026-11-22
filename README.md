@@ -72,6 +72,8 @@ The upper **Tools** menu includes **Read timer** for a countdown or a local cloc
 
 The reading footer can estimate how long the current chapter or book will take. Superscripts and subscripts follow the publisher's text, keeping footnotes and formulas legible. [Reading time](docs/reading-time-estimates.md) · [Sample reading page](docs/screenshots/inline-scripts.png)
 
+Use **Tools › Progress sync** to compare or send the current book’s position through your configured WebDAV folder. Sync starts off and runs only when you request it. Conflicting passages offer a visible choice, and sign-out retains local reading data. [Protocol, controls and verification](docs/progress-sync.md)
+
 ## Reading on Kindle
 
 Install Reader from PrimitiveOS Store or follow the manual install guide.

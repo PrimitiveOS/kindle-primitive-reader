@@ -77,6 +77,10 @@ required-features = ["kindle"]
 name = "desktop"
 required-features = ["kindle"]
 
+[[example]]
+name = "sync_worker"
+required-features = ["kindle"]
+
 [patch.crates-io]
 hayro-syntax = { path = "vendor/hayro-syntax" }
 hayro-interpret = { path = "vendor/hayro-interpret" }

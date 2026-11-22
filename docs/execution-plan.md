@@ -40,6 +40,10 @@ Reader now applies CREngine's defined Windows-1252 numeric-reference substitutio
 
 The remaining 134 private-use characters are already present in an original KF8 source with no font declaration or embedded font. Its reconstructed chapters preserve the exact character sequence. An authored Microsoft Symbol cmap control renders all eight tested values with unchanged source anchors through the existing pipeline. Do not infer the original symbols from low bytes or an unrelated font. Explicit secondary Symbol-map coverage and an actual affected-passage comparison in stock KOReader remain pending device availability. [Provenance and limits](symbol-font-provenance.md)
 
+## Opt-in progress sync · K22
+
+The native candidate uses a documented versioned WebDAV progress record, conditional writes, explicit conflict choice and durable clears. Component tests cover actual process workers, two original books, interrupted replies, account changes, cancellation and local-state recovery. Combined and native acceptance remain separate gates. Annotation sync and KOReader-server interoperability retain their own scope. [Behavior and protocol](progress-sync.md)
+
 ## P0.1 Prepare the corpus
 
 Record each fixture's source, redistribution terms, and checksum. Use original
