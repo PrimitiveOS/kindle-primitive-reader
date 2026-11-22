@@ -285,6 +285,27 @@ fn legacy_records_profiles_defaults_and_typed_backup_preserve_both_modes() {
             .word_spacing,
         4.0
     );
+    editor(&mut app);
+    tap(&mut app, DEFAULT);
+    assert_eq!(app.editor.string(), "95");
+    tap(&mut app, MINIMUM);
+    assert_eq!(app.editor.string(), "75");
+    assert_eq!(app.input(Input::PageBack), Change::Partial);
+    assert_eq!(current(&app), None);
+    assert_eq!(
+        app.active
+            .as_ref()
+            .unwrap()
+            .reading
+            .config
+            .settings
+            .word_spacing,
+        4.0
+    );
+    editor(&mut app);
+    tap(&mut app, DEFAULT);
+    tap(&mut app, primitive_ui::back_button(WIDTH as i32));
+    assert_eq!(current(&app), None);
     app.save_reading_profile("Legacy pixel spacing").unwrap();
     apply(
         &mut app,

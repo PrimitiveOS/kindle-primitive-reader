@@ -25,7 +25,15 @@ impl<B: Brush> Layout<B> {
         {
             return;
         }
-        let locked = locked_prefix(text);
+        let mut locked = Vec::new();
+        let mut offset = 0;
+        for paragraph in text.split_inclusive('\n') {
+            let length = locked_prefix(paragraph);
+            if length > 0 {
+                locked.push(offset..offset + length);
+            }
+            offset += paragraph.len();
+        }
         let mut additions = Vec::new();
         for (index, _) in self.data.shaped_text.runs().iter().enumerate() {
             let slice = self.data.shaped_text.run_slice(index as u32);
@@ -53,9 +61,13 @@ impl<B: Brush> Layout<B> {
                     .unwrap_or(Gaps::ZERO);
                 let natural = (atom.advance() + existing.total()).max(0.0);
                 let scaled = natural * f32::from(scaling) / 100.0;
+                let lock_at = locked.partition_point(|range| range.end <= bytes.start);
+                let is_locked = locked
+                    .get(lock_at)
+                    .is_some_and(|range| range.contains(&bytes.start));
                 let eligible = bytes.end < text.len()
                     && !matches!(text[bytes.end..].chars().next(), Some(' ' | '\u{a0}'))
-                    && bytes.start >= locked;
+                    && !is_locked;
                 let capacity = if eligible {
                     scaled * f32::from(100 - minimum) / 100.0
                 } else {
