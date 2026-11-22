@@ -82,6 +82,8 @@ Browse configured online book catalogs from **Library › Online catalogs**. Cho
 
 Use **Tools › Progress sync** to compare or send the current book’s position through your configured WebDAV folder. Sync starts off and runs only when you request it. Conflicting passages offer a visible choice, and sign-out retains local reading data. [Protocol, controls and verification](docs/progress-sync.md)
 
+Back up book records together with local reading controls, profiles, vocabulary and daily history. Restore previews each saved component; existing local settings stay skipped until you choose replacement. [Backup scope, controls and recovery](docs/reading-data-backups.md)
+
 ## Reading on Kindle
 
 Install Reader from PrimitiveOS Store or follow the manual install guide.

@@ -198,6 +198,24 @@ struct Preferences {
     reverse: bool,
 }
 
+pub(super) fn backup_value(bytes: &[u8]) -> std::io::Result<serde_json::Value> {
+    let preferences: Preferences = serde_json::from_slice(bytes)?;
+    let valid = match &preferences.source {
+        Some(Source::Folder(path, _)) => path.components().all(|c| matches!(c, std::path::Component::Normal(_)))
+            && path.to_str().is_some_and(|s| s.len() <= 4096 && !s.chars().any(char::is_control)),
+        Some(Source::Books(ids)) => ids.len() <= 16_384,
+        Some(Source::Collections(names)) => names.len() <= 256
+            && names.iter().all(|s| !s.trim().is_empty() && s.chars().count() <= 64 && !s.chars().any(char::is_control)),
+        _ => true,
+    };
+    if !valid { return Err(std::io::Error::other("The bookmark browser backup is invalid")); }
+    serde_json::to_value(preferences).map_err(std::io::Error::other)
+}
+
+pub(super) fn metadata_backup_value(bytes: &[u8]) -> std::io::Result<serde_json::Value> {
+    metadata::backup_value(bytes)
+}
+
 pub(super) struct Browser {
     catalog: metadata::Catalog,
     path: PathBuf,

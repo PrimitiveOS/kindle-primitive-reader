@@ -47,6 +47,10 @@ The development candidate adds explicit configured OPDS catalogs, advertised sea
 
 The native candidate uses a documented versioned WebDAV progress record, conditional writes, explicit conflict choice and durable clears. Component tests cover actual process workers, two original books, interrupted replies, account changes, cancellation and local-state recovery. Combined and native acceptance remain separate gates. Annotation sync and KOReader-server interoperability retain their own scope. [Behavior and protocol](progress-sync.md)
 
+## Complete local reading-data backups · K24
+
+The development candidate adds a bounded v2 envelope for non-secret reading controls, profiles/defaults, gestures, dictionary preferences, vocabulary, statistics/history, personal hyphenation, retained bookmark metadata, timer preferences and pace samples. Legacy library-only input keeps its additive merge. Each global component has an explicit preview choice; existing local components start skipped. A durable transaction journal recovers before normal startup loads data. Network accounts and jobs stay outside the envelope. [Scope, failure recovery and tests](reading-data-backups.md)
+
 ## P0.1 Prepare the corpus
 
 Record each fixture's source, redistribution terms, and checksum. Use original

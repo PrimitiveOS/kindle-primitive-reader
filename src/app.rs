@@ -36,6 +36,7 @@ mod opds;
 mod quick_display;
 mod reader_timer;
 mod read_alarm;
+mod reading_backup;
 mod reading_bars;
 mod result_context;
 mod reading_footer;
@@ -75,8 +76,8 @@ use crate::generated_contents::{GeneratedContents, OutlineTarget};
 use crate::koreader_import::{self, ExportEntry, QuoteMatch, QuoteResolver};
 use crate::koreader_sidecar::{self, SidecarProgress};
 use crate::library::{
-    BackupImport, BookMetadata, BookPreferences, BookState, Bookmark, DocumentFormat,
-    FixedPreferences, Highlight, Library, LibraryBook, MAX_BACKUP_BYTES, PdfHighlight,
+    BookMetadata, BookPreferences, BookState, Bookmark, DocumentFormat,
+    FixedPreferences, Highlight, Library, LibraryBook, PdfHighlight,
     ReadingPosition, ReadingStatus,
 };
 use crate::ocr_job::{OcrAssets, OcrJob};
@@ -360,6 +361,7 @@ enum Action {
     ClearOcr,
     PreviewBackup,
     MergeBackup,
+    ToggleBackupComponent(usize),
     PreviewNearbyMarks,
     ApplyNearbyMarks,
     PreviewKoReader,
@@ -588,7 +590,7 @@ pub struct Reader {
     pace: crate::reading_pace::ReadingPace,
     stats_path: PathBuf,
     stats_awake: bool,
-    backup_import: Option<BackupImport>,
+    backup_import: Option<reading_backup::Preview>,
     annotation_import: Option<AnnotationImport>,
     nearby_marks: Option<sidecar_marks::MarkImport>,
     position_import: Option<PositionImport>,
@@ -681,6 +683,11 @@ pub struct Reader {
 
 impl Reader {
     pub fn open(documents: &Path, state: &Path, fonts: Vec<PathBuf>) -> io::Result<Self> {
+        reading_backup::recover(state)?;
+        Self::open_data(documents, state, fonts)
+    }
+
+    fn open_data(documents: &Path, state: &Path, fonts: Vec<PathBuf>) -> io::Result<Self> {
         let (library, browser) = with_storage(|| {
             let mut library = Library::open(documents, state)?;
             library.scan()?;
@@ -1396,7 +1403,7 @@ impl Reader {
                     .detail("From History, chosen books or collections"),
                 Item::new("Progress sync", Action::ProgressSync(progress_sync::Command::Open)).detail("Optional WebDAV server"),
                 Item::new("Back up reading data", Action::ExportBackup)
-                    .detail("Saves progress, bookmarks, highlights, and preferences to exports"),
+                    .detail("Books, vocabulary, history and chosen local preferences"),
                 Item::new("Restore a backup", Action::PreviewBackup)
                     .detail("Copy a backup to reader/data/reader-import.json"),
                 Item::new("Clear recognized text", Action::Show(Screen::ClearOcr))
@@ -1416,43 +1423,7 @@ impl Reader {
                 Item::new("Keep OCR cache", Action::Show(Screen::ReadingData)),
             ];
         }
-        if self.screen == Screen::RestoreBackup
-            && let Some(import) = &self.backup_import
-        {
-            let summary = import.summary();
-            let highlights = summary.highlights_added + summary.pdf_highlights_added;
-            return vec![
-                Item::new("Apply backup", Action::MergeBackup).detail(format!(
-                    "{} new books and {} known books",
-                    summary.new_books, summary.existing_books
-                )),
-                Item::new(
-                    format!(
-                        "{} bookmarks and {highlights} highlights",
-                        summary.bookmarks_added
-                    ),
-                    Action::Heading,
-                )
-                .detail(format!(
-                    "{} notes, {} custom chapters, {} flow boundaries and {} note conflicts",
-                    summary.notes_added, summary.custom_chapters_added, summary.custom_flow_points_added, summary.note_conflicts
-                )),
-                Item::new(
-                    format!(
-                        "{} duplicates and {} skipped",
-                        summary.duplicates, summary.skipped
-                    ),
-                    Action::Heading,
-                ),
-                Item::new(
-                    format!(
-                        "{} collections and {} memberships",
-                        summary.collections_added, summary.memberships_added
-                    ),
-                    Action::Heading,
-                ),
-            ];
-        }
+        if self.screen == Screen::RestoreBackup { return self.reading_backup_items(); }
         if self.screen == Screen::ImportPosition {
             return self
                 .position_import
@@ -2220,6 +2191,7 @@ impl Reader {
             }
             Action::PreviewBackup => self.preview_backup()?,
             Action::MergeBackup => self.restore_backup()?,
+            Action::ToggleBackupComponent(index) => self.toggle_backup_component(index)?,
             Action::PreviewNearbyMarks => self.preview_nearby_marks()?,
             Action::ApplyNearbyMarks => self.apply_nearby_marks()?,
             Action::PreviewKoReader => self.preview_koreader()?,
@@ -4548,7 +4520,7 @@ impl Reader {
     }
 
     fn export_backup(&mut self) -> Result<()> {
-        let bytes = self.library.backup_bytes()?;
+        let bytes = self.reading_backup_bytes()?;
         let suffix = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_millis();
@@ -4561,7 +4533,7 @@ impl Reader {
     }
 
     fn preview_backup(&mut self) -> Result<()> {
-        let bytes = read_import_file(&self.import_path, MAX_BACKUP_BYTES).map_err(|error| {
+        let bytes = read_import_file(&self.import_path, crate::reading_backup::LIMIT).map_err(|error| {
             if error.kind() == io::ErrorKind::NotFound {
                 io::Error::new(
                     error.kind(),
@@ -4571,24 +4543,13 @@ impl Reader {
                 error
             }
         })?;
-        self.backup_import = Some(self.library.preview_backup(&bytes)?);
+        self.backup_import = Some(self.prepare_reading_backup(&bytes)?);
         self.show(Screen::RestoreBackup);
         Ok(())
     }
 
     fn restore_backup(&mut self) -> Result<()> {
-        let import = self
-            .backup_import
-            .take()
-            .ok_or("Preview the backup again")?;
-        let summary = self.library.merge_backup(import)?;
-        self.mark_dirty();
-        self.show(Screen::ReadingData);
-        self.save()?;
-        self.notice = Some(format!(
-            "Merged reading data for {} books",
-            summary.new_books + summary.existing_books
-        ));
+        self.apply_reading_backup()?;
         Ok(())
     }
 

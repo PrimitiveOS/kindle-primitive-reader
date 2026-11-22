@@ -877,6 +877,9 @@ pub struct Library {
 }
 
 impl Library {
+    pub(crate) fn state_path(&self) -> &Path { &self.state_path }
+    pub(crate) fn documents_path(&self) -> &Path { &self.original_root }
+
     pub fn open(root: &Path, state_path: &Path) -> io::Result<Self> {
         let original_root = if root.is_absolute() {
             root.to_owned()
@@ -1560,6 +1563,14 @@ impl Library {
     /// Export Reader metadata as a versioned JSON document.
     pub fn backup_bytes(&self) -> io::Result<Vec<u8>> {
         encode_library(&self.recent, &self.collections, MAX_BACKUP_BYTES)
+    }
+
+    /// Validate and project the existing additive restore without mutating live state.
+    pub(crate) fn merged_backup_bytes(&self, bytes: &[u8]) -> io::Result<(Vec<u8>, BackupSummary)> {
+        let import = self.preview_backup(bytes)?;
+        let (merged, mut summary) = merge_states(&self.recent, &import.books);
+        let collections = merge_collections(&self.collections, &import.collections, &merged, &mut summary);
+        Ok((encode_library(&merged, &collections, MAX_STATE_BYTES)?, summary))
     }
 
     /// Calculate the effect of an import without touching the library, books, or state file.

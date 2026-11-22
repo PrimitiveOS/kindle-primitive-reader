@@ -22,6 +22,15 @@ struct SavedStats {
     seconds_read: BTreeMap<u64, u64>,
 }
 
+pub(crate) fn backup_value(bytes: &[u8]) -> io::Result<serde_json::Value> {
+    if bytes.len() as u64 > MAX_STATE_BYTES { return Err(invalid_state()); }
+    let saved: SavedStats = serde_json::from_slice(bytes)?;
+    if saved.version != VERSION || saved.seconds_read.len() > MAX_BOOKS {
+        return Err(invalid_state());
+    }
+    serde_json::to_value(saved).map_err(io::Error::other)
+}
+
 #[derive(Clone, Copy)]
 struct ActiveReading {
     book: u64,

@@ -105,7 +105,8 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         | Action::Wikipedia => LINK,
         Action::TranslatePage => TEXT,
         Action::ReadAlarm | Action::Show(Screen::OnlineHistory) | Action::ReadingHistory(_) => CLOCK,
-        Action::SaveBookData => SAVE,
+        Action::SaveBookData | Action::ExportBackup | Action::PreviewBackup
+        | Action::MergeBackup | Action::ToggleBackupComponent(_) => SAVE,
         Action::HighlightStyle | Action::Show(Screen::Highlights) | Action::ExportHighlights(_) => {
             HIGHLIGHT
         }
