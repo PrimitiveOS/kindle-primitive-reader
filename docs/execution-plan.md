@@ -64,9 +64,10 @@ The current static ARMHF candidate was built from the Reader worktree with the
 shared-input dependency pinned to `d3caf14241facf307699d3ecc37414671496bd1a`.
 `file` identifies it as a 32-bit ARM EABI5 statically linked, stripped ELF; its
 size is 33,396,708 bytes and SHA-256 is
-`7f8d07911053b3d5a91a00dba4381ee932038a64513603a962fbdf494d62e11b`. Reader
-source changes are still uncommitted, so this is a development candidate, not
-a reproducible release artifact. `rust-objcopy` warned that this Rust
+`7f8d07911053b3d5a91a00dba4381ee932038a64513603a962fbdf494d62e11b`. Its
+Reader source is committed at `d0887f18b0ab5e5831302a06eeec856ce8e67a94` on
+the parity feature branch. It is a development candidate, not a release.
+`rust-objcopy` warned that this Rust
 installation cannot load `libLLVM.dylib`; `file` confirms the resulting ELF is
 stripped. Manual
 fixed-page buttons and tap zones pan through zoomed documents using the saved
@@ -95,8 +96,9 @@ re-enter gating. The [hold-selection capture](screenshots/hold-selection.png)
 and EPUB/PDF interaction tests are current. Fixed PDF text selection remains
 page-local. Kindle timing, corner hit regions, and owner-document acceptance
 are open. The current desktop tests and ARMHF development candidate use the
-Git-pinned shared-input revision above. Commit the Reader working-tree source
-before preparing a reproducible device package.
+Git-pinned shared-input revision above. Reader source and the current evidence
+are committed on the parity feature branch; Kindle acceptance and publication
+remain open.
 
 Source `e79c7afe` passes 862 ordinary Mac tests, CI and eight original-document
 settings, backup and DPI workflows. It repairs original EPUB 053's three rejected

@@ -1802,12 +1802,12 @@
     "docs/architecture.md": "4787a0ed03518c3e800683705a95b9082c44b4a72fdadfa0459873544a5db059",
     "docs/requirements.md": "7bee52bcc6c2d8554a59b48cda471022d46f784ca4f9dd14678aac5ecadf7ee4",
     "docs/opds-acquisition.md": "6987aa5ede6fbca648c2b3c141ab912e4f5d29ac19e9079db347098b22c63966",
-    "docs/reading-parity-plan.md": "80408fcc65f80dce2b1383c0a5ca380869ea7d5ccdab08b99083e6926db2478e",
+    "docs/reading-parity-plan.md": "39858c248956fb9515f453d9ef0eb6d06dafb48df39f48c87b0d08799dce2de4",
     "src/fixed_session.rs": "c675cd919a21fd5e5da1cfbc263e482e6224caca04f44f1135d6a7f57acac472",
     "docs/long-press-behavior.md": "31c83e95111c2bd2fa14200071b0afc76cc118dd78d58f0b202507ed332e0060",
     "docs/screenshots/hold-selection.png": "da7db22a2551cd6b5481c0479af39e1802b0d0807ba900f4f661689bbbf4cefc",
     "docs/koreader-controls-parity.md": "a64163e11638518ccc1e85191d1bb0bc8ba0a5bcaea08706532d4165db46a407",
-    "docs/execution-plan.md": "c906cae1f8ced7901e3ed8c92b4bc1653265c97e6e34e67c2d01b985ae4e92ab"
+    "docs/execution-plan.md": "8a132fbd7d4438731e1f4f51e52dea148c64cafbb6f2aba075d601d3b4498faf"
   },
   "families": {
     "navigation": {
