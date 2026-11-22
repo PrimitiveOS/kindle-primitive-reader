@@ -141,11 +141,14 @@ fn opds_ui_delete_confirms_and_stale_owned_partial_cleanup_preserves_publication
     assert_eq!(fs::read(&fixture.book).unwrap(), before);
 }
 fn settle(app: &mut Reader) {
-    for _ in 0..1000 {
-        let Some(due) = app.catalog.job.as_ref().map(|job| job.poll_at) else {
+    // This drives an actual process. Advancing synthetic time per iteration
+    // would exhaust its network timeout while the host is still scheduling it.
+    let end = Instant::now() + Duration::from_secs(40);
+    while Instant::now() < end {
+        if app.catalog.job.is_none() {
             return;
-        };
-        app.tick(due + Duration::from_millis(1));
+        }
+        app.tick(Instant::now());
         std::thread::sleep(Duration::from_millis(5));
     }
     panic!("The actual OPDS worker did not finish");
@@ -182,7 +185,7 @@ fn opds_ui_actual_worker_browses_searches_acquires_cancels_and_opens_offline() {
     app.activate(Action::Catalog(Command::Connect(0))).unwrap();
     assert!(app.catalog.job.is_some());
     settle(&mut app);
-    assert_eq!(app.screen, Screen::Catalog(Page::Feed));
+    assert_eq!(app.screen, Screen::Catalog(Page::Feed), "{:?}", app.catalog.message);
     app.activate(Action::Catalog(Command::Search)).unwrap();
     editor(&mut app, Field::Search, "tides & harbors");
     settle(&mut app);
