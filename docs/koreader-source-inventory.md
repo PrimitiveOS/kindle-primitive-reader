@@ -60,8 +60,8 @@ To check coverage, run `python3 scripts/check-koreader-inventory.py /path/to/kor
 | Upstream identifiers | Reader behavior and acceptance |
 | --- | --- |
 | `rotation_mode`, `visible_pages`, `view_mode` | Portrait orientation, facing pages, page turns and continuous reading. Compare anchors, selected text and links after each transition. |
-| `h_page_margins`, `t_page_margin`, `b_page_margin` | Reader exposes side, top and bottom margins. Check each value and source anchor. |
-| `sync_t_b_page_margins` | Open comparison for linking top and bottom margin changes. |
+| `h_page_margins`, `t_page_margin`, `b_page_margin` | Reader exposes independent left, right, top and bottom margins. The same word and all rendered rows moved by the chosen offset on two actual EPUBs. [Verification](reflow-page-margins.md) |
+| `sync_t_b_page_margins` | The normal controls link the two edges at their rounded average, adjust either and restore separate changes after unlinking. [Controls and screenshots](reflow-page-margins.md) |
 | `font_size`, `font_fine_tune`, `line_spacing`, `word_spacing`, `font_gamma`, `font_base_weight`, `font_hinting`, `font_kerning` | Available typography covers a subset of detailed settings. Compare steps, actual painted pixels and persistence. |
 | `embedded_css`, `embedded_fonts` | Check publisher styles and font override independently in reflow and mixed-script titles. |
 | `status_line` | Reader uses its reading footer. Check displayed information and interaction against the footer workflow. |

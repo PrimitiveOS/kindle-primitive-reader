@@ -58,6 +58,7 @@ pub(super) fn panel_icon(panel: BarPanel) -> Icon {
         BarPanel::Pages => GRID,
         BarPanel::Text => TEXT,
         BarPanel::TextLayout | BarPanel::ViewLayout => GRID,
+        BarPanel::TextMargins => CROP,
         BarPanel::TextStyle => HIGHLIGHT,
         BarPanel::TextSpacing => READFLOW,
         BarPanel::TextRendering => SLIDERS,

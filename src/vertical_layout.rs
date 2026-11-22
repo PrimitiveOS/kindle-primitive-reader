@@ -253,7 +253,7 @@ impl VerticalChapter {
             let logical_end = ((page + 1) as f32 * self.page_span)
                 .min(logical_top + (slot + 1) as f32 * logical_pitch);
             let left = settings.width as f32
-                - settings.side_margin() as f32
+                - settings.right_margin() as f32
                 - (slot + 1) as f32 * self.pitch;
             let base_width = self.pitch - self.ruby_gutter;
             let center = left + base_width / 2.0;
@@ -420,7 +420,7 @@ impl VerticalChapter {
 
     pub(crate) fn capture(&mut self, range: Range<f32>, settings: Settings) -> Result<Vec<u8>> {
         let stride = settings.width as usize;
-        let margin = settings.side_margin() as usize;
+        let bounds = settings.text_columns();
         let top = settings.top_margin() as usize;
         let bottom = (settings.height - settings.bottom_margin()) as usize;
         let mut frame = vec![255; stride * settings.height as usize];
@@ -431,7 +431,7 @@ impl VerticalChapter {
                 self.cache.draw_vertical(
                     page,
                     stride,
-                    margin,
+                    &bounds,
                     PaintGlyph {
                         font: &self.faces[glyph.face].font,
                         id: glyph.id,

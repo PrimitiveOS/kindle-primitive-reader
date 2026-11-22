@@ -69,7 +69,7 @@ Install Reader from PrimitiveOS Store or follow the manual install guide.
   queries, a typed dictionary lookup, and saved vocabulary.
 - Swipe up from the bottom edge to reopen the last formatting panel for the
   current format. Text controls include font size, line and word spacing,
-  independent margins, facing pages, weight, screen settings, and font profiles. Fixed-page
+  [independent page margins](docs/reflow-page-margins.md), facing pages, weight, screen settings, and font profiles. Fixed-page
   controls include fit, zoom, rotation, scroll mode, and available scan tools.
   Make adjustments with the page visible. Tap the upper center to show both
   bars. Tap the page to dismiss them. **Exit** returns to Launcher.

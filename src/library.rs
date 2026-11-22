@@ -247,6 +247,12 @@ pub struct BookPreferences {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub margin_sides: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub margin_left: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub margin_right: Option<u32>,
+    #[serde(skip_serializing_if = "is_false")]
+    pub link_vertical_margins: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub margin_top: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub margin_bottom: Option<u32>,
@@ -277,6 +283,17 @@ pub struct BookPreferences {
 impl BookPreferences {
     pub fn apply_to(&self, settings: Settings) -> Settings {
         let permitted_margin = |margin: &u32| *margin <= settings.width.min(settings.height) / 4;
+        let edge = |specific: Option<u32>, inherited: Option<u32>| {
+            specific.filter(permitted_margin).or_else(|| {
+                if self.margin_sides.is_some_and(|n| permitted_margin(&n))
+                    || self.margin.is_some_and(|n| permitted_margin(&n))
+                {
+                    None
+                } else {
+                    inherited
+                }
+            })
+        };
         let adjusted = Settings {
             font_size: self.font_size.unwrap_or(settings.font_size),
             margin: self.margin.unwrap_or(settings.margin),
@@ -284,13 +301,16 @@ impl BookPreferences {
                 .margin_sides
                 .filter(permitted_margin)
                 .or(settings.margin_sides),
+            margin_left: edge(self.margin_left, settings.margin_left),
+            margin_right: edge(self.margin_right, settings.margin_right),
+            link_vertical_margins: self.link_vertical_margins,
             margin_top: self
                 .margin_top
-                .filter(permitted_margin)
+                .filter(|&v| v <= settings.height / 4)
                 .or(settings.margin_top),
             margin_bottom: self
                 .margin_bottom
-                .filter(permitted_margin)
+                .filter(|&v| v <= settings.height / 4)
                 .or(settings.margin_bottom),
             line_height: self.line_height.unwrap_or(settings.line_height),
             word_spacing: if (-2.0..=12.0).contains(&self.word_spacing) {

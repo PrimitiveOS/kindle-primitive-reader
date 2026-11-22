@@ -149,6 +149,9 @@ pub struct Settings {
     pub font_size: f32,
     pub margin: u32,
     pub margin_sides: Option<u32>,
+    pub margin_left: Option<u32>,
+    pub margin_right: Option<u32>,
+    pub link_vertical_margins: bool,
     pub margin_top: Option<u32>,
     pub margin_bottom: Option<u32>,
     pub line_height: f32,
@@ -177,6 +180,9 @@ impl Default for Settings {
             font_size: 42.0,
             margin: 54,
             margin_sides: None,
+            margin_left: None,
+            margin_right: None,
+            link_vertical_margins: false,
             margin_top: None,
             margin_bottom: None,
             line_height: 1.35,
@@ -247,7 +253,8 @@ impl Settings {
         if !(160..=4096).contains(&self.width)
             || !(160..=4096).contains(&self.height)
             || self.margin > margin_limit
-            || self.side_margin() > margin_limit
+            || self.left_margin() > margin_limit
+            || self.right_margin() > margin_limit
             || self.top_margin() > self.height / 4
             || self.bottom_margin() > self.height / 4
             || !(12.0..=144.0).contains(&self.font_size)
@@ -265,6 +272,18 @@ impl Settings {
         self.margin_sides.unwrap_or(self.margin)
     }
 
+    fn left_margin(self) -> u32 {
+        self.margin_left.unwrap_or_else(|| self.side_margin())
+    }
+
+    fn right_margin(self) -> u32 {
+        self.margin_right.unwrap_or_else(|| self.side_margin())
+    }
+
+    fn text_columns(self) -> Range<usize> {
+        self.left_margin() as usize..(self.width - self.right_margin()) as usize
+    }
+
     fn top_margin(self) -> u32 {
         self.margin_top.unwrap_or(self.margin)
     }
@@ -274,7 +293,7 @@ impl Settings {
     }
 
     fn text_width(self) -> u32 {
-        self.width - 2 * self.side_margin()
+        self.width - self.left_margin() - self.right_margin()
     }
 
     fn text_height(self) -> u32 {
@@ -759,16 +778,17 @@ impl Probe {
         match &self.renderer {
             Renderer::Vertical(renderer) => renderer.source_at(range, x, y),
             Renderer::Parley(renderer) => {
-                let sides = self.settings.side_margin() as f32;
+                let left = self.settings.left_margin() as f32;
                 let local_y = y - self.settings.top_margin() as f32;
                 let y = range.start + local_y;
                 if !(0.0..self.settings.text_height() as f32).contains(&local_y)
                     || !range.contains(&y)
-                    || !(sides..self.settings.width as f32 - sides).contains(&x)
+                    || !(left..(self.settings.width - self.settings.right_margin()) as f32)
+                        .contains(&x)
                 {
                     return None;
                 }
-                renderer.source_at(x - sides, y, &range)
+                renderer.source_at(x - left, y, &range)
             }
             Renderer::Blitz(_) => None,
         }

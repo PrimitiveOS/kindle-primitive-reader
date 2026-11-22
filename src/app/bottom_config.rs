@@ -53,9 +53,10 @@ impl ConfigRow {
     }
 }
 
-pub(super) const TEXT_SECTIONS: [(BarPanel, &str); 6] = [
+pub(super) const TEXT_SECTIONS: [(BarPanel, &str); 7] = [
     (BarPanel::Text, "Type"),
     (BarPanel::TextLayout, "Layout"),
+    (BarPanel::TextMargins, "Margins"),
     (BarPanel::TextStyle, "Style"),
     (BarPanel::TextScreen, "Screen"),
     (BarPanel::TextRendering, "Rendering"),
@@ -202,20 +203,16 @@ impl Reader {
                         ));
                     }
                     rows.extend([
-                        margin_row("Side margins", settings.side_margin(), |value| Settings {
-                            margin_sides: Some(value),
-                            ..settings
-                        }),
-                        margin_row("Top margin", settings.top_margin(), |value| Settings {
-                            margin_top: Some(value),
-                            ..settings
-                        }),
-                        margin_row("Bottom margin", settings.bottom_margin(), |value| {
-                            Settings {
-                                margin_bottom: Some(value),
+                        margin_row(
+                            "Side margins",
+                            (settings.left_margin() + settings.right_margin()).div_ceil(2),
+                            |value| Settings {
+                                margin_sides: Some(value),
+                                margin_left: None,
+                                margin_right: None,
                                 ..settings
-                            }
-                        }),
+                            },
+                        ),
                         ConfigRow::new(
                             format!("Lines · {:.2}×", settings.line_height),
                             [
@@ -237,6 +234,84 @@ impl Reader {
                         ),
                     ]);
                     return rows;
+                }
+                BarPanel::TextMargins => {
+                    let linked = settings.link_vertical_margins;
+                    let side_limit = settings.width.min(settings.height) / 4;
+                    let vertical_limit = settings.height / 4;
+                    let middle = (settings.top_margin() + settings.bottom_margin()).div_ceil(2);
+                    let independent = Settings {
+                        link_vertical_margins: false,
+                        ..settings
+                    };
+                    let sync = Settings {
+                        margin_top: Some(middle),
+                        margin_bottom: Some(middle),
+                        link_vertical_margins: true,
+                        ..settings
+                    };
+                    return vec![
+                        edge_row("Left", settings.left_margin(), side_limit, |value| {
+                            Settings {
+                                margin_left: Some(value),
+                                ..settings
+                            }
+                        }),
+                        edge_row("Right", settings.right_margin(), side_limit, |value| {
+                            Settings {
+                                margin_right: Some(value),
+                                ..settings
+                            }
+                        }),
+                        edge_row("Top", settings.top_margin(), vertical_limit, |value| {
+                            Settings {
+                                margin_top: Some(value),
+                                margin_bottom: if linked {
+                                    Some(value)
+                                } else {
+                                    settings.margin_bottom
+                                },
+                                ..settings
+                            }
+                        }),
+                        edge_row(
+                            "Bottom",
+                            settings.bottom_margin(),
+                            vertical_limit,
+                            |value| Settings {
+                                margin_bottom: Some(value),
+                                margin_top: if linked {
+                                    Some(value)
+                                } else {
+                                    settings.margin_top
+                                },
+                                ..settings
+                            },
+                        ),
+                        ConfigRow::new(
+                            "Top and bottom",
+                            [
+                                Choice::option("Independent", Action::Text(independent), !linked),
+                                Choice::option("Linked", Action::Text(sync), linked),
+                            ],
+                        ),
+                        ConfigRow::new(
+                            "",
+                            [text(
+                                "Reset margins",
+                                Settings {
+                                    margin: Settings::default().margin,
+                                    margin_sides: None,
+                                    margin_left: None,
+                                    margin_right: None,
+                                    margin_top: None,
+                                    margin_bottom: None,
+                                    link_vertical_margins: false,
+                                    ..settings
+                                },
+                            )],
+                        ),
+                    ];
                 }
                 BarPanel::TextSpacing if !vertical => {
                     return vec![
@@ -687,5 +762,19 @@ fn margin_row(title: &str, current: u32, update: impl Fn(u32) -> Settings) -> Co
             Choice::live("Less", Action::Text(update(current.saturating_sub(12)))),
             Choice::live("More", Action::Text(update((current + 12).min(150)))),
         ],
+    )
+}
+
+fn edge_row(title: &str, current: u32, limit: u32, update: impl Fn(u32) -> Settings) -> ConfigRow {
+    ConfigRow::new(
+        format!("{title} · {current} px"),
+        [-12, -1, 1, 12].map(|step: i32| {
+            let value = (current as i32 + step).clamp(0, limit as i32) as u32;
+            Choice::option(
+                format!("{step:+}"),
+                Action::Text(update(value)),
+                value == current,
+            )
+        }),
     )
 }

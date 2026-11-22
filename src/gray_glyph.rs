@@ -1,4 +1,5 @@
 use std::collections::{HashMap, hash_map::Entry};
+use std::ops::Range;
 
 use ab_glyph_rasterizer::{Point, Rasterizer, point};
 use parley::{FontData, GlyphRun};
@@ -73,7 +74,7 @@ impl GlyphCache {
         &mut self,
         page: &mut [u8],
         stride: usize,
-        margin: usize,
+        columns: &Range<usize>,
         origin: (f32, f32),
         glyphs: &GlyphRun<'_, ()>,
         contrast: bool,
@@ -95,14 +96,14 @@ impl GlyphCache {
         let positions = glyphs
             .positioned_glyphs()
             .map(|glyph| (glyph.id, origin.0 + glyph.x, origin.1 + glyph.y));
-        self.draw_positioned(page, stride, margin, style, positions, contrast);
+        self.draw_positioned(page, stride, columns, style, positions, contrast);
     }
 
     pub(crate) fn draw_vertical(
         &mut self,
         page: &mut [u8],
         stride: usize,
-        margin: usize,
+        columns: &Range<usize>,
         glyph: crate::vertical_layout::PaintGlyph<'_>,
         contrast: bool,
     ) {
@@ -114,11 +115,11 @@ impl GlyphCache {
             bold: false,
             clockwise: glyph.clockwise,
         };
-        let position = (glyph.id, glyph.x - margin as f32, glyph.y);
+        let position = (glyph.id, glyph.x - columns.start as f32, glyph.y);
         self.draw_positioned(
             page,
             stride,
-            margin,
+            columns,
             style,
             std::iter::once(position),
             contrast,
@@ -129,7 +130,7 @@ impl GlyphCache {
         &mut self,
         page: &mut [u8],
         stride: usize,
-        margin: usize,
+        columns: &Range<usize>,
         style: GlyphStyle<'_>,
         glyphs: impl Iterator<Item = (u32, f32, f32)>,
         contrast: bool,
@@ -137,7 +138,8 @@ impl GlyphCache {
         if stride == 0
             || stride > MAX_VIEWPORT_EDGE
             || page.len() / stride > MAX_VIEWPORT_EDGE
-            || margin > stride / 2
+            || columns.is_empty()
+            || columns.end > stride
             || style.variations.len() > MAX_AXES
             || !(1.0..=MAX_EDGE as f32).contains(&style.size)
         {
@@ -178,7 +180,7 @@ impl GlyphCache {
             match face.entry((glyph, phase)) {
                 Entry::Occupied(entry) => entry
                     .get()
-                    .blend(page, stride, margin, x, baseline, contrast),
+                    .blend(page, stride, columns, x, baseline, contrast),
                 Entry::Vacant(entry) => {
                     let variations = scaled_variations.get_or_insert_with(|| {
                         style
@@ -191,7 +193,7 @@ impl GlyphCache {
                         .get_or_insert_with(|| hinting_instance(self.hinting, &style, variations));
                     let mask = rasterize(&style, glyph, phase, variations, hints.as_ref())
                         .unwrap_or_default();
-                    mask.blend(page, stride, margin, x, baseline, contrast);
+                    mask.blend(page, stride, columns, x, baseline, contrast);
                     let cost = mask.alpha.len() + ENTRY_OVERHEAD;
                     if self.bytes + cost <= CACHE_BYTES {
                         self.bytes += cost;
@@ -206,14 +208,22 @@ impl GlyphCache {
 }
 
 impl Mask {
-    fn blend(&self, page: &mut [u8], stride: usize, margin: usize, x: i32, y: i32, contrast: bool) {
+    fn blend(
+        &self,
+        page: &mut [u8],
+        stride: usize,
+        columns: &Range<usize>,
+        x: i32,
+        y: i32,
+        contrast: bool,
+    ) {
         if self.alpha.is_empty() {
             return;
         }
-        let x = x + self.left + margin as i32;
+        let x = x + self.left + columns.start as i32;
         let y = y + self.top;
-        let visible_left = x.max(margin as i32);
-        let visible_right = (x + self.width as i32).min((stride - margin) as i32);
+        let visible_left = x.max(columns.start as i32);
+        let visible_right = (x + self.width as i32).min(columns.end as i32);
         if visible_right <= visible_left {
             return;
         }

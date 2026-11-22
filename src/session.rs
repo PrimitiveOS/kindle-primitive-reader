@@ -122,7 +122,9 @@ impl BookConfig {
             Settings {
                 width: FACING_PAGE_WIDTH,
                 margin: self.settings.margin.min(margin_limit),
-                margin_sides: Some(self.settings.side_margin().min(margin_limit)),
+                margin_sides: None,
+                margin_left: Some(self.settings.left_margin().min(margin_limit)),
+                margin_right: Some(self.settings.right_margin().min(margin_limit)),
                 margin_top: Some(self.settings.top_margin()),
                 margin_bottom: Some(self.settings.bottom_margin()),
                 ..self.settings
@@ -297,11 +299,14 @@ impl Reading {
     pub(crate) fn reflow(&mut self, settings: Settings) -> Result<()> {
         if (Settings {
             invert_night_images: settings.invert_night_images,
+            link_vertical_margins: settings.link_vertical_margins,
             ..self.config.settings
         }) == settings
         {
             self.config.settings.invert_night_images = settings.invert_night_images;
             self.probe.settings.invert_night_images = settings.invert_night_images;
+            self.config.settings.link_vertical_margins = settings.link_vertical_margins;
+            self.probe.settings.link_vertical_margins = settings.link_vertical_margins;
             return Ok(());
         }
         let anchor = self.anchor();
@@ -1168,6 +1173,33 @@ mod tests {
             }
         }
         None
+    }
+
+    #[test]
+    fn facing_pages_apply_independent_margins_to_each_leaf_and_keep_the_gutter_clean() {
+        let mut reading = example("long-chapter.epub", 42.0, true);
+        let settings = reading.config.settings;
+        assert!(reading.uses_facing_pages() && reading.last_visible_page() == 1);
+        let before = reading.frame.pixels.clone();
+        reading
+            .reflow(Settings {
+                margin_left: Some(66),
+                margin_right: Some(42),
+                ..settings
+            })
+            .unwrap();
+        let after = &reading.frame.pixels;
+        let gutter = FACING_GUTTER as usize;
+        let width = FACING_PAGE_WIDTH as usize;
+        for (a, c) in before
+            .chunks_exact(WIDTH as usize)
+            .zip(after.chunks_exact(WIDTH as usize))
+        {
+            assert!(c[width..width + gutter].iter().all(|&v| v == 255));
+            for base in [0, width + gutter] {
+                assert!(a[base..base + width - 12] == c[base + 12..base + width]);
+            }
+        }
     }
 
     #[test]

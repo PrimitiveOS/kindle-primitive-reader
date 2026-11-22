@@ -540,11 +540,7 @@ impl ParleyChapter {
     ) -> impl Iterator<Item = (&Illustration, Range<usize>, Range<usize>)> {
         let height = visible_rows(&range, settings) as i32;
         self.illustrations.iter().filter_map(move |illustration| {
-            let (left, top) = illustration.origin(
-                range.start,
-                settings.width as usize,
-                settings.side_margin() as usize,
-            );
+            let (left, top) = illustration.origin(range.start, &settings.text_columns());
             let rows = top.max(0)..(top + illustration.display.1 as i32).min(height);
             if rows.is_empty() {
                 return None;
@@ -592,7 +588,8 @@ impl ParleyChapter {
         let visible_height = visible_rows(&range, settings);
         let mut frame = vec![255; (settings.width * settings.height) as usize];
         let stride = settings.width as usize;
-        let margin = settings.side_margin() as usize;
+        let columns = settings.text_columns();
+        let margin = columns.start;
         let top = settings.top_margin() as usize;
         let page = &mut frame[top * stride..(top + visible_height) * stride];
 
@@ -628,7 +625,7 @@ impl ParleyChapter {
                         self.glyphs.draw_run(
                             page,
                             stride,
-                            margin,
+                            &columns,
                             (paragraph.x, paragraph.y - range.start),
                             &run,
                             settings.text_contrast,
@@ -638,11 +635,11 @@ impl ParleyChapter {
                                 (paragraph.y - range.start + run.baseline() + 3.0).round() as isize;
                             let x0 = margin
                                 + ((paragraph.x + run.offset()).floor().max(0.0) as usize)
-                                    .min(stride - 2 * margin);
+                                    .min(columns.len());
                             let x1 = margin
                                 + ((paragraph.x + run.offset() + run.advance()).ceil().max(0.0)
                                     as usize)
-                                    .min(stride - 2 * margin);
+                                    .min(columns.len());
                             for row in y.max(0) as usize..(y + 2).max(0) as usize {
                                 if row < visible_height && x0 < x1 {
                                     page[row * stride + x0..row * stride + x1].fill(48);
@@ -663,7 +660,7 @@ impl ParleyChapter {
                         self.glyphs.draw_run(
                             page,
                             stride,
-                            margin,
+                            &columns,
                             (
                                 paragraph.x + overlay.x,
                                 paragraph.y + overlay.y - range.start,
@@ -687,7 +684,7 @@ impl ParleyChapter {
                             self.glyphs.draw_run(
                                 page,
                                 stride,
-                                margin,
+                                &columns,
                                 (marker.x, *y - range.start),
                                 &run,
                                 settings.text_contrast,
@@ -707,7 +704,7 @@ impl ParleyChapter {
         }
 
         for illustration in &self.illustrations {
-            illustration.draw(page, &range, stride, margin);
+            illustration.draw(page, &range, stride, &columns);
         }
         Ok(frame)
     }
@@ -1436,14 +1433,14 @@ fn grayscale_image(image: DynamicImage) -> GrayImage {
 }
 
 impl Illustration {
-    fn origin(&self, start: f32, stride: usize, margin: usize) -> (usize, i32) {
-        let remaining = stride - 2 * margin - self.display.0 as usize;
-        let left = margin + self.x.map_or(remaining / 2, |x| x.min(remaining));
+    fn origin(&self, start: f32, columns: &Range<usize>) -> (usize, i32) {
+        let remaining = columns.len() - self.display.0 as usize;
+        let left = columns.start + self.x.map_or(remaining / 2, |x| x.min(remaining));
         (left, (self.y - start).round() as i32)
     }
 
-    fn draw(&self, page: &mut [u8], range: &Range<f32>, stride: usize, margin: usize) {
-        let (x, top) = self.origin(range.start, stride, margin);
+    fn draw(&self, page: &mut [u8], range: &Range<f32>, stride: usize, columns: &Range<usize>) {
+        let (x, top) = self.origin(range.start, columns);
         let height = (page.len() / stride) as i32;
         let first = (-top).max(0);
         let last = (height - top).min(self.display.1 as i32);
@@ -2407,11 +2404,7 @@ mod tests {
         let original = probe.open_illustration(&book.0, bounded).unwrap();
         assert_eq!(original.page_size(), (144.0, 96.0));
         assert_eq!(probe.page_for(&probe.fragment("cover").unwrap()), Some(0));
-        let (x, y) = art.origin(
-            0.0,
-            settings.width as usize,
-            settings.side_margin() as usize,
-        );
+        let (x, y) = art.origin(0.0, &settings.text_columns());
         assert_eq!(
             probe.illustration_at(
                 0,
@@ -2489,7 +2482,7 @@ mod tests {
             display,
         };
         let mut page = vec![255; 150 * 100];
-        art.draw(&mut page, &(0.0..100.0), 150, 0);
+        art.draw(&mut page, &(0.0..100.0), 150, &(0..150));
         assert!(page.iter().any(|&v| v < 180));
         for (x, y) in [(0, 0), (52, 72), (143, 95)] {
             assert_eq!(
@@ -2771,11 +2764,7 @@ mod tests {
         let illustration = &layout.illustrations[0];
         let page = probe.pages.page(illustration.y);
         let range = probe.pages.range(page).unwrap();
-        let (left, top) = illustration.origin(
-            range.start,
-            settings.width as usize,
-            settings.margin as usize,
-        );
+        let (left, top) = illustration.origin(range.start, &settings.text_columns());
         let right = left + illustration.pixels.width() as usize;
         assert!(illustration.pixels.width() < 144);
         let (px, py, color) = illustration
@@ -2860,11 +2849,7 @@ mod tests {
         let illustration = &layout.illustrations[0];
         let page = probe.pages.page(illustration.y);
         let range = probe.pages.range(page).unwrap();
-        let (left, top) = illustration.origin(
-            range.start,
-            settings.width as usize,
-            settings.margin as usize,
-        );
+        let (left, top) = illustration.origin(range.start, &settings.text_columns());
         assert_eq!(illustration.pixels.dimensions(), (64, 36));
         assert!(
             probe

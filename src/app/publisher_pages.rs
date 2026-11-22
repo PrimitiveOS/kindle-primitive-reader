@@ -222,8 +222,7 @@ impl Reader {
         // Keep the installed Reader’s default (14) at its original pixel height.
         let glyph_height = (18 * size + 7) / 14;
         let line = (25 * size + 7) / 14;
-        let width = probe.settings.side_margin().min(TILE_WIDTH);
-        if width < 16 || paint.visible.len() < line as usize {
+        if paint.visible.len() < line as usize {
             return;
         }
         let mut surface = self.publisher_label_canvas.borrow_mut();
@@ -238,6 +237,15 @@ impl Reader {
         let Some(tile) = surface.as_mut() else { return };
         for (range, x) in reading.visible_columns() {
             let left = reading.uses_facing_pages() && x == 0;
+            let width = if left {
+                probe.settings.left_margin()
+            } else {
+                probe.settings.right_margin()
+            }
+            .min(TILE_WIDTH);
+            if width < 16 {
+                continue;
+            }
             let dest_x = if left {
                 x
             } else {

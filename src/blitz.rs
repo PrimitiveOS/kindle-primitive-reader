@@ -180,10 +180,11 @@ impl BlitzChapter {
         settings: Settings,
     ) -> Result<(Self, Vec<Line>, f32)> {
         let css = format!(
-            "html, body {{ padding: 0; }} body {{ margin: 0 {}px; font: {}px/{} serif; }}
+            "html, body {{ padding: 0; }} body {{ margin: 0 {}px 0 {}px; font: {}px/{} serif; }}
              img {{ max-width: 100%; max-height: {}px; object-fit: contain; }}
              iframe, frame, embed, object {{ display: none !important; }}",
-            settings.side_margin(),
+            settings.right_margin(),
+            settings.left_margin(),
             settings.font_size,
             settings.line_height,
             settings.text_height(),

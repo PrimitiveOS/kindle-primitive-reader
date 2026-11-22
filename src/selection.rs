@@ -186,8 +186,8 @@ impl Probe {
     }
 
     fn selection_point(&self, page: Range<f32>, x: f32, y: f32) -> Option<PagePoint> {
-        let sides = self.settings.side_margin() as f32;
-        if !(sides..self.settings.width as f32 - sides).contains(&x) {
+        let left = self.settings.left_margin() as f32;
+        if !(left..(self.settings.width - self.settings.right_margin()) as f32).contains(&x) {
             return None;
         }
         let local_y = y - self.settings.top_margin() as f32;
@@ -195,7 +195,7 @@ impl Probe {
         ((0.0..self.settings.text_height() as f32).contains(&local_y) && page.contains(&y))
             .then_some(PagePoint {
                 page,
-                x: x - sides,
+                x: x - left,
                 y,
             })
     }
@@ -340,9 +340,9 @@ fn page_rect(
     {
         return None;
     }
-    let sides = f64::from(settings.side_margin());
+    let left_margin = f64::from(settings.left_margin());
     let top_margin = f64::from(settings.top_margin());
-    let right = f64::from(settings.width) - sides;
+    let right = f64::from(settings.width - settings.right_margin());
     let bottom = top_margin
         + f64::from(
             (page.end - page.start)
@@ -350,9 +350,9 @@ fn page_rect(
                 .min(settings.text_height() as f32),
         );
     let y = top_margin + f64::from(origin - page.start);
-    let left = (rect.x0 + sides).floor().clamp(sides, right) as i32;
+    let left = (rect.x0 + left_margin).floor().clamp(left_margin, right) as i32;
     let top = (rect.y0 + y).floor().clamp(top_margin, bottom) as i32;
-    let right = (rect.x1 + sides).ceil().clamp(sides, right) as i32;
+    let right = (rect.x1 + left_margin).ceil().clamp(left_margin, right) as i32;
     let bottom = (rect.y1 + y).ceil().clamp(top_margin, bottom) as i32;
     (right > left && bottom > top).then_some(HighlightRect {
         x: left,

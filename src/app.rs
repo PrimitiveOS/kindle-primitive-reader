@@ -2190,6 +2190,9 @@ impl Reader {
                 preferences.font_size = Some(settings.font_size);
                 preferences.margin = Some(settings.margin);
                 preferences.margin_sides = settings.margin_sides;
+                preferences.margin_left = settings.margin_left;
+                preferences.margin_right = settings.margin_right;
+                preferences.link_vertical_margins = settings.link_vertical_margins;
                 preferences.margin_top = settings.margin_top;
                 preferences.margin_bottom = settings.margin_bottom;
                 preferences.line_height = Some(settings.line_height);
@@ -2426,6 +2429,9 @@ impl Reader {
             font_size: Some(settings.font_size),
             margin: Some(settings.margin),
             margin_sides: settings.margin_sides,
+            margin_left: settings.margin_left,
+            margin_right: settings.margin_right,
+            link_vertical_margins: settings.link_vertical_margins,
             margin_top: settings.margin_top,
             margin_bottom: settings.margin_bottom,
             line_height: Some(settings.line_height),
@@ -6127,6 +6133,8 @@ fn text_items(settings: Settings, scroll: bool) -> Vec<Item> {
             Action::Text(Settings {
                 margin: (settings.margin + 12).min(150),
                 margin_sides: None,
+                margin_left: None,
+                margin_right: None,
                 margin_top: None,
                 margin_bottom: None,
                 ..settings
@@ -6138,6 +6146,8 @@ fn text_items(settings: Settings, scroll: bool) -> Vec<Item> {
             Action::Text(Settings {
                 margin: settings.margin.saturating_sub(12),
                 margin_sides: None,
+                margin_left: None,
+                margin_right: None,
                 margin_top: None,
                 margin_bottom: None,
                 ..settings

@@ -20,6 +20,7 @@ impl BarPanel {
     fn tab(self) -> Self {
         match self {
             Self::TextLayout
+            | Self::TextMargins
             | Self::TextStyle
             | Self::TextSpacing
             | Self::TextScreen
@@ -824,3 +825,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "reflow_margin_tests.rs"]
+mod margin_tests;

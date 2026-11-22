@@ -232,6 +232,8 @@ impl Reader {
             height: CONTENT_HEIGHT,
             margin: 16,
             margin_sides: Some(22),
+            margin_left: None,
+            margin_right: None,
             margin_top: Some(8),
             margin_bottom: Some(8),
             font_size: (reading.config.settings.font_size - 2.0).clamp(18.0, 64.0),

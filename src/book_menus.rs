@@ -18,6 +18,7 @@ pub(crate) enum BarPanel {
     Pages,
     Text,
     TextLayout,
+    TextMargins,
     TextStyle,
     TextScreen,
     TextSpacing,
