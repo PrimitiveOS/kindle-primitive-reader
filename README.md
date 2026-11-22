@@ -44,7 +44,7 @@ Preview a saved KOReader position before applying it, or extend a saved passage 
 
 Tap a PDF web link to inspect its address over the current page. **Copy** makes it available in Reader’s search and note fields for this session. **QR code** lets you scan it with another device. [Address preview](docs/screenshots/pdf-link-address.png) · [QR display](docs/screenshots/pdf-link-code.png)
 
-**Controls › Reading status bar › Overlap status bar** lets a reflowable book fill the screen. Tap **Status** to reveal progress over the same page. [Status bar settings and screenshots](docs/status-bar-overlap.md)
+**Controls › Reading status bar › Overlap status bar** lets books, PDFs and comics fill the screen. Tap **Status** to reveal progress over the same page. [Status bar settings and screenshots](docs/status-bar-overlap.md)
 
 Tap a saved passage to read its note. When marks overlap, Reader shows the matching passages so you can choose one. In **Find**, the arrows start at your current passage. [Overlapping highlights](docs/screenshots/overlapping-highlights.png) · [Note on the page](docs/screenshots/tapped-note.png) · [Find from this passage](docs/screenshots/nearby-find.png)
 

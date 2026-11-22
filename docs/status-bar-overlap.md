@@ -1,8 +1,8 @@
 # Reading beneath the status bar
 
-Open a reflowable book and choose **Controls › Reading status bar › Overlap status bar**. With overlap enabled, the book uses all 1,680 screen rows on an Oasis 3. Choose the minimal status view to read the last lines without a status strip. **Status** brings back the footer over the current page. **Exit** remains available in the lower right. A visible footer receives taps before the text beneath it. With the footer hidden, the exposed text supports selection, links and annotations.
+Open a book, PDF or comic and choose **Controls › Reading status bar › Overlap status bar**. With overlap enabled, the book uses all 1,680 screen rows on an Oasis 3. Choose the minimal status view to read the last lines without a status strip. **Status** brings back the footer over the current page. **Exit** remains available in the lower right. A visible footer receives taps before the text beneath it. With the footer hidden, the exposed text supports selection, links and annotations.
 
-The setting is saved across books. Enabling or disabling overlap lays out the current chapter around its saved source anchor. Showing the footer, cycling its contents or hiding it keeps the current pagination and position. Facing pages and continuous scrolling use the same height. The default reserves 74 pixels for status and Exit.
+The setting is saved across books. Enabling or disabling overlap lays out the current chapter around its saved source anchor. Showing the footer, cycling its contents or hiding it keeps the current pagination and position. Fixed pages use the full height for fitting, two-page spreads, continuous PDF scrolling, selection and panning. Revealing status also reveals the usual fixed-page zoom controls. The default reserves 74 pixels for status and Exit.
 
 | Footer hidden | Footer shown over the same page |
 | --- | --- |
@@ -28,3 +28,8 @@ READER_OVERLAP_HIDDEN_IMAGE="$PWD/hidden.png" \
 READER_OVERLAP_VISIBLE_IMAGE="$PWD/shown.png" \
 cargo test --locked --lib reading_footer::overlap_tests
 ```
+
+
+### Fixed-page comparison
+
+With page-height fitting, original PDF 030 page 2 and PDF 054 page 950 each changed by the screen-height ratio of 1,680 / 1,606 (about 4.61%). Revealing the status and zoom controls kept all 2,029,984 pixels above the footer identical. Both original pages and their original transforms returned after Exit, reopening and restoring the reserved height. The authored tide chart contains a selectable PDF word beneath the usual zoom buttons. The simulator held that word and confirmed the exact selection when the footer was hidden. A zoomed and panned authored page kept its source center. Additional tests cover failure to save, continuous PDF gaps and a comic spread. [KOReader fixed-page fit calculation](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerzooming.lua#L541-L572) · [Installed KOReader check](../scripts/koreader-fixed-footer-check.lua) · [Authored fixed-page screenshot](screenshots/fixed-page-overlap.png)

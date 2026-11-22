@@ -154,7 +154,7 @@ impl<'a> Progress<'a> {
 }
 
 impl Reader {
-    pub(super) fn reflow_device_settings(&self) -> crate::Settings {
+    pub(super) fn device_reading_settings(&self) -> crate::Settings {
         crate::Settings {
             height: if self.controls.overlap_footer {
                 HEIGHT
@@ -166,9 +166,12 @@ impl Reader {
     }
 
     pub(super) fn overlapping_book_page(&self) -> bool {
-        self.active.is_some()
-            && self.controls.overlap_footer
-            && matches!(self.screen, Screen::Book | Screen::BookTools)
+        self.controls.overlap_footer
+            && match self.screen {
+                Screen::Book | Screen::BookTools => self.active.is_some(),
+                Screen::Fixed | Screen::FixedTools => self.fixed.is_some(),
+                _ => false,
+            }
     }
 
     pub(super) fn hidden_overlap_footer(&self) -> bool {
@@ -178,15 +181,24 @@ impl Reader {
             && self.search_result.is_none()
             && self.selection.is_none()
             && !self.touch_locked
+            && self.pdf_selection.is_none()
+            && self.ocr.is_none()
+            && self.next_comic().is_none()
             && self
                 .active
                 .as_ref()
-                .is_some_and(|b| !b.reading.has_page_error())
+                .is_none_or(|b| !b.reading.has_page_error())
     }
 
     pub(super) fn overlay_footer_input(&mut self, input: primitive_ui::Input) -> Option<Change> {
         use primitive_ui::Input;
-        if !self.overlapping_book_page() || self.selection.is_some() {
+        if !self.overlapping_book_page()
+            || self.selection.is_some()
+            || self.pdf_selection.is_some()
+            || self.search_result.is_some()
+            || self.ocr.is_some()
+            || self.next_comic().is_some()
+        {
             return None;
         }
         let (Input::Tap(x, y) | Input::LongTap(x, y)) = input else {
@@ -201,6 +213,10 @@ impl Reader {
             } else {
                 Change::None
             });
+        }
+        if self.fixed.is_some() && !self.hidden_overlap_footer() && x >= self.footer_right() as f32
+        {
+            return None;
         }
         if self.hidden_overlap_footer() {
             if !SHOW_STATUS.contains(x, y) {
@@ -527,7 +543,7 @@ impl Reader {
                 },
             ),
         ];
-        if self.active.is_some() {
+        if self.active.is_some() || self.fixed.is_some() {
             items.push(setting(
                 "Overlap status bar",
                 on_off(c.overlap_footer),

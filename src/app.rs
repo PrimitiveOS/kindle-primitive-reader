@@ -765,7 +765,7 @@ impl Reader {
                 Ok((absolute, self.library.identify(&entry)?, None))
             }
         })?;
-        let mut settings = self.reflow_device_settings();
+        let mut settings = self.device_reading_settings();
         let mut scroll = false;
         let mut facing_pages = false;
         let mut fixed_preferences = FixedPreferences::default();
@@ -777,6 +777,7 @@ impl Reader {
             state.position.clone()
         });
         let fixed = FixedReading::open(
+            self.device_reading_settings().height,
             entry.format,
             &absolute,
             position.as_ref().map_or(0, |saved| saved.page),
@@ -1924,7 +1925,21 @@ impl Reader {
                 } else {
                     None
                 };
-                controls.save(&self.controls_path)?;
+                if controls.overlap_footer != self.controls.overlap_footer
+                    && let Some(fixed) = &mut self.fixed
+                {
+                    let height = if controls.overlap_footer {
+                        HEIGHT
+                    } else {
+                        PAGE_HEIGHT
+                    };
+                    fixed
+                        .reading
+                        .resize(height, || controls.save(&self.controls_path))?;
+                    self.record_position();
+                } else {
+                    controls.save(&self.controls_path)?;
+                }
                 if let (Some(reading), Some(book)) = (resized, &mut self.active) {
                     book.reading = reading;
                     self.record_position();
@@ -2424,7 +2439,7 @@ impl Reader {
 
     fn apply_text_profile(&mut self, preferences: BookPreferences) -> Result<()> {
         let fonts = self.fonts_for(preferences.font_file.as_deref())?;
-        let base = self.reflow_device_settings();
+        let base = self.device_reading_settings();
         let active = self.active.as_mut().ok_or("Open a book first")?;
         let position = position(&active.reading);
         let mut config = active.reading.config.clone();
@@ -3753,6 +3768,10 @@ impl Reader {
     }
 
     fn handle_fixed(&mut self, input: Input) -> Change {
+        if let Some(change) = self.overlay_footer_input(input) {
+            return change;
+        }
+        let show_zoom = !self.hidden_overlap_footer();
         if let Input::LongTap(x, y) = input
             && self.pdf_selection.is_none()
             && let Some(change) = self.hold_footer(x, y)
@@ -3866,7 +3885,7 @@ impl Reader {
         let Some(input) = self.controls.page_input(input) else {
             return Change::None;
         };
-        let result = fixed.reading.input(input);
+        let result = fixed.reading.input_with_status(input, show_zoom);
         self.finish_fixed_update(result, page)
     }
 
@@ -4977,7 +4996,7 @@ impl App for Reader {
                 .collect();
             let search_caption = self.search_caption();
             let status_caption = self.status_caption();
-            fixed.reading.draw(
+            fixed.reading.draw_with_footer(
                 canvas,
                 self.notice
                     .as_deref()
@@ -4986,6 +5005,7 @@ impl App for Reader {
                 &marks,
                 &selection,
                 self.page_paint(),
+                self.hidden_overlap_footer(),
             );
             self.draw_footer_track(canvas);
             if self.saved_popup_over_book() {

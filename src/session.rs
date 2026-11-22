@@ -32,10 +32,6 @@ impl PagePaint {
         }
     }
 
-    pub fn is_full(&self) -> bool {
-        self.visible == (0..PAGE_HEIGHT)
-    }
-
     pub(crate) fn apply(self, mut page: GrayImage) -> (Rect, GrayImage) {
         let Self { visible, inverted } = self;
         let visible = visible.start.min(page.height)..visible.end.min(page.height);
@@ -758,47 +754,11 @@ impl Reading {
         paint: PagePaint,
     ) {
         let page = self.marked_frame(highlights, selection, &paint);
-        let full = paint.visible == (0..self.frame.height);
-        let footer_visible = paint.visible.end == self.frame.height;
-        if self.frame.height == HEIGHT && footer_visible {
-            if hidden_status && action.is_some() {
-                if full {
-                    draw_page_around_footer_buttons(canvas, page, paint);
-                } else {
-                    draw_page_picture(canvas, page, paint);
-                }
-            } else {
-                draw_page_picture(
-                    canvas,
-                    page,
-                    PagePaint {
-                        visible: paint.visible.start.min(PAGE_HEIGHT)..PAGE_HEIGHT,
-                        inverted: paint.inverted,
-                    },
-                );
-            }
-        } else {
-            draw_page_picture(canvas, page, paint);
-        }
-        if !footer_visible {
+        let Some(full) =
+            draw_document_and_footer(canvas, page, paint, hidden_status && action.is_some())
+        else {
             return;
-        }
-        if self.frame.height == HEIGHT {
-            if hidden_status && action.is_some() {
-                if full {
-                    for (rect, title) in [(SHOW_STATUS, "Status"), (DONE, "Exit")] {
-                        canvas.fill(rect, 255);
-                        canvas.button(rect, title, false, false);
-                    }
-                }
-                return;
-            }
-            canvas.fill(
-                Rect::new(0, PAGE_HEIGHT as i32, WIDTH as i32, FOOTER_HEIGHT as i32),
-                255,
-            );
-        }
-        canvas.fill(Rect::new(0, PAGE_HEIGHT as i32, WIDTH as i32, 1), HAIRLINE);
+        };
         let Some(action) = action else { return };
         let first = first_frame_page(&self.probe, self.page) + 1;
         let count = self.probe.page_count();
@@ -888,6 +848,45 @@ impl Reading {
             }
         }
     }
+}
+
+/// Paint the visible document and its footer background. Return whether the
+/// caller should draw the full set of regular status controls.
+pub(crate) fn draw_document_and_footer(
+    canvas: &mut Canvas,
+    page: GrayImage,
+    mut paint: PagePaint,
+    hidden_status: bool,
+) -> Option<bool> {
+    let height = page.height;
+    let full = paint.visible == (0..height);
+    if paint.visible.end != height {
+        draw_page_picture(canvas, page, paint);
+        return None;
+    }
+    if height == HEIGHT && hidden_status {
+        if full {
+            draw_page_around_footer_buttons(canvas, page, paint);
+            for (rect, title) in [(SHOW_STATUS, "Status"), (DONE, "Exit")] {
+                canvas.fill(rect, 255);
+                canvas.button(rect, title, false, false);
+            }
+        } else {
+            draw_page_picture(canvas, page, paint);
+        }
+        return None;
+    }
+    if height == HEIGHT {
+        paint.visible.start = paint.visible.start.min(PAGE_HEIGHT);
+        paint.visible.end = PAGE_HEIGHT;
+        canvas.fill(
+            Rect::new(0, PAGE_HEIGHT as i32, WIDTH as i32, FOOTER_HEIGHT as i32),
+            255,
+        );
+    }
+    draw_page_picture(canvas, page, paint);
+    canvas.fill(Rect::new(0, PAGE_HEIGHT as i32, WIDTH as i32, 1), HAIRLINE);
+    Some(full)
 }
 
 // Canvas paints document bitmaps after its text and buttons. Keep the two controls'

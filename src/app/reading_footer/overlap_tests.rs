@@ -32,13 +32,18 @@ fn return_to_page(app: &mut Reader) {
     let back = center(primitive_ui::back_button(WIDTH as i32));
     app.input(back);
     app.input(back);
+    let reading = if app.fixed.is_some() {
+        Screen::Fixed
+    } else {
+        Screen::Book
+    };
     for _ in 0..3 {
-        if app.screen == Screen::Book {
+        if app.screen == reading {
             return;
         }
         app.input(Input::Tap(630., 700.));
     }
-    assert_eq!(app.screen, Screen::Book);
+    assert_eq!(app.screen, reading);
 }
 
 fn frame(app: &Reader, fonts: &[PathBuf]) -> Vec<u8> {
@@ -297,4 +302,150 @@ fn overlap_resizes_spreads_and_scroll_and_preserves_geometry_after_a_failed_save
         HEIGHT
     );
     assert_eq!(frame(&app, &fonts).len(), (WIDTH * HEIGHT) as usize);
+}
+
+fn tide_chart() -> Vec<u8> {
+    let mut page = String::from("BT /F 23 Tf 29 430 Td (Tide measurements) Tj ET\n");
+    page.push_str("BT /F 11 Tf 30 407 Td (Field notebook  /  North cove) Tj ET\n");
+    page.push_str("BT /F 12 Tf 30 363 Td (Water depth above the same rock ledge) Tj ET\n");
+    for (i, (time, depth)) in [
+        ("06:00", 20),
+        ("07:00", 34),
+        ("08:00", 52),
+        ("09:00", 74),
+        ("10:00", 67),
+        ("11:00", 49),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let y = 314 - 33 * i;
+        page.push_str(&format!("BT /F 11 Tf 30 {y} Td ({time}) Tj ET\n0.73 g 75 {y} {} 9 re f 0 g\nBT /F 11 Tf 255 {y} Td ({depth} cm) Tj ET\n", depth * 2));
+    }
+    page.push_str("0.5 w 30 119 m 325 119 l S\nBT /F 11 Tf 30 93 Td (The highest recorded level was 74 cm at 09:00.) Tj ET\n");
+    page.push_str("BT /F 9 Tf 249 8 Td (Datum) Tj ET\n");
+    crate::fixed::tests::pdf_objects(&[
+        "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+        "<< /Type /Pages /Count 1 /Kids [3 0 R] >>".to_owned(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 360 480] /Resources << /Font << /F 5 0 R >> >> /Contents 4 0 R >>".to_owned(),
+        format!("<< /Length {} >>\nstream\n{page}endstream", page.len()),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned(),
+    ])
+}
+
+#[test]
+fn fixed_pages_fit_the_full_height_and_reveal_status_without_rescaling() {
+    let fixture = Fixture::new();
+    let original = std::env::var_os("READER_FIXED_OVERLAP_BOOK").map(PathBuf::from);
+    let authored = original.is_none();
+    let path = original.unwrap_or_else(|| {
+        let p = fixture.root.join("Chart.pdf");
+        std::fs::write(&p, tide_chart()).unwrap();
+        p
+    });
+    let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let mut app = Reader::open(path.parent().unwrap(), &fixture.state, fonts.clone()).unwrap();
+    app.open_path(&path).unwrap();
+    let page = std::env::var("READER_FIXED_OVERLAP_PAGE")
+        .ok()
+        .map_or(0, |v| v.parse::<usize>().unwrap() - 1);
+    let reader = &mut app.fixed.as_mut().unwrap().reading;
+    reader.jump(page).unwrap();
+    reader.fit_height().unwrap();
+    let (size, old) = reader.page_viewport().unwrap();
+    assert_eq!(old.height, PAGE_HEIGHT);
+    let baseline = frame(&app, &fonts);
+    settings(&mut app);
+    tap_contents_item(&mut app, "Overlap status bar");
+    status(&mut app, StatusBar::Minimal);
+    return_to_page(&mut app);
+    let reader = &app.fixed.as_ref().unwrap().reading;
+    let (_, full) = reader.page_viewport().unwrap();
+    assert_eq!(reader.page(), page);
+    assert_eq!(full.height, HEIGHT);
+    assert!((full.scale / old.scale - HEIGHT as f32 / PAGE_HEIGHT as f32).abs() < 0.00001);
+    assert!(app.hidden_overlap_footer());
+    let hidden = frame(&app, &fonts);
+    assert_ne!(baseline, hidden);
+    if authored {
+        capture_test_screen(&app, &fonts, "READER_FIXED_OVERLAP_IMAGE", false);
+        // Click the authored word under the usual zoom buttons through the same
+        // selection routing that handles physical long presses.
+        let mut at = None;
+        for y in (1618..1668).step_by(3) {
+            for x in (850..955).step_by(6) {
+                if let crate::fixed_session::WordAtTouch::Ready(Some(word)) =
+                    reader.select_word(x as f32, y as f32).unwrap()
+                    && word.text() == "Datum"
+                {
+                    at = Some((x as f32, y as f32));
+                    break;
+                }
+            }
+            if at.is_some() {
+                break;
+            }
+        }
+        let (x, y) = at.expect("The PDF word must occupy the exposed zoom-control area");
+        app.input(Input::LongTap(x, y));
+        assert_eq!(app.pdf_selection.as_ref().unwrap().text(), "Datum");
+        let cancel = app.selection_button(crate::app::selection_popup::SelectionAction::Cancel);
+        app.input(center(cancel));
+        assert!(app.pdf_selection.is_none());
+    }
+    app.input(center(SHOW_STATUS));
+    assert_eq!(app.controls.status_bar, StatusBar::PageNumbers);
+    let shown = frame(&app, &fonts);
+    let cut = (WIDTH * PAGE_HEIGHT) as usize;
+    assert!(hidden[..cut] == shown[..cut] && hidden[cut..] != shown[cut..]);
+    assert_eq!(
+        app.fixed
+            .as_ref()
+            .unwrap()
+            .reading
+            .page_viewport()
+            .unwrap()
+            .1,
+        full
+    );
+    let visible_zoom = app.fixed.as_ref().unwrap().reading.preferences().zoom;
+    assert_eq!(app.input(Input::Tap(1030., 1642.)), Change::Partial);
+    assert_eq!(
+        app.fixed.as_ref().unwrap().reading.preferences().zoom,
+        visible_zoom + 1
+    );
+    assert_eq!(app.input(Input::Tap(895., 1642.)), Change::Partial);
+    assert_eq!(
+        app.fixed.as_ref().unwrap().reading.preferences().zoom,
+        visible_zoom
+    );
+    assert_eq!(app.input(center(DONE)), Change::Exit);
+    drop(app);
+    let mut reopened = Reader::open(path.parent().unwrap(), &fixture.state, fonts.clone()).unwrap();
+    reopened.open_path(&path).unwrap();
+    let reader = &reopened.fixed.as_ref().unwrap().reading;
+    assert_eq!(reader.page(), page);
+    assert_eq!(reader.page_viewport().unwrap().1, full);
+    settings(&mut reopened);
+    tap_contents_item(&mut reopened, "Overlap status bar");
+    return_to_page(&mut reopened);
+    assert_eq!(
+        reopened
+            .fixed
+            .as_ref()
+            .unwrap()
+            .reading
+            .page_viewport()
+            .unwrap()
+            .1,
+        old
+    );
+    let reset = frame(&reopened, &fonts);
+    assert!(baseline[..cut] == reset[..cut]);
+    if let Some(p) = std::env::var_os("READER_FIXED_OVERLAP_REPORT") {
+        let data = serde_json::json!({"page":page+1,"source_width":size.0,"source_height":size.1,
+        "old_height":old.height,"full_height":full.height,"scale_ratio":full.scale / old.scale,
+        "reveal_unchanged_pixels":cut,"reset_identical":true,"restored_page_and_view":true});
+        std::fs::write(p, serde_json::to_vec(&data).unwrap()).unwrap();
+    }
 }

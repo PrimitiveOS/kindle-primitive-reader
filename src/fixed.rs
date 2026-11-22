@@ -83,7 +83,7 @@ pub struct PdfLink {
     pub destination_point: Option<Point>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RenderRequest {
     pub width: u32,
     pub height: u32,
