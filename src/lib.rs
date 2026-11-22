@@ -41,6 +41,7 @@ pub mod koreader_sidecar;
 pub mod highlight_style;
 pub mod library;
 mod list_marker;
+mod mark_time;
 mod loose;
 pub mod mobi;
 pub mod ocr;
