@@ -2,6 +2,8 @@
 
 Progress sync is an opt-in native Reader workflow for a user-configured WebDAV folder. Open **Tools → Progress sync → Sync settings**, enter the folder URL and credentials, choose a device name, then enable it. Creating or editing settings does not contact the server. **Sync now**, **Check server position** and **Send this device's position** are explicit actions. Reading, annotation export and local backups remain available without a server or account.
 
+A separate [KOReader server provider](koreader-server-sync.md) supports explicit PDF source-page actions with its own account. Its engine-specific reflow interoperability remains a separate gate.
+
 This implements the documented-progress-provider alternative in K22. It compares the familiar push, pull, conflict and sign-out workflows with the pinned KOReader sync plug-in. The native record format and WebDAV endpoint are separate from KOReader's sync-server account and position protocol. Annotation synchronization, automatic push/pull, and direct KOReader-server interoperability retain separate acceptance work.
 
 ## Reading behavior

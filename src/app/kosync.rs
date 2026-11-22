@@ -190,16 +190,7 @@ impl Reader {
                 action("Push this PDF's position", Command::Push)
                     .detail("Explicit replacement; this server has no conditional writes"),
             );
-        } else {
-            rows.push(
-                Item::new("Open a PDF to sync its source page", Action::Heading)
-                    .detail("EPUB and other reflow pointers need a verified adapter"),
-            );
         }
-        rows.push(
-            Item::new("Server position removal", Action::Heading)
-                .detail("KOReader's protocol has no remote-clear endpoint"),
-        );
         rows.push(
             Item::new("WebDAV progress sync", Action::Show(Screen::ProgressSync))
                 .detail("Separate account and conditional-write protocol"),
@@ -219,6 +210,7 @@ impl Reader {
     pub(super) fn kosync_command(&mut self, command: Command) -> Result<()> {
         match command {
             Command::Open => {
+                self.leave_progress_sync();
                 self.cancel_kosync();
                 self.kosync.remote = None;
                 if self.kosync.back.is_none() {
@@ -547,9 +539,12 @@ impl Reader {
                 );
             }
         }
+        if !settings {
+            canvas.text(Rect::new(115,1080,1034,75),"PDF source pages only. Reflow pointers and remote clearing are not available in this provider.",CAPTION.lines(2));
+        }
         if let Some(notice) = &self.notice {
             canvas.text(
-                Rect::new(sheet.x + 35, sheet.bottom() - 95, sheet.w - 70, 75),
+                Rect::new(sheet.x + 35, sheet.bottom() - 80, sheet.w - 70, 65),
                 notice,
                 CAPTION.lines(2),
             );
