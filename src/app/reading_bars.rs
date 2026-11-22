@@ -99,6 +99,7 @@ impl Button {
                 }
             }
             Visual::Shortcut(icon) => {
+                let size = self.shortcut_label_size(canvas, size);
                 let ink = if pressed { 255 } else { 0 };
                 if pressed {
                     canvas.panel(rect.inset(4), 16, 2, 0);
@@ -128,6 +129,21 @@ impl Button {
                 self.draw_selected(canvas, ink);
             }
         }
+    }
+
+    fn shortcut_label_size(&self, canvas: &mut Canvas, preferred: i32) -> i32 {
+        let bounds = Rect::new(0, 0, self.rect.w - 8, self.rect.h);
+        [preferred, 28, 26, 24]
+            .into_iter()
+            .filter(|size| *size <= preferred)
+            .find(|size| {
+                canvas.text_pages(
+                    bounds,
+                    &self.label,
+                    TextStyle::new(*size).bold().break_long_words(),
+                ).len() == 1
+            })
+            .unwrap_or(preferred.min(24))
     }
 
     fn draw_selected(&self, canvas: &mut Canvas, ink: u8) {
@@ -777,6 +793,60 @@ mod tests {
             (rect.x + rect.w / 2) as f32,
             (rect.y + rect.h / 2) as f32,
         ))
+    }
+
+    #[test]
+    fn compact_and_large_shortcuts_keep_complete_labels_and_the_reading_anchor() {
+        let fixture = crate::app::tests::Fixture::new();
+        let pdf = fixture.root.join("Harbor chart.pdf");
+        fs::write(&pdf, crate::fixed::tests::document()).unwrap();
+        let fonts = std::env::var_os("READER_TOOLBAR_REVIEW_FONTS")
+            .map(|paths| std::env::split_paths(&paths).collect())
+            .unwrap_or_else(|| vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")]);
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        let font_paths: Vec<_> = fonts.iter().map(|p| p.display().to_string()).collect();
+        let mut canvas = Canvas::new(WIDTH, HEIGHT, &font_paths).unwrap();
+        let mut layouts = Vec::new();
+        for (format, file) in [("epub", &fixture.book), ("pdf", &pdf)] {
+            app.open_path(file).unwrap();
+            let origin = app.current_history_location();
+            for large in [false, true] {
+                app.controls.large_toolbar = large;
+                app.open_reading_edge(false, 500.0);
+                assert!(app.reading_bottom && !app.reading_top);
+                let bars = app.reading_bars();
+                let buttons: Vec<_> = bars.buttons.iter()
+                    .filter(|button| button.rect.y >= HEIGHT as i32 - 112)
+                    .map(|button| serde_json::json!({
+                        "label":button.label,
+                        "x":button.rect.x,
+                        "y":button.rect.y,
+                        "w":button.rect.w,
+                        "h":button.rect.h,
+                    })).collect();
+                assert!(buttons.len() >= 7);
+                if let Some(directory) = std::env::var_os("READER_TOOLBAR_REVIEW") {
+                    for dark in [false, true] {
+                        let file = format!("{format}-{}{}.png",
+                            if large { "large" } else { "compact" },
+                            if dark { "-dark" } else { "" });
+                        let path = PathBuf::from(&directory).join(&file);
+                        let image = primitive_app::frame(&app, &mut canvas, dark);
+                        primitive_app::write_png(&path, WIDTH, HEIGHT, &image).unwrap();
+                        layouts.push(serde_json::json!({"file":file,"dark":dark,"buttons":buttons}));
+                    }
+                }
+                tap(&mut app, "Bookmarks");
+                assert!(matches!(app.screen, Screen::Bookmarks | Screen::FixedBookmarks));
+                assert_eq!(app.current_history_location(), origin);
+                let back = primitive_ui::back_button(WIDTH as i32);
+                app.input(Input::Tap((back.x + 30) as f32, (back.y + 30) as f32));
+                app.show(if app.fixed.is_some() { Screen::Fixed } else { Screen::Book });
+            }
+        }
+        if let Some(directory) = std::env::var_os("READER_TOOLBAR_REVIEW") {
+            fs::write(PathBuf::from(directory).join("controls.json"), serde_json::to_vec_pretty(&layouts).unwrap()).unwrap();
+        }
     }
 
     #[test]

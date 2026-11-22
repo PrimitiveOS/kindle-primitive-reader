@@ -439,6 +439,7 @@ impl Reader {
             settings: state.preferences.apply_to(self.device_reading_settings()),
             scroll: state.preferences.scroll,
             facing_pages: state.preferences.facing_pages,
+            hide_nonlinear: state.hide_nonlinear,
         });
         Ok(PendingBook {
             id,
