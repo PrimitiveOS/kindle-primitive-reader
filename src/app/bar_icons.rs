@@ -91,22 +91,36 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         )
         | Action::OpenPreviousDocument => CLOCK,
         Action::Show(Screen::BookMap) | Action::Overview => GRID,
-        Action::Show(Screen::DocumentDefaults | Screen::StyleTweaks | Screen::StylePreset | Screen::StyleFiles | Screen::StyleReview | Screen::StyleEditor | Screen::StyleClear) | Action::Style(_) => SLIDERS,
+        Action::Skim => JUMP,
+        Action::Show(
+            Screen::DocumentDefaults
+            | Screen::StyleTweaks
+            | Screen::StylePreset
+            | Screen::StyleFiles
+            | Screen::StyleReview
+            | Screen::StyleEditor
+            | Screen::StyleClear,
+        )
+        | Action::Style(_) => SLIDERS,
         Action::DocumentDefaults(command) => match command {
-            super::default_settings::Command::SaveReflow | super::default_settings::Command::SaveFixed => SAVE,
-            super::default_settings::Command::ResetReflow | super::default_settings::Command::ResetFixed => icons::ROTATE,
+            super::default_settings::Command::SaveReflow
+            | super::default_settings::Command::SaveFixed => SAVE,
+            super::default_settings::Command::ResetReflow
+            | super::default_settings::Command::ResetFixed => icons::ROTATE,
             _ => CLOSE,
         },
         Action::ToggleNonlinear => BOOK,
-        Action::Catalog(_) => BOOK,
         Action::Flow(_) | Action::Show(Screen::HiddenFlows) => BOOK,
-        Action::Show(Screen::Links | Screen::ProgressSync | Screen::ProgressSyncSettings)
-        | Action::ProgressSync(_)
-        | Action::Wikipedia => LINK,
+        Action::Show(Screen::Links) | Action::Wikipedia => LINK,
         Action::TranslatePage => TEXT,
-        Action::ReadAlarm | Action::Show(Screen::OnlineHistory) | Action::ReadingHistory(_) => CLOCK,
-        Action::SaveBookData | Action::ExportBackup | Action::PreviewBackup
-        | Action::MergeBackup | Action::ToggleBackupComponent(_) => SAVE,
+        Action::ReadAlarm | Action::Show(Screen::OnlineHistory) | Action::ReadingHistory(_) => {
+            CLOCK
+        }
+        Action::SaveBookData
+        | Action::ExportBackup
+        | Action::PreviewBackup
+        | Action::MergeBackup
+        | Action::ToggleBackupComponent(_) => SAVE,
         Action::HighlightStyle | Action::Show(Screen::Highlights) | Action::ExportHighlights(_) => {
             HIGHLIGHT
         }
@@ -123,7 +137,12 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         | Action::TogglePublisherFooter
         | Action::TogglePublisherMargins => PAGE,
         Action::Show(Screen::GoToPage) | Action::NextLocation => JUMP,
-        Action::Show(Screen::Gestures | Screen::ReadingControls | Screen::ReadingData | Screen::FooterSettings) => SLIDERS,
+        Action::Show(
+            Screen::Gestures
+            | Screen::ReadingControls
+            | Screen::ReadingData
+            | Screen::FooterSettings,
+        ) => SLIDERS,
         Action::Show(Screen::Typography | Screen::ReadingProfiles)
         | Action::ShowFonts
         | Action::Text(_) => TEXT,

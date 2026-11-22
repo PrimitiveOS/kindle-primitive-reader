@@ -257,6 +257,7 @@ mod tests {
     }
 
     fn select(app: &mut Reader, selected: &TextSelection) {
+        app.controls.dictionary_on_single_word = Some(false);
         let reading = &app.active.as_ref().unwrap().reading;
         let rect = reading.highlight_rects(selected)[0];
         let hold = Input::LongTap(

@@ -146,7 +146,13 @@ impl Reader {
                     self.finish_reflow_jump(previous);
                     Ok(())
                 } else {
-                    if position.chapter != 0 || position.anchor.is_some() || self.fixed.as_ref().is_none_or(|book| position.page >= book.reading.count()) {
+                    if position.chapter != 0
+                        || position.anchor.is_some()
+                        || self
+                            .fixed
+                            .as_ref()
+                            .is_none_or(|book| position.page >= book.reading.count())
+                    {
                         return Err("That chapter belongs to a different document layout".into());
                     }
                     self.follow_fixed(position.page, None)

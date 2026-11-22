@@ -8,7 +8,9 @@ fn fonts() -> Vec<PathBuf> {
     vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")]
 }
 fn reader(fixture: &Fixture) -> Reader {
-    Reader::open(&fixture.root, &fixture.state, fonts()).unwrap()
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts()).unwrap();
+    app.controls.dictionary_on_single_word = Some(false);
+    app
 }
 fn tap(app: &mut Reader, rect: Rect) {
     assert_eq!(

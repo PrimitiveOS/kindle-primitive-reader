@@ -27,8 +27,8 @@ impl Default for Templates {
     }
 }
 
-/// Geometry belongs to one edition: crop and pan cannot enter this schema.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+/// Per-format defaults for fixed-page navigation and rendering.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct FixedDefaults {
     zoom: usize,
@@ -44,9 +44,40 @@ pub(crate) struct FixedDefaults {
     continuous_gap: u16,
     scan_white_level: Option<u8>,
     right_to_left: bool,
+    zoom_overlap_h: u8,
+    zoom_overlap_v: u8,
+    zoom_direction_vertical: bool,
+    zoom_bottom_to_top: bool,
     epub_spread: Option<bool>,
     epub_right_to_left: Option<bool>,
 }
+
+impl Default for FixedDefaults {
+    fn default() -> Self {
+        Self {
+            zoom: 0,
+            turns: 0,
+            width_fit: false,
+            height_fit: false,
+            continuous: false,
+            spread: false,
+            scan_contrast: false,
+            straighten_limit: 0,
+            force_ocr: false,
+            dither: false,
+            continuous_gap: 0,
+            scan_white_level: None,
+            right_to_left: false,
+            zoom_overlap_h: 40,
+            zoom_overlap_v: 40,
+            zoom_direction_vertical: false,
+            zoom_bottom_to_top: false,
+            epub_spread: None,
+            epub_right_to_left: None,
+        }
+    }
+}
+
 impl FixedDefaults {
     pub(crate) fn from_view(view: FixedPreferences) -> Self {
         let view = view.normalized();
@@ -64,6 +95,10 @@ impl FixedDefaults {
             continuous_gap: view.continuous_gap,
             scan_white_level: view.scan_white_level,
             right_to_left: view.right_to_left,
+            zoom_overlap_h: view.zoom_overlap_h(),
+            zoom_overlap_v: view.zoom_overlap_v(),
+            zoom_direction_vertical: view.zoom_direction_vertical(),
+            zoom_bottom_to_top: view.zoom_bottom_to_top(),
             epub_spread: view.epub_spread,
             epub_right_to_left: view.epub_right_to_left,
         }
@@ -83,6 +118,10 @@ impl FixedDefaults {
             continuous_gap: self.continuous_gap,
             scan_white_level: self.scan_white_level,
             right_to_left: self.right_to_left,
+            zoom_overlap_h: Some(self.zoom_overlap_h),
+            zoom_overlap_v: Some(self.zoom_overlap_v),
+            zoom_direction_vertical: Some(self.zoom_direction_vertical),
+            zoom_bottom_to_top: Some(self.zoom_bottom_to_top),
             epub_spread: self.epub_spread,
             epub_right_to_left: self.epub_right_to_left,
             crop: geometry.crop,
@@ -170,7 +209,8 @@ pub(crate) fn validate_preferences(p: &BookPreferences) -> io::Result<()> {
         p.margin_top,
         p.margin_bottom,
     ];
-    if p.logical_font_size.is_some_and(|n| !crate::logical_font::valid(n))
+    if p.logical_font_size
+        .is_some_and(|n| !crate::logical_font::valid(n))
         || p.render_dpi.is_some_and(|n| !crate::valid_render_dpi(n))
         || p.font_size.is_some_and(|n| !(12.0..=144.0).contains(&n))
         || p.line_height.is_some_and(|n| !(1.0..=3.0).contains(&n))

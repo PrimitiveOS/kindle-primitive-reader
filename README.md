@@ -23,11 +23,14 @@
 Reader is a native Rust book and document reader for PrimitiveOS on Kindle.
 It uses Parley for reflowable books and Hayro for PDF pages. The reading
 workflows and format coverage are being compared with KOReader on the same
-Kindle. Parity work covers local reading workflows; online book acquisition,
-remote sync or annotation services, network lookup, KOReader's extension
-system, and unrelated utilities such as Terminal are outside the goal. Local
-annotation export and reading-data migration remain in scope. The
-[scope checklist](docs/reading-parity-plan.md#scope-and-completion-checklist)
+Kindle. Parity work covers local reading workflows, including explicit,
+contextual Wikipedia and translation actions that preserve the book location.
+Online book acquisition, remote sync or annotation services, Wikipedia
+article-to-EPUB export, a general plug-in runtime or catalogue, and unrelated
+utilities such as Terminal are outside the goal. Local annotation export and
+reading-data migration remain in scope. Reading-specific capabilities that
+KOReader packages as plug-ins can be implemented natively; Reader will not add
+a general plug-in loader or catalogue. The [scope checklist](docs/reading-parity-plan.md#scope-and-completion-checklist)
 defines what counts toward completion.
 [EPUB feasibility results](docs/epub-probe-results.md)
 
@@ -78,6 +81,12 @@ Use **Settings › Style tweaks** for live all-books defaults, per-book override
 
 Use **Settings › Highlight style** to set how new passages appear. Tap a saved highlight and choose **Style** under its actions to change that passage. [Four highlight styles on a reading page](docs/highlight-drawing-styles.md) · [Named colors and margin note markers](docs/highlight-colors-and-note-markers.md)
 
+Choose whether the selected-text actions appear at the top, center, bottom or beside the passage. [Selection dialog positions](docs/selection-dialog.md)
+
+In **Settings › Long-press on text**, choose what a held word does. By default, holding a single word opens the local dictionary; turn that option off to use another default such as highlight, note, translation, Wikipedia or full-text search. [Long-press actions and current parity](docs/long-press-behavior.md)
+
+Set **Highlight style and color prompt** to choose an appearance for each new mark. It stays off by default; Style, Color, and Style and color open a small chooser over the page. [Style chooser](docs/screenshots/highlight-style-prompt.png) · [Color chooser](docs/screenshots/highlight-color-prompt.png)
+
 Use the book's color for temporary selections, or confirm **Apply to all highlights** to restyle its saved passages together. Filter the bookmark browser by color, and choose several colors when exporting highlights. [Selection and highlight workflows](docs/highlight-workflows.md)
 
 Tap a saved passage to read its note. When marks overlap, Reader shows the matching passages so you can choose one. In **Find**, the arrows start at your current passage. [Overlapping highlights](docs/screenshots/overlapping-highlights.png) · [Note on the page](docs/screenshots/tapped-note.png) · [Find from this passage](docs/screenshots/nearby-find.png)
@@ -88,9 +97,7 @@ The upper **Tools** menu includes **Read timer** for a countdown or a local cloc
 
 The reading footer can estimate how long the current chapter or book will take. Superscripts and subscripts follow the publisher's text, keeping footnotes and formulas legible. [Reading time](docs/reading-time-estimates.md) · [Sample reading page](docs/screenshots/inline-scripts.png)
 
-Browse configured online book catalogs from **Library › Online catalogs**. Choose a publication format and a destination in Documents, then keep the completed book for offline reading. The development candidate supports OPDS Atom/JSON and direct calibre Content server acquisition. [Protocols, controls and verification](docs/opds-acquisition.md)
-
-Use **Tools › Progress sync** to compare or send the current book’s position through your configured WebDAV folder. Sync starts off and runs only when you request it. Conflicting passages offer a visible choice, and sign-out retains local reading data. [Protocol, controls and verification](docs/progress-sync.md)
+Reader keeps the reading library local. Add books through Documents and Files. The current source has no online book acquisition or remote progress-sync implementation; local backup, restore, and reading-data migration remain available.
 
 Back up book records together with local reading controls, profiles, vocabulary and daily history. Restore previews each saved component; existing local settings stay skipped until you choose replacement. [Backup scope, controls and recovery](docs/reading-data-backups.md)
 
@@ -112,7 +119,11 @@ Install Reader from PrimitiveOS Store or follow the manual install guide.
   left, center, or right to open Navigation, the last-used tab, or Library. Navigation has
   contents, bookmarks, location history, a book map, page previews, and
   automatic page turns with saved preset or custom intervals and an adjustable
-  signed scroll distance. Search has full-text and bookmark search, recent
+  signed scroll distance. Zoomed fixed-page AutoTurn also has configurable
+  horizontal and vertical overlap and reading direction. Manual page buttons
+  and page-turn tap zones use those same saved settings to pan through enlarged
+  PDF and scan pages before advancing. [Manual fixed-page pan](docs/screenshots/fixed-manual-pan.png).
+  Search has full-text and bookmark search, recent
   queries, a typed dictionary lookup, and [vocabulary review](docs/vocabulary-review.md)
   with reading context, due dates and per-word undo.
 - Swipe up from the bottom edge to reopen the last formatting panel for the

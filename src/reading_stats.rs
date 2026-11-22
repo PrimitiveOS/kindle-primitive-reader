@@ -23,7 +23,9 @@ struct SavedStats {
 }
 
 pub(crate) fn backup_value(bytes: &[u8]) -> io::Result<serde_json::Value> {
-    if bytes.len() as u64 > MAX_STATE_BYTES { return Err(invalid_state()); }
+    if bytes.len() as u64 > MAX_STATE_BYTES {
+        return Err(invalid_state());
+    }
     let saved: SavedStats = serde_json::from_slice(bytes)?;
     if saved.version != VERSION || saved.seconds_read.len() > MAX_BOOKS {
         return Err(invalid_state());

@@ -204,7 +204,10 @@ pub(crate) fn pdf_open_timing<T>(stage: &str, run: impl FnOnce() -> T) -> T {
     }
     let started = std::time::Instant::now();
     let result = run();
-    eprintln!("reader_pdf_open {stage}_ms={}", started.elapsed().as_millis());
+    eprintln!(
+        "reader_pdf_open {stage}_ms={}",
+        started.elapsed().as_millis()
+    );
     result
 }
 
@@ -281,10 +284,15 @@ impl Pdf {
         let metadata = self.document.metadata();
         let decode = |bytes: &[u8]| pdf_text(&bytes[..bytes.len().min(16 * 1024)]);
         let xref = self.document.xref();
-        let language = xref.get::<Dict<'_>>(xref.root_id())
+        let language = xref
+            .get::<Dict<'_>>(xref.root_id())
             .and_then(|catalog| catalog.get::<PdfString<'_>>(b"Lang"))
             .map(|language| decode(language.as_bytes()));
-        (metadata.subject.as_deref().map(decode), metadata.keywords.as_deref().map(decode), language)
+        (
+            metadata.subject.as_deref().map(decode),
+            metadata.keywords.as_deref().map(decode),
+            language,
+        )
     }
 
     /// The printed label for a zero-based page, if the PDF provides one.
@@ -676,7 +684,11 @@ fn read_page_links(document: &Document, page: usize, viewport: Rect) -> Vec<PdfL
                     x1: (rect.x1 / viewport.width()) as f32,
                     y1: (rect.y1 / viewport.height()) as f32,
                 },
-                uri: if target == PdfLinkTarget::External { annotation_uri(&annotation) } else { None },
+                uri: if target == PdfLinkTarget::External {
+                    annotation_uri(&annotation)
+                } else {
+                    None
+                },
                 target,
                 destination_point,
             })
@@ -686,15 +698,23 @@ fn read_page_links(document: &Document, page: usize, viewport: Rect) -> Vec<PdfL
 
 fn annotation_uri(annotation: &Dict<'_>) -> Option<String> {
     let action = annotation.get::<Dict<'_>>(b"A")?;
-    if action.get::<Name<'_>>(b"S")?.as_ref() != b"URI" { return None; }
+    if action.get::<Name<'_>>(b"S")?.as_ref() != b"URI" {
+        return None;
+    }
     let bytes = action.get::<PdfString<'_>>(b"URI")?;
-    if bytes.is_empty() || bytes.len() > 8192 { return None; }
+    if bytes.is_empty() || bytes.len() > 8192 {
+        return None;
+    }
     let address = if bytes.starts_with(b"\xfe\xff") || bytes.starts_with(b"\xef\xbb\xbf") {
         pdf_text(&bytes)
     } else {
-        std::str::from_utf8(&bytes).map(str::to_owned).unwrap_or_else(|_| pdf_text(&bytes))
+        std::str::from_utf8(&bytes)
+            .map(str::to_owned)
+            .unwrap_or_else(|_| pdf_text(&bytes))
     };
-    if address.trim().is_empty() || address.chars().any(char::is_control) { return None; }
+    if address.trim().is_empty() || address.chars().any(char::is_control) {
+        return None;
+    }
     Some(address)
 }
 

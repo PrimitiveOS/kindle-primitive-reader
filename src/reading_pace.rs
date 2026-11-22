@@ -22,9 +22,14 @@ struct Stored {
 
 pub(crate) fn backup_value(bytes: &[u8]) -> io::Result<serde_json::Value> {
     let stored: Stored = serde_json::from_slice(bytes)?;
-    if bytes.len() as u64 > MAX_BYTES || stored.version != 1
+    if bytes.len() as u64 > MAX_BYTES
+        || stored.version != 1
         || stored.pages.len() > MAX_PAGES
-        || stored.pages.values().any(|&n| !(MIN_SECONDS..=MAX_SECONDS).contains(&u64::from(n))) {
+        || stored
+            .pages
+            .values()
+            .any(|&n| !(MIN_SECONDS..=MAX_SECONDS).contains(&u64::from(n)))
+    {
         return Err(io::Error::other("The reading-pace backup is invalid"));
     }
     serde_json::to_value(stored).map_err(io::Error::other)

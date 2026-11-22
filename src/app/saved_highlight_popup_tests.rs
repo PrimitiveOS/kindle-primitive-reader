@@ -269,10 +269,17 @@ fn tap_saved_pdf_highlights_matches_zoomed_page_geometry_and_preserves_the_viewp
     } else {
         left.1
     };
+    let before_page = app.fixed.as_ref().unwrap().reading.page();
+    let before_view = app.fixed.as_ref().unwrap().reading.preferences();
     app.input(Input::Tap(left.0, y));
     app.tick(Instant::now() + Duration::from_secs(2));
     assert!(app.saved_popup.is_none());
-    assert_eq!(app.fixed.as_ref().unwrap().reading.page(), page - 1);
+    let reading = &app.fixed.as_ref().unwrap().reading;
+    assert_eq!(reading.page(), before_page);
+    let after_view = reading.preferences();
+    assert!(
+        after_view.offset_x != before_view.offset_x || after_view.offset_y != before_view.offset_y
+    );
 }
 
 #[test]

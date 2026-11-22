@@ -60,6 +60,7 @@ fn authored() -> (Fixture, Reader) {
         ],
     );
     let mut app = Reader::open(&fixture.root, &fixture.state, fonts()).unwrap();
+    app.controls.dictionary_on_single_word = Some(false);
     app.open_path(&text).unwrap();
     (fixture, app)
 }

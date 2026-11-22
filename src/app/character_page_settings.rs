@@ -15,6 +15,8 @@ pub(super) enum NumberField {
     LogicalFont(u64),
     WordSpacing(super::word_spacing::Draft),
     AutoTurn,
+    AutoTurnOverlapHorizontal,
+    AutoTurnOverlapVertical,
 }
 
 impl NumberField {
@@ -24,6 +26,7 @@ impl NumberField {
             Self::DefaultStride | Self::MarginSize => Screen::NumberingDefaults,
             Self::ContentDpi(_) | Self::LogicalFont(_) | Self::WordSpacing(_) => Screen::Book,
             Self::AutoTurn => Screen::AutoTurn,
+            Self::AutoTurnOverlapHorizontal | Self::AutoTurnOverlapVertical => Screen::AutoTurnPan,
         }
     }
 }
@@ -192,6 +195,21 @@ impl Reader {
             self.show(field.parent());
             return Ok(());
         }
+        if matches!(
+            field,
+            NumberField::AutoTurnOverlapHorizontal | NumberField::AutoTurnOverlapVertical
+        ) {
+            let overlap = value
+                .trim()
+                .parse::<u8>()
+                .ok()
+                .filter(|value| *value <= 90)
+                .ok_or("Enter a zoom overlap from 0% to 90%")?;
+            let horizontal = field == NumberField::AutoTurnOverlapHorizontal;
+            self.set_fixed_auto_turn_overlap(horizontal, overlap)?;
+            self.show(field.parent());
+            return Ok(());
+        }
         let number = value.trim().parse::<u16>().ok();
         let mut controls = self.controls;
         match field {
@@ -199,6 +217,9 @@ impl Reader {
             NumberField::LogicalFont(owner) => return self.apply_logical_font_input(owner),
             NumberField::WordSpacing(draft) => return self.apply_word_spacing_input(draft),
             NumberField::AutoTurn => unreachable!("handled above"),
+            NumberField::AutoTurnOverlapHorizontal | NumberField::AutoTurnOverlapVertical => {
+                unreachable!("handled above")
+            }
             NumberField::MarginSize => {
                 controls.numbering.label_size = number
                     .filter(|n| (8..=20).contains(n))

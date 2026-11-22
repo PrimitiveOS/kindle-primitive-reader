@@ -68,6 +68,7 @@ impl Reader {
         }
         if self.screen != Screen::Book || self.selection.as_ref() != Some(&job.initial) {
             self.cjk_selection_lookup = None;
+            self.pending_selection_action = None;
             return None;
         }
         let result = match job.receiver.try_recv() {
@@ -80,25 +81,30 @@ impl Reader {
         };
         let job = self.cjk_selection_lookup.take()?;
         // Missing/corrupt dictionaries preserve the immediate ICU selection.
-        let Ok(Some(bytes)) = result else {
-            return None;
+        let selected = match result {
+            Ok(Some(bytes))
+                if bytes > 0
+                    && bytes <= job.scan.text.len()
+                    && job.scan.text.is_char_boundary(bytes) =>
+            {
+                let mut end = job.scan.start.clone();
+                end.offset += bytes;
+                self.active
+                    .as_ref()
+                    .and_then(|active| active.reading.probe.select_range(&job.scan.start, &end))
+            }
+            _ => None,
         };
-        if bytes == 0 || bytes > job.scan.text.len() || !job.scan.text.is_char_boundary(bytes) {
-            return None;
+        let selection_changed = selected
+            .as_ref()
+            .is_some_and(|selected| self.selection.as_ref() != Some(selected));
+        if let Some(selected) = selected {
+            self.selection = Some(selected);
         }
-        let mut end = job.scan.start.clone();
-        end.offset += bytes;
-        let selected = self
-            .active
-            .as_ref()?
-            .reading
-            .probe
-            .select_range(&job.scan.start, &end)?;
-        if self.selection.as_ref() == Some(&selected) {
-            return None;
+        if let Some(action) = self.pending_selection_action.take() {
+            return Some(self.apply_selection_long_press_action(action));
         }
-        self.selection = Some(selected);
-        Some(Change::Partial)
+        selection_changed.then_some(Change::Partial)
     }
 }
 

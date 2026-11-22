@@ -1425,8 +1425,11 @@ fn list_insets(
                 .ordinal(item)
                 .and_then(|ordinal| style.marker.label(ordinal))
             {
-                let estimate =
-                    if settings.logical_font_size.is_some() { settings.styled_font(style.size_scale) } else { font_size * style.size_scale } * (0.76 * label.chars().count() as f32 + 0.46);
+                let estimate = if settings.logical_font_size.is_some() {
+                    settings.styled_font(style.size_scale)
+                } else {
+                    font_size * style.size_scale
+                } * (0.76 * label.chars().count() as f32 + 0.46);
                 *width = width.max(estimate);
             }
         }
@@ -1524,7 +1527,11 @@ fn make_annotation(
         ),
     )));
     builder.push_default(StyleProperty::FontSize(
-        if settings.logical_font_size.is_some() { settings.styled_font(style.size_scale * 0.48) } else { (settings.font_size * style.size_scale * 0.48).clamp(8.0, 84.0) },
+        if settings.logical_font_size.is_some() {
+            settings.styled_font(style.size_scale * 0.48)
+        } else {
+            (settings.font_size * style.size_scale * 0.48).clamp(8.0, 84.0)
+        },
     ));
     let mut layout = builder.build(text);
     layout.break_all_lines(None);
@@ -1733,7 +1740,12 @@ fn make_paragraph(
     }
     let mut layout = builder.build(&block.text);
     if let Some(pair) = settings.percent_word_spacing {
-        let preserved: Vec<_> = block.styled_text.iter().filter(|run| styles[run.element].preformatted_spaces).map(|run| run.bytes.clone()).collect();
+        let preserved: Vec<_> = block
+            .styled_text
+            .iter()
+            .filter(|run| styles[run.element].preformatted_spaces)
+            .map(|run| run.bytes.clone())
+            .collect();
         layout.set_word_spacing_percent(&block.text, pair.scaling, pair.minimum, &preserved);
     }
     if indent.amount > 0.0 {

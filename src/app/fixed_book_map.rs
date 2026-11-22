@@ -124,15 +124,22 @@ impl Reader {
         for (index, slot) in window.slots(count).enumerate() {
             let rect = cell(index);
             let selected = slot.contains(&focus);
-            let hidden = reading.hidden_flow_map().is_some_and(|flows|
-                flows.count_in(0, slot.clone()) < slot.len());
+            let hidden = reading
+                .hidden_flow_map()
+                .is_some_and(|flows| flows.count_in(0, slot.clone()) < slot.len());
             let pressed = canvas.control_pressed(rect, false);
             let ink = if pressed { 255 } else { 0 };
             canvas.panel(
                 rect,
                 16,
                 if selected { 6 } else { 2 },
-                if pressed { 0 } else if hidden { 235 } else { 255 },
+                if pressed {
+                    0
+                } else if hidden {
+                    235
+                } else {
+                    255
+                },
             );
             canvas.text(
                 Rect::new(rect.x + 12, rect.y + 10, rect.w - 22, 53),
@@ -209,8 +216,11 @@ impl Reader {
                 }
             }
             if hidden {
-                canvas.text(Rect::new(rect.right() - 116, rect.bottom() - 50, 104, 34),
-                    "Hidden", TextStyle::new(22).ink(ink));
+                canvas.text(
+                    Rect::new(rect.right() - 116, rect.bottom() - 50, 104, 34),
+                    "Hidden",
+                    TextStyle::new(22).ink(ink),
+                );
             }
         }
         if window.adjacent(false, count).is_some() {

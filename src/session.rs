@@ -1036,6 +1036,10 @@ impl Reading {
         self.end_attempt = false;
     }
 
+    pub(crate) fn is_turning(&self) -> bool {
+        !self.turns.pending.is_empty()
+    }
+
     pub(crate) fn take_end_attempt(&mut self) -> bool {
         std::mem::take(&mut self.end_attempt)
     }

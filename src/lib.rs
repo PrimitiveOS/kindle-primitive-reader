@@ -34,10 +34,10 @@ mod flow_projection;
 mod flow_view;
 mod font_render;
 mod font_synthesis;
-pub mod logical_font;
 #[cfg(feature = "kindle")]
 mod generated_contents;
 mod gray_glyph;
+pub mod logical_font;
 pub use flow_probe::SourcePresentation;
 #[cfg(feature = "kindle")]
 mod footnotes;
@@ -61,13 +61,9 @@ pub mod ocr;
 mod ocr_job;
 #[cfg(feature = "kindle")]
 pub mod online_lookup;
-#[cfg(feature = "kindle")]
-pub mod opds;
 mod parley_layout;
 #[cfg(feature = "kindle")]
 mod pdf_annotations;
-#[cfg(feature = "kindle")]
-pub mod progress_sync;
 mod publication_metadata;
 mod publisher_breaks;
 mod publisher_padding;
@@ -174,7 +170,9 @@ pub enum FontHinting {
 pub const RENDER_DPI_PRESETS: [u16; 6] = [0, 48, 96, 167, 212, 300];
 
 /// Pinned content-DPI More Options: integer 0..=300, separate from screen DPI.
-pub const fn valid_render_dpi(value: u16) -> bool { value <= 300 }
+pub const fn valid_render_dpi(value: u16) -> bool {
+    value <= 300
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Settings {
@@ -318,14 +316,23 @@ impl Settings {
             || if let Some(logical) = self.logical_font_size {
                 !logical_font::valid(logical)
                     || self.font_scale.effective(logical).ok() != Some(self.font_size)
-            } else { !(12.0..=144.0).contains(&self.font_size) }
+            } else {
+                !(12.0..=144.0).contains(&self.font_size)
+            }
             || !(1.0..=3.0).contains(&self.line_height)
             || !(-2.0..=12.0).contains(&self.word_spacing)
             || self.percent_word_spacing.is_some_and(|pair| !pair.valid())
             || self.word_expansion > 20
             || !(-1.0..=4.0).contains(&self.letter_spacing)
             || !(100..=150).contains(&self.cjk_width_percent)
-            || self.text_height() as f32 <= self.font_size * self.line_height * if self.logical_font_size.is_some() { 1.0 } else { 2.0 }
+            || self.text_height() as f32
+                <= self.font_size
+                    * self.line_height
+                    * if self.logical_font_size.is_some() {
+                        1.0
+                    } else {
+                        2.0
+                    }
         {
             return Err("Reading layout settings are out of range".into());
         }
@@ -451,9 +458,9 @@ impl Error for PageContentTooTall {}
 
 impl Pagination {
     fn fixed_stride(height: f32, extent: f32) -> Result<Self> {
-        Self::fixed_stride_capped(height,extent,2_000_000.0)
+        Self::fixed_stride_capped(height, extent, 2_000_000.0)
     }
-    fn fixed_stride_capped(height: f32, extent: f32, limit:f32) -> Result<Self> {
+    fn fixed_stride_capped(height: f32, extent: f32, limit: f32) -> Result<Self> {
         if !extent.is_finite() || !(0.0..=limit).contains(&extent) {
             return Err("The chapter exceeds the layout height limit".into());
         }
@@ -475,12 +482,15 @@ impl Pagination {
         content_height: f32,
         breaks: &[publisher_breaks::BoxRules],
     ) -> Result<Self> {
-        Self::with_breaks_capped(lines,height,content_height,breaks,2_000_000.0)
+        Self::with_breaks_capped(lines, height, content_height, breaks, 2_000_000.0)
     }
     fn with_breaks_capped(
-        lines:&[Line],height:f32,mut content_height:f32,
-        breaks:&[publisher_breaks::BoxRules],limit:f32,
-    )->Result<Self> {
+        lines: &[Line],
+        height: f32,
+        mut content_height: f32,
+        breaks: &[publisher_breaks::BoxRules],
+        limit: f32,
+    ) -> Result<Self> {
         let mut intervals: Vec<Range<f32>> = Vec::new();
         for line in lines {
             if !line.top.is_finite() || !line.bottom.is_finite() || line.top > line.bottom {
@@ -802,7 +812,13 @@ impl Probe {
                             let grid = lay_out(&source, fonts.clone()).and_then(
                                 |(layout, mut lines, extent)| {
                                     lines.sort_by(|a, b| a.top.total_cmp(&b.top));
-                                    Pagination::with_breaks_capped(&lines, settings.text_height() as f32, extent, &[], settings.chapter_height_limit())?;
+                                    Pagination::with_breaks_capped(
+                                        &lines,
+                                        settings.text_height() as f32,
+                                        extent,
+                                        &[],
+                                        settings.chapter_height_limit(),
+                                    )?;
                                     Ok((layout, lines, extent))
                                 },
                             );
@@ -839,9 +855,19 @@ impl Probe {
         lines.sort_by(|a, b| a.top.total_cmp(&b.top));
         let height = settings.text_height() as f32;
         let mut pages = if matches!(&renderer, Renderer::Vertical(_)) {
-            Pagination::fixed_stride_capped(height, content_height, settings.chapter_height_limit())?
+            Pagination::fixed_stride_capped(
+                height,
+                content_height,
+                settings.chapter_height_limit(),
+            )?
         } else {
-            Pagination::with_breaks_capped(&lines, height, content_height, &publisher_edges, settings.chapter_height_limit())?
+            Pagination::with_breaks_capped(
+                &lines,
+                height,
+                content_height,
+                &publisher_edges,
+                settings.chapter_height_limit(),
+            )?
         };
         if pages.len() > 1
             && let Renderer::Parley(chapter) = &renderer
@@ -1275,10 +1301,11 @@ impl Probe {
             };
             for range in ranges.into_iter().rev() {
                 let ceiling = range.end.min(upper_bound);
-                let candidate_offset = block
-                    .text
-                    .get(range.start..ceiling)
-                    .and_then(|text| text.char_indices().next_back().map(|(at, _)| range.start + at));
+                let candidate_offset = block.text.get(range.start..ceiling).and_then(|text| {
+                    text.char_indices()
+                        .next_back()
+                        .map(|(at, _)| range.start + at)
+                });
                 let Some(candidate_offset) = candidate_offset else {
                     continue;
                 };

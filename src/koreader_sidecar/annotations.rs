@@ -97,8 +97,15 @@ fn mark(record: &[u8]) -> Result<Option<SidecarMark>, SidecarError> {
     let mut supported = true;
     fields(record, &mut |key, value| {
         if key.as_deref() == Some(b"color") {
-            if !color_seen && let Value::String(bytes)=value && bytes.len()<=128 && let Ok(name)=std::str::from_utf8(&bytes) {color=crate::highlight_style::HighlightColor::from_name(name);}
-            color_seen=true;return Ok(());
+            if !color_seen
+                && let Value::String(bytes) = value
+                && bytes.len() <= 128
+                && let Ok(name) = std::str::from_utf8(&bytes)
+            {
+                color = crate::highlight_style::HighlightColor::from_name(name);
+            }
+            color_seen = true;
+            return Ok(());
         }
         if key.as_deref() == Some(b"datetime") {
             // A bad or repeated date must not discard an otherwise usable annotation.
@@ -184,7 +191,13 @@ mod tests {
         }}"#;
         let marks = parse_annotations(input).unwrap();
         assert_eq!((marks.marks.len(), marks.unavailable), (4, 0));
-        assert!(marks.marks.iter().all(|mark| matches!(mark, SidecarMark::Bookmark {created_at: None, ..})));
+        assert!(marks.marks.iter().all(|mark| matches!(
+            mark,
+            SidecarMark::Bookmark {
+                created_at: None,
+                ..
+            }
+        )));
     }
 
     #[test]

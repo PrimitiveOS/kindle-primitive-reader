@@ -17,16 +17,22 @@ recreating its extension system or every item in its utility menus.
 |---|---|---|
 | P0 · EPUB feasibility | Test package loading, layout, text positions, and a minimal book view on desktop and Oasis 3. K01–K05. | Corpus results, ARMHF build, device measurements, and a documented engine decision |
 | P1 · Daily EPUB | Build the library, Continue Reading, typography and navigation, bookmarks, highlights, search, and Files integration. K06–K11. | Desktop workflows and an automated Kindle reading session, including reopening a book and returning to Launcher. |
-| P2 · Offline parity | Add the fixed-page PDF workflow and the other offline formats and reading tools in scope. K12–K16. | Documents and annotations verified against format-specific fixtures on desktop and Kindle |
+| P2 · Offline reading parity | Add fixed-page PDF, other offline formats, and format-specific reading controls. K12–K16. | Reading and annotation workflows verified against format-specific fixtures on desktop and Kindle |
 | P3 · Advanced reading, formats, and import | Deliver the remaining local-reading and reading-data requirements, including advanced documents, organization, accessibility, and KOReader data import. K17–K20 and K23–K24. | Each in-scope Kindle workflow has an acceptance result. Import reports matched and unmatched records. |
 
-The active goal covers local reading and local reading-data workflows. OPDS or
-calibre acquisition (K21), remote progress or annotation sync (K22), network
-lookup services, service-based annotation export or sharing, a general
-extension/plugin host, Terminal or shell, RSS/news tools, HTTP inspectors or
-servers, patch management, and unrelated utilities are closed scope. Do not implement, test, or count these as parity gaps. File
-extensions identify supported document formats. Keep device-wide controls in
-Launcher. See the [scope checklist](reading-parity-plan.md#scope-and-completion-checklist).
+The active goal is a focused Kindle reading app: document access and rendering,
+navigation and layout, search and lookup, bookmarks and annotations,
+accessibility, offline scan reading, and local reading data. Retain an optional
+capability only when it directly supports reading, finding a book, or managing
+local reading data; implement that behavior natively when KOReader delivers it
+through a plug-in. OPDS or calibre acquisition (K21), remote progress or
+annotation sync (K22), Wikipedia article-to-EPUB export, remote annotation
+services, a general extension/plugin host, manager or catalogue, Terminal or
+shell, RSS/news tools, HTTP inspectors or servers, patch management, and
+unrelated utilities are closed scope. Do not implement, test, or count them as
+parity gaps or release gates. File extensions identify supported document
+formats. Keep device-wide controls in Launcher. See the
+[scope checklist](reading-parity-plan.md#scope-and-completion-checklist).
 
 The [pinned native KOReader interface inventory](koreader-sdl-reference.md) adds
 128 complete desktop frames, including six lower configuration tabs, selection
@@ -38,6 +44,59 @@ this inventory; excluded controls are not implementation tasks, and inventory
 counts do not measure completed parity.
 
 ## Current desktop integration gate
+
+The current worktree passes `cargo test --lib`: 904 library tests passed and
+62 remain ignored for private or device-provided inputs.
+`cargo test --bins --tests --examples` also passed, covering the Kindle binary, package and layout
+targets. The isolated shared-input worktree passed 140 `kl-core`, eight
+`primitive-app`, and four `primitive-input` tests. Reader tests used a temporary
+local Cargo patch to that worktree at the time; subsequent tests now use the
+same revision pinned in Cargo.toml and Cargo.lock. The optional KOReader-style
+highlight prompt now offers Off, Style,
+Color, and Style and color. Desktop workflows verify persistence, cancel,
+per-mark appearance, EPUB and PDF saves, and that the book defaults remain
+unchanged. An additional opt-in original-publication check passed on the
+redistributable `build/reading/real-corpus/Alice.epub`: it saved a styled
+highlight and confirmed the input bytes were unchanged. This is not the owner's
+Kindle Documents corpus, which remains pending. Both chooser screenshots are
+in [`docs/screenshots`](screenshots).
+The current static ARMHF candidate was built from the Reader worktree with the
+shared-input dependency pinned to `d3caf14241facf307699d3ecc37414671496bd1a`.
+`file` identifies it as a 32-bit ARM EABI5 statically linked, stripped ELF; its
+size is 33,396,708 bytes and SHA-256 is
+`7f8d07911053b3d5a91a00dba4381ee932038a64513603a962fbdf494d62e11b`. Reader
+source changes are still uncommitted, so this is a development candidate, not
+a reproducible release artifact. `rust-objcopy` warned that this Rust
+installation cannot load `libLLVM.dylib`; `file` confirms the resulting ELF is
+stripped. Manual
+fixed-page buttons and tap zones pan through zoomed documents using the saved
+overlap and traversal order; their functional tests and simulator captures are
+recorded. OPDS acquisition and remote progress-sync code and worker entry
+points have been removed from this source candidate. The Kindle is
+disconnected, so device installation and acceptance remain open. Older release
+and corpus results below describe their recorded revisions.
+
+The long-press update adds all nine text-hold choices and the stock single-word
+dictionary default/opt-out. Desktop unit and workflow tests cover each action,
+preference persistence and selection return. Select mode now uses a compact
+floating Cancel/Highlight sheet and extends reflowable text or same-page PDF
+selections; two workflow tests cover extending, cancel and save. The optional
+style/color chooser keeps the passage selected until a per-mark style or color
+is confirmed. Its current selection is visible, Cancel leaves the range intact,
+and Invert skips the color step. The simulator captures are
+[`highlight-style-prompt.png`](screenshots/highlight-style-prompt.png) and
+[`highlight-color-prompt.png`](screenshots/highlight-color-prompt.png). The
+select-mode capture is [`select-mode.png`](screenshots/select-mode.png), and the
+settings frame is [`long-press-settings.png`](screenshots/long-press-settings.png).
+The candidate now paints a temporary held selection, extends it on paced drag,
+applies the configured action at release, supports a 0.9–20.0 second very-long
+threshold (3.0 second default), and scrolls at reading corners with leave and
+re-enter gating. The [hold-selection capture](screenshots/hold-selection.png)
+and EPUB/PDF interaction tests are current. Fixed PDF text selection remains
+page-local. Kindle timing, corner hit regions, and owner-document acceptance
+are open. The current desktop tests and ARMHF development candidate use the
+Git-pinned shared-input revision above. Commit the Reader working-tree source
+before preparing a reproducible device package.
 
 Source `e79c7afe` passes 862 ordinary Mac tests, CI and eight original-document
 settings, backup and DPI workflows. It repairs original EPUB 053's three rejected
@@ -77,12 +136,14 @@ Reader now applies CREngine's defined Windows-1252 numeric-reference substitutio
 ## Private-use source font audit
 
 The remaining 134 private-use characters are already present in an original KF8 source with no font declaration or embedded font. Its reconstructed chapters preserve the exact character sequence. An authored Microsoft Symbol cmap control renders all eight tested values with unchanged source anchors through the existing pipeline. Do not infer the original symbols from low bytes or an unrelated font. Explicit secondary Symbol-map coverage and an actual affected-passage comparison in stock KOReader remain pending device availability. [Provenance and limits](symbol-font-provenance.md)
-## Closed scope: network integrations · K21–K22
+## Closed scope: acquisition and remote services · K21–K22
 
-OPDS/calibre acquisition, remote progress or annotation sync, and network lookup
-are excluded from the current reading goal. Their existing design and test
-records remain available for reference, but they are not active milestones,
-release gates, or completion checklist items.
+OPDS/calibre acquisition, remote progress or annotation sync, article export,
+remote annotation services, and generic network utilities are excluded from the
+current reading goal. Contextual Wikipedia and translation actions remain in
+scope through K15 because they act on selected or visible reading text. Existing
+acquisition and sync designs remain historical reference only; they are not
+active milestones, release gates, or completion checklist items.
 
 ## Complete local reading-data backups · K24
 

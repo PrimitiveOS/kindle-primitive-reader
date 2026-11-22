@@ -3,60 +3,59 @@ mod annotation_search;
 mod bar_icons;
 pub(crate) const NOTE_MARK_ICON: primitive_ui::Icon = bar_icons::HIGHLIGHT;
 mod bookmark_browser;
-mod reading_history;
-mod custom_contents;
-mod contents_position;
-pub(crate) mod publisher_pages;
 mod character_page_settings;
 mod content_dpi;
+mod contents_position;
+mod custom_contents;
 mod logical_font;
+pub(crate) mod publisher_pages;
+mod reading_history;
 mod word_spacing;
 use character_page_settings::NumberField;
-mod dictionary_panel;
-mod default_settings;
 mod cjk_selection;
+mod default_settings;
+mod dictionary_panel;
 mod dictionary_sources;
 use dictionary_sources::{SourceAction, SourcePreferences};
-mod end_of_book;
-mod fixed_book_map;
-mod gestures;
-mod extend_highlight;
-mod external_link;
-#[cfg(test)]
-mod epub_gif_tests;
-#[cfg(test)]
-mod fixed_results_tests;
-mod sidecar_marks;
-mod library_view;
-mod library_export;
-mod lookup_history;
-mod progress_sync;
-mod vocabulary;
-mod metadata_save;
-mod nearby_search;
-mod online_panel;
-mod opds;
-mod quick_display;
-mod reader_timer;
-mod read_alarm;
-mod reading_backup;
 #[cfg(test)]
 mod backup_defaults_integration_tests;
-mod reading_bars;
-mod result_context;
-mod reading_footer;
-mod selection_popup;
-mod saved_highlight_popup;
-mod highlight_palette;
-mod user_hyphenation;
-mod style_tweaks;
-mod footnote_popup;
+mod end_of_book;
+#[cfg(test)]
+mod epub_gif_tests;
+mod extend_highlight;
+mod external_link;
+mod fixed_book_map;
+#[cfg(test)]
+mod fixed_results_tests;
 #[cfg(test)]
 mod font_render_tests;
-mod top_config;
+mod footnote_popup;
+mod gestures;
 mod hidden_flows;
+mod highlight_palette;
+mod library_export;
+mod library_view;
+mod lookup_history;
+mod metadata_save;
+mod nearby_search;
 #[cfg(test)]
 mod nonlinear_tests;
+mod online_panel;
+mod quick_display;
+mod read_alarm;
+mod reader_timer;
+mod reading_backup;
+mod reading_bars;
+mod reading_footer;
+mod result_context;
+mod saved_highlight_popup;
+mod selection_popup;
+mod sidecar_marks;
+mod skim;
+mod style_tweaks;
+mod top_config;
+mod user_hyphenation;
+mod vocabulary;
 #[cfg(test)]
 mod workflow_integration_tests;
 
@@ -68,8 +67,8 @@ use std::time::{Duration, Instant};
 
 use primitive_app::{App, Change, HEIGHT, WIDTH, with_storage};
 use primitive_ui::{
-    BODY, CAPTION, Canvas, Editor, Input, Layout, Press, Rect, Row, RowAccessory, Rows,
-    header, keyboard_key,
+    BODY, CAPTION, Canvas, Editor, Input, Layout, Press, Rect, Row, RowAccessory, Rows, header,
+    keyboard_key,
 };
 
 use crate::annotation_export;
@@ -82,14 +81,14 @@ use crate::generated_contents::{GeneratedContents, OutlineTarget};
 use crate::koreader_import::{self, ExportEntry, QuoteMatch, QuoteResolver};
 use crate::koreader_sidecar::{self, SidecarProgress};
 use crate::library::{
-    BookMetadata, BookPreferences, BookState, Bookmark, DocumentFormat,
-    FixedPreferences, Highlight, Library, LibraryBook, PdfHighlight,
-    ReadingPosition, ReadingStatus,
+    BookMetadata, BookPreferences, BookState, Bookmark, DocumentFormat, FixedPreferences,
+    Highlight, Library, LibraryBook, PdfHighlight, ReadingPosition, ReadingStatus,
 };
 use crate::ocr_job::{OcrAssets, OcrJob};
 use crate::pdf_annotations;
 use crate::reading_controls::{
-    MenuActivation, ReadingControls, ReadingOrientation, SystemTheme,
+    HighlightPrompt, MenuActivation, ReadingControls, ReadingOrientation, SelectionLongPressAction,
+    SystemTheme,
 };
 use crate::reading_fonts;
 use crate::reading_profiles::{self, Profile};
@@ -97,7 +96,8 @@ use crate::reading_stats::ReadingStats;
 use crate::search::{MAX_FIXED_SEARCH_HITS, PdfSearch, PdfSearchHit, Search, SearchHit};
 use crate::selection::TextSelection;
 use crate::session::{
-    BookConfig, DONE, PAGE_HEIGHT, PAGE_REFRESH_GAP, PageThumbnail, PageTurns, Reading, page_thumbnail,
+    BookConfig, DONE, PAGE_HEIGHT, PAGE_REFRESH_GAP, PageThumbnail, PageTurns, Reading,
+    page_thumbnail,
 };
 use crate::text_flow::TextFlow;
 use crate::{Engine, Probe, Result, Settings, TextAlignment};
@@ -151,12 +151,15 @@ enum Screen {
     OrganizeLibrary,
     BookmarkBrowser(bookmark_browser::Page),
     ReadingHistory(reading_history::Page),
-    Catalog(opds::Page),
     BookList,
     BookDetails,
     CollectionName,
     RemoveCollection,
     ReadingControls,
+    SelectionPosition,
+    LongPressSettings,
+    VeryLongPressSettings,
+    HighlightPromptSettings,
     FooterSettings,
     EndActionSettings,
     MetadataSaveSettings,
@@ -189,9 +192,11 @@ enum Screen {
     NumberingDefaults,
     PublisherOffer,
     PageOverview,
+    Skim,
     BookMap,
     AutoTurn,
     AutoTurnDistance,
+    AutoTurnPan,
     LocationHistory,
     BookTools,
     Contents,
@@ -233,9 +238,6 @@ enum Screen {
     ClearOnlineHistory,
     DictionaryHistory,
     Vocabulary,
-    ProgressSync,
-    ProgressSyncSettings,
-    SyncEdit(progress_sync::Field),
     VocabularyWord,
     VocabularyContext,
     VocabularyOptions,
@@ -254,12 +256,15 @@ impl Screen {
             Self::OrganizeLibrary => "Library organization",
             Self::BookmarkBrowser(page) => page.title(),
             Self::ReadingHistory(page) => page.title(),
-            Self::Catalog(page) => page.title(),
             Self::BookList => "Books",
             Self::BookDetails => "Book details",
             Self::CollectionName => "Collection name",
             Self::RemoveCollection => "Remove collection?",
             Self::ReadingControls => "Reading controls",
+            Self::SelectionPosition => "Selection dialog position",
+            Self::LongPressSettings => "Long-press on text",
+            Self::VeryLongPressSettings => "Very long press interval",
+            Self::HighlightPromptSettings => "Highlight prompt",
             Self::FooterSettings => "Reading status bar",
             Self::EndActionSettings => "At the end of a book",
             Self::MetadataSaveSettings => "Save reading data",
@@ -286,15 +291,19 @@ impl Screen {
             Self::NumberingValue(NumberField::LogicalFont(_)) => "Font size",
             Self::NumberingValue(NumberField::WordSpacing(_)) => "Word spacing",
             Self::NumberingValue(NumberField::AutoTurn) => "Automatic page turns",
+            Self::NumberingValue(NumberField::AutoTurnOverlapHorizontal) => "Horizontal overlap",
+            Self::NumberingValue(NumberField::AutoTurnOverlapVertical) => "Vertical overlap",
             Self::NumberingValue(NumberField::MarginSize) => "Margin label size",
             Self::NumberingValue(_) => "Characters per page",
             Self::NumberingDefaults => "Page numbering defaults",
             Self::PublisherOffer => "Publisher page numbers",
             Self::PublisherPages => "Stable page number list",
             Self::PageOverview => "Pages",
+            Self::Skim => "Skim",
             Self::BookMap => "Book map",
             Self::AutoTurn => "Automatic page turns",
             Self::AutoTurnDistance => "Automatic scroll distance",
+            Self::AutoTurnPan => "Fixed-page pan",
             Self::LocationHistory => "Location history",
             Self::ReadFixedText => "",
             Self::OcrLanguage => "Recognize text",
@@ -338,9 +347,6 @@ impl Screen {
             Self::ClearOnlineHistory => "Online lookup history",
             Self::DictionaryHistory => "Dictionary history",
             Self::Vocabulary => "Vocabulary",
-            Self::ProgressSync => "Progress sync",
-            Self::ProgressSyncSettings => "Sync settings",
-            Self::SyncEdit(field) => field.title(),
             Self::VocabularyWord => "Word review",
             Self::VocabularyContext => "Reading context",
             Self::VocabularyOptions => "Vocabulary options",
@@ -353,7 +359,6 @@ impl Screen {
 }
 
 enum Action {
-    Catalog(opds::Command),
     Open(LibraryBook),
     OpenTracked(u64),
     OpenPreviousDocument,
@@ -379,6 +384,7 @@ enum Action {
     AutoTurn(Option<Duration>),
     AdjustAutoTurnDistance(i16),
     ResetAutoTurnDistance,
+    AutoTurnPan(AutoTurnPanChange),
     ReadAlarm,
     SaveBookData,
     HighlightStyle,
@@ -424,7 +430,6 @@ enum Action {
     DocumentDefaults(default_settings::Command),
     Style(style_tweaks::Command),
     LookUp(String),
-    ProgressSync(progress_sync::Command),
     Vocabulary(vocabulary::Command),
     Wikipedia,
     TranslatePage,
@@ -463,6 +468,7 @@ enum Action {
     ForceOcr(bool),
     ScanColumns,
     Overview,
+    Skim,
     FixedPage(usize),
     Heading,
     RotatePage,
@@ -472,6 +478,13 @@ enum Action {
     RecognizeLanguage(String),
     ReadFixedText,
     ReflowScan,
+}
+
+#[derive(Clone, Copy)]
+enum AutoTurnPanChange {
+    ToggleVerticalFirst,
+    ToggleBottomToTop,
+    Reset,
 }
 
 enum BookList {
@@ -588,9 +601,19 @@ struct PositionImport {
     target: std::result::Result<ReadingPosition, String>,
 }
 
+#[derive(Clone)]
+enum TouchHoldBase {
+    Reflow(TextSelection),
+    Fixed(PdfSelection),
+}
+
+struct TouchHold {
+    base: Option<TouchHoldBase>,
+    corner_armed: bool,
+}
+
 pub struct Reader {
     library: Library,
-    catalog: opds::Panel,
     user_hyphenation: std::rc::Rc<crate::user_hyphenation::Rules>,
     user_hyphenation_path: PathBuf,
     hyphenation_edit: Option<user_hyphenation::Draft>,
@@ -600,6 +623,7 @@ pub struct Reader {
     book_list: Option<BookList>,
     book_details: Option<BookDetails>,
     overview: Option<PageOverview>,
+    skim: Option<skim::Session>,
     flow_popup: Option<hidden_flows::FlowPopup>,
     outline: Option<OutlineScan>,
     numbering_scan: Option<character_page_settings::Scan>,
@@ -685,6 +709,12 @@ pub struct Reader {
     search_at: Option<Instant>,
     next_search_refresh: Instant,
     selection: Option<TextSelection>,
+    touch_hold: Option<TouchHold>,
+    selection_mode: bool,
+    highlight_prompt_stage: Option<selection_popup::HighlightPromptStage>,
+    pending_highlight_style: Option<crate::highlight_style::HighlightStyle>,
+    pending_highlight_color: Option<crate::highlight_style::HighlightColor>,
+    pending_selection_action: Option<SelectionLongPressAction>,
     footnote: Option<footnote_popup::Footnote>,
     highlight_index: usize,
     range_edit: Option<extend_highlight::RangeEdit>,
@@ -700,7 +730,6 @@ pub struct Reader {
     installed_dictionaries: Vec<InstalledDictionary>,
     lookup_history_path: PathBuf,
     lookup_history: LookupHistory,
-    progress_sync: progress_sync::View,
     vocabulary_view: vocabulary::View,
     online: Option<online_panel::Panel>,
     annotation_search: annotation_search::AnnotationSearch,
@@ -717,7 +746,9 @@ impl Reader {
     /// Immutable inputs for diagnostics to reproduce this live reflow session.
     /// Fixed-page documents deliberately have no reflow configuration.
     pub(crate) fn verification_book_config(&self) -> Option<BookConfig> {
-        self.active.as_ref().map(|active| active.reading.config.clone())
+        self.active
+            .as_ref()
+            .map(|active| active.reading.config.clone())
     }
 
     pub fn open(documents: &Path, state: &Path, fonts: Vec<PathBuf>) -> io::Result<Self> {
@@ -738,7 +769,8 @@ impl Reader {
         let stats_path = data.join("reading-stats.json");
         let stats = ReadingStats::load(&stats_path);
         let reading_history = crate::reading_stats::history::History::load(
-            data.join("reading-history.json"), stats.recorded_totals(),
+            data.join("reading-history.json"),
+            stats.recorded_totals(),
         );
         let profiles_path = data.join("reading-profiles.json");
         let profiles = reading_profiles::load(&profiles_path);
@@ -756,13 +788,13 @@ impl Reader {
             user_hyphenation_path,
             hyphenation_edit: None,
             library,
-            catalog: opds::Panel::load(documents,data.join("opds-catalogs.json"))?,
             browser,
             bookmark_browser: bookmark_browser::Browser::load(data.join("bookmark-browser.json")),
             library_query: String::new(),
             book_list: None,
             book_details: None,
             overview: None,
+            skim: None,
             flow_popup: None,
             outline: None,
             numbering_scan: None,
@@ -795,8 +827,12 @@ impl Reader {
             available_fonts: Vec::new(),
             profiles,
             profiles_path,
-            document_defaults: crate::document_defaults::Store::load(data.join(crate::document_defaults::FILE)),
-            style_store: crate::user_styles::storage::Store::load(data.join(crate::user_styles::FILE)),
+            document_defaults: crate::document_defaults::Store::load(
+                data.join(crate::document_defaults::FILE),
+            ),
+            style_store: crate::user_styles::storage::Store::load(
+                data.join(crate::user_styles::FILE),
+            ),
             style_view: Default::default(),
             active: None,
             logical_recovery: None,
@@ -850,6 +886,12 @@ impl Reader {
             search_at: None,
             next_search_refresh: Instant::now(),
             selection: None,
+            touch_hold: None,
+            selection_mode: false,
+            highlight_prompt_stage: None,
+            pending_highlight_style: None,
+            pending_highlight_color: None,
+            pending_selection_action: None,
             footnote: None,
             highlight_index: 0,
             range_edit: None,
@@ -865,7 +907,6 @@ impl Reader {
             installed_dictionaries: Vec::new(),
             lookup_history_path,
             lookup_history,
-            progress_sync: progress_sync::View::load(data.join("progress-sync.json")),
             vocabulary_view: Default::default(),
             online: None,
             annotation_search: annotation_search::AnnotationSearch::default(),
@@ -891,7 +932,10 @@ impl Reader {
             if self.fixed.is_some() {
                 return self.follow_fixed(chapter, None);
             }
-            return self.follow(Destination { path, fragment: None });
+            return self.follow(Destination {
+                path,
+                fragment: None,
+            });
         }
         self.open_with_password(entry, None)
     }
@@ -915,12 +959,22 @@ impl Reader {
             }
         })?;
         let unseen = self.library.state(id).is_none();
-        let mut initial_preferences = self.document_defaults.templates.reflow.clone().unwrap_or_else(BookPreferences::for_new_reflow);
+        let mut initial_preferences = self
+            .document_defaults
+            .templates
+            .reflow
+            .clone()
+            .unwrap_or_else(BookPreferences::for_new_reflow);
         let mut default_font_missing = false;
         let mut settings = initial_preferences.apply_to(self.device_reading_settings());
         let mut scroll = initial_preferences.scroll;
         let mut facing_pages = initial_preferences.facing_pages;
-        let mut fixed_preferences = self.document_defaults.templates.fixed.unwrap_or_default().apply(FixedPreferences::default());
+        let mut fixed_preferences = self
+            .document_defaults
+            .templates
+            .fixed
+            .unwrap_or_default()
+            .apply(FixedPreferences::default());
         let position = self.library.state(id).and_then(|state| {
             // A saved state inherits the device baseline, never a newly changed
             // template, including older records with empty/default preferences.
@@ -965,11 +1019,26 @@ impl Reader {
         self.search_result = None;
         self.result_selection = None;
         if let Some(mut reading) = fixed {
-            let flows = self.library.state(id).map(|state| state.hidden_flows.clone()).unwrap_or_default();
-            reading.restore_hidden_flows(&flows, position.as_ref().map_or(0, |saved| saved.page), fixed_preferences)?;
+            let flows = self
+                .library
+                .state(id)
+                .map(|state| state.hidden_flows.clone())
+                .unwrap_or_default();
+            reading.restore_hidden_flows(
+                &flows,
+                position.as_ref().map_or(0, |saved| saved.page),
+                fixed_preferences,
+            )?;
             reading.set_ocr_path(self.ocr_root.join(format!("{id:016x}")));
-            reading.ocr_language = self.library.state(id).and_then(|state| state.ocr_language.clone())
-                .filter(|code| self.ocr_assets.as_ref().is_none_or(|assets| assets.languages().contains(code)));
+            reading.ocr_language = self
+                .library
+                .state(id)
+                .and_then(|state| state.ocr_language.clone())
+                .filter(|code| {
+                    self.ocr_assets
+                        .as_ref()
+                        .is_none_or(|assets| assets.languages().contains(code))
+                });
             if let Some(title) = reading.title() {
                 entry.title = title;
             }
@@ -989,7 +1058,8 @@ impl Reader {
             self.pdf_selection = None;
             self.back.clear();
             self.forward.clear();
-            self.auto_turn.configure(self.controls.auto_turn_interval(), Instant::now());
+            self.auto_turn
+                .configure(self.controls.auto_turn_interval(), Instant::now());
             self.selection = None;
             self.annotation_search = annotation_search::AnnotationSearch::default();
             self.restore_reading_menus(id);
@@ -1000,13 +1070,21 @@ impl Reader {
             }
             return Ok(());
         }
-        if unseen && initial_preferences.font_file.is_some()
-            && self.fonts_for(initial_preferences.font_file.as_deref()).is_err() {
+        if unseen
+            && initial_preferences.font_file.is_some()
+            && self
+                .fonts_for(initial_preferences.font_file.as_deref())
+                .is_err()
+        {
             initial_preferences.font_file = None;
             default_font_missing = true;
         }
-        let custom_font = self.library.state(id).map_or(initial_preferences.font_file.as_deref(),
-            |state| state.preferences.font_file.as_deref());
+        let custom_font = self
+            .library
+            .state(id)
+            .map_or(initial_preferences.font_file.as_deref(), |state| {
+                state.preferences.font_file.as_deref()
+            });
         let fonts = self
             .fonts_for(custom_font)
             .unwrap_or_else(|_| self.fonts.clone());
@@ -1020,27 +1098,58 @@ impl Reader {
             settings,
             scroll,
             facing_pages,
-            hide_nonlinear: self.library.state(id).and_then(|state| state.hide_nonlinear)
+            hide_nonlinear: self
+                .library
+                .state(id)
+                .and_then(|state| state.hide_nonlinear)
                 .unwrap_or(self.controls.hide_nonlinear_default),
-            hidden_flows: self.library.state(id).map(|state| state.hidden_flows.clone())
-                .unwrap_or_default().into(),
+            hidden_flows: self
+                .library
+                .state(id)
+                .map(|state| state.hidden_flows.clone())
+                .unwrap_or_default()
+                .into(),
         };
-        if config.settings.logical_font_size.is_some() && config.settings.validate().is_err()
-            && (Settings { logical_font_size: None, font_size: 12., ..config.settings }).validate().is_ok() {
+        if config.settings.logical_font_size.is_some()
+            && config.settings.validate().is_err()
+            && (Settings {
+                logical_font_size: None,
+                font_size: 12.,
+                ..config.settings
+            })
+            .validate()
+            .is_ok()
+        {
             // Prove this is an otherwise readable edition before offering a
             // layout reset. Parser/DRM/font/source-anchor failures propagate.
             let mut control = config.clone();
-            control.settings = Settings { logical_font_size: None, font_size: 12., ..control.settings };
+            control.settings = Settings {
+                logical_font_size: None,
+                font_size: 12.,
+                ..control.settings
+            };
             let checked = if let Some(saved) = &position {
                 Reading::restore(control, saved.chapter, saved.page, saved.anchor.as_ref())?
-            } else { Reading::open(control)? };
+            } else {
+                Reading::open(control)?
+            };
             if let Some(anchor) = position.as_ref().and_then(|saved| saved.anchor.as_ref())
-                && checked.probe.restore_anchor(anchor).is_none() {
-                return Err(io::Error::other("The saved source anchor is unavailable; this is not a font-fit error").into());
+                && checked.probe.restore_anchor(anchor).is_none()
+            {
+                return Err(io::Error::other(
+                    "The saved source anchor is unavailable; this is not a font-fit error",
+                )
+                .into());
             }
             self.logical_recovery = Some(logical_font::Recovery {
-                entry, id, config, position,
-                preferences: self.library.state(id).map_or(initial_preferences, |state| state.preferences.clone()),
+                entry,
+                id,
+                config,
+                position,
+                preferences: self
+                    .library
+                    .state(id)
+                    .map_or(initial_preferences, |state| state.preferences.clone()),
             });
             return Ok(());
         }
@@ -1061,24 +1170,41 @@ impl Reader {
         self.pages_since_refresh = 0;
         self.range_edit = None;
         self.saved_popup = None;
-        self.active = Some(ActiveBook { entry, id, reading, numbering: None });
+        self.active = Some(ActiveBook {
+            entry,
+            id,
+            reading,
+            numbering: None,
+        });
         self.style_view = Default::default();
         if unseen {
             let active = self.active.as_ref().unwrap();
-            self.library.remember(&active.entry, id, &active.reading.probe.title).preferences = initial_preferences;
+            self.library
+                .remember(&active.entry, id, &active.reading.probe.title)
+                .preferences = initial_preferences;
         }
         let offer_publisher = self.apply_new_numbering_defaults();
         self.restore_character_pages();
         self.fixed = None;
         self.back.clear();
         self.forward.clear();
-        self.auto_turn.configure(self.controls.auto_turn_interval(), Instant::now());
+        self.auto_turn
+            .configure(self.controls.auto_turn_interval(), Instant::now());
         self.selection = None;
+        self.touch_hold = None;
+        self.selection_mode = false;
+        self.pdf_selection = None;
         self.annotation_search = annotation_search::AnnotationSearch::default();
         self.restore_reading_menus(id);
-        self.show(if offer_publisher { Screen::PublisherOffer } else { Screen::Book });
+        self.show(if offer_publisher {
+            Screen::PublisherOffer
+        } else {
+            Screen::Book
+        });
         self.record_position();
-        if default_font_missing { self.notice = Some("Default reading font unavailable; using device fonts".into()); }
+        if default_font_missing {
+            self.notice = Some("Default reading font unavailable; using device fonts".into());
+        }
         if let Some(active) = &self.active {
             self.library
                 .cache_author(active.id, active.reading.probe.author.as_deref());
@@ -1087,22 +1213,31 @@ impl Reader {
     }
 
     fn show(&mut self, screen: Screen) {
-        if !matches!(screen,Screen::Catalog(_)) { self.catalog.cancel(); }
-        if !matches!(screen, Screen::ProgressSync | Screen::ProgressSyncSettings | Screen::SyncEdit(_)) {
-            self.leave_progress_sync();
+        if !matches!(screen, Screen::Book | Screen::Fixed) {
+            self.touch_hold = None;
+        }
+        if !matches!(screen, Screen::Book | Screen::Fixed) {
+            self.selection_mode = false;
         }
         self.flow_popup = None;
         self.end_dialog = None;
-        if screen != Screen::Definition { self.spelling_lookup = None; }
+        if screen != Screen::Definition {
+            self.spelling_lookup = None;
+        }
         self.cjk_selection_lookup = None;
         self.result_context = None;
-        if !matches!(screen, Screen::Footnote | Screen::Definition | Screen::OnlineLookup | Screen::OnlineEdit) {
+        if !matches!(
+            screen,
+            Screen::Footnote | Screen::Definition | Screen::OnlineLookup | Screen::OnlineEdit
+        ) {
             self.footnote = None;
         }
         if screen != Screen::Hyphenate {
             self.hyphenation_edit = None;
         }
-        if screen != Screen::CustomTitle { self.chapter_draft = None; }
+        if screen != Screen::CustomTitle {
+            self.chapter_draft = None;
+        }
         if !matches!(screen, Screen::OnlineLookup | Screen::OnlineEdit) {
             self.online = None;
         }
@@ -1122,7 +1257,9 @@ impl Reader {
         if matches!(screen, Screen::DictionaryEntry | Screen::BookmarkFind) {
             self.editor = Editor::new(96);
             if screen == Screen::BookmarkFind {
-                if self.screen != Screen::BookmarkMatches { self.annotation_search.origin = Some(self.screen); }
+                if self.screen != Screen::BookmarkMatches {
+                    self.annotation_search.origin = Some(self.screen);
+                }
                 self.editor.text = self.annotation_search.text.chars().collect();
                 self.editor.caret = self.editor.text.len();
             }
@@ -1134,7 +1271,8 @@ impl Reader {
             self.scan_columns = None;
         }
         if !matches!(screen, Screen::ReadFixedText | Screen::BookDetails)
-            && !(matches!(screen, Screen::Illustration | Screen::ReadingHistory(_)) && self.book_details.is_some())
+            && !(matches!(screen, Screen::Illustration | Screen::ReadingHistory(_))
+                && self.book_details.is_some())
         {
             self.text_flow = None;
         }
@@ -1148,11 +1286,17 @@ impl Reader {
         if screen != Screen::ImportPdfAnnotations {
             self.pdf_annotation_import.clear();
         }
-        if !matches!(screen, Screen::BookDetails | Screen::Illustration | Screen::ReadingHistory(_)) {
+        if !matches!(
+            screen,
+            Screen::BookDetails | Screen::Illustration | Screen::ReadingHistory(_)
+        ) {
             self.book_details = None;
         }
         if screen != Screen::PageOverview {
             self.overview = None;
+        }
+        if screen != Screen::Skim {
+            self.skim = None;
         }
         if screen != Screen::GeneratedContents {
             self.outline = None;
@@ -1166,16 +1310,45 @@ impl Reader {
             self.editor.caret = self.editor.text.len();
         }
         if matches!(screen, Screen::NumberingValue(_)) {
-            self.editor = Editor::new(if matches!(screen, Screen::NumberingValue(NumberField::LogicalFont(_))) {
-                24
-            } else if matches!(screen, Screen::NumberingValue(NumberField::AutoTurn)) {
-                5
-            } else {
-                4
-            });
+            self.editor = Editor::new(
+                if matches!(screen, Screen::NumberingValue(NumberField::LogicalFont(_))) {
+                    24
+                } else if matches!(screen, Screen::NumberingValue(NumberField::AutoTurn)) {
+                    5
+                } else if matches!(
+                    screen,
+                    Screen::NumberingValue(
+                        NumberField::AutoTurnOverlapHorizontal
+                            | NumberField::AutoTurnOverlapVertical
+                    )
+                ) {
+                    2
+                } else {
+                    4
+                },
+            );
             if matches!(screen, Screen::NumberingValue(NumberField::AutoTurn)) {
-                let seconds = if self.controls.auto_turn_seconds == 0 { 30 } else { self.controls.auto_turn_seconds };
+                let seconds = if self.controls.auto_turn_seconds == 0 {
+                    30
+                } else {
+                    self.controls.auto_turn_seconds
+                };
                 self.editor.text = seconds.to_string().chars().collect();
+                self.editor.caret = self.editor.text.len();
+            }
+            if let Screen::NumberingValue(
+                field @ (NumberField::AutoTurnOverlapHorizontal
+                | NumberField::AutoTurnOverlapVertical),
+            ) = screen
+                && let Some(fixed) = &self.fixed
+            {
+                let preferences = fixed.reading.preferences();
+                let value = if field == NumberField::AutoTurnOverlapHorizontal {
+                    preferences.zoom_overlap_h()
+                } else {
+                    preferences.zoom_overlap_v()
+                };
+                self.editor.text = value.to_string().chars().collect();
                 self.editor.caret = self.editor.text.len();
             }
         }
@@ -1211,7 +1384,9 @@ impl Reader {
         self.map_window = fixed_book_map::MapWindow::default();
         self.sync_auto_turn(Instant::now());
         self.update_stats_activity(Instant::now());
-        if screen == Screen::Library { self.reading_history.finish(Instant::now()); }
+        if screen == Screen::Library {
+            self.reading_history.finish(Instant::now());
+        }
         self.current_contents_row = if screen == Screen::PublisherPages {
             self.visible_publisher_page()
         } else {
@@ -1241,7 +1416,9 @@ impl Reader {
             let saved = self
                 .library
                 .remember(&fixed.entry, fixed.id, &fixed.entry.title);
-            saved.highlight_color.get_or_insert(self.controls.highlight_color);
+            saved
+                .highlight_color
+                .get_or_insert(self.controls.highlight_color);
             let position = fixed_position(&fixed.reading);
             let changed = saved.position.as_ref() != Some(&position);
             saved.position = Some(position);
@@ -1251,7 +1428,9 @@ impl Reader {
         } else if let Some(active) = &self.active {
             let title = &active.reading.probe.title;
             let saved = self.library.remember(&active.entry, active.id, title);
-            saved.highlight_color.get_or_insert(self.controls.highlight_color);
+            saved
+                .highlight_color
+                .get_or_insert(self.controls.highlight_color);
             let position = position(&active.reading);
             let changed = saved.position.as_ref() != Some(&position);
             saved.position = Some(position);
@@ -1260,7 +1439,8 @@ impl Reader {
             return;
         };
         self.dirty = true;
-        self.metadata_checkpoint.record(self.controls.metadata_save, position_changed, now);
+        self.metadata_checkpoint
+            .record(self.controls.metadata_save, position_changed, now);
     }
 
     fn mark_dirty(&mut self) {
@@ -1284,8 +1464,12 @@ impl Reader {
         };
         let book = book.filter(|id| {
             let options = self.reading_history.options();
-            options.enabled && (!options.freeze_finished
-                || self.library.state(*id).is_none_or(|state| state.status() != ReadingStatus::Finished))
+            options.enabled
+                && (!options.freeze_finished
+                    || self
+                        .library
+                        .state(*id)
+                        .is_none_or(|state| state.status() != ReadingStatus::Finished))
         });
         self.stats.set_active(book, now);
         let page = book.and_then(|id| {
@@ -1308,9 +1492,20 @@ impl Reader {
         });
         self.pace.set_page(page, now);
         if let Some(id) = book {
-            let title = self.active.as_ref().filter(|b| b.id == id).map(|b| b.entry.title.as_str())
-                .or_else(|| self.fixed.as_ref().filter(|b| b.id == id).map(|b| b.entry.title.as_str()));
-            if let Some(title) = title { self.reading_history.remember_title(id, title); }
+            let title = self
+                .active
+                .as_ref()
+                .filter(|b| b.id == id)
+                .map(|b| b.entry.title.as_str())
+                .or_else(|| {
+                    self.fixed
+                        .as_ref()
+                        .filter(|b| b.id == id)
+                        .map(|b| b.entry.title.as_str())
+                });
+            if let Some(title) = title {
+                self.reading_history.remember_title(id, title);
+            }
         }
         let history_page = page.map(|(book, page, _)| (book, page));
         self.reading_history.set_page(history_page, now);
@@ -1340,7 +1535,12 @@ impl Reader {
         }
         if self.screen == Screen::Matches {
             if let Some(fixed) = &self.fixed {
-                let items = self.pdf_hits.iter().enumerate().skip(first).take(ROWS_PER_PAGE)
+                let items = self
+                    .pdf_hits
+                    .iter()
+                    .enumerate()
+                    .skip(first)
+                    .take(ROWS_PER_PAGE)
                     .map(|(index, hit)| {
                         Item::new(&hit.snippet, Action::PdfSearchHit(index))
                             .detail(fixed_page_label(&fixed.reading, hit.page))
@@ -1348,7 +1548,12 @@ impl Reader {
                     .collect();
                 return (self.pdf_hits.len(), items);
             }
-            let items = self.hits.iter().enumerate().skip(first).take(ROWS_PER_PAGE)
+            let items = self
+                .hits
+                .iter()
+                .enumerate()
+                .skip(first)
+                .take(ROWS_PER_PAGE)
                 .map(|(index, hit)| {
                     Item::new(&hit.snippet, Action::SearchHit(index)).detail(&hit.chapter_title)
                 })
@@ -1367,19 +1572,165 @@ impl Reader {
     }
 
     fn items(&self) -> Vec<Item> {
-        if matches!(self.screen, Screen::StyleTweaks | Screen::StylePreset | Screen::StyleFiles | Screen::StyleReview | Screen::StyleClear | Screen::StyleEditor) { return self.style_items(); }
-        if let Screen::ReadingHistory(page) = self.screen { return self.reading_history_items(page); }
-        if matches!(self.screen, Screen::ProgressSync | Screen::ProgressSyncSettings) { return self.sync_items(); }
-        if matches!(self.screen, Screen::Vocabulary | Screen::VocabularyWord | Screen::VocabularyOptions | Screen::VocabularyBooks) { return self.vocabulary_items(); }
-        if let Screen::LibraryExport(page) = self.screen { return self.library_export_items(page); }
-        if let Screen::Catalog(page) = self.screen { return self.catalog_items(page); }
-        if self.screen == Screen::HiddenFlows { return self.hidden_flow_items(); }
-        if matches!(self.screen, Screen::CustomContents | Screen::CustomEdits | Screen::CustomBookmarks) ||
-             (matches!(self.screen, Screen::Contents | Screen::FixedContents) && self.custom_contents_enabled()) {
+        if matches!(
+            self.screen,
+            Screen::StyleTweaks
+                | Screen::StylePreset
+                | Screen::StyleFiles
+                | Screen::StyleReview
+                | Screen::StyleClear
+                | Screen::StyleEditor
+        ) {
+            return self.style_items();
+        }
+        if let Screen::ReadingHistory(page) = self.screen {
+            return self.reading_history_items(page);
+        }
+        if matches!(
+            self.screen,
+            Screen::Vocabulary
+                | Screen::VocabularyWord
+                | Screen::VocabularyOptions
+                | Screen::VocabularyBooks
+        ) {
+            return self.vocabulary_items();
+        }
+        if let Screen::LibraryExport(page) = self.screen {
+            return self.library_export_items(page);
+        }
+        if self.screen == Screen::HiddenFlows {
+            return self.hidden_flow_items();
+        }
+        if matches!(
+            self.screen,
+            Screen::CustomContents | Screen::CustomEdits | Screen::CustomBookmarks
+        ) || (matches!(self.screen, Screen::Contents | Screen::FixedContents)
+            && self.custom_contents_enabled())
+        {
             return self.custom_items();
         }
         match self.screen {
             Screen::FooterSettings => return self.footer_items(),
+            Screen::SelectionPosition => {
+                return crate::reading_controls::SelectionPopupPosition::ALL
+                    .into_iter()
+                    .map(|position| {
+                        let item = Item::new(
+                            position.label(),
+                            Action::SetReadingControls(ReadingControls {
+                                selection_popup_position: position,
+                                ..self.controls
+                            }),
+                        );
+                        if position == self.controls.selection_popup_position {
+                            item.detail("Selected")
+                        } else {
+                            item
+                        }
+                    })
+                    .collect();
+            }
+            Screen::LongPressSettings => {
+                let dictionary = self.controls.dictionary_on_single_word.unwrap_or(true);
+                let mut items = vec![
+                    Item::new(
+                        "Dictionary on a single word",
+                        Action::SetReadingControls(ReadingControls {
+                            dictionary_on_single_word: Some(!dictionary),
+                            ..self.controls
+                        }),
+                    )
+                    .detail(if dictionary {
+                        "On · opens the local dictionary"
+                    } else {
+                        "Off · uses the default action"
+                    }),
+                    Item::new(
+                        "Highlight style and color prompt",
+                        Action::Show(Screen::HighlightPromptSettings),
+                    )
+                    .detail(self.controls.highlight_prompt.label()),
+                    Item::new(
+                        "Very long press interval",
+                        Action::Show(Screen::VeryLongPressSettings),
+                    )
+                    .detail(self.controls.very_long_press_label()),
+                ];
+                items.extend(SelectionLongPressAction::ALL.into_iter().map(|action| {
+                    let item = Item::new(
+                        action.label(),
+                        Action::SetReadingControls(ReadingControls {
+                            selection_long_press_action: action,
+                            ..self.controls
+                        }),
+                    );
+                    if action == self.controls.selection_long_press_action {
+                        item.detail("Selected")
+                    } else {
+                        item
+                    }
+                }));
+                return items;
+            }
+            Screen::VeryLongPressSettings => {
+                let current = self.controls.very_long_press_tenths();
+                let mut choices = Vec::new();
+                for (label, delta) in [
+                    ("−0.5 seconds", -5i32),
+                    ("−0.1 seconds", -1),
+                    ("+0.1 seconds", 1),
+                    ("+0.5 seconds", 5),
+                ] {
+                    let value = (i32::from(current) + delta).clamp(
+                        i32::from(crate::reading_controls::MIN_VERY_LONG_PRESS_TENTHS),
+                        i32::from(crate::reading_controls::MAX_VERY_LONG_PRESS_TENTHS),
+                    ) as u16;
+                    choices.push(
+                        Item::new(
+                            label,
+                            Action::SetReadingControls(ReadingControls {
+                                very_long_press_tenths: Some(value),
+                                ..self.controls
+                            }),
+                        )
+                        .detail(format!(
+                            "{}.{:01} seconds",
+                            value / 10,
+                            value % 10
+                        )),
+                    );
+                }
+                choices.push(
+                    Item::new(
+                        "Reset to default",
+                        Action::SetReadingControls(ReadingControls {
+                            very_long_press_tenths: None,
+                            ..self.controls
+                        }),
+                    )
+                    .detail("3.0 seconds"),
+                );
+                return choices;
+            }
+            Screen::HighlightPromptSettings => {
+                return HighlightPrompt::ALL
+                    .into_iter()
+                    .map(|prompt| {
+                        let item = Item::new(
+                            prompt.label(),
+                            Action::SetReadingControls(ReadingControls {
+                                highlight_prompt: prompt,
+                                ..self.controls
+                            }),
+                        );
+                        if prompt == self.controls.highlight_prompt {
+                            item.detail("Selected")
+                        } else {
+                            item
+                        }
+                    })
+                    .collect();
+            }
             Screen::Gestures => return self.gestures.gestures(),
             Screen::GestureBinding(gesture) => return self.gestures.choices(gesture),
             Screen::BookMap => return self.book_map_items(),
@@ -1422,6 +1773,18 @@ impl Reader {
                         ),
                     ),
                 );
+                if self.fixed.is_some() {
+                    let preferences = self.fixed.as_ref().unwrap().reading.preferences();
+                    items.push(
+                        Item::new("Fixed-page pan", Action::Show(Screen::AutoTurnPan)).detail(
+                            format!(
+                                "{}% horizontal · {}% vertical overlap",
+                                preferences.zoom_overlap_h(),
+                                preferences.zoom_overlap_v()
+                            ),
+                        ),
+                    );
+                }
                 return items;
             }
             Screen::AutoTurnDistance => {
@@ -1442,7 +1805,61 @@ impl Reader {
                     )),
                 ];
             }
-            Screen::OnlineHistory | Screen::ClearOnlineHistory => return self.online_history_items(),
+            Screen::AutoTurnPan => {
+                let Some(fixed) = &self.fixed else {
+                    return vec![Item::new(
+                        "Open a fixed-page document to change pan behavior",
+                        Action::Heading,
+                    )];
+                };
+                let preferences = fixed.reading.preferences();
+                return vec![
+                    Item::new(
+                        "Horizontal overlap",
+                        Action::Show(Screen::NumberingValue(
+                            NumberField::AutoTurnOverlapHorizontal,
+                        )),
+                    )
+                    .detail(format!("{}% · 0–90%", preferences.zoom_overlap_h())),
+                    Item::new(
+                        "Vertical overlap",
+                        Action::Show(Screen::NumberingValue(NumberField::AutoTurnOverlapVertical)),
+                    )
+                    .detail(format!("{}% · 0–90%", preferences.zoom_overlap_v())),
+                    Item::new(
+                        "Pan order",
+                        Action::AutoTurnPan(AutoTurnPanChange::ToggleVerticalFirst),
+                    )
+                    .detail(if preferences.zoom_direction_vertical() {
+                        "Vertical first · horizontal at the edge · tap to change"
+                    } else {
+                        "Horizontal first · vertical at the edge · tap to change"
+                    }),
+                    Item::new(
+                        "Vertical direction",
+                        Action::AutoTurnPan(AutoTurnPanChange::ToggleBottomToTop),
+                    )
+                    .detail(if preferences.zoom_bottom_to_top() {
+                        "Bottom to top · tap to reverse"
+                    } else {
+                        "Top to bottom · tap to reverse"
+                    }),
+                    Item::new("Horizontal reading direction", Action::Heading).detail(
+                        if preferences.right_to_left {
+                            "Right to left · change in View settings"
+                        } else {
+                            "Left to right · change in View settings"
+                        },
+                    ),
+                    Item::new(
+                        "Use document defaults",
+                        Action::AutoTurnPan(AutoTurnPanChange::Reset),
+                    ),
+                ];
+            }
+            Screen::OnlineHistory | Screen::ClearOnlineHistory => {
+                return self.online_history_items();
+            }
             Screen::SearchHistory => {
                 return self
                     .lookup_history
@@ -1450,7 +1867,11 @@ impl Reader {
                     .iter()
                     .map(|query| {
                         let item = Item::new(&query.text, Action::RepeatSearch(query.clone()));
-                        if query.regular_expression { item.detail("Regular expression") } else { item }
+                        if query.regular_expression {
+                            item.detail("Regular expression")
+                        } else {
+                            item
+                        }
                     })
                     .collect();
             }
@@ -1513,13 +1934,19 @@ impl Reader {
         if self.screen == Screen::MetadataSaveSettings {
             return self.metadata_save_items();
         }
-        if self.screen == Screen::Dictionaries { return self.source_rows(); }
-        if let Screen::DictionaryOptions(i) = self.screen { return self.source_options(i); }
+        if self.screen == Screen::Dictionaries {
+            return self.source_rows();
+        }
+        if let Screen::DictionaryOptions(i) = self.screen {
+            return self.source_options(i);
+        }
         if self.screen == Screen::ReadingData {
             let mut items = vec![
-                Item::new("Export highlights", Action::LibraryExport(library_export::Command::Open))
-                    .detail("From History, chosen books or collections"),
-                Item::new("Progress sync", Action::ProgressSync(progress_sync::Command::Open)).detail("Optional WebDAV server"),
+                Item::new(
+                    "Export highlights",
+                    Action::LibraryExport(library_export::Command::Open),
+                )
+                .detail("From History, chosen books or collections"),
                 Item::new("Back up reading data", Action::ExportBackup)
                     .detail("Books, vocabulary, history and chosen local preferences"),
                 Item::new("Restore a backup", Action::PreviewBackup)
@@ -1528,11 +1955,21 @@ impl Reader {
                     .detail("Clear saved OCR text from document pages"),
             ];
             if self.open_book_id().is_some() {
-                items.push(Item::new("Import a copied KOReader position", Action::PreviewCopiedPosition)
-                    .detail("From reader/data/koreader-progress.lua"));
+                items.push(
+                    Item::new(
+                        "Import a copied KOReader position",
+                        Action::PreviewCopiedPosition,
+                    )
+                    .detail("From reader/data/koreader-progress.lua"),
+                );
             }
-            items.push(Item::new("Reading statistics", Action::ReadingHistory(reading_history::Command::Open(None)))
-                .detail("Daily history, calendar, and book totals"));
+            items.push(
+                Item::new(
+                    "Reading statistics",
+                    Action::ReadingHistory(reading_history::Command::Open(None)),
+                )
+                .detail("Daily history, calendar, and book totals"),
+            );
             return items;
         }
         if self.screen == Screen::ClearOcr {
@@ -1541,7 +1978,9 @@ impl Reader {
                 Item::new("Keep OCR cache", Action::Show(Screen::ReadingData)),
             ];
         }
-        if self.screen == Screen::RestoreBackup { return self.reading_backup_items(); }
+        if self.screen == Screen::RestoreBackup {
+            return self.reading_backup_items();
+        }
         if self.screen == Screen::ImportPosition {
             return self
                 .position_import
@@ -1680,17 +2119,17 @@ impl Reader {
                     }
                     items
                 }
-                Screen::FixedContents => std::iter::once(Item::new("Custom contents", Action::Show(Screen::CustomContents))).chain(fixed
-                    .reading
-                    .outline()
-                    .iter()
-                    .map(|entry| {
-                        Item::new(
-                            format!("{}{}", "  ".repeat(entry.depth.min(6)), entry.title),
-                            entry.page.map_or(Action::Heading, Action::FixedPage),
-                        )
-                    })
-                    ).collect(),
+                Screen::FixedContents => std::iter::once(Item::new(
+                    "Custom contents",
+                    Action::Show(Screen::CustomContents),
+                ))
+                .chain(fixed.reading.outline().iter().map(|entry| {
+                    Item::new(
+                        format!("{}{}", "  ".repeat(entry.depth.min(6)), entry.title),
+                        entry.page.map_or(Action::Heading, Action::FixedPage),
+                    )
+                }))
+                .collect(),
                 Screen::OcrLanguage => self.ocr_assets.as_ref().map_or_else(Vec::new, |assets| {
                     assets
                         .languages()
@@ -1719,7 +2158,10 @@ impl Reader {
                             .detail("Build from headings in the book"),
                     );
                 }
-                items.push(Item::new("Custom contents", Action::Show(Screen::CustomContents)));
+                items.push(Item::new(
+                    "Custom contents",
+                    Action::Show(Screen::CustomContents),
+                ));
                 if reading.probe.toc.is_empty() {
                     items.extend(reading.probe.chapter_entries().iter().map(|chapter| {
                         Item::new(
@@ -1769,13 +2211,22 @@ impl Reader {
             Screen::Bookmarks => self.bookmark_items(active.id),
             Screen::Typography => {
                 let settings = reading.config.settings;
-                let mut items = text_items(settings, reading.config.scroll, self.active.as_ref().unwrap().id);
+                let mut items = text_items(
+                    settings,
+                    reading.config.scroll,
+                    self.active.as_ref().unwrap().id,
+                );
                 if !reading.probe.is_vertical()
                     && settings.hyphenation_mode() == crate::HyphenationMode::Automatic
                 {
                     let enabled = self.user_hyphenation.enabled;
-                    items.push(Item::new("Custom hyphenation rules", Action::SetUserHyphenation(!enabled))
-                        .detail(if enabled { "On" } else { "Off" }));
+                    items.push(
+                        Item::new(
+                            "Custom hyphenation rules",
+                            Action::SetUserHyphenation(!enabled),
+                        )
+                        .detail(if enabled { "On" } else { "Off" }),
+                    );
                 }
                 if reading.probe.is_vertical() {
                     items.retain(|item| match item.action {
@@ -1815,7 +2266,13 @@ impl Reader {
                 );
                 items
             }
-            Screen::DocumentDefaults | Screen::StyleTweaks | Screen::StylePreset | Screen::StyleFiles | Screen::StyleReview | Screen::StyleClear | Screen::StyleEditor => Vec::new(),
+            Screen::DocumentDefaults
+            | Screen::StyleTweaks
+            | Screen::StylePreset
+            | Screen::StyleFiles
+            | Screen::StyleReview
+            | Screen::StyleClear
+            | Screen::StyleEditor => Vec::new(),
             Screen::ReadingProfiles => {
                 let mut items = vec![Item::new(
                     "Save current text settings",
@@ -1850,8 +2307,11 @@ impl Reader {
                 if active.entry.format == DocumentFormat::Epub {
                     items.insert(
                         0,
-                        Item::new("Import marks saved beside this book", Action::PreviewNearbyMarks)
-                            .detail("Preview KOReader bookmarks, highlights and notes"),
+                        Item::new(
+                            "Import marks saved beside this book",
+                            Action::PreviewNearbyMarks,
+                        )
+                        .detail("Preview KOReader bookmarks, highlights and notes"),
                     );
                 }
                 if let Some(state) = self.library.state(active.id) {
@@ -1869,12 +2329,20 @@ impl Reader {
     }
 
     fn bookmark_items(&self, id: u64) -> Vec<Item> {
-        let Some(state) = self.library.state(id) else { return Vec::new() };
-        let mut items: Vec<_> = state.bookmarks.iter().enumerate()
+        let Some(state) = self.library.state(id) else {
+            return Vec::new();
+        };
+        let mut items: Vec<_> = state
+            .bookmarks
+            .iter()
+            .enumerate()
             .map(|(index, bookmark)| Item::new(&bookmark.label, Action::Bookmark(index)))
             .collect();
         if !items.is_empty() || !state.highlights.is_empty() || !state.pdf_highlights.is_empty() {
-            items.insert(0, Item::new("Find bookmarks", Action::Show(Screen::BookmarkFind)));
+            items.insert(
+                0,
+                Item::new("Find bookmarks", Action::Show(Screen::BookmarkFind)),
+            );
         }
         items
     }
@@ -1917,8 +2385,16 @@ impl Reader {
                 )
                 .detail({
                     let detail = map_detail(index == reading.chapter, marks, highlights);
-                    reading.hidden_chapter(index).map_or(detail.clone(), |all|
-                        format!("{} · {detail}", if all { "Hidden" } else { "Includes hidden pages" }))
+                    reading.hidden_chapter(index).map_or(detail.clone(), |all| {
+                        format!(
+                            "{} · {detail}",
+                            if all {
+                                "Hidden"
+                            } else {
+                                "Includes hidden pages"
+                            }
+                        )
+                    })
                 })
             })
             .collect()
@@ -1944,7 +2420,6 @@ impl Reader {
                 items.extend(ReadingStatus::ALL.into_iter().map(|status| {
                     Item::new(status.label(), Action::ListBooks(BookList::Status(status)))
                 }));
-                items.push(Item::new("Online catalogs",Action::Catalog(opds::Command::Open)));
                 items.push(Item::new("New collection", Action::NameCollection(None)));
                 items.extend(self.library.collections().iter().map(|collection| {
                     Item::new(
@@ -2057,8 +2532,13 @@ impl Reader {
                     }));
                 }
                 let seconds = self.stats.seconds_read(book.id, Instant::now());
-                items
-                    .push(Item::new("Reading time", Action::ReadingHistory(reading_history::Command::Open(Some(book.id)))).detail(reading_time(seconds)));
+                items.push(
+                    Item::new(
+                        "Reading time",
+                        Action::ReadingHistory(reading_history::Command::Open(Some(book.id))),
+                    )
+                    .detail(reading_time(seconds)),
+                );
                 let state = self.library.state(book.id);
                 let favorite = state.is_some_and(|state| state.favorite);
                 items.push(Item::new(
@@ -2107,7 +2587,6 @@ impl Reader {
 
     fn activate(&mut self, action: Action) -> Result<()> {
         match action {
-            Action::Catalog(command) => self.catalog_action(command)?,
             Action::BookmarkBrowser(command) => self.activate_bookmark_browser(command)?,
             Action::ReadingHistory(command) => self.activate_reading_history(command)?,
             Action::Flow(action) => self.flow_action(action)?,
@@ -2116,10 +2595,15 @@ impl Reader {
                 if active.reading.config.scroll || active.reading.config.facing_pages {
                     return Err("Use single-page mode to hide non-linear fragments".into());
                 }
-                active.reading.set_hide_nonlinear(!active.reading.config.hide_nonlinear);
+                active
+                    .reading
+                    .set_hide_nonlinear(!active.reading.config.hide_nonlinear);
                 let id = active.id;
                 let enabled = active.reading.config.hide_nonlinear;
-                self.library.state_mut(id).ok_or("This book is unavailable")?.hide_nonlinear = Some(enabled);
+                self.library
+                    .state_mut(id)
+                    .ok_or("This book is unavailable")?
+                    .hide_nonlinear = Some(enabled);
                 self.mark_book_changed();
             }
             Action::LibraryExport(command) => self.activate_library_export(command)?,
@@ -2253,7 +2737,11 @@ impl Reader {
                 if controls.metadata_save != self.controls.metadata_save {
                     self.metadata_checkpoint.cancel();
                     if self.dirty {
-                        self.metadata_checkpoint.record(controls.metadata_save, false, Instant::now());
+                        self.metadata_checkpoint.record(
+                            controls.metadata_save,
+                            false,
+                            Instant::now(),
+                        );
                     }
                 }
                 self.controls = controls;
@@ -2273,7 +2761,9 @@ impl Reader {
                 self.refresh_display = true;
             }
             Action::HighlightStyle => self.open_highlight_styles(None),
-            Action::ReadAlarm => { self.open_read_alarm(); }
+            Action::ReadAlarm => {
+                self.open_read_alarm();
+            }
             Action::SaveBookData => {
                 self.save_library()?;
                 self.notice = Some("Reading data saved".into());
@@ -2293,6 +2783,7 @@ impl Reader {
                 self.adjust_auto_turn_distance(delta)?;
             }
             Action::ResetAutoTurnDistance => self.reset_auto_turn_distance()?,
+            Action::AutoTurnPan(change) => self.change_auto_turn_pan(change)?,
             Action::LockTouch => {
                 self.selection = None;
                 self.pdf_selection = None;
@@ -2362,10 +2853,14 @@ impl Reader {
             Action::Wikipedia => self.prepare_online(true, false)?,
             Action::TranslatePage => self.prepare_online(false, true)?,
             Action::RepeatOnline(index) => self.repeat_online(index)?,
-            Action::ToggleOnlineHistory => self.update_lookup_history(|h| h.online_languages.forget_queries = !h.online_languages.forget_queries)?,
-            Action::ClearOnlineHistory => {self.update_lookup_history(|h| h.online.clear())?; self.show(Screen::OnlineHistory);},
+            Action::ToggleOnlineHistory => self.update_lookup_history(|h| {
+                h.online_languages.forget_queries = !h.online_languages.forget_queries
+            })?,
+            Action::ClearOnlineHistory => {
+                self.update_lookup_history(|h| h.online.clear())?;
+                self.show(Screen::OnlineHistory);
+            }
             Action::LookUp(word) => self.look_up(&word)?,
-            Action::ProgressSync(command) => self.progress_sync_command(command)?,
             Action::Vocabulary(command) => self.vocabulary_command(command)?,
             Action::RepeatSearch(query) => {
                 if query.regular_expression && self.active.is_none() {
@@ -2489,6 +2984,7 @@ impl Reader {
                 self.update_overview(chapter, Some(current / OVERVIEW_PAGES * OVERVIEW_PAGES))?;
                 self.show(Screen::PageOverview);
             }
+            Action::Skim => self.start_skim()?,
             Action::RotatePage => {
                 let fixed = self.fixed.as_mut().ok_or("No open document")?;
                 fixed.reading.rotate()?;
@@ -2543,8 +3039,8 @@ impl Reader {
             }
             Action::ToggleBookmark => self.toggle_bookmark()?,
             Action::SetUserHyphenation(enabled) => self.set_user_hyphenation(enabled)?,
-            Action::ApplyWordSpacing(owner,value) => self.apply_word_spacing(owner,value)?,
-            Action::ApplyLogicalFont(owner,value) => self.apply_logical_font(owner,value)?,
+            Action::ApplyWordSpacing(owner, value) => self.apply_word_spacing(owner, value)?,
+            Action::ApplyLogicalFont(owner, value) => self.apply_logical_font(owner, value)?,
             Action::Text(settings) => {
                 let active = self.active.as_mut().ok_or("No open book")?;
                 active.reading.reflow(settings)?;
@@ -2552,7 +3048,9 @@ impl Reader {
                     .library
                     .remember(&active.entry, active.id, &active.reading.probe.title)
                     .preferences;
-                if settings.logical_font_size.is_none() { preferences.font_size = Some(settings.font_size); }
+                if settings.logical_font_size.is_none() {
+                    preferences.font_size = Some(settings.font_size);
+                }
                 preferences.logical_font_size = settings.logical_font_size;
                 preferences.render_dpi = Some(settings.render_dpi);
                 preferences.margin = Some(settings.margin);
@@ -2567,7 +3065,8 @@ impl Reader {
                 preferences.percent_word_spacing = settings.percent_word_spacing;
                 preferences.word_expansion = Some(settings.word_expansion);
                 preferences.letter_spacing = settings.letter_spacing;
-                preferences.cjk_width_percent = (settings.cjk_width_percent != 100).then_some(settings.cjk_width_percent);
+                preferences.cjk_width_percent =
+                    (settings.cjk_width_percent != 100).then_some(settings.cjk_width_percent);
                 preferences.scroll = active.reading.config.scroll;
                 preferences.alignment = settings.alignment;
                 preferences.bold_text = settings.bold_text;
@@ -2786,12 +3285,22 @@ impl Reader {
         config.scroll = preferences.scroll;
         config.facing_pages = preferences.facing_pages;
         config.fonts = fonts;
-        let candidate = Reading::restore(config, location.chapter, location.page, location.anchor.as_ref())?;
+        let candidate = Reading::restore(
+            config,
+            location.chapter,
+            location.page,
+            location.anchor.as_ref(),
+        )?;
         if candidate.probe.book != active.reading.probe.book
-            || with_storage(|| self.library.identify(&active.entry))? != id {
+            || with_storage(|| self.library.identify(&active.entry))? != id
+        {
             return Err("The document edition changed during profile application".into());
         }
-        let prior = self.library.state(id).cloned().ok_or("Reading state unavailable")?;
+        let prior = self
+            .library
+            .state(id)
+            .cloned()
+            .ok_or("Reading state unavailable")?;
         let state = self.library.state_mut(id).unwrap();
         state.preferences = preferences;
         state.position = Some(position(&candidate));
@@ -2850,8 +3359,13 @@ impl Reader {
             }
             let path = self.library.absolute_path(&details.entry.path)?;
             let mut book = Book::open(&path).map_err(io::Error::other)?;
-            let cover = book.cover().cloned().ok_or_else(|| io::Error::other("The book has no supported cover"))?;
-            let (_, bytes) = book.read_cover().map_err(io::Error::other)?
+            let cover = book
+                .cover()
+                .cloned()
+                .ok_or_else(|| io::Error::other("The book has no supported cover"))?;
+            let (_, bytes) = book
+                .read_cover()
+                .map_err(io::Error::other)?
                 .ok_or_else(|| io::Error::other("The book has no supported cover"))?;
             if cover.kind == crate::epub::CoverKind::Svg {
                 return crate::svg_image::original_package_image(&mut book, &cover.path, &bytes)
@@ -3354,11 +3868,16 @@ impl Reader {
             return None;
         }
         let width = WIDTH as f32;
-        let height = HEIGHT as f32;
+        let page_height = PAGE_HEIGHT as f32;
+        let screen_height = HEIGHT as f32;
         let central = (width / 4.0..=width * 0.75).contains(&start_x);
-        let edge = if central { height / 5.0 } else { height / 8.0 };
+        let edge = if central {
+            page_height / 5.0
+        } else {
+            page_height / 8.0
+        };
         let from_top = dy > 0.0 && (0.0..=edge).contains(&start_y);
-        let from_bottom = dy < 0.0 && (height - edge..=height).contains(&start_y);
+        let from_bottom = dy < 0.0 && (screen_height - edge..=screen_height).contains(&start_y);
         if from_top || from_bottom {
             self.selection = None;
             self.pdf_selection = None;
@@ -3401,10 +3920,16 @@ impl Reader {
                 Screen::LibraryFind => Screen::Library,
                 Screen::VocabularySearch => Screen::Vocabulary,
                 Screen::EditNote if self.saved_popup.is_some() => {
-                    if self.fixed.is_some() { Screen::Fixed } else { Screen::Book }
+                    if self.fixed.is_some() {
+                        Screen::Fixed
+                    } else {
+                        Screen::Book
+                    }
                 }
                 Screen::EditNote => Screen::Annotation,
-                Screen::BookmarkFind => self.annotation_search.origin.unwrap_or(self.tools_screen()),
+                Screen::BookmarkFind => {
+                    self.annotation_search.origin.unwrap_or(self.tools_screen())
+                }
                 Screen::Note if self.fixed.is_some() => Screen::Fixed,
                 Screen::Note => Screen::Book,
                 _ if self.fixed.is_some() => Screen::FixedTools,
@@ -3433,7 +3958,9 @@ impl Reader {
         }
         if self.screen == Screen::Find && self.active.is_some() && FIND_PATTERN.contains(x, y) {
             self.find_regex = !self.find_regex;
-            if self.find_regex { self.find_ignore_accents = false; }
+            if self.find_regex {
+                self.find_ignore_accents = false;
+            }
             self.notice = None;
             return Change::Partial;
         }
@@ -3552,9 +4079,15 @@ impl Reader {
     }
 
     fn handle_page_number(&mut self, input: Input) -> Change {
-        if let Some(change) = self.logical_font_input(input) { return change; }
-        if let Some(change) = self.content_dpi_input(input) { return change; }
-        if let Some(change) = self.word_spacing_input(input) { return change; }
+        if let Some(change) = self.logical_font_input(input) {
+            return change;
+        }
+        if let Some(change) = self.content_dpi_input(input) {
+            return change;
+        }
+        if let Some(change) = self.word_spacing_input(input) {
+            return change;
+        }
         if matches!(input, Input::PageBack)
             || matches!(input, Input::Tap(x, y) if primitive_ui::back_button(WIDTH as i32).contains(x, y))
         {
@@ -3571,7 +4104,11 @@ impl Reader {
             return Change::None;
         };
         let layout = Layout::new(WIDTH, HEIGHT, 4, 5);
-        let action = if matches!(self.screen, Screen::NumberingValue(_)) { "Set" } else { "Go" };
+        let action = if matches!(self.screen, Screen::NumberingValue(_)) {
+            "Set"
+        } else {
+            "Go"
+        };
         let Some(key) = keyboard_key(&layout, &self.editor, action, x, y) else {
             return Change::None;
         };
@@ -3642,7 +4179,8 @@ impl Reader {
             };
             let password = self.editor.string();
             self.editor = Editor::new(64);
-            if let Err(error) = self.open_with_password(entry, Some(&password))
+            if let Err(error) = self
+                .open_with_password(entry, Some(&password))
                 .and_then(|_| self.bookmark_after_password())
             {
                 return self.report(error);
@@ -3664,8 +4202,13 @@ impl Reader {
         let active = self.active.as_ref().ok_or("No open book")?;
         if let Some(label) = input.strip_prefix("label ") {
             if let Some(map) = &active.numbering {
-                let row = label.trim().parse::<usize>().ok().and_then(|n| n.checked_sub(1))
-                    .filter(|row| *row < map.count).ok_or("Enter a stable page number from the list")?;
+                let row = label
+                    .trim()
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|n| n.checked_sub(1))
+                    .filter(|row| *row < map.count)
+                    .ok_or("Enter a stable page number from the list")?;
                 return self.follow_character_page(row);
             }
             let mut matches = active
@@ -3794,16 +4337,35 @@ impl Reader {
             let rect = overview_tile(index);
             canvas.card(rect);
             let page = overview.first + index;
-            let hidden = self.active.as_ref().and_then(|active| overview.chapter.and_then(|chapter|
-                active.reading.custom_flow_for_page(chapter, page, overview.count)))
-                .or_else(|| self.fixed.as_ref().and_then(|fixed| fixed.reading.hidden_flow_map().map(|flows| flows.flow(page))))
+            let hidden = self
+                .active
+                .as_ref()
+                .and_then(|active| {
+                    overview.chapter.and_then(|chapter| {
+                        active
+                            .reading
+                            .custom_flow_for_page(chapter, page, overview.count)
+                    })
+                })
+                .or_else(|| {
+                    self.fixed.as_ref().and_then(|fixed| {
+                        fixed
+                            .reading
+                            .hidden_flow_map()
+                            .map(|flows| flows.flow(page))
+                    })
+                })
                 .is_some_and(|flow| flow != 0);
-            if hidden { canvas.panel(rect, 22, 2, 235); }
+            if hidden {
+                canvas.panel(rect, 22, 2, 235);
+            }
             let mut label = self.fixed.as_ref().map_or_else(
                 || format!("Page {}", page + 1),
                 |fixed| fixed_page_label(&fixed.reading, page),
             );
-            if hidden { label.push_str(" · Hidden"); }
+            if hidden {
+                label.push_str(" · Hidden");
+            }
             if let Some(tile) = tile {
                 let thumbnail = tile.for_theme(self.uses_night_pages());
                 let width = thumbnail.width as i32;
@@ -3891,10 +4453,16 @@ impl Reader {
         };
         let direction = match input {
             Input::LongTap(x, y) => {
-                let Some(index) = (0..overview.tiles.len()).find(|&index| overview_tile(index).contains(x, y))
-                    else { return Change::None; };
+                let Some(index) =
+                    (0..overview.tiles.len()).find(|&index| overview_tile(index).contains(x, y))
+                else {
+                    return Change::None;
+                };
                 let result = self.show_flow_page_popup(overview.chapter, overview.first + index);
-                return match result { Ok(()) => Change::Partial, Err(error) => self.report(error) };
+                return match result {
+                    Ok(()) => Change::Partial,
+                    Err(error) => self.report(error),
+                };
             }
             Input::PageForward => 1,
             Input::PageBack => -1,
@@ -4006,11 +4574,21 @@ impl Reader {
     }
 
     fn handle_book(&mut self, input: Input) -> Change {
+        if self.pending_selection_action.is_some() && !matches!(input, Input::LongTap(..)) {
+            self.pending_selection_action = None;
+            self.cjk_selection_lookup = None;
+        }
         if let Input::LongTap(x, y) = input
             && self.selection.is_none()
             && let Some(change) = self.hold_footer(x, y)
         {
             return change;
+        }
+        if let Input::LongTap(x, y) = input
+            && self.selection_mode
+        {
+            self.extend_reflow_selection(x, y);
+            return Change::Partial;
         }
         if let Input::LongTap(x, y) = input {
             match self.inspect_illustration(x, y) {
@@ -4021,37 +4599,22 @@ impl Reader {
             let Some(active) = &self.active else {
                 return Change::None;
             };
+            self.pending_selection_action = None;
             self.selection = active.reading.word_at(x, y);
             self.start_cjk_selection();
             self.notice = None;
-            return Change::Partial;
+            return if self.selection.is_some() {
+                self.handle_text_long_press()
+            } else {
+                Change::Partial
+            };
         }
         if let Input::Tap(x, y) = input {
             if self.selection.is_some() {
                 if let Some(change) = self.selection_popup_input(x, y) {
                     return change;
                 }
-                if let (Some(active), Some(selection)) = (&self.active, &self.selection)
-                    && let Some(word) = active.reading.word_at(x, y)
-                {
-                    let start = if (word.start.block, word.start.offset)
-                        < (selection.start.block, selection.start.offset)
-                    {
-                        &word.start
-                    } else {
-                        &selection.start
-                    };
-                    let end = if (word.end.block, word.end.offset)
-                        > (selection.end.block, selection.end.offset)
-                    {
-                        &word.end
-                    } else {
-                        &selection.end
-                    };
-                    if let Some(extended) = active.reading.probe.select_range(start, end) {
-                        self.selection = Some(extended);
-                    }
-                }
+                self.extend_reflow_selection(x, y);
                 return Change::Partial;
             }
             if let Some(change) = self.search_result_input(x, y) {
@@ -4091,7 +4654,10 @@ impl Reader {
     }
 
     fn finish_book_update(&mut self, change: Change, previous: (usize, usize)) -> Change {
-        let attempted = self.active.as_mut().is_some_and(|active| active.reading.take_end_attempt());
+        let attempted = self
+            .active
+            .as_mut()
+            .is_some_and(|active| active.reading.take_end_attempt());
         if change != Change::Partial {
             return self.finish_end_attempt(attempted, change);
         }
@@ -4146,6 +4712,14 @@ impl Reader {
             return change;
         }
         if let Input::LongTap(x, y) = input
+            && self.selection_mode
+            && let (Some(fixed), Some(selection)) = (&self.fixed, &mut self.pdf_selection)
+        {
+            self.notice = (!fixed.reading.extend_selection(selection, x, y))
+                .then(|| "Hold a word on this page to extend the selection".into());
+            return Change::Partial;
+        }
+        if let Input::LongTap(x, y) = input
             && let Some(fixed) = &mut self.fixed
             && fixed.entry.format.is_comic()
         {
@@ -4171,7 +4745,7 @@ impl Reader {
                     self.pdf_selection = Some(selection);
                     self.pdf_result_regions.clear();
                     self.notice = None;
-                    Change::Partial
+                    self.handle_text_long_press()
                 }
                 Ok(WordAtTouch::Ready(None)) => self.report("No selectable text at this point"),
                 Ok(WordAtTouch::Recognize { page, point }) => {
@@ -4257,7 +4831,10 @@ impl Reader {
     }
 
     fn finish_fixed_update(&mut self, result: Result<bool>, previous: usize) -> Change {
-        let attempted = self.fixed.as_mut().is_some_and(|fixed| fixed.reading.take_end_attempt());
+        let attempted = self
+            .fixed
+            .as_mut()
+            .is_some_and(|fixed| fixed.reading.take_end_attempt());
         let change = match result {
             Ok(true) => {
                 let (changed, continuous) = self.fixed.as_ref().map_or((false, false), |fixed| {
@@ -4305,7 +4882,10 @@ impl Reader {
             } else {
                 crate::search::SearchDirection::Next
             };
-            return self.nearby.can_step(direction).then_some(Action::StepNearby(direction));
+            return self
+                .nearby
+                .can_step(direction)
+                .then_some(Action::StepNearby(direction));
         }
         let index = current.checked_add_signed(step)?;
         if self.fixed.is_some() {
@@ -4346,7 +4926,9 @@ impl Reader {
             canvas.button(MATCH_PREV, "Cancel", false, false);
             return;
         }
-        if self.draw_fixed_result_navigation(canvas) { return; }
+        if self.draw_fixed_result_navigation(canvas) {
+            return;
+        }
         if self.search_step(-1).is_some() {
             canvas.button(MATCH_PREV, "Previous", false, false);
         }
@@ -4359,7 +4941,11 @@ impl Reader {
         let index = self.search_result?;
         if self.nearby.result() {
             if let Some(fixed) = &self.fixed {
-                return Some(format!("Matching page {} of {}", fixed.reading.page() + 1, fixed.reading.count()));
+                return Some(format!(
+                    "Matching page {} of {}",
+                    fixed.reading.page() + 1,
+                    fixed.reading.count()
+                ));
             }
             return Some("Search match".into());
         }
@@ -4391,7 +4977,10 @@ impl Reader {
     }
 
     fn finish_text_flow_update(&mut self, result: Result<bool>) -> Change {
-        let attempted = self.text_flow.as_mut().is_some_and(TextFlow::take_end_attempt);
+        let attempted = self
+            .text_flow
+            .as_mut()
+            .is_some_and(TextFlow::take_end_attempt);
         let change = match result {
             Ok(false) => Change::None,
             Ok(true) => {
@@ -4507,7 +5096,11 @@ impl Reader {
     }
 
     fn cancel_ocr_selection(&mut self) {
-        if self.ocr.as_ref().is_some_and(|job| job.selection_point.is_some()) {
+        if self
+            .ocr
+            .as_ref()
+            .is_some_and(|job| job.selection_point.is_some())
+        {
             self.ocr = None;
         }
     }
@@ -4521,17 +5114,32 @@ impl Reader {
             self.show(Screen::OcrLanguage);
             return Ok(());
         }
-        let page = self.fixed.as_ref().ok_or("Open a PDF or DjVu first")?.reading.page();
+        let page = self
+            .fixed
+            .as_ref()
+            .ok_or("Open a PDF or DjVu first")?
+            .reading
+            .page();
         self.recognize_page(page, language, None)
     }
 
-    fn recognize_page(&mut self, page: usize, language: Option<&str>, selection_point: Option<hayro::kurbo::Point>) -> Result<()> {
+    fn recognize_page(
+        &mut self,
+        page: usize,
+        language: Option<&str>,
+        selection_point: Option<hayro::kurbo::Point>,
+    ) -> Result<()> {
         self.ocr = None;
-        let assets = self.ocr_assets.as_ref().ok_or("OCR requires an installed language pack")?;
+        let assets = self
+            .ocr_assets
+            .as_ref()
+            .ok_or("OCR requires an installed language pack")?;
         let fixed = self.fixed.as_ref().ok_or("Open a PDF or DjVu first")?;
         let explicit_language = language.is_some();
-        let language = language.or(fixed.reading.ocr_language.as_deref())
-            .unwrap_or_else(|| assets.default_language()).to_owned();
+        let language = language
+            .or(fixed.reading.ocr_language.as_deref())
+            .unwrap_or_else(|| assets.default_language())
+            .to_owned();
         let raster = fixed.reading.ocr_raster(page)?;
         let job = if language == assets.default_language() {
             OcrJob::start(assets, &raster.pixels, raster.width, raster.height)?
@@ -4586,7 +5194,9 @@ impl Reader {
             .fixed
             .as_mut()
             .ok_or("The document closed during OCR")?;
-        let requested_word = active.selection_point.filter(|_| self.screen == Screen::Fixed && fixed.reading.visible_pages().any(|p| p == page));
+        let requested_word = active.selection_point.filter(|_| {
+            self.screen == Screen::Fixed && fixed.reading.visible_pages().any(|p| p == page)
+        });
         fixed.reading.remember_ocr(page, &active.language, text)?;
         if let Some(point) = requested_word {
             self.pdf_selection = fixed
@@ -4689,6 +5299,9 @@ impl Reader {
         {
             self.selection = None;
         }
+        if self.selection.is_none() && self.pdf_selection.is_none() {
+            self.selection_mode = false;
+        }
     }
 
     fn export_backup(&mut self) -> Result<()> {
@@ -4705,16 +5318,17 @@ impl Reader {
     }
 
     fn preview_backup(&mut self) -> Result<()> {
-        let bytes = read_import_file(&self.import_path, crate::reading_backup::LIMIT).map_err(|error| {
-            if error.kind() == io::ErrorKind::NotFound {
-                io::Error::new(
-                    error.kind(),
-                    "Copy a backup to reader/data/reader-import.json",
-                )
-            } else {
-                error
-            }
-        })?;
+        let bytes =
+            read_import_file(&self.import_path, crate::reading_backup::LIMIT).map_err(|error| {
+                if error.kind() == io::ErrorKind::NotFound {
+                    io::Error::new(
+                        error.kind(),
+                        "Copy a backup to reader/data/reader-import.json",
+                    )
+                } else {
+                    error
+                }
+            })?;
         self.backup_import = Some(self.prepare_reading_backup(&bytes)?);
         self.show(Screen::RestoreBackup);
         Ok(())
@@ -4779,14 +5393,24 @@ impl Reader {
     }
 
     fn preview_koreader_position(&mut self, copied_only: bool) -> Result<()> {
-        let entry = self.fixed.as_ref().map(|book| &book.entry)
+        let entry = self
+            .fixed
+            .as_ref()
+            .map(|book| &book.entry)
             .or_else(|| self.active.as_ref().map(|book| &book.entry))
             .ok_or("Open the matching book first")?;
-        let nearby = if copied_only { None } else {
+        let nearby = if copied_only {
+            None
+        } else {
             with_storage(|| self.library.nearby_koreader_metadata(&entry.path))?
         };
-        let source = if nearby.is_some() { "Saved beside this book" } else { "Copied to Reader data" };
-        let path = nearby.unwrap_or_else(|| self.import_path.with_file_name("koreader-progress.lua"));
+        let source = if nearby.is_some() {
+            "Saved beside this book"
+        } else {
+            "Copied to Reader data"
+        };
+        let path =
+            nearby.unwrap_or_else(|| self.import_path.with_file_name("koreader-progress.lua"));
         let bytes = read_import_file(&path, koreader_sidecar::MAX_SIDECAR_BYTES as u64).map_err(
             |error| {
                 if error.kind() == io::ErrorKind::NotFound {
@@ -4807,7 +5431,11 @@ impl Reader {
             target.map_err(|error| error.to_string())
         };
         self.show(Screen::ImportPosition);
-        self.position_import = Some(PositionImport { sidecar, target, source });
+        self.position_import = Some(PositionImport {
+            sidecar,
+            target,
+            source,
+        });
         Ok(())
     }
 
@@ -5022,7 +5650,8 @@ impl Reader {
             .take_while(|(offset, ch)| offset + ch.len_utf8() <= crate::search::MAX_QUERY_BYTES)
             .map(|(_, ch)| ch)
             .collect();
-        let shortened = query.len() > crate::search::MAX_QUERY_BYTES || query.chars().count() > excerpt.len();
+        let shortened =
+            query.len() > crate::search::MAX_QUERY_BYTES || query.chars().count() > excerpt.len();
         if shortened {
             self.show(Screen::Find);
         } else {
@@ -5045,6 +5674,8 @@ impl Reader {
         if selection.text.len() > 8192 {
             return Err("Select a shorter passage".into());
         }
+        let chosen_color = self.pending_highlight_color;
+        let chosen_style = self.pending_highlight_style;
         let state = self
             .library
             .remember(&active.entry, active.id, &active.reading.probe.title);
@@ -5064,16 +5695,23 @@ impl Reader {
                 return Err("This book has reached its highlight limit".into());
             }
             state.highlights.push(Highlight {
-                color: state.highlight_color.unwrap_or(self.controls.highlight_color),
+                color: chosen_color.unwrap_or_else(|| {
+                    state
+                        .highlight_color
+                        .unwrap_or(self.controls.highlight_color)
+                }),
                 created_at: crate::mark_time::now(),
-                style: state
-                    .highlight_style
-                    .unwrap_or(self.controls.highlight_style),
+                style: chosen_style.unwrap_or_else(|| {
+                    state
+                        .highlight_style
+                        .unwrap_or(self.controls.highlight_style)
+                }),
                 selection: selection.clone(),
                 note,
             });
         }
         self.selection = None;
+        self.selection_mode = false;
         self.mark_book_changed();
         self.show(Screen::Book);
         self.notice = Some("Highlight saved".into());
@@ -5236,24 +5874,30 @@ impl Reader {
         let note = note
             .map(|note| note.trim().to_owned())
             .filter(|note| !note.is_empty());
+        let chosen_color = self.pending_highlight_color;
+        let chosen_style = self.pending_highlight_style;
         let state = self
             .library
             .remember(&fixed.entry, fixed.id, &fixed.entry.title);
-        if let Some(mark) = state
-            .pdf_highlights
-            .iter_mut()
-            .find(|mark| mark.continuation.is_empty() && mark.page == selection.page() && mark.bounds == bounds)
-        {
+        if let Some(mark) = state.pdf_highlights.iter_mut().find(|mark| {
+            mark.continuation.is_empty() && mark.page == selection.page() && mark.bounds == bounds
+        }) {
             if note.is_some() {
                 mark.note = note;
             }
         } else {
             state.add_pdf_highlight(PdfHighlight {
-                color: state.highlight_color.unwrap_or(self.controls.highlight_color),
+                color: chosen_color.unwrap_or_else(|| {
+                    state
+                        .highlight_color
+                        .unwrap_or(self.controls.highlight_color)
+                }),
                 created_at: crate::mark_time::now(),
-                style: state
-                    .highlight_style
-                    .unwrap_or(self.controls.highlight_style),
+                style: chosen_style.unwrap_or_else(|| {
+                    state
+                        .highlight_style
+                        .unwrap_or(self.controls.highlight_style)
+                }),
                 continuation: Vec::new(),
                 page: selection.page(),
                 bounds,
@@ -5262,6 +5906,7 @@ impl Reader {
             })?;
         }
         self.pdf_selection = None;
+        self.selection_mode = false;
         self.mark_book_changed();
         self.show(Screen::Fixed);
         self.notice = Some("Highlight saved".into());
@@ -5271,11 +5916,17 @@ impl Reader {
 
 impl Reader {
     fn draw_content(&self, canvas: &mut Canvas) {
-        if self.draw_style_editor(canvas) { self.read_alarm.draw(canvas, false); return; }
-        if self.screen == Screen::DocumentDefaults { self.draw_document_defaults(canvas); return; }
-        if self.draw_reading_history(canvas) { return; }
-        if let Screen::Catalog(page) = self.screen && self.draw_catalog(canvas,page) { return; }
-        if let Screen::SyncEdit(field) = self.screen { self.draw_sync_editor(canvas, field); return; }
+        if self.draw_style_editor(canvas) {
+            self.read_alarm.draw(canvas, false);
+            return;
+        }
+        if self.screen == Screen::DocumentDefaults {
+            self.draw_document_defaults(canvas);
+            return;
+        }
+        if self.draw_reading_history(canvas) {
+            return;
+        }
         // The launcher's theme may have changed (it asks for a redraw when it does).
         if let Some(theme) = &self.system_theme {
             theme.refresh();
@@ -5305,15 +5956,20 @@ impl Reader {
             };
             let notice = self.notice.as_deref().unwrap_or(title);
             let mut paint = self.page_paint();
-            if self.book_details.is_none() && self.active.as_ref().is_some_and(
-                |active| !active.reading.config.settings.invert_night_images
-            ) {
+            if self.book_details.is_none()
+                && self
+                    .active
+                    .as_ref()
+                    .is_some_and(|active| !active.reading.config.settings.invert_night_images)
+            {
                 paint.inverted = false;
             }
             illustration.draw(canvas, Some(notice), &[], &[], paint);
             return;
         }
-        if self.screen == Screen::ReadFixedText && let Some(flow) = &self.text_flow {
+        if self.screen == Screen::ReadFixedText
+            && let Some(flow) = &self.text_flow
+        {
             flow.draw(canvas, self.notice.as_deref(), self.uses_night_pages());
             self.draw_end_dialog(canvas);
             return;
@@ -5356,8 +6012,10 @@ impl Reader {
             draw_toolbar_button(canvas, CANCEL_CROP, "Cancel");
             return;
         }
-        if (matches!(self.screen, Screen::Fixed | Screen::FixedTools | Screen::OnlineLookup)
-            || self.definition_over_book())
+        if (matches!(
+            self.screen,
+            Screen::Fixed | Screen::FixedTools | Screen::OnlineLookup | Screen::Skim
+        ) || self.definition_over_book())
             && let Some(fixed) = &self.fixed
         {
             let mut marks: Vec<_> = self
@@ -5366,20 +6024,45 @@ impl Reader {
                 .into_iter()
                 .flat_map(|state| &state.pdf_highlights)
                 .enumerate()
-                .filter_map(|(index, saved)| match self.range_edit.as_ref().filter(|edit| edit.index == index).map(|edit| &edit.draft) {
-                    Some(extend_highlight::Draft::Fixed {current, ..}) => Some(current),
-                    None => Some(saved),
-                    _ => None,
+                .filter_map(|(index, saved)| {
+                    match self
+                        .range_edit
+                        .as_ref()
+                        .filter(|edit| edit.index == index)
+                        .map(|edit| &edit.draft)
+                    {
+                        Some(extend_highlight::Draft::Fixed { current, .. }) => Some(current),
+                        None => Some(saved),
+                        _ => None,
+                    }
                 })
                 .flat_map(|mark| {
-                    mark.parts()
-                        .map(move |(page, rects, _)| (page, rects, mark.style, mark.color, mark.note.is_some()))
-                })
-                .filter(|(index, _, _, _, _)| fixed.reading.visible_pages().any(|page| page == *index))
-                .flat_map(|(page, rects, style, color, note)| {
-                    rects.iter().filter(move |bounds|fixed.reading.visible_rectangle(page,**bounds).is_some()).enumerate().map(move |(i, &bounds)| {
-                        ((page, bounds), crate::highlight_style::Paint::Annotation {style, color, note, first:i==0, night:self.uses_night_pages()})
+                    mark.parts().map(move |(page, rects, _)| {
+                        (page, rects, mark.style, mark.color, mark.note.is_some())
                     })
+                })
+                .filter(|(index, _, _, _, _)| {
+                    fixed.reading.visible_pages().any(|page| page == *index)
+                })
+                .flat_map(|(page, rects, style, color, note)| {
+                    rects
+                        .iter()
+                        .filter(move |bounds| {
+                            fixed.reading.visible_rectangle(page, **bounds).is_some()
+                        })
+                        .enumerate()
+                        .map(move |(i, &bounds)| {
+                            (
+                                (page, bounds),
+                                crate::highlight_style::Paint::Annotation {
+                                    style,
+                                    color,
+                                    note,
+                                    first: i == 0,
+                                    night: self.uses_night_pages(),
+                                },
+                            )
+                        })
                 })
                 .collect();
             marks.extend(
@@ -5416,7 +6099,7 @@ impl Reader {
                 self.draw_range_tools(canvas);
                 return;
             }
-            if self.screen == Screen::Fixed {
+            if self.screen == Screen::Fixed && self.touch_hold.is_none() {
                 self.draw_selection_popup(canvas);
             }
             if self.screen == Screen::FixedTools {
@@ -5433,8 +6116,12 @@ impl Reader {
             } else if self.screen == Screen::Fixed && selection.is_empty() {
                 self.draw_search_steps(canvas);
             }
-            if let Some(popup) = &self.link_popup { popup.draw(canvas); }
-            if self.screen == Screen::OnlineLookup { self.draw_online(canvas); }
+            if let Some(popup) = &self.link_popup {
+                popup.draw(canvas);
+            }
+            if self.screen == Screen::OnlineLookup {
+                self.draw_online(canvas);
+            }
             if self.definition_over_book() {
                 self.draw_definition_popup(canvas);
             }
@@ -5443,7 +6130,11 @@ impl Reader {
         }
         if (matches!(
             self.screen,
-            Screen::Footnote | Screen::Book | Screen::BookTools | Screen::OnlineLookup
+            Screen::Footnote
+                | Screen::Book
+                | Screen::BookTools
+                | Screen::OnlineLookup
+                | Screen::Skim
         ) || self.definition_over_book())
             && let Some(active) = &self.active
         {
@@ -5455,17 +6146,30 @@ impl Reader {
                 .flat_map(|state| &state.highlights)
                 .enumerate()
                 .flat_map(|(index, highlight)| {
-                    let selected = self.range_edit.as_ref().filter(|edit| edit.index == index)
+                    let selected = self
+                        .range_edit
+                        .as_ref()
+                        .filter(|edit| edit.index == index)
                         .and_then(|edit| match &edit.draft {
-                            extend_highlight::Draft::Text {current, ..} => Some(current),
+                            extend_highlight::Draft::Text { current, .. } => Some(current),
                             _ => None,
                         })
                         .unwrap_or(&highlight.selection);
                     reading
                         .highlight_rects(selected)
                         .into_iter()
-                        .enumerate().map(move |(i, rect)| {
-                            (rect, crate::highlight_style::Paint::Annotation {style:highlight.style, color:highlight.color, note:highlight.note.is_some(), first:i==0, night:self.uses_night_pages()})
+                        .enumerate()
+                        .map(move |(i, rect)| {
+                            (
+                                rect,
+                                crate::highlight_style::Paint::Annotation {
+                                    style: highlight.style,
+                                    color: highlight.color,
+                                    note: highlight.note.is_some(),
+                                    first: i == 0,
+                                    night: self.uses_night_pages(),
+                                },
+                            )
                         })
                 })
                 .collect();
@@ -5517,7 +6221,7 @@ impl Reader {
                 self.draw_range_tools(canvas);
                 return;
             }
-            if self.screen == Screen::Book {
+            if self.screen == Screen::Book && self.touch_hold.is_none() {
                 self.draw_selection_popup(canvas);
             }
             if self.screen == Screen::BookTools {
@@ -5530,20 +6234,31 @@ impl Reader {
             if let Some(note) = &self.footnote {
                 note.draw(canvas, self.uses_night_pages());
             }
-            if self.screen == Screen::OnlineLookup { self.draw_online(canvas); }
+            if self.screen == Screen::OnlineLookup {
+                self.draw_online(canvas);
+            }
             if self.definition_over_book() {
                 self.draw_definition_popup(canvas);
             }
             self.draw_end_dialog(canvas);
             return;
         }
-        if self.screen == Screen::OnlineEdit { self.draw_online_editor(canvas); return; }
-        if self.screen == Screen::OnlineLookup { self.draw_online(canvas); return; }
+        if self.screen == Screen::OnlineEdit {
+            self.draw_online_editor(canvas);
+            return;
+        }
+        if self.screen == Screen::OnlineLookup {
+            self.draw_online(canvas);
+            return;
+        }
         if self.screen == Screen::Hyphenate {
             self.draw_hyphenation(canvas);
             return;
         }
-        if self.screen == Screen::CustomTitle { self.draw_chapter_editor(canvas); return; }
+        if self.screen == Screen::CustomTitle {
+            self.draw_chapter_editor(canvas);
+            return;
+        }
         if self.screen == Screen::Library {
             self.draw_library(canvas);
             return;
@@ -5564,8 +6279,14 @@ impl Reader {
             _ => self.screen.title(),
         };
         header(canvas, title, "Back");
-        if self.screen==Screen::LibraryExport(library_export::Page::Colors) {self.draw_export_colors(canvas);return;}
-        if self.screen == Screen::VocabularyContext { self.draw_vocabulary_context(canvas); return; }
+        if self.screen == Screen::LibraryExport(library_export::Page::Colors) {
+            self.draw_export_colors(canvas);
+            return;
+        }
+        if self.screen == Screen::VocabularyContext {
+            self.draw_vocabulary_context(canvas);
+            return;
+        }
         if let Screen::BookmarkBrowser(page) = self.screen
             && self.draw_bookmark_browser_controls(canvas, page)
         {
@@ -5603,18 +6324,33 @@ impl Reader {
                 Screen::CollectionName => ("Collection name", "Save"),
                 Screen::ProfileName => ("Profile name", "Save"),
                 Screen::PdfPassword => ("PDF password", "Open"),
-                Screen::NumberingValue(NumberField::ContentDpi(_)) => ("Content zoom: 0 to 300 dpi", "Set"),
-                Screen::NumberingValue(NumberField::LogicalFont(_)) => ("Logical font size: 12 to 255", "Set"),
-                Screen::NumberingValue(NumberField::WordSpacing(draft)) => (match draft.field { word_spacing::Field::Scaling => "Scaling: 10 to 500%", word_spacing::Field::Minimum => "Reduction: 25 to 100%" }, "Set"),
-                Screen::NumberingValue(NumberField::AutoTurn) => ("Page-turn interval: 1 to 86,400 seconds", "Set"),
-                Screen::NumberingValue(NumberField::MarginSize) => ("Margin text size from 8 to 20", "Set"),
+                Screen::NumberingValue(NumberField::ContentDpi(_)) => {
+                    ("Content zoom: 0 to 300 dpi", "Set")
+                }
+                Screen::NumberingValue(NumberField::LogicalFont(_)) => {
+                    ("Logical font size: 12 to 255", "Set")
+                }
+                Screen::NumberingValue(NumberField::WordSpacing(draft)) => (
+                    match draft.field {
+                        word_spacing::Field::Scaling => "Scaling: 10 to 500%",
+                        word_spacing::Field::Minimum => "Reduction: 25 to 100%",
+                    },
+                    "Set",
+                ),
+                Screen::NumberingValue(NumberField::AutoTurn) => {
+                    ("Page-turn interval: 1 to 86,400 seconds", "Set")
+                }
+                Screen::NumberingValue(
+                    NumberField::AutoTurnOverlapHorizontal | NumberField::AutoTurnOverlapVertical,
+                ) => ("Zoom overlap: 0 to 90%", "Set"),
+                Screen::NumberingValue(NumberField::MarginSize) => {
+                    ("Margin text size from 8 to 20", "Set")
+                }
                 Screen::NumberingValue(_) => ("500 to 3,000 characters per page", "Set"),
                 Screen::GoToPage if self.fixed.is_none() => {
-                    let hint = if self
-                        .active
-                        .as_ref()
-                        .is_some_and(|book| book.numbering.is_some() || !book.reading.probe.printed_pages.is_empty())
-                    {
+                    let hint = if self.active.as_ref().is_some_and(|book| {
+                        book.numbering.is_some() || !book.reading.probe.printed_pages.is_empty()
+                    }) {
                         "Page, chapter:page, book %, or label followed by a stable page"
                     } else {
                         "Page, chapter:page, or book percentage"
@@ -5622,7 +6358,9 @@ impl Reader {
                     (hint, "Go")
                 }
                 Screen::GoToPage => ("Page, printed label, or % of document", "Go"),
-                Screen::Find if self.active.is_some() && self.find_regex => ("Regular expression", "Find all"),
+                Screen::Find if self.active.is_some() && self.find_regex => {
+                    ("Regular expression", "Find all")
+                }
                 Screen::Find => ("Search text", "Find all"),
                 _ => ("Search text", "Find"),
             };
@@ -5636,7 +6374,9 @@ impl Reader {
             self.draw_content_dpi(canvas);
             self.draw_logical_font(canvas);
             self.draw_word_spacing(canvas);
-            if self.can_paste_address() { external_link::draw_paste(canvas); }
+            if self.can_paste_address() {
+                external_link::draw_paste(canvas);
+            }
             if self.screen == Screen::BookmarkFind {
                 self.annotation_search.draw_filters(canvas);
             }
@@ -5647,7 +6387,12 @@ impl Reader {
                     "Match case off"
                 };
                 canvas.button(FIND_CASE, label, self.find_match_case, false);
-                canvas.button(FIND_ACCENTS, "Ignore accents", self.find_ignore_accents, false);
+                canvas.button(
+                    FIND_ACCENTS,
+                    "Ignore accents",
+                    self.find_ignore_accents,
+                    false,
+                );
                 if self.active.is_some() {
                     canvas.button(FIND_PATTERN, "Regular expression", self.find_regex, false);
                 }
@@ -5669,7 +6414,14 @@ impl Reader {
             .and_then(|row| items.get_mut(row))
         {
             let context = match self.screen {
-                Screen::PublisherPages if self.active.as_ref().is_some_and(|book| book.numbering.is_some()) => "Current stable page",
+                Screen::PublisherPages
+                    if self
+                        .active
+                        .as_ref()
+                        .is_some_and(|book| book.numbering.is_some()) =>
+                {
+                    "Current stable page"
+                }
                 Screen::PublisherPages => "Current printed page",
                 _ => "Current section",
             };
@@ -5681,7 +6433,11 @@ impl Reader {
         let rows: Vec<_> = items
             .iter()
             .map(|item| Row {
-                title: if self.screen == Screen::Matches { "" } else { &item.title },
+                title: if self.screen == Screen::Matches {
+                    ""
+                } else {
+                    &item.title
+                },
                 detail: item.detail.as_deref(),
                 accessory: if self.screen == Screen::MetadataSaveSettings
                     || matches!(item.action, Action::Heading)
@@ -5692,14 +6448,20 @@ impl Reader {
                 },
             })
             .collect();
-        let group = Rows { bounds: list_rect(rows.len()), rows: &rows };
+        let group = Rows {
+            bounds: list_rect(rows.len()),
+            rows: &rows,
+        };
         group.draw(canvas, None);
-        if self.screen == Screen::BookMap && let Some(active) = &self.active {
+        if self.screen == Screen::BookMap
+            && let Some(active) = &self.active
+        {
             for (index, item) in items.iter().enumerate() {
                 if let Action::Jump(target) = &item.action
                     && let Some(chapter) = active.reading.probe.chapter_index(&target.path)
                     && active.reading.hidden_chapter(chapter).is_some()
-                    && let Some(rect) = group.row_rect(index) {
+                    && let Some(rect) = group.row_rect(index)
+                {
                     // Gray rail keeps the shared row's text and disclosure target intact.
                     canvas.fill(Rect::new(rect.x + 8, rect.y + 14, 12, rect.h - 28), 187);
                 }
@@ -5713,7 +6475,9 @@ impl Reader {
                 Screen::Bookmarks | Screen::FixedBookmarks => "No bookmarks in this book",
                 Screen::Highlights => "No highlights or notes in this book",
                 Screen::BookmarkMatches => "No matching bookmarks, highlights, or notes",
-                Screen::BookmarkBrowser(bookmark_browser::Page::Results) => "No matching saved marks",
+                Screen::BookmarkBrowser(bookmark_browser::Page::Results) => {
+                    "No matching saved marks"
+                }
                 Screen::DictionaryHistory => "No lookups yet",
                 Screen::OnlineHistory => "No completed online lookups",
                 Screen::SearchHistory => "No recent searches",
@@ -5721,7 +6485,9 @@ impl Reader {
                 Screen::Matches if self.search_at.is_some() && self.fixed.is_some() => {
                     "Searching pages"
                 }
-                Screen::Matches if self.search_at.is_some() || self.nearby.searching_all() => "Searching chapters",
+                Screen::Matches if self.search_at.is_some() || self.nearby.searching_all() => {
+                    "Searching chapters"
+                }
                 Screen::Matches => "No matches",
                 Screen::GeneratedContents
                     if self
@@ -5768,7 +6534,11 @@ impl Reader {
             }
             let first = self.list_page * ROWS_PER_PAGE + 1;
             let last = (first - 1 + ROWS_PER_PAGE).min(count);
-            let more = if self.nearby.searching_all() || self.search_at.is_some() { "+" } else { "" };
+            let more = if self.nearby.searching_all() || self.search_at.is_some() {
+                "+"
+            } else {
+                ""
+            };
             canvas.text(
                 Rect::new(435, HEIGHT as i32 - 104, WIDTH as i32 - 870, 72),
                 &format!("{first}–{last} of {count}{more}"),
@@ -5796,20 +6566,262 @@ impl Reader {
                 );
             }
         }
-        if let Some(popup) = &self.result_context { popup.draw(canvas); }
-        if self.screen == Screen::ClearOnlineHistory { self.draw_clear_online_history(canvas); }
+        if let Some(popup) = &self.result_context {
+            popup.draw(canvas);
+        }
+        if self.screen == Screen::ClearOnlineHistory {
+            self.draw_clear_online_history(canvas);
+        }
+    }
+}
+
+impl Reader {
+    fn touch_selection_enabled(&self) -> bool {
+        matches!(self.screen, Screen::Book | Screen::Fixed)
+            && self.logical_recovery.is_none()
+            && self.end_dialog.is_none()
+            && self.flow_popup.is_none()
+            && self.link_popup.is_none()
+            && self.saved_popup.is_none()
+            && self.range_edit.is_none()
+            && self.reading_panel.is_none()
+            && self.top_group.is_none()
+            && !self.reading_top
+            && !self.reading_bottom
+            && !self.touch_locked
+            && !self.read_alarm.modal()
+            && self.ocr.is_none()
     }
 
+    fn touch_hold_input(&mut self, input: Input) -> Option<Change> {
+        match input {
+            Input::HoldStart(x, y) => Some(self.start_touch_hold(x, y)),
+            Input::HoldPan(x, y) => Some(self.pan_touch_hold(x, y)),
+            Input::HoldRelease {
+                start_x,
+                start_y,
+                held_ms,
+                ..
+            } => {
+                let Some(hold) = self.touch_hold.take() else {
+                    return Some(self.input(Input::LongTap(start_x, start_y)));
+                };
+                if let Some(base) = hold.base {
+                    match base {
+                        TouchHoldBase::Reflow(selection) => {
+                            if self.selection.is_none() {
+                                self.selection = Some(selection);
+                            }
+                        }
+                        TouchHoldBase::Fixed(selection) => {
+                            if self.pdf_selection.is_none() {
+                                self.pdf_selection = Some(selection);
+                            }
+                        }
+                    }
+                    self.notice = None;
+                    return Some(self.handle_text_long_press_with_force_ask(
+                        held_ms >= self.controls.very_long_press_millis(),
+                    ));
+                }
+                Some(self.input(Input::LongTap(start_x, start_y)))
+            }
+            _ => None,
+        }
+    }
+
+    fn start_touch_hold(&mut self, x: f32, y: f32) -> Change {
+        let mut base = None;
+        if self.touch_selection_enabled() {
+            self.selection = None;
+            self.pdf_selection = None;
+            self.pending_selection_action = None;
+            self.notice = None;
+            match self.screen {
+                Screen::Book => {
+                    let at_illustration = self
+                        .active
+                        .as_ref()
+                        .is_some_and(|active| active.reading.illustration_at(x, y).is_some());
+                    if !at_illustration
+                        && let Some(selection) = self
+                            .active
+                            .as_ref()
+                            .and_then(|active| active.reading.word_at(x, y))
+                    {
+                        self.selection = Some(selection.clone());
+                        self.start_cjk_selection();
+                        base = Some(TouchHoldBase::Reflow(selection));
+                    }
+                }
+                Screen::Fixed => {
+                    if let Some(fixed) = &self.fixed
+                        && fixed.reading.supports_text()
+                        && let Ok(crate::fixed_session::WordAtTouch::Ready(Some(selection))) =
+                            fixed.reading.select_word(x, y)
+                    {
+                        self.pdf_selection = Some(selection.clone());
+                        self.pdf_result_regions.clear();
+                        base = Some(TouchHoldBase::Fixed(selection));
+                    }
+                }
+                _ => {}
+            }
+        }
+        let corner_armed = self.touch_corner_direction(x, y).is_none();
+        self.touch_hold = Some(TouchHold { base, corner_armed });
+        if self
+            .touch_hold
+            .as_ref()
+            .is_some_and(|hold| hold.base.is_some())
+        {
+            Change::Partial
+        } else {
+            Change::None
+        }
+    }
+
+    fn touch_corner_direction(&self, x: f32, y: f32) -> Option<i16> {
+        let width = WIDTH as f32;
+        let height = HEIGHT as f32;
+        let left = x <= width * 0.12;
+        let right = x >= width * 0.88;
+        let top = y <= height * 0.10;
+        let bottom = y >= height * 0.90;
+        let rtl = match self.screen {
+            Screen::Book => self
+                .active
+                .as_ref()
+                .is_some_and(|active| active.reading.probe.pages_right_to_left()),
+            Screen::Fixed => self
+                .fixed
+                .as_ref()
+                .is_some_and(|fixed| fixed.reading.pages_right_to_left()),
+            _ => false,
+        };
+        match (rtl, left, right, top, bottom) {
+            (false, true, _, true, _) | (true, _, true, true, _) => Some(-3),
+            (false, _, true, _, true) | (true, true, _, _, true) => Some(3),
+            _ => None,
+        }
+    }
+
+    fn pan_touch_hold(&mut self, x: f32, y: f32) -> Change {
+        if self
+            .touch_hold
+            .as_ref()
+            .is_some_and(|hold| hold.base.is_some())
+        {
+            self.cjk_selection_lookup = None;
+            self.pending_selection_action = None;
+        }
+        let Some(direction) = self.touch_corner_direction(x, y) else {
+            if let Some(hold) = &mut self.touch_hold {
+                hold.corner_armed = true;
+            }
+            return self.extend_touch_selection(x, y);
+        };
+        let (armed, base) = self.touch_hold.as_mut().map_or((false, None), |hold| {
+            let armed = hold.corner_armed;
+            hold.corner_armed = false;
+            (armed, hold.base.clone())
+        });
+        if armed && base.is_some() {
+            return self.turn_for_touch_corner(direction);
+        }
+        Change::None
+    }
+
+    fn extend_touch_selection(&mut self, x: f32, y: f32) -> Change {
+        let base = self.touch_hold.as_ref().and_then(|hold| hold.base.clone());
+        match base {
+            Some(TouchHoldBase::Reflow(base)) => {
+                let Some((active, word)) = self
+                    .active
+                    .as_ref()
+                    .and_then(|active| active.reading.word_at(x, y).map(|word| (active, word)))
+                else {
+                    return Change::None;
+                };
+                if let Ok(selection) = active.reading.extend_saved_quote(&base, &word)
+                    && self.selection.as_ref() != Some(&selection)
+                {
+                    self.selection = Some(selection);
+                    return Change::Partial;
+                }
+            }
+            Some(TouchHoldBase::Fixed(base)) => {
+                let Some(fixed) = &self.fixed else {
+                    return Change::None;
+                };
+                let mut selection = base;
+                if fixed.reading.extend_selection(&mut selection, x, y)
+                    && self
+                        .pdf_selection
+                        .as_ref()
+                        .is_none_or(|current| current.text() != selection.text())
+                {
+                    self.pdf_selection = Some(selection);
+                    return Change::Partial;
+                }
+            }
+            None => {}
+        }
+        Change::None
+    }
+
+    fn turn_for_touch_corner(&mut self, direction: i16) -> Change {
+        match self.screen {
+            Screen::Book => {
+                let Some((previous, change)) = self.active.as_mut().map(|active| {
+                    let previous = (active.reading.chapter, active.reading.page);
+                    (previous, active.reading.automatic_turn(direction))
+                }) else {
+                    return Change::None;
+                };
+                let change = self.finish_book_update(change, previous);
+                if self.selection.is_none()
+                    && let Some(TouchHold {
+                        base: Some(TouchHoldBase::Reflow(selection)),
+                        ..
+                    }) = &self.touch_hold
+                {
+                    self.selection = Some(selection.clone());
+                }
+                change
+            }
+            Screen::Fixed => {
+                let Some((previous, result)) = self.fixed.as_mut().map(|fixed| {
+                    let previous = fixed.reading.page();
+                    (previous, fixed.reading.automatic_turn(direction))
+                }) else {
+                    return Change::None;
+                };
+                let change = self.finish_fixed_update(result, previous);
+                if self.pdf_selection.is_none()
+                    && let Some(TouchHold {
+                        base: Some(TouchHoldBase::Fixed(selection)),
+                        ..
+                    }) = &self.touch_hold
+                {
+                    self.pdf_selection = Some(selection.clone());
+                }
+                change
+            }
+            _ => Change::None,
+        }
+    }
 }
 
 impl App for Reader {
     fn draw(&self, canvas: &mut Canvas) {
         self.draw_content(canvas);
+        if self.screen == Screen::Skim {
+            self.draw_skim(canvas);
+        }
         self.draw_flow_popup(canvas);
         self.read_alarm.draw(canvas, self.screen == Screen::Book);
         self.draw_vocabulary_dialog(canvas);
-        self.draw_catalog_popup(canvas);
-        self.draw_sync_dialog(canvas);
         self.draw_logical_recovery(canvas);
     }
 
@@ -5825,27 +6837,46 @@ impl App for Reader {
     }
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
-        if let Some(change) = self.logical_recovery_input(input) { return change; }
-        if let Screen::Catalog(page) = self.screen && let Some(change) = self.catalog_input(page,input) { return change; }
-        if let Some(change) = self.sync_dialog_input(input) { return change; }
-        if let Some(change) = self.vocabulary_dialog_input(input) { return change; }
-        if self.flow_popup.is_some() { return self.flow_popup_input(input); }
-        if self.read_alarm.modal() { return self.read_alarm_input(input); }
-        if let Some(change) = self.style_editor_input(input) { return change; }
-        if let Some(change) = self.reading_history_input(input) { return change; }
-        if self.end_dialog.is_some() { return self.end_dialog_input(input); }
-        if self.range_edit.is_some() { return self.range_input(input); }
+        if let Some(change) = self.logical_recovery_input(input) {
+            return change;
+        }
+        if let Some(change) = self.vocabulary_dialog_input(input) {
+            return change;
+        }
+        if self.flow_popup.is_some() {
+            return self.flow_popup_input(input);
+        }
+        if self.read_alarm.modal() {
+            return self.read_alarm_input(input);
+        }
+        if let Some(change) = self.style_editor_input(input) {
+            return change;
+        }
+        if let Some(change) = self.reading_history_input(input) {
+            return change;
+        }
+        if self.end_dialog.is_some() {
+            return self.end_dialog_input(input);
+        }
+        if self.range_edit.is_some() {
+            return self.range_input(input);
+        }
         if self.saved_popup_over_book() {
             return self.saved_popup_input(input);
         }
         if let Screen::BookmarkBrowser(page) = self.screen {
-            return self.bookmark_browser_input(page, input).unwrap_or_else(|| self.input(input));
+            return self
+                .bookmark_browser_input(page, input)
+                .unwrap_or_else(|| self.input(input));
         }
         if self.screen == Screen::PageOverview
             && let Input::Swipe { dx, start_y, .. } = input
             && OVERVIEW_TRACK.contains(start_x, start_y)
         {
             return self.scrub_overview(start_x + dx);
+        }
+        if self.screen == Screen::Skim {
+            return self.skim_swipe(input, start_x);
         }
         if let Some(change) = self.swipe_display_control(input, start_x) {
             return change;
@@ -5874,20 +6905,33 @@ impl App for Reader {
     }
 
     fn input(&mut self, input: Input) -> Change {
-        if let Some(change) = self.logical_recovery_input(input) { return change; }
+        if matches!(
+            input,
+            Input::HoldStart(..) | Input::HoldPan(..) | Input::HoldRelease { .. }
+        ) {
+            return self.touch_hold_input(input).unwrap_or(Change::None);
+        }
+        if let Some(change) = self.logical_recovery_input(input) {
+            return change;
+        }
         // Any further user action owns the selection; late automatic results
         // must never replace a manually extended range or an open popup.
         self.cjk_selection_lookup = None;
-        if let Some(change) = self.sync_dialog_input(input) { return change; }
-        if let Some(change) = self.vocabulary_dialog_input(input) { return change; }
-        if let Some(change) = self.document_defaults_input(input) { return change; }
+        if let Some(change) = self.vocabulary_dialog_input(input) {
+            return change;
+        }
+        if let Some(change) = self.document_defaults_input(input) {
+            return change;
+        }
         if input == Input::Sleep {
-            self.cancel_catalog_for_sleep();
-            self.cancel_progress_sync();
+            self.touch_hold = None;
             self.spelling_lookup = None;
             self.cancel_library_export();
         }
-        if input == Input::Sleep && let Some(panel) = &mut self.online && panel.job.take().is_some() {
+        if input == Input::Sleep
+            && let Some(panel) = &mut self.online
+            && panel.job.take().is_some()
+        {
             panel.message = Some("Lookup cancelled when Reader went to sleep.".into());
         }
         if matches!(input, Input::Sleep) && self.ocr.take().is_some() {
@@ -5922,18 +6966,35 @@ impl App for Reader {
             if let Some(flow) = &mut self.text_flow {
                 flow.pause();
             }
-            return if input == Input::Wake { self.poll_read_alarm(Instant::now(), true) } else { Change::None };
+            return if input == Input::Wake {
+                self.poll_read_alarm(Instant::now(), true)
+            } else {
+                Change::None
+            };
         }
-        if self.read_alarm.modal() { return self.read_alarm_input(input); }
-        if let Some(change) = self.style_editor_input(input) { return change; }
-        if let Some(change) = self.reading_history_input(input) { return change; }
+        if self.read_alarm.modal() {
+            return self.read_alarm_input(input);
+        }
+        if let Some(change) = self.style_editor_input(input) {
+            return change;
+        }
+        if let Some(change) = self.reading_history_input(input) {
+            return change;
+        }
         self.sync_auto_turn(Instant::now());
-        if let Screen::Catalog(page) = self.screen && let Some(change) = self.catalog_input(page,input) { return change; }
-        if self.flow_popup.is_some() { return self.flow_popup_input(input); }
+        if self.flow_popup.is_some() {
+            return self.flow_popup_input(input);
+        }
         self.auto_turn.activity(Instant::now());
-        if self.end_dialog.is_some() { return self.end_dialog_input(input); }
-        if self.link_popup.is_some() { return self.link_address_input(input); }
-        if self.can_paste_address() && matches!(input, Input::Tap(x, y) if external_link::PASTE.contains(x,y)) {
+        if self.end_dialog.is_some() {
+            return self.end_dialog_input(input);
+        }
+        if self.link_popup.is_some() {
+            return self.link_address_input(input);
+        }
+        if self.can_paste_address()
+            && matches!(input, Input::Tap(x, y) if external_link::PASTE.contains(x,y))
+        {
             return self.paste_address();
         }
         if self.touch_locked {
@@ -5948,7 +7009,9 @@ impl App for Reader {
                 _ => return Change::None,
             }
         }
-        if self.range_edit.is_some() { return self.range_input(input); }
+        if self.range_edit.is_some() {
+            return self.range_input(input);
+        }
         if self.saved_popup_over_book() {
             return self.saved_popup_input(input);
         }
@@ -5957,13 +7020,17 @@ impl App for Reader {
         {
             return change;
         }
-        if self.screen==Screen::LibraryExport(library_export::Page::Colors) {return self.export_colors_input(input);}
+        if self.screen == Screen::LibraryExport(library_export::Page::Colors) {
+            return self.export_colors_input(input);
+        }
         if matches!(self.screen, Screen::Book | Screen::Fixed)
             && let Some(change) = self.overlay_footer_input(input)
         {
             return change;
         }
-        if let Input::Tap(x, y) = input && let Some(change) = self.tap_saved_mark(x, y) {
+        if let Input::Tap(x, y) = input
+            && let Some(change) = self.tap_saved_mark(x, y)
+        {
             return change;
         }
         if let Some(change) = self.assigned_gesture(input, None) {
@@ -5997,16 +7064,19 @@ impl App for Reader {
         }
         if self.screen == Screen::Illustration {
             if matches!(input, Input::Tap(x, y) if DONE.contains(x, y)) {
-                self.show(if self.book_details.as_ref().is_some_and(|details|
-                    details.back == Screen::BookmarkBrowser(bookmark_browser::Page::Book)) {
-                    Screen::BookmarkBrowser(bookmark_browser::Page::Book)
-                } else if self.book_details.is_some() {
-                    Screen::BookDetails
-                } else if self.fixed.is_some() {
-                    Screen::Fixed
-                } else {
-                    Screen::Book
-                });
+                self.show(
+                    if self.book_details.as_ref().is_some_and(|details| {
+                        details.back == Screen::BookmarkBrowser(bookmark_browser::Page::Book)
+                    }) {
+                        Screen::BookmarkBrowser(bookmark_browser::Page::Book)
+                    } else if self.book_details.is_some() {
+                        Screen::BookDetails
+                    } else if self.fixed.is_some() {
+                        Screen::Fixed
+                    } else {
+                        Screen::Book
+                    },
+                );
                 return Change::Partial;
             }
             if let Some(illustration) = &mut self.illustration {
@@ -6023,18 +7093,27 @@ impl App for Reader {
         if self.screen == Screen::Hyphenate {
             return self.hyphenation_input(input);
         }
-        if self.screen == Screen::CustomTitle { return self.chapter_editor_input(input); }
-        if self.screen == Screen::ClearOnlineHistory { return self.clear_online_history_input(input); }
+        if self.screen == Screen::CustomTitle {
+            return self.chapter_editor_input(input);
+        }
+        if self.screen == Screen::ClearOnlineHistory {
+            return self.clear_online_history_input(input);
+        }
         if self.screen == Screen::Footnote {
             return self.footnote_input(input);
         }
-        if self.screen == Screen::OnlineLookup { return self.online_input(input); }
-        if self.screen == Screen::OnlineEdit { return self.online_editor_input(input); }
+        if self.screen == Screen::OnlineLookup {
+            return self.online_input(input);
+        }
+        if self.screen == Screen::OnlineEdit {
+            return self.online_editor_input(input);
+        }
         if self.screen == Screen::Definition {
             return self.definition_input(input);
         }
-        if let Screen::SyncEdit(field) = self.screen { return self.sync_editor_input(input, field); }
-        if self.screen == Screen::VocabularyContext { return self.vocabulary_context_input(input); }
+        if self.screen == Screen::VocabularyContext {
+            return self.vocabulary_context_input(input);
+        }
         if matches!(self.screen, Screen::GoToPage | Screen::NumberingValue(_)) {
             return self.handle_page_number(input);
         }
@@ -6043,6 +7122,9 @@ impl App for Reader {
         }
         if self.screen == Screen::PageOverview {
             return self.overview_input(input);
+        }
+        if self.screen == Screen::Skim {
+            return self.skim_input(input);
         }
         if matches!(self.screen, Screen::CollectionName | Screen::ProfileName) {
             return self.name_editor_input(input);
@@ -6075,7 +7157,9 @@ impl App for Reader {
             return self.library_input(input);
         }
         if let Some(popup) = &mut self.result_context {
-            if let Input::Swipe { dx, dy, .. } = input && dy.abs() > dx.abs() {
+            if let Input::Swipe { dx, dy, .. } = input
+                && dy.abs() > dx.abs()
+            {
                 popup.scroll(dy);
                 return Change::Partial;
             }
@@ -6117,7 +7201,6 @@ impl App for Reader {
             Input::Tap(x, y) if primitive_ui::back_button(WIDTH as i32).contains(x, y) => {
                 match self.screen {
                     Screen::LibraryExport(page) => self.back_from_library_export(page),
-                    Screen::Catalog(page) => self.catalog_back(page),
                     Screen::OrganizeLibrary => self.show(Screen::Library),
                     Screen::BookList if matches!(self.book_list, Some(BookList::Author(_))) => {
                         self.book_list = Some(BookList::Authors);
@@ -6140,18 +7223,32 @@ impl App for Reader {
                         self.list_page = i / ROWS_PER_PAGE;
                     }
                     Screen::Dictionaries => self.show(self.dictionary_origin),
-                    Screen::FooterSettings | Screen::EndActionSettings | Screen::MetadataSaveSettings => {
-                        self.show(Screen::ReadingControls)
-                    }
+                    Screen::FooterSettings
+                    | Screen::EndActionSettings
+                    | Screen::MetadataSaveSettings
+                    | Screen::SelectionPosition
+                    | Screen::LongPressSettings => self.show(Screen::ReadingControls),
+                    Screen::VeryLongPressSettings => self.show(Screen::LongPressSettings),
+                    Screen::HighlightPromptSettings => self.show(Screen::LongPressSettings),
                     Screen::DocumentDefaults => self.show(Screen::ReadingControls),
                     Screen::StyleTweaks => self.show(self.tools_screen()),
-                    Screen::StylePreset | Screen::StyleFiles | Screen::StyleClear => self.show(Screen::StyleTweaks),
-                    Screen::StyleReview => self.show(if self.style_view.editor.is_some() { Screen::StyleEditor } else { Screen::StyleTweaks }),
+                    Screen::StylePreset | Screen::StyleFiles | Screen::StyleClear => {
+                        self.show(Screen::StyleTweaks)
+                    }
+                    Screen::StyleReview => self.show(if self.style_view.editor.is_some() {
+                        Screen::StyleEditor
+                    } else {
+                        Screen::StyleTweaks
+                    }),
                     Screen::StyleEditor => self.show(Screen::StyleTweaks),
                     Screen::ReadingProfiles => self.show(Screen::Typography),
                     Screen::RemoveProfiles => self.show(Screen::ReadingProfiles),
                     Screen::BookDetails => {
-                        if self.book_details.as_ref().is_some_and(|book| book.close_document) {
+                        if self
+                            .book_details
+                            .as_ref()
+                            .is_some_and(|book| book.close_document)
+                        {
                             return match self.leave_finished_book() {
                                 Ok(()) => Change::Partial,
                                 Err(error) => self.report(error),
@@ -6165,8 +7262,6 @@ impl App for Reader {
                     }
                     Screen::ReadingHistory(_) => self.history_back(),
                     Screen::ReadingData => self.show(Screen::Library),
-                    Screen::ProgressSync => self.show(self.tools_screen()),
-                    Screen::ProgressSyncSettings => self.show(Screen::ProgressSync),
                     Screen::ReadingControls => self.show(if self.fixed.is_some() {
                         Screen::FixedTools
                     } else if self.active.is_some() {
@@ -6187,9 +7282,12 @@ impl App for Reader {
                     }
                     Screen::Matches => self.show(Screen::Find),
                     Screen::CustomContents => self.show(self.contents_screen()),
-                    Screen::CustomEdits | Screen::CustomBookmarks => self.show(Screen::CustomContents),
+                    Screen::CustomEdits | Screen::CustomBookmarks => {
+                        self.show(Screen::CustomContents)
+                    }
                     Screen::NumberingDefaults => self.show(Screen::PageNumbering),
                     Screen::AutoTurnDistance => self.show(Screen::AutoTurn),
+                    Screen::AutoTurnPan => self.show(Screen::AutoTurn),
                     Screen::PageNumbering | Screen::PublisherOffer => self.show(Screen::Book),
                     Screen::GeneratedContents => self.show(Screen::Contents),
                     Screen::BookmarkMatches => self.show(Screen::BookmarkFind),
@@ -6198,7 +7296,9 @@ impl App for Reader {
                     Screen::ImportPdfAnnotations => self.show(Screen::Highlights),
                     Screen::ExportAnnotations => self.show(Screen::Highlights),
                     Screen::RemoveHighlight => self.show(Screen::Annotation),
-                    Screen::VocabularyWord | Screen::VocabularyOptions => self.show(Screen::Vocabulary),
+                    Screen::VocabularyWord | Screen::VocabularyOptions => {
+                        self.show(Screen::Vocabulary)
+                    }
                     Screen::VocabularyBooks => self.show(Screen::VocabularyOptions),
                     _ if self.fixed.is_some() => self.show(Screen::FixedTools),
                     _ => self.show(Screen::BookTools),
@@ -6257,23 +7357,29 @@ impl App for Reader {
         let page = self
             .active
             .as_ref()
-            .filter(|_| self.screen == Screen::Book)
+            .filter(|_| matches!(self.screen, Screen::Book | Screen::Skim))
             .and_then(|active| active.reading.deadline());
         let fixed_page = self
             .fixed
             .as_ref()
-            .filter(|_| self.screen == Screen::Fixed)
+            .filter(|_| matches!(self.screen, Screen::Fixed | Screen::Skim))
             .and_then(|fixed| fixed.reading.deadline());
         page.into_iter()
             .chain(fixed_page)
             .chain(self.export_deadline())
-            .chain(self.catalog.job.as_ref().map(|job| job.poll_at))
             .chain(self.bookmark_metadata_deadline())
-            .chain(self.progress_sync.deadline())
-            .chain(self.nearby_marks.as_ref().and_then(|import| import.deadline))
+            .chain(
+                self.nearby_marks
+                    .as_ref()
+                    .and_then(|import| import.deadline),
+            )
             .chain(self.save_at)
             .chain(self.metadata_checkpoint.deadline())
-            .chain(self.stats_awake.then(|| self.read_alarm.deadline()).flatten())
+            .chain(
+                self.stats_awake
+                    .then(|| self.read_alarm.deadline())
+                    .flatten(),
+            )
             .chain(self.search_at)
             .chain(self.nearby.deadline())
             .chain(self.spelling_lookup.as_ref().map(|job| job.deadline))
@@ -6285,7 +7391,11 @@ impl App for Reader {
                     .as_ref()
                     .and_then(|import| import.deadline),
             )
-            .chain(self.online.as_ref().and_then(|p| p.job.as_ref().map(|j| j.poll_at)))
+            .chain(
+                self.online
+                    .as_ref()
+                    .and_then(|p| p.job.as_ref().map(|j| j.poll_at)),
+            )
             .chain(self.ocr.as_ref().map(|job| job.deadline))
             .chain(self.text_flow.as_ref().and_then(TextFlow::deadline))
             .chain(self.stats.deadline())
@@ -6304,17 +7414,26 @@ impl App for Reader {
     }
 
     fn tick(&mut self, now: Instant) -> Change {
-        if let Some(change) = self.poll_progress_sync(now) { return change; }
         if self.stats_awake {
             let alarm = self.poll_read_alarm(now, false);
-            if alarm != Change::None { return alarm; }
+            if alarm != Change::None {
+                return alarm;
+            }
         }
-        if let Some(change) = self.poll_cjk_selection(now) { return change; }
-        if let Some(change) = self.poll_spelling_lookup(now) { return change; }
-        if let Some(change) = self.poll_online(now) { return change; }
-        if let Some(change) = self.poll_catalog(now) { return change; }
+        if let Some(change) = self.poll_cjk_selection(now) {
+            return change;
+        }
+        if let Some(change) = self.poll_spelling_lookup(now) {
+            return change;
+        }
+        if let Some(change) = self.poll_online(now) {
+            return change;
+        }
         if self.save_at.is_some_and(|at| at <= now)
-            || self.metadata_checkpoint.deadline().is_some_and(|at| at <= now)
+            || self
+                .metadata_checkpoint
+                .deadline()
+                .is_some_and(|at| at <= now)
         {
             self.save_at = None;
             self.metadata_checkpoint.cancel();
@@ -6325,8 +7444,13 @@ impl App for Reader {
             }
         }
         if self.reading_history.deadline().is_some_and(|at| at <= now)
-            && let Err(error) = self.reading_history.save(now, crate::mark_time::now(), false)
-            && error.kind() != io::ErrorKind::WouldBlock { return self.report(error); }
+            && let Err(error) = self
+                .reading_history
+                .save(now, crate::mark_time::now(), false)
+            && error.kind() != io::ErrorKind::WouldBlock
+        {
+            return self.report(error);
+        }
         if self.stats.deadline().is_some_and(|at| at <= now)
             && let Err(error) = self
                 .stats
@@ -6336,7 +7460,10 @@ impl App for Reader {
         {
             return self.report(error);
         }
-        if self.export_deadline().is_some_and(|deadline| deadline <= now) {
+        if self
+            .export_deadline()
+            .is_some_and(|deadline| deadline <= now)
+        {
             return match self.step_library_export(now) {
                 Ok(change) => change,
                 Err(error) => {
@@ -6345,7 +7472,10 @@ impl App for Reader {
                 }
             };
         }
-        if self.bookmark_metadata_deadline().is_some_and(|deadline| deadline <= now) {
+        if self
+            .bookmark_metadata_deadline()
+            .is_some_and(|deadline| deadline <= now)
+        {
             return match self.step_bookmark_metadata(now) {
                 Ok(change) => change,
                 Err(error) => self.report(error),
@@ -6359,8 +7489,11 @@ impl App for Reader {
         {
             return self.step_scan_column(now);
         }
-        if self.nearby_marks.as_ref()
-            .and_then(|import| import.deadline).is_some_and(|at| at <= now)
+        if self
+            .nearby_marks
+            .as_ref()
+            .and_then(|import| import.deadline)
+            .is_some_and(|at| at <= now)
         {
             return match self.step_nearby_marks() {
                 Ok(change) => change,
@@ -6423,10 +7556,17 @@ impl App for Reader {
                 }
             };
         }
-        if self.numbering_scan.as_ref().is_some_and(|scan| scan.deadline <= now) {
+        if self
+            .numbering_scan
+            .as_ref()
+            .is_some_and(|scan| scan.deadline <= now)
+        {
             return match self.step_character_pages(now) {
                 Ok(change) => change,
-                Err(error) => { self.numbering_scan = None; self.report(error) }
+                Err(error) => {
+                    self.numbering_scan = None;
+                    self.report(error)
+                }
             };
         }
         if self.screen == Screen::ReadFixedText
@@ -6437,6 +7577,9 @@ impl App for Reader {
         }
         if self.auto_turn_eligible() && self.auto_turn.take_due(now) {
             return self.step_auto_turn(now);
+        }
+        if self.screen == Screen::Skim {
+            return self.skim_tick(now);
         }
         if self.screen == Screen::Book
             && let Some(active) = &mut self.active
@@ -6456,12 +7599,11 @@ impl App for Reader {
     }
 
     fn save(&mut self) -> io::Result<()> {
-        self.catalog.cancel();
-        self.cancel_progress_sync();
         self.save_library()?;
         let now = Instant::now();
         self.stats.checkpoint(&self.stats_path, now, true)?;
-        self.reading_history.save(now, crate::mark_time::now(), true)?;
+        self.reading_history
+            .save(now, crate::mark_time::now(), true)?;
         self.pace.checkpoint(now)?;
         if let Err(error) = self.save_bookmark_metadata() {
             eprintln!("reader metadata_cache_save_failed={error}");
@@ -6471,7 +7613,6 @@ impl App for Reader {
 
     fn storage_returned(&mut self) -> io::Result<()> {
         self.document_defaults.reload();
-        self.cancel_progress_sync();
 
         self.cjk_selection_lookup = None;
         self.spelling_lookup = None;
@@ -6589,13 +7730,15 @@ fn definition_actions(popup: Rect) -> [Rect; 3] {
 }
 
 fn same_pdf_highlight(left: &PdfHighlight, right: &PdfHighlight) -> bool {
-    left.parts().any(|(page, bounds, _)| page == right.page
-        && bounds.len() == right.bounds.len()
-        && bounds.iter().zip(&right.bounds).all(|(a, b)| {
-            [a.x0 - b.x0, a.y0 - b.y0, a.x1 - b.x1, a.y1 - b.y1]
-                .into_iter()
-                .all(|delta| delta.abs() <= 0.000_01)
-        }))
+    left.parts().any(|(page, bounds, _)| {
+        page == right.page
+            && bounds.len() == right.bounds.len()
+            && bounds.iter().zip(&right.bounds).all(|(a, b)| {
+                [a.x0 - b.x0, a.y0 - b.y0, a.x1 - b.x1, a.y1 - b.y1]
+                    .into_iter()
+                    .all(|delta| delta.abs() <= 0.000_01)
+            })
+    })
 }
 
 fn column_view(original: FixedPreferences, bounds: PdfTextRect) -> FixedPreferences {
@@ -6605,7 +7748,7 @@ fn column_view(original: FixedPreferences, bounds: PdfTextRect) -> FixedPreferen
         scan_contrast: original.scan_contrast,
         dither: original.dither,
         straighten_limit: original.straighten_limit,
-                        force_ocr: original.force_ocr,
+        force_ocr: original.force_ocr,
         scan_white_level: original.scan_white_level,
         continuous_gap: original.continuous_gap,
         ..FixedPreferences::default()
@@ -6756,12 +7899,25 @@ fn device_settings() -> Settings {
 
 fn text_size_items(settings: Settings, owner: u64) -> [Item; 3] {
     let size = format!("Current size {}", settings.font_label());
-    let change = |delta: f64| settings.logical_font_size.map_or_else(|| Action::Text(Settings {
-        font_size: (settings.font_size + delta as f32 * 8.).clamp(20.,100.), ..settings
-    }), |value| Action::ApplyLogicalFont(owner,(value+delta).clamp(12.,255.)));
-    [Item::new("Larger text",change(0.5)).detail(&size),
-        Item::new("Smaller text",change(-0.5)),
-        Item::new("Set font size",Action::Show(Screen::NumberingValue(NumberField::LogicalFont(owner))))]
+    let change = |delta: f64| {
+        settings.logical_font_size.map_or_else(
+            || {
+                Action::Text(Settings {
+                    font_size: (settings.font_size + delta as f32 * 8.).clamp(20., 100.),
+                    ..settings
+                })
+            },
+            |value| Action::ApplyLogicalFont(owner, (value + delta).clamp(12., 255.)),
+        )
+    };
+    [
+        Item::new("Larger text", change(0.5)).detail(&size),
+        Item::new("Smaller text", change(-0.5)),
+        Item::new(
+            "Set font size",
+            Action::Show(Screen::NumberingValue(NumberField::LogicalFont(owner))),
+        ),
+    ]
 }
 
 fn text_items(settings: Settings, scroll: bool, owner: u64) -> Vec<Item> {
@@ -6940,7 +8096,11 @@ mod tests {
 
         fn app(&self) -> Reader {
             let fonts = [crate::test_fixture("fonts/Silkscreen-Regular.ttf")];
-            Reader::open(&self.root, &self.state, fonts.to_vec()).unwrap()
+            let mut app = Reader::open(&self.root, &self.state, fonts.to_vec()).unwrap();
+            // Most interaction fixtures exercise the action popup explicitly;
+            // the stock single-word dictionary default has focused coverage below.
+            app.controls.dictionary_on_single_word = Some(false);
+            app
         }
     }
 
@@ -7036,7 +8196,12 @@ mod tests {
         assert!(app.library.recently_read().next().is_none());
         app.save().unwrap();
 
-        let mut reopened = fixture.app();
+        let mut reopened = Reader::open(
+            &fixture.root,
+            &fixture.state,
+            vec![crate::test_fixture("fonts/Silkscreen-Regular.ttf")],
+        )
+        .unwrap();
         for list in [
             BookList::Favorites,
             BookList::Status(ReadingStatus::OnHold),
@@ -7185,7 +8350,12 @@ mod tests {
         let content = Rect::new(0, 0, WIDTH as i32, PAGE_HEIGHT as i32);
         assert_eq!(light_area, content);
         assert_eq!(night_area, content);
-        let mut reopened = fixture.app();
+        let mut reopened = Reader::open(
+            &fixture.root,
+            &fixture.state,
+            vec![crate::test_fixture("fonts/Silkscreen-Regular.ttf")],
+        )
+        .unwrap();
         assert_eq!(reopened.controls, controls);
         assert_eq!(
             reopened.controls.page_input(Input::Tap(100.0, 700.0)),
@@ -7339,8 +8509,17 @@ mod tests {
         let original = position(&app.active.as_ref().unwrap().reading);
         app.activate(Action::ResetText).unwrap();
         let reset = &app.active.as_ref().unwrap().reading;
-        assert_eq!(reset.config.settings.logical_font_size, Some(crate::logical_font::DEFAULT));
-        assert_eq!(reset.config.settings.font_size, device_settings().font_scale.effective(crate::logical_font::DEFAULT).unwrap());
+        assert_eq!(
+            reset.config.settings.logical_font_size,
+            Some(crate::logical_font::DEFAULT)
+        );
+        assert_eq!(
+            reset.config.settings.font_size,
+            device_settings()
+                .font_scale
+                .effective(crate::logical_font::DEFAULT)
+                .unwrap()
+        );
         assert_eq!(
             reset.config.settings.hyphenation_mode(),
             crate::HyphenationMode::Automatic
@@ -7371,8 +8550,13 @@ mod tests {
         fs::write(&pdf, crate::fixed::tests::document()).unwrap();
         let mut app = fixture.app();
         app.open_path(&pdf).unwrap();
-        let hash = md5::Digest(koreader_sidecar::partial_md5(&mut fs::File::open(&pdf).unwrap()).unwrap());
-        let progress = |page| format!("return {{last_page = {page}, doc_pages = 2, partial_md5_checksum = '{hash:x}'}}");
+        let hash =
+            md5::Digest(koreader_sidecar::partial_md5(&mut fs::File::open(&pdf).unwrap()).unwrap());
+        let progress = |page| {
+            format!(
+                "return {{last_page = {page}, doc_pages = 2, partial_md5_checksum = '{hash:x}'}}"
+            )
+        };
         let nearby = pdf.with_extension("sdr");
         fs::create_dir(&nearby).unwrap();
         let metadata = nearby.join("metadata.PDF.lua");
@@ -7380,15 +8564,41 @@ mod tests {
         fs::write(nearby.join("metadata.epub.lua"), "return {}").unwrap();
         fs::write(fixture.root.join("koreader-progress.lua"), progress(1)).unwrap();
         app.activate(Action::PreviewKoReaderPosition).unwrap();
-        assert!(app.items().iter().any(|item| item.title == "Saved beside this book"));
-        assert_eq!(app.position_import.as_ref().unwrap().target.as_ref().unwrap().page, 1);
+        assert!(
+            app.items()
+                .iter()
+                .any(|item| item.title == "Saved beside this book")
+        );
+        assert_eq!(
+            app.position_import
+                .as_ref()
+                .unwrap()
+                .target
+                .as_ref()
+                .unwrap()
+                .page,
+            1
+        );
         assert_eq!(app.current_position().unwrap().page, 0);
         app.activate(Action::ApplyKoReaderPosition).unwrap();
         assert_eq!(app.current_position().unwrap().page, 1);
         app.show(Screen::ReadingData);
         tap_contents_item(&mut app, "Import a copied KOReader position");
-        assert!(app.items().iter().any(|item| item.title == "Copied to Reader data"));
-        assert_eq!(app.position_import.as_ref().unwrap().target.as_ref().unwrap().page, 0);
+        assert!(
+            app.items()
+                .iter()
+                .any(|item| item.title == "Copied to Reader data")
+        );
+        assert_eq!(
+            app.position_import
+                .as_ref()
+                .unwrap()
+                .target
+                .as_ref()
+                .unwrap()
+                .page,
+            0
+        );
         assert_eq!(app.current_position().unwrap().page, 1);
         assert_eq!(fs::read_to_string(metadata).unwrap(), progress(2));
     }
@@ -7405,22 +8615,39 @@ mod tests {
             let hash = koreader_sidecar::partial_md5(&mut fs::File::open(&path).unwrap()).unwrap();
             let directory = path.with_extension("sdr");
             fs::create_dir(&directory).unwrap();
-            fs::write(directory.join("metadata.pdf.lua"), format!(
-                "return {{last_page=2, doc_pages=2, partial_md5_checksum='{:x}'}}", md5::Digest(hash)
-            )).unwrap();
+            fs::write(
+                directory.join("metadata.pdf.lua"),
+                format!(
+                    "return {{last_page=2, doc_pages=2, partial_md5_checksum='{:x}'}}",
+                    md5::Digest(hash)
+                ),
+            )
+            .unwrap();
             path
         };
-        let mut app = Reader::open(book.parent().unwrap(), &fixture.state,
-            vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")]).unwrap();
+        let mut app = Reader::open(
+            book.parent().unwrap(),
+            &fixture.state,
+            vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+        )
+        .unwrap();
         assert!(app.open_path(&book).is_ok());
         let entry = &app.fixed.as_ref().unwrap().entry;
-        let metadata = app.library.nearby_koreader_metadata(&entry.path).unwrap().unwrap();
+        let metadata = app
+            .library
+            .nearby_koreader_metadata(&entry.path)
+            .unwrap()
+            .unwrap();
         let before = fs::read(&metadata).unwrap();
         let expected = koreader_sidecar::parse(&before).unwrap().last_page.unwrap() as usize - 1;
         let old = app.current_position().unwrap();
         app.show(Screen::ReadingControls);
         tap_contents_item(&mut app, "Import KOReader position");
-        assert!(app.items().iter().any(|row| row.title == "Saved beside this book"));
+        assert!(
+            app.items()
+                .iter()
+                .any(|row| row.title == "Saved beside this book")
+        );
         assert_eq!(app.current_position(), Some(old.clone()));
         tap_contents_item(&mut app, "Apply reading position");
         assert_eq!(app.current_position().unwrap().page, expected);
@@ -7596,6 +8823,170 @@ mod tests {
     }
 
     #[test]
+    fn skim_previews_epub_and_cancel_restores_origin_without_history() {
+        let fixture = Fixture::new();
+        let long = fixture.root.join("Long Chapter.epub");
+        fs::write(&long, include_bytes!("../tests/fixtures/long-chapter.epub")).unwrap();
+        let mut app = fixture.app();
+        app.open_path(&long).unwrap();
+        let origin = app.current_history_location().unwrap();
+        let history = app.back.clone();
+
+        app.activate(Action::Skim).unwrap();
+        assert_eq!(app.screen, Screen::Skim);
+        capture_test_screen(&app, &simulation_fonts(), "READER_SKIM_SCREENSHOT", false);
+        assert_eq!(app.input(Input::PageForward), Change::Partial);
+        for _ in 0..8 {
+            if !app.active.as_ref().unwrap().reading.is_turning() {
+                break;
+            }
+            let due = app.deadline().unwrap();
+            app.tick(due + Duration::from_secs(1));
+        }
+        assert!(!app.active.as_ref().unwrap().reading.is_turning());
+        assert_ne!(app.current_history_location().as_ref(), Some(&origin));
+
+        let cancel = Input::Tap(410.0, 1568.0);
+        assert_eq!(app.input(cancel), Change::Partial);
+        assert_eq!(app.screen, Screen::Book);
+        assert_eq!(app.current_history_location().as_ref(), Some(&origin));
+        assert_eq!(app.back, history);
+    }
+
+    #[test]
+    fn skim_cancel_during_queued_epub_turns_restores_origin_and_drops_the_queue() {
+        let fixture = Fixture::new();
+        let long = fixture.root.join("Long Chapter.epub");
+        fs::write(&long, include_bytes!("../tests/fixtures/long-chapter.epub")).unwrap();
+        let mut app = fixture.app();
+        app.open_path(&long).unwrap();
+        let origin = app.current_history_location().unwrap();
+        let history = app.back.clone();
+
+        app.activate(Action::Skim).unwrap();
+        for _ in 0..4 {
+            assert_eq!(app.input(Input::PageForward), Change::Partial);
+        }
+        assert!(app.active.as_ref().unwrap().reading.is_turning());
+
+        assert_eq!(app.input(Input::Tap(410.0, 1568.0)), Change::Partial);
+        assert_eq!(app.screen, Screen::Book);
+        assert_eq!(app.current_history_location().as_ref(), Some(&origin));
+        assert_eq!(app.back, history);
+        assert!(!app.active.as_ref().unwrap().reading.is_turning());
+    }
+
+    #[test]
+    fn skim_commits_one_history_return_after_a_queued_epub_turn() {
+        let fixture = Fixture::new();
+        let long = fixture.root.join("Long Chapter.epub");
+        fs::write(&long, include_bytes!("../tests/fixtures/long-chapter.epub")).unwrap();
+        let mut app = fixture.app();
+        app.open_path(&long).unwrap();
+        let origin = app.current_history_location().unwrap();
+        let history_len = app.back.len();
+
+        app.activate(Action::Skim).unwrap();
+        assert_eq!(app.input(Input::PageForward), Change::Partial);
+        let read_here = Input::Tap(854.0, 1568.0);
+        assert_eq!(app.input(read_here), Change::Partial);
+        assert_eq!(app.screen, Screen::Skim);
+        for _ in 0..8 {
+            if app.screen != Screen::Skim {
+                break;
+            }
+            let due = app.deadline().unwrap();
+            app.tick(due + Duration::from_secs(1));
+        }
+        assert_eq!(app.screen, Screen::Book);
+        assert_eq!(app.back.len(), history_len + 1);
+        assert_eq!(app.back.last(), Some(&origin));
+        assert_ne!(app.current_history_location().as_ref(), Some(&origin));
+
+        app.activate(Action::ReturnToLocation).unwrap();
+        assert_eq!(app.current_history_location().as_ref(), Some(&origin));
+    }
+
+    #[test]
+    fn skim_progress_drag_previews_across_chapters_and_commits_a_return_location() {
+        let fixture = Fixture::new();
+        let book = fixture.root.join("Many chapters.epub");
+        fs::copy(crate::test_fixture("many-chapters.epub"), &book).unwrap();
+        let mut app = fixture.app();
+        app.open_path(&book).unwrap();
+        assert!(
+            app.active
+                .as_ref()
+                .unwrap()
+                .reading
+                .probe
+                .chapter_entries()
+                .len()
+                > 2
+        );
+        let origin = app.current_history_location().unwrap();
+
+        app.activate(Action::Skim).unwrap();
+        let track_y = HEIGHT as f32 - 297.0;
+        assert_eq!(app.input(Input::Tap(300.0, track_y)), Change::Partial);
+        let swipe = Input::Swipe {
+            dx: 600.0,
+            dy: 0.0,
+            start_y: track_y,
+        };
+        assert_eq!(app.swipe(swipe, 400.0), Change::Partial);
+        let preview = app.current_history_location().unwrap();
+        assert!(preview.position.chapter > origin.position.chapter);
+
+        assert_eq!(app.input(Input::Tap(854.0, 1568.0)), Change::Partial);
+        assert_eq!(app.screen, Screen::Book);
+        assert_eq!(app.current_history_location().as_ref(), Some(&preview));
+        assert_eq!(app.back.last(), Some(&origin));
+        app.activate(Action::ReturnToLocation).unwrap();
+        assert_eq!(app.current_history_location().as_ref(), Some(&origin));
+    }
+
+    #[test]
+    fn skim_cancels_fixed_page_scrub_back_to_original_page() {
+        let fixture = Fixture::new();
+        let pdf = fixture.root.join("Tilted Scan.pdf");
+        fs::copy(crate::test_fixture("tilted-scan.pdf"), &pdf).unwrap();
+        let mut app = fixture.app();
+        app.open_path(&pdf).unwrap();
+        let origin = app.current_history_location().unwrap();
+        let history = app.back.clone();
+
+        app.activate(Action::Skim).unwrap();
+        capture_test_screen(
+            &app,
+            &simulation_fonts(),
+            "READER_SKIM_FIXED_SCREENSHOT",
+            false,
+        );
+        let scrub = Input::Tap(1100.0, 1383.0);
+        assert_eq!(app.input(scrub), Change::Partial);
+        assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 1);
+        let cancel = Input::Tap(410.0, 1568.0);
+        assert_eq!(app.input(cancel), Change::Partial);
+        assert_eq!(app.screen, Screen::Fixed);
+        assert_eq!(app.current_history_location().as_ref(), Some(&origin));
+        assert_eq!(app.back, history);
+    }
+
+    #[test]
+    fn skim_keeps_done_exit_available() {
+        let fixture = Fixture::new();
+        let mut app = fixture.app();
+        app.open_path(&fixture.book).unwrap();
+        app.activate(Action::Skim).unwrap();
+        assert_eq!(app.screen, Screen::Skim);
+        assert_eq!(
+            app.input(Input::Tap((DONE.x + 20) as f32, (DONE.y + 20) as f32)),
+            Change::Exit
+        );
+    }
+
+    #[test]
     fn browses_other_chapters_without_moving_until_a_thumbnail_is_chosen() {
         let fixture = Fixture::new();
         let mut app = fixture.app();
@@ -7694,7 +9085,11 @@ mod tests {
         let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
         let mut app = Reader::open(&fixture.root, &fixture.state, fonts.to_vec()).unwrap();
         app.open_path(&fixture.book).unwrap();
-        app.activate(Action::Text(Settings { font_size: 50.0, ..device_settings() })).unwrap();
+        app.activate(Action::Text(Settings {
+            font_size: 50.0,
+            ..device_settings()
+        }))
+        .unwrap();
         let original = position(&app.active.as_ref().unwrap().reading);
         app.activate(Action::PreviewKoReaderPosition).unwrap();
         let expected = app
@@ -7712,7 +9107,10 @@ mod tests {
         app.activate(Action::ApplyKoReaderPosition).unwrap();
         let reading = &app.active.as_ref().unwrap().reading;
         assert_eq!(reading.probe.page_for(&expected), Some(reading.page));
-        assert_eq!(expected.block, reading.probe.fragment("door").unwrap().block);
+        assert_eq!(
+            expected.block,
+            reading.probe.fragment("door").unwrap().block
+        );
         assert_ne!(reading.chapter, original.chapter);
         capture_test_screen(&app, &fonts, "READER_KOREADER_POSITION_PAGE", false);
         assert_eq!(fs::read(&path).unwrap(), authored);
@@ -7813,16 +9211,28 @@ mod tests {
     fn follows_a_direct_kindle_image_link_and_returns_to_the_same_page() {
         let fixture = Fixture::new();
         let path = Path::new("Picture.azw3");
-        fs::write(fixture.root.join(path), crate::kf8::tests::linked_image_fixture()).unwrap();
+        fs::write(
+            fixture.root.join(path),
+            crate::kf8::tests::linked_image_fixture(),
+        )
+        .unwrap();
         let mut app = fixture.app();
         app.open_path(path).unwrap();
         let before = position(&app.active.as_ref().unwrap().reading);
-        let target = app.active.as_ref().unwrap().reading.links().into_iter().find_map(|(label,target)| (label.contains("View original")).then_some(target)).unwrap();
+        let target = app
+            .active
+            .as_ref()
+            .unwrap()
+            .reading
+            .links()
+            .into_iter()
+            .find_map(|(label, target)| (label.contains("View original")).then_some(target))
+            .unwrap();
         app.activate(Action::Jump(target)).unwrap();
-        assert_eq!(app.screen,Screen::Illustration);
+        assert_eq!(app.screen, Screen::Illustration);
         assert!(app.illustration.is_some());
-        app.input(Input::Tap((DONE.x + 15) as f32,(DONE.y + 15) as f32));
-        assert_eq!(app.screen,Screen::Book);
+        app.input(Input::Tap((DONE.x + 15) as f32, (DONE.y + 15) as f32));
+        assert_eq!(app.screen, Screen::Book);
         assert_eq!(position(&app.active.as_ref().unwrap().reading), before);
     }
 
@@ -7857,7 +9267,11 @@ mod tests {
         app.open_path(&fixture.book).unwrap();
         let original = position(&app.active.as_ref().unwrap().reading);
         app.definitions = ["The movement of the sea", "A flow of water"]
-            .map(|text| dictionary::Definition { dictionary: "Sample".into(), word: "Tide".into(), text: text.into() })
+            .map(|text| dictionary::Definition {
+                dictionary: "Sample".into(),
+                word: "Tide".into(),
+                text: text.into(),
+            })
             .into();
         app.show(Screen::Definition);
         assert!(app.definition_over_book());
@@ -8156,7 +9570,9 @@ mod tests {
         let book = Book::open(&f.book).unwrap();
         assert!(book.recovered_placeholder(&book.chapters[0]));
         assert_eq!(book.chapters.len(), 2);
-        let [label] = book.printed_pages() else { panic!("Expected the surviving publisher boundary") };
+        let [label] = book.printed_pages() else {
+            panic!("Expected the surviving publisher boundary")
+        };
         assert_eq!(label.label, "2");
     }
 
@@ -8166,7 +9582,9 @@ mod tests {
         let mut nav = String::from(r#"<html><body><nav type="page-list"><ol>"#);
         nav.push_str(r#"<li><a href="first.xhtml#passage2">iii</a></li>"#);
         for n in 3..=14 {
-            nav.push_str(&format!(r#"<li><a href="first.xhtml#passage{n}">{n}</a></li>"#));
+            nav.push_str(&format!(
+                r#"<li><a href="first.xhtml#passage{n}">{n}</a></li>"#
+            ));
         }
         nav.push_str(r#"<li><a href="second.xhtml">14</a></li></ol></nav></body></html>"#);
         write_outline_fixture(&fixture.book, Some(nav.as_bytes()), None);
@@ -8174,6 +9592,7 @@ mod tests {
             .map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
             .unwrap_or_else(|| vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")]);
         let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        app.controls.dictionary_on_single_word = Some(false);
         app.open_path(&fixture.book).unwrap();
         assert_eq!(app.visible_publisher_page(), None);
         assert_eq!(app.status_caption(), None);
@@ -8189,7 +9608,10 @@ mod tests {
         app.activate(target.action).unwrap();
         assert_eq!(app.active.as_ref().unwrap().reading.chapter, 0);
         let frame = |app: &Reader, dark| {
-            let paths = fonts.iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>();
+            let paths = fonts
+                .iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect::<Vec<_>>();
             let mut canvas = Canvas::new(WIDTH, HEIGHT, &paths).unwrap();
             primitive_app::frame(app, &mut canvas, dark)
         };
@@ -8197,12 +9619,31 @@ mod tests {
         app.open_reading_edge(true, 520.);
         tap_reading_control(&mut app, "Printed pages in margin");
         let marked = frame(&app, false);
-        let margin = app.active.as_ref().unwrap().reading.probe.settings.side_margin();
-        let changes = original.iter().zip(&marked).enumerate().filter(|(_, (a, b))| a != b)
-            .map(|(index, _)| index).collect::<Vec<_>>();
-        assert!(!changes.is_empty(), "A visible source boundary should draw a label");
-        assert!(changes.iter().all(|index| index % WIDTH as usize >= (WIDTH - margin) as usize
-            && index / (WIDTH as usize) < PAGE_HEIGHT as usize));
+        let margin = app
+            .active
+            .as_ref()
+            .unwrap()
+            .reading
+            .probe
+            .settings
+            .side_margin();
+        let changes = original
+            .iter()
+            .zip(&marked)
+            .enumerate()
+            .filter(|(_, (a, b))| a != b)
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        assert!(
+            !changes.is_empty(),
+            "A visible source boundary should draw a label"
+        );
+        assert!(
+            changes
+                .iter()
+                .all(|index| index % WIDTH as usize >= (WIDTH - margin) as usize
+                    && index / (WIDTH as usize) < PAGE_HEIGHT as usize)
+        );
         capture_test_screen(&app, &fonts, "READER_PRINTED_MARGIN_SCREENSHOT", false);
         app.activate(Action::TogglePublisherMargins).unwrap();
         assert_eq!(frame(&app, false), original);
@@ -8224,10 +9665,20 @@ mod tests {
         let mut reopened = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
         reopened.activate(Action::Continue).unwrap();
         assert_eq!(reopened.current_publisher_page(), before);
-        assert_eq!(reopened.status_caption().as_deref(), Some("Printed page 14"));
-        let next = Settings { font_size: 48., logical_font_size: None, ..reopened.active.as_ref().unwrap().reading.config.settings };
+        assert_eq!(
+            reopened.status_caption().as_deref(),
+            Some("Printed page 14")
+        );
+        let next = Settings {
+            font_size: 48.,
+            logical_font_size: None,
+            ..reopened.active.as_ref().unwrap().reading.config.settings
+        };
         reopened.activate(Action::Text(next)).unwrap();
-        assert_eq!(reopened.status_caption().as_deref(), Some("Printed page 14"));
+        assert_eq!(
+            reopened.status_caption().as_deref(),
+            Some("Printed page 14")
+        );
         reopened.activate(Action::TogglePublisherFooter).unwrap();
         assert_eq!(reopened.status_caption(), None);
         let mut persisted = fixture.app();
@@ -8238,7 +9689,9 @@ mod tests {
     fn finish_character_numbering(app: &mut Reader) {
         let limit = app.active.as_ref().unwrap().reading.probe.chapter_count() + 1;
         for _ in 0..limit {
-            let Some(scan) = &app.numbering_scan else { return };
+            let Some(scan) = &app.numbering_scan else {
+                return;
+            };
             app.step_character_pages(scan.deadline).unwrap();
         }
         assert!(app.numbering_scan.is_none());
@@ -8259,7 +9712,12 @@ mod tests {
         wait_for_search(&mut app, 14);
         assert_eq!(app.hits.len(), 14);
         // CREngine clamps passages before the first marker to its first label.
-        for (row, expected) in [(0, "Page iii"), (1, "Page iii"), (3, "Page iii"), (4, "Page vii")] {
+        for (row, expected) in [
+            (0, "Page iii"),
+            (1, "Page iii"),
+            (3, "Page iii"),
+            (4, "Page vii"),
+        ] {
             app.preview_result(row).unwrap();
             assert_eq!(app.result_context.as_ref().unwrap().label, expected);
         }
@@ -8268,11 +9726,21 @@ mod tests {
         finish_character_numbering(&mut app);
         app.start_document_search("headings here").unwrap();
         wait_for_search(&mut app, 1);
-        let last = app.active.as_ref().unwrap().numbering.as_ref().unwrap().count;
+        let last = app
+            .active
+            .as_ref()
+            .unwrap()
+            .numbering
+            .as_ref()
+            .unwrap()
+            .count;
         assert!(last > 14);
         assert_eq!(app.hits[0].chapter, 1);
         app.preview_result(0).unwrap();
-        assert_eq!(app.result_context.as_ref().unwrap().label, format!("Page {last}"));
+        assert_eq!(
+            app.result_context.as_ref().unwrap().label,
+            format!("Page {last}")
+        );
         assert_eq!(app.active.as_ref().unwrap().reading.chapter, 0);
     }
 
@@ -8305,16 +9773,37 @@ mod tests {
         assert!(app.current_contents_row.unwrap() >= current);
         capture_test_screen(&app, &fonts, "READER_CHARACTER_PAGE_LIST", false);
         let id = app.active.as_ref().unwrap().id;
-        let before = app.active.as_ref().unwrap().numbering.as_ref().unwrap().locate(current);
+        let before = app
+            .active
+            .as_ref()
+            .unwrap()
+            .numbering
+            .as_ref()
+            .unwrap()
+            .locate(current);
         app.show(Screen::Book);
-        let settings = Settings { font_size: 48., logical_font_size: None, ..app.active.as_ref().unwrap().reading.config.settings };
+        let settings = Settings {
+            font_size: 48.,
+            logical_font_size: None,
+            ..app.active.as_ref().unwrap().reading.config.settings
+        };
         app.activate(Action::Text(settings)).unwrap();
         app.activate(Action::CharacterPage(current)).unwrap();
         app.save().unwrap();
         let mut resumed = Reader::open(&f.root, &f.state, fonts.clone()).unwrap();
         resumed.activate(Action::Continue).unwrap();
         assert!(resumed.numbering_scan.is_none());
-        assert_eq!(resumed.active.as_ref().unwrap().numbering.as_ref().unwrap().locate(current), before);
+        assert_eq!(
+            resumed
+                .active
+                .as_ref()
+                .unwrap()
+                .numbering
+                .as_ref()
+                .unwrap()
+                .locate(current),
+            before
+        );
         resumed.show(Screen::GoToPage);
         resumed.editor.text = (format!("label {}", current + 1)).chars().collect();
         resumed.jump_reflow_number().unwrap();
@@ -8324,11 +9813,33 @@ mod tests {
         restored.activate(Action::Continue).unwrap();
         assert!(restored.numbering_scan.is_some());
         finish_character_numbering(&mut restored);
-        assert_eq!(restored.active.as_ref().unwrap().numbering.as_ref().unwrap().count, count);
+        assert_eq!(
+            restored
+                .active
+                .as_ref()
+                .unwrap()
+                .numbering
+                .as_ref()
+                .unwrap()
+                .count,
+            count
+        );
         restored.activate(Action::SetCharacterPages(None)).unwrap();
-        assert_eq!(restored.status_caption().as_deref(), Some("Printed page iii"));
-        assert!(restored.library.state(id).unwrap().character_page_stride.is_none());
-        restored.activate(Action::SetCharacterPages(Some(3000))).unwrap();
+        assert_eq!(
+            restored.status_caption().as_deref(),
+            Some("Printed page iii")
+        );
+        assert!(
+            restored
+                .library
+                .state(id)
+                .unwrap()
+                .character_page_stride
+                .is_none()
+        );
+        restored
+            .activate(Action::SetCharacterPages(Some(3000)))
+            .unwrap();
         restored.activate(Action::SetCharacterPages(None)).unwrap();
         assert!(restored.numbering_scan.is_none());
     }
@@ -8340,9 +9851,15 @@ mod tests {
         write_outline_fixture(&f.book, Some(nav), None);
         let mut app = f.app();
         let mut defaults = crate::reading_controls::NumberingDefaults {
-            stride: Some(750), prompt_publisher: true, ..Default::default()
+            stride: Some(750),
+            prompt_publisher: true,
+            ..Default::default()
         };
-        app.activate(Action::SetReadingControls(ReadingControls { numbering: defaults, ..app.controls })).unwrap();
+        app.activate(Action::SetReadingControls(ReadingControls {
+            numbering: defaults,
+            ..app.controls
+        }))
+        .unwrap();
         app.open_path(&f.book).unwrap();
         assert_eq!(app.screen, Screen::PublisherOffer);
         assert!(app.numbering_scan.is_none());
@@ -8356,14 +9873,31 @@ mod tests {
         assert_eq!(app.screen, Screen::NumberingDefaults);
         assert_eq!(app.controls.numbering.label_size, 20);
         let other = f.root.join("Second.epub");
-        fs::write(&other, include_bytes!("../tests/fixtures/field-notes-epub3.epub")).unwrap();
+        fs::write(
+            &other,
+            include_bytes!("../tests/fixtures/field-notes-epub3.epub"),
+        )
+        .unwrap();
         app.open_path(&other).unwrap();
         assert!(app.numbering_scan.is_some());
         finish_character_numbering(&mut app);
-        assert_eq!(app.active.as_ref().unwrap().numbering.as_ref().unwrap().stride, 750);
+        assert_eq!(
+            app.active
+                .as_ref()
+                .unwrap()
+                .numbering
+                .as_ref()
+                .unwrap()
+                .stride,
+            750
+        );
         defaults.override_publisher = true;
         defaults.label_size = 20;
-        app.activate(Action::SetReadingControls(ReadingControls { numbering: defaults, ..app.controls })).unwrap();
+        app.activate(Action::SetReadingControls(ReadingControls {
+            numbering: defaults,
+            ..app.controls
+        }))
+        .unwrap();
         app.open_path(&f.book).unwrap();
         assert_eq!(app.screen, Screen::Book);
         assert!(app.numbering_scan.is_none() && app.active.as_ref().unwrap().numbering.is_none());
@@ -8378,23 +9912,40 @@ mod tests {
         assert_eq!(resumed.screen, Screen::Book);
         assert!(resumed.numbering_scan.is_some());
         finish_character_numbering(&mut resumed);
-        assert_eq!(resumed.active.as_ref().unwrap().numbering.as_ref().unwrap().stride, 750);
+        assert_eq!(
+            resumed
+                .active
+                .as_ref()
+                .unwrap()
+                .numbering
+                .as_ref()
+                .unwrap()
+                .stride,
+            750
+        );
     }
 
     #[test]
     #[ignore = "requires an original EPUB and its installed CREngine comparison"]
     fn follows_character_pages_in_an_original_document() {
         let path = PathBuf::from(std::env::var_os("READER_SYNTHETIC_BOOK").unwrap());
-        let stride: u16 = std::env::var("READER_SYNTHETIC_STRIDE").unwrap().parse().unwrap();
-        let expected: Vec<String> = serde_json::from_slice(&fs::read(std::env::var_os("READER_SYNTHETIC_REFERENCE").unwrap()).unwrap()).unwrap();
+        let stride: u16 = std::env::var("READER_SYNTHETIC_STRIDE")
+            .unwrap()
+            .parse()
+            .unwrap();
+        let expected: Vec<String> = serde_json::from_slice(
+            &fs::read(std::env::var_os("READER_SYNTHETIC_REFERENCE").unwrap()).unwrap(),
+        )
+        .unwrap();
         let f = Fixture::new();
         let mut app = Reader::open(path.parent().unwrap(), &f.state, simulation_fonts()).unwrap();
         app.open_path(&path).unwrap();
-        app.activate(Action::SetCharacterPages(Some(stride))).unwrap();
+        app.activate(Action::SetCharacterPages(Some(stride)))
+            .unwrap();
         finish_character_numbering(&mut app);
         assert_eq!(app.list_window().0, expected.len());
         let previous = app.active.as_ref().unwrap().reading.anchor();
-        for row in [0, expected.len()/2, expected.len()-1] {
+        for row in [0, expected.len() / 2, expected.len() - 1] {
             let action = app.publisher_page_window(row, 1).1.remove(0).action;
             app.activate(action).unwrap();
             let active = app.active.as_ref().unwrap();
@@ -8402,37 +9953,65 @@ mod tests {
             let (chapter, point) = map.locate(row).unwrap();
             assert_eq!(chapter, active.reading.chapter);
             if let Some(point) = point {
-                let anchor = map.anchor(chapter, point, &active.reading.probe.chapter).unwrap();
-                assert_eq!(active.reading.probe.page_for(&anchor), Some(active.reading.page));
+                let anchor = map
+                    .anchor(chapter, point, &active.reading.probe.chapter)
+                    .unwrap();
+                assert_eq!(
+                    active.reading.probe.page_for(&anchor),
+                    Some(active.reading.page)
+                );
             } else {
                 assert_eq!(active.reading.page, 0);
             }
-            assert!(app.current_publisher_page().is_some_and(|active_row| active_row >= row));
+            assert!(
+                app.current_publisher_page()
+                    .is_some_and(|active_row| active_row >= row)
+            );
             app.activate(Action::ReturnToLocation).unwrap();
             assert_eq!(app.active.as_ref().unwrap().reading.anchor(), previous);
         }
-        println!("Followed 3 stable pages and returned exactly across {} stock labels", expected.len());
+        println!(
+            "Followed 3 stable pages and returned exactly across {} stock labels",
+            expected.len()
+        );
     }
 
     #[test]
     #[ignore = "requires an original EPUB and independent page labels"]
     fn compares_publisher_pages_in_an_original_document() {
         let original = PathBuf::from(std::env::var_os("READER_PAGE_MAP_BOOK").expect("EPUB"));
-        let labels: Vec<String> = serde_json::from_slice(&fs::read(std::env::var_os("READER_PAGE_MAP_LABELS").expect("labels")).unwrap()).unwrap();
+        let labels: Vec<String> = serde_json::from_slice(
+            &fs::read(std::env::var_os("READER_PAGE_MAP_LABELS").expect("labels")).unwrap(),
+        )
+        .unwrap();
         let f = Fixture::new();
-        let mut app = Reader::open(original.parent().unwrap(), &f.state, simulation_fonts()).unwrap();
+        let mut app =
+            Reader::open(original.parent().unwrap(), &f.state, simulation_fonts()).unwrap();
         app.open_path(&original).unwrap();
         app.activate(Action::TogglePublisherFooter).unwrap();
         app.open_reading_edge(true, 520.);
         tap_reading_control(&mut app, "Stable page number list");
-        let actual: Vec<_> = app.items().into_iter().filter(|item| matches!(item.action, Action::Jump(_))).map(|item| item.title).collect();
+        let actual: Vec<_> = app
+            .items()
+            .into_iter()
+            .filter(|item| matches!(item.action, Action::Jump(_)))
+            .map(|item| item.title)
+            .collect();
         assert_eq!(actual.len(), labels.len());
         assert!(actual == labels, "Publisher labels or order differed");
         let active = app.active.as_ref().unwrap();
-        let mut by_chapter: std::collections::BTreeMap<usize, Vec<&Destination>> = Default::default();
+        let mut by_chapter: std::collections::BTreeMap<usize, Vec<&Destination>> =
+            Default::default();
         for entry in &active.reading.probe.printed_pages {
-            let dest = entry.destination.as_ref().expect("Missing print destination");
-            let chapter = active.reading.probe.chapter_index(&dest.path).expect("Missing print chapter");
+            let dest = entry
+                .destination
+                .as_ref()
+                .expect("Missing print destination");
+            let chapter = active
+                .reading
+                .probe
+                .chapter_index(&dest.path)
+                .expect("Missing print chapter");
             by_chapter.entry(chapter).or_default().push(dest);
         }
         let mut mapped = 0;
@@ -8441,29 +10020,49 @@ mod tests {
             for destination in entries {
                 if let Some(id) = &destination.fragment {
                     let anchor = probe.fragment(id).expect("Unresolved printed page ID");
-                    assert!(probe.page_for(&anchor).is_some(), "No visible geometry for print boundary");
+                    assert!(
+                        probe.page_for(&anchor).is_some(),
+                        "No visible geometry for print boundary"
+                    );
                 }
                 mapped += 1;
             }
         }
         assert_eq!(mapped, labels.len());
-        for n in [0, labels.len()/2, labels.len()-1] {
+        for n in [0, labels.len() / 2, labels.len() - 1] {
             let target = app.items().remove(n).action;
-            let Action::Jump(dest) = &target else { panic!("Missing print destination") };
+            let Action::Jump(dest) = &target else {
+                panic!("Missing print destination")
+            };
             let expected = dest.clone();
             app.activate(target).unwrap();
             let reading = &app.active.as_ref().unwrap().reading;
             assert_eq!(reading.probe.chapter, expected.path);
             if let Some(id) = &expected.fragment {
-                let page = reading.probe.page_for(&reading.probe.fragment(id).expect("Missing printed page anchor")).unwrap();
+                let page = reading
+                    .probe
+                    .page_for(
+                        &reading
+                            .probe
+                            .fragment(id)
+                            .expect("Missing printed page anchor"),
+                    )
+                    .unwrap();
                 assert_eq!(reading.page, page);
             }
-            assert!(app.status_caption().is_some_and(|s| s.starts_with("Printed page ")));
+            assert!(
+                app.status_caption()
+                    .is_some_and(|s| s.starts_with("Printed page "))
+            );
             app.show(Screen::PublisherPages);
             let row = app.current_contents_row.expect("Selected print range");
             assert!(row >= n && row < labels.len());
         }
-        println!("Matched {} publisher labels, {} source locations and three exact jumps", labels.len(), mapped);
+        println!(
+            "Matched {} publisher labels, {} source locations and three exact jumps",
+            labels.len(),
+            mapped
+        );
     }
 
     fn write_outline_fixture(path: &Path, nav: Option<&[u8]>, ncx: Option<&[u8]>) {
@@ -8486,7 +10085,11 @@ mod tests {
         );
         for index in 1..=14 {
             use std::fmt::Write as _;
-            write!(first, r#"<h1 id="passage{index}">Passage {index}</h1><p>{lyric}</p>"#).unwrap();
+            write!(
+                first,
+                r#"<h1 id="passage{index}">Passage {index}</h1><p>{lyric}</p>"#
+            )
+            .unwrap();
         }
         first.push_str("</body></html>");
         let second = br#"<html xmlns="http://www.w3.org/1999/xhtml"><body><p>There are no headings here.</p></body></html>"#;
@@ -8527,8 +10130,10 @@ mod tests {
             fs::write(&path, include_bytes!("../tests/fixtures/long-chapter.epub")).unwrap();
             path
         });
-        let query = std::env::var("READER_TEST_RESULTS_QUERY").unwrap_or_else(|_| "Observation".into());
-        let mut app = Reader::open(path.parent().unwrap(), &fixture.state, vec![font.clone()]).unwrap();
+        let query =
+            std::env::var("READER_TEST_RESULTS_QUERY").unwrap_or_else(|_| "Observation".into());
+        let mut app =
+            Reader::open(path.parent().unwrap(), &fixture.state, vec![font.clone()]).unwrap();
         app.open_path(&path).unwrap();
         let original = position(&app.active.as_ref().unwrap().reading);
         app.find_match_case = true;
@@ -8546,7 +10151,12 @@ mod tests {
         assert_eq!(app.list_page, last_page);
         assert_eq!(app.list_window().1.len(), count - last_page * ROWS_PER_PAGE);
         if authored {
-            capture_test_screen(&app, std::slice::from_ref(&font), "READER_DEEP_RESULTS", false);
+            capture_test_screen(
+                &app,
+                std::slice::from_ref(&font),
+                "READER_DEEP_RESULTS",
+                false,
+            );
         }
         let (x, y) = rectangle_center(FIRST_MATCH_PAGE);
         assert_eq!(app.input(Input::Tap(x, y)), Change::Partial);
@@ -8848,13 +10458,17 @@ mod tests {
         app.open_path(&fixture.book).unwrap();
         let reading = &app.active.as_ref().unwrap().reading;
         let start = position(reading);
-        let (x, y) = (0..PAGE_HEIGHT).step_by(5).find_map(|y| {
-            (0..WIDTH).step_by(5).find_map(|x| {
-                reading.illustration_at(x as f32, y as f32)
-                    .is_some_and(|p| p.ends_with("beacon.svg"))
-                    .then_some((x as f32, y as f32))
+        let (x, y) = (0..PAGE_HEIGHT)
+            .step_by(5)
+            .find_map(|y| {
+                (0..WIDTH).step_by(5).find_map(|x| {
+                    reading
+                        .illustration_at(x as f32, y as f32)
+                        .is_some_and(|p| p.ends_with("beacon.svg"))
+                        .then_some((x as f32, y as f32))
+                })
             })
-        }).unwrap();
+            .unwrap();
         assert_eq!(app.input(Input::Tap(x, y)), Change::Partial);
         let reading = &app.active.as_ref().unwrap().reading;
         assert_eq!(reading.chapter, 1);
@@ -9028,7 +10642,10 @@ mod tests {
         assert_eq!(app.screen, Screen::Book);
         let reading = &app.active.as_ref().unwrap().reading;
         assert_eq!(reading.chapter, 0);
-        assert_eq!(position(reading).anchor, reading.probe.fragment("reference"));
+        assert_eq!(
+            position(reading).anchor,
+            reading.probe.fragment("reference")
+        );
         let (ox, oy) = source_link_point(&app, "harbor appendix");
         app.input(Input::Tap(ox, oy));
         assert_eq!(app.screen, Screen::Book);
@@ -9244,11 +10861,30 @@ mod tests {
         // volume remains available at the last regular page.
         let mut flows = crate::library::hidden_flows::HiddenFlows::default();
         flows.enabled = true;
-        flows.toggle(ReadingPosition { chapter: 0, page: 1, anchor: None }, None).unwrap();
-        app.fixed.as_mut().unwrap().reading.set_hidden_flows(&flows).unwrap();
+        flows
+            .toggle(
+                ReadingPosition {
+                    chapter: 0,
+                    page: 1,
+                    anchor: None,
+                },
+                None,
+            )
+            .unwrap();
+        app.fixed
+            .as_mut()
+            .unwrap()
+            .reading
+            .set_hidden_flows(&flows)
+            .unwrap();
         assert_eq!(app.next_comic().unwrap().path, Path::new("Volume 10.cbz"));
         flows.enabled = false;
-        app.fixed.as_mut().unwrap().reading.set_hidden_flows(&flows).unwrap();
+        app.fixed
+            .as_mut()
+            .unwrap()
+            .reading
+            .set_hidden_flows(&flows)
+            .unwrap();
         assert!(app.next_comic().is_none());
         app.activate(Action::FixedPage(1)).unwrap();
         assert_eq!(app.next_comic().unwrap().path, Path::new("Volume 10.cbz"));
@@ -9279,7 +10915,11 @@ mod tests {
     fn reopens_the_last_menu_of_each_document_after_restart() {
         let fixture = Fixture::new();
         let second = fixture.root.join("Second.epub");
-        fs::write(&second, include_bytes!("../tests/fixtures/long-chapter.epub")).unwrap();
+        fs::write(
+            &second,
+            include_bytes!("../tests/fixtures/long-chapter.epub"),
+        )
+        .unwrap();
         let mut app = fixture.app();
         app.open_path(&fixture.book).unwrap();
         app.input(Input::Tap(630.0, 32.0));
@@ -9296,6 +10936,34 @@ mod tests {
         assert_eq!(restarted.top_group, Some(TopGroup::Search));
         restarted.open_reading_edge(false, 630.0);
         assert_eq!(restarted.reading_panel, Some(BarPanel::TextLayout));
+    }
+
+    #[test]
+    fn reader_menus_expose_local_reading_workflows_without_network_services() {
+        let fixture = Fixture::new();
+        let mut app = fixture.app();
+        app.open_path(&fixture.book).unwrap();
+
+        for group in [TopGroup::Library, TopGroup::Tools] {
+            let labels: Vec<_> = app
+                .top_config_items(group)
+                .into_iter()
+                .map(|item| item.title)
+                .collect();
+            assert!(!labels.iter().any(|label| label == "Online catalogs"));
+            assert!(!labels.iter().any(|label| label == "Progress sync"));
+        }
+
+        app.show(Screen::OrganizeLibrary);
+        let labels: Vec<_> = app.items().into_iter().map(|item| item.title).collect();
+        assert!(!labels.iter().any(|label| label == "Online catalogs"));
+        assert!(labels.iter().any(|label| label == "New collection"));
+
+        app.show(Screen::ReadingData);
+        let labels: Vec<_> = app.items().into_iter().map(|item| item.title).collect();
+        assert!(!labels.iter().any(|label| label == "Progress sync"));
+        assert!(labels.iter().any(|label| label == "Back up reading data"));
+        assert!(labels.iter().any(|label| label == "Restore a backup"));
     }
 
     #[test]
@@ -9347,7 +11015,7 @@ mod tests {
             start_y: 865.0,
         };
         app.swipe(swipe, WIDTH as f32 - 30.0);
-        assert_eq!(app.screen, Screen::PageOverview);
+        assert_eq!(app.screen, Screen::Skim);
         app.show(Screen::Book);
         let diagonal = Input::Swipe {
             dx: 130.0,
@@ -9452,9 +11120,17 @@ mod tests {
             .unwrap_or_else(|| vec![crate::test_fixture("fonts/Silkscreen-Regular.ttf")])
     }
 
-    pub(super) fn capture_test_screen(app: &Reader, fonts: &[PathBuf], output_variable: &str, dark: bool) {
+    pub(super) fn capture_test_screen(
+        app: &Reader,
+        fonts: &[PathBuf],
+        output_variable: &str,
+        dark: bool,
+    ) {
         if let Some(path) = std::env::var_os(output_variable) {
-            let font_paths = fonts.iter().map(|p| p.display().to_string()).collect::<Vec<_>>();
+            let font_paths = fonts
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>();
             let mut canvas = Canvas::new(WIDTH, HEIGHT, &font_paths).unwrap();
             let pixels = primitive_app::frame(app, &mut canvas, dark);
             primitive_app::write_png(Path::new(&path), WIDTH, HEIGHT, &pixels).unwrap();
@@ -9471,21 +11147,47 @@ mod tests {
         app.open_reading_edge(false, 500.0);
         tap_reading_control(&mut app, "Rendering");
         assert_eq!(tap_reading_control(&mut app, "Fast"), Change::Partial);
-        assert!(!app.active.as_ref().unwrap().reading.config.settings.smooth_images);
-        let settings = ReadingControls { night_pages: true, ..app.controls };
+        assert!(
+            !app.active
+                .as_ref()
+                .unwrap()
+                .reading
+                .config
+                .settings
+                .smooth_images
+        );
+        let settings = ReadingControls {
+            night_pages: true,
+            ..app.controls
+        };
         app.activate(Action::SetReadingControls(settings)).unwrap();
         assert_eq!(app.applied_change(), Change::Full);
         let probe = &app.active.as_ref().unwrap().reading.probe;
-        let crate::Renderer::Parley(layout) = &probe.renderer else { unreachable!() };
-        let image_page = (0..probe.page_count()).find(|&page| {
-            layout.visible_illustrations(probe.page_range(page), probe.settings).next().is_some()
-        }).unwrap();
+        let crate::Renderer::Parley(layout) = &probe.renderer else {
+            unreachable!()
+        };
+        let image_page = (0..probe.page_count())
+            .find(|&page| {
+                layout
+                    .visible_illustrations(probe.page_range(page), probe.settings)
+                    .next()
+                    .is_some()
+            })
+            .unwrap();
         app.follow_reflow_page(0, image_page).unwrap();
         capture_test_screen(&app, &fonts, "READER_NIGHT_IMAGE_SCREENSHOT", true);
         app.open_reading_edge(false, 500.0);
         capture_test_screen(&app, &fonts, "READER_IMAGE_CONTROLS_SCREENSHOT", true);
         assert_eq!(tap_reading_control(&mut app, "Inverted"), Change::Partial);
-        assert!(app.active.as_ref().unwrap().reading.config.settings.invert_night_images);
+        assert!(
+            app.active
+                .as_ref()
+                .unwrap()
+                .reading
+                .config
+                .settings
+                .invert_night_images
+        );
         app.save().unwrap();
         let mut reopened = fixture.app();
         reopened.activate(Action::Continue).unwrap();
@@ -9494,10 +11196,18 @@ mod tests {
     }
 
     pub(super) fn tap_contents_item(app: &mut Reader, label: &str) {
-        let index = app.items().iter().position(|item| item.title == label).unwrap_or_else(|| panic!("No row {label} in {:?}", app.screen));
+        let index = app
+            .items()
+            .iter()
+            .position(|item| item.title == label)
+            .unwrap_or_else(|| panic!("No row {label} in {:?}", app.screen));
         let page = index / ROWS_PER_PAGE;
-        while app.list_page < page { app.input(Input::PageForward); }
-        while app.list_page > page { app.input(Input::PageBack); }
+        while app.list_page < page {
+            app.input(Input::PageForward);
+        }
+        while app.list_page > page {
+            app.input(Input::PageBack);
+        }
         let y = LIST_Y + (index % ROWS_PER_PAGE) as i32 * ROW_HEIGHT + ROW_HEIGHT / 2;
         assert_eq!(app.input(Input::Tap(160.0, y as f32)), Change::Partial);
     }
@@ -9513,7 +11223,11 @@ mod tests {
         .unwrap();
         let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
         let mut app = Reader::open(&fixture.root, &fixture.state, vec![font.clone()]).unwrap();
-        let index = app.items().iter().position(|row| row.title == title).unwrap();
+        let index = app
+            .items()
+            .iter()
+            .position(|row| row.title == title)
+            .unwrap();
         let y = library_view::LIBRARY_LIST_Y + index as i32 * ROW_HEIGHT + 32;
         assert_eq!(app.input(Input::Tap(100.0, y as f32)), Change::Partial);
         assert_eq!(app.screen, Screen::Book);
@@ -9724,9 +11438,12 @@ mod tests {
         let path = fixture.root.join("Document.epub");
         let external = std::env::var_os("READER_TEST_CONTENTS_EPUB").map(PathBuf::from);
         fs::copy(
-            external.as_deref().unwrap_or(&crate::test_fixture("many-chapters.epub")),
+            external
+                .as_deref()
+                .unwrap_or(&crate::test_fixture("many-chapters.epub")),
             &path,
-        ).unwrap();
+        )
+        .unwrap();
         let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
         let mut canvas = Canvas::new(WIDTH, HEIGHT, &[font.display().to_string()]).unwrap();
         let mut app = Reader::open(&fixture.root, &fixture.state, vec![font.clone()]).unwrap();
@@ -9737,7 +11454,10 @@ mod tests {
         let row = if external.is_some() {
             items.len() / 2
         } else {
-            items.iter().position(|item| item.title == "Day 38").unwrap()
+            items
+                .iter()
+                .position(|item| item.title == "Day 38")
+                .unwrap()
         };
         assert!(row >= ROWS_PER_PAGE);
         let Action::Jump(destination) = &items[row].action else {
@@ -9759,7 +11479,12 @@ mod tests {
             let contents_frame = primitive_app::frame(&app, &mut canvas, false);
             assert!(contents_frame != reading_frame);
             if upper && external.is_none() {
-                capture_test_screen(&app, std::slice::from_ref(&font), "READER_CURRENT_CONTENTS_SCREENSHOT", false);
+                capture_test_screen(
+                    &app,
+                    std::slice::from_ref(&font),
+                    "READER_CURRENT_CONTENTS_SCREENSHOT",
+                    false,
+                );
             }
             assert_eq!(app.input(Input::PageBack), Change::Partial);
             assert_eq!(app.list_page, row / ROWS_PER_PAGE - 1);
@@ -9786,7 +11511,10 @@ mod tests {
         active.jump(0, Some("passage12")).unwrap();
         let before = app.current_position().unwrap();
         app.show(Screen::Contents);
-        assert_eq!(app.items()[app.current_contents_row.unwrap()].title, "Later section");
+        assert_eq!(
+            app.items()[app.current_contents_row.unwrap()].title,
+            "Later section"
+        );
         assert_eq!(app.current_position(), Some(before));
     }
 
@@ -9798,7 +11526,10 @@ mod tests {
         if let Some(source) = &external {
             fs::copy(source, &path).unwrap();
         } else {
-            let kids = (3..99).map(|id| format!("{id} 0 R")).collect::<Vec<_>>().join(" ");
+            let kids = (3..99)
+                .map(|id| format!("{id} 0 R"))
+                .collect::<Vec<_>>()
+                .join(" ");
             let mut objects = vec![
                 "<< /Type /Catalog /Pages 2 0 R >>".into(),
                 format!("<< /Type /Pages /Count 96 /Kids [{kids}] /MediaBox [0 0 300 400] >>"),
@@ -9818,18 +11549,42 @@ mod tests {
             let id = app.open_book_id().unwrap();
             let custom = &mut app.library.state_mut(id).unwrap().custom_contents;
             custom.enabled = true;
-            for (page, label) in [(0, "Harbor"), (12, "Estuary"), (24, "Narrows"), (36, "Ferry"), (48, "Headland"), (60, "Beacon"), (72, "Passage"), (84, "Inlet")] {
-                custom.save(ReadingPosition { chapter: 0, page, anchor: None }, label).unwrap();
+            for (page, label) in [
+                (0, "Harbor"),
+                (12, "Estuary"),
+                (24, "Narrows"),
+                (36, "Ferry"),
+                (48, "Headland"),
+                (60, "Beacon"),
+                (72, "Passage"),
+                (84, "Inlet"),
+            ] {
+                custom
+                    .save(
+                        ReadingPosition {
+                            chapter: 0,
+                            page,
+                            anchor: None,
+                        },
+                        label,
+                    )
+                    .unwrap();
             }
         }
         app.show(Screen::Fixed);
         if external.is_none() {
             use crate::reading_controls::StatusBar;
             app.controls.status_bar = StatusBar::Chapter;
-            assert_eq!(app.status_caption().as_deref(), Some("Headland  ·  Page 1 of 12"));
+            assert_eq!(
+                app.status_caption().as_deref(),
+                Some("Headland  ·  Page 1 of 12")
+            );
             let id = app.open_book_id().unwrap();
             app.library.state_mut(id).unwrap().custom_contents.enabled = false;
-            assert_eq!(app.status_caption().as_deref(), Some("Document  ·  Page 49 of 96"));
+            assert_eq!(
+                app.status_caption().as_deref(),
+                Some("Document  ·  Page 49 of 96")
+            );
             app.library.state_mut(id).unwrap().custom_contents.enabled = true;
         }
         let prior = app.back.clone();
@@ -9869,11 +11624,22 @@ mod tests {
         let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
         app.open_path(&path).unwrap();
         app.activate(Action::SetFixedZoom(3)).unwrap();
-        app.input(Input::Swipe { dx: -180.0, dy: -220.0, start_y: 640.0 });
+        app.input(Input::Swipe {
+            dx: -180.0,
+            dy: -220.0,
+            start_y: 640.0,
+        });
         let cover = app.current_position().unwrap();
         let origin = app.fixed.as_ref().unwrap().reading.history_point().unwrap();
         assert!(origin.x > 0.0 && origin.y > 0.0);
-        assert!(app.fixed.as_ref().unwrap().footer_chapters.iter().all(|(_, title)| title != "Next plate"));
+        assert!(
+            app.fixed
+                .as_ref()
+                .unwrap()
+                .footer_chapters
+                .iter()
+                .all(|(_, title)| title != "Next plate")
+        );
 
         assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 0);
         app.input(Input::Tap(630.0, 27.0));
@@ -9884,7 +11650,11 @@ mod tests {
         assert_eq!(app.screen, Screen::FixedContents);
         capture_test_screen(&app, &fonts, "READER_DJVU_CONTENTS_SCREENSHOT", false);
         let items = app.items();
-        assert!(items.iter().any(|item| item.title == "Source website" && matches!(item.action, Action::Heading)));
+        assert!(
+            items.iter().any(
+                |item| item.title == "Source website" && matches!(item.action, Action::Heading)
+            )
+        );
         assert!(items.iter().any(|item| item.title == "Unknown plate" && matches!(item.action, Action::Heading)));
         tap_contents_item(&mut app, "Unknown plate");
         assert_eq!(app.screen, Screen::FixedContents);
@@ -9895,7 +11665,10 @@ mod tests {
         app.input(Input::Tap(630.0, 1420.0));
         tap_reading_control(&mut app, "Contents");
         assert_eq!(app.screen, Screen::FixedContents);
-        assert_eq!(app.items()[app.current_contents_row.unwrap()].title, "  Outer reef");
+        assert_eq!(
+            app.items()[app.current_contents_row.unwrap()].title,
+            "  Outer reef"
+        );
         tap_contents_item(&mut app, "  Nearest station");
         assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 4);
         app.activate(Action::ReturnToLocation).unwrap();
@@ -9905,14 +11678,36 @@ mod tests {
         let restored = app.fixed.as_ref().unwrap().reading.history_point().unwrap();
         assert!((origin - restored).hypot() < 1.0);
         app.save().unwrap();
-        let mut reopened = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+        let mut reopened = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
         reopened.activate(Action::Continue).unwrap();
         assert_eq!(reopened.fixed.as_ref().unwrap().reading.page(), 0);
-        reopened.input(Input::PageForward);
-        reopened.tick(Instant::now() + Duration::from_secs(1));
+        let mut captured_pan = false;
+        for _ in 0..32 {
+            reopened.input(Input::PageForward);
+            reopened.tick(Instant::now() + Duration::from_secs(1));
+            let page = reopened.fixed.as_ref().unwrap().reading.page();
+            if page == 0 && !captured_pan {
+                capture_test_screen(
+                    &reopened,
+                    &fonts,
+                    "READER_FIXED_MANUAL_PAN_SCREENSHOT",
+                    false,
+                );
+                captured_pan = true;
+            }
+            if page == 1 {
+                break;
+            }
+        }
+        assert!(captured_pan);
         assert_eq!(reopened.fixed.as_ref().unwrap().reading.page(), 1);
-        reopened.input(Input::PageBack);
-        reopened.tick(Instant::now() + Duration::from_secs(2));
+        for _ in 0..32 {
+            reopened.input(Input::PageBack);
+            reopened.tick(Instant::now() + Duration::from_secs(2));
+            if reopened.fixed.as_ref().unwrap().reading.page() == 0 {
+                break;
+            }
+        }
         assert_eq!(reopened.fixed.as_ref().unwrap().reading.page(), 0);
     }
 
@@ -9920,29 +11715,42 @@ mod tests {
     fn fixed_contents_uses_publisher_and_custom_page_destinations() {
         let fixture = Fixture::new();
         let path = fixture.root.join("Chart booklet.pdf");
-        fs::write(&path, crate::fixed::tests::pdf_objects(&[
-            "<< /Type /Catalog /Pages 2 0 R /Outlines 5 0 R >>",
-            "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
-            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 120] >>",
-            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 120] >>",
-            "<< /Type /Outlines /First 6 0 R /Last 7 0 R >>",
-            "<< /Title (First chart) /Dest [3 0 R /Fit] /Parent 5 0 R /Next 7 0 R >>",
-            "<< /Title (Second chart) /Dest [4 0 R /Fit] /Parent 5 0 R /Prev 6 0 R >>",
-        ])).unwrap();
+        fs::write(
+            &path,
+            crate::fixed::tests::pdf_objects(&[
+                "<< /Type /Catalog /Pages 2 0 R /Outlines 5 0 R >>",
+                "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 120] >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 120] >>",
+                "<< /Type /Outlines /First 6 0 R /Last 7 0 R >>",
+                "<< /Title (First chart) /Dest [3 0 R /Fit] /Parent 5 0 R /Next 7 0 R >>",
+                "<< /Title (Second chart) /Dest [4 0 R /Fit] /Parent 5 0 R /Prev 6 0 R >>",
+            ]),
+        )
+        .unwrap();
         let mut app = fixture.app();
         app.open_path(&path).unwrap();
         app.follow_fixed(1, None).unwrap();
         let before = app.current_position().unwrap();
         app.show(Screen::FixedContents);
-        assert_eq!(app.items()[app.current_contents_row.unwrap()].title, "Second chart");
+        assert_eq!(
+            app.items()[app.current_contents_row.unwrap()].title,
+            "Second chart"
+        );
         assert_eq!(app.current_position(), Some(before.clone()));
 
         let fixed = app.fixed.as_ref().unwrap();
-        let custom = &mut app.library.remember(&fixed.entry, fixed.id, &fixed.entry.title).custom_contents;
+        let custom = &mut app
+            .library
+            .remember(&fixed.entry, fixed.id, &fixed.entry.title)
+            .custom_contents;
         custom.save(before.clone(), "Local soundings").unwrap();
         custom.enabled = true;
         app.show(Screen::FixedContents);
-        assert_eq!(app.items()[app.current_contents_row.unwrap()].title, "Local soundings");
+        assert_eq!(
+            app.items()[app.current_contents_row.unwrap()].title,
+            "Local soundings"
+        );
         assert_eq!(app.current_position(), Some(before));
     }
 
@@ -9993,7 +11801,11 @@ mod tests {
                 )),
                 Change::Partial
             );
-            let extend_highlight::Draft::Text {current: draft,..} = &app.range_edit.as_ref().unwrap().draft else { panic!("expected an EPUB highlight") };
+            let extend_highlight::Draft::Text { current: draft, .. } =
+                &app.range_edit.as_ref().unwrap().draft
+            else {
+                panic!("expected an EPUB highlight")
+            };
             assert_ne!(draft.start.chapter, draft.end.chapter);
             assert!(draft.text.contains("The first step"));
             assert!(draft.text.ends_with("At"));
@@ -10051,8 +11863,12 @@ mod tests {
         assert_eq!(app.screen, Screen::BookmarkFind);
         app.editor.text = query.chars().collect();
         app.editor.caret = app.editor.text.len();
-        let go = Layout::new(WIDTH, HEIGHT, 4, 5).keyboard_keys_with(app.editor.layer, "Find")
-            .into_iter().find(|(key, _)| key.key == primitive_ui::Key::Go).unwrap().1;
+        let go = Layout::new(WIDTH, HEIGHT, 4, 5)
+            .keyboard_keys_with(app.editor.layer, "Find")
+            .into_iter()
+            .find(|(key, _)| key.key == primitive_ui::Key::Go)
+            .unwrap()
+            .1;
         let (x, y) = rectangle_center(go);
         assert_eq!(app.input(Input::Tap(x, y)), Change::Partial);
         assert_eq!(app.screen, Screen::BookmarkMatches);
@@ -10066,7 +11882,12 @@ mod tests {
         app.open_path(&fixture.book).unwrap();
         app.activate(Action::AddBookmark).unwrap();
         for (chapter, fragment, excerpt, note) in [
-            (0, "lantern", "The copper lantern", Some("Compare the Amber chart")),
+            (
+                0,
+                "lantern",
+                "The copper lantern",
+                Some("Compare the Amber chart"),
+            ),
             (1, "door", "At dusk the door", None),
         ] {
             let reading = &mut app.active.as_mut().unwrap().reading;
@@ -10082,14 +11903,24 @@ mod tests {
         app.open_reading_edge(false, 630.0);
         assert_eq!(tap_reading_control(&mut app, "Bookmarks"), Change::Partial);
         tap_contents_item(&mut app, "Find bookmarks");
-        capture_test_screen(&app, std::slice::from_ref(&font), "READER_ANNOTATION_FILTERS_SCREENSHOT", false);
+        capture_test_screen(
+            &app,
+            std::slice::from_ref(&font),
+            "READER_ANNOTATION_FILTERS_SCREENSHOT",
+            false,
+        );
         submit_annotation_search(&mut app, "amber");
         assert_eq!(app.items().len(), 1);
         tap_contents_item(&mut app, "Compare the Amber chart");
         assert_eq!(app.screen, Screen::Book);
         let reading = &app.active.as_ref().unwrap().reading;
         assert_eq!(reading.chapter, 0);
-        assert_eq!(reading.probe.page_for(&reading.probe.fragment("lantern").unwrap()), Some(reading.page));
+        assert_eq!(
+            reading
+                .probe
+                .page_for(&reading.probe.fragment("lantern").unwrap()),
+            Some(reading.page)
+        );
         app.activate(Action::ReturnToLocation).unwrap();
         assert_eq!(app.current_position(), Some(original));
 
@@ -10100,20 +11931,25 @@ mod tests {
         assert_eq!(app.input(Input::Tap(160.0, 330.0)), Change::Partial);
         submit_annotation_search(&mut app, "amber");
         assert!(app.items().is_empty());
-        let (bx,by) = rectangle_center(primitive_ui::back_button(WIDTH as i32));
-        app.input(Input::Tap(bx,by));
+        let (bx, by) = rectangle_center(primitive_ui::back_button(WIDTH as i32));
+        app.input(Input::Tap(bx, by));
         assert_eq!(app.screen, Screen::BookmarkFind);
         submit_annotation_search(&mut app, "Amber");
         assert_eq!(app.items().len(), 1);
-        app.input(Input::Tap(bx,by));
+        app.input(Input::Tap(bx, by));
         submit_annotation_search(&mut app, "");
         assert_eq!(app.items().len(), 3);
-        capture_test_screen(&app, std::slice::from_ref(&font), "READER_ANNOTATION_RESULTS_SCREENSHOT", false);
-        app.input(Input::Tap(bx,by));
+        capture_test_screen(
+            &app,
+            std::slice::from_ref(&font),
+            "READER_ANNOTATION_RESULTS_SCREENSHOT",
+            false,
+        );
+        app.input(Input::Tap(bx, by));
         app.input(Input::Tap(1050.0, 424.0)); // Exclude notes.
         submit_annotation_search(&mut app, "copper");
         assert!(app.items().is_empty()); // A highlight with a note belongs to the Notes category.
-        app.input(Input::Tap(bx,by));
+        app.input(Input::Tap(bx, by));
         app.input(Input::Tap(640.0, 424.0)); // Exclude highlights.
         submit_annotation_search(&mut app, "");
         assert_eq!(app.items().len(), 1);
@@ -10150,12 +11986,20 @@ mod tests {
         let id = fixed.id;
         let layer = fixed.reading.page_text(0).unwrap();
         let first = layer.words.last().unwrap();
-        let point = fixed.reading.visible_rectangle(0, first.bounds).unwrap().center();
+        let point = fixed
+            .reading
+            .visible_rectangle(0, first.bounds)
+            .unwrap()
+            .center();
         let before = crate::mark_time::now().unwrap();
         app.input(Input::LongTap(point.x as f32, point.y as f32));
-        app.save_pdf_highlight(Some("Check the harbor".into())).unwrap();
+        app.save_pdf_highlight(Some("Check the harbor".into()))
+            .unwrap();
         let fixed = app.fixed.as_ref().unwrap();
-        let mark = &mut app.library.remember(&fixed.entry, id, &fixed.entry.title).pdf_highlights[0];
+        let mark = &mut app
+            .library
+            .remember(&fixed.entry, id, &fixed.entry.title)
+            .pdf_highlights[0];
         assert!((before..=crate::mark_time::now().unwrap()).contains(&mark.created_at.unwrap()));
         // An edit of an older annotation must keep its independently saved creation time.
         mark.created_at = Some(1_600_000_001);
@@ -10276,18 +12120,22 @@ mod tests {
         assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 0);
         app.show(Screen::FixedBookmarks);
         tap_contents_item(&mut app, "Find bookmarks");
-        let (x,y) = rectangle_center(primitive_ui::back_button(WIDTH as i32));
-        app.input(Input::Tap(x,y));
+        let (x, y) = rectangle_center(primitive_ui::back_button(WIDTH as i32));
+        app.input(Input::Tap(x, y));
         assert_eq!(app.screen, Screen::FixedBookmarks);
     }
 
     fn save_chapter_title(app: &mut Reader, title: &str) {
         assert_eq!(app.screen, Screen::CustomTitle);
         app.editor.text = title.chars().collect();
-        let go = Layout::new(WIDTH, HEIGHT, 4, 5).keyboard_keys_with(app.editor.layer, "Save")
-            .into_iter().find(|(key, _)| key.key == primitive_ui::Key::Go).unwrap().1;
-        let (x,y) = rectangle_center(go);
-        app.input(Input::Tap(x,y));
+        let go = Layout::new(WIDTH, HEIGHT, 4, 5)
+            .keyboard_keys_with(app.editor.layer, "Save")
+            .into_iter()
+            .find(|(key, _)| key.key == primitive_ui::Key::Go)
+            .unwrap()
+            .1;
+        let (x, y) = rectangle_center(go);
+        app.input(Input::Tap(x, y));
     }
 
     #[test]
@@ -10296,10 +12144,18 @@ mod tests {
         let fonts = simulation_fonts();
         let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
         app.open_path(&fixture.book).unwrap();
-        app.activate(Action::Jump(Destination { path: "EPUB/chapters/dusk.xhtml".into(), fragment: Some("door".into()) })).unwrap();
+        app.activate(Action::Jump(Destination {
+            path: "EPUB/chapters/dusk.xhtml".into(),
+            fragment: Some("door".into()),
+        }))
+        .unwrap();
         let destination = app.current_position().unwrap();
         app.activate(Action::AddBookmark).unwrap();
-        app.activate(Action::Jump(Destination { path: "EPUB/chapters/shore.xhtml".into(), fragment: Some("tide-b".into()) })).unwrap();
+        app.activate(Action::Jump(Destination {
+            path: "EPUB/chapters/shore.xhtml".into(),
+            fragment: Some("tide-b".into()),
+        }))
+        .unwrap();
         let origin = app.current_position().unwrap();
         app.show(Screen::Contents);
         tap_contents_item(&mut app, "Custom contents");
@@ -10309,41 +12165,86 @@ mod tests {
         save_chapter_title(&mut app, "Return after dark");
         tap_contents_item(&mut app, "Add current location");
         app.input(Input::PageBack);
-        assert_eq!(app.library.state(app.open_book_id().unwrap()).unwrap().custom_contents.entries().len(), 1);
+        assert_eq!(
+            app.library
+                .state(app.open_book_id().unwrap())
+                .unwrap()
+                .custom_contents
+                .entries()
+                .len(),
+            1
+        );
         tap_contents_item(&mut app, "Add current location");
         save_chapter_title(&mut app, "Tide observation");
         tap_contents_item(&mut app, "Use custom contents");
-        assert_eq!(app.items().iter().map(|i| &*i.title).collect::<Vec<_>>(), ["Manage custom contents", "Tide observation", "Return after dark"]);
+        assert_eq!(
+            app.items().iter().map(|i| &*i.title).collect::<Vec<_>>(),
+            [
+                "Manage custom contents",
+                "Tide observation",
+                "Return after dark"
+            ]
+        );
         capture_test_screen(&app, &fonts, "READER_CUSTOM_CONTENTS_SCREENSHOT", false);
         tap_contents_item(&mut app, "Return after dark");
         assert_eq!(app.current_position(), Some(destination.clone()));
         app.activate(Action::ReturnToLocation).unwrap();
         assert_eq!(app.current_position(), Some(origin.clone()));
-        app.activate(Action::Text(Settings { font_size: 76.0, ..device_settings() })).unwrap();
+        app.activate(Action::Text(Settings {
+            font_size: 76.0,
+            ..device_settings()
+        }))
+        .unwrap();
         app.save().unwrap();
         let mut reopened = fixture.app();
         reopened.activate(Action::Continue).unwrap();
         reopened.show(Screen::Contents);
         tap_contents_item(&mut reopened, "Return after dark");
-        assert_eq!(reopened.current_position().unwrap().anchor, destination.anchor);
+        assert_eq!(
+            reopened.current_position().unwrap().anchor,
+            destination.anchor
+        );
         reopened.show(Screen::Contents);
         tap_contents_item(&mut reopened, "Manage custom contents");
         tap_contents_item(&mut reopened, "Edit chapters");
         tap_contents_item(&mut reopened, "Return after dark");
         save_chapter_title(&mut reopened, "Dusk");
         tap_contents_item(&mut reopened, "Dusk");
-        reopened.input(Input::Tap(100.0,(LIST_Y + 266) as f32));
+        reopened.input(Input::Tap(100.0, (LIST_Y + 266) as f32));
         reopened.input(Input::PageBack);
         reopened.input(Input::PageBack);
         assert!(reopened.items().iter().any(|item| item.title == "Dusk"));
         tap_contents_item(&mut reopened, "Dusk");
-        reopened.input(Input::Tap(100.0,(LIST_Y+266) as f32));
-        reopened.input(Input::Tap(800.0,832.0));
-        assert_eq!(reopened.library.state(reopened.open_book_id().unwrap()).unwrap().custom_contents.entries().len(), 1);
+        reopened.input(Input::Tap(100.0, (LIST_Y + 266) as f32));
+        reopened.input(Input::Tap(800.0, 832.0));
+        assert_eq!(
+            reopened
+                .library
+                .state(reopened.open_book_id().unwrap())
+                .unwrap()
+                .custom_contents
+                .entries()
+                .len(),
+            1
+        );
         reopened.show(Screen::CustomContents);
         tap_contents_item(&mut reopened, "Use publisher contents");
-        assert!(reopened.items().iter().any(|item| item.title == "Returning at Dusk"));
-        assert_eq!(reopened.library.state(reopened.open_book_id().unwrap()).unwrap().custom_contents.entries().len(), 1);
+        assert!(
+            reopened
+                .items()
+                .iter()
+                .any(|item| item.title == "Returning at Dusk")
+        );
+        assert_eq!(
+            reopened
+                .library
+                .state(reopened.open_book_id().unwrap())
+                .unwrap()
+                .custom_contents
+                .entries()
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -10367,7 +12268,17 @@ mod tests {
         tap_selection_action(&mut app, selection_popup::SelectionAction::Chapter);
         save_chapter_title(&mut app, "Second tide");
         assert!(app.selection.is_none());
-        assert!(app.library.state(app.open_book_id().unwrap()).unwrap().custom_contents.entries()[0].position.anchor.as_ref() == Some(&start));
+        assert!(
+            app.library
+                .state(app.open_book_id().unwrap())
+                .unwrap()
+                .custom_contents
+                .entries()[0]
+                .position
+                .anchor
+                .as_ref()
+                == Some(&start)
+        );
         app.show(Screen::Contents);
         tap_contents_item(&mut app, "Second tide");
         assert_eq!(app.current_position().unwrap().anchor, Some(start));
@@ -10378,22 +12289,26 @@ mod tests {
         let fixture = Fixture::new();
         let mut app = fixture.app();
         let path = fixture.root.join("No outline.pdf");
-        fs::write(&path, crate::fixed::tests::pdf_objects(&[
-            "<< /Type /Catalog /Pages 2 0 R >>",
-            "<< /Type /Pages /Count 2 /Kids [3 0 R 4 0 R] >>",
-            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 120] >>",
-            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 120] >>",
-        ])).unwrap();
+        fs::write(
+            &path,
+            crate::fixed::tests::pdf_objects(&[
+                "<< /Type /Catalog /Pages 2 0 R >>",
+                "<< /Type /Pages /Count 2 /Kids [3 0 R 4 0 R] >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 120] >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 120] >>",
+            ]),
+        )
+        .unwrap();
         app.open_path(&path).unwrap();
         assert!(app.fixed.as_ref().unwrap().reading.outline().is_empty());
         app.follow_fixed(1, None).unwrap();
-        app.open_reading_edge(false,500.0);
+        app.open_reading_edge(false, 500.0);
         tap_reading_control(&mut app, "Contents");
         tap_contents_item(&mut app, "Custom contents");
         tap_contents_item(&mut app, "Add current location");
         save_chapter_title(&mut app, "Second page");
         tap_contents_item(&mut app, "Use custom contents");
-        app.follow_fixed(0,None).unwrap();
+        app.follow_fixed(0, None).unwrap();
         app.show(Screen::FixedContents);
         tap_contents_item(&mut app, "Second page");
         assert_eq!(app.current_position().unwrap().page, 1);
@@ -10483,9 +12398,14 @@ mod tests {
             assert_eq!(app.input(tap), Change::Partial);
             assert_eq!(app.screen, Screen::Book);
             assert_eq!(app.controls.status_bar, mode);
-            assert_eq!(ReadingControls::load(&app.controls_path, true).status_bar, mode);
+            assert_eq!(
+                ReadingControls::load(&app.controls_path, true).status_bar,
+                mode
+            );
             match mode {
-                StatusBar::Progress => assert!(app.status_caption().unwrap().ends_with("% of book")),
+                StatusBar::Progress => {
+                    assert!(app.status_caption().unwrap().ends_with("% of book"))
+                }
                 StatusBar::Chapter => assert!(app.status_caption().unwrap().contains("Page 1 of")),
                 StatusBar::Remaining => assert!(app.status_caption().unwrap().ends_with("left")),
                 StatusBar::ChapterTime => {
@@ -10500,15 +12420,19 @@ mod tests {
             skim_on_footer_hold: true,
             footer_all_at_once: true,
             ..app.controls
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(app.status_caption().unwrap().contains("left"));
         app.input(tap);
         assert_eq!(app.controls.status_bar, StatusBar::Minimal);
         assert_eq!(app.input(hold), Change::None);
         app.input(tap);
         assert_eq!(app.input(hold), Change::Partial);
-        assert_eq!(app.screen, Screen::PageOverview);
-        assert_eq!(position(&app.active.as_ref().unwrap().reading), position_before);
+        assert_eq!(app.screen, Screen::Skim);
+        assert_eq!(
+            position(&app.active.as_ref().unwrap().reading),
+            position_before
+        );
 
         app.show(Screen::Book);
         app.controls.footer_tap_locked = true;
@@ -10516,7 +12440,10 @@ mod tests {
         app.activate(Action::LockTouch).unwrap();
         assert_eq!(app.input(hold), Change::None);
         assert_eq!(app.screen, Screen::Book);
-        assert_eq!(app.input(Input::Tap(DONE.x as f32 + 20.0, DONE.y as f32 + 20.0)), Change::Exit);
+        assert_eq!(
+            app.input(Input::Tap(DONE.x as f32 + 20.0, DONE.y as f32 + 20.0)),
+            Change::Exit
+        );
     }
 
     #[test]
@@ -10525,31 +12452,41 @@ mod tests {
         let mut app = fixture.app();
         app.open_path(&fixture.book).unwrap();
         let before = position(&app.active.as_ref().unwrap().reading);
-        let reading=&app.active.as_ref().unwrap().reading;
-        let selected=reading.probe.matches("first").into_iter().next().unwrap();
-        let mut end=selected.clone(); end.offset+=5;
-        app.selection=reading.probe.select_range(&selected,&end);
-        for action in [selection_popup::SelectionAction::Wikipedia, selection_popup::SelectionAction::Translate] {
-            let button=app.selection_button(action);
-            assert_eq!(app.input(Input::Tap((button.x+button.w/2) as f32,(button.y+button.h/2) as f32)),Change::Partial);
-            assert_eq!(app.screen,Screen::OnlineLookup);
+        let reading = &app.active.as_ref().unwrap().reading;
+        let selected = reading.probe.matches("first").into_iter().next().unwrap();
+        let mut end = selected.clone();
+        end.offset += 5;
+        app.selection = reading.probe.select_range(&selected, &end);
+        for action in [
+            selection_popup::SelectionAction::Wikipedia,
+            selection_popup::SelectionAction::Translate,
+        ] {
+            let button = app.selection_button(action);
+            assert_eq!(
+                app.input(Input::Tap(
+                    (button.x + button.w / 2) as f32,
+                    (button.y + button.h / 2) as f32
+                )),
+                Change::Partial
+            );
+            assert_eq!(app.screen, Screen::OnlineLookup);
             assert!(app.online.as_ref().unwrap().job.is_none());
-            assert_eq!(app.online.as_ref().unwrap().request.text,"first");
+            assert_eq!(app.online.as_ref().unwrap().request.text, "first");
             assert!(app.lookup_history.online.is_empty());
-            app.input(Input::Tap(1090.0,366.0));
-            assert_eq!(app.screen,Screen::Book);
-            assert_eq!(app.selection.as_ref().unwrap().text,"first");
-            assert_eq!(position(&app.active.as_ref().unwrap().reading),before);
+            app.input(Input::Tap(1090.0, 366.0));
+            assert_eq!(app.screen, Screen::Book);
+            assert_eq!(app.selection.as_ref().unwrap().text, "first");
+            assert_eq!(position(&app.active.as_ref().unwrap().reading), before);
         }
         app.show(Screen::BookTools);
         app.activate(Action::TranslatePage).unwrap();
         assert!(app.online.as_ref().unwrap().request.text.contains("first"));
         assert!(app.online.as_ref().unwrap().job.is_none());
-        app.input(Input::Tap(1090.0,366.0));
+        app.input(Input::Tap(1090.0, 366.0));
         app.activate(Action::Wikipedia).unwrap();
-        assert_eq!(app.screen,Screen::OnlineEdit);
+        assert_eq!(app.screen, Screen::OnlineEdit);
         app.input(Input::PageBack);
-        assert_eq!(app.screen,Screen::BookTools);
+        assert_eq!(app.screen, Screen::BookTools);
     }
 
     #[test]
@@ -10567,13 +12504,19 @@ mod tests {
         app.input(tap);
         assert!(app.status_caption().unwrap().contains("Page 1 of"));
         let before = app.fixed.as_ref().unwrap().reading.preferences().zoom;
-        assert_eq!(app.input(Input::Tap(1030.0, HEIGHT as f32 - 34.0)), Change::Partial);
+        assert_eq!(
+            app.input(Input::Tap(1030.0, HEIGHT as f32 - 34.0)),
+            Change::Partial
+        );
         assert!(app.fixed.as_ref().unwrap().reading.preferences().zoom > before);
         assert_eq!(app.controls.status_bar, StatusBar::Chapter);
         app.fixed.as_mut().unwrap().reading.jump(1).unwrap();
         app.input(tap);
         assert!(app.status_caption().unwrap().ends_with("0 pages left"));
-        assert_eq!(app.input(Input::Tap(DONE.x as f32 + 30.0, DONE.y as f32 + 30.0)), Change::Exit);
+        assert_eq!(
+            app.input(Input::Tap(DONE.x as f32 + 30.0, DONE.y as f32 + 30.0)),
+            Change::Exit
+        );
     }
 
     #[test]
@@ -10679,16 +12622,28 @@ mod tests {
         app.open_path(&pdf).unwrap();
         {
             let reading = &mut app.fixed.as_mut().unwrap().reading;
-            reading.restore_view(FixedPreferences {
-                straighten_limit: 10,
-                turns: 0,
-                crop: Some(PdfTextRect { x0: 0.05, y0: 0.04, x1: 0.94, y1: 0.94 }),
-                ..Default::default()
-            }).unwrap();
+            reading
+                .restore_view(FixedPreferences {
+                    straighten_limit: 10,
+                    turns: 0,
+                    crop: Some(PdfTextRect {
+                        x0: 0.05,
+                        y0: 0.04,
+                        x1: 0.94,
+                        y1: 0.94,
+                    }),
+                    ..Default::default()
+                })
+                .unwrap();
         }
         let reading = &app.fixed.as_ref().unwrap().reading;
         let source = reading.page_text(0).unwrap();
-        let word = source.words.iter().find(|w| &source.text[w.bytes.clone()] == "Trail").unwrap().bounds;
+        let word = source
+            .words
+            .iter()
+            .find(|w| &source.text[w.bytes.clone()] == "Trail")
+            .unwrap()
+            .bounds;
         let point = reading.visible_rectangle(0, word).unwrap().center();
         let raster = reading.ocr_raster(0).unwrap();
         // The simulated worker reports a different word at the source rectangle, just as an OCR
@@ -10696,7 +12651,8 @@ mod tests {
         let pack = fixture.root.join("engine");
         let tessdata = pack.join("ocr/tessdata");
         fs::create_dir_all(&tessdata).unwrap();
-        let real = std::env::var_os("READER_TEST_TESSERACT").zip(std::env::var_os("READER_TEST_TESSDATA"));
+        let real =
+            std::env::var_os("READER_TEST_TESSERACT").zip(std::env::var_os("READER_TEST_TESSDATA"));
         let expected = if let Some((engine, model)) = real {
             fs::copy(engine, pack.join("ocr/tesseract")).unwrap();
             fs::copy(model, tessdata.join("eng.traineddata")).unwrap();
@@ -10705,21 +12661,39 @@ mod tests {
             fs::write(tessdata.join("eng.traineddata"), b"fixture").unwrap();
             let script = format!(
                 "#!/bin/sh\ncat >/dev/null\nprintf '%b\\n' 'level\\tpage_num\\tblock_num\\tpar_num\\tline_num\\tword_num\\tleft\\ttop\\twidth\\theight\\tconf\\ttext' '1\\t1\\t0\\t0\\t0\\t0\\t0\\t0\\t{}\\t{}\\t-1\\t' '5\\t1\\t1\\t1\\t1\\t1\\t{}\\t{}\\t{}\\t{}\\t98\\tHarbor'\n",
-                raster.width, raster.height,
-                (word.x0 * raster.width as f32) as usize, (word.y0 * raster.height as f32) as usize,
-                ((word.x1 - word.x0) * raster.width as f32) as usize, ((word.y1 - word.y0) * raster.height as f32) as usize
+                raster.width,
+                raster.height,
+                (word.x0 * raster.width as f32) as usize,
+                (word.y0 * raster.height as f32) as usize,
+                ((word.x1 - word.x0) * raster.width as f32) as usize,
+                ((word.y1 - word.y0) * raster.height as f32) as usize
             );
             fs::write(pack.join("ocr/tesseract"), script).unwrap();
             "Harbor"
         };
-        fs::set_permissions(pack.join("ocr/tesseract"), fs::Permissions::from_mode(0o700)).unwrap();
+        fs::set_permissions(
+            pack.join("ocr/tesseract"),
+            fs::Permissions::from_mode(0o700),
+        )
+        .unwrap();
         let capture = |name: &str, app: &Reader| {
-            if let (Some(dir), Some(fonts)) = (std::env::var_os("READER_OCR_SHOTS"), std::env::var_os("READER_TEST_FONTS")) {
-                let fonts = std::env::split_paths(&fonts).map(|p| p.display().to_string()).collect::<Vec<_>>();
+            if let (Some(dir), Some(fonts)) = (
+                std::env::var_os("READER_OCR_SHOTS"),
+                std::env::var_os("READER_TEST_FONTS"),
+            ) {
+                let fonts = std::env::split_paths(&fonts)
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>();
                 let mut canvas = Canvas::new(WIDTH, HEIGHT, &fonts).unwrap();
                 let dir = Path::new(&dir);
                 fs::create_dir_all(dir).unwrap();
-                primitive_app::write_png(&dir.join(name), WIDTH, HEIGHT, &primitive_app::frame(app, &mut canvas, false)).unwrap();
+                primitive_app::write_png(
+                    &dir.join(name),
+                    WIDTH,
+                    HEIGHT,
+                    &primitive_app::frame(app, &mut canvas, false),
+                )
+                .unwrap();
             }
         };
         app.ocr_assets = OcrAssets::discover(&pack);
@@ -10729,12 +12703,17 @@ mod tests {
         assert_eq!(tap_reading_control(&mut app, "Force OCR"), Change::Partial);
         capture("forced-ocr-control.png", &app);
         app.input(Input::Tap(630.0, 720.0));
-        if app.screen == Screen::FixedTools { app.input(Input::Tap(630.0, 720.0)); }
+        if app.screen == Screen::FixedTools {
+            app.input(Input::Tap(630.0, 720.0));
+        }
         assert_eq!(app.screen, Screen::Fixed);
         let hold = Input::LongTap(point.x as f32, point.y as f32);
         app.input(hold);
         assert!(app.ocr.is_some() && app.pdf_selection.is_none());
-        app.input(Input::Tap((CANCEL_OCR.x + 15) as f32, (CANCEL_OCR.y + 15) as f32));
+        app.input(Input::Tap(
+            (CANCEL_OCR.x + 15) as f32,
+            (CANCEL_OCR.y + 15) as f32,
+        ));
         assert!(app.ocr.is_none());
         assert!(app.fixed.as_ref().unwrap().reading.cached_ocr(0).is_none());
         app.input(hold);
@@ -10744,12 +12723,20 @@ mod tests {
             app.poll_ocr(job.deadline).unwrap();
             std::thread::sleep(Duration::from_millis(12));
         }
-        let selected = app.pdf_selection.as_ref().expect("recognized word at original touch");
+        let selected = app
+            .pdf_selection
+            .as_ref()
+            .expect("recognized word at original touch");
         assert_eq!(selected.text(), expected);
         assert_eq!(selected.page(), 0);
         capture("forced-ocr-selection.png", &app);
         let reading = &app.fixed.as_ref().unwrap().reading;
-        assert!(reading.selection_bounds(selected).unwrap().contains(point.x as f32, point.y as f32));
+        assert!(
+            reading
+                .selection_bounds(selected)
+                .unwrap()
+                .contains(point.x as f32, point.y as f32)
+        );
         let native_search = reading.page_text(0).unwrap();
         assert!(native_search.text.contains("Trail"));
         assert!(!native_search.text.contains("Harbor"));
@@ -10764,17 +12751,35 @@ mod tests {
         app.save().unwrap();
         let mut reopened = fixture.app();
         reopened.open_path(&pdf).unwrap();
-        assert!(reopened.fixed.as_ref().unwrap().reading.preferences().force_ocr);
+        assert!(
+            reopened
+                .fixed
+                .as_ref()
+                .unwrap()
+                .reading
+                .preferences()
+                .force_ocr
+        );
         reopened.start_document_search("Trail").unwrap();
         while reopened.search_at.is_some() {
             reopened.step_pdf_search(Instant::now()).unwrap();
         }
-        assert_eq!(reopened.pdf_hits.iter().map(|hit| hit.page).collect::<Vec<_>>(), [0, 1]);
+        assert_eq!(
+            reopened
+                .pdf_hits
+                .iter()
+                .map(|hit| hit.page)
+                .collect::<Vec<_>>(),
+            [0, 1]
+        );
         reopened.start_document_search("Harbor").unwrap();
         while reopened.search_at.is_some() {
             reopened.step_pdf_search(Instant::now()).unwrap();
         }
-        assert!(reopened.pdf_hits.is_empty(), "native text takes priority over recognition in search");
+        assert!(
+            reopened.pdf_hits.is_empty(),
+            "native text takes priority over recognition in search"
+        );
         app.activate(Action::ForceOcr(false)).unwrap();
         app.input(hold);
         assert_eq!(app.pdf_selection.as_ref().unwrap().text(), "Trail");
@@ -10791,7 +12796,10 @@ mod tests {
             .map(|paths| std::env::split_paths(&paths).collect())
             .unwrap_or_else(|| vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")]);
         let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
-        let fonts = fonts.iter().map(|p| p.display().to_string()).collect::<Vec<_>>();
+        let fonts = fonts
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>();
         let mut canvas = Canvas::new(WIDTH, HEIGHT, &fonts).unwrap();
         let mut capture = |name: &str, app: &Reader| {
             let pixels = primitive_app::frame(app, &mut canvas, false);
@@ -10808,15 +12816,28 @@ mod tests {
         tap_reading_control(&mut app, "Scan");
         assert_eq!(tap_reading_control(&mut app, "10°"), Change::Partial);
         assert_eq!(app.reading_panel, Some(BarPanel::Scan));
-        assert_eq!(tap_reading_control(&mut app, "Increase 1°"), Change::Partial);
-        assert_eq!(tap_reading_control(&mut app, "Decrease 1°"), Change::Partial);
+        assert_eq!(
+            tap_reading_control(&mut app, "Increase 1°"),
+            Change::Partial
+        );
+        assert_eq!(
+            tap_reading_control(&mut app, "Decrease 1°"),
+            Change::Partial
+        );
         capture("scan-control.png", &app);
         app.input(Input::Tap(630.0, 720.0));
-        if app.screen == Screen::FixedTools { app.input(Input::Tap(630.0, 720.0)); }
+        if app.screen == Screen::FixedTools {
+            app.input(Input::Tap(630.0, 720.0));
+        }
         assert_eq!(app.screen, Screen::Fixed);
         let after = capture("scan-straightened.png", &app);
-        assert!(before[..(WIDTH * PAGE_HEIGHT) as usize] != after[..(WIDTH * PAGE_HEIGHT) as usize]);
-        assert_eq!(app.input(Input::Tap((DONE.x + 30) as f32, (DONE.y + 24) as f32)), Change::Exit);
+        assert!(
+            before[..(WIDTH * PAGE_HEIGHT) as usize] != after[..(WIDTH * PAGE_HEIGHT) as usize]
+        );
+        assert_eq!(
+            app.input(Input::Tap((DONE.x + 30) as f32, (DONE.y + 24) as f32)),
+            Change::Exit
+        );
         let mut reopened = fixture.app();
         reopened.activate(Action::Continue).unwrap();
         let fixed = &reopened.fixed.as_ref().unwrap().reading;
@@ -10914,7 +12935,9 @@ mod tests {
             reading.set_continuous(continuous).unwrap();
             reading.set_zoom(4).unwrap();
             reading.jump(0).unwrap();
-            reopened.start_document_search("turns north past the").unwrap();
+            reopened
+                .start_document_search("turns north past the")
+                .unwrap();
             while reopened.search_at.is_some() {
                 reopened.step_pdf_search(Instant::now()).unwrap();
             }
@@ -11111,9 +13134,10 @@ mod tests {
             // Dictionary title, returned headword and optional digest of visible definition text.
             results: Vec<(String, String, Option<String>)>,
         }
-        let reference: Reference = serde_json::from_slice(&fs::read(
-            std::env::var_os("READER_DICTIONARY_REFERENCE").unwrap()
-        ).unwrap()).unwrap();
+        let reference: Reference = serde_json::from_slice(
+            &fs::read(std::env::var_os("READER_DICTIONARY_REFERENCE").unwrap()).unwrap(),
+        )
+        .unwrap();
         let documents = PathBuf::from(std::env::var_os("PRIMITIVE_READER_DOCUMENTS").unwrap());
         let fixture = Fixture::new();
         let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
@@ -11123,50 +13147,99 @@ mod tests {
         let mut looked_up = 0;
         for case in reference.cases {
             app.open_path(&case.book).unwrap();
-            let probe = app.active.as_ref().unwrap().reading.config.chapter(case.chapter).unwrap();
-            let passage = probe.source.blocks.iter().find_map(|b| {
-                let range = crate::selection::word_ranges(&b.text)
-                    .find(|range| b.text[range.clone()] == case.word)?;
-                probe.select_range(&probe.anchor(b.key, range.start), &probe.anchor(b.key, range.end))
-            }).expect("Reference word occurs in the specified chapter");
+            let probe = app
+                .active
+                .as_ref()
+                .unwrap()
+                .reading
+                .config
+                .chapter(case.chapter)
+                .unwrap();
+            let passage = probe
+                .source
+                .blocks
+                .iter()
+                .find_map(|b| {
+                    let range = crate::selection::word_ranges(&b.text)
+                        .find(|range| b.text[range.clone()] == case.word)?;
+                    probe.select_range(
+                        &probe.anchor(b.key, range.start),
+                        &probe.anchor(b.key, range.end),
+                    )
+                })
+                .expect("Reference word occurs in the specified chapter");
             app.restore_position(&ReadingPosition {
-                chapter: case.chapter, page: 0, anchor: Some(passage.start.clone())
-            }).unwrap();
+                chapter: case.chapter,
+                page: 0,
+                anchor: Some(passage.start.clone()),
+            })
+            .unwrap();
             let origin = app.current_history_location().unwrap();
-            let bounds = app.active.as_ref().unwrap().reading.highlight_rects(&passage)[0];
-            let (x, y) = rectangle_center(Rect::new(bounds.x, bounds.y, bounds.width, bounds.height));
+            let bounds = app
+                .active
+                .as_ref()
+                .unwrap()
+                .reading
+                .highlight_rects(&passage)[0];
+            let (x, y) =
+                rectangle_center(Rect::new(bounds.x, bounds.y, bounds.width, bounds.height));
             app.input(Input::LongTap(x, y));
-            assert!(app.selection.as_ref().is_some_and(|selected| selected.text == case.word));
+            assert!(
+                app.selection
+                    .as_ref()
+                    .is_some_and(|selected| selected.text == case.word)
+            );
             let start = Instant::now();
             tap_selection_action(&mut app, selection_popup::SelectionAction::Dictionary);
             assert_eq!(app.screen, Screen::Definition);
             assert!(app.definition_over_book());
             let deadline = Instant::now() + Duration::from_secs(180);
             while app.spelling_lookup.is_some() {
-                assert!(Instant::now() < deadline, "Dictionary suggestions exceeded three minutes");
+                assert!(
+                    Instant::now() < deadline,
+                    "Dictionary suggestions exceeded three minutes"
+                );
                 app.tick(Instant::now());
-                if app.spelling_lookup.is_some() { std::thread::sleep(Duration::from_millis(20)); }
+                if app.spelling_lookup.is_some() {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
             }
-            assert_eq!(app.definitions.len(), case.results.len(), "dictionary result count for case {looked_up}");
+            assert_eq!(
+                app.definitions.len(),
+                case.results.len(),
+                "dictionary result count for case {looked_up}"
+            );
             let mut remaining: Vec<_> = app.definitions.iter().collect();
             for (dictionary, word, visible_digest) in case.results {
-                let index = remaining.iter().position(|entry| {
-                    if entry.dictionary != dictionary || entry.word != word {
-                        return false;
-                    }
-                    visible_digest.as_ref().is_none_or(|digest| {
-                        let normalized = entry.text.split_whitespace().collect::<Vec<_>>().join(" ");
-                        format!("{:x}", md5::compute(normalized)) == *digest
+                let index = remaining
+                    .iter()
+                    .position(|entry| {
+                        if entry.dictionary != dictionary || entry.word != word {
+                            return false;
+                        }
+                        visible_digest.as_ref().is_none_or(|digest| {
+                            let normalized =
+                                entry.text.split_whitespace().collect::<Vec<_>>().join(" ");
+                            format!("{:x}", md5::compute(normalized)) == *digest
+                        })
                     })
-                }).expect("Same dictionary, headword and visible definition as the stock result");
+                    .expect("Same dictionary, headword and visible definition as the stock result");
                 remaining.remove(index);
             }
-            eprintln!("Dictionary check {} took {} ms", looked_up + 1, start.elapsed().as_millis());
+            eprintln!(
+                "Dictionary check {} took {} ms",
+                looked_up + 1,
+                start.elapsed().as_millis()
+            );
             let (x, y) = rectangle_center(app.definition_layout().1);
             app.input(Input::Tap(x, y));
             assert_eq!(app.screen, Screen::Book);
             assert!(app.current_history_location().as_ref() == Some(&origin));
-            assert!(app.selection.as_ref().is_some_and(|selected| selected.text == case.word));
+            assert!(
+                app.selection
+                    .as_ref()
+                    .is_some_and(|selected| selected.text == case.word)
+            );
             app.selection = None;
             looked_up += 1;
         }
@@ -11246,10 +13319,840 @@ mod tests {
     }
 
     #[test]
+    fn highlight_prompt_applies_chosen_style_and_color_without_changing_defaults() {
+        use crate::highlight_style::{HighlightColor, HighlightStyle};
+        use crate::reading_controls::{HighlightPrompt, SelectionLongPressAction};
+        use selection_popup::{HighlightPromptStage, SelectionAction};
+
+        let fixture = Fixture::new();
+        let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        app.open_path(&fixture.book).unwrap();
+        app.controls.highlight_prompt = HighlightPrompt::StyleAndColor;
+        let reading = &app.active.as_ref().unwrap().reading;
+        let origin = reading.probe.fragment("tide-note").unwrap();
+        let mut start = origin.clone();
+        start.offset += "The ".len();
+        let mut end = start.clone();
+        end.offset += "first".len();
+        app.selection = Some(reading.probe.select_range(&start, &end).unwrap());
+        let id = app.open_book_id().unwrap();
+        let original_book_style = app.library.state(id).unwrap().highlight_style;
+        let original_book_color = app.library.state(id).unwrap().highlight_color;
+
+        assert_eq!(
+            app.apply_selection_long_press_action(SelectionLongPressAction::Highlight),
+            Change::Partial
+        );
+        assert_eq!(
+            app.highlight_prompt_stage,
+            Some(HighlightPromptStage::Style)
+        );
+        assert!(app.library.state(id).unwrap().highlights.is_empty());
+        capture_test_screen(
+            &app,
+            &fonts,
+            "READER_HIGHLIGHT_STYLE_PROMPT_SCREENSHOT",
+            false,
+        );
+
+        assert_eq!(
+            tap_selection_action(
+                &mut app,
+                SelectionAction::PromptStyle(HighlightStyle::Underline)
+            ),
+            Change::Partial
+        );
+        assert_eq!(
+            app.highlight_prompt_stage,
+            Some(HighlightPromptStage::Color)
+        );
+        assert_eq!(app.selection.as_ref().unwrap().text, "first");
+        assert!(app.library.state(id).unwrap().highlights.is_empty());
+        capture_test_screen(
+            &app,
+            &fonts,
+            "READER_HIGHLIGHT_COLOR_PROMPT_SCREENSHOT",
+            false,
+        );
+
+        assert_eq!(
+            tap_selection_action(&mut app, SelectionAction::CancelPrompt),
+            Change::Partial
+        );
+        assert_eq!(app.highlight_prompt_stage, None);
+        assert_eq!(app.selection.as_ref().unwrap().text, "first");
+        assert!(app.library.state(id).unwrap().highlights.is_empty());
+
+        tap_selection_action(&mut app, SelectionAction::Highlight);
+        tap_selection_action(
+            &mut app,
+            SelectionAction::PromptStyle(HighlightStyle::Underline),
+        );
+        let button = app.selection_button(SelectionAction::PromptColor(HighlightColor::Cyan));
+        let mut canvas = Canvas::new(WIDTH, HEIGHT, &[fonts[0].display().to_string()]).unwrap();
+        let before = primitive_app::frame(&app, &mut canvas, false);
+        assert!(canvas.press_at(
+            (button.x + button.w / 2) as f32,
+            (button.y + button.h / 2) as f32,
+        ));
+        let pressed = primitive_app::frame(&app, &mut canvas, false);
+        assert_ne!(before, pressed);
+        for (index, (before, after)) in before.iter().zip(&pressed).enumerate() {
+            if before != after {
+                assert!(button.contains(
+                    (index % WIDTH as usize) as f32,
+                    (index / WIDTH as usize) as f32,
+                ));
+            }
+        }
+        canvas.clear_press();
+        assert_eq!(
+            tap_selection_action(&mut app, SelectionAction::PromptColor(HighlightColor::Cyan)),
+            Change::Partial
+        );
+        let state = app.library.state(id).unwrap();
+        assert_eq!(state.highlights.len(), 1);
+        assert_eq!(state.highlights[0].selection.text, "first");
+        assert_eq!(state.highlights[0].style, HighlightStyle::Underline);
+        assert_eq!(state.highlights[0].color, HighlightColor::Cyan);
+        assert_eq!(state.highlight_style, original_book_style);
+        assert_eq!(state.highlight_color, original_book_color);
+        assert_eq!(app.highlight_prompt_stage, None);
+        assert!(app.selection.is_none());
+    }
+
+    #[test]
+    fn highlight_prompt_saves_the_chosen_color_for_pdf_text() {
+        use crate::highlight_style::HighlightColor;
+        use crate::reading_controls::HighlightPrompt;
+        use selection_popup::{HighlightPromptStage, SelectionAction};
+
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Prompt.pdf");
+        let content = "BT /F1 14 Tf 55 60 Td (PDF sample words) Tj ET";
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+            "<< /Type /Pages /Count 1 /Kids [3 0 R] /Resources << /Font << /F1 5 0 R >> >> >>"
+                .to_owned(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 240 120] /Contents 4 0 R >>".to_owned(),
+            format!(
+                "<< /Length {} >>\nstream\n{content}\nendstream",
+                content.len()
+            ),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned(),
+        ];
+        fs::write(&path, crate::fixed::tests::pdf_objects(&objects)).unwrap();
+        let mut app = fixture.app();
+        app.open_path(&path).unwrap();
+        app.controls.highlight_prompt = HighlightPrompt::Color;
+        let fixed = &app.fixed.as_ref().unwrap().reading;
+        let text = fixed.page_text(0).unwrap();
+        let bounds = text.words[1].bounds;
+        let point = hayro::kurbo::Point::new(
+            f64::from((bounds.x0 + bounds.x1) / 2.0),
+            f64::from((bounds.y0 + bounds.y1) / 2.0),
+        );
+        app.pdf_selection = Some(PdfSelection::at(0, point, text).unwrap());
+        let id = app.open_book_id().unwrap();
+
+        assert_eq!(
+            tap_selection_action(&mut app, SelectionAction::Highlight),
+            Change::Partial
+        );
+        assert_eq!(
+            app.highlight_prompt_stage,
+            Some(HighlightPromptStage::Color)
+        );
+        assert!(app.library.state(id).unwrap().pdf_highlights.is_empty());
+        assert_eq!(
+            tap_selection_action(&mut app, SelectionAction::PromptColor(HighlightColor::Cyan)),
+            Change::Partial
+        );
+        let marks = &app.library.state(id).unwrap().pdf_highlights;
+        assert_eq!(marks.len(), 1);
+        assert_eq!(marks[0].text, "sample");
+        assert_eq!(marks[0].color, HighlightColor::Cyan);
+        assert_eq!(app.highlight_prompt_stage, None);
+    }
+
+    #[test]
+    #[ignore = "requires an authorized original DRM-free EPUB path in READER_PARITY_EPUB"]
+    fn highlight_prompt_on_an_original_epub_preserves_the_source_file() {
+        use crate::highlight_style::{HighlightColor, HighlightStyle};
+        use crate::reading_controls::HighlightPrompt;
+        use selection_popup::SelectionAction;
+
+        let original = PathBuf::from(
+            std::env::var_os("READER_PARITY_EPUB")
+                .expect("set READER_PARITY_EPUB to an authorized original document"),
+        );
+        let original_bytes = fs::read(&original).unwrap();
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Original.epub");
+        fs::write(&path, &original_bytes).unwrap();
+        let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+        app.open_path(&path).unwrap();
+        app.controls.highlight_prompt = HighlightPrompt::StyleAndColor;
+        let chapter_count = app.active.as_ref().unwrap().reading.probe.chapter_count();
+        let (selected, word) = (0..chapter_count)
+            .find_map(|chapter| {
+                app.active.as_mut()?.reading.go_to_page(chapter, 0).ok()?;
+                let reading = &app.active.as_ref()?.reading;
+                let (block, word) = reading.probe.source.blocks.iter().find_map(|block| {
+                    block
+                        .text
+                        .split_whitespace()
+                        .find(|word| word.chars().any(char::is_alphanumeric))
+                        .map(|word| (block, word.to_owned()))
+                })?;
+                let start = block.text.find(&word)?;
+                let selected = reading.probe.select_range(
+                    &reading.probe.anchor(block.key, start),
+                    &reading.probe.anchor(block.key, start + word.len()),
+                )?;
+                Some((selected, word))
+            })
+            .expect("original publication has selectable words");
+        app.selection = Some(selected);
+        let id = app.open_book_id().unwrap();
+        let previous_style = app.library.state(id).unwrap().highlight_style;
+        let previous_color = app.library.state(id).unwrap().highlight_color;
+
+        tap_selection_action(&mut app, SelectionAction::Highlight);
+        tap_selection_action(
+            &mut app,
+            SelectionAction::PromptStyle(HighlightStyle::Underline),
+        );
+        tap_selection_action(&mut app, SelectionAction::PromptColor(HighlightColor::Cyan));
+
+        let marks = &app.library.state(id).unwrap().highlights;
+        assert_eq!(marks.len(), 1);
+        assert_eq!(marks[0].selection.text, word);
+        assert_eq!(marks[0].style, HighlightStyle::Underline);
+        assert_eq!(marks[0].color, HighlightColor::Cyan);
+        assert_eq!(
+            app.library.state(id).unwrap().highlight_style,
+            previous_style
+        );
+        assert_eq!(
+            app.library.state(id).unwrap().highlight_color,
+            previous_color
+        );
+        assert_eq!(fs::read(&original).unwrap(), original_bytes);
+    }
+
+    #[test]
+    fn selection_popup_position_matches_koreader_choices_and_persists() {
+        use crate::reading_controls::SelectionPopupPosition as Position;
+
+        let fixture = Fixture::new();
+        let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+        let mut app = Reader::open(&fixture.root, &fixture.state, vec![font.clone()]).unwrap();
+        app.open_path(&fixture.book).unwrap();
+        app.controls.dictionary_on_single_word = Some(false);
+        assert_eq!(app.controls.selection_popup_position, Position::Center);
+
+        let item = app
+            .top_config_items(TopGroup::Settings)
+            .into_iter()
+            .find(|item| item.title == "Selection dialog position")
+            .unwrap();
+        assert_eq!(item.detail.as_deref(), Some("Center"));
+        assert!(app.reading_settings_items().iter().any(|item| {
+            item.title == "Selection dialog position" && item.detail.as_deref() == Some("Center")
+        }));
+        app.activate(Action::Show(Screen::SelectionPosition))
+            .unwrap();
+        let options = app.items();
+        assert_eq!(options.len(), Position::ALL.len());
+        assert!(
+            options.iter().any(|item| {
+                item.title == "Center" && item.detail.as_deref() == Some("Selected")
+            })
+        );
+        let selected = options
+            .into_iter()
+            .find(|item| item.title == "By selected text")
+            .unwrap();
+        app.activate(selected.action).unwrap();
+        assert_eq!(app.controls.selection_popup_position, Position::Highlight);
+        assert_eq!(
+            crate::reading_controls::ReadingControls::load(&app.controls_path, false)
+                .selection_popup_position,
+            Position::Highlight
+        );
+
+        let reading = &app.active.as_ref().unwrap().reading;
+        let target = Book::resolve_link(&reading.probe.chapter, "#tide-note").unwrap();
+        app.follow(target).unwrap();
+        let reading = &app.active.as_ref().unwrap().reading;
+        let origin = reading.probe.fragment("tide-note").unwrap();
+        let mut start = origin.clone();
+        start.offset += "The ".len();
+        let mut end = start.clone();
+        end.offset += "first".len();
+        let selected_text = reading.probe.select_range(&start, &end).unwrap();
+        let rect = reading.highlight_rects(&selected_text)[0];
+        let point = rectangle_center(Rect::new(rect.x, rect.y, rect.width, rect.height));
+        app.input(Input::LongTap(point.0, point.1));
+        let anchored = app.selection_popup_rect();
+        assert!(
+            anchored.y >= Rect::new(rect.x, rect.y, rect.width, rect.height).bottom()
+                || anchored.bottom() <= rect.y
+        );
+
+        app.activate(Action::SetReadingControls(ReadingControls {
+            selection_popup_position: Position::Center,
+            ..app.controls
+        }))
+        .unwrap();
+        let centered = app.selection_popup_rect();
+        assert_eq!(centered.y, (PAGE_HEIGHT as i32 - centered.h) / 2);
+        assert_eq!(centered.x, (WIDTH as i32 - centered.w) / 2);
+        if let Some(path) = std::env::var_os("READER_SELECTION_CENTER_SCREENSHOT") {
+            let mut canvas = Canvas::new(WIDTH, HEIGHT, &[font.display().to_string()]).unwrap();
+            let frame = primitive_app::frame(&app, &mut canvas, false);
+            primitive_app::write_png(std::path::Path::new(&path), WIDTH, HEIGHT, &frame).unwrap();
+        }
+    }
+
+    #[test]
+    fn long_press_settings_match_koreader_actions_and_persist() {
+        use crate::reading_controls::SelectionLongPressAction as ActionChoice;
+
+        let fixture = Fixture::new();
+        let mut app = Reader::open(
+            &fixture.root,
+            &fixture.state,
+            vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+        )
+        .unwrap();
+        app.open_path(&fixture.book).unwrap();
+        assert!(app.reading_settings_items().iter().any(|item| {
+            item.title == "Long-press on text"
+                && item.detail.as_deref()
+                    == Some("Dictionary on one word · otherwise Ask with popup dialog")
+        }));
+        app.activate(Action::Show(Screen::LongPressSettings))
+            .unwrap();
+        let items = app.items();
+        assert_eq!(items.len(), ActionChoice::ALL.len() + 3);
+        assert_eq!(items[0].title, "Dictionary on a single word");
+        assert_eq!(
+            items[0].detail.as_deref(),
+            Some("On · opens the local dictionary")
+        );
+        assert!(items.iter().any(|item| {
+            item.title == "Ask with popup dialog" && item.detail.as_deref() == Some("Selected")
+        }));
+        if let Some(path) = std::env::var_os("READER_LONG_PRESS_SETTINGS_SCREENSHOT") {
+            let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+            let mut canvas = Canvas::new(WIDTH, HEIGHT, &[font.display().to_string()]).unwrap();
+            let frame = primitive_app::frame(&app, &mut canvas, false);
+            primitive_app::write_png(std::path::Path::new(&path), WIDTH, HEIGHT, &frame).unwrap();
+        }
+        let prompt = items
+            .iter()
+            .find(|item| item.title == "Highlight style and color prompt")
+            .unwrap();
+        assert_eq!(prompt.detail.as_deref(), Some("Off"));
+        let interval = items
+            .iter()
+            .find(|item| item.title == "Very long press interval")
+            .unwrap();
+        assert_eq!(interval.detail.as_deref(), Some("3.0 seconds"));
+        let interval_action = app
+            .items()
+            .into_iter()
+            .find(|item| item.title == "Very long press interval")
+            .unwrap()
+            .action;
+        app.activate(interval_action).unwrap();
+        assert_eq!(app.screen, Screen::VeryLongPressSettings);
+        let intervals = app.items();
+        assert_eq!(intervals.len(), 5);
+        app.activate(
+            intervals
+                .into_iter()
+                .find(|item| item.title == "+0.5 seconds")
+                .unwrap()
+                .action,
+        )
+        .unwrap();
+        assert_eq!(app.controls.very_long_press_tenths(), 35);
+        assert_eq!(
+            ReadingControls::load(&app.controls_path, false).very_long_press_tenths(),
+            35
+        );
+        app.activate(Action::Show(Screen::LongPressSettings))
+            .unwrap();
+        app.activate(Action::Show(Screen::HighlightPromptSettings))
+            .unwrap();
+        let choices = app.items();
+        assert_eq!(choices.len(), HighlightPrompt::ALL.len());
+        assert!(
+            choices
+                .iter()
+                .any(|item| { item.title == "Off" && item.detail.as_deref() == Some("Selected") })
+        );
+        app.activate(
+            choices
+                .into_iter()
+                .find(|item| item.title == "Style and color")
+                .unwrap()
+                .action,
+        )
+        .unwrap();
+        assert_eq!(
+            app.controls.highlight_prompt,
+            HighlightPrompt::StyleAndColor
+        );
+        assert_eq!(
+            ReadingControls::load(&app.controls_path, false).highlight_prompt,
+            HighlightPrompt::StyleAndColor
+        );
+        app.activate(Action::Show(Screen::LongPressSettings))
+            .unwrap();
+        let items = app.items();
+        let selected = items
+            .into_iter()
+            .find(|item| item.title == "Do nothing")
+            .unwrap();
+        app.activate(selected.action).unwrap();
+        assert_eq!(
+            app.controls.selection_long_press_action,
+            ActionChoice::Nothing
+        );
+        assert_eq!(
+            crate::reading_controls::ReadingControls::load(&app.controls_path, false)
+                .selection_long_press_action,
+            ActionChoice::Nothing
+        );
+    }
+
+    #[test]
+    fn long_press_selection_actions_run_natively_and_retain_reading_context() {
+        use crate::reading_controls::SelectionLongPressAction as ActionChoice;
+
+        for action in ActionChoice::ALL {
+            let fixture = Fixture::new();
+            let mut app = fixture.app();
+            app.open_path(&fixture.book).unwrap();
+            app.controls.dictionary_on_single_word = Some(false);
+            app.controls.selection_long_press_action = action;
+            let reading = &app.active.as_ref().unwrap().reading;
+            let origin = reading.probe.fragment("tide-note").unwrap();
+            let mut start = origin.clone();
+            start.offset += "The ".len();
+            let mut end = start.clone();
+            end.offset += "first".len();
+            let selected = reading.probe.select_range(&start, &end).unwrap();
+            let bounds = reading.highlight_rects(&selected)[0];
+            let point =
+                rectangle_center(Rect::new(bounds.x, bounds.y, bounds.width, bounds.height));
+            let position = app.current_history_location();
+
+            assert_eq!(
+                app.input(Input::LongTap(point.0, point.1)),
+                Change::Partial,
+                "{}",
+                action.label()
+            );
+            match action {
+                ActionChoice::Ask => {
+                    assert_eq!(app.screen, Screen::Book);
+                    assert_eq!(app.selection.as_ref().unwrap().text, "first");
+                    assert!(!app.selection_mode);
+                }
+                ActionChoice::Select => {
+                    assert_eq!(app.screen, Screen::Book);
+                    assert_eq!(app.selection.as_ref().unwrap().text, "first");
+                    assert!(app.selection_mode);
+                    assert_eq!(app.selection_popup_action_count(), 2);
+                }
+                ActionChoice::Nothing => {
+                    assert_eq!(app.screen, Screen::Book);
+                    assert!(app.selection.is_none());
+                }
+                ActionChoice::Highlight => {
+                    assert_eq!(app.screen, Screen::Book);
+                    assert!(app.selection.is_none());
+                    assert_eq!(
+                        app.library
+                            .state(app.open_book_id().unwrap())
+                            .unwrap()
+                            .highlights
+                            .len(),
+                        1
+                    );
+                }
+                ActionChoice::Note => assert_eq!(app.screen, Screen::Note),
+                ActionChoice::Translate | ActionChoice::Wikipedia => {
+                    assert_eq!(app.screen, Screen::OnlineLookup);
+                    assert!(app.online.is_some());
+                }
+                ActionChoice::Dictionary => assert_eq!(app.screen, Screen::Definition),
+                ActionChoice::Search => {
+                    assert!(matches!(app.screen, Screen::Matches | Screen::Find))
+                }
+            }
+            assert_eq!(
+                app.current_history_location(),
+                position,
+                "{}",
+                action.label()
+            );
+        }
+    }
+
+    #[test]
+    fn select_and_highlight_mode_extends_a_reflow_selection_and_can_cancel_or_save() {
+        use crate::reading_controls::SelectionLongPressAction;
+        use selection_popup::SelectionAction;
+
+        let fixture = Fixture::new();
+        let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        app.controls.dictionary_on_single_word = Some(false);
+        app.open_path(&fixture.book).unwrap();
+        app.controls.selection_long_press_action = SelectionLongPressAction::Select;
+
+        let reading = &app.active.as_ref().unwrap().reading;
+        let origin = reading.probe.fragment("tide-note").unwrap();
+        let mut first = origin.clone();
+        first.offset += "The ".len();
+        let mut first_end = first.clone();
+        first_end.offset += "first".len();
+        let selected = reading.probe.select_range(&first, &first_end).unwrap();
+        let rect = reading.highlight_rects(&selected)[0];
+        let start_point = rectangle_center(Rect::new(rect.x, rect.y, rect.width, rect.height));
+
+        let mut earlier_end = origin.clone();
+        earlier_end.offset += "The".len();
+        let earlier = reading.probe.select_range(&origin, &earlier_end).unwrap();
+        let rect = reading.highlight_rects(&earlier)[0];
+        let earlier_point = rectangle_center(Rect::new(rect.x, rect.y, rect.width, rect.height));
+
+        assert_eq!(
+            app.input(Input::LongTap(start_point.0, start_point.1)),
+            Change::Partial
+        );
+        assert!(app.selection_mode);
+        assert_eq!(app.selection.as_ref().unwrap().text, "first");
+        assert_eq!(app.selection_popup_action_count(), 2);
+        assert_eq!(
+            app.input(Input::Tap(earlier_point.0, earlier_point.1)),
+            Change::Partial
+        );
+        assert_eq!(app.selection.as_ref().unwrap().text, "The first");
+        capture_test_screen(&app, &fonts, "READER_SELECT_MODE_SCREENSHOT", false);
+        let font_paths = fonts
+            .iter()
+            .map(|font| font.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        let mut canvas = Canvas::new(WIDTH, HEIGHT, &font_paths).unwrap();
+        let plain = primitive_app::frame(&app, &mut canvas, false);
+        for action in [SelectionAction::Cancel, SelectionAction::Highlight] {
+            let button = app.selection_button(action);
+            assert!(canvas.press_at(
+                (button.x + button.w / 2) as f32,
+                (button.y + button.h / 2) as f32,
+            ));
+            let pressed = primitive_app::frame(&app, &mut canvas, false);
+            assert_ne!(plain, pressed);
+            for (index, (before, after)) in plain.iter().zip(&pressed).enumerate() {
+                if before != after {
+                    assert!(button.contains(
+                        (index % WIDTH as usize) as f32,
+                        (index / WIDTH as usize) as f32,
+                    ));
+                }
+            }
+            canvas.clear_press();
+        }
+        assert_eq!(
+            tap_selection_action(&mut app, SelectionAction::Cancel),
+            Change::Partial
+        );
+        assert!(!app.selection_mode);
+        assert!(app.selection.is_none());
+        assert!(
+            app.library
+                .state(app.open_book_id().unwrap())
+                .unwrap()
+                .highlights
+                .is_empty()
+        );
+
+        assert_eq!(
+            app.input(Input::LongTap(start_point.0, start_point.1)),
+            Change::Partial
+        );
+        assert!(app.selection_mode);
+        assert_eq!(
+            app.input(Input::LongTap(earlier_point.0, earlier_point.1)),
+            Change::Partial
+        );
+        assert_eq!(
+            tap_selection_action(&mut app, SelectionAction::Highlight),
+            Change::Partial
+        );
+        assert!(!app.selection_mode);
+        assert!(app.selection.is_none());
+        let state = app.library.state(app.open_book_id().unwrap()).unwrap();
+        assert_eq!(state.highlights.len(), 1);
+        assert_eq!(state.highlights[0].selection.text, "The first");
+    }
+
+    #[test]
+    fn select_and_highlight_mode_extends_and_saves_a_pdf_selection() {
+        use crate::reading_controls::SelectionLongPressAction;
+        use selection_popup::SelectionAction;
+
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Selection.pdf");
+        let content = "BT /F1 14 Tf 55 60 Td (PDF sample words) Tj ET";
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+            "<< /Type /Pages /Count 1 /Kids [3 0 R] /Resources << /Font << /F1 5 0 R >> >> >>"
+                .to_owned(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 240 120] /Contents 4 0 R >>".to_owned(),
+            format!(
+                "<< /Length {} >>\nstream\n{content}\nendstream",
+                content.len()
+            ),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned(),
+        ];
+        fs::write(&path, crate::fixed::tests::pdf_objects(&objects)).unwrap();
+        let mut app = fixture.app();
+        app.open_path(&path).unwrap();
+        app.controls.dictionary_on_single_word = Some(false);
+        app.controls.selection_long_press_action = SelectionLongPressAction::Select;
+        let fixed = &app.fixed.as_ref().unwrap().reading;
+        let text = fixed.page_text(0).unwrap();
+        let (size, viewport) = fixed.page_viewport().unwrap();
+        let first = text.words[0]
+            .bounds
+            .in_viewport(size, viewport)
+            .unwrap()
+            .center();
+        let last = text.words[2]
+            .bounds
+            .in_viewport(size, viewport)
+            .unwrap()
+            .center();
+
+        assert_eq!(
+            app.input(Input::LongTap(first.x as f32, first.y as f32)),
+            Change::Partial
+        );
+        assert!(app.selection_mode);
+        assert_eq!(app.pdf_selection.as_ref().unwrap().text(), "PDF");
+        assert_eq!(app.selection_popup_action_count(), 2);
+        assert_eq!(
+            app.input(Input::Tap(last.x as f32, last.y as f32)),
+            Change::Partial
+        );
+        assert_eq!(
+            app.pdf_selection.as_ref().unwrap().text(),
+            "PDF sample words"
+        );
+        assert_eq!(
+            tap_selection_action(&mut app, SelectionAction::Highlight),
+            Change::Partial
+        );
+        assert!(!app.selection_mode);
+        assert!(app.pdf_selection.is_none());
+        let state = app.library.state(app.open_book_id().unwrap()).unwrap();
+        assert_eq!(state.pdf_highlights.len(), 1);
+        assert_eq!(state.pdf_highlights[0].text, "PDF sample words");
+    }
+
+    #[test]
+    fn stock_single_word_long_press_opens_dictionary_and_can_be_disabled() {
+        let fixture = Fixture::new();
+        let mut app = Reader::open(
+            &fixture.root,
+            &fixture.state,
+            vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+        )
+        .unwrap();
+        app.open_path(&fixture.book).unwrap();
+        assert_eq!(app.controls.dictionary_on_single_word, None);
+        let reading = &app.active.as_ref().unwrap().reading;
+        let start = reading.probe.fragment("tide-note").unwrap();
+        let mut end = start.clone();
+        end.offset += "The".len();
+        let selected = reading.probe.select_range(&start, &end).unwrap();
+        let bounds = reading.highlight_rects(&selected)[0];
+        let point = rectangle_center(Rect::new(bounds.x, bounds.y, bounds.width, bounds.height));
+        assert_eq!(app.input(Input::LongTap(point.0, point.1)), Change::Partial);
+        assert!(app.selection.is_some());
+        if app.pending_selection_action.is_some() {
+            app.tick(Instant::now() + Duration::from_secs(2));
+        }
+        assert_eq!(app.screen, Screen::Definition);
+
+        let mut disabled = fixture.app();
+        disabled.open_path(&fixture.book).unwrap();
+        disabled.controls.dictionary_on_single_word = Some(false);
+        let reading = &disabled.active.as_ref().unwrap().reading;
+        let start = reading.probe.fragment("tide-note").unwrap();
+        let mut end = start.clone();
+        end.offset += "The".len();
+        let selected = reading.probe.select_range(&start, &end).unwrap();
+        let bounds = reading.highlight_rects(&selected)[0];
+        let point = rectangle_center(Rect::new(bounds.x, bounds.y, bounds.width, bounds.height));
+        assert_eq!(
+            disabled.input(Input::LongTap(point.0, point.1)),
+            Change::Partial
+        );
+        assert_eq!(disabled.screen, Screen::Book);
+        assert_eq!(disabled.selection.as_ref().unwrap().text, "The");
+    }
+
+    #[test]
+    fn held_drag_extends_epub_selection_and_very_long_release_uses_ask() {
+        let fixture = Fixture::new();
+        let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        app.open_path(&fixture.book).unwrap();
+        let reading = &app.active.as_ref().unwrap().reading;
+        let target = Book::resolve_link(&reading.probe.chapter, "#tide-note").unwrap();
+        app.follow(target).unwrap();
+        let reading = &app.active.as_ref().unwrap().reading;
+        let origin = reading.probe.fragment("tide-note").unwrap();
+        let point = |offset: usize, len: usize| {
+            let mut start = origin.clone();
+            start.offset += offset;
+            let mut end = start.clone();
+            end.offset += len;
+            let selected = reading.probe.select_range(&start, &end).unwrap();
+            let rect = reading.highlight_rects(&selected)[0];
+            rectangle_center(Rect::new(rect.x, rect.y, rect.width, rect.height))
+        };
+        let first = point(0, "The".len());
+        let next = point("The ".len(), "first".len());
+
+        assert_eq!(
+            app.input(Input::HoldStart(first.0, first.1)),
+            Change::Partial
+        );
+        assert_eq!(app.selection.as_ref().unwrap().text, "The");
+        capture_test_screen(&app, &fonts, "READER_HOLD_SELECTION_SCREENSHOT", false);
+        assert_eq!(app.input(Input::HoldPan(next.0, next.1)), Change::Partial);
+        assert_eq!(app.selection.as_ref().unwrap().text, "The first");
+        assert_eq!(
+            app.input(Input::HoldRelease {
+                start_x: first.0,
+                start_y: first.1,
+                x: next.0,
+                y: next.1,
+                held_ms: 1_500,
+            }),
+            Change::Partial
+        );
+        assert_eq!(app.screen, Screen::Book);
+
+        assert_eq!(
+            app.input(Input::HoldStart(first.0, first.1)),
+            Change::Partial
+        );
+        assert_eq!(
+            app.input(Input::HoldRelease {
+                start_x: first.0,
+                start_y: first.1,
+                x: first.0,
+                y: first.1,
+                held_ms: 3_000,
+            }),
+            Change::Partial
+        );
+        assert_eq!(
+            app.screen,
+            Screen::Book,
+            "very-long release asks instead of opening the one-word dictionary"
+        );
+        assert_eq!(app.selection.as_ref().unwrap().text, "The");
+    }
+
+    #[test]
+    fn held_drag_extends_pdf_text_and_corner_mapping_follows_reading_direction() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Held selection.pdf");
+        let content = "BT /F1 14 Tf 55 60 Td (PDF sample words) Tj ET";
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+            "<< /Type /Pages /Count 1 /Kids [3 0 R] /Resources << /Font << /F1 5 0 R >> >> >>"
+                .to_owned(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 240 120] /Contents 4 0 R >>".to_owned(),
+            format!(
+                "<< /Length {} >>\nstream\n{content}\nendstream",
+                content.len()
+            ),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned(),
+        ];
+        fs::write(&path, crate::fixed::tests::pdf_objects(&objects)).unwrap();
+        let mut app = fixture.app();
+        app.open_path(&path).unwrap();
+        app.controls.dictionary_on_single_word = Some(false);
+
+        assert_eq!(app.touch_corner_direction(2.0, 2.0), Some(-3));
+        assert_eq!(
+            app.touch_corner_direction(WIDTH as f32 - 2.0, PAGE_HEIGHT as f32 - 2.0),
+            Some(3)
+        );
+        assert_eq!(
+            app.touch_corner_direction(2.0, PAGE_HEIGHT as f32 - 2.0),
+            None
+        );
+
+        let fixed = &app.fixed.as_ref().unwrap().reading;
+        let text = fixed.page_text(0).unwrap();
+        let (size, viewport) = fixed.page_viewport().unwrap();
+        let first = text.words[0]
+            .bounds
+            .in_viewport(size, viewport)
+            .unwrap()
+            .center();
+        let second = text.words[1]
+            .bounds
+            .in_viewport(size, viewport)
+            .unwrap()
+            .center();
+        let expected = text.text[text.words[0].bytes.start..text.words[1].bytes.end].to_owned();
+
+        assert_eq!(
+            app.input(Input::HoldStart(first.x as f32, first.y as f32)),
+            Change::Partial
+        );
+        assert_eq!(
+            app.input(Input::HoldPan(second.x as f32, second.y as f32)),
+            Change::Partial
+        );
+        assert_eq!(app.pdf_selection.as_ref().unwrap().text(), expected);
+        assert_eq!(
+            app.input(Input::HoldRelease {
+                start_x: first.x as f32,
+                start_y: first.y as f32,
+                x: second.x as f32,
+                y: second.y as f32,
+                held_ms: 1_500,
+            }),
+            Change::Partial
+        );
+        assert_eq!(app.screen, Screen::Fixed);
+        assert_eq!(app.pdf_selection.as_ref().unwrap().text(), expected);
+    }
+
+    #[test]
     fn searches_from_a_selection_on_reflow_and_rotated_pdf_pages() {
         let fixture = Fixture::new();
         let fonts = simulation_fonts();
         let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        app.controls.dictionary_on_single_word = Some(false);
         app.open_path(&fixture.book).unwrap();
         let reading = &app.active.as_ref().unwrap().reading;
         let target = Book::resolve_link(&reading.probe.chapter, "#tide-note").unwrap();
@@ -11261,7 +14164,10 @@ mod tests {
         app.selection = reading.probe.select_range(&start, &end);
         let original = position(reading);
         capture_test_screen(&app, &fonts, "READER_SELECTION_FIND_SCREENSHOT", false);
-        assert_eq!(tap_selection_action(&mut app, selection_popup::SelectionAction::Find), Change::Partial);
+        assert_eq!(
+            tap_selection_action(&mut app, selection_popup::SelectionAction::Find),
+            Change::Partial
+        );
         assert_eq!(app.screen, Screen::Matches);
         assert_eq!(app.editor.string(), "The first");
         assert!(app.selection.is_none());
@@ -11286,7 +14192,10 @@ mod tests {
         let expected = text.text[word.bytes.clone()].to_owned();
         let point = word.bounds.in_viewport(size, viewport).unwrap().center();
         app.input(Input::LongTap(point.x as f32, point.y as f32));
-        assert_eq!(tap_selection_action(&mut app, selection_popup::SelectionAction::Find), Change::Partial);
+        assert_eq!(
+            tap_selection_action(&mut app, selection_popup::SelectionAction::Find),
+            Change::Partial
+        );
         assert_eq!(app.screen, Screen::Matches);
         app.step_pdf_search(Instant::now()).unwrap();
         assert!(
@@ -11641,7 +14550,10 @@ mod tests {
         assert_eq!(highlights[0].note.as_deref(), Some("Check the lantern"));
         assert_eq!(highlights[0].created_at, Some(1_750_000_001));
         app.save().unwrap();
-        assert_eq!(fixture.app().library.state(id).unwrap().highlights[0].created_at, Some(1_750_000_001));
+        assert_eq!(
+            fixture.app().library.state(id).unwrap().highlights[0].created_at,
+            Some(1_750_000_001)
+        );
     }
 }
 

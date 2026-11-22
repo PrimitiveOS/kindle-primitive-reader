@@ -1,6 +1,6 @@
 # Kindle reading parity implementation plan
 
-**Goal:** deliver feature-by-feature parity with KOReader for local reading workflows on Kindle, using PrimitiveOS Reader's own Rust implementation and e-ink interface. The scope is opening and rendering supported documents, navigating and adjusting a reading view, searching and looking up text locally, annotating, managing local reading data, and offline scan workflows. Use the same publications and device to compare results. The [requirements](requirements.md) define the in-scope acceptance checks; the [execution plan](execution-plan.md) tracks milestones and the [architecture](architecture.md) defines component boundaries.
+**Goal:** build PrimitiveOS Reader as a focused Kindle reading app and match KOReader feature by feature for supported reading workflows. The goal covers opening and rendering documents, reading navigation and layout, text search and lookup, bookmarks and annotations, accessibility, offline scan reading, and local reading data. Implement these capabilities in the Rust Reader and compare them against the same KOReader version, documents, and Kindle. The [requirements](requirements.md) define the in-scope acceptance checks; the [execution plan](execution-plan.md) tracks milestones and the [architecture](architecture.md) defines component boundaries.
 
 Compare against the installed KOReader release for hardware measurements. Record the actual edition, format provider, options, and interaction being compared in each run. Keep only capabilities that directly support local reading in the parity backlog. [KOReader user guide](https://koreader.rocks/user_guide/) · [KOReader main features](https://github.com/koreader/koreader#main-features)
 
@@ -23,9 +23,9 @@ goal. File extensions remain in scope only as document-format identifiers.
 
 | Scope decision | Status |
 | --- | --- |
-| Implement document opening, reading and rendering, navigation, page/text layout, local search and dictionaries, annotations, local reading data, accessibility and offline scan workflows. | Core reading scope · K01–K20, K23–K24 |
-| Keep reading-specific features such as timers, AutoTurn, profiles, statistics, vocabulary and reading-data import/export when they directly support reading. Implement them natively. | Core or advanced reading scope |
-| Do not implement a general plugin/extension loader or manager, Terminal/shell, RSS/news tools, HTTP inspectors or servers, patch management, unrelated developer utilities, online book acquisition, remote progress/annotation sync, remote annotation export or sharing services, or network lookup services. | Explicitly excluded from this goal |
+| Implement document opening and rendering, reading navigation and layout, search and lookup, bookmarks and annotations, accessibility, offline scan reading, and local reading data. | Core reading scope · K01–K20, K23–K24 |
+| Keep a capability only when it directly supports reading, finding or managing a book or the reader's local data. Implement an in-scope capability natively, even when KOReader delivers it through a plug-in. | Reading-only acceptance rule |
+| Do not implement or count a general plugin/extension runtime, manager or catalogue, Terminal/shell, RSS/news tools, HTTP inspectors or servers, patch management, unrelated developer utilities, online book acquisition, remote progress/annotation sync, remote annotation services, or Wikipedia article-to-EPUB export. | Explicitly excluded from this goal, tests, and release gates |
 | Keep battery, Wi-Fi, clock, sleep, wallpaper and other Kindle-wide settings in PrimitiveOS Launcher. | Explicitly excluded from Reader |
 
 Only the in-scope reading requirements contribute to parity tracking. Excluded
@@ -40,17 +40,56 @@ workflows on the Oasis. Keep the feature-by-feature reading checklist in
 [requirements](requirements.md) and use the [control matrix](koreader-sdl-reference-controls.json)
 only to find and compare relevant controls.
 
+### Execution checklist
+
+**Milestone status:** 10 of 16 checklist items (63%) have desktop or scope
+evidence. This count tracks plan milestones, not overall feature parity; the
+remaining reading requirements and all Kindle acceptance gates are still open.
+
+- [x] Set the Reader goal to reading workflows only: document open/render, navigation/layout, search/lookup, bookmarks/annotations, accessibility, offline scans, and local reading data.
+- [x] Exclude the general extension/plugin runtime, Terminal/shell, unrelated utilities, acquisition and remote services from implementation, parity counts, test requirements, and release gates.
+- [x] Remove OPDS acquisition and WebDAV progress-sync modules, screens, and worker commands from the current source. Keep local progress, backup, restore, and migration workflows.
+- [x] Apply saved overlap and axis-order preferences to manual fixed-page turns. Physical buttons and page-turn tap zones pan through the zoomed page before advancing, matching KOReader's reading order. Fixed-page and app-level regressions pass on the Mac; the device comparison remains open.
+- [x] Add KOReader's selection-dialog placement choices with the stock Center default and a selected-text placement option. Unit and integrated desktop tests cover geometry and persistence; capture the simulator frame.
+- [x] Add the nine KOReader text-hold actions and default single-word dictionary behavior with a setting to disable it. Implement a dedicated Select mode with only Highlight/Cancel, tap or long-hold extension, and reflowable plus same-page PDF workflow coverage. [Select-mode screenshot and remaining input-gesture gaps](long-press-behavior.md)
+- [x] Add KOReader's optional highlight style/color prompts to text-selection highlighting, with per-mark appearance and no change to future book defaults. Cover Off, Style, Color and Style and color settings, cancellation, EPUB, PDF, touch targets and simulator screenshots. [Prompt behavior and screenshots](long-press-behavior.md)
+- [x] Implement temporary highlight, hold-release/hold-pan selection, configurable very-long-press timing and re-entry corner auto-scroll. Desktop EPUB/PDF tests and the temporary-selection screenshot pass; PDF text selection remains page-local.
+- [ ] Compare selection placement, hold timing, corner zones and selection behavior against KOReader on Kindle, including whether cross-page PDF selection is required.
+- [ ] Compare selection-dialog placement, long-press behavior, highlight appearance and dismissal against KOReader on the Kindle.
+- [x] Run the current desktop library, binary, package and layout test suites against the pinned shared-input revision. The Reader library passes 904 tests with 62 ignored; package/system tests and four layout probes pass. The isolated shared-input worktree passes 140 `kl-core`, eight `primitive-app` and four `primitive-input` tests.
+- [x] Pin shared input at `d3caf14241facf307699d3ecc37414671496bd1a`, rebuild the static ARMHF candidate, and record its checksum in the [execution plan](execution-plan.md#current-desktop-integration-gate). Reader changes are still uncommitted, so this is a working-tree candidate rather than a reproducible release artifact.
+- [ ] Compare and implement every remaining in-scope reading requirement against the pinned KOReader source and interface evidence. Keep device-owned and excluded controls out of the implementation backlog; update statuses with evidence instead of treating the source inventory as a feature list.
+- [ ] Exercise the supported workflows with the owner's real Kindle Documents files through unit, functional, system, and simulator checks; record format-specific failures and keep original files unchanged.
+- [ ] Complete automated Kindle acceptance for document open/read/resume, physical controls, touch and exit, sleep/wake, USB handoff, and state preservation. Capture comparable device screenshots for the reading surface, top and bottom controls, selection/lookup, and reading settings.
+- [ ] Publish and list the candidate after the desktop and Kindle gates pass, then record the release checksum, Store listing, screenshots, and device evidence.
+
+The checklist applies to PrimitiveOS Reader only; it does not remove the separate
+Primitive Terminal application from PrimitiveOS. Device-wide settings remain in
+Launcher. Current desktop evidence is not a substitute for the still-pending
+Kindle checks while the device is disconnected.
+
 ## Implementation checkpoint
+
+Library and Reading Data expose local reading and data workflows. OPDS
+acquisition and WebDAV progress-sync modules, UI paths and worker entry points
+have been removed from the current source candidate. Existing per-user config
+files are not loaded or changed by Reader. Previously published packages are
+unchanged. Contextual Wikipedia and translation remain available as confirmed
+reading actions under K15; local reading-data backup and migration remain in
+scope.
 
 Custom hidden reading flows now have source-anchored boundary editing, explicit hidden-page destinations, main-flow navigation and separate page counts across paged, scroll and spread layouts. Desktop source/reference and private-original checks are recorded separately from pending aggregate native and foreground acceptance. [Custom-flow evidence](custom-hidden-flows.md)
 
 The publisher-page workflow has independent checks for source order, exact destinations and the label shown at a reflowed passage. Generated character-count numbers have their own acceptance criteria. [Printed page controls](publisher-page-numbers.md)
 
-Automatic turns now accept and persist custom inactivity intervals from 1 second
+Automatic turns accept and persist custom inactivity intervals from 1 second
 to 24 hours and signed scroll distance from −20.0 to +20.0 pages. Reflowable
-scroll views move by the selected fraction, paged views advance whole pages, and
-fixed pages pan with KOReader's default 40% overlap before turning. Configurable
-pan overlap and vertical or bottom-to-top direction remain open.
+scroll views move by the selected fraction and paged views advance whole pages.
+Fixed-page AutoTurn exposes per-book horizontal and vertical overlap (0–90%),
+horizontal-first or vertical-first traversal, and top-to-bottom or
+bottom-to-top reading. **Save current** includes these settings in fixed-page
+defaults for new documents. Desktop checks pass; Kindle comparison of the new
+controls and resumed preferences remains open.
 [Automatic page-turn parity](auto-turn-parity.md)
 
 | Area | Development coverage | Remaining work |
@@ -59,9 +98,9 @@ pan overlap and vertical or bottom-to-top direction remain open.
 | PDF | Fixed pages and continuous scroll, printed labels, page thumbnails, outlines and links, passwords, page, width and height fit, crop, contrast, search across wrapped text lines and local annotations. Visible embedded highlights import and annotated-copy export for intact unencrypted PDFs up to 16 MiB. | [Standard password revisions 2–6 and both roles](protected-pdf.md) compared with installed KOReader. Broader international input, certificate handlers, outline and annotation types, and sustained large-scan tests |
 | Other offline reading | Fixed-layout EPUB, DjVu, TXT, HTML, single-document HTMLZ, Markdown, FB2, supported MOBI/PalmDOC and KF8, DOCX, CHM, RTF, TCR, CBZ, uncompressed USTAR CBT, selected CBR, JPEG, PNG, BMP, GIF first frame, portable anymaps, static SVG, selected WebP and TIFF, and compressed StarDict with synonyms | Wider format variants and larger live document samples |
 | Scanned documents | Embedded and recognized text reflow across readable source pages. Original word-image reflow for scans with complete horizontal left-to-right OCR and a column view for clear two-column scans. English and Vietnamese recognized by the worker on desktop. The ARMHF package's English OCR worker produced word boxes on Oasis 3. | Broader layout and language cases, and sustained tests with real scans |
-| Library and controls | Folder navigation with file types, sizes and support labels, whole-library search, favorites, reading status, collections, author and recent views, EPUB cover previews and series, [daily reading history and a calendar](reading-statistics.md), separately retained undated screen time, reusable text profiles, night pages, adjustable toolbar sizes, mirrored or disabled tap turns, touch lock, optional E Ink full refresh intervals, chapter-spanning page thumbnails, location history and zoom for framed comic panels in single-page views | More configurable gestures, broader accessibility, outline editing for additional provider types and excluded sections, and irregular comic panels |
+| Library and controls | Folder navigation with file types, sizes and support labels, whole-library search, favorites, reading status, collections, author and recent views, EPUB cover previews and series, [daily reading history and a calendar](reading-statistics.md), separately retained undated screen time, reusable text profiles, night pages, adjustable toolbar sizes, mirrored or disabled tap turns, touch lock, optional E Ink full refresh intervals, chapter-spanning page thumbnails, transient EPUB and fixed-page Skim previews with queued turns, origin restore, cancel and one-entry return history, location history and zoom for framed comic panels in single-page views | More configurable gestures, broader accessibility, physical Skim panel interaction and dialog preferences, outline editing for additional provider types and excluded sections, and irregular comic panels |
 | Reading data | Backup and restore with preview, text/Markdown/HTML annotation exports, adjacent KOReader EPUB bookmarks and source-verified highlighted passages, KOReader JSON annotations by unique quotation, and sampled-fingerprint checks for fixed-page sidecar progress and supported reflowable EPUB CFIs and normalized CREngine DocFragment positions | Additional CREngine DOM versions, broader CFI and sidecar variants, and migration measurements with larger libraries |
-| Kindle verification | Reader 0.1.20 passed 515 native and Mac tests. Installed KOReader served as reference for source-selected EPUB layout, dictionary suggestions and result context. The earlier signed 0.1.18 package opened and resumed all 117 readable entries. | Verify the latest package through Launcher and continue comparing original documents across formats. [Reading evidence](reading-control-evidence.md) · [Original documents](real-document-verification.md) |
+| Kindle verification | Reader 0.1.20 passed 515 native and Mac tests. Installed KOReader served as reference for source-selected EPUB layout, dictionary suggestions and result context. The earlier signed 0.1.18 package opened and resumed all 117 readable entries. | Current source passes 904 library tests (62 ignored), and the Kindle binary, package, layout and doc-test targets passed. The isolated shared-input worktree passes 140 `kl-core`, eight `primitive-app` and four `primitive-input` tests. Reader used a temporary local Cargo patch to that worktree; pin its revision and rebuild the static ARMHF binary before installation. An opt-in highlight workflow passed on the redistributable `build/reading/real-corpus/Alice.epub` and confirmed source bytes remain unchanged; the owner's Documents corpus is still pending. Kindle acceptance awaits device availability. [Reading evidence](reading-control-evidence.md) · [Original documents](real-document-verification.md) · [Current AutoTurn and manual pan evidence](auto-turn-parity.md) · [Long-press behavior](long-press-behavior.md) |
 
 The initial feasibility run passed 249 desktop Reader tests, six vendored Parley tests, and 16 Files tests.
 Reader rendered three public-domain DjVu samples and 12 narrative chapters from
@@ -162,7 +201,7 @@ P3 includes work that depends on a suitable rendering component or on evidence f
 | Annotation formats · K09, K13 | Extend local export to human-readable HTML, Markdown and Kindle Clippings-compatible text where verified. Add patterns or grayscale marks for different highlight modes and bulk export. | Confirm overlapping highlights remain distinct, notes and quotations round-trip, and incomplete local exports can be retried. [KOReader annotation export guide](https://koreader.rocks/user_guide/) · [W3C Web Annotation Data Model](https://www.w3.org/TR/annotation-model/) |
 | KOReader import, metadata backup and file associations · K23–K24 | Import known export formats and sidecar snapshots as bounded data. Match publication and revision before mapping source pointers. Show resolvable, ambiguous and missing targets. Add Reader export/restore with duplicate protection and use the existing Files handler choice for shared formats. | Import known progress and highlights twice without duplicate records, produce a useful unresolved list for missing or edited books, verify source hashes, and restore Reader metadata on a fresh test installation. Confirm Reader, Viewer and KOReader all continue to open files through their chosen handlers. |
 
-Online book acquisition, remote progress sync, service-based annotation export or sharing, and network lookup services are outside this goal. Existing code or design notes for those integrations do not add parity requirements or release gates. Local reading-data export and import remain in scope.
+Online book acquisition, remote progress sync, service-based annotation export or sharing, and article-to-EPUB export are outside this goal. Contextual Wikipedia and translation requests launched from the reading view are in scope as reading actions; they require explicit confirmation and must preserve local reading state. Local annotation and reading-data export/import remain in scope.
 
 **P3 acceptance.** For each native format, record its variant coverage, reference version, constraints and Kindle evidence. Complete tests for advanced EPUB, scan reflow, OCR and interoperation before declaring reading parity. Keep unresolved capabilities visible in the status record.
 

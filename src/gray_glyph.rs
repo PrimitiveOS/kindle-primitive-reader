@@ -68,7 +68,11 @@ pub(crate) struct GlyphCache {
 }
 
 impl GlyphCache {
-    pub(crate) fn with_hinting(large_outlines: bool, hinting: FontHinting, font_weights: Arc<HashMap<u64, f32>>) -> Self {
+    pub(crate) fn with_hinting(
+        large_outlines: bool,
+        hinting: FontHinting,
+        font_weights: Arc<HashMap<u64, f32>>,
+    ) -> Self {
         Self {
             large_outlines,
             hinting,
@@ -77,9 +81,14 @@ impl GlyphCache {
         }
     }
 
-    pub(crate) fn begin_paint(&mut self) { self.paint_error = None; }
+    pub(crate) fn begin_paint(&mut self) {
+        self.paint_error = None;
+    }
     pub(crate) fn check_paint(&self) -> crate::Result<()> {
-        match self.paint_error { Some(message) => Err(message.into()), None => Ok(()) }
+        match self.paint_error {
+            Some(message) => Err(message.into()),
+            None => Ok(()),
+        }
     }
 
     pub(crate) fn draw_run(
@@ -105,7 +114,10 @@ impl GlyphCache {
             skew: synthesis.skew().unwrap_or(0.0),
             clockwise: false,
             strength: crate::font_synthesis::strength(
-                run.font(), run.font_attrs().weight.value(), run.font_size(), &self.font_weights,
+                run.font(),
+                run.font_attrs().weight.value(),
+                run.font_size(),
+                &self.font_weights,
             ),
         };
         let positions = glyphs
@@ -126,7 +138,11 @@ impl GlyphCache {
         let style = GlyphStyle {
             font: glyph.font,
             size: glyph.size,
-            variations: glyph.variations.iter().map(|coord| coord.to_bits()).collect(),
+            variations: glyph
+                .variations
+                .iter()
+                .map(|coord| coord.to_bits())
+                .collect(),
             skew: 0.0,
             clockwise: glyph.clockwise,
             strength: glyph.strength,
@@ -159,9 +175,16 @@ impl GlyphCache {
             || columns.is_empty()
             || columns.end > stride
             || style.variations.len() > MAX_AXES
-            || !(1.0..=if self.large_outlines { 340.0 } else { MAX_EDGE as f32 }).contains(&style.size)
+            || !(1.0..=if self.large_outlines {
+                340.0
+            } else {
+                MAX_EDGE as f32
+            })
+                .contains(&style.size)
         {
-            if self.large_outlines { self.paint_error = Some("A font run exceeds Reader's paint bounds"); }
+            if self.large_outlines {
+                self.paint_error = Some("A font run exceeds Reader's paint bounds");
+            }
             return;
         }
         if self.full || self.faces.len() >= MAX_FACES {
@@ -214,7 +237,20 @@ impl GlyphCache {
                     let mask = match rasterize(&style, glyph, phase, variations, hints.as_ref()) {
                         Some(mask) => mask,
                         None if self.large_outlines => {
-                            if let Err(error) = tiled::paint(page,stride,columns,x,baseline,&style,glyph,phase,variations,hints.as_ref(),contrast,gamma) {
+                            if let Err(error) = tiled::paint(
+                                page,
+                                stride,
+                                columns,
+                                x,
+                                baseline,
+                                &style,
+                                glyph,
+                                phase,
+                                variations,
+                                hints.as_ref(),
+                                contrast,
+                                gamma,
+                            ) {
                                 self.paint_error = Some(error);
                             }
                             continue;
@@ -291,7 +327,8 @@ enum Segment {
 
 fn synthesize_outline(outline: &Outline, strength: f32, clockwise: bool) -> Option<Mask> {
     use kurbo::{BezPath, Join, PathEl, Point as CurvePoint, Shape, Stroke, StrokeOpts};
-    if !strength.is_finite() || strength.abs() > 32.0
+    if !strength.is_finite()
+        || strength.abs() > 32.0
         || outline.max.x - outline.min.x > MAX_EDGE as f32
         || outline.max.y - outline.min.y > MAX_EDGE as f32
     {
@@ -300,27 +337,43 @@ fn synthesize_outline(outline: &Outline, strength: f32, clockwise: bool) -> Opti
     // Center the vertical stroke expansion while preserving the reference's
     // horizontal bearing convention. A clockwise run exchanges the two axes.
     let offset = f64::from(strength) / 2.0;
-    let point = |p: Point| CurvePoint::new(
-        f64::from(p.x) + if clockwise { 0.0 } else { offset },
-        f64::from(p.y) + if clockwise { offset } else { 0.0 },
+    let point = |p: Point| {
+        CurvePoint::new(
+            f64::from(p.x) + if clockwise { 0.0 } else { offset },
+            f64::from(p.y) + if clockwise { offset } else { 0.0 },
+        )
+    };
+    let path = BezPath::from_vec(
+        outline
+            .segments
+            .iter()
+            .map(|segment| match segment {
+                Segment::Move(p) => PathEl::MoveTo(point(*p)),
+                Segment::Line(p) => PathEl::LineTo(point(*p)),
+                Segment::Quad(a, p) => PathEl::QuadTo(point(*a), point(*p)),
+                Segment::Cubic(a, b, p) => PathEl::CurveTo(point(*a), point(*b), point(*p)),
+                Segment::Close => PathEl::ClosePath,
+            })
+            .collect(),
     );
-    let path = BezPath::from_vec(outline.segments.iter().map(|segment| match segment {
-        Segment::Move(p) => PathEl::MoveTo(point(*p)),
-        Segment::Line(p) => PathEl::LineTo(point(*p)),
-        Segment::Quad(a, p) => PathEl::QuadTo(point(*a), point(*p)),
-        Segment::Cubic(a, b, p) => PathEl::CurveTo(point(*a), point(*b), point(*p)),
-        Segment::Close => PathEl::ClosePath,
-    }).collect());
-    let border = kurbo::stroke(path.elements().iter().copied(),
+    let border = kurbo::stroke(
+        path.elements().iter().copied(),
         &Stroke::new(f64::from(strength.abs())).with_join(Join::Miter),
-        &StrokeOpts::default(), 0.05);
-    if border.elements().len() > MAX_SEGMENTS * 8 { return None; }
+        &StrokeOpts::default(),
+        0.05,
+    );
+    if border.elements().len() > MAX_SEGMENTS * 8 {
+        return None;
+    }
     let bounds = path.bounding_box().union(border.bounding_box());
     let left = bounds.x0.floor();
     let top = bounds.y0.floor();
     let width = (bounds.x1.ceil() - left) as usize;
     let height = (bounds.y1.ceil() - top) as usize;
-    if width == 0 || height == 0 || width > MAX_EDGE || height > MAX_EDGE
+    if width == 0
+        || height == 0
+        || width > MAX_EDGE
+        || height > MAX_EDGE
         || width * height > MAX_MASK_BYTES
     {
         return None;
@@ -335,10 +388,21 @@ fn synthesize_outline(outline: &Outline, strength: f32, clockwise: bool) -> Opti
             ((u16::from(*pixel) * paper + 127) / 255) as u8
         };
     }
-    Some(Mask { left: left as i32, top: top as i32, width, alpha })
+    Some(Mask {
+        left: left as i32,
+        top: top as i32,
+        width,
+        alpha,
+    })
 }
 
-pub(crate) fn curve_mask(path: &[kurbo::PathEl], left: f64, top: f64, width: usize, height: usize) -> Vec<u8> {
+pub(crate) fn curve_mask(
+    path: &[kurbo::PathEl],
+    left: f64,
+    top: f64,
+    width: usize,
+    height: usize,
+) -> Vec<u8> {
     let mut raster = Rasterizer::new(width, height);
     let local = |p: kurbo::Point| point((p.x - left) as f32, (p.y - top) as f32);
     let mut first = point(0.0, 0.0);
@@ -562,16 +626,32 @@ mod logical_bound_tests {
     use super::*;
     #[test]
     fn excessive_axes_are_explicit_logical_paint_failures_and_legacy_stays_unchanged() {
-        let bytes=std::fs::read(crate::test_fixture("fonts/NotoSans-Regular.ttf")).unwrap();
-        let font=FontData::new(parley::fontique::Blob::new(Arc::new(bytes)),0);
-        for logical in [false,true] {
-            let mut cache=GlyphCache::with_hinting(logical,FontHinting::Off,Arc::default());
-            let style=GlyphStyle{font:&font,size:42.,variations:vec![0;MAX_AXES+1],skew:0.,clockwise:false,strength:0.};
-            let mut frame=vec![255;500*500];cache.begin_paint();
-            cache.draw_positioned(&mut frame,500,&(0..500),style,std::iter::once((1,0.,340.)),false,crate::font_render::NORMAL_GAMMA);
-            assert_eq!(cache.check_paint().is_err(),logical);
-            assert!(frame.iter().all(|&n|n==255));
-            assert_eq!(cache.bytes,0);
+        let bytes = std::fs::read(crate::test_fixture("fonts/NotoSans-Regular.ttf")).unwrap();
+        let font = FontData::new(parley::fontique::Blob::new(Arc::new(bytes)), 0);
+        for logical in [false, true] {
+            let mut cache = GlyphCache::with_hinting(logical, FontHinting::Off, Arc::default());
+            let style = GlyphStyle {
+                font: &font,
+                size: 42.,
+                variations: vec![0; MAX_AXES + 1],
+                skew: 0.,
+                clockwise: false,
+                strength: 0.,
+            };
+            let mut frame = vec![255; 500 * 500];
+            cache.begin_paint();
+            cache.draw_positioned(
+                &mut frame,
+                500,
+                &(0..500),
+                style,
+                std::iter::once((1, 0., 340.)),
+                false,
+                crate::font_render::NORMAL_GAMMA,
+            );
+            assert_eq!(cache.check_paint().is_err(), logical);
+            assert!(frame.iter().all(|&n| n == 255));
+            assert_eq!(cache.bytes, 0);
         }
     }
 }

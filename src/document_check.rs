@@ -50,8 +50,8 @@ fn select_in_picker(app: &mut Reader, library: &Library, relative: &Path) -> Res
     Ok(())
 }
 
-pub(crate) mod spine;
 mod css_coverage;
+pub(crate) mod spine;
 use spine::verify_spine;
 
 /// Exercise the regular UI in a new scratch profile. The Kindle's framebuffer,
@@ -139,9 +139,14 @@ pub fn verify(
     drop(second);
     drop(pixels);
     let spine = match env::var("READER_VERIFY_SPINE") {
-        Ok(mode) if matches!(entry.format, DocumentFormat::Epub | DocumentFormat::Mobi) => Some(
-            verify_spine(&saved.absolute_path(&entry.path)?, &fonts, &mode, spine_config.as_ref())?,
-        ),
+        Ok(mode) if matches!(entry.format, DocumentFormat::Epub | DocumentFormat::Mobi) => {
+            Some(verify_spine(
+                &saved.absolute_path(&entry.path)?,
+                &fonts,
+                &mode,
+                spine_config.as_ref(),
+            )?)
+        }
         _ => None,
     };
     let peak_kib = fs::read_to_string("/proc/self/status").ok().and_then(|s| {

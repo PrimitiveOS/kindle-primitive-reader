@@ -1,15 +1,21 @@
-# Online catalogs and book acquisition
+# Archived implementation note: online catalogs and book acquisition
 
-This implementation note describes an existing optional product workflow.
-Online acquisition is outside the current local-reading parity goal and is not
-a milestone or completion requirement.
+Online book acquisition is outside the current Reader goal. Its OPDS modules,
+UI, and worker entry points have been removed from the current source candidate.
+Previously published releases are unchanged. The design and verification
+details below are historical engineering records only; do not treat them as
+current product instructions, active milestones, or parity checklist items.
 
-This development candidate adds explicit OPDS browsing, search and publication
-acquisition to Reader. It covers the reading path of K21. Kindle acceptance is
-pending the next combined build. The separate calibre wireless device protocol,
-loan services and other provider integrations remain outside this verified slice.
+<details>
+<summary>Historical implementation and verification record</summary>
 
-## Using a catalog
+An earlier development candidate implemented OPDS browsing, search and
+publication acquisition for K21. That workflow is excluded from the current
+Reader goal and removed from the current source. The separate
+calibre wireless-device protocol, loan services and other provider integrations
+were not included in that historical implementation.
+
+## Previous catalog workflow (removed from current source)
 
 Open **Library › Online catalogs**, or **Library › Organize library › Online
 catalogs** from the document list. Choose **Add catalog**, enter its name and
@@ -102,10 +108,10 @@ The pinned reference is KOReader **v2026.07.1**, commit
 | `plugins/opds.koplugin/opdsbrowser.lua:1022` onward | Explicit acquisition format choice, destination and download actions. |
 | `plugins/opds.koplugin/opdsparser.lua` | XML content/CDATA handling. Reader accepts well-formed XML; the reference's additional repairs for broken HTML inside XML are not all replicated. |
 
-Reader's implementation is in `src/opds.rs`, `src/opds/model.rs`,
-`src/opds/storage.rs` and `src/app/opds.rs`. Executable entry points dispatch the
-private worker before framebuffer or Launcher ownership checks. The normal event
-loop polls it without blocking touch input or refreshing the screen while idle.
+The former implementation is preserved at the frozen baseline
+[`ff03a146`](https://github.com/PrimitiveOS/kindle-primitive-reader/tree/ff03a14609bad09cdb390776ec93190d07ffbbea).
+Its OPDS modules, application screens, and `--opds-worker` entry point have been
+removed from the current source candidate.
 
 ## Desktop verification
 
@@ -170,5 +176,8 @@ documents, DRM/loan/purchase fulfillment, indirect acquisition chains, PSE strea
 external URI-template operators, persistent offline catalog caching, cover
 thumbnails, automatic discovery, calibre wireless transfer, additional real
 providers and native Kindle acceptance. Unsupported service links remain inactive
-instead of pretending a loan or purchase is a direct book file. K21 remains open
-for those separately scoped integrations and native acceptance.
+instead of pretending a loan or purchase is a direct book file. K21 was open
+when this historical record was written; acquisition is now excluded from the
+active Reader goal and checklist.
+
+</details>

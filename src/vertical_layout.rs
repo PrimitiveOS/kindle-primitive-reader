@@ -204,30 +204,53 @@ impl VerticalChapter {
             let mut largest = 0.0_f32;
             let mut annotation = 0.0_f32;
             for original in &source.blocks {
-                if styles[original.element].flow.suppressed { continue; }
+                if styles[original.element].flow.suppressed {
+                    continue;
+                }
                 let block = flow.layout_block(source, original)?;
                 let mut cursor = 0;
                 for run in block.styled_text.iter() {
                     if run.bytes.start > cursor {
-                        largest = largest.max(settings.styled_font(styles[block.element].size_scale));
+                        largest =
+                            largest.max(settings.styled_font(styles[block.element].size_scale));
                     }
-                    if run.bytes.start < run.bytes.end && block.text.get(run.bytes.clone()).is_some() {
+                    if run.bytes.start < run.bytes.end
+                        && block.text.get(run.bytes.clone()).is_some()
+                    {
                         largest = largest.max(settings.styled_font(styles[run.element].size_scale));
                     }
                     cursor = cursor.max(run.bytes.end);
                 }
-                if cursor < block.text.len() { largest = largest.max(settings.styled_font(styles[block.element].size_scale)); }
+                if cursor < block.text.len() {
+                    largest = largest.max(settings.styled_font(styles[block.element].size_scale));
+                }
                 for ruby in block.ruby.iter().filter(|ruby| !ruby.annotation.is_empty()) {
-                    annotation = annotation.max(settings.styled_font(styles[ruby.element].size_scale * RUBY_SCALE));
+                    annotation = annotation
+                        .max(settings.styled_font(styles[ruby.element].size_scale * RUBY_SCALE));
                 }
             }
-            let gutter = if annotation > 0. { annotation + largest * 0.20 } else { 0. };
+            let gutter = if annotation > 0. {
+                annotation + largest * 0.20
+            } else {
+                0.
+            };
             ((largest * settings.line_height).max(12.) + gutter, gutter)
         } else {
             let gutter = if source.blocks.iter().any(|block| {
-                !styles[block.element].flow.suppressed && block.ruby.iter().any(|ruby| !styles[ruby.element].flow.suppressed)
-            }) { settings.font_size * MAX_SCALE * (RUBY_SCALE + 0.20) } else { 0. };
-            ((settings.font_size * settings.line_height * MAX_SCALE).max(12.) + gutter, gutter)
+                !styles[block.element].flow.suppressed
+                    && block
+                        .ruby
+                        .iter()
+                        .any(|ruby| !styles[ruby.element].flow.suppressed)
+            }) {
+                settings.font_size * MAX_SCALE * (RUBY_SCALE + 0.20)
+            } else {
+                0.
+            };
+            (
+                (settings.font_size * settings.line_height * MAX_SCALE).max(12.) + gutter,
+                gutter,
+            )
         };
         let columns_per_page = (width / pitch).floor() as usize;
         if columns_per_page == 0 {
@@ -694,7 +717,12 @@ fn font_runs(
         } else {
             let style = &styles[element];
             let face = find_face(fonts, faces, style, settings, &format, text)?;
-            let size = if settings.logical_font_size.is_some() { settings.styled_font(input.scale * style.size_scale) } else { (settings.font_size * input.scale * style.size_scale.clamp(0.75, MAX_SCALE)).clamp(1.0, 144.0) };
+            let size = if settings.logical_font_size.is_some() {
+                settings.styled_font(input.scale * style.size_scale)
+            } else {
+                (settings.font_size * input.scale * style.size_scale.clamp(0.75, MAX_SCALE))
+                    .clamp(1.0, 144.0)
+            };
             let requested = crate::font_render::font_weight(
                 if settings.bold_text {
                     FontWeight::BOLD.value()
@@ -986,19 +1014,40 @@ mod tests {
 
     #[test]
     fn logical_vertical_pitch_uses_actual_text_not_empty_oversized_ancestors() {
-        let source = Source::parse("<html><body><div><p>VERTICAL TEXT</p></div></body></html>").unwrap();
-        let settings = Settings { width:440,height:800,margin:24,..Settings::default() }.with_logical_font(22.).unwrap();
+        let source =
+            Source::parse("<html><body><div><p>VERTICAL TEXT</p></div></body></html>").unwrap();
+        let settings = Settings {
+            width: 440,
+            height: 800,
+            margin: 24,
+            ..Settings::default()
+        }
+        .with_logical_font(22.)
+        .unwrap();
         let mut styles = vec![Style::default(); source.elements.len()];
-        let fonts = || crate::font_context(&[crate::test_fixture("fonts/NotoSans-Regular.ttf")]).unwrap();
-        let (mut ordinary, lines, extent)=VerticalChapter::new(&source,&styles,fonts(),settings).unwrap();
-        let div=source.elements.iter().position(|e|e.tag=="div").unwrap();
-        styles[div].size_scale=8.;
-        let (mut nested, nested_lines, nested_extent)=VerticalChapter::new(&source,&styles,fonts(),settings).unwrap();
-        assert_eq!(nested.pitch,ordinary.pitch);
-        assert_eq!(nested.columns_per_page,ordinary.columns_per_page);
-        assert_eq!(nested_extent,extent);
-        assert_eq!(lines.iter().map(|l|&l.bytes).collect::<Vec<_>>(),nested_lines.iter().map(|l|&l.bytes).collect::<Vec<_>>());
-        assert_eq!(ordinary.capture(0.0..settings.text_height() as f32,settings).unwrap(),nested.capture(0.0..settings.text_height() as f32,settings).unwrap());
+        let fonts =
+            || crate::font_context(&[crate::test_fixture("fonts/NotoSans-Regular.ttf")]).unwrap();
+        let (mut ordinary, lines, extent) =
+            VerticalChapter::new(&source, &styles, fonts(), settings).unwrap();
+        let div = source.elements.iter().position(|e| e.tag == "div").unwrap();
+        styles[div].size_scale = 8.;
+        let (mut nested, nested_lines, nested_extent) =
+            VerticalChapter::new(&source, &styles, fonts(), settings).unwrap();
+        assert_eq!(nested.pitch, ordinary.pitch);
+        assert_eq!(nested.columns_per_page, ordinary.columns_per_page);
+        assert_eq!(nested_extent, extent);
+        assert_eq!(
+            lines.iter().map(|l| &l.bytes).collect::<Vec<_>>(),
+            nested_lines.iter().map(|l| &l.bytes).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            ordinary
+                .capture(0.0..settings.text_height() as f32, settings)
+                .unwrap(),
+            nested
+                .capture(0.0..settings.text_height() as f32, settings)
+                .unwrap()
+        );
     }
 
     #[test]

@@ -4,14 +4,14 @@
 
 pub(crate) mod borders;
 pub(crate) mod flow;
-mod semantic_type;
 #[cfg(test)]
 mod flow_tests;
+mod semantic_type;
 use flow::{Display, Visibility};
 mod user_css;
 #[cfg(test)]
 mod user_css_tests;
-pub(crate) use user_css::{validate as validate_user_css, matches as user_css_matches};
+pub(crate) use user_css::{matches as user_css_matches, validate as validate_user_css};
 #[cfg(test)]
 mod dpi_tests;
 
@@ -104,7 +104,10 @@ impl ImageLength {
 pub(crate) enum CssLength {
     Em(f32),
     RootEm(f32),
-    ComputedEm { value: f32, font_scale: f32 },
+    ComputedEm {
+        value: f32,
+        font_scale: f32,
+    },
     Pixels(f32),
     /// Keep the original 96-DPI float conversion and its physical-unit identity.
     Physical(f32),
@@ -220,13 +223,22 @@ pub(crate) struct TextRise {
 }
 
 impl TextRise {
-    pub(crate) fn from_block_at(self, block: &Style, settings: crate::Settings) -> parley::VerticalAlign {
-        if settings.logical_font_size.is_none() { return self.from_block(block); }
+    pub(crate) fn from_block_at(
+        self,
+        block: &Style,
+        settings: crate::Settings,
+    ) -> parley::VerticalAlign {
+        if settings.logical_font_size.is_none() {
+            return self.from_block(block);
+        }
         let actual_scale = settings.styled_font(block.size_scale) / settings.font_size;
-        parley::VerticalAlign::new(parley::AlignmentBaseline::Baseline, parley::BaselineShift::FontMetrics {
-            height: (self.height-block.text_rise.height)/actual_scale,
-            descent: (self.descent-block.text_rise.descent)/actual_scale,
-        })
+        parley::VerticalAlign::new(
+            parley::AlignmentBaseline::Baseline,
+            parley::BaselineShift::FontMetrics {
+                height: (self.height - block.text_rise.height) / actual_scale,
+                descent: (self.descent - block.text_rise.descent) / actual_scale,
+            },
+        )
     }
     pub(crate) fn from_block(self, block: &Style) -> parley::VerticalAlign {
         parley::VerticalAlign::new(
@@ -349,8 +361,12 @@ impl BookStyle {
 
     pub fn load(book: &mut Book, chapter: &str, source: &Source, fonts: &mut FontContext) -> Self {
         let (mut styled, faces) = Self::load_sheets(book, chapter, source);
-        styled.families.extend(fonts.collection.family_names()
-            .map(|name| (name.to_ascii_lowercase(), Arc::from(name))));
+        styled.families.extend(
+            fonts
+                .collection
+                .family_names()
+                .map(|name| (name.to_ascii_lowercase(), Arc::from(name))),
+        );
         if !faces.is_empty() {
             styled.register_fonts(book, &faces, fonts);
         }
@@ -360,16 +376,25 @@ impl BookStyle {
     /// The exact same stylesheet selection, caps, cascade and inline handling as
     /// native layout, without FontContext or font-face resource registration.
     pub(crate) fn load_for_flow(
-        book: &mut Book, chapter: &str, source: &Source, publisher_styles: bool,
+        book: &mut Book,
+        chapter: &str,
+        source: &Source,
+        publisher_styles: bool,
         user: &crate::user_styles::Snapshot,
     ) -> crate::Result<Self> {
-        let styled = if publisher_styles { Self::load_sheets(book, chapter, source).0 }
-            else { Self::default() };
+        let styled = if publisher_styles {
+            Self::load_sheets(book, chapter, source).0
+        } else {
+            Self::default()
+        };
         styled.with_user_css(user)
     }
 
     fn load_sheets(book: &mut Book, chapter: &str, source: &Source) -> (Self, Vec<FontFace>) {
-        let mut styled = Self { author_inline: true, ..Self::default() };
+        let mut styled = Self {
+            author_inline: true,
+            ..Self::default()
+        };
         let mut faces = Vec::new();
         let mut remaining = MAX_CSS_BYTES;
         let mut linked = 0;
@@ -409,8 +434,15 @@ impl BookStyle {
         self.scale_dpi(self.compute(elements), dpi)
     }
 
-    pub(crate) fn compute_for_settings(&self, elements: &[Element], settings: crate::Settings) -> Vec<Style> {
-        self.scale_dpi(self.compute_with_font(elements, Some(settings)), settings.render_dpi)
+    pub(crate) fn compute_for_settings(
+        &self,
+        elements: &[Element],
+        settings: crate::Settings,
+    ) -> Vec<Style> {
+        self.scale_dpi(
+            self.compute_with_font(elements, Some(settings)),
+            settings.render_dpi,
+        )
     }
 
     fn scale_dpi(&self, mut styles: Vec<Style>, dpi: u16) -> Vec<Style> {
@@ -419,7 +451,9 @@ impl BookStyle {
         }
         for style in &mut styles {
             style.text_indent.length = style.text_indent.length.for_dpi(dpi);
-            for edge in style.padding.iter_mut()
+            for edge in style
+                .padding
+                .iter_mut()
                 .chain(style.vertical_padding.iter_mut())
                 .chain(style.border_spacing.iter_mut())
             {
@@ -440,10 +474,22 @@ impl BookStyle {
         self.compute_with_font(elements, None)
     }
 
-    fn compute_with_font(&self, elements: &[Element], settings: Option<crate::Settings>) -> Vec<Style> {
+    fn compute_with_font(
+        &self,
+        elements: &[Element],
+        settings: Option<crate::Settings>,
+    ) -> Vec<Style> {
         let logical = settings.filter(|settings| settings.logical_font_size.is_some());
-        let relative_font = |scale: f32| logical.map_or_else(|| scale.clamp(0.125, 8.0), |settings| settings.styled_font(scale) / settings.font_size);
-        let defaults = Style { font_weights: self.font_weights.clone(), ..Style::default() };
+        let relative_font = |scale: f32| {
+            logical.map_or_else(
+                || scale.clamp(0.125, 8.0),
+                |settings| settings.styled_font(scale) / settings.font_size,
+            )
+        };
+        let defaults = Style {
+            font_weights: self.font_weights.clone(),
+            ..Style::default()
+        };
         let mut result: Vec<Style> = Vec::with_capacity(elements.len());
         for (index, element) in elements.iter().enumerate() {
             let parent = element.parent.map_or(&defaults, |parent| &result[parent]);
@@ -505,9 +551,12 @@ impl BookStyle {
             let mut winners: Winners = [None; 42];
             for (user, rules) in [(true, &self.user_rules), (false, &self.rules)] {
                 for rule in rules {
-                    if let Some(specificity) = rule.selectors.iter()
+                    if let Some(specificity) = rule
+                        .selectors
+                        .iter()
                         .filter(|selector| selector.matches(elements, index))
-                        .map(|selector| selector.specificity).max()
+                        .map(|selector| selector.specificity)
+                        .max()
                     {
                         choose(&mut winners, &rule.declarations, false, specificity, user);
                     }
@@ -516,9 +565,15 @@ impl BookStyle {
             choose(&mut winners, &inline, true, (0, 0, 0), false);
             for (_, property) in winners.into_iter().flatten() {
                 match property {
-                    Property::Reset(16, reset) => decoration = user_css::decoration(*reset, parent.decoration),
-                    Property::Reset(key, reset) => user_css::apply_reset(&mut style, *key, *reset, parent, &defaults),
-                    Property::ResetMany(..) => unreachable!("reset shorthand is expanded before cascading"),
+                    Property::Reset(16, reset) => {
+                        decoration = user_css::decoration(*reset, parent.decoration)
+                    }
+                    Property::Reset(key, reset) => {
+                        user_css::apply_reset(&mut style, *key, *reset, parent, &defaults)
+                    }
+                    Property::ResetMany(..) => {
+                        unreachable!("reset shorthand is expanded before cascading")
+                    }
                     Property::Display(display) => style.display = *display,
                     Property::Visibility(visibility) => style.visibility = *visibility,
                     Property::Family(families) => {
@@ -546,7 +601,9 @@ impl BookStyle {
                     }
                     Property::Padding(side, length) => {
                         let font = relative_font(style.size_scale);
-                        let root_font = result.first().map_or(font, |root| relative_font(root.size_scale));
+                        let root_font = result
+                            .first()
+                            .map_or(font, |root| relative_font(root.size_scale));
                         let (target, inherited) = if *side < 2 {
                             (&mut style.padding[*side], parent.padding[*side])
                         } else {
@@ -564,7 +621,9 @@ impl BookStyle {
                     Property::Indent(indent) => {
                         if let Some(indent) = indent {
                             let font = relative_font(style.size_scale);
-                            let root_font = result.first().map_or(font, |root| relative_font(root.size_scale));
+                            let root_font = result
+                                .first()
+                                .map_or(font, |root| relative_font(root.size_scale));
                             style.text_indent = indent.computed(font, root_font);
                         }
                     }
@@ -601,9 +660,13 @@ impl BookStyle {
                         style.border_spacing = value.map_or(parent.border_spacing, |values| {
                             if logical.is_some() {
                                 let font = relative_font(style.size_scale);
-                                let root = result.first().map_or(font, |root| relative_font(root.size_scale));
+                                let root = result
+                                    .first()
+                                    .map_or(font, |root| relative_font(root.size_scale));
                                 values.map(|value| value.computed(font, root))
-                            } else { values }
+                            } else {
+                                values
+                            }
                         })
                     }
                     Property::BorderParts(_) => unreachable!("expanded before cascading"),
@@ -627,7 +690,16 @@ impl BookStyle {
                     Property::Width(value) | Property::Height(value) => {
                         let value = match value {
                             ImageLength::RootEm(value) => {
-                                let root = result.first().map_or_else(|| if logical.is_some() { relative_font(style.size_scale) } else { style.size_scale }, |root| relative_font(root.size_scale));
+                                let root = result.first().map_or_else(
+                                    || {
+                                        if logical.is_some() {
+                                            relative_font(style.size_scale)
+                                        } else {
+                                            style.size_scale
+                                        }
+                                    },
+                                    |root| relative_font(root.size_scale),
+                                );
                                 ImageLength::RootEm(value * root / relative_font(style.size_scale))
                             }
                             value => *value,
@@ -647,11 +719,19 @@ impl BookStyle {
             // CREngine places superscripts a quarter of the parent font height above
             // baseline and subscripts four fifths of its descent below it.
             match style.image_align.shift {
-                parley::BaselineShift::Super => style.text_rise.height += 0.25 * relative_font(parent.size_scale),
-                parley::BaselineShift::Sub => style.text_rise.descent -= 0.8 * relative_font(parent.size_scale),
+                parley::BaselineShift::Super => {
+                    style.text_rise.height += 0.25 * relative_font(parent.size_scale)
+                }
+                parley::BaselineShift::Sub => {
+                    style.text_rise.descent -= 0.8 * relative_font(parent.size_scale)
+                }
                 _ => {}
             }
-            style.size_scale = if logical.is_some() { style.size_scale.clamp(f32::MIN_POSITIVE, f32::MAX) } else { style.size_scale.clamp(0.125, 8.0) };
+            style.size_scale = if logical.is_some() {
+                style.size_scale.clamp(f32::MIN_POSITIVE, f32::MAX)
+            } else {
+                style.size_scale.clamp(0.125, 8.0)
+            };
             style.flow = flow::resolve(parent.flow, style.display, style.visibility);
             result.push(style);
         }
@@ -886,7 +966,10 @@ impl Compound {
     fn matches(&self, element: &Element) -> bool {
         !element.anonymous
             && (!self.has_href || element.has_href)
-            && self.semantic_types.iter().all(|selector| selector.matches(element))
+            && self
+                .semantic_types
+                .iter()
+                .all(|selector| selector.matches(element))
             && (!self.is_link || (element.tag == "a" && element.has_href))
             && (!self.first_child || element.previous_sibling.is_none())
             && (!self.first_of_type || element.first_of_type)
@@ -942,7 +1025,9 @@ impl Selector {
                 Token::SquareBracketBlock => {
                     match input.parse_nested_block(semantic_type::parse)? {
                         semantic_type::Attribute::Href => compound.has_href = true,
-                        semantic_type::Attribute::Type(selector) => compound.semantic_types.push(selector),
+                        semantic_type::Attribute::Type(selector) => {
+                            compound.semantic_types.push(selector)
+                        }
                     }
                     specificity.1 = specificity.1.saturating_add(1);
                 }
@@ -952,7 +1037,9 @@ impl Selector {
                     };
                     if name.eq_ignore_ascii_case("first-of-type") {
                         compound.first_of_type = true;
-                    } else if name.eq_ignore_ascii_case("link") || name.eq_ignore_ascii_case("any-link") {
+                    } else if name.eq_ignore_ascii_case("link")
+                        || name.eq_ignore_ascii_case("any-link")
+                    {
                         compound.is_link = true;
                     } else if name.eq_ignore_ascii_case("first-child") {
                         compound.first_child = true;
@@ -1145,7 +1232,8 @@ fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
     for decl in RuleBodyParser::new(input, &mut Properties).flatten() {
         if let Property::ResetMany(keys, reset) = decl.property {
             result.extend(keys.into_iter().map(|key| Declaration {
-                property: Property::Reset(key, reset), important: decl.important,
+                property: Property::Reset(key, reset),
+                important: decl.important,
             }));
         } else if let Property::PaddingBoth(sides) = decl.property {
             for (side, length) in sides.into_iter().enumerate() {
@@ -1217,7 +1305,12 @@ fn choose<'a>(
             }
             Property::PaddingBoth(_) | Property::FontSource(_) => continue,
         };
-        let tier = match (user, declaration.important) { (true, false) => 0, (false, false) => 1, (false, true) => 2, (true, true) => 3 };
+        let tier = match (user, declaration.important) {
+            (true, false) => 0,
+            (false, false) => 1,
+            (false, true) => 2,
+            (true, true) => 3,
+        };
         let priority = (tier, inline, specificity);
         if winners[index].is_none_or(|(current, _)| priority >= current) {
             winners[index] = Some((priority, &declaration.property));
@@ -1311,10 +1404,14 @@ impl<'i> DeclarationParser<'i> for Properties {
             }
             input.reset(&before);
             let property = match name.to_ascii_lowercase().as_ref() {
-                "display" => Property::Display(Display::parse(&input.expect_ident()?.to_ascii_lowercase())
-                    .ok_or_else(ParseError::unexpected_token)?),
-                "visibility" => Property::Visibility(Visibility::parse(&input.expect_ident()?.to_ascii_lowercase())
-                    .ok_or_else(ParseError::unexpected_token)?),
+                "display" => Property::Display(
+                    Display::parse(&input.expect_ident()?.to_ascii_lowercase())
+                        .ok_or_else(ParseError::unexpected_token)?,
+                ),
+                "visibility" => Property::Visibility(
+                    Visibility::parse(&input.expect_ident()?.to_ascii_lowercase())
+                        .ok_or_else(ParseError::unexpected_token)?,
+                ),
                 "padding-top" => Property::Padding(2, parse_padding(input, false)?[0]),
                 "padding-bottom" => Property::Padding(3, parse_padding(input, false)?[0]),
                 "padding-left" => Property::Padding(0, parse_padding(input, false)?[0]),
@@ -1387,10 +1484,14 @@ impl<'i> DeclarationParser<'i> for Properties {
                 "widows" => Property::Widows(line_minimum(input)?),
                 "page-break-before" | "break-before" => Property::BreakBefore(break_edge(input)?),
                 "page-break-after" | "break-after" => Property::BreakAfter(break_edge(input)?),
-                "page-break-inside" | "break-inside" => Property::BreakInside(match break_edge(input)? {
-                    Some(crate::publisher_breaks::Edge::Force) => return Err(ParseError::unexpected_token()),
-                    value => value.map(|edge| edge == crate::publisher_breaks::Edge::Avoid),
-                }),
+                "page-break-inside" | "break-inside" => {
+                    Property::BreakInside(match break_edge(input)? {
+                        Some(crate::publisher_breaks::Edge::Force) => {
+                            return Err(ParseError::unexpected_token());
+                        }
+                        value => value.map(|edge| edge == crate::publisher_breaks::Edge::Avoid),
+                    })
+                }
                 "text-indent" => Property::Indent(parse_indent(input)?),
                 "text-decoration" | "text-decoration-line" => {
                     let mut lines = TextDecoration::default();
@@ -1444,7 +1545,9 @@ impl<'i> DeclarationParser<'i> for Properties {
                         {
                             ImageLength::Fraction(unit_value)
                         }
-                        Token::Dimension { unit, value, .. } if value.is_finite() && value > 0.0 => {
+                        Token::Dimension { unit, value, .. }
+                            if value.is_finite() && value > 0.0 =>
+                        {
                             match unit.to_ascii_lowercase().as_str() {
                                 "px" => ImageLength::Pixels(value),
                                 "em" => ImageLength::Em(value),
@@ -1472,8 +1575,12 @@ impl<'i> DeclarationParser<'i> for Properties {
                 }
                 "font-size" => {
                     let size = match input.next()?.clone() {
-                        Token::Ident(name) if name.eq_ignore_ascii_case("smaller") => Size::Parent(1.0 / 1.2),
-                        Token::Ident(name) if name.eq_ignore_ascii_case("larger") => Size::Parent(1.2),
+                        Token::Ident(name) if name.eq_ignore_ascii_case("smaller") => {
+                            Size::Parent(1.0 / 1.2)
+                        }
+                        Token::Ident(name) if name.eq_ignore_ascii_case("larger") => {
+                            Size::Parent(1.2)
+                        }
                         Token::Percentage { unit_value, .. } => Size::Parent(unit_value),
                         Token::Dimension { value, unit, .. } if unit.eq_ignore_ascii_case("em") => {
                             Size::Parent(value)
@@ -1843,13 +1950,32 @@ mod tests {
         let mut book = Book::open(&crate::test_fixture("publisher-faces.epub")).unwrap();
         let href = book.chapters[0].href.clone();
         let source = Source::parse(&book.chapter(0).unwrap()).unwrap();
-        let mut context = crate::font_context(&[crate::test_fixture("fonts/NotoSans-Regular.ttf")]).unwrap();
+        let mut context =
+            crate::font_context(&[crate::test_fixture("fonts/NotoSans-Regular.ttf")]).unwrap();
         let sheet = BookStyle::load(&mut book, &href, &source, &mut context);
         assert_eq!(sheet.font_weights.len(), 5);
-        assert_eq!(sheet.font_weights.values().filter(|&&weight| weight == 400.0).count(), 3);
-        assert_eq!(sheet.font_weights.values().filter(|&&weight| weight == 700.0).count(), 2);
+        assert_eq!(
+            sheet
+                .font_weights
+                .values()
+                .filter(|&&weight| weight == 400.0)
+                .count(),
+            3
+        );
+        assert_eq!(
+            sheet
+                .font_weights
+                .values()
+                .filter(|&&weight| weight == 700.0)
+                .count(),
+            2
+        );
         let styles = sheet.compute(&source.elements);
-        assert!(styles.iter().all(|style| Arc::ptr_eq(&style.font_weights, &sheet.font_weights)));
+        assert!(
+            styles
+                .iter()
+                .all(|style| Arc::ptr_eq(&style.font_weights, &sheet.font_weights))
+        );
     }
 
     #[test]

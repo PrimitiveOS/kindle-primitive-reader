@@ -1,6 +1,17 @@
 # KOReader progress protocol: audit and execution plan
 
-This is a source audit and proposed implementation plan, dated 2026-11-22. No KOReader account was created or contacted, no server was deployed, and no new Reader sync implementation or interoperability test is claimed. Reader's existing [WebDAV progress sync](progress-sync.md) remains a separate working provider.
+## Archive status
+
+Remote progress interoperability (K22) is outside the Reader goal. The earlier
+WebDAV provider and its worker have been removed from the current source
+candidate. This protocol audit and proposed implementation plan are retained as
+historical reference only; do not use them as implementation tasks or release
+gates. Previously published packages are unchanged.
+
+<details>
+<summary>Historical source audit and proposed plan</summary>
+
+This is a source audit and proposed implementation plan, dated 2026-11-22. No KOReader account was created or contacted, no server was deployed, and no new Reader sync implementation or interoperability test is claimed. The earlier Reader candidate's [WebDAV progress sync](progress-sync.md) was a separate provider.
 
 The reference is KOReader commit `9192014d8bd82a91dc1012473be0f238dedfdb54` (`v2026.07.1`), its base `6e4bc81af4e04f78d81677a323a780a71b29702a`, and CREngine `b32a88ffbbf505cf2ea5208c1a49002d70d3609f`. Reader was inspected at `991e879a019ba34d22fcb36464d12bb3d16966a4`. The client and API specification establish the wire contract below; the sync-server implementation is not part of these pinned sources. Server persistence, timestamp generation and production-specific behavior still require their own checks.
 
@@ -69,3 +80,5 @@ The existing native WebDAV provider uses an acknowledged baseline and strong ETa
 | State/UI/privacy | Existing WebDAV accounts and clears still work; backup/export excludes both providers' secrets/queues; persisted config is private and atomic; failed navigation/save retains old frame/page; visible Back/Cancel and pressed-state rectangles; no password/key/title in screenshots or logs; no request occurs from opening settings or ordinary reading with sync off. |
 
 The first proposed deliverable is protocol-oracle evidence plus fixed-page interoperability. Reflow acceptance remains contingent on the separate XPointer adapter and native source-position oracle. No new package dependency, data import, feature completion or native acceptance follows from this plan alone.
+
+</details>

@@ -403,7 +403,13 @@ fn read_htmlz_member(
     Ok(bytes)
 }
 
-fn htmlz_metadata(bytes: &[u8]) -> Option<(Option<String>, Option<String>, crate::publication_metadata::Metadata)> {
+fn htmlz_metadata(
+    bytes: &[u8],
+) -> Option<(
+    Option<String>,
+    Option<String>,
+    crate::publication_metadata::Metadata,
+)> {
     const DC: &str = "http://purl.org/dc/elements/1.1/";
     let xml = decode_document(bytes, Format::Htmlz).ok()?;
     let document = Xml::parse_with_options(
@@ -426,7 +432,11 @@ fn htmlz_metadata(bytes: &[u8]) -> Option<(Option<String>, Option<String>, crate
             .find(|text| !text.is_empty())
             .map(str::to_owned)
     };
-    Some((value("title"), value("creator"), crate::publication_metadata::Metadata::opf(metadata)))
+    Some((
+        value("title"),
+        value("creator"),
+        crate::publication_metadata::Metadata::opf(metadata),
+    ))
 }
 
 fn add_htmlz_contents(document: &mut Document) -> Result<()> {
@@ -869,7 +879,9 @@ fn fb2_document(input: &str, fallback_title: &str) -> Result<Document> {
     Ok(Document {
         title,
         author: (!authors.is_empty()).then(|| authors.join(", ")),
-        metadata: info.map(|info| crate::publication_metadata::Metadata::fb2(info,input)).unwrap_or_default(),
+        metadata: info
+            .map(|info| crate::publication_metadata::Metadata::fb2(info, input))
+            .unwrap_or_default(),
         chapter_path: CHAPTER_PATH.to_owned(),
         xhtml: output.xhtml,
         toc: output.toc,

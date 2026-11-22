@@ -69,12 +69,16 @@ separately; a backup keeps their validated preference names/paths, not their dat
 
 ## Network and cache boundaries
 
-The envelope contains no OPDS catalogs, network account credentials, sync state,
-online lookup history/provider preferences, pending requests or worker jobs.
+The envelope contains no acquisition catalogs, network account credentials,
+remote sync state, online lookup history/provider preferences, pending requests
+or worker jobs. Legacy catalog/sync config files from earlier releases are not
+loaded or changed by the current source; a restore does not copy or overwrite
+them.
 Only four local portions of `lookup-history.json` enter the envelope: `searches`,
 `dictionary`, `vocabulary` and `review`. When replacing these portions on an
 existing profile, its existing online history and language/provider values are
-preserved. Current network-account files remain in place.
+preserved. Existing local lookup preferences remain part of Reader's local
+state; network services and account files are outside the backup envelope.
 
 OCR output, generated page maps, layout caches and font/dictionary/book resources
 are excluded. Retained bookmark metadata is included because source-removed

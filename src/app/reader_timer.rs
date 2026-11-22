@@ -2,8 +2,8 @@
 
 use std::time::{Duration, Instant};
 
-use crate::Result;
 use super::Reader;
+use crate::Result;
 
 #[derive(Default)]
 pub(super) struct AutoTurn {
@@ -55,6 +55,76 @@ impl AutoTurn {
 }
 
 impl Reader {
+    pub(super) fn set_fixed_auto_turn_overlap(
+        &mut self,
+        horizontal: bool,
+        overlap: u8,
+    ) -> Result<()> {
+        if overlap > 90 {
+            return Err("Zoom overlap must be from 0% to 90%".into());
+        }
+        let fixed = self
+            .fixed
+            .as_mut()
+            .ok_or("Open a fixed-page document first")?;
+        let preferences = fixed.reading.preferences();
+        fixed.reading.set_auto_turn_pan(
+            horizontal.then_some(overlap).or(preferences.zoom_overlap_h),
+            (!horizontal)
+                .then_some(overlap)
+                .or(preferences.zoom_overlap_v),
+            preferences.zoom_direction_vertical,
+            preferences.zoom_bottom_to_top,
+        )?;
+        self.record_position();
+        Ok(())
+    }
+
+    pub(super) fn change_auto_turn_pan(&mut self, change: super::AutoTurnPanChange) -> Result<()> {
+        let fixed = self
+            .fixed
+            .as_mut()
+            .ok_or("Open a fixed-page document first")?;
+        let current = fixed.reading.preferences();
+        let (horizontal, vertical, vertical_first, bottom_to_top) = match change {
+            super::AutoTurnPanChange::ToggleVerticalFirst => (
+                current.zoom_overlap_h,
+                current.zoom_overlap_v,
+                Some(!current.zoom_direction_vertical()),
+                current.zoom_bottom_to_top,
+            ),
+            super::AutoTurnPanChange::ToggleBottomToTop => (
+                current.zoom_overlap_h,
+                current.zoom_overlap_v,
+                current.zoom_direction_vertical,
+                Some(!current.zoom_bottom_to_top()),
+            ),
+            super::AutoTurnPanChange::Reset => {
+                let defaults = self
+                    .document_defaults
+                    .templates
+                    .fixed
+                    .unwrap_or_default()
+                    .apply(current);
+                (
+                    Some(defaults.zoom_overlap_h()),
+                    Some(defaults.zoom_overlap_v()),
+                    Some(defaults.zoom_direction_vertical()),
+                    Some(defaults.zoom_bottom_to_top()),
+                )
+            }
+        };
+        self.fixed.as_mut().unwrap().reading.set_auto_turn_pan(
+            horizontal,
+            vertical,
+            vertical_first,
+            bottom_to_top,
+        )?;
+        self.record_position();
+        self.show(super::Screen::AutoTurnPan);
+        Ok(())
+    }
+
     pub(super) fn set_auto_turn_seconds(&mut self, seconds: u32) -> Result<()> {
         if !(1..=crate::reading_controls::MAX_AUTO_TURN_SECONDS).contains(&seconds) {
             return Err("Automatic page turns must be from 1 second to one day".into());

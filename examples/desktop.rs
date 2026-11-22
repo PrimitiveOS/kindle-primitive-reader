@@ -7,14 +7,8 @@ use reader::Result;
 use reader::app::Reader;
 
 fn main() -> Result<()> {
-    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--sync-worker")) {
-        return reader::progress_sync::worker();
-    }
     if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--lookup-worker")) {
         return reader::online_lookup::worker();
-    }
-    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--opds-worker")) {
-        return reader::opds::worker();
     }
     let mut args = std::env::args_os().skip(1).map(PathBuf::from);
     let usage = "Usage: desktop <books directory> <book filename> <output directory> <Noto Sans font> [fallback fonts...]";

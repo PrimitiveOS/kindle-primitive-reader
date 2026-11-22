@@ -1,10 +1,18 @@
-# Progress sync
+# Archived implementation note: progress sync
 
-This implementation note describes an existing optional product workflow. Remote
-sync is outside the current local-reading parity goal and is not a milestone or
-completion requirement.
+Remote progress sync is outside the current Reader goal. Its application and
+worker modules have been removed from the current source candidate. Previously
+published releases are unchanged. The design and verification details below
+are historical engineering records only; do not treat them as current product
+instructions, active milestones, or parity checklist items.
 
-Progress sync is an opt-in native Reader workflow for a user-configured WebDAV folder. Open **Tools → Progress sync → Sync settings**, enter the folder URL and credentials, choose a device name, then enable it. Creating or editing settings does not contact the server. **Sync now**, **Check server position** and **Send this device's position** are explicit actions. Reading, annotation export and local backups remain available without a server or account.
+<details>
+<summary>Historical implementation and verification record</summary>
+
+An earlier candidate implemented an opt-in native WebDAV progress-sync flow.
+That feature is excluded from the current Reader goal and removed from the
+current source. The notes below describe that historical candidate;
+they are not instructions for the current product.
 
 This implements the documented-progress-provider alternative in K22. It compares the familiar push, pull, conflict and sign-out workflows with the pinned KOReader sync plug-in. The native record format and WebDAV endpoint are separate from KOReader's sync-server account and position protocol. Annotation synchronization, automatic push/pull, and direct KOReader-server interoperability retain separate acceptance work.
 
@@ -41,8 +49,11 @@ The development unit and functional checks cover conditional two-client changes,
 
 The component passed 642 ordinary library tests, 14 EPUB package tests and four system tests, with 43 opt-in cases omitted from that run. Its focused sync suite passed 18 ordinary cases and the separate two-profile original EPUB/PDF worker scenario. Eleven authored screens were inspected. The combined candidate verifies the compact conflict dialog through its actual touch controls and repeats the two-profile original-file scenario. Native acceptance and individual production WebDAV provider checks remain pending while the Kindle is disconnected. No server configuration is included in the package.
 
+
 <img src="screenshots/progress-sync-settings.png" width="390" alt="Reader sync settings with opt-in controls and no password exposed">
 <img src="screenshots/progress-sync-waiting.png" width="390" alt="Reader showing a cancellable reading-position request">
 
 <img src="screenshots/progress-sync-conflict.png" width="390" alt="Compact position conflict with this-device, server and Cancel choices">
 <img src="screenshots/progress-sync-conflict-dark.png" width="390" alt="The same position choice in dark mode">
+
+</details>

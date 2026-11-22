@@ -137,11 +137,14 @@ impl Button {
             .into_iter()
             .filter(|size| *size <= preferred)
             .find(|size| {
-                canvas.text_pages(
-                    bounds,
-                    &self.label,
-                    TextStyle::new(*size).bold().break_long_words(),
-                ).len() == 1
+                canvas
+                    .text_pages(
+                        bounds,
+                        &self.label,
+                        TextStyle::new(*size).bold().break_long_words(),
+                    )
+                    .len()
+                    == 1
             })
             .unwrap_or(preferred.min(24))
     }
@@ -405,13 +408,13 @@ impl Reader {
             let supports_text = fixed.is_none_or(|reading| reading.supports_text());
             let tabs = [
                 Some((
-                        "Contents",
-                        Target::Invoke(Action::Show(if fixed_book {
-                            Screen::FixedContents
-                        } else {
-                            Screen::Contents
-                        })),
-                    )),
+                    "Contents",
+                    Target::Invoke(Action::Show(if fixed_book {
+                        Screen::FixedContents
+                    } else {
+                        Screen::Contents
+                    })),
+                )),
                 Some((
                     "Bookmarks",
                     Target::Invoke(Action::Show(if fixed_book {
@@ -481,6 +484,7 @@ impl Reader {
     fn page_actions(&self) -> Vec<Item> {
         let mut items = vec![
             Item::new("Thumbnails", Action::Overview),
+            Item::new("Skim", Action::Skim),
             Item::new("Add bookmark", Action::AddBookmark),
         ];
         if self
@@ -544,9 +548,17 @@ impl Reader {
         } else {
             0..height
         };
-        PagePaint { visible, inverted, highlight_appearance: self.controls.highlight_appearance, note_marker: self.controls.note_marker,
-            selection_color: (self.controls.selection_uses_highlight_color && self.effective_highlight_style() != crate::highlight_style::HighlightStyle::Invert)
-                .then(||self.effective_highlight_color()).filter(|color|!color.is_default()) }
+        PagePaint {
+            visible,
+            inverted,
+            highlight_appearance: self.controls.highlight_appearance,
+            note_marker: self.controls.note_marker,
+            selection_color: (self.controls.selection_uses_highlight_color
+                && self.effective_highlight_style()
+                    != crate::highlight_style::HighlightStyle::Invert)
+                .then(|| self.effective_highlight_color())
+                .filter(|color| !color.is_default()),
+        }
     }
 
     pub(super) fn tools_screen(&self) -> Screen {
@@ -700,10 +712,14 @@ impl Reader {
     pub(super) fn reading_tools_input(&mut self, input: Input) -> Change {
         let reading_screen = self.surface_screen();
         match input {
-            Input::LongTap(x, y) if matches!(
-                self.reading_bars().button_at(x, y),
-                Some(Target::Invoke(Action::ReadAlarm))
-            ) => self.read_alarm.stop(),
+            Input::LongTap(x, y)
+                if matches!(
+                    self.reading_bars().button_at(x, y),
+                    Some(Target::Invoke(Action::ReadAlarm))
+                ) =>
+            {
+                self.read_alarm.stop()
+            }
             Input::Tap(x, y) => {
                 let mut bars = self.reading_bars();
                 match bars.button_at(x, y) {
@@ -817,37 +833,56 @@ mod tests {
                 app.open_reading_edge(false, 500.0);
                 assert!(app.reading_bottom && !app.reading_top);
                 let bars = app.reading_bars();
-                let buttons: Vec<_> = bars.buttons.iter()
+                let buttons: Vec<_> = bars
+                    .buttons
+                    .iter()
                     .filter(|button| button.rect.y >= HEIGHT as i32 - 112)
-                    .map(|button| serde_json::json!({
-                        "label":button.label,
-                        "x":button.rect.x,
-                        "y":button.rect.y,
-                        "w":button.rect.w,
-                        "h":button.rect.h,
-                    })).collect();
+                    .map(|button| {
+                        serde_json::json!({
+                            "label":button.label,
+                            "x":button.rect.x,
+                            "y":button.rect.y,
+                            "w":button.rect.w,
+                            "h":button.rect.h,
+                        })
+                    })
+                    .collect();
                 assert!(buttons.len() >= 7);
                 if let Some(directory) = std::env::var_os("READER_TOOLBAR_REVIEW") {
                     for dark in [false, true] {
-                        let file = format!("{format}-{}{}.png",
+                        let file = format!(
+                            "{format}-{}{}.png",
                             if large { "large" } else { "compact" },
-                            if dark { "-dark" } else { "" });
+                            if dark { "-dark" } else { "" }
+                        );
                         let path = PathBuf::from(&directory).join(&file);
                         let image = primitive_app::frame(&app, &mut canvas, dark);
                         primitive_app::write_png(&path, WIDTH, HEIGHT, &image).unwrap();
-                        layouts.push(serde_json::json!({"file":file,"dark":dark,"buttons":buttons}));
+                        layouts
+                            .push(serde_json::json!({"file":file,"dark":dark,"buttons":buttons}));
                     }
                 }
                 tap(&mut app, "Bookmarks");
-                assert!(matches!(app.screen, Screen::Bookmarks | Screen::FixedBookmarks));
+                assert!(matches!(
+                    app.screen,
+                    Screen::Bookmarks | Screen::FixedBookmarks
+                ));
                 assert_eq!(app.current_history_location(), origin);
                 let back = primitive_ui::back_button(WIDTH as i32);
                 app.input(Input::Tap((back.x + 30) as f32, (back.y + 30) as f32));
-                app.show(if app.fixed.is_some() { Screen::Fixed } else { Screen::Book });
+                app.show(if app.fixed.is_some() {
+                    Screen::Fixed
+                } else {
+                    Screen::Book
+                });
             }
         }
         if let Some(directory) = std::env::var_os("READER_TOOLBAR_REVIEW") {
-            fs::write(PathBuf::from(directory).join("controls.json"), serde_json::to_vec_pretty(&layouts).unwrap()).unwrap();
+            fs::write(
+                PathBuf::from(directory).join("controls.json"),
+                serde_json::to_vec_pretty(&layouts).unwrap(),
+            )
+            .unwrap();
         }
     }
 
@@ -899,16 +934,22 @@ mod tests {
         assert_eq!(tap(&mut app, "Some"), Change::Partial);
         assert_eq!(tap(&mut app, "+1%"), Change::Partial);
         assert_eq!(app.reading_panel, Some(BarPanel::TextSpacing));
-        crate::app::tests::capture_test_screen(
-            &app, &fonts, "READER_WORD_EXPANSION_SCREEN", false,
-        );
+        crate::app::tests::capture_test_screen(&app, &fonts, "READER_WORD_EXPANSION_SCREEN", false);
         app.open_reading_edge(false, 500.0);
         assert_eq!(app.reading_panel, Some(BarPanel::TextSpacing));
         app.save().unwrap();
         let mut restored = Reader::open(&documents, &state, fonts).unwrap();
         restored.open_path(&book).unwrap();
         assert_eq!(
-            restored.active.as_ref().unwrap().reading.config.settings.word_expansion, 6
+            restored
+                .active
+                .as_ref()
+                .unwrap()
+                .reading
+                .config
+                .settings
+                .word_expansion,
+            6
         );
         assert_eq!(
             restored

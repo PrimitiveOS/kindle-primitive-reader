@@ -22,7 +22,13 @@ impl Reader {
             .state(active.id)
             .and_then(|state| state.preferences.font_file.clone());
         Ok(BookPreferences {
-            font_size: if settings.logical_font_size.is_some() { self.library.state(active.id).and_then(|state| state.preferences.font_size) } else { Some(settings.font_size) },
+            font_size: if settings.logical_font_size.is_some() {
+                self.library
+                    .state(active.id)
+                    .and_then(|state| state.preferences.font_size)
+            } else {
+                Some(settings.font_size)
+            },
             logical_font_size: settings.logical_font_size,
             render_dpi: Some(settings.render_dpi),
             margin: Some(settings.margin),
@@ -91,7 +97,7 @@ impl Reader {
                     .ok_or("Open a fixed-page document first")?;
                 templates.fixed = Some(FixedDefaults::from_view(fixed.reading.preferences()));
                 self.document_defaults.save(templates)?;
-                "Page settings saved for new documents; crop and pan excluded"
+                "Page settings saved for new documents; crop and view offset excluded"
             }
             Command::ClearReflow => {
                 templates.reflow = None;
@@ -258,7 +264,10 @@ impl Reader {
                         |p| {
                             format!(
                                 "Saved text defaults · {} · {}",
-                                p.logical_font_size.map_or_else(|| format!("{} px", p.font_size.unwrap_or(42.)), |n| format!("{n} logical")),
+                                p.logical_font_size.map_or_else(
+                                    || format!("{} px", p.font_size.unwrap_or(42.)),
+                                    |n| format!("{n} logical")
+                                ),
                                 if p.scroll { "Scroll" } else { "Pages" }
                             )
                         },
@@ -292,7 +301,7 @@ impl Reader {
             }
         }
         canvas.text(Rect::new(48,980,1168,180),"Save current applies to new books only. Reset book applies the saved defaults to the open book. Existing reading positions and annotations stay in the book.",BODY.lines(3));
-        canvas.text(Rect::new(48,1190,1168,140),"Fixed-page defaults exclude crop and pan. Reset keeps this document's crop and retains pan within the new page bounds. Clear defaults restores device settings for future books.",CAPTION.lines(3));
+        canvas.text(Rect::new(48,1190,1168,140),"Fixed-page defaults include AutoTurn overlap and direction, but exclude crop and the current view offset. Reset keeps this document's crop and places its view within the page bounds. Clear defaults restores device settings for future books.",CAPTION.lines(3));
         if let Some(message) = self
             .document_defaults
             .problem

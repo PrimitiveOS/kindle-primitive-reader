@@ -46,16 +46,22 @@ impl LookupHistory {
         });
         history.dictionary.retain(|word| valid(word));
         let mut seen = std::collections::BTreeSet::new();
-        history.vocabulary.retain(|word| valid(word) && seen.insert(word.clone()));
+        history
+            .vocabulary
+            .retain(|word| valid(word) && seen.insert(word.clone()));
         history.online.retain(|item| item.validate().is_ok());
         history.online.truncate(8);
         history.online_languages.normalize();
         history.searches.truncate(MAX_QUERY_HISTORY);
         history.dictionary.truncate(MAX_QUERY_HISTORY);
         history.review.words.retain(|word, _| valid(word));
-        for word in &history.vocabulary { history.review.words.entry(word.clone()).or_default(); }
+        for word in &history.vocabulary {
+            history.review.words.entry(word.clone()).or_default();
+        }
         for word in history.review.words.keys() {
-            if seen.insert(word.clone()) { history.vocabulary.push(word.clone()); }
+            if seen.insert(word.clone()) {
+                history.vocabulary.push(word.clone());
+            }
         }
         history
     }
@@ -63,7 +69,9 @@ impl LookupHistory {
     pub fn save(&self, path: &Path) -> io::Result<()> {
         let contents = serde_json::to_vec(self).map_err(io::Error::other)?;
         if contents.len() as u64 > MAX_HISTORY_BYTES {
-            return Err(io::Error::other("Vocabulary and lookup history exceed 8 MiB"));
+            return Err(io::Error::other(
+                "Vocabulary and lookup history exceed 8 MiB",
+            ));
         }
         primitive_app::save(path, &contents)
     }

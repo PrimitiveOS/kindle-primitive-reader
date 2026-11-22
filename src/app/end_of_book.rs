@@ -396,7 +396,8 @@ mod tests {
         let fixture = Fixture::new();
         let jpeg = fixture.root.join("Single photograph.jpg");
         image::GrayImage::from_pixel(80, 120, image::Luma([96]))
-            .save(&jpeg).unwrap();
+            .save(&jpeg)
+            .unwrap();
         let xhtml = fixture.root.join("Short report.xhtml");
         std::fs::write(&xhtml,
             "<html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>Short report</title></head><body><p>A single page with a reading position.</p></body></html>")
@@ -404,7 +405,11 @@ mod tests {
         for (number, path) in [jpeg, xhtml].into_iter().enumerate() {
             let mut app = app(&fixture);
             app.open_path(&path).unwrap();
-            let paths = app.fonts.iter().map(|p| p.display().to_string()).collect::<Vec<_>>();
+            let paths = app
+                .fonts
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>();
             let mut canvas = Canvas::new(WIDTH, HEIGHT, &paths).unwrap();
             let document = primitive_app::frame(&app, &mut canvas, false);
             page_input(&mut app, Input::PageForward);
@@ -415,9 +420,13 @@ mod tests {
             assert_eq!(primitive_app::frame(&app, &mut canvas, false), document);
             assert!(!app.dismiss_end_prompt());
             crate::document_check::verify(
-                &fixture.root, &path, &fixture.root.join(format!("resume-{number}")),
-                app.fonts.clone(), false,
-            ).unwrap();
+                &fixture.root,
+                &path,
+                &fixture.root.join(format!("resume-{number}")),
+                app.fonts.clone(),
+                false,
+            )
+            .unwrap();
         }
     }
 
@@ -591,8 +600,15 @@ mod tests {
         let mut app = app(&fixture);
         app.open_path(&fixture.book).unwrap();
         app.show(Screen::AutoTurn);
-        let custom = app.items().into_iter().find(|item| item.title == "Custom interval").unwrap();
-        assert!(matches!(custom.action, Action::Show(Screen::NumberingValue(NumberField::AutoTurn))));
+        let custom = app
+            .items()
+            .into_iter()
+            .find(|item| item.title == "Custom interval")
+            .unwrap();
+        assert!(matches!(
+            custom.action,
+            Action::Show(Screen::NumberingValue(NumberField::AutoTurn))
+        ));
         capture_test_screen(&app, &app.fonts, "READER_AUTO_TURN_SCREENSHOT", false);
 
         app.activate(custom.action).unwrap();
@@ -601,7 +617,10 @@ mod tests {
         for invalid in ["0", "86401", "abc"] {
             app.editor.text = invalid.chars().collect();
             app.editor.caret = app.editor.text.len();
-            assert!(app.apply_numbering_input(NumberField::AutoTurn).is_err(), "{invalid}");
+            assert!(
+                app.apply_numbering_input(NumberField::AutoTurn).is_err(),
+                "{invalid}"
+            );
         }
 
         for _ in 0..app.editor.string().chars().count() {
@@ -614,7 +633,10 @@ mod tests {
         assert_eq!(app.screen, Screen::AutoTurn);
         assert_eq!(app.controls.auto_turn_seconds, 86_400);
         assert_eq!(app.auto_turn.interval(), Some(Duration::from_secs(86_400)));
-        assert_eq!(ReadingControls::load(&app.controls_path, true).auto_turn_seconds, 86_400);
+        assert_eq!(
+            ReadingControls::load(&app.controls_path, true).auto_turn_seconds,
+            86_400
+        );
         assert!(app.items().iter().any(|item| {
             item.title == "Custom interval" && item.detail.as_deref() == Some("86400 seconds")
         }));
@@ -623,8 +645,15 @@ mod tests {
         assert_eq!(app.auto_turn.interval(), None);
         assert_eq!(app.controls.auto_turn_seconds, 86_400);
         assert!(!app.controls.auto_turn_enabled);
-        assert_eq!(ReadingControls::load(&app.controls_path, true).auto_turn_seconds, 86_400);
-        let custom = app.items().into_iter().find(|item| item.title == "Custom interval").unwrap();
+        assert_eq!(
+            ReadingControls::load(&app.controls_path, true).auto_turn_seconds,
+            86_400
+        );
+        let custom = app
+            .items()
+            .into_iter()
+            .find(|item| item.title == "Custom interval")
+            .unwrap();
         app.activate(custom.action).unwrap();
         assert_eq!(app.editor.string(), "86400");
         app.activate(Action::AutoTurn(Some(Duration::from_secs(86_400))))
@@ -656,7 +685,10 @@ mod tests {
         )
         .unwrap();
         reopened.open_path(&fixture.book).unwrap();
-        assert_eq!(reopened.auto_turn.interval(), Some(Duration::from_secs(86_400)));
+        assert_eq!(
+            reopened.auto_turn.interval(),
+            Some(Duration::from_secs(86_400))
+        );
         assert!(reopened.auto_turn.deadline().is_some());
     }
 
@@ -689,6 +721,102 @@ mod tests {
         assert!(app.items().iter().any(|item| {
             item.title == "Scroll distance" && item.detail.as_deref() == Some("+110% of a page")
         }));
+    }
+
+    #[test]
+    fn fixed_page_auto_turn_pan_settings_are_editable_and_persist_per_book() {
+        let fixture = Fixture::new();
+        let scan = fixture.root.join("Tilted scan.pdf");
+        fs::copy(crate::test_fixture("tilted-scan.pdf"), &scan).unwrap();
+        let mut reader = app(&fixture);
+        reader.open_path(&scan).unwrap();
+        reader.show(Screen::AutoTurn);
+        let pan = reader
+            .items()
+            .into_iter()
+            .find(|item| item.title == "Fixed-page pan")
+            .unwrap();
+        reader.activate(pan.action).unwrap();
+        assert_eq!(reader.screen, Screen::AutoTurnPan);
+        capture_test_screen(
+            &reader,
+            &reader.fonts,
+            "READER_FIXED_AUTOTURN_PAN_SCREENSHOT",
+            false,
+        );
+
+        reader.show(Screen::NumberingValue(
+            NumberField::AutoTurnOverlapHorizontal,
+        ));
+        reader.editor.text = "25".chars().collect();
+        reader.editor.caret = reader.editor.text.len();
+        reader
+            .apply_numbering_input(NumberField::AutoTurnOverlapHorizontal)
+            .unwrap();
+        reader.show(Screen::NumberingValue(NumberField::AutoTurnOverlapVertical));
+        reader.editor.text = "70".chars().collect();
+        reader.editor.caret = reader.editor.text.len();
+        reader
+            .apply_numbering_input(NumberField::AutoTurnOverlapVertical)
+            .unwrap();
+
+        let vertical_first = reader
+            .items()
+            .into_iter()
+            .find(|item| item.title == "Pan order")
+            .unwrap();
+        assert_eq!(
+            vertical_first.detail.as_deref(),
+            Some("Horizontal first · vertical at the edge · tap to change")
+        );
+        reader.activate(vertical_first.action).unwrap();
+        let bottom_to_top = reader
+            .items()
+            .into_iter()
+            .find(|item| item.title == "Vertical direction")
+            .unwrap();
+        assert_eq!(
+            bottom_to_top.detail.as_deref(),
+            Some("Top to bottom · tap to reverse")
+        );
+        reader.activate(bottom_to_top.action).unwrap();
+        assert_eq!(
+            reader
+                .items()
+                .into_iter()
+                .find(|item| item.title == "Pan order")
+                .unwrap()
+                .detail
+                .as_deref(),
+            Some("Vertical first · horizontal at the edge · tap to change")
+        );
+        let preferences = reader.fixed.as_ref().unwrap().reading.preferences();
+        assert_eq!(preferences.zoom_overlap_h(), 25);
+        assert_eq!(preferences.zoom_overlap_v(), 70);
+        assert!(preferences.zoom_direction_vertical());
+        assert!(preferences.zoom_bottom_to_top());
+
+        reader
+            .activate(Action::DocumentDefaults(
+                super::super::default_settings::Command::SaveFixed,
+            ))
+            .unwrap();
+        let defaults = reader.document_defaults.templates.fixed.unwrap();
+        let defaults = defaults.apply(crate::library::FixedPreferences::default());
+        assert_eq!(defaults.zoom_overlap_h(), 25);
+        assert_eq!(defaults.zoom_overlap_v(), 70);
+        assert!(defaults.zoom_direction_vertical());
+        assert!(defaults.zoom_bottom_to_top());
+        reader.save().unwrap();
+        drop(reader);
+
+        let mut reopened = app(&fixture);
+        reopened.open_path(&scan).unwrap();
+        let preferences = reopened.fixed.as_ref().unwrap().reading.preferences();
+        assert_eq!(preferences.zoom_overlap_h(), 25);
+        assert_eq!(preferences.zoom_overlap_v(), 70);
+        assert!(preferences.zoom_direction_vertical());
+        assert!(preferences.zoom_bottom_to_top());
     }
 
     #[test]

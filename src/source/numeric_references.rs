@@ -286,7 +286,10 @@ pub(super) fn parse(
         return Err("Numeric-reference history reordered publisher blocks".into());
     }
     // Previously stored TOC targets may contain the pre-normalization attribute value.
-    let owners_by_origin: HashMap<_, _> = current.element_origins.iter().enumerate()
+    let owners_by_origin: HashMap<_, _> = current
+        .element_origins
+        .iter()
+        .enumerate()
         .filter_map(|(element, origin)| Some(((*origin)?, element)))
         .collect();
     for (id, (key, offset)) in &old.fragments {

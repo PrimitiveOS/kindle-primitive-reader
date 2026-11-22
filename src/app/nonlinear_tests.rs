@@ -1,5 +1,5 @@
-use super::*;
 use super::tests::{Fixture, capture_test_screen};
+use super::*;
 use std::io::Write;
 use zip::{ZipWriter, write::SimpleFileOptions};
 
@@ -38,7 +38,11 @@ pub(super) fn authored_book(path: &Path) {
 
 fn turn(app: &mut Reader, forward: bool) {
     app.show(Screen::Book);
-    app.input(if forward { Input::PageForward } else { Input::PageBack });
+    app.input(if forward {
+        Input::PageForward
+    } else {
+        Input::PageBack
+    });
     let due = app.active.as_ref().unwrap().reading.deadline().unwrap();
     app.tick(due + Duration::from_millis(1));
 }
@@ -54,7 +58,14 @@ fn nonlinear_fragments_are_skipped_only_in_single_page_and_keep_explicit_destina
     let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
     app.open_path(&fixture.book).unwrap();
     assert_eq!(app.active.as_ref().unwrap().reading.chapter, 0);
-    assert!(app.active.as_ref().unwrap().reading.probe.has_nonlinear_chapters());
+    assert!(
+        app.active
+            .as_ref()
+            .unwrap()
+            .reading
+            .probe
+            .has_nonlinear_chapters()
+    );
     app.activate(Action::ToggleNonlinear).unwrap();
     assert!(app.active.as_ref().unwrap().reading.hides_nonlinear());
     let id = app.open_book_id().unwrap();
@@ -67,8 +78,19 @@ fn nonlinear_fragments_are_skipped_only_in_single_page_and_keep_explicit_destina
     assert_eq!(weights[3], weights[4]);
     assert_eq!(weights[5], weights[6]);
     let origin = app.current_history_location().unwrap();
-    let entry = app.active.as_ref().unwrap().reading.probe.toc.iter()
-        .find(|item| item.label == "Long note").unwrap().destination.clone().unwrap();
+    let entry = app
+        .active
+        .as_ref()
+        .unwrap()
+        .reading
+        .probe
+        .toc
+        .iter()
+        .find(|item| item.label == "Long note")
+        .unwrap()
+        .destination
+        .clone()
+        .unwrap();
     app.activate(Action::Jump(entry)).unwrap();
     let reading = &app.active.as_ref().unwrap().reading;
     assert_eq!(reading.chapter, 2);
@@ -83,9 +105,19 @@ fn nonlinear_fragments_are_skipped_only_in_single_page_and_keep_explicit_destina
     turn(&mut app, false);
     assert_eq!(app.active.as_ref().unwrap().reading.chapter, 1);
 
-    app.active.as_mut().unwrap().reading.jump(2, Some("note")).unwrap();
+    app.active
+        .as_mut()
+        .unwrap()
+        .reading
+        .jump(2, Some("note"))
+        .unwrap();
     let last = app.active.as_ref().unwrap().reading.probe.page_count() - 1;
-    app.active.as_mut().unwrap().reading.go_to_page(2, last).unwrap();
+    app.active
+        .as_mut()
+        .unwrap()
+        .reading
+        .go_to_page(2, last)
+        .unwrap();
     turn(&mut app, true);
     assert_eq!(app.active.as_ref().unwrap().reading.chapter, 3);
     let weights = app.active.as_ref().unwrap().reading.progress_weights();
@@ -95,31 +127,64 @@ fn nonlinear_fragments_are_skipped_only_in_single_page_and_keep_explicit_destina
     assert_eq!(weights[4], weights[6]);
     turn(&mut app, false);
     assert_eq!(app.active.as_ref().unwrap().reading.chapter, 2);
-    app.active.as_mut().unwrap().reading.jump(2, Some("note")).unwrap();
+    app.active
+        .as_mut()
+        .unwrap()
+        .reading
+        .jump(2, Some("note"))
+        .unwrap();
     turn(&mut app, false);
     assert_eq!(app.active.as_ref().unwrap().reading.chapter, 1);
-    app.active.as_mut().unwrap().reading.jump_progress(0.0).unwrap();
+    app.active
+        .as_mut()
+        .unwrap()
+        .reading
+        .jump_progress(0.0)
+        .unwrap();
     assert_eq!(app.active.as_ref().unwrap().reading.chapter, 1);
-    app.active.as_mut().unwrap().reading.jump_progress(1.0).unwrap();
+    app.active
+        .as_mut()
+        .unwrap()
+        .reading
+        .jump_progress(1.0)
+        .unwrap();
     assert_eq!(app.active.as_ref().unwrap().reading.chapter, 4);
-    app.active.as_mut().unwrap().reading.jump_progress(0.5).unwrap();
+    app.active
+        .as_mut()
+        .unwrap()
+        .reading
+        .jump_progress(0.5)
+        .unwrap();
     assert!([1, 4].contains(&app.active.as_ref().unwrap().reading.chapter));
 
     app.activate(Action::ReadingMode(true)).unwrap();
     assert!(!app.active.as_ref().unwrap().reading.hides_nonlinear());
-    app.active.as_mut().unwrap().reading.jump_progress(0.0).unwrap();
+    app.active
+        .as_mut()
+        .unwrap()
+        .reading
+        .jump_progress(0.0)
+        .unwrap();
     assert_eq!(app.active.as_ref().unwrap().reading.chapter, 0);
     app.activate(Action::ReadingMode(false)).unwrap();
     app.activate(Action::FacingPages(true)).unwrap();
     assert!(!app.active.as_ref().unwrap().reading.hides_nonlinear());
     app.activate(Action::FacingPages(false)).unwrap();
-    app.active.as_mut().unwrap().reading.jump(3, Some("other")).unwrap();
+    app.active
+        .as_mut()
+        .unwrap()
+        .reading
+        .jump(3, Some("other"))
+        .unwrap();
     app.record_position();
     let note_position = app.current_position().unwrap();
     app.save().unwrap();
     let mut reopened = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
     reopened.open_path(&fixture.book).unwrap();
-    assert_eq!(reopened.library.state(id).unwrap().hide_nonlinear, Some(true));
+    assert_eq!(
+        reopened.library.state(id).unwrap().hide_nonlinear,
+        Some(true)
+    );
     assert_eq!(reopened.current_position(), Some(note_position));
     reopened.show(Screen::BookTools);
     reopened.top_group = Some(top_config::TopGroup::Navigation);
@@ -133,11 +198,13 @@ fn nonlinear_fragments_are_skipped_only_in_single_page_and_keep_explicit_destina
 #[test]
 #[ignore = "reads authorized local EPUBs when READER_NONLINEAR_ORIGINALS is supplied"]
 fn nonlinear_original_covers_preserve_source_indexes_and_resume() {
-    let Some(root) = std::env::var_os("READER_NONLINEAR_ORIGINALS") else { return; };
+    let Some(root) = std::env::var_os("READER_NONLINEAR_ORIGINALS") else {
+        return;
+    };
     let root = PathBuf::from(root);
     let fixture = Fixture::new();
     let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
-    for (number, chapters) in [(36,20), (45,32), (61,59), (68,2), (69,46)] {
+    for (number, chapters) in [(36, 20), (45, 32), (61, 59), (68, 2), (69, 46)] {
         let path = root.join(format!("{number:03}.epub"));
         let before = fs::read(&path).unwrap();
         let book = Book::open(&path).unwrap();
@@ -147,7 +214,12 @@ fn nonlinear_original_covers_preserve_source_indexes_and_resume() {
         let mut app = Reader::open(&root, &fixture.state, fonts.clone()).unwrap();
         app.open_path(&path).unwrap();
         app.activate(Action::ToggleNonlinear).unwrap();
-        app.active.as_mut().unwrap().reading.jump_progress(0.0).unwrap();
+        app.active
+            .as_mut()
+            .unwrap()
+            .reading
+            .jump_progress(0.0)
+            .unwrap();
         assert_eq!(app.active.as_ref().unwrap().reading.chapter, 1);
         let first = app.current_position().unwrap();
         app.record_position();
@@ -156,11 +228,20 @@ fn nonlinear_original_covers_preserve_source_indexes_and_resume() {
         reopened.open_path(&path).unwrap();
         assert!(reopened.active.as_ref().unwrap().reading.hides_nonlinear());
         assert_eq!(reopened.current_position(), Some(first));
-        reopened.active.as_mut().unwrap().reading.jump(0, None).unwrap();
+        reopened
+            .active
+            .as_mut()
+            .unwrap()
+            .reading
+            .jump(0, None)
+            .unwrap();
         turn(&mut reopened, true);
         assert_eq!(reopened.active.as_ref().unwrap().reading.chapter, 1);
         turn(&mut reopened, false);
         assert_eq!(reopened.active.as_ref().unwrap().reading.chapter, 1);
-        assert!(before == fs::read(&path).unwrap(), "Reading changed the source EPUB");
+        assert!(
+            before == fs::read(&path).unwrap(),
+            "Reading changed the source EPUB"
+        );
     }
 }

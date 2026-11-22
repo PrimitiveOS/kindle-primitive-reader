@@ -367,6 +367,10 @@ fn temporary_selection_tones_match_the_actual_pinned_cre_grayscale_function() {
 }
 
 fn rendered_selection(app: &mut Reader, font: &Path, capture: bool) {
+    // Keep the action panel beside the selected range so this pixel test sees
+    // the selection painter rather than the default centered dialog surface.
+    app.controls.selection_popup_position =
+        crate::reading_controls::SelectionPopupPosition::Highlight;
     app.save_highlight_color(None, Some(HighlightColor::Blue));
     app.save_highlight_style(None, Some(HighlightStyle::Lighten));
     app.open_highlight_styles(None);

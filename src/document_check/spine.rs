@@ -68,9 +68,16 @@ impl From<&BookConfig> for SessionConfiguration {
             requested_width: config.settings.width,
             requested_height: config.settings.height,
             font_size: config.settings.font_size,
-            font_policy: if config.settings.logical_font_size.is_some() { "stock_logical" } else { "legacy_pixels" },
+            font_policy: if config.settings.logical_font_size.is_some() {
+                "stock_logical"
+            } else {
+                "legacy_pixels"
+            },
             logical_font_size: config.settings.logical_font_size,
-            requested_font_pixels: config.settings.logical_font_size.and_then(|n| config.settings.font_scale.requested(n).ok()),
+            requested_font_pixels: config
+                .settings
+                .logical_font_size
+                .and_then(|n| config.settings.font_scale.requested(n).ok()),
             full_screen_short_side: config.settings.font_scale.short_side(),
             screen_dpi_override: config.settings.font_scale.dpi_override(),
             render_dpi: config.settings.render_dpi,
@@ -521,24 +528,37 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn canonical_publication_aliases_bind_to_the_same_resumed_session() {
-        let fixture=crate::test_fixture("field-notes-epub3.epub");
-        let fonts=[crate::test_fixture("fonts/NotoSans-Regular.ttf")];
-        let nonce=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let alias=std::env::temp_dir().join(format!("reader-spine-alias-{}-{nonce}.epub",std::process::id()));
-        std::os::unix::fs::symlink(&fixture,&alias).unwrap();
-        let config=legacy_test_config(&fixture.canonicalize().unwrap(),&fonts);
-        let audit=verify_spine(&alias,&fonts,"sample",Some(&config));
-        std::fs::remove_file(alias).unwrap();assert!(audit.unwrap().failed_indices.is_empty());
-        #[cfg(target_os="macos")]
+        let fixture = crate::test_fixture("field-notes-epub3.epub");
+        let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let alias = std::env::temp_dir().join(format!(
+            "reader-spine-alias-{}-{nonce}.epub",
+            std::process::id()
+        ));
+        std::os::unix::fs::symlink(&fixture, &alias).unwrap();
+        let config = legacy_test_config(&fixture.canonicalize().unwrap(), &fonts);
+        let audit = verify_spine(&alias, &fonts, "sample", Some(&config));
+        std::fs::remove_file(alias).unwrap();
+        assert!(audit.unwrap().failed_indices.is_empty());
+        #[cfg(target_os = "macos")]
         {
             // Exercise the actual system alias which triggered the host failure,
             // independently of the process's possibly already canonical TMPDIR.
-            let path=std::path::PathBuf::from(format!("/var/tmp/reader-spine-{}-{nonce}.epub",std::process::id()));
-            std::fs::copy(&fixture,&path).unwrap();let canonical=path.canonicalize().unwrap();
-            assert!(canonical.starts_with("/private/var/tmp"));assert_ne!(path,canonical);
-            let config=legacy_test_config(&canonical,&fonts);
-            let audit=verify_spine(&path,&fonts,"sample",Some(&config));
-            std::fs::remove_file(path).unwrap();assert!(audit.unwrap().failed_indices.is_empty());
+            let path = std::path::PathBuf::from(format!(
+                "/var/tmp/reader-spine-{}-{nonce}.epub",
+                std::process::id()
+            ));
+            std::fs::copy(&fixture, &path).unwrap();
+            let canonical = path.canonicalize().unwrap();
+            assert!(canonical.starts_with("/private/var/tmp"));
+            assert_ne!(path, canonical);
+            let config = legacy_test_config(&canonical, &fonts);
+            let audit = verify_spine(&path, &fonts, "sample", Some(&config));
+            std::fs::remove_file(path).unwrap();
+            assert!(audit.unwrap().failed_indices.is_empty());
         }
     }
 
@@ -565,23 +585,38 @@ mod tests {
 #[cfg(test)]
 mod logical_configuration_tests {
     use super::*;
-    use crate::{Engine,Settings};
+    use crate::{Engine, Settings};
     #[test]
     fn configured_receipt_distinguishes_raw_requested_effective_and_legacy_units_without_paths() {
-        let mut config=BookConfig {
-            user_styles:Default::default(),user_hyphenation:Default::default(),engine:Engine::Parley,
-            book:std::path::PathBuf::from("/private/publication.epub"),fonts:vec![std::path::PathBuf::from("/private/font.ttf")],
-            settings:Settings::default().with_logical_font(255.).unwrap(),scroll:false,facing_pages:true,
-            hide_nonlinear:false,hidden_flows:Default::default(),chapter_offsets:Default::default(),
+        let mut config = BookConfig {
+            user_styles: Default::default(),
+            user_hyphenation: Default::default(),
+            engine: Engine::Parley,
+            book: std::path::PathBuf::from("/private/publication.epub"),
+            fonts: vec![std::path::PathBuf::from("/private/font.ttf")],
+            settings: Settings::default().with_logical_font(255.).unwrap(),
+            scroll: false,
+            facing_pages: true,
+            hide_nonlinear: false,
+            hidden_flows: Default::default(),
+            chapter_offsets: Default::default(),
         };
-        let json=serde_json::to_value(SessionConfiguration::from(&config)).unwrap();
-        assert_eq!(json["font_policy"],"stock_logical");assert_eq!(json["logical_font_size"],255.);
-        assert_eq!(json["requested_font_pixels"],538);assert_eq!(json["font_size"],340.);
-        assert_eq!(json["full_screen_short_side"],1264);assert!(json["screen_dpi_override"].is_null());
+        let json = serde_json::to_value(SessionConfiguration::from(&config)).unwrap();
+        assert_eq!(json["font_policy"], "stock_logical");
+        assert_eq!(json["logical_font_size"], 255.);
+        assert_eq!(json["requested_font_pixels"], 538);
+        assert_eq!(json["font_size"], 340.);
+        assert_eq!(json["full_screen_short_side"], 1264);
+        assert!(json["screen_dpi_override"].is_null());
         assert!(!json.to_string().contains("private"));
-        config.settings=Settings{font_size:42.25,..Settings::default()};
-        let json=serde_json::to_value(SessionConfiguration::from(&config)).unwrap();
-        assert_eq!(json["font_policy"],"legacy_pixels");assert!(json["logical_font_size"].is_null());
-        assert!(json["requested_font_pixels"].is_null());assert_eq!(json["font_size"],42.25);
+        config.settings = Settings {
+            font_size: 42.25,
+            ..Settings::default()
+        };
+        let json = serde_json::to_value(SessionConfiguration::from(&config)).unwrap();
+        assert_eq!(json["font_policy"], "legacy_pixels");
+        assert!(json["logical_font_size"].is_null());
+        assert!(json["requested_font_pixels"].is_null());
+        assert_eq!(json["font_size"], 42.25);
     }
 }

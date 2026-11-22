@@ -63,6 +63,29 @@ fn fixed_templates_exclude_geometry_and_reuse_only_the_current_books_geometry() 
 }
 
 #[test]
+fn fixed_auto_turn_defaults_load_legacy_values_and_round_trip_pan_settings() {
+    let legacy: FixedDefaults = serde_json::from_str(r#"{"zoom":2,"right_to_left":true}"#).unwrap();
+    assert_eq!(legacy.zoom_overlap_h, 40);
+    assert_eq!(legacy.zoom_overlap_v, 40);
+    assert!(!legacy.zoom_direction_vertical);
+    assert!(!legacy.zoom_bottom_to_top);
+
+    let configured: FixedDefaults = serde_json::from_str(
+        r#"{"zoom_overlap_h":25,"zoom_overlap_v":70,"zoom_direction_vertical":true,"zoom_bottom_to_top":true}"#,
+    )
+    .unwrap();
+    let saved = serde_json::to_vec(&configured).unwrap();
+    let reopened: FixedDefaults = serde_json::from_slice(&saved).unwrap();
+    assert_eq!(reopened, configured);
+    let applied = reopened.apply(FixedPreferences::default());
+    assert_eq!(applied.zoom_overlap_h(), 25);
+    assert_eq!(applied.zoom_overlap_v(), 70);
+    assert!(applied.zoom_direction_vertical());
+    assert!(applied.zoom_bottom_to_top());
+    assert!(applied.is_valid());
+}
+
+#[test]
 fn defaults_are_optional_distinct_atomic_and_retained_across_reopening() {
     let root = TestDirectory::new();
     let path = root.0.join(FILE);

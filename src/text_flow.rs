@@ -172,7 +172,8 @@ impl TextFlow {
 
     pub(crate) fn from_start(&self, document: &FixedReading) -> Result<Self> {
         let style = self.style.clone();
-        let layout = style.layout_page(document, 0)?
+        let layout = style
+            .layout_page(document, 0)?
             .ok_or_else(|| format!("Page 1 {}", style.missing_text()))?;
         Self::with_layout(0, document.count(), style, layout)
     }
@@ -251,8 +252,11 @@ impl TextFlow {
     }
 
     pub(crate) fn tick(&mut self, now: Instant, document: &FixedReading) -> Result<bool> {
-        self.step_with_navigation(now, |style, page| style.layout_page(document, page),
-            |page, direction| document.next_reading_page(page, direction))
+        self.step_with_navigation(
+            now,
+            |style, page| style.layout_page(document, page),
+            |page, direction| document.next_reading_page(page, direction),
+        )
     }
 
     #[cfg(test)]
@@ -262,12 +266,15 @@ impl TextFlow {
         layout_page: impl FnMut(&FlowStyle, usize) -> Result<Option<FlowLayout>>,
     ) -> Result<bool> {
         let count = self.document_pages;
-        self.step_with_navigation(now, layout_page,
-            |page, direction| page.checked_add_signed(direction).filter(|&page| page < count))
+        self.step_with_navigation(now, layout_page, |page, direction| {
+            page.checked_add_signed(direction)
+                .filter(|&page| page < count)
+        })
     }
 
     fn step_with_navigation(
-        &mut self, now: Instant,
+        &mut self,
+        now: Instant,
         mut layout_page: impl FnMut(&FlowStyle, usize) -> Result<Option<FlowLayout>>,
         mut adjacent_page: impl FnMut(usize, isize) -> Option<usize>,
     ) -> Result<bool> {
@@ -286,8 +293,7 @@ impl TextFlow {
                 page = next;
                 continue;
             }
-            let Some(adjacent) = adjacent_page(self.document_page, step)
-            else {
+            let Some(adjacent) = adjacent_page(self.document_page, step) else {
                 self.end_attempt = step > 0;
                 boundary = Some(
                     if step > 0 {

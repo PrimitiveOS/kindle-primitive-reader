@@ -408,7 +408,13 @@ fn parse_relationships(text: &str, source: &str, package: bool) -> Result<Relati
     Ok(found)
 }
 
-fn read_metadata(text: &str) -> Result<(Option<String>, Option<String>, crate::publication_metadata::Metadata)> {
+fn read_metadata(
+    text: &str,
+) -> Result<(
+    Option<String>,
+    Option<String>,
+    crate::publication_metadata::Metadata,
+)> {
     let document = xml(text)?;
     let root = document.root_element();
     if !root.has_tag_name((CORE_NS, "coreProperties")) {
@@ -420,11 +426,22 @@ fn read_metadata(text: &str) -> Result<(Option<String>, Option<String>, crate::p
             .and_then(|node| node.text())
             .and_then(label)
     };
-    let raw_field = |ns,name| root.children().find(|node| node.has_tag_name((ns,name))).and_then(|node| node.text()).map(str::to_owned);
-    Ok((field("title"), field("creator"), crate::publication_metadata::Metadata {
-        language: raw_field(DC_NS,"language"), description: raw_field(DC_NS,"description"),
-        keywords: raw_field(CORE_NS,"keywords").into_iter().collect(), series: Vec::new(),
-    }))
+    let raw_field = |ns, name| {
+        root.children()
+            .find(|node| node.has_tag_name((ns, name)))
+            .and_then(|node| node.text())
+            .map(str::to_owned)
+    };
+    Ok((
+        field("title"),
+        field("creator"),
+        crate::publication_metadata::Metadata {
+            language: raw_field(DC_NS, "language"),
+            description: raw_field(DC_NS, "description"),
+            keywords: raw_field(CORE_NS, "keywords").into_iter().collect(),
+            series: Vec::new(),
+        },
+    ))
 }
 
 fn label(text: &str) -> Option<String> {

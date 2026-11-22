@@ -33,17 +33,23 @@ non-reading screens pause the timer, and Kindle Sleep pauses it until Wake.
 In continuous EPUB and PDF views, the selected distance moves that fraction of
 the content viewport and negative values reverse direction. Paginated EPUB
 turns whole pages, rounding any nonzero distance away from zero. Noncontinuous
-fixed pages pan by 60% of the visible area, matching KOReader's default 40%
-overlap. Reader pans horizontally first, reverses that axis for right-to-left
-books, then advances vertically at the row edge; it turns or skips pages after
-reaching the final visible area. The same rule works for portrait and landscape
-pages.
+fixed pages use saved per-book horizontal and vertical overlap settings, each
+from 0% through 90%, with the KOReader default of 40%. The fixed-page pan
+settings expose horizontal-first or vertical-first traversal and top-to-bottom
+or bottom-to-top movement; horizontal reading direction is shared with the
+existing View settings. Reading direction determines the starting edge, and
+movement changes to the second axis at each row or column edge before turning
+the page. Both overlaps and direction persist with the book. **Document
+Defaults › Save current** carries them to new fixed-page documents without
+copying crop or view offset. This matches the source's separate physical-axis
+overlaps and traversal order. [Zoom overlap and direction controls](https://github.com/koreader/koreader/blob/v2026.07.1/frontend/apps/reader/modules/readerzooming.lua#L1788-L1804) · [Axis traversal and direction mapping](https://github.com/koreader/koreader/blob/v2026.07.1/frontend/apps/reader/modules/readerpaging.lua#L3886-L3947)
 
-The fixed-page implementation currently uses KOReader's default overlap and
-horizontal-first direction. Reader does not yet expose KOReader's configurable
-overlap percentage, vertical-first column direction or bottom-to-top reading
-direction. Those controls remain tracked separately from the default AutoTurn
-movement.
+Physical page buttons and page-turn tap zones on zoomed fixed pages use the same
+per-book overlap and axis order. They pan to the next visible region, then the
+next row or column, and advance the source page at the edge. Returning across a
+page boundary starts from that page's matching edge. Continuous fixed-page
+reading retains its normal scroll behavior; spreads retain spread-by-spread
+turning. This gives manual and timed turns the same fixed-page reading path.
 
 The interval is global to Reader, as in KOReader. Device-level frontlight,
 rotation and sleep behavior remain owned by Primitive Launcher and the app kit.
@@ -52,23 +58,33 @@ rotation and sleep behavior remain owned by Primitive Launcher and the app kit.
 
 ![Automatic page-turn settings in the Reader simulator](screenshots/auto-turn-settings.png)
 
+![Fixed-page overlap and traversal controls](screenshots/fixed-auto-turn-pan.png)
+
+![A zoomed fixed page after a manual page turn pans to the next region](screenshots/fixed-manual-pan.png)
+
 The functional test `custom_auto_turn_interval_is_validated_saved_and_restored_on_reopen`
 exercises the settings row, 1..86,400 validation, persistence, reopening the
 book, sleep/wake pause, and return to the last book. A second test exercises the
-distance controls and persistence. Session tests cover signed fractional EPUB
-scroll, fixed PDF scrolling and multi-page movement. The `AutoTurn` unit tests
-cover activity resetting the deadline, paused timer behavior, disabling, and a
-late tick producing exactly one turn. The simulator functional test captures
-the screenshot above. The focused interval test also passes independently.
-`cargo test --locked` passed all 901 library tests with 66 ignored, the Kindle
-binary test (1), EPUB package tests (14), and layout probes (4). Documentation
-tests pass with the explicit `RUSTDOC` path used in this Mac environment. The
-new fixed-page tests cover horizontal and vertical movement, RTL direction,
-signed reversal, overlap distance and page-edge transitions. The ARMHF build for
-this candidate and Kindle installation are still pending.
+distance controls and persistence. Focused fixed-page tests cover 0%, 40% and
+90% overlap on both screen axes, vertical-first traversal with physical-axis
+overlap preserved, bottom-to-top traversal, RTL, signed reversal and page-edge
+transitions. Document-default tests cover legacy settings and round-tripping
+the new fields. Session tests cover signed fractional EPUB scroll, fixed PDF
+scrolling and multi-page movement. The `AutoTurn` unit tests cover activity
+resetting the deadline, paused timer behavior, disabling, and a late tick
+producing exactly one turn. The simulator functional test captures the
+screenshots above. `manual_fixed_page_turns_pan_to_page_edges_before_changing_pages`
+checks physical turns in both directions, saved overlap and page-edge
+transition; the DjVu app test exercises page-button and tap input paths and
+checks return history after resume. After removing the out-of-scope OPDS and remote progress-sync
+modules, the desktop gate passes 887 library tests with 61 ignored, the Kindle
+binary test, 14 package tests, four layout probes and doc tests. The ARMHF
+release binary builds as a static executable with SHA-256
+`b7fb46c2acf8f809ccbb058ac728dc0ca7b361bbbac100539db62adb5fcd5223`.
+Kindle installation and acceptance for this candidate are still pending.
 
 ## Remaining parity work
 
-- Add per-book and global controls for fixed-page pan overlap and direction.
+- Compare the new overlap and traversal controls with KOReader on Kindle, including mixed page shapes and resumed per-book preferences.
 - Compare USB handoff and actual sleep/resume timing on the Kindle. This Mac simulator check does not validate physical panel refresh or deep-suspend timing.
 - Device acceptance for the current Reader build is pending.

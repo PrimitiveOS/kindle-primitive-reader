@@ -128,7 +128,12 @@ impl Reader {
             })
         })?;
         let added = match (entry, mapped) {
-            (SidecarMark::Bookmark { label, created_at, .. }, Ok(Resolved::Point(p))) => {
+            (
+                SidecarMark::Bookmark {
+                    label, created_at, ..
+                },
+                Ok(Resolved::Point(p)),
+            ) => {
                 let label = label.clone().unwrap_or_else(|| {
                     active.reading.probe.chapter_entries()[p.chapter]
                         .label
@@ -147,7 +152,12 @@ impl Reader {
             }
             (
                 SidecarMark::Highlight {
-                    text, note, style, color, created_at, ..
+                    text,
+                    note,
+                    style,
+                    color,
+                    created_at,
+                    ..
                 },
                 Ok(Resolved::Range(a, b)),
             ) => {
@@ -198,7 +208,12 @@ impl Reader {
             .remember(&active.entry, id, &active.reading.probe.title);
         let mut summary = BackupSummary::default();
         merge_text_marks(state, &import.bookmarks, &import.highlights, &mut summary);
-        if summary.bookmarks_added + summary.highlights_added + summary.notes_added + summary.timestamps_added > 0 {
+        if summary.bookmarks_added
+            + summary.highlights_added
+            + summary.notes_added
+            + summary.timestamps_added
+            > 0
+        {
             self.mark_dirty();
             self.save()?;
         }
@@ -316,19 +331,30 @@ mod tests {
         );
         if supplied.is_none() {
             assert_eq!(saved.bookmarks[0].created_at, Some(1_704_067_200));
-            assert_eq!(saved.highlights[0].created_at, crate::mark_time::parse(b"2024-01-02 18:32:07"));
+            assert_eq!(
+                saved.highlights[0].created_at,
+                crate::mark_time::parse(b"2024-01-02 18:32:07")
+            );
         }
         let expected_bookmark_times = source.marks.iter().filter_map(|mark| match mark {
             SidecarMark::Bookmark { created_at, .. } => Some(*created_at),
             _ => None,
         });
-        assert!(saved.bookmarks.iter().map(|m| m.created_at).eq(expected_bookmark_times));
+        assert!(
+            saved
+                .bookmarks
+                .iter()
+                .map(|m| m.created_at)
+                .eq(expected_bookmark_times)
+        );
         for (mark, (expected, created_at)) in
             saved
                 .highlights
                 .iter()
                 .zip(source.marks.iter().filter_map(|mark| match mark {
-                    SidecarMark::Highlight { text, created_at, .. } => Some((text, created_at)),
+                    SidecarMark::Highlight {
+                        text, created_at, ..
+                    } => Some((text, created_at)),
                     _ => None,
                 }))
         {

@@ -394,7 +394,9 @@ fn exth_labels(bytes: &[u8], encoding: Encoding) -> Labels {
                 labels.metadata.description = decode_text(value.to_vec(), encoding).ok();
             }
             105 if value.len() <= MAX_METADATA_BYTES && labels.metadata.keywords.len() < 128 => {
-                if let Ok(value) = decode_text(value.to_vec(), encoding) { labels.metadata.keywords.push(value); }
+                if let Ok(value) = decode_text(value.to_vec(), encoding) {
+                    labels.metadata.keywords.push(value);
+                }
             }
             503 if labels.title.is_none() => labels.title = read_label(value, encoding),
             524 if labels.language.is_none()
@@ -1108,7 +1110,10 @@ mod tests {
         assert_eq!(marked.title.as_deref(), Some("Harbor Notes"));
         assert_eq!(marked.author.as_deref(), Some("A. Reader"));
         assert_eq!(marked.language, parley::Language::parse("vi").ok());
-        assert_eq!(marked.metadata.description.as_deref(), Some("<p>A coastal description.</p>"));
+        assert_eq!(
+            marked.metadata.description.as_deref(),
+            Some("<p>A coastal description.</p>")
+        );
         assert_eq!(marked.metadata.keywords, ["Navigation", "Tides"]);
         assert!(
             marked

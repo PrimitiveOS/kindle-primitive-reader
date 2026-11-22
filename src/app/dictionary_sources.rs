@@ -9,21 +9,38 @@ pub(super) struct SourcePreferences {
 }
 
 impl SourcePreferences {
-    pub(super) fn paths(&self) -> (&[PathBuf], &[PathBuf]) { (&self.order, &self.disabled) }
+    pub(super) fn paths(&self) -> (&[PathBuf], &[PathBuf]) {
+        (&self.order, &self.disabled)
+    }
     pub(super) fn backup_value(bytes: &[u8]) -> io::Result<serde_json::Value> {
         let value: serde_json::Value = serde_json::from_slice(bytes)?;
         let settings: Self = if value.is_object() {
             serde_json::from_value(value)?
         } else {
             let prior: Option<PathBuf> = serde_json::from_value(value)?;
-            Self { order: prior.into_iter().collect(), ..Self::default() }
+            Self {
+                order: prior.into_iter().collect(),
+                ..Self::default()
+            }
         };
-        if settings.order.len() > 512 || settings.disabled.len() > 512
+        if settings.order.len() > 512
+            || settings.disabled.len() > 512
             || settings.order.iter().chain(&settings.disabled).any(|path| {
-                path.as_os_str().is_empty() || path.to_str().is_none_or(|s| s.len() > 4096 || s.chars().any(char::is_control))
-                    || path.components().any(|c| matches!(c, std::path::Component::ParentDir | std::path::Component::CurDir))
-            }) {
-            return Err(io::Error::other("The dictionary preferences backup is invalid"));
+                path.as_os_str().is_empty()
+                    || path
+                        .to_str()
+                        .is_none_or(|s| s.len() > 4096 || s.chars().any(char::is_control))
+                    || path.components().any(|c| {
+                        matches!(
+                            c,
+                            std::path::Component::ParentDir | std::path::Component::CurDir
+                        )
+                    })
+            })
+        {
+            return Err(io::Error::other(
+                "The dictionary preferences backup is invalid",
+            ));
         }
         serde_json::to_value(settings).map_err(io::Error::other)
     }
@@ -78,11 +95,14 @@ impl Reader {
     }
 
     fn book_word_forms(&self) -> Option<bool> {
-        self.open_book_id().and_then(|id| self.library.state(id)).and_then(|s| s.dictionary_word_forms)
+        self.open_book_id()
+            .and_then(|id| self.library.state(id))
+            .and_then(|s| s.dictionary_word_forms)
     }
 
     pub(super) fn word_forms_enabled(&self) -> bool {
-        self.book_word_forms().unwrap_or(!self.dictionary_settings.disable_word_forms)
+        self.book_word_forms()
+            .unwrap_or(!self.dictionary_settings.disable_word_forms)
     }
 
     pub(super) fn lookup_sources(&self, word: &str) -> io::Result<Vec<dictionary::Definition>> {
@@ -98,7 +118,10 @@ impl Reader {
 
     pub(super) fn start_spelling_lookup(&mut self, word: &str) {
         self.spelling_lookup = None;
-        if !self.definitions.is_empty() || !self.word_forms_enabled() || !dictionary::spelling_eligible(word) {
+        if !self.definitions.is_empty()
+            || !self.word_forms_enabled()
+            || !dictionary::spelling_eligible(word)
+        {
             return;
         }
         let sources = self.dictionaries.clone();
@@ -109,7 +132,9 @@ impl Reader {
             sources.suggested_definitions(&word, &book, &settings.order, &settings.disabled, cancel)
         }) {
             Ok(job) => self.spelling_lookup = Some(job),
-            Err(error) => self.notice = Some(format!("Could not start dictionary search ({error})")),
+            Err(error) => {
+                self.notice = Some(format!("Could not start dictionary search ({error})"))
+            }
         }
     }
 
@@ -174,16 +199,36 @@ impl Reader {
             ));
         }
         if !self.installed_dictionaries.is_empty() {
-            rows.push(Item::new("Word forms by default", Action::DictionarySource(SourceAction::DefaultWordForms))
-                .detail(if self.dictionary_settings.disable_word_forms { "Off" } else { "On · inflections and similar words" }));
+            rows.push(
+                Item::new(
+                    "Word forms by default",
+                    Action::DictionarySource(SourceAction::DefaultWordForms),
+                )
+                .detail(if self.dictionary_settings.disable_word_forms {
+                    "Off"
+                } else {
+                    "On · inflections and similar words"
+                }),
+            );
             if self.open_book_id().is_some() {
                 let state = match (self.word_forms_enabled(), self.book_word_forms().is_none()) {
-                    (true, true) => "On · default", (false, true) => "Off · default",
-                    (true, false) => "On", (false, false) => "Off",
+                    (true, true) => "On · default",
+                    (false, true) => "Off · default",
+                    (true, false) => "On",
+                    (false, false) => "Off",
                 };
-                rows.push(Item::new("Word forms in this book", Action::DictionarySource(SourceAction::BookWordForms)).detail(state));
+                rows.push(
+                    Item::new(
+                        "Word forms in this book",
+                        Action::DictionarySource(SourceAction::BookWordForms),
+                    )
+                    .detail(state),
+                );
                 if self.book_word_forms().is_some() {
-                    rows.push(Item::new("Use the default word forms setting", Action::DictionarySource(SourceAction::ResetBookWordForms)));
+                    rows.push(Item::new(
+                        "Use the default word forms setting",
+                        Action::DictionarySource(SourceAction::ResetBookWordForms),
+                    ));
                 }
             }
         }
@@ -257,11 +302,18 @@ impl Reader {
             self.show(Screen::DictionaryOptions(i));
             return Ok(());
         }
-        if matches!(action, SourceAction::BookWordForms | SourceAction::ResetBookWordForms) {
+        if matches!(
+            action,
+            SourceAction::BookWordForms | SourceAction::ResetBookWordForms
+        ) {
             let id = self.open_book_id().ok_or("Open a book first")?;
-            let new = matches!(action, SourceAction::BookWordForms).then(|| !self.word_forms_enabled());
+            let new =
+                matches!(action, SourceAction::BookWordForms).then(|| !self.word_forms_enabled());
             let old = self.book_word_forms();
-            self.library.state_mut(id).ok_or("Book unavailable")?.dictionary_word_forms = new;
+            self.library
+                .state_mut(id)
+                .ok_or("Book unavailable")?
+                .dictionary_word_forms = new;
             self.mark_dirty();
             if let Err(error) = self.save_library() {
                 self.library.state_mut(id).unwrap().dictionary_word_forms = old;
@@ -341,8 +393,11 @@ impl Reader {
                     }
                     next.order = ordered;
                 }
-                SourceAction::ResetOrder | SourceAction::Open(_) | SourceAction::DefaultWordForms
-                | SourceAction::BookWordForms | SourceAction::ResetBookWordForms => unreachable!(),
+                SourceAction::ResetOrder
+                | SourceAction::Open(_)
+                | SourceAction::DefaultWordForms
+                | SourceAction::BookWordForms
+                | SourceAction::ResetBookWordForms => unreachable!(),
             }
             selected_key = Some(key);
         }
@@ -386,13 +441,23 @@ mod tests {
     }
 
     fn select_for_dictionary(app: &mut Reader, word: &str) {
+        app.controls.dictionary_on_single_word = Some(false);
         let reading = &app.active.as_ref().unwrap().reading;
-        let block = reading.probe.source.blocks.iter().find(|b| b.text.contains(word)).unwrap();
+        let block = reading
+            .probe
+            .source
+            .blocks
+            .iter()
+            .find(|b| b.text.contains(word))
+            .unwrap();
         let offset = block.text.find(word).unwrap();
-        let range = reading.probe.select_range(
-            &reading.probe.anchor(block.key, offset),
-            &reading.probe.anchor(block.key, offset + word.len()),
-        ).unwrap();
+        let range = reading
+            .probe
+            .select_range(
+                &reading.probe.anchor(block.key, offset),
+                &reading.probe.anchor(block.key, offset + word.len()),
+            )
+            .unwrap();
         let bounds = reading.highlight_rects(&range)[0];
         app.input(Input::LongTap(
             (bounds.x + bounds.width / 2) as f32,
@@ -400,7 +465,10 @@ mod tests {
         ));
         assert_eq!(app.selection.as_ref().unwrap().text, word);
         let rect = app.selection_button(selection_popup::SelectionAction::Dictionary);
-        app.input(Input::Tap((rect.x + rect.w / 2) as f32, (rect.y + rect.h / 2) as f32));
+        app.input(Input::Tap(
+            (rect.x + rect.w / 2) as f32,
+            (rect.y + rect.h / 2) as f32,
+        ));
     }
 
     #[test]
@@ -408,8 +476,12 @@ mod tests {
         let fixture = Fixture::new();
         let dir = fixture.root.join("dictionaries");
         fs::create_dir(&dir).unwrap();
-        crate::dictionary::tests::write_dictionary(&dir, "Beacon",
-            "sametypesequence=m\n", &[("stone", b"A fragment of rock."), ("store", b"A supply.")]);
+        crate::dictionary::tests::write_dictionary(
+            &dir,
+            "Beacon",
+            "sametypesequence=m\n",
+            &[("stone", b"A fragment of rock."), ("store", b"A supply.")],
+        );
         let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
         let mut reader = Reader::open(&fixture.root, &fixture.state, vec![font.clone()]).unwrap();
         let passage = fixture.root.join("Cliff path.xhtml");
@@ -430,11 +502,17 @@ mod tests {
         }
         assert_eq!(reader.definitions.first().unwrap().word, "stone");
         crate::app::tests::capture_test_screen(
-            &reader, std::slice::from_ref(&font), "READER_SPELLING_POPUP_SCREEN", false,
+            &reader,
+            std::slice::from_ref(&font),
+            "READER_SPELLING_POPUP_SCREEN",
+            false,
         );
         let dismiss = |reader: &mut Reader| {
             let done = reader.definition_layout().1;
-            reader.input(Input::Tap((done.x + done.w / 2) as f32, (done.y + done.h / 2) as f32));
+            reader.input(Input::Tap(
+                (done.x + done.w / 2) as f32,
+                (done.y + done.h / 2) as f32,
+            ));
         };
         dismiss(&mut reader);
         assert_eq!(reader.screen, Screen::Book);
@@ -445,7 +523,7 @@ mod tests {
         reader.look_up("store").unwrap();
         assert!(reader.spelling_lookup.is_none());
         assert_eq!(reader.definitions.first().unwrap().word, "store");
-        reader.tick(Instant::now()+Duration::from_secs(2));
+        reader.tick(Instant::now() + Duration::from_secs(2));
         assert_eq!(reader.definitions.first().unwrap().word, "store");
         dismiss(&mut reader);
         reader.look_up("sotne").unwrap();
@@ -466,10 +544,18 @@ mod tests {
         let f = Fixture::new();
         let dictionaries = f.root.join("dictionaries");
         fs::create_dir(&dictionaries).unwrap();
-        crate::dictionary::tests::write_dictionary(&dictionaries, "Harbour Dictionary",
-            "sametypesequence=m\n", &[("carry", b"To take something from one place to another.")]);
+        crate::dictionary::tests::write_dictionary(
+            &dictionaries,
+            "Harbour Dictionary",
+            "sametypesequence=m\n",
+            &[("carry", b"To take something from one place to another.")],
+        );
         let source = f.root.join("Harbour log.xhtml");
-        fs::write(&source, include_str!("../../tests/fixtures/dictionary-word-forms.xhtml")).unwrap();
+        fs::write(
+            &source,
+            include_str!("../../tests/fixtures/dictionary-word-forms.xhtml"),
+        )
+        .unwrap();
         let second = f.root.join("Other.epub");
         fs::copy(crate::test_fixture("night-landing.epub"), &second).unwrap();
         let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
@@ -502,9 +588,17 @@ mod tests {
         assert_eq!(app.definition_word, "carried");
         assert_eq!(app.definitions[0].word, "carry");
         assert_eq!(app.lookup_history.vocabulary, before);
-        crate::app::tests::capture_test_screen(&app, std::slice::from_ref(&font), "READER_WORD_FORM_SCREEN", false);
+        crate::app::tests::capture_test_screen(
+            &app,
+            std::slice::from_ref(&font),
+            "READER_WORD_FORM_SCREEN",
+            false,
+        );
         let done = app.definition_layout().1;
-        app.input(Input::Tap((done.x + done.w / 2) as f32, (done.y + done.h / 2) as f32));
+        app.input(Input::Tap(
+            (done.x + done.w / 2) as f32,
+            (done.y + done.h / 2) as f32,
+        ));
         assert_eq!(app.screen, Screen::Book);
         assert_eq!(app.current_history_location(), passage);
     }

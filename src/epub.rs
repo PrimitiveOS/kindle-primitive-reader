@@ -252,7 +252,9 @@ impl Book {
         let fonts = crate::epub_font::EmbeddedFonts::read(
             &mut archive,
             root,
-            manifest.values().map(|item| (item.path.as_str(), item.media.as_str())),
+            manifest
+                .values()
+                .map(|item| (item.path.as_str(), item.media.as_str())),
         );
         let cover = package_cover(metadata, &manifest);
         let spine = child(root, "spine")?;
@@ -274,18 +276,20 @@ impl Book {
                 .filter(|node| node.has_tag_name("itemref"))
                 .filter_map(|node| manifest.get(node.attribute("idref")?))
             {
-                let path = paths.entry(item.path.as_str()).or_insert_with(|| {
-                    (0usize, !archive.missing_after_recovery(&item.path))
-                });
+                let path = paths
+                    .entry(item.path.as_str())
+                    .or_insert_with(|| (0usize, !archive.missing_after_recovery(&item.path)));
                 path.0 += 1;
             }
             inherit_group_targets(&mut toc, &group_headings, &paths, &mut archive);
             let has_target = |entries: &[TocEntry], print: bool| {
                 entries.iter().any(|entry| {
                     entry.destination.as_ref().is_some_and(|destination| {
-                        paths.get(destination.path.as_str()).is_some_and(|&(count, available)| {
-                            !print || (available && count == 1 && entry.label.len() <= 256)
-                        })
+                        paths
+                            .get(destination.path.as_str())
+                            .is_some_and(|&(count, available)| {
+                                !print || (available && count == 1 && entry.label.len() <= 256)
+                            })
                     })
                 })
             };
@@ -374,22 +378,31 @@ impl Book {
                 }
             }
             let valid = |entry: &TocEntry| {
-                entry.label.len() <= 256 && entry.destination.as_ref().is_some_and(|destination| {
-                    paths.get(destination.path.as_str()) == Some(&1)
-                })
+                entry.label.len() <= 256
+                    && entry
+                        .destination
+                        .as_ref()
+                        .is_some_and(|destination| paths.get(destination.path.as_str()) == Some(&1))
             };
             printed_pages.retain(valid);
-            if printed_pages.is_empty() && let Some(item) = adobe_map
+            if printed_pages.is_empty()
+                && let Some(item) = adobe_map
                 && let Ok(xml) = xml_entry(&mut archive, &item.path)
                 && let Ok(doc) = parse_xml(&xml)
             {
-                printed_pages = adobe_pages(&doc, &item.path).filter(valid).take(MAX_PAGE_REFERENCES).collect();
+                printed_pages = adobe_pages(&doc, &item.path)
+                    .filter(valid)
+                    .take(MAX_PAGE_REFERENCES)
+                    .collect();
             }
         }
-        let printed_source = metadata.children()
+        let printed_source = metadata
+            .children()
             .find(|node| node.has_tag_name(("http://purl.org/dc/elements/1.1/", "source")))
-            .and_then(|node| node.text()).map(str::trim)
-            .filter(|source| !source.is_empty() && source.len() <= 1024).map(str::to_owned);
+            .and_then(|node| node.text())
+            .map(str::trim)
+            .filter(|source| !source.is_empty() && source.len() <= 1024)
+            .map(str::to_owned);
         Ok(Self {
             title,
             author,
@@ -429,7 +442,10 @@ impl Book {
     }
 
     pub(crate) fn publisher_metadata(&self) -> Option<&crate::publication_metadata::Metadata> {
-        match &self.content { Content::Loose { metadata, .. } => Some(metadata), _ => None }
+        match &self.content {
+            Content::Loose { metadata, .. } => Some(metadata),
+            _ => None,
+        }
     }
 
     #[cfg(feature = "kindle")]
@@ -724,13 +740,17 @@ impl Book {
 
     pub(crate) fn previous_mobi_chapters(&self, name: &str) -> &[String] {
         match &self.content {
-            Content::Loose { prior_mobi, .. } => prior_mobi.get(name).map(Vec::as_slice).unwrap_or_default(),
+            Content::Loose { prior_mobi, .. } => {
+                prior_mobi.get(name).map(Vec::as_slice).unwrap_or_default()
+            }
             _ => &[],
         }
     }
     #[cfg(test)]
     pub(crate) fn previous_mobi_chapter(&self, name: &str) -> Option<&str> {
-        self.previous_mobi_chapters(name).first().map(String::as_str)
+        self.previous_mobi_chapters(name)
+            .first()
+            .map(String::as_str)
     }
 
     /// Look up a canonical archive path in the reading spine.
@@ -766,16 +786,29 @@ impl Book {
     #[cfg(feature = "kindle")]
     pub(crate) fn linear_progress_target(&mut self, fraction: f64) -> Result<(usize, f64)> {
         let offsets = self.chapter_offsets()?;
-        let chapters: Vec<_> = self.chapters.iter().enumerate().filter(|(_, chapter)| !chapter.nonlinear)
-            .map(|(index, _)| (index, offsets[index + 1] - offsets[index])).collect();
-        let Some(&(first, _)) = chapters.first() else { return self.progress_target(fraction); };
+        let chapters: Vec<_> = self
+            .chapters
+            .iter()
+            .enumerate()
+            .filter(|(_, chapter)| !chapter.nonlinear)
+            .map(|(index, _)| (index, offsets[index + 1] - offsets[index]))
+            .collect();
+        let Some(&(first, _)) = chapters.first() else {
+            return self.progress_target(fraction);
+        };
         let &(last, _) = chapters.last().unwrap();
-        if fraction <= 0.0 { return Ok((first, 0.0)); }
-        if fraction >= 1.0 { return Ok((last, 1.0)); }
+        if fraction <= 0.0 {
+            return Ok((first, 0.0));
+        }
+        if fraction >= 1.0 {
+            return Ok((last, 1.0));
+        }
         let total: u64 = chapters.iter().map(|(_, weight)| weight).sum();
         let mut target = fraction * total as f64;
         for (chapter, weight) in chapters {
-            if target < weight as f64 { return Ok((chapter, target / weight as f64)); }
+            if target < weight as f64 {
+                return Ok((chapter, target / weight as f64));
+            }
             target -= weight as f64;
         }
         Ok((last, 1.0))
@@ -805,7 +838,10 @@ impl Book {
 
     pub(crate) fn local_font(&mut self, path: &str, cap: usize) -> Result<Vec<u8>> {
         let mut bytes = self.resource_limited(path, cap)?;
-        if let Content::Archive { fonts: Some(fonts), .. } = &self.content {
+        if let Content::Archive {
+            fonts: Some(fonts), ..
+        } = &self.content
+        {
             fonts.apply(path, &mut bytes);
         }
         Ok(bytes)
@@ -1329,11 +1365,20 @@ fn ncx_pages(doc: &Document<'_>, base: &str) -> Vec<TocEntry> {
 
 fn adobe_pages<'a>(doc: &'a Document<'a>, base: &'a str) -> impl Iterator<Item = TocEntry> + 'a {
     let root = doc.root_element();
-    root.children().filter(move |node| root.has_tag_name("page-map") && node.has_tag_name("page"))
+    root.children()
+        .filter(move |node| root.has_tag_name("page-map") && node.has_tag_name("page"))
         .filter_map(move |node| {
-            let label = node.attribute("name")?.split_whitespace().collect::<Vec<_>>().join(" ");
+            let label = node
+                .attribute("name")?
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
             let destination = Book::resolve_link(base, node.attribute("href")?).ok()?;
-            (!label.is_empty()).then_some(TocEntry { label, destination: Some(destination), depth: 0 })
+            (!label.is_empty()).then_some(TocEntry {
+                label,
+                destination: Some(destination),
+                depth: 0,
+            })
         })
 }
 
@@ -1485,7 +1530,10 @@ mod tests {
         for (i, entry) in entries.iter().enumerate() {
             let dest = entry.destination.as_ref().unwrap();
             assert_eq!(dest.path, "Book/text/part.xhtml");
-            assert_eq!(dest.fragment.as_deref(), Some(if i==0 { "p1" } else { "p2" }));
+            assert_eq!(
+                dest.fragment.as_deref(),
+                Some(if i == 0 { "p1" } else { "p2" })
+            );
         }
     }
 

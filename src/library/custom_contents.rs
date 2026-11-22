@@ -23,9 +23,9 @@ impl CustomContents {
     }
 
     pub fn find(&self, position: &ReadingPosition) -> Option<usize> {
-        self.entries
-            .iter()
-            .position(|entry| entry.position.chapter == position.chapter && same_position(&entry.position, position))
+        self.entries.iter().position(|entry| {
+            entry.position.chapter == position.chapter && same_position(&entry.position, position)
+        })
     }
 
     pub fn save(&mut self, position: ReadingPosition, label: &str) -> io::Result<()> {
@@ -89,28 +89,47 @@ mod tests {
 
     #[test]
     fn backup_merge_keeps_existing_titles_and_bounds_custom_entries() {
-        let initial: BookState = serde_json::from_str(r#"{"id":7,"path":"archive.pdf","title":"Archive"}"#).unwrap();
+        let initial: BookState =
+            serde_json::from_str(r#"{"id":7,"path":"archive.pdf","title":"Archive"}"#).unwrap();
         let mut source = initial.clone();
         let mut current = initial;
-        let page = |page| ReadingPosition { chapter: 0, page, anchor: None };
+        let page = |page| ReadingPosition {
+            chapter: 0,
+            page,
+            anchor: None,
+        };
         current.custom_contents.save(page(3), "Current").unwrap();
         source.custom_contents.enabled = true;
         source.custom_contents.save(page(3), "Older title").unwrap();
         source.custom_contents.save(page(1), "Foreword").unwrap();
         let (mut merged, summary) = merge_states(&[current], &[source.clone()]);
-        assert_eq!((summary.custom_chapters_added, summary.duplicates), (1,1));
-        assert_eq!(merged[0].custom_contents.entries.iter().map(|entry|entry.label.as_str()).collect::<Vec<_>>(), ["Foreword", "Current"]);
+        assert_eq!((summary.custom_chapters_added, summary.duplicates), (1, 1));
+        assert_eq!(
+            merged[0]
+                .custom_contents
+                .entries
+                .iter()
+                .map(|entry| entry.label.as_str())
+                .collect::<Vec<_>>(),
+            ["Foreword", "Current"]
+        );
         assert!(!merged[0].custom_contents.enabled);
         let (_, summary) = merge_states(&merged, &[source.clone()]);
-        assert_eq!((summary.custom_chapters_added, summary.duplicates),(0,2));
+        assert_eq!((summary.custom_chapters_added, summary.duplicates), (0, 2));
         let (restored, _) = merge_states(&[], &[source]);
         assert!(restored[0].custom_contents.enabled);
         let chapters = &mut merged[0].custom_contents;
         assert!(chapters.save(page(2), "").is_err());
-        assert!(chapters.save(page(2), &"x".repeat(TITLE_LIMIT+1)).is_err());
-        for i in 10..10+ENTRY_LIMIT { let _ = chapters.save(page(i), "Chapter"); }
+        assert!(
+            chapters
+                .save(page(2), &"x".repeat(TITLE_LIMIT + 1))
+                .is_err()
+        );
+        for i in 10..10 + ENTRY_LIMIT {
+            let _ = chapters.save(page(i), "Chapter");
+        }
         assert_eq!(chapters.entries.len(), ENTRY_LIMIT);
-        assert!(chapters.save(page(0),"Excess").is_err());
-        chapters.save(page(3),"Renamed at the limit").unwrap();
+        assert!(chapters.save(page(0), "Excess").is_err());
+        chapters.save(page(3), "Renamed at the limit").unwrap();
     }
 }

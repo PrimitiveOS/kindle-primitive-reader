@@ -7,9 +7,9 @@ use roxmltree::{Document, Node, NodeId, ParsingOptions};
 use crate::Result;
 
 pub(crate) const SOURCE_ATTRIBUTE: &str = "data-primos-source";
-mod numeric_references;
 #[cfg(test)]
 mod flow_metadata_tests;
+mod numeric_references;
 
 const RUBY_TEXT_MODEL: u64 = 0xe026_92a4_3415_b12f;
 const MAX_RUBY_GROUPS: usize = 1_024;
@@ -526,7 +526,9 @@ impl Source {
                 tag: node.tag_name().name().to_owned(),
                 list_kind: crate::list_marker::MarkerKind::html(node),
                 has_href: node.has_attribute("href"),
-                type_attribute: node.attributes().find(|a| a.name() == "type")
+                type_attribute: node
+                    .attributes()
+                    .find(|a| a.name() == "type")
                     .map(|a| a.value().to_owned()),
                 classes: node.attribute("class").unwrap_or_default().to_owned(),
                 id: node.attribute("id").map(str::to_owned),

@@ -1,8 +1,8 @@
 //! Reading adjustments that can be applied without leaving the visible page.
 use super::{Action, BarPanel, Reader, Screen};
+use crate::app::NumberField;
 use crate::reading_controls::{ReadingOrientation, ScreenPalette};
 use crate::{FontHinting, Settings, TextAlignment};
-use crate::app::NumberField;
 
 pub(super) struct Choice {
     pub(super) title: String,
@@ -143,18 +143,48 @@ impl Reader {
             let text = |title, settings: Settings| Choice::live(title, Action::Text(settings));
             match panel {
                 BarPanel::Text => {
-                    let smaller = settings.logical_font_size.map_or_else(|| Action::Text(Settings {
-                        font_size:(settings.font_size-4.).max(20.),..settings
-                    }), |n| Action::ApplyLogicalFont(active.id,(n-0.5).max(12.)));
-                    let larger = settings.logical_font_size.map_or_else(|| Action::Text(Settings {
-                        font_size:(settings.font_size+4.).min(100.),..settings
-                    }), |n| Action::ApplyLogicalFont(active.id,(n+0.5).min(255.)));
-                    let mut rows = vec![ConfigRow::new(format!("Size · {}",settings.font_label()), [
-                        Choice::live("Smaller text",smaller),Choice::live("Larger text",larger),
-                        Choice::link("More",Action::Show(Screen::NumberingValue(NumberField::LogicalFont(active.id))))])];
+                    let smaller = settings.logical_font_size.map_or_else(
+                        || {
+                            Action::Text(Settings {
+                                font_size: (settings.font_size - 4.).max(20.),
+                                ..settings
+                            })
+                        },
+                        |n| Action::ApplyLogicalFont(active.id, (n - 0.5).max(12.)),
+                    );
+                    let larger = settings.logical_font_size.map_or_else(
+                        || {
+                            Action::Text(Settings {
+                                font_size: (settings.font_size + 4.).min(100.),
+                                ..settings
+                            })
+                        },
+                        |n| Action::ApplyLogicalFont(active.id, (n + 0.5).min(255.)),
+                    );
+                    let mut rows = vec![ConfigRow::new(
+                        format!("Size · {}", settings.font_label()),
+                        [
+                            Choice::live("Smaller text", smaller),
+                            Choice::live("Larger text", larger),
+                            Choice::link(
+                                "More",
+                                Action::Show(Screen::NumberingValue(NumberField::LogicalFont(
+                                    active.id,
+                                ))),
+                            ),
+                        ],
+                    )];
                     for presets in crate::logical_font::PRESETS.chunks(6) {
-                        rows.push(ConfigRow::new("Font size",presets.iter().map(|&value| Choice::option(value.to_string(),
-                            Action::ApplyLogicalFont(active.id,f64::from(value)),settings.logical_font_size==Some(f64::from(value))))));
+                        rows.push(ConfigRow::new(
+                            "Font size",
+                            presets.iter().map(|&value| {
+                                Choice::option(
+                                    value.to_string(),
+                                    Action::ApplyLogicalFont(active.id, f64::from(value)),
+                                    settings.logical_font_size == Some(f64::from(value)),
+                                )
+                            }),
+                        ));
                     }
                     if !vertical {
                         rows.push(ConfigRow::new(
@@ -312,17 +342,30 @@ impl Reader {
                     return vec![
                         ConfigRow::new(
                             "Word spacing",
-                            [("Small", crate::WordSpacePercent::SMALL),
-                             ("Medium", crate::WordSpacePercent::MEDIUM),
-                             ("Large", crate::WordSpacePercent::LARGE)]
-                            .map(|(label,value)|Choice::option(label,Action::ApplyWordSpacing(active.id,value),settings.percent_word_spacing==Some(value))),
+                            [
+                                ("Small", crate::WordSpacePercent::SMALL),
+                                ("Medium", crate::WordSpacePercent::MEDIUM),
+                                ("Large", crate::WordSpacePercent::LARGE),
+                            ]
+                            .map(|(label, value)| {
+                                Choice::option(
+                                    label,
+                                    Action::ApplyWordSpacing(active.id, value),
+                                    settings.percent_word_spacing == Some(value),
+                                )
+                            }),
                         ),
                         ConfigRow::new(
                             match settings.percent_word_spacing {
-                                Some(pair)=>format!("{}% / {}%",pair.scaling,pair.minimum),
-                                None=>format!("Legacy: {:+} px",settings.word_spacing),
+                                Some(pair) => format!("{}% / {}%", pair.scaling, pair.minimum),
+                                None => format!("Legacy: {:+} px", settings.word_spacing),
                             },
-                            [Choice::link("More",Action::Show(Screen::NumberingValue(NumberField::WordSpacing(self.word_spacing_draft(active.id)))))],
+                            [Choice::link(
+                                "More",
+                                Action::Show(Screen::NumberingValue(NumberField::WordSpacing(
+                                    self.word_spacing_draft(active.id),
+                                ))),
+                            )],
                         ),
                         ConfigRow::new(
                             "Letter spacing",
@@ -345,49 +388,75 @@ impl Reader {
                         ),
                         ConfigRow::new(
                             "Word expansion",
-                            [(0, "None"), (5, "Some"), (15, "More")].map(|(word_expansion, label)| {
-                                Choice::option(
-                                    label,
-                                    Action::Text(Settings { word_expansion, ..settings }),
-                                    word_expansion == settings.word_expansion,
-                                )
-                            }),
+                            [(0, "None"), (5, "Some"), (15, "More")].map(
+                                |(word_expansion, label)| {
+                                    Choice::option(
+                                        label,
+                                        Action::Text(Settings {
+                                            word_expansion,
+                                            ..settings
+                                        }),
+                                        word_expansion == settings.word_expansion,
+                                    )
+                                },
+                            ),
                         ),
                         ConfigRow::new(
                             format!("Fine tune · {}%", settings.word_expansion),
                             [
-                                text("-1%", Settings {
-                                    word_expansion: settings.word_expansion.saturating_sub(1),
-                                    ..settings
-                                }),
-                                text("+1%", Settings {
-                                    word_expansion: settings.word_expansion.saturating_add(1).min(20),
-                                    ..settings
-                                }),
+                                text(
+                                    "-1%",
+                                    Settings {
+                                        word_expansion: settings.word_expansion.saturating_sub(1),
+                                        ..settings
+                                    },
+                                ),
+                                text(
+                                    "+1%",
+                                    Settings {
+                                        word_expansion: settings
+                                            .word_expansion
+                                            .saturating_add(1)
+                                            .min(20),
+                                        ..settings
+                                    },
+                                ),
                             ],
                         ),
                         ConfigRow::new(
                             format!("CJK width · {}%", settings.cjk_width_percent),
-                            [("-5%", -5), ("-1%", -1), ("100%", 0), ("+1%", 1), ("+5%", 5)]
-                                .map(|(label, delta)| {
-                                    let value = if delta == 0 {
-                                        100
-                                    } else {
-                                        (i16::from(settings.cjk_width_percent) + delta)
-                                            .clamp(100, 150) as u8
-                                    };
-                                    Choice::option(
-                                        label,
-                                        Action::Text(Settings { cjk_width_percent: value, ..settings }),
-                                        value == settings.cjk_width_percent,
-                                    )
-                                }),
+                            [
+                                ("-5%", -5),
+                                ("-1%", -1),
+                                ("100%", 0),
+                                ("+1%", 1),
+                                ("+5%", 5),
+                            ]
+                            .map(|(label, delta)| {
+                                let value = if delta == 0 {
+                                    100
+                                } else {
+                                    (i16::from(settings.cjk_width_percent) + delta).clamp(100, 150)
+                                        as u8
+                                };
+                                Choice::option(
+                                    label,
+                                    Action::Text(Settings {
+                                        cjk_width_percent: value,
+                                        ..settings
+                                    }),
+                                    value == settings.cjk_width_percent,
+                                )
+                            }),
                         ),
                     ];
                 }
                 BarPanel::TextRendering => {
                     let mut rows = vec![
-                        ConfigRow::new("Style tweaks", [Choice::link("Open", Action::Show(Screen::StyleTweaks))]),
+                        ConfigRow::new(
+                            "Style tweaks",
+                            [Choice::link("Open", Action::Show(Screen::StyleTweaks))],
+                        ),
                         ConfigRow::new(
                             "Publisher CSS",
                             [("Off", false), ("On", true)].map(|(title, publisher_styles)| {
@@ -405,20 +474,38 @@ impl Reader {
                             "Zoom (dpi)",
                             crate::RENDER_DPI_PRESETS.map(|render_dpi| {
                                 Choice::option(
-                                    if render_dpi == 0 { "Off".to_string() } else { render_dpi.to_string() },
-                                    Action::Text(Settings { render_dpi, ..settings }),
+                                    if render_dpi == 0 {
+                                        "Off".to_string()
+                                    } else {
+                                        render_dpi.to_string()
+                                    },
+                                    Action::Text(Settings {
+                                        render_dpi,
+                                        ..settings
+                                    }),
                                     settings.render_dpi == render_dpi,
                                 )
                             }),
                         ),
                         ConfigRow::new(
                             "Custom zoom",
-                            [Choice::option(
-                                if settings.render_dpi == 0 { "Off".to_string() }
-                                    else { format!("{} dpi", settings.render_dpi) },
-                                Action::Heading,
-                                !crate::RENDER_DPI_PRESETS.contains(&settings.render_dpi),
-                            ), Choice::link("Set value", Action::Show(Screen::NumberingValue(NumberField::ContentDpi(active.id))))],
+                            [
+                                Choice::option(
+                                    if settings.render_dpi == 0 {
+                                        "Off".to_string()
+                                    } else {
+                                        format!("{} dpi", settings.render_dpi)
+                                    },
+                                    Action::Heading,
+                                    !crate::RENDER_DPI_PRESETS.contains(&settings.render_dpi),
+                                ),
+                                Choice::link(
+                                    "Set value",
+                                    Action::Show(Screen::NumberingValue(NumberField::ContentDpi(
+                                        active.id,
+                                    ))),
+                                ),
+                            ],
                         ),
                         ConfigRow::new(
                             "Font kerning",
@@ -501,13 +588,27 @@ impl Reader {
                     )];
                     rows.push(ConfigRow::new(
                         format!("Fine tune · {:+.2}", settings.font_weight_delta),
-                        [("-1", -1.0), ("-0.25", -0.25), ("0", 0.0), ("+0.25", 0.25), ("+1", 1.0)]
-                            .map(|(label, step)| text(label, Settings {
-                                font_weight_delta: if step == 0.0 { 0.0 }
-                                    else { (settings.font_weight_delta + step).clamp(-3.0, 5.5) },
-                                bold_text: false,
-                                ..settings
-                            })),
+                        [
+                            ("-1", -1.0),
+                            ("-0.25", -0.25),
+                            ("0", 0.0),
+                            ("+0.25", 0.25),
+                            ("+1", 1.0),
+                        ]
+                        .map(|(label, step)| {
+                            text(
+                                label,
+                                Settings {
+                                    font_weight_delta: if step == 0.0 {
+                                        0.0
+                                    } else {
+                                        (settings.font_weight_delta + step).clamp(-3.0, 5.5)
+                                    },
+                                    bold_text: false,
+                                    ..settings
+                                },
+                            )
+                        }),
                     ));
                     rows.push(ConfigRow::new(
                         "Font contrast",
@@ -524,20 +625,25 @@ impl Reader {
                         }),
                     ));
                     rows.push(ConfigRow::new(
-                        format!("Fine tune · {}", crate::font_render::gamma_label(settings.font_gamma_index)),
-                        [("-", -1), ("1.00", 0), ("+", 1)]
-                            .map(|(label, step)| {
-                                let index = if step == 0 {
-                                    crate::font_render::NORMAL_GAMMA
-                                } else {
-                                    (i16::from(settings.font_gamma_index) + step).clamp(0, 56) as u8
-                                };
-                                text(label, Settings {
+                        format!(
+                            "Fine tune · {}",
+                            crate::font_render::gamma_label(settings.font_gamma_index)
+                        ),
+                        [("-", -1), ("1.00", 0), ("+", 1)].map(|(label, step)| {
+                            let index = if step == 0 {
+                                crate::font_render::NORMAL_GAMMA
+                            } else {
+                                (i16::from(settings.font_gamma_index) + step).clamp(0, 56) as u8
+                            };
+                            text(
+                                label,
+                                Settings {
                                     font_gamma_index: index,
                                     text_contrast: false,
                                     ..settings
-                                })
-                            }),
+                                },
+                            )
+                        }),
                     ));
                     if !vertical {
                         rows.push(ConfigRow::new(
@@ -572,11 +678,13 @@ impl Reader {
                         if settings.hyphenation_mode() == crate::HyphenationMode::Automatic {
                             rows.push(ConfigRow::new(
                                 "Custom rules",
-                                [false, true].map(|enabled| Choice::option(
-                                    if enabled { "On" } else { "Off" },
-                                    Action::SetUserHyphenation(enabled),
-                                    self.user_hyphenation.enabled == enabled,
-                                )),
+                                [false, true].map(|enabled| {
+                                    Choice::option(
+                                        if enabled { "On" } else { "Off" },
+                                        Action::SetUserHyphenation(enabled),
+                                        self.user_hyphenation.enabled == enabled,
+                                    )
+                                }),
                             ));
                         }
                     }

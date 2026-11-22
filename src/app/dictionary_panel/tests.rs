@@ -49,7 +49,8 @@ impl Simulation {
             ],
         );
         let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
-        let app = Reader::open(&fixture.root, &fixture.state, vec![font.clone()]).unwrap();
+        let mut app = Reader::open(&fixture.root, &fixture.state, vec![font.clone()]).unwrap();
+        app.controls.dictionary_on_single_word = Some(false);
         let canvas = Canvas::new(WIDTH, HEIGHT, &[font.to_string_lossy().into_owned()]).unwrap();
         Self {
             fixture,

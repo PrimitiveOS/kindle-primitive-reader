@@ -18,21 +18,31 @@ pub(super) struct SpellingLookup {
 }
 
 impl Drop for SpellingLookup {
-    fn drop(&mut self) { self.cancelled.store(true, std::sync::atomic::Ordering::Relaxed); }
+    fn drop(&mut self) {
+        self.cancelled
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 impl SpellingLookup {
     pub(super) fn start(
         work: impl FnOnce(&std::sync::atomic::AtomicBool) -> io::Result<Vec<dictionary::Definition>>
-            + Send + 'static,
+        + Send
+        + 'static,
     ) -> io::Result<Self> {
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let flag = cancelled.clone();
-        std::thread::Builder::new().name("dictionary-spelling".into()).spawn(move || {
-            let _ = sender.send(work(&flag));
-        })?;
-        Ok(Self { receiver, cancelled, deadline: Instant::now() + Duration::from_millis(150) })
+        std::thread::Builder::new()
+            .name("dictionary-spelling".into())
+            .spawn(move || {
+                let _ = sender.send(work(&flag));
+            })?;
+        Ok(Self {
+            receiver,
+            cancelled,
+            deadline: Instant::now() + Duration::from_millis(150),
+        })
     }
 }
 
@@ -283,7 +293,9 @@ impl Reader {
     pub(super) fn poll_spelling_lookup(&mut self, now: Instant) -> Option<Change> {
         use std::sync::mpsc::TryRecvError;
         let job = self.spelling_lookup.as_mut()?;
-        if now < job.deadline { return None; }
+        if now < job.deadline {
+            return None;
+        }
         match job.receiver.try_recv() {
             Err(TryRecvError::Empty) => {
                 job.deadline = now + Duration::from_millis(150);
@@ -294,7 +306,9 @@ impl Reader {
                 self.dictionary_navigation.view = View::default();
             }
             Ok(Err(error)) => self.notice = Some(error.to_string()),
-            Err(TryRecvError::Disconnected) => self.notice = Some("Dictionary search ended early".into()),
+            Err(TryRecvError::Disconnected) => {
+                self.notice = Some("Dictionary search ended early".into())
+            }
         }
         self.spelling_lookup = None;
         Some(Change::Partial)
@@ -309,20 +323,25 @@ impl Reader {
         if nested && self.dictionary_navigation.trail.len() >= MAX_DEPTH {
             return Err("Go back one lookup to open another definition".into());
         }
-        let results = with_storage(|| {
-            self.lookup_sources(word)
-        })?;
+        let results = with_storage(|| self.lookup_sources(word))?;
         let entry = self.vocabulary_entry(word);
         let reviewing = if self.screen == Screen::VocabularyWord {
             self.vocabulary_view.word.as_deref() == Some(word)
-        } else { nested && self.dictionary_navigation.review_word.as_deref() == Some(word) };
-        let repeated = self.lookup_history.review.automatic && !reviewing
+        } else {
+            nested && self.dictionary_navigation.review_word.as_deref() == Some(word)
+        };
+        let repeated = self.lookup_history.review.automatic
+            && !reviewing
             && self.lookup_history.review.words.contains_key(word);
         self.update_lookup_history(|history| {
             history.lookup(word);
             if history.review.automatic && !reviewing && !repeated {
-                if !history.vocabulary.iter().any(|saved| saved == word) { history.vocabulary.insert(0, word.to_owned()); }
-                history.review.remember(word, entry.clone(), super::vocabulary::now());
+                if !history.vocabulary.iter().any(|saved| saved == word) {
+                    history.vocabulary.insert(0, word.to_owned());
+                }
+                history
+                    .review
+                    .remember(word, entry.clone(), super::vocabulary::now());
             }
         })?;
         if nested {
@@ -339,7 +358,9 @@ impl Reader {
                 origin: Some((self.screen, self.list_page)),
                 origin_editor: (self.screen == Screen::DictionaryEntry)
                     .then(|| self.editor.clone()),
-                review_word: (self.screen == Screen::VocabularyWord).then(|| self.vocabulary_view.word.clone()).flatten(),
+                review_word: (self.screen == Screen::VocabularyWord)
+                    .then(|| self.vocabulary_view.word.clone())
+                    .flatten(),
                 ..Default::default()
             };
         }
@@ -348,7 +369,9 @@ impl Reader {
         self.definition_expanded = false;
         self.definition_results_page = None;
         self.show(Screen::Definition);
-        if repeated { self.vocabulary_view.repeated = Some((word.to_owned(), entry)); }
+        if repeated {
+            self.vocabulary_view.repeated = Some((word.to_owned(), entry));
+        }
         self.start_spelling_lookup(word);
         Ok(())
     }
@@ -602,14 +625,19 @@ impl Reader {
                     let word = self.definition_word.clone();
                     if self.lookup_history.review.words.contains_key(&word) {
                         self.vocabulary_view.word = Some(word);
-                        return match self.vocabulary_command(super::vocabulary::Command::ConfirmRemove) {
-                            Ok(()) => Change::Partial, Err(error) => self.report(error),
+                        return match self
+                            .vocabulary_command(super::vocabulary::Command::ConfirmRemove)
+                        {
+                            Ok(()) => Change::Partial,
+                            Err(error) => self.report(error),
                         };
                     }
                     let entry = self.vocabulary_entry(&word);
                     return match self.update_lookup_history(|h| {
                         let added = h.save_word(&word);
-                        if added { h.review.remember(&word, entry, super::vocabulary::now()); }
+                        if added {
+                            h.review.remember(&word, entry, super::vocabulary::now());
+                        }
                         added
                     }) {
                         Ok(_) => Change::Partial,

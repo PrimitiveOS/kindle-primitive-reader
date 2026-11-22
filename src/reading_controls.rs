@@ -13,6 +13,9 @@ use crate::session::PAGE_HEIGHT;
 const MAX_FILE_BYTES: u64 = 4096;
 pub(crate) const MAX_AUTO_TURN_SECONDS: u32 = 86_400;
 pub(crate) const MAX_AUTO_TURN_DISTANCE_TENTHS: i16 = 200;
+pub(crate) const DEFAULT_VERY_LONG_PRESS_TENTHS: u16 = 30;
+pub(crate) const MIN_VERY_LONG_PRESS_TENTHS: u16 = 9;
+pub(crate) const MAX_VERY_LONG_PRESS_TENTHS: u16 = 200;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
@@ -28,6 +31,18 @@ pub(crate) struct ReadingControls {
     pub note_marker: crate::highlight_style::NoteMarker,
     #[serde(skip_serializing_if = "crate::highlight_style::Appearance::is_default")]
     pub highlight_appearance: crate::highlight_style::Appearance,
+    #[serde(skip_serializing_if = "SelectionPopupPosition::is_default")]
+    pub selection_popup_position: SelectionPopupPosition,
+    #[serde(skip_serializing_if = "SelectionLongPressAction::is_default")]
+    pub selection_long_press_action: SelectionLongPressAction,
+    #[serde(skip_serializing_if = "HighlightPrompt::is_default")]
+    pub highlight_prompt: HighlightPrompt,
+    /// `None` follows KOReader's default: open a dictionary for a held single word.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dictionary_on_single_word: Option<bool>,
+    /// Seconds in tenths. `None` retains KOReader's three-second default in legacy settings.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub very_long_press_tenths: Option<u16>,
     pub night_pages: bool,
     pub footnote_popups: bool,
     pub prefer_footnotes: bool,
@@ -58,6 +73,111 @@ pub(crate) struct ReadingControls {
     pub finish_at_end: bool,
     #[serde(default = "legacy_metadata_save")]
     pub metadata_save: MetadataSave,
+}
+
+/// Where the selected-text action panel appears over the reading page.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SelectionPopupPosition {
+    Top,
+    #[default]
+    Center,
+    Bottom,
+    Highlight,
+}
+
+impl SelectionPopupPosition {
+    pub(crate) const ALL: [Self; 4] = [Self::Top, Self::Center, Self::Bottom, Self::Highlight];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Top => "Top",
+            Self::Center => "Center",
+            Self::Bottom => "Bottom",
+            Self::Highlight => "By selected text",
+        }
+    }
+
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// Default action for a held word when it is not handled by the single-word dictionary rule.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SelectionLongPressAction {
+    #[default]
+    Ask,
+    Nothing,
+    Highlight,
+    Select,
+    Note,
+    Translate,
+    Wikipedia,
+    Dictionary,
+    Search,
+}
+
+impl SelectionLongPressAction {
+    pub(crate) const ALL: [Self; 9] = [
+        Self::Ask,
+        Self::Nothing,
+        Self::Highlight,
+        Self::Select,
+        Self::Note,
+        Self::Translate,
+        Self::Wikipedia,
+        Self::Dictionary,
+        Self::Search,
+    ];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Ask => "Ask with popup dialog",
+            Self::Nothing => "Do nothing",
+            Self::Highlight => "Highlight",
+            Self::Select => "Select and highlight",
+            Self::Note => "Add note",
+            Self::Translate => "Translate",
+            Self::Wikipedia => "Wikipedia",
+            Self::Dictionary => "Dictionary",
+            Self::Search => "Full-text search",
+        }
+    }
+
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// Ask for a highlight's appearance before saving it, matching KOReader's
+/// optional highlight prompt while keeping the reader's default one-tap flow.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum HighlightPrompt {
+    #[default]
+    None,
+    Style,
+    Color,
+    StyleAndColor,
+}
+
+impl HighlightPrompt {
+    pub(crate) const ALL: [Self; 4] = [Self::None, Self::Style, Self::Color, Self::StyleAndColor];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::None => "Off",
+            Self::Style => "Style",
+            Self::Color => "Color",
+            Self::StyleAndColor => "Style and color",
+        }
+    }
+
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -427,10 +547,24 @@ impl PageRefresh {
 }
 
 impl ReadingControls {
+    pub(crate) fn very_long_press_tenths(self) -> u16 {
+        self.very_long_press_tenths
+            .unwrap_or(DEFAULT_VERY_LONG_PRESS_TENTHS)
+            .clamp(MIN_VERY_LONG_PRESS_TENTHS, MAX_VERY_LONG_PRESS_TENTHS)
+    }
+
+    pub(crate) fn very_long_press_millis(self) -> u32 {
+        u32::from(self.very_long_press_tenths()) * 100
+    }
+
+    pub(crate) fn very_long_press_label(self) -> String {
+        let tenths = self.very_long_press_tenths();
+        format!("{}.{:01} seconds", tenths / 10, tenths % 10)
+    }
+
     pub(crate) fn auto_turn_distance_tenths(self) -> i16 {
         if self.auto_turn_distance_tenths == 0
-            || self.auto_turn_distance_tenths.unsigned_abs()
-                > MAX_AUTO_TURN_DISTANCE_TENTHS as u16
+            || self.auto_turn_distance_tenths.unsigned_abs() > MAX_AUTO_TURN_DISTANCE_TENTHS as u16
         {
             10
         } else {
@@ -559,6 +693,10 @@ mod tests {
     fn old_settings_keep_the_default_partial_page_refresh() {
         let controls: ReadingControls = serde_json::from_str(r#"{"night_pages":true}"#).unwrap();
         assert!(controls.night_pages);
+        assert_eq!(
+            controls.selection_popup_position,
+            SelectionPopupPosition::Center
+        );
         assert_eq!(controls.auto_turn_seconds, 0);
         assert_eq!(controls.auto_turn_interval(), None);
         assert_eq!(controls.page_refresh, PageRefresh::Default);
@@ -568,6 +706,92 @@ mod tests {
             Change::Partial
         );
         assert_eq!(since_last, 0);
+    }
+
+    #[test]
+    fn selection_popup_position_defaults_to_stock_center_and_round_trips() {
+        for position in SelectionPopupPosition::ALL {
+            let controls = ReadingControls {
+                selection_popup_position: position,
+                ..ReadingControls::default()
+            };
+            let bytes = serde_json::to_vec(&controls).unwrap();
+            let reopened: ReadingControls = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(reopened.selection_popup_position, position);
+        }
+        assert_eq!(
+            serde_json::from_str::<ReadingControls>(r#"{"selection_popup_position":"bogus"}"#)
+                .unwrap_err()
+                .classify(),
+            serde_json::error::Category::Data
+        );
+    }
+
+    #[test]
+    fn highlight_prompt_defaults_to_one_tap_and_persists_each_choice() {
+        assert_eq!(
+            ReadingControls::default().highlight_prompt,
+            HighlightPrompt::None
+        );
+        for prompt in HighlightPrompt::ALL {
+            let controls = ReadingControls {
+                highlight_prompt: prompt,
+                ..ReadingControls::default()
+            };
+            let reopened: ReadingControls =
+                serde_json::from_slice(&serde_json::to_vec(&controls).unwrap()).unwrap();
+            assert_eq!(reopened.highlight_prompt, prompt);
+        }
+        let legacy: ReadingControls =
+            serde_json::from_str(r#"{"selection_long_press_action":"highlight"}"#).unwrap();
+        assert_eq!(legacy.highlight_prompt, HighlightPrompt::None);
+    }
+
+    #[test]
+    fn long_press_actions_round_trip_and_keep_stock_single_word_dictionary_default() {
+        let defaults = ReadingControls::default();
+        assert_eq!(
+            defaults.selection_long_press_action,
+            SelectionLongPressAction::Ask
+        );
+        assert_eq!(defaults.dictionary_on_single_word, None);
+        for action in SelectionLongPressAction::ALL {
+            let controls = ReadingControls {
+                selection_long_press_action: action,
+                dictionary_on_single_word: Some(false),
+                ..defaults
+            };
+            let bytes = serde_json::to_vec(&controls).unwrap();
+            let reopened: ReadingControls = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(reopened.selection_long_press_action, action);
+            assert_eq!(reopened.dictionary_on_single_word, Some(false));
+        }
+        let legacy: ReadingControls = serde_json::from_str(r#"{"night_pages":true}"#).unwrap();
+        assert_eq!(
+            legacy.selection_long_press_action,
+            SelectionLongPressAction::Ask
+        );
+        assert_eq!(legacy.dictionary_on_single_word, None);
+    }
+
+    #[test]
+    fn very_long_press_interval_defaults_to_three_seconds_and_is_bounded() {
+        let mut controls = ReadingControls::default();
+        assert_eq!(controls.very_long_press_tenths(), 30);
+        assert_eq!(controls.very_long_press_millis(), 3_000);
+        assert_eq!(controls.very_long_press_label(), "3.0 seconds");
+
+        controls.very_long_press_tenths = Some(9);
+        assert_eq!(controls.very_long_press_tenths(), 9);
+        controls.very_long_press_tenths = Some(201);
+        assert_eq!(controls.very_long_press_tenths(), 200);
+
+        controls.very_long_press_tenths = Some(45);
+        let reopened: ReadingControls =
+            serde_json::from_slice(&serde_json::to_vec(&controls).unwrap()).unwrap();
+        assert_eq!(reopened.very_long_press_tenths(), 45);
+        let legacy: ReadingControls = serde_json::from_str("{}").unwrap();
+        assert_eq!(legacy.very_long_press_tenths(), 30);
     }
 
     #[test]

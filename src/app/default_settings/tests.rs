@@ -72,8 +72,23 @@ fn templates_apply_only_to_unseen_books_and_freeze_across_changes_and_restart() 
     let last = f.root.join("After clearing.txt");
     fs::write(&last, "A later book uses the device baseline.").unwrap();
     app.open_path(&last).unwrap();
-    assert_eq!(app.active.as_ref().unwrap().reading.config.settings.logical_font_size, Some(crate::logical_font::DEFAULT));
-    assert_eq!(size(&app), app.device_reading_settings().font_scale.effective(crate::logical_font::DEFAULT).unwrap());
+    assert_eq!(
+        app.active
+            .as_ref()
+            .unwrap()
+            .reading
+            .config
+            .settings
+            .logical_font_size,
+        Some(crate::logical_font::DEFAULT)
+    );
+    assert_eq!(
+        size(&app),
+        app.device_reading_settings()
+            .font_scale
+            .effective(crate::logical_font::DEFAULT)
+            .unwrap()
+    );
     app.open_path(&next).unwrap();
     assert_eq!(size(&app), 58.);
 }

@@ -13,9 +13,7 @@ use icu_normalizer::{ComposingNormalizer, DecomposingNormalizer};
 use serde::{Deserialize, Serialize};
 use zip::ZipArchive;
 
-use crate::comic::{
-    MAX_COMIC_BYTES, MAX_IMAGE_BYTES, MAX_WEBP_BYTES, natural_cmp,
-};
+use crate::comic::{MAX_COMIC_BYTES, MAX_IMAGE_BYTES, MAX_WEBP_BYTES, natural_cmp};
 use crate::djvu::MAX_DJVU_BYTES;
 use crate::epub::{Book, MAX_ARCHIVE, check_zip_directory};
 use crate::fixed::MAX_PDF_BYTES;
@@ -312,7 +310,11 @@ pub struct BookPreferences {
 impl BookPreferences {
     /// Explicit application policy for new books; legacy deserialization stays unchanged.
     pub(crate) fn for_new_reflow() -> Self {
-        Self { logical_font_size: Some(crate::logical_font::DEFAULT), percent_word_spacing: Some(crate::WordSpacePercent::MEDIUM), ..Self::default() }
+        Self {
+            logical_font_size: Some(crate::logical_font::DEFAULT),
+            percent_word_spacing: Some(crate::WordSpacePercent::MEDIUM),
+            ..Self::default()
+        }
     }
 
     pub fn apply_to(&self, settings: Settings) -> Settings {
@@ -329,9 +331,13 @@ impl BookPreferences {
             })
         };
         let adjusted = Settings {
-            font_size: self.logical_font_size.and_then(|value| settings.font_scale.effective(value).ok()).unwrap_or_else(|| self.font_size.unwrap_or(settings.font_size)),
+            font_size: self
+                .logical_font_size
+                .and_then(|value| settings.font_scale.effective(value).ok())
+                .unwrap_or_else(|| self.font_size.unwrap_or(settings.font_size)),
             logical_font_size: self.logical_font_size,
-            render_dpi: self.render_dpi
+            render_dpi: self
+                .render_dpi
                 .filter(|dpi| crate::valid_render_dpi(*dpi))
                 .unwrap_or(settings.render_dpi),
             margin: self.margin.unwrap_or(settings.margin),
@@ -374,10 +380,12 @@ impl BookPreferences {
             alignment: self.alignment,
             bold_text: self.bold_text,
             text_contrast: self.text_contrast,
-            font_gamma_index: self.font_gamma_index
+            font_gamma_index: self
+                .font_gamma_index
                 .filter(|&index| usize::from(index) < crate::font_render::GAMMA_LEVELS.len())
                 .unwrap_or(settings.font_gamma_index),
-            font_weight_delta: self.font_weight_delta
+            font_weight_delta: self
+                .font_weight_delta
                 .filter(|delta| (-3.0..=5.5).contains(delta))
                 .unwrap_or(settings.font_weight_delta),
             publisher_styles: self.publisher_styles.unwrap_or(settings.publisher_styles),
@@ -419,6 +427,17 @@ pub struct FixedPreferences {
     pub offset_x: f32,
     pub offset_y: f32,
     pub right_to_left: bool,
+    /// KOReader-compatible zoom pan overlap. Missing values inherit 40%.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zoom_overlap_h: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zoom_overlap_v: Option<u8>,
+    /// Pan up/down before left/right, used by fixed-page AutoTurn.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zoom_direction_vertical: Option<bool>,
+    /// Reverse the vertical pan direction for bottom-to-top documents.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zoom_bottom_to_top: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub epub_spread: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -428,6 +447,22 @@ pub struct FixedPreferences {
 }
 
 impl FixedPreferences {
+    pub fn zoom_overlap_h(self) -> u8 {
+        self.zoom_overlap_h.unwrap_or(40)
+    }
+
+    pub fn zoom_overlap_v(self) -> u8 {
+        self.zoom_overlap_v.unwrap_or(40)
+    }
+
+    pub fn zoom_direction_vertical(self) -> bool {
+        self.zoom_direction_vertical.unwrap_or(false)
+    }
+
+    pub fn zoom_bottom_to_top(self) -> bool {
+        self.zoom_bottom_to_top.unwrap_or(false)
+    }
+
     pub fn is_valid(self) -> bool {
         self == self.normalized()
     }
@@ -440,6 +475,8 @@ impl FixedPreferences {
             continuous_gap: self.continuous_gap.min(MAX_CONTINUOUS_GAP),
             straighten_limit: self.straighten_limit.min(MAX_STRAIGHTEN_DEGREES),
             scan_white_level: self.scan_white_level.filter(valid_white_level),
+            zoom_overlap_h: self.zoom_overlap_h.filter(|value| *value <= 90),
+            zoom_overlap_v: self.zoom_overlap_v.filter(|value| *value <= 90),
             offset_x: normalized_offset(f64::from(self.offset_x)),
             offset_y: normalized_offset(f64::from(self.offset_y)),
             crop: self.crop.filter(valid_crop),
@@ -459,6 +496,13 @@ impl<'de> Deserialize<'de> for FixedPreferences {
                 .unwrap_or(0)
         };
         let optional_switch = |key| values.get(key).and_then(serde_json::Value::as_bool);
+        let optional_overlap = |key| {
+            values
+                .get(key)
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|value| u8::try_from(value).ok())
+                .filter(|value| *value <= 90)
+        };
         let switch = |key| optional_switch(key).unwrap_or(false);
         let offset = |key| {
             normalized_offset(
@@ -488,6 +532,10 @@ impl<'de> Deserialize<'de> for FixedPreferences {
             offset_x: offset("offset_x"),
             offset_y: offset("offset_y"),
             right_to_left: switch("right_to_left"),
+            zoom_overlap_h: optional_overlap("zoom_overlap_h"),
+            zoom_overlap_v: optional_overlap("zoom_overlap_v"),
+            zoom_direction_vertical: optional_switch("zoom_direction_vertical"),
+            zoom_bottom_to_top: optional_switch("zoom_bottom_to_top"),
             epub_spread: optional_switch("epub_spread"),
             epub_right_to_left: optional_switch("epub_right_to_left"),
             crop: values
@@ -551,7 +599,10 @@ pub struct Highlight {
         skip_serializing_if = "crate::highlight_style::HighlightStyle::is_default"
     )]
     pub style: crate::highlight_style::HighlightStyle,
-    #[serde(default, skip_serializing_if = "crate::highlight_style::HighlightColor::is_default")]
+    #[serde(
+        default,
+        skip_serializing_if = "crate::highlight_style::HighlightColor::is_default"
+    )]
     pub color: crate::highlight_style::HighlightColor,
     pub selection: TextSelection,
     pub note: Option<String>,
@@ -575,7 +626,10 @@ pub struct PdfHighlight {
         skip_serializing_if = "crate::highlight_style::HighlightStyle::is_default"
     )]
     pub style: crate::highlight_style::HighlightStyle,
-    #[serde(default, skip_serializing_if = "crate::highlight_style::HighlightColor::is_default")]
+    #[serde(
+        default,
+        skip_serializing_if = "crate::highlight_style::HighlightColor::is_default"
+    )]
     pub color: crate::highlight_style::HighlightColor,
     pub page: usize,
     pub bounds: Vec<PdfTextRect>,
@@ -678,7 +732,10 @@ pub struct BookState {
     pub hide_nonlinear: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub highlight_style: Option<crate::highlight_style::HighlightStyle>,
-    #[serde(default = "legacy_highlight_color", skip_serializing_if = "is_implicit_gray")]
+    #[serde(
+        default = "legacy_highlight_color",
+        skip_serializing_if = "is_implicit_gray"
+    )]
     pub highlight_color: Option<crate::highlight_style::HighlightColor>,
     pub id: u64,
     pub path: PathBuf,
@@ -895,8 +952,12 @@ pub struct Library {
 }
 
 impl Library {
-    pub(crate) fn state_path(&self) -> &Path { &self.state_path }
-    pub(crate) fn documents_path(&self) -> &Path { &self.original_root }
+    pub(crate) fn state_path(&self) -> &Path {
+        &self.state_path
+    }
+    pub(crate) fn documents_path(&self) -> &Path {
+        &self.original_root
+    }
 
     pub fn open(root: &Path, state_path: &Path) -> io::Result<Self> {
         let original_root = if root.is_absolute() {
@@ -1108,11 +1169,16 @@ impl Library {
     }
 
     /// Use the same natural filename order and document availability as the folder picker.
-    pub(crate) fn next_book_in_folder(&self, current: &LibraryBook) -> io::Result<Option<LibraryBook>> {
+    pub(crate) fn next_book_in_folder(
+        &self,
+        current: &LibraryBook,
+    ) -> io::Result<Option<LibraryBook>> {
         let path = current.library_path();
         let folder = path.parent().unwrap_or_else(|| Path::new(""));
         let listing = self.browse(folder)?;
-        let next = listing.entries.into_iter()
+        let next = listing
+            .entries
+            .into_iter()
             .skip_while(|entry| entry.path != path)
             .skip(1)
             .find_map(|entry| match entry.kind {
@@ -1132,11 +1198,15 @@ impl Library {
 
     pub(crate) fn delete_book_file(&mut self, current: &LibraryBook, id: u64) -> io::Result<()> {
         if !current.can_delete_file() {
-            return Err(io::Error::other("This book is a folder. Manage it in Files."));
+            return Err(io::Error::other(
+                "This book is a folder. Manage it in Files.",
+            ));
         }
         let path = self.absolute_path(&current.path)?;
         if self.identify(current)? != id {
-            return Err(io::Error::other("The file changed. Reopen it before deleting."));
+            return Err(io::Error::other(
+                "The file changed. Reopen it before deleting.",
+            ));
         }
         fs::remove_file(path)?;
         self.books.retain(|entry| entry.path != current.path);
@@ -1386,7 +1456,9 @@ impl Library {
 
     /// Filter out organization-only records that have never recorded a reading position.
     pub fn recently_read(&self) -> impl Iterator<Item = &BookState> {
-        self.recent.iter().filter(|book| book.position.is_some() && !book.file_deleted)
+        self.recent
+            .iter()
+            .filter(|book| book.position.is_some() && !book.file_deleted)
     }
 
     pub fn favorites(&self) -> impl Iterator<Item = &BookState> {
@@ -1587,8 +1659,16 @@ impl Library {
     pub(crate) fn merged_backup_bytes(&self, bytes: &[u8]) -> io::Result<(Vec<u8>, BackupSummary)> {
         let import = self.preview_backup(bytes)?;
         let (merged, mut summary) = merge_states(&self.recent, &import.books);
-        let collections = merge_collections(&self.collections, &import.collections, &merged, &mut summary);
-        Ok((encode_library(&merged, &collections, MAX_STATE_BYTES)?, summary))
+        let collections = merge_collections(
+            &self.collections,
+            &import.collections,
+            &merged,
+            &mut summary,
+        );
+        Ok((
+            encode_library(&merged, &collections, MAX_STATE_BYTES)?,
+            summary,
+        ))
     }
 
     /// Calculate the effect of an import without touching the library, books, or state file.
@@ -1633,16 +1713,31 @@ impl Library {
     }
 
     #[cfg(feature = "kindle")]
-    pub(crate) fn commit_recovered_layout(&mut self, entry:&LibraryBook, id:u64, preferences:BookPreferences, position:ReadingPosition)->io::Result<()> {
-        let index=self.recent.iter().position(|state|state.id==id);
-        let mut candidate=index.map(|index|self.recent[index].clone()).unwrap_or_else(||BookState::new(entry,id));
-        candidate.preferences=preferences;candidate.position=Some(position);
-        if let Some(index)=index {
-            let prior=std::mem::replace(&mut self.recent[index],candidate);
-            if let Err(error)=self.persist() {self.recent[index]=prior;return Err(error);}
+    pub(crate) fn commit_recovered_layout(
+        &mut self,
+        entry: &LibraryBook,
+        id: u64,
+        preferences: BookPreferences,
+        position: ReadingPosition,
+    ) -> io::Result<()> {
+        let index = self.recent.iter().position(|state| state.id == id);
+        let mut candidate = index
+            .map(|index| self.recent[index].clone())
+            .unwrap_or_else(|| BookState::new(entry, id));
+        candidate.preferences = preferences;
+        candidate.position = Some(position);
+        if let Some(index) = index {
+            let prior = std::mem::replace(&mut self.recent[index], candidate);
+            if let Err(error) = self.persist() {
+                self.recent[index] = prior;
+                return Err(error);
+            }
         } else {
-            self.recent.insert(0,candidate);
-            if let Err(error)=self.persist() {self.recent.remove(0);return Err(error);}
+            self.recent.insert(0, candidate);
+            if let Err(error) = self.persist() {
+                self.recent.remove(0);
+                return Err(error);
+            }
         }
         Ok(())
     }
@@ -1776,8 +1871,15 @@ fn validate_state(states: &[BookState]) -> io::Result<()> {
             "Reader state contains an invalid PDF highlight",
         ));
     }
-    if states.iter().any(|state| state.preferences.logical_font_size.is_some_and(|n| !crate::logical_font::valid(n))) {
-        return Err(invalid_state("Reader state contains an invalid logical font size"));
+    if states.iter().any(|state| {
+        state
+            .preferences
+            .logical_font_size
+            .is_some_and(|n| !crate::logical_font::valid(n))
+    }) {
+        return Err(invalid_state(
+            "Reader state contains an invalid logical font size",
+        ));
     }
     Ok(())
 }
@@ -1869,16 +1971,18 @@ fn merge_states(current: &[BookState], backup: &[BookState]) -> (Vec<BookState>,
                 Err(_) => summary.skipped += 1,
             }
         }
-        if target.hide_nonlinear.is_none() { target.hide_nonlinear = source.hide_nonlinear; }
+        if target.hide_nonlinear.is_none() {
+            target.hide_nonlinear = source.hide_nonlinear;
+        }
         merge_text_marks(target, &source.bookmarks, &source.highlights, &mut summary);
         for mark in &source.pdf_highlights {
             if !mark.is_valid() {
                 summary.skipped += 1;
-            } else if let Some(existing) = target
-                .pdf_highlights
-                .iter_mut()
-                .find(|existing| existing.page == mark.page && existing.bounds == mark.bounds && existing.continuation == mark.continuation)
-            {
+            } else if let Some(existing) = target.pdf_highlights.iter_mut().find(|existing| {
+                existing.page == mark.page
+                    && existing.bounds == mark.bounds
+                    && existing.continuation == mark.continuation
+            }) {
                 merge_created_at(&mut existing.created_at, mark.created_at, &mut summary);
                 merge_note(&mut existing.note, &mark.note, &mut summary);
             } else if target.pdf_highlights.len() < MAX_PDF_HIGHLIGHTS {
@@ -2944,14 +3048,24 @@ mod tests {
         assert!(!legacy.dither);
         assert_eq!(legacy.continuous_gap, 0);
         assert_eq!(legacy.scan_white_level, None);
+        assert_eq!(legacy.zoom_overlap_h(), 40);
+        assert_eq!(legacy.zoom_overlap_v(), 40);
+        assert!(!legacy.zoom_direction_vertical());
+        assert!(!legacy.zoom_bottom_to_top());
 
         let options: FixedPreferences = serde_json::from_str(
-            r#"{"dither":true,"scan_white_level":900,"continuous_gap":999999}"#,
+            r#"{"dither":true,"scan_white_level":900,"continuous_gap":999999,
+               "zoom_overlap_h":67,"zoom_overlap_v":0,"zoom_direction_vertical":true,
+               "zoom_bottom_to_top":true}"#,
         )
         .unwrap();
         assert!(options.dither);
         assert_eq!(options.continuous_gap, MAX_CONTINUOUS_GAP);
         assert_eq!(options.scan_white_level, None);
+        assert_eq!(options.zoom_overlap_h(), 67);
+        assert_eq!(options.zoom_overlap_v(), 0);
+        assert!(options.zoom_direction_vertical());
+        assert!(options.zoom_bottom_to_top());
         let saved = FixedPreferences {
             scan_white_level: Some(235),
             ..options
@@ -2959,6 +3073,14 @@ mod tests {
         let reopened: FixedPreferences =
             serde_json::from_slice(&serde_json::to_vec(&saved).unwrap()).unwrap();
         assert_eq!(reopened, saved);
+        assert_eq!(reopened.zoom_overlap_h(), 67);
+        assert_eq!(reopened.zoom_overlap_v(), 0);
+        assert!(reopened.zoom_direction_vertical());
+        assert!(reopened.zoom_bottom_to_top());
+        let invalid: FixedPreferences =
+            serde_json::from_str(r#"{"zoom_overlap_h":91,"zoom_overlap_v":255}"#).unwrap();
+        assert_eq!(invalid.zoom_overlap_h, None);
+        assert_eq!(invalid.zoom_overlap_v, None);
         assert_eq!(
             FixedPreferences {
                 scan_white_level: Some(120),
@@ -3000,6 +3122,10 @@ mod tests {
                 offset_x: MAX_FIXED_OFFSET,
                 offset_y: 0.0,
                 right_to_left: true,
+                zoom_overlap_h: None,
+                zoom_overlap_v: None,
+                zoom_direction_vertical: None,
+                zoom_bottom_to_top: None,
                 epub_spread: None,
                 epub_right_to_left: None,
                 crop: None,
@@ -3154,9 +3280,26 @@ mod tests {
         assert_eq!(saved.position, Some(position(4, 40)));
         assert_eq!(saved.preferences.font_size, Some(54.0));
         assert_eq!(saved.bookmarks.len(), 2);
-        assert_eq!(saved.bookmarks.iter().map(|m| m.created_at).collect::<Vec<_>>(), [Some(11), Some(13)]);
-        assert_eq!(saved.highlights.iter().map(|m| m.created_at).collect::<Vec<_>>(), [None, Some(14), None]);
-        assert_eq!(target.state(another_id).unwrap().pdf_highlights[0].created_at, Some(15));
+        assert_eq!(
+            saved
+                .bookmarks
+                .iter()
+                .map(|m| m.created_at)
+                .collect::<Vec<_>>(),
+            [Some(11), Some(13)]
+        );
+        assert_eq!(
+            saved
+                .highlights
+                .iter()
+                .map(|m| m.created_at)
+                .collect::<Vec<_>>(),
+            [None, Some(14), None]
+        );
+        assert_eq!(
+            target.state(another_id).unwrap().pdf_highlights[0].created_at,
+            Some(15)
+        );
         assert_eq!(saved.highlights[0].note.as_deref(), Some("Keep this"));
         assert_eq!(saved.highlights[1].note.as_deref(), Some("Fill blank"));
         assert!(!current.join("Another.pdf").exists());
