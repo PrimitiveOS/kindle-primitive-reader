@@ -86,7 +86,8 @@ Install Reader from PrimitiveOS Store or follow the manual install guide.
   left, center, or right to open Navigation, the last-used tab, or Library. Navigation has
   contents, bookmarks, location history, a book map, page previews, and
   automatic page turns. Search has full-text and bookmark search, recent
-  queries, a typed dictionary lookup, and saved vocabulary.
+  queries, a typed dictionary lookup, and [vocabulary review](docs/vocabulary-review.md)
+  with reading context, due dates and per-word undo.
 - Swipe up from the bottom edge to reopen the last formatting panel for the
   current format. Text controls include font size, line and word spacing,
   [CJK character width](docs/cjk-width.md),
