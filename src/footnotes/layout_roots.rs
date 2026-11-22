@@ -71,7 +71,7 @@ impl<'a> LayoutRoots<'a> {
     }
 
     pub(super) fn matches(&self, xhtml: &str) -> bool {
-        self.source.revision == crate::revision(xhtml)
+        self.source.matches_input(xhtml)
     }
 
     pub(super) fn root<'d, 'i>(

@@ -183,6 +183,9 @@ pub(crate) struct InlineLink {
 
 pub(crate) struct Source {
     pub revision: u64,
+    /// Raw publication identity is independent of Ruby/numeric text-model
+    /// revisions. Internal parse stages are unbound until the outer entry sets it.
+    original_input_sha256: Option<[u8; 32]>,
     legacy_revision: Option<u64>,
     previous_mobi: BTreeMap<u64, BTreeMap<usize, usize>>,
     numeric_history: Vec<numeric_references::History>,
@@ -351,22 +354,25 @@ impl Source {
         publication_language: Option<Language>,
         kindle_elements: &BTreeSet<usize>,
     ) -> Result<Self> {
-        if let Some(normalized) = numeric_references::normalize(xhtml) {
-            return numeric_references::parse(
+        let input = ring::digest::digest(&ring::digest::SHA256, xhtml.as_bytes());
+        let mut fingerprint = [0; 32];
+        fingerprint.copy_from_slice(input.as_ref());
+        let mut parsed = if let Some(normalized) = numeric_references::normalize(xhtml) {
+            numeric_references::parse(xhtml, normalized, publication_language, kindle_elements)?
+        } else {
+            Self::parse_document(
                 xhtml,
-                normalized,
+                crate::revision(xhtml),
+                None,
                 publication_language,
                 kindle_elements,
-            );
-        }
-        Self::parse_document(
-            xhtml,
-            crate::revision(xhtml),
-            None,
-            publication_language,
-            kindle_elements,
-            Extraction::default(),
-        )
+                Extraction::default(),
+            )?
+        };
+        // Bind the original bytes after all numeric/anonymous transformations;
+        // their canonical and historical revisions retain their existing values.
+        parsed.original_input_sha256 = Some(fingerprint);
+        Ok(parsed)
     }
 
     fn parse_document(
@@ -926,6 +932,7 @@ impl Source {
             .unwrap_or(body.range().start);
         Ok(Self {
             revision,
+            original_input_sha256: None,
             legacy_revision,
             previous_mobi: BTreeMap::new(),
             numeric_history: Vec::new(),
@@ -950,6 +957,13 @@ impl Source {
     /// This permits CSS-hidden-target checks without changing saved tuples.
     pub(crate) fn fragment_owner(&self, id: &str) -> Option<usize> {
         self.fragment_owners.get(id).copied()
+    }
+
+    pub(crate) fn matches_input(&self, xhtml: &str) -> bool {
+        self.original_input_sha256.is_some_and(|expected| {
+            expected.as_slice()
+                == ring::digest::digest(&ring::digest::SHA256, xhtml.as_bytes()).as_ref()
+        })
     }
 
     /// Legacy MOBI block keys were byte offsets in the image/link-stripped XHTML.
