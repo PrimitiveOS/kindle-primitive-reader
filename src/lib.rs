@@ -1184,6 +1184,110 @@ impl Probe {
                 }
             }
         }
+        let is_epub_pagebreak = self
+            .source
+            .elements
+            .get(owner)
+            .and_then(|element| element.type_attribute.as_deref())
+            .is_some_and(|value| {
+                value
+                    .split_ascii_whitespace()
+                    .any(|token| token.eq_ignore_ascii_case("pagebreak"))
+            });
+        is_epub_pagebreak
+            .then(|| self.nearest_pagebreak_text(&original))
+            .flatten()
+    }
+
+    /// KOReader hides EPUB pagebreak markers and resolves their destinations to
+    /// the next visible text, falling back to the previous visible text at EOF.
+    fn nearest_pagebreak_text(&self, original: &Anchor) -> Option<Anchor> {
+        let (index, offset) = self.project_anchor(original)?;
+
+        // Prefer source text at or after the marker, including a visible run
+        // later in the same block when publisher CSS removed a leading prefix.
+        for block_index in index..self.source.blocks.len() {
+            let block = &self.source.blocks[block_index];
+            let lower_bound = if block_index == index { offset } else { 0 };
+            let view = self.reading_flow.view(&self.source, block).ok()?;
+            let ranges: Vec<_> = match view.runs() {
+                Some(runs) => runs
+                    .iter()
+                    .filter(|run| run.painted && !run.source.is_empty())
+                    .map(|run| run.source.clone())
+                    .collect(),
+                None => block
+                    .styled_text
+                    .iter()
+                    .filter(|run| {
+                        self.reading_flow
+                            .element(run.element)
+                            .is_ok_and(|flow| !flow.suppressed && flow.painted)
+                    })
+                    .map(|run| run.bytes.clone())
+                    .collect(),
+            };
+            for range in ranges {
+                let floor = range.start.max(lower_bound);
+                if floor >= range.end {
+                    continue;
+                }
+                let Some(candidate_offset) = block
+                    .text
+                    .get(floor..range.end)
+                    .and_then(|text| text.char_indices().next().map(|(at, _)| floor + at))
+                else {
+                    continue;
+                };
+                let candidate = self.anchor(block.key, candidate_offset);
+                if self.page_for(&candidate).is_some() {
+                    return Some(candidate);
+                }
+            }
+        }
+
+        // A trailing pagebreak has no next text. Use the nearest preceding
+        // painted character, matching KOReader's previousVisibleText fallback.
+        for block_index in (0..=index).rev() {
+            let block = &self.source.blocks[block_index];
+            let upper_bound = if block_index == index {
+                offset
+            } else {
+                block.text.len()
+            };
+            let view = self.reading_flow.view(&self.source, block).ok()?;
+            let ranges: Vec<_> = match view.runs() {
+                Some(runs) => runs
+                    .iter()
+                    .filter(|run| run.painted && !run.source.is_empty())
+                    .map(|run| run.source.clone())
+                    .collect(),
+                None => block
+                    .styled_text
+                    .iter()
+                    .filter(|run| {
+                        self.reading_flow
+                            .element(run.element)
+                            .is_ok_and(|flow| !flow.suppressed && flow.painted)
+                    })
+                    .map(|run| run.bytes.clone())
+                    .collect(),
+            };
+            for range in ranges.into_iter().rev() {
+                let ceiling = range.end.min(upper_bound);
+                let candidate_offset = block
+                    .text
+                    .get(range.start..ceiling)
+                    .and_then(|text| text.char_indices().next_back().map(|(at, _)| range.start + at));
+                let Some(candidate_offset) = candidate_offset else {
+                    continue;
+                };
+                let candidate = self.anchor(block.key, candidate_offset);
+                if self.page_for(&candidate).is_some() {
+                    return Some(candidate);
+                }
+            }
+        }
         None
     }
 

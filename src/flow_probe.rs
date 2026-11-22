@@ -482,4 +482,41 @@ mod tests {
         let (before, after) = probe.word_context(&word, 3).unwrap();
         assert!(!before.contains("TRAP") && !after.contains("TRAP"));
     }
+
+    #[test]
+    fn epub_pagebreak_fragment_uses_next_visible_text_after_publisher_css_hiding() {
+        let html = "<html xmlns:epub='http://www.idpf.org/2007/ops'><head><style>.suppressed{display:none}</style></head><body><p><span epub:type='pagebreak' id='page_x' title='x'/><span class='suppressed'>Hidden prefix</span><span id='visible'>The visible destination.</span></p></body></html>";
+        let probe = open(html, true);
+        let pagebreak = probe.fragment("page_x").expect("pagebreak destination");
+        let visible = probe
+            .matches("The visible destination.")
+            .into_iter()
+            .next()
+            .expect("visible text destination");
+        assert_eq!(pagebreak, visible);
+    }
+
+    #[test]
+    fn trailing_epub_pagebreak_falls_back_to_previous_visible_text() {
+        let html = "<html xmlns:epub='http://www.idpf.org/2007/ops'><head><style>.suppressed{display:none}</style></head><body><p>Visible before the marker.</p><p><span epub:type='pagebreak' id='page_end' title='end'/><span class='suppressed'>Hidden after the marker.</span></p></body></html>";
+        let probe = open(html, true);
+        let pagebreak = probe.fragment("page_end").expect("trailing pagebreak");
+        let visible = probe
+            .matches("Visible before the marker.")
+            .into_iter()
+            .next()
+            .expect("preceding visible text");
+        let last_character = crate::Anchor {
+            offset: visible.offset + "Visible before the marker.".len() - 1,
+            ..visible.clone()
+        };
+        assert_eq!(probe.page_for(&pagebreak), probe.page_for(&last_character));
+    }
+
+    #[test]
+    fn ordinary_empty_fragment_does_not_escape_its_retained_subtree() {
+        let html = "<html><head><style>.suppressed{display:none}</style></head><body><p><span id='ordinary'/><span class='suppressed'>Hidden prefix</span><span id='visible'>The visible destination.</span></p></body></html>";
+        let probe = open(html, true);
+        assert!(probe.fragment("ordinary").is_none());
+    }
 }
