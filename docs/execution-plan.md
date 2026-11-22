@@ -18,6 +18,14 @@ workflow and format, with prerequisites and side-by-side acceptance checks.
 | P2 · Offline parity | Add the fixed-page PDF workflow and the other offline formats and reading tools in scope. K12–K16. | Documents and annotations verified against format-specific fixtures on desktop and Kindle |
 | P3 · Remaining formats, integrations, and import | Deliver the remaining parity requirements by feature, including advanced PDF, library integrations, and KOReader data import. K17–K24. | Each Kindle workflow has an acceptance result. Import reports matched and unmatched records. |
 
+The [pinned native KOReader interface inventory](koreader-sdl-reference.md) adds
+128 complete desktop frames, including six lower configuration tabs, selection
+and dictionary popups. Its [774-control matrix](koreader-sdl-reference-controls.json)
+pairs visible controls with pinned source handlers and explicit workflow, partial,
+gap or audit states. The capture is a stock macOS SDL reference, separate from
+Oasis acceptance. Use its remaining contracts to schedule implementation; these
+inventory counts do not measure completed parity.
+
 ## Verification on existing Kindle documents
 
 Use the original file, the same view and the same input action in both readers when comparing behavior. Separate opening a document, painting a page, navigating to a passage, resuming after exit and retaining an annotation. A successful open alone did not reveal the lost PDF destinations, chapter-end blank pages or missing list markers found in this collection.

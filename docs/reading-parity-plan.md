@@ -4,6 +4,14 @@ Build Reader into a daily replacement for KOReader's reading workflows on Kindle
 
 Compare against the installed KOReader release for hardware measurements. Record the actual edition, format provider, options, and interaction being compared in each run. Use the current guide and provider inventory to plan capabilities introduced since the benchmark release. Keep those additional capabilities in the parity backlog until they have their own verification. [KOReader user guide](https://koreader.rocks/user_guide/) · [KOReader main features](https://github.com/koreader/koreader#main-features)
 
+The [pinned native KOReader interface inventory](koreader-sdl-reference.md) adds
+128 complete desktop frames, including six lower configuration tabs, selection
+and dictionary popups. Its [774-control matrix](koreader-sdl-reference-controls.json)
+pairs visible controls with pinned source handlers and explicit workflow, partial,
+gap or audit states. The capture is a stock macOS SDL reference, separate from
+Oasis acceptance. Use its remaining contracts to schedule implementation; these
+inventory counts do not measure completed parity.
+
 ## Implementation checkpoint
 
 Custom hidden reading flows now have source-anchored boundary editing, explicit hidden-page destinations, main-flow navigation and separate page counts across paged, scroll and spread layouts. Desktop source/reference and private-original checks are recorded separately from pending aggregate native and foreground acceptance. [Custom-flow evidence](custom-hidden-flows.md)

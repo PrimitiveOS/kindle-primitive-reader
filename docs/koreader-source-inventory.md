@@ -9,6 +9,14 @@ KOReader commit `9192014d8bd82a91dc1012473be0f238dedfdb54` is the baseline for t
 
 To check coverage, run `python3 scripts/check-koreader-inventory.py /path/to/koreader`. The check reads the pinned Git objects. It covers reader modules, document and file manager modules, bundled plug-ins, top-menu registrations and the outer rows in both configuration dialogs. Dynamic submenus, translation services, the rendering engines and platform-specific hooks require additional comparisons.
 
+The [pinned native KOReader interface inventory](koreader-sdl-reference.md) adds
+128 complete desktop frames, including six lower configuration tabs, selection
+and dictionary popups. Its [774-control matrix](koreader-sdl-reference-controls.json)
+pairs visible controls with pinned source handlers and explicit workflow, partial,
+gap or audit states. The capture is a stock macOS SDL reference, separate from
+Oasis acceptance. Use its remaining contracts to schedule implementation; these
+inventory counts do not measure completed parity.
+
 ## Reader modules
 
 | Upstream identifiers | Reader behavior and acceptance |
