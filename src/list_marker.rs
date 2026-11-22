@@ -109,13 +109,34 @@ pub(crate) struct ListItem {
     pub ordinal: i32,
     pub first: bool,
 }
+/// Raw counter inputs, separate from the historical generated ordinal. Every
+/// retained direct element child is included: CSS may give a non-li child a
+/// list-item display, and an explicit reset must survive even when it originally
+/// equalled the natural ordinal. The existing extraction node cap bounds these
+/// records; each retained node belongs to at most one direct-child list.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CounterChild {
+    pub element: usize,
+    pub value: Option<i32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CounterGroup {
+    pub element: usize,
+    pub start: Option<i32>,
+    pub reversed: bool,
+    pub children: Vec<CounterChild>,
+}
+
 pub(crate) struct Items {
     by_node: HashMap<NodeId, ListItem>,
     seen: HashSet<usize>,
+    pub counters: Vec<CounterGroup>,
 }
 impl Items {
     pub fn read(body: Node<'_, '_>, elements: &HashMap<NodeId, usize>) -> Self {
         let mut by_node = HashMap::new();
+        let mut counters = Vec::new();
         for list in body
             .descendants()
             .filter(|n| n.has_tag_name("ol") || n.has_tag_name("ul"))
@@ -130,6 +151,21 @@ impl Items {
                 .and_then(|node| elements.get(&node.id()).copied());
             let children = || list.children().filter(|n| n.has_tag_name("li"));
             let reversed = list.has_tag_name("ol") && list.has_attribute("reversed");
+            counters.push(CounterGroup {
+                element: group,
+                start: list.attribute("start").and_then(|v| v.trim().parse().ok()),
+                reversed,
+                children: list
+                    .children()
+                    .filter(Node::is_element)
+                    .filter_map(|child| {
+                        Some(CounterChild {
+                            element: *elements.get(&child.id())?,
+                            value: child.attribute("value").and_then(|v| v.trim().parse().ok()),
+                        })
+                    })
+                    .collect(),
+            });
             let mut value = list
                 .attribute("start")
                 .and_then(|v| v.trim().parse().ok())
@@ -168,6 +204,7 @@ impl Items {
         Self {
             by_node,
             seen: HashSet::new(),
+            counters,
         }
     }
     pub fn block(&mut self, node: Node<'_, '_>) -> Option<ListItem> {
