@@ -3,7 +3,8 @@
 [THIRD-PARTY.txt](THIRD-PARTY.txt) records the locked Kindle dependency versions,
 licences, and exact source links. The source of each MPL 2.0 component is
 available from its listed crate archive. PrimitiveOS Tools is used under its
-PolyForm Noncommercial option. The USB drive-mode artwork is from PrimitiveOS
+PolyForm Noncommercial option. Reader uses self_cell under its Apache 2.0
+option. The USB drive-mode artwork is from PrimitiveOS
 Launcher. [Launcher artwork terms](https://github.com/PrimitiveOS/kindle-primitive-launcher#licence)
 
 - [SRELL](SRELL.txt) covers the ECMAScript engine used in reflow search. The ARMHF binary uses the same LLVM [libc++](ocr/libcxx-LICENSE), [libc++abi](ocr/libcxxabi-LICENSE) and [libunwind](ocr/libunwind-LICENSE) runtimes already distributed with OCR.
