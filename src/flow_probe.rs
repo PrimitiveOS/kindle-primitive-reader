@@ -418,10 +418,13 @@ mod tests {
                 false,
             )
             .unwrap();
-            assert!(excerpt.contains("style='display:none'"));
+            assert_eq!(excerpt.contains("style='display:none'"), id_on_aside);
             let mut preview = open(&excerpt, true);
-            assert!(preview.matches("INLINE NOTE").is_empty());
-            assert!(preview.capture(0).unwrap().iter().all(|&x| x == 255));
+            assert_eq!(preview.matches("INLINE NOTE").is_empty(), id_on_aside);
+            assert_eq!(
+                preview.capture(0).unwrap().iter().all(|&x| x == 255),
+                id_on_aside
+            );
             assert!(
                 preview
                     .source

@@ -18,12 +18,20 @@ pub(super) struct Audit {
     painted_pages_with_ink: u64,
     source_chars: u64,
     mapped_chars: u64,
+    normal_chars: u64,
+    visibility_hidden_chars: u64,
+    css_omitted_chars: u64,
     missing_glyphs: u64,
     source_graphics: u64,
     decoded_graphics: u64,
     placeholder_graphics: u64,
+    visibility_hidden_graphics: u64,
+    css_omitted_graphics: u64,
     source_fragments: u64,
     located_fragments: u64,
+    visibility_hidden_fragments: u64,
+    css_omitted_fragments: u64,
+    intentional_blank_painted_pages: u64,
     inspected_page_anchors: u64,
     exact_page_anchors: u64,
     issues: Vec<SectionIssues>,
@@ -39,6 +47,7 @@ struct SectionIssues {
     blank_painted_pages: usize,
     ink_pages_without_anchor: usize,
     page_anchor_discrepancies: usize,
+    layout_limitations: Vec<String>,
     blank_page_examples: Vec<usize>,
     anchor_page_examples: Vec<(usize, Option<usize>)>,
 }
@@ -81,11 +90,24 @@ impl Audit {
         } else {
             self.genuine_reflow_sections += 1;
         }
+        let intent = super::css_coverage::classify(&chapter.source, &chapter.reading_flow)?;
         if genuine {
             let (mapped, total) = chapter.coverage();
+            let eligible = total
+                .checked_sub(intent.css_omitted_chars)
+                .ok_or("CSS intent exceeds canonical source coverage")?;
+            if total != intent.source_chars || mapped > eligible {
+                return Err(
+                    "Mapped geometry disagrees with canonical CSS source accounting".into(),
+                );
+            }
             self.source_chars += total as u64;
             self.mapped_chars += mapped as u64;
-            issue.unmapped_chars = total - mapped;
+            self.normal_chars += intent.normal_chars as u64;
+            self.visibility_hidden_chars += intent.visibility_hidden_chars as u64;
+            self.css_omitted_chars += intent.css_omitted_chars as u64;
+            issue.unmapped_chars = eligible - mapped;
+            issue.layout_limitations = chapter.layout_limitations().to_vec();
             issue.missing_glyphs = chapter.missing_glyphs();
             self.missing_glyphs += issue.missing_glyphs as u64;
             let graphics: usize = chapter.source.blocks.iter().map(|b| b.images.len()).sum();
@@ -93,24 +115,45 @@ impl Audit {
                 Renderer::Parley(layout) => layout.illustration_counts(),
                 _ => (0, 0), // Vertical layout is only selected when there are no images.
             };
+            if graphics != intent.source_graphics {
+                return Err("CSS graphic intent disagrees with canonical source".into());
+            }
+            let eligible_graphics = graphics
+                .checked_sub(intent.css_omitted_graphics)
+                .ok_or("CSS graphic intent exceeds canonical source")?;
+            if decoded > eligible_graphics {
+                return Err("Decoded graphics exceed retained source graphics".into());
+            }
             self.source_graphics += graphics as u64;
+            self.visibility_hidden_graphics += intent.visibility_hidden_graphics as u64;
+            self.css_omitted_graphics += intent.css_omitted_graphics as u64;
             self.decoded_graphics += decoded as u64;
             self.placeholder_graphics += placeholders as u64;
-            issue.undecoded_graphics = graphics.saturating_sub(decoded);
+            issue.undecoded_graphics = eligible_graphics - decoded;
             self.source_fragments += chapter.source.fragments.len() as u64;
-            let resolved = chapter
-                .source
-                .fragments
-                .keys()
-                .filter(|id| {
+            let mut resolved = 0;
+            let mut omitted = 0;
+            for id in chapter.source.fragments.keys() {
+                match chapter.fragment_presentation(id) {
+                    Some(crate::SourcePresentation::CssOmitted) => {
+                        omitted += 1;
+                        continue;
+                    }
+                    Some(crate::SourcePresentation::VisibilityHidden) => {
+                        self.visibility_hidden_fragments += 1;
+                    }
+                    _ => {}
+                }
+                resolved += usize::from(
                     chapter
                         .fragment(id)
                         .and_then(|a| chapter.page_for(&a))
-                        .is_some()
-                })
-                .count();
+                        .is_some(),
+                );
+            }
+            self.css_omitted_fragments += omitted as u64;
             self.located_fragments += resolved as u64;
-            issue.unresolved_fragments = chapter.source.fragments.len() - resolved;
+            issue.unresolved_fragments = chapter.source.fragments.len() - omitted - resolved;
         }
         let pages = chapter.page_count();
         self.pages_in_checked_sections += pages as u64;
@@ -120,8 +163,16 @@ impl Audit {
             let ink = pixels.iter().any(|&v| v < 255);
             self.painted_pages_with_ink += u64::from(ink);
             if genuine {
-                issue.blank_painted_pages += usize::from(!ink);
-                if !ink && issue.blank_page_examples.len() < 8 {
+                // Only a wholly unpainted chapter has a proven blank-frame
+                // explanation here. Mixed chapters retain their blank-page
+                // issues until a finer per-page paint oracle is available.
+                let paintable_graphics = intent.source_graphics
+                    - intent.css_omitted_graphics
+                    - intent.visibility_hidden_graphics;
+                let intentional_blank = !ink && intent.normal_chars == 0 && paintable_graphics == 0;
+                self.intentional_blank_painted_pages += u64::from(intentional_blank);
+                issue.blank_painted_pages += usize::from(!ink && !intentional_blank);
+                if !ink && !intentional_blank && issue.blank_page_examples.len() < 8 {
                     issue.blank_page_examples.push(page);
                 }
                 match chapter.page_anchor(page) {
@@ -226,7 +277,13 @@ pub(super) fn verify_spine(path: &Path, fonts: &[PathBuf], mode: &str) -> Result
                 let literal_empty = chapter.source.blocks.is_empty()
                     && !placeholders[index]
                     && literal_empty_body(&Book::open(path)?.chapter(index)?);
-                audit.reflow(&mut chapter, index, placeholders[index], literal_empty, all_pages)?;
+                audit.reflow(
+                    &mut chapter,
+                    index,
+                    placeholders[index],
+                    literal_empty,
+                    all_pages,
+                )?;
             }
             Ok(())
         })();
@@ -240,6 +297,72 @@ pub(super) fn verify_spine(path: &Path, fonts: &[PathBuf], mode: &str) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn styled_probe(body: &str) -> Probe {
+        Probe::from_book_content(
+            Book::open(&crate::test_fixture("field-notes-epub3.epub")).unwrap(),
+            Engine::Parley,
+            &[crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+            Settings {
+                width: 600,
+                height: 800,
+                ..Default::default()
+            },
+            0,
+            Some(format!("<html><body>{body}</body></html>")),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn css_omissions_are_reported_separately_from_mapped_source_and_fragment_geometry() {
+        let mut chapter = styled_probe(
+            "<p id='visible'><span id='hidden' style='display:none'>SECRET</span>Shown</p><p id='unpainted' style='visibility:hidden'>GHOST</p>",
+        );
+        let mut audit = Audit::default();
+        audit.reflow(&mut chapter, 0, false, false, true).unwrap();
+        assert_eq!(audit.source_chars, 16);
+        assert_eq!(audit.normal_chars, 5);
+        assert_eq!(audit.visibility_hidden_chars, 5);
+        assert_eq!(audit.css_omitted_chars, 6);
+        assert_eq!(audit.mapped_chars, 10);
+        assert_eq!(audit.source_fragments, 3);
+        assert_eq!(audit.located_fragments, 2);
+        assert_eq!(audit.css_omitted_fragments, 1);
+        assert_eq!(audit.visibility_hidden_fragments, 1);
+        assert!(audit.issues.is_empty());
+    }
+
+    #[test]
+    fn all_hidden_chapters_keep_the_original_denominator_and_an_explicit_white_frame_reason() {
+        for (style, omitted) in [("display:none", true), ("visibility:hidden", false)] {
+            let mut chapter = styled_probe(&format!("<p id='note' style='{style}'>Alpha</p>"));
+            let mut audit = Audit::default();
+            audit.reflow(&mut chapter, 0, false, false, true).unwrap();
+            assert_eq!(audit.source_chars, 5);
+            assert_eq!(audit.mapped_chars, if omitted { 0 } else { 5 });
+            assert_eq!(audit.css_omitted_chars, if omitted { 5 } else { 0 });
+            assert_eq!(audit.visibility_hidden_chars, if omitted { 0 } else { 5 });
+            assert_eq!(audit.css_omitted_fragments, u64::from(omitted));
+            assert!(audit.intentional_blank_painted_pages > 0);
+            assert_eq!(audit.painted_pages_with_ink, 0);
+            assert!(audit.issues.is_empty());
+        }
+    }
+
+    #[test]
+    fn visibility_geometry_loss_is_still_an_unmapped_source_failure() {
+        let mut chapter = styled_probe("<p style='visibility:hidden'>Alpha</p>");
+        // Simulate a consumer losing lines without deleting any canonical source.
+        chapter.lines.clear();
+        let mut audit = Audit::default();
+        audit.reflow(&mut chapter, 0, false, false, true).unwrap();
+        assert_eq!(audit.source_chars, 5);
+        assert_eq!(audit.visibility_hidden_chars, 5);
+        assert_eq!(audit.css_omitted_chars, 0);
+        assert_eq!(audit.mapped_chars, 0);
+        assert_eq!(audit.issues[0].unmapped_chars, 5);
+    }
 
     #[test]
     fn a_white_leaf_requires_an_empty_source_body() {

@@ -3,7 +3,6 @@
 //! This never claims that geometry or pixels succeeded. It partitions *all*
 //! canonical source characters/graphics by CSS intent, so omitted content can
 //! be reported explicitly without forgiving eligible content that lost layout.
-#![allow(dead_code)] // Wired into the spine verifier with the Probe consumer migration.
 
 use crate::{Result, flow_view::ChapterFlow, source::Source};
 
