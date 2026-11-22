@@ -53,6 +53,7 @@ struct Table {
     border: [Stroke; 4],
     spacing: [u32; 2],
     padding: [u32; 2],
+    painted: bool,
 }
 pub(crate) struct CellBorder {
     pub element: usize,
@@ -67,6 +68,19 @@ pub(crate) struct Borders {
 }
 impl Borders {
     pub(crate) fn read(source: &Source, styles: &[Style], font: f32) -> Option<Self> {
+        Self::read_with_flow(
+            source,
+            styles,
+            font,
+            &crate::table_layout::TableFlow::identity(source),
+        )
+    }
+    pub(crate) fn read_with_flow(
+        source: &Source,
+        styles: &[Style],
+        font: f32,
+        flow: &crate::table_layout::TableFlow<'_>,
+    ) -> Option<Self> {
         let has_padding = |index: usize| {
             styles[index]
                 .vertical_padding
@@ -83,7 +97,7 @@ impl Borders {
                 && source.elements[index].tag == "table"
                 && has_padding(index)
         };
-        if source.table_cells.is_empty()
+        if flow.cells().is_empty()
             || !styles.iter().enumerate().any(|(index, s)| {
                 s.borders.is_some() || separate_padding(index) || shaded_cell(index)
             })
@@ -93,7 +107,7 @@ impl Borders {
         let mut table = HashMap::new();
         let mut hierarchy = HashMap::new();
         let mut rows = HashMap::new();
-        for &(element, cell) in &source.table_cells {
+        for &(element, cell) in flow.cells() {
             let mut current = source.elements[element].parent;
             let (mut row, mut group) = (None, None);
             while let Some(i) = current {
@@ -111,6 +125,7 @@ impl Borders {
                             spacing: styles[i].border_spacing.map(|s| {
                                 (s.box_pixels(0, font * styles[i].size_scale) as u32).min(64)
                             }),
+                            painted: styles[i].flow.painted,
                         });
                         t.rows = t.rows.max(cell.after_row);
                         t.active |= shaded_cell(element);
@@ -133,9 +148,41 @@ impl Borders {
         if table.is_empty() {
             return None;
         }
+        // A retained empty row can still be covered by an earlier rowspan.
+        // Preserve its own border/group metadata even when no cell starts there.
+        let native_tables: HashMap<_, _> = table.iter().map(|(id, t)| (t.element, *id)).collect();
+        let mut table_owners = Vec::with_capacity(source.elements.len());
+        let mut group_owners = Vec::with_capacity(source.elements.len());
+        let mut original_rows = HashMap::<NodeId, usize>::new();
+        for (index, element) in source.elements.iter().enumerate() {
+            let owner = if element.tag == "table" {
+                native_tables.get(&index).copied()
+            } else {
+                element.parent.and_then(|parent| table_owners[parent])
+            };
+            let group = if element.tag == "table" {
+                None
+            } else if matches!(element.tag.as_str(), "thead" | "tbody" | "tfoot") {
+                Some(index)
+            } else {
+                element.parent.and_then(|parent| group_owners[parent])
+            };
+            table_owners.push(owner);
+            group_owners.push(group);
+            if element.tag == "tr"
+                && !element.selector_only
+                && let Some(owner) = owner
+            {
+                let original = original_rows.entry(owner).or_default();
+                if let Some(row) = flow.row_index(index, *original) {
+                    rows.insert((owner, row), (index, group));
+                }
+                *original += 1;
+            }
+        }
         let mut cells = HashMap::new();
         let mut outer = HashMap::new();
-        for &(element, cell) in &source.table_cells {
+        for &(element, cell) in flow.cells() {
             let Some(t) = table.get(&cell.table) else {
                 continue;
             };
@@ -190,6 +237,13 @@ impl Borders {
                     t.element,
                     (t.border, t.spacing[0], u32::from(cell.columns) + 1),
                 );
+            }
+            // Collapsed donors contribute geometry first. The final cell owns
+            // painting, matching CRE's post-conflict cell-style draw gate.
+            if !styles[element].flow.painted {
+                for edge in &mut border {
+                    edge.gray = None;
+                }
             }
             cells.insert(
                 cell,
@@ -306,7 +360,8 @@ impl Positions {
                 0
             };
             let bounds = boxes[spec.element];
-            if let Some(gray) = styles[spec.element].background
+            if styles[spec.element].flow.painted
+                && let Some(gray) = styles[spec.element].background
                 && styles[spec.element]
                     .vertical_padding
                     .iter()
@@ -341,7 +396,11 @@ impl Positions {
                     b.outer_width,
                     top,
                     self.bottom[id],
-                    t.border,
+                    if t.painted {
+                        t.border
+                    } else {
+                        t.border.map(|edge| Stroke { gray: None, ..edge })
+                    },
                 );
             }
         }
@@ -435,5 +494,111 @@ impl Frame {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod flow_tests {
+    use super::*;
+
+    #[test]
+    fn a_retained_empty_row_still_donates_the_ending_edge_to_a_visible_rowspan() {
+        let source=Source::parse("<html><body><table style='border-collapse:collapse;border:1px solid #000'><tr><td id='span' rowspan='2' style='border-bottom:2px solid #000'>Spanning</td><td>B</td></tr><tr style='visibility:hidden;border-bottom:9px solid #000'><td style='display:none'>Removed</td></tr></table></body></html>").unwrap();
+        let mut book = crate::Book::open(&crate::test_fixture("field-notes-epub3.epub")).unwrap();
+        let href = book.chapters[0].href.clone();
+        let styles = crate::book_style::BookStyle::load_for_flow(
+            &mut book,
+            &href,
+            &source,
+            true,
+            &Default::default(),
+        )
+        .unwrap()
+        .compute(&source.elements);
+        let flow = crate::table_layout::TableFlow::new(&source, &styles).unwrap();
+        let owner = source
+            .elements
+            .iter()
+            .position(|e| e.id.as_deref() == Some("span"))
+            .unwrap();
+        let cell = flow.cell(owner).unwrap();
+        assert_eq!((cell.row, cell.after_row), (0, 2));
+        let borders = Borders::read_with_flow(&source, &styles, 40., &flow).unwrap();
+        assert_eq!(borders.cells[&cell].edges[2].width, 9);
+        assert!(borders.cells[&cell].edges[2].gray.is_some());
+    }
+
+    #[test]
+    fn hidden_cells_keep_collapsed_geometry_but_visible_cells_paint_donated_edges() {
+        let source=Source::parse("<html><body><table style='visibility:hidden;border-collapse:collapse;border:12px solid #000'><tr><td id='hidden' style='padding-top:5px;background:#888'>Hidden</td><td id='visible' style='visibility:visible'>Visible</td></tr></table></body></html>").unwrap();
+        let mut book = crate::Book::open(&crate::test_fixture("field-notes-epub3.epub")).unwrap();
+        let href = book.chapters[0].href.clone();
+        let styles = crate::book_style::BookStyle::load_for_flow(
+            &mut book,
+            &href,
+            &source,
+            true,
+            &Default::default(),
+        )
+        .unwrap()
+        .compute(&source.elements);
+        let flow = crate::table_layout::TableFlow::new(&source, &styles).unwrap();
+        let hidden = source
+            .elements
+            .iter()
+            .position(|e| e.id.as_deref() == Some("hidden"))
+            .unwrap();
+        let visible = source
+            .elements
+            .iter()
+            .position(|e| e.id.as_deref() == Some("visible"))
+            .unwrap();
+        let hidden_cell = flow.cell(hidden).unwrap();
+        let visible_cell = flow.cell(visible).unwrap();
+        let borders = Borders::read_with_flow(&source, &styles, 40., &flow).unwrap();
+        assert!(
+            borders.cells[&hidden_cell]
+                .edges
+                .iter()
+                .all(|edge| edge.gray.is_none())
+        );
+        assert_eq!(borders.cells[&hidden_cell].edges[0].width, 12);
+        assert_eq!(borders.cells[&visible_cell].edges[0].width, 12);
+        assert!(borders.cells[&visible_cell].edges[0].gray.is_some());
+        let mut shown = styles.clone();
+        for style in &mut shown {
+            style.flow.painted = true;
+        }
+        let control = Borders::read_with_flow(&source, &shown, 40., &flow).unwrap();
+        for &(_, cell) in flow.cells() {
+            assert_eq!(
+                borders.cells[&cell].edges.map(|e| e.width),
+                control.cells[&cell].edges.map(|e| e.width)
+            );
+            assert_eq!(borders.vertical(cell), control.vertical(cell));
+            assert_eq!(borders.horizontal(cell, 600), control.horizontal(cell, 600));
+        }
+        let boxes = crate::publisher_padding::layout_with_flow(
+            &source,
+            &styles,
+            600,
+            40.,
+            Some(&borders),
+            &flow,
+            |_| (40, 80),
+        )
+        .unwrap();
+        let mut positions = Positions::default();
+        for &(_, cell) in flow.cells() {
+            positions.record(cell, 0., 100.);
+        }
+        let mut backgrounds = Vec::new();
+        let frames = positions.finish(&borders, &boxes, &styles, &mut backgrounds);
+        assert!(backgrounds.is_empty());
+        assert_eq!(frames.len(), 1);
+        let mut pixels = vec![255; 600 * 100];
+        frames[0].paint(&mut pixels, 600, &(0..600), &(0.0..100.0));
+        assert!(pixels[..300].iter().all(|&value| value == 255));
+        assert!(pixels[300..600].contains(&0));
     }
 }

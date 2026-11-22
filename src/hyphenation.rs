@@ -2,7 +2,7 @@
 use crate::{
     Settings,
     book_style::{Hyphens, Style},
-    source::Block,
+    source::{Block, StyledText},
 };
 use parley::{Language, LineBreak, WordBreak};
 
@@ -49,22 +49,28 @@ fn dictionary(style: &Style, lang: Option<Language>) -> Option<English> {
 }
 
 pub(crate) fn opportunities(block: &Block, styles: &[Style], settings: Settings) -> Vec<usize> {
+    opportunities_text(&block.text, &block.styled_text, styles, settings)
+}
+
+pub(crate) fn opportunities_text(
+    text: &str,
+    styled: &[StyledText],
+    styles: &[Style],
+    settings: Settings,
+) -> Vec<usize> {
     let mut breaks = Vec::new();
     if !settings.automatic_hyphenation
         || settings.disable_soft_hyphens
-        || !block
-            .styled_text
+        || !styled
             .iter()
             .any(|run| dictionary(&styles[run.element], run.language).is_some())
     {
         return breaks;
     }
-    for range in crate::selection::word_ranges(&block.text) {
-        let word = &block.text[range.clone()];
-        let first = block
-            .styled_text
-            .partition_point(|span| span.bytes.end <= range.start);
-        let mut spans = block.styled_text[first..]
+    for range in crate::selection::word_ranges(text) {
+        let word = &text[range.clone()];
+        let first = styled.partition_point(|span| span.bytes.end <= range.start);
+        let mut spans = styled[first..]
             .iter()
             .take_while(|span| span.bytes.start < range.end);
         let Some(locale) = spans
@@ -122,7 +128,17 @@ pub(crate) fn with_user_rules(
     settings: Settings,
     rules: &crate::user_hyphenation::Rules,
 ) -> crate::user_hyphenation::Opportunities {
-    let breaks = opportunities(block, styles, settings);
+    with_user_rules_text(&block.text, &block.styled_text, styles, settings, rules)
+}
+
+pub(crate) fn with_user_rules_text(
+    text: &str,
+    styled: &[StyledText],
+    styles: &[Style],
+    settings: Settings,
+    rules: &crate::user_hyphenation::Rules,
+) -> crate::user_hyphenation::Opportunities {
+    let breaks = opportunities_text(text, styled, styles, settings);
     let mut result = crate::user_hyphenation::Opportunities {
         breaks,
         custom_words: Vec::new(),
@@ -132,11 +148,9 @@ pub(crate) fn with_user_rules(
         return result;
     }
     let mut custom_breaks = Vec::new();
-    for range in crate::selection::word_ranges(&block.text) {
-        let first = block
-            .styled_text
-            .partition_point(|span| span.bytes.end <= range.start);
-        let mut spans = block.styled_text[first..]
+    for range in crate::selection::word_ranges(text) {
+        let first = styled.partition_point(|span| span.bytes.end <= range.start);
+        let mut spans = styled[first..]
             .iter()
             .take_while(|span| span.bytes.start < range.end);
         let Some(run) = spans.next() else {
@@ -157,7 +171,7 @@ pub(crate) fn with_user_rules(
         {
             continue;
         }
-        let word = &block.text[range.clone()];
+        let word = &text[range.clone()];
         if let Some(mask) = rules.mask(loc, word) {
             for byte in crate::user_hyphenation::source_offsets(word, &mask) {
                 // A matching publisher soft hyphen already supplies the boundary and glyph.

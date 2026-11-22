@@ -8,6 +8,8 @@ use crate::Result;
 
 pub(crate) const SOURCE_ATTRIBUTE: &str = "data-primos-source";
 mod numeric_references;
+#[cfg(test)]
+mod flow_metadata_tests;
 
 const RUBY_TEXT_MODEL: u64 = 0xe026_92a4_3415_b12f;
 const MAX_RUBY_GROUPS: usize = 1_024;
@@ -58,6 +60,8 @@ pub(crate) struct Ruby {
     pub bytes: Range<usize>,
     pub annotation: String,
     pub language: Option<Language>,
+    /// Annotation paint can differ from the base text's inherited visibility.
+    pub element: usize,
 }
 
 #[derive(Clone, Default)]
@@ -181,8 +185,13 @@ pub(crate) struct Source {
     previous_mobi: BTreeMap<u64, BTreeMap<usize, usize>>,
     numeric_history: Vec<numeric_references::History>,
     origins: Vec<usize>,
+    // Only populated by the existing numeric-history parse, where normalized
+    // XHTML can have different anonymous wrappers. Not a canonical text model.
+    element_origins: Vec<Option<usize>>,
     pub blocks: Vec<Block>,
     pub fragments: BTreeMap<String, (usize, usize)>,
+    fragment_owners: BTreeMap<String, usize>,
+    pub list_counters: Vec<crate::list_marker::CounterGroup>,
     pub stylesheets: Vec<Stylesheet>,
     pub elements: Vec<Element>,
     pub table_cells: Vec<(usize, crate::table_layout::Cell)>,
@@ -453,8 +462,8 @@ impl Source {
         }
         let mut elements: Vec<Element> = Vec::new();
         let mut element_ids = HashMap::new();
+        let mut element_origins = Vec::new();
         let mut languages = Vec::new();
-        let structural = !stylesheets.is_empty();
         let mut selector_only_nodes = Vec::new();
         let mut seen_types = HashSet::new();
         let mut last_children = HashMap::new();
@@ -480,12 +489,13 @@ impl Source {
             // identity but never expose their text, IDs, list items or cells to Reader.
             let selector_only = (parent == Some(0) && node != body) || hidden_element(node);
             if selector_only {
-                if !structural {
-                    continue;
-                }
                 selector_only_nodes.push(node.id());
             }
-            let structural_element = structural && !anonymous;
+            // User-origin CSS can be enabled later, even when the publisher
+            // supplies no sheet or publisher CSS is disabled. Keep real sibling
+            // metadata independently of stylesheet presence. Anonymous layout
+            // wrappers still do not acquire publisher DOM relationships.
+            let structural_element = !anonymous;
             let previous_sibling = if structural_element {
                 parent.and_then(|i| last_children.insert(i, elements.len()))
             } else {
@@ -495,6 +505,9 @@ impl Source {
             let first_of_type =
                 structural_element && seen_types.insert((parent, tag.namespace(), tag.name()));
             element_ids.insert(node.id(), elements.len());
+            if extraction.origins {
+                element_origins.push(node_origins.get(&node.id()).copied());
+            }
             let inherited = if node == root {
                 publication_language
             } else {
@@ -528,6 +541,7 @@ impl Source {
         let tables = crate::table_layout::TableCells::read(body, &element_ids);
         let mut blocks = Vec::new();
         let mut fragments = BTreeMap::new();
+        let mut fragment_owners = BTreeMap::new();
         let mut insertions = Vec::new();
         let mut ruby_exclusions = Vec::new();
         let mut available_ruby = MAX_RUBY_GROUPS;
@@ -579,6 +593,7 @@ impl Source {
                         id,
                         text.len()
                             + usize::from(spaces && !text.is_empty() && !text.ends_with('\n')),
+                        element_ids[&descendant.id()],
                     ));
                 }
                 if descendant.has_tag_name("br") {
@@ -755,15 +770,23 @@ impl Source {
             for image in &mut images {
                 image.offset = image.offset.min(text.len());
             }
-            for (id, offset) in ids {
-                fragments
-                    .entry(id.to_owned())
-                    .or_insert((key, offset.min(text.len())));
+            for (id, offset, owner) in ids {
+                if let std::collections::btree_map::Entry::Vacant(entry) =
+                    fragments.entry(id.to_owned())
+                {
+                    fragment_owners.insert(id.to_owned(), owner);
+                    entry.insert((key, offset.min(text.len())));
+                }
             }
             if !text.is_empty() || !images.is_empty() {
                 for parent in node.ancestors().skip(1) {
                     for id in fragment_ids(parent, &navigation_ids) {
-                        fragments.entry(id.to_owned()).or_insert((key, 0));
+                        if let std::collections::btree_map::Entry::Vacant(entry) =
+                            fragments.entry(id.to_owned())
+                        {
+                            fragment_owners.insert(id.to_owned(), element_ids[&parent.id()]);
+                            entry.insert((key, 0));
+                        }
                     }
                 }
             }
@@ -800,6 +823,7 @@ impl Source {
                             bytes: draft.bytes?,
                             annotation: draft.annotation,
                             language: languages[element_ids[&draft.annotation_node]],
+                            element: element_ids[&draft.annotation_node],
                         })
                     })
                     .collect(),
@@ -855,6 +879,7 @@ impl Source {
                     .or_else(|| blocks.last().map(|block| (block.key, block.text.len())));
                 if let Some(position) = position {
                     fragments.insert(id.into(), position);
+                    fragment_owners.insert(id.into(), element_ids[&anchor.id()]);
                 }
             }
         }
@@ -901,8 +926,11 @@ impl Source {
             previous_mobi: BTreeMap::new(),
             numeric_history: Vec::new(),
             origins,
+            element_origins,
             blocks,
             fragments,
+            fragment_owners,
+            list_counters: list_items.counters,
             stylesheets,
             table_cells: tables.by_element(&element_ids),
             elements,
@@ -911,6 +939,13 @@ impl Source {
             ruby_exclusions,
             head_end,
         })
+    }
+
+    /// The DOM element that supplied the existing destination, not the element
+    /// of a later paragraph chosen for an empty anchor's canonical position.
+    /// This permits CSS-hidden-target checks without changing saved tuples.
+    pub(crate) fn fragment_owner(&self, id: &str) -> Option<usize> {
+        self.fragment_owners.get(id).copied()
     }
 
     /// Legacy MOBI block keys were byte offsets in the image/link-stripped XHTML.

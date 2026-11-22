@@ -8,14 +8,14 @@ mod book_style;
 mod cbr;
 mod chm;
 pub mod comic;
+pub mod cre_pointer;
 pub mod dictionary;
-#[cfg(feature = "kindle")]
-mod document_defaults;
+pub mod djvu;
 #[cfg(feature = "kindle")]
 pub mod document_check;
-pub mod djvu;
+#[cfg(feature = "kindle")]
+mod document_defaults;
 mod docx;
-pub mod cre_pointer;
 pub mod epub;
 pub mod epub_cfi;
 mod epub_font;
@@ -27,31 +27,32 @@ pub mod fixed_epub;
 #[cfg(feature = "kindle")]
 mod fixed_session;
 pub mod fixed_text;
+mod flow_probe;
+mod flow_projection;
+mod flow_view;
+mod font_render;
+mod font_synthesis;
 #[cfg(feature = "kindle")]
 mod generated_contents;
 mod gray_glyph;
-mod font_render;
-mod font_synthesis;
-mod flow_projection;
-mod gif_image;
+pub use flow_probe::SourcePresentation;
 #[cfg(feature = "kindle")]
 mod footnotes;
+mod gif_image;
+pub mod highlight_style;
 mod hyphenation;
-mod user_hyphenation;
-mod user_styles;
 mod jpeg2000;
 mod kf8;
 mod kindle_sections;
 pub mod koreader_import;
 pub mod koreader_sidecar;
-pub mod highlight_style;
-#[cfg(feature = "kindle")]
-mod note_marker;
 pub mod library;
 mod list_marker;
-mod mark_time;
 mod loose;
+mod mark_time;
 pub mod mobi;
+#[cfg(feature = "kindle")]
+mod note_marker;
 pub mod ocr;
 #[cfg(feature = "kindle")]
 mod ocr_job;
@@ -59,26 +60,26 @@ mod ocr_job;
 pub mod online_lookup;
 #[cfg(feature = "kindle")]
 pub mod opds;
-#[cfg(feature = "kindle")]
-pub mod progress_sync;
 mod parley_layout;
-mod publisher_breaks;
 #[cfg(feature = "kindle")]
 mod pdf_annotations;
-mod publisher_padding;
-mod publication_metadata;
 #[cfg(feature = "kindle")]
-mod reading_controls;
+pub mod progress_sync;
+mod publication_metadata;
+mod publisher_breaks;
+mod publisher_padding;
 #[cfg(feature = "kindle")]
 mod reading_backup;
 #[cfg(feature = "kindle")]
+mod reading_controls;
+#[cfg(feature = "kindle")]
 mod reading_fonts;
+#[cfg(feature = "kindle")]
+mod reading_pace;
 #[cfg(feature = "kindle")]
 mod reading_profiles;
 #[cfg(feature = "kindle")]
 mod reading_stats;
-#[cfg(feature = "kindle")]
-mod reading_pace;
 mod rtf;
 #[cfg(feature = "kindle")]
 mod scan_columns;
@@ -91,16 +92,18 @@ pub mod selection;
 #[cfg(feature = "kindle")]
 mod session;
 mod source;
+mod svg_image;
 #[cfg(feature = "kindle")]
 mod synthetic_pages;
-mod table_layout;
 mod table_borders;
+mod table_layout;
 mod table_widths;
-mod svg_image;
 mod tcr;
 #[cfg(feature = "kindle")]
 mod text_flow;
 mod tiff_image;
+mod user_hyphenation;
+mod user_styles;
 mod vertical_layout;
 mod vertical_padding;
 
@@ -361,14 +364,72 @@ pub struct Anchor {
 struct Line {
     block: usize,
     bytes: Range<usize>,
+    /// Exact canonical spans when projected layout crosses omitted source text.
+    /// `bytes` remains the envelope for pagination endpoints only.
+    spans: Option<std::sync::Arc<[Range<usize>]>>,
     top: f32,
     bottom: f32,
     missing_glyphs: usize,
 }
 
+impl Line {
+    fn source_spans(&self) -> &[Range<usize>] {
+        self.spans
+            .as_deref()
+            .unwrap_or_else(|| std::slice::from_ref(&self.bytes))
+    }
+
+    fn contains_source(&self, offset: usize) -> bool {
+        self.source_spans()
+            .iter()
+            .any(|span| span.contains(&offset))
+    }
+
+    fn project(
+        &mut self,
+        view: &flow_projection::Projection<'_>,
+        bytes: Range<usize>,
+    ) -> Result<()> {
+        let spans = view
+            .source_spans(bytes.clone())
+            .ok_or("A layout line has invalid projected boundaries")?;
+        let mut kept: Vec<Range<usize>> = Vec::new();
+        for span in spans {
+            if let Some(last) = kept.last_mut()
+                && last.end == span.start
+            {
+                last.end = span.end;
+            } else {
+                kept.push(span);
+            }
+        }
+        self.bytes = match (kept.first(), kept.last()) {
+            (Some(first), Some(last)) => first.start..last.end,
+            _ => {
+                let point = view
+                    .source_offset(bytes.start, flow_projection::Affinity::After)
+                    .or_else(|| view.source_offset(bytes.start, flow_projection::Affinity::Before))
+                    .unwrap_or(0);
+                point..point
+            }
+        };
+        self.spans = (kept.len() > 1).then(|| kept.into());
+        Ok(())
+    }
+}
+
 struct Pagination {
     bounds: Vec<f32>,
 }
+
+#[derive(Debug)]
+struct PageContentTooTall;
+impl std::fmt::Display for PageContentTooTall {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("The chapter contains content taller than one reading page")
+    }
+}
+impl Error for PageContentTooTall {}
 
 impl Pagination {
     fn fixed_stride(height: f32, extent: f32) -> Result<Self> {
@@ -387,7 +448,12 @@ impl Pagination {
         Self::with_breaks(lines, height, content_height, &[])
     }
 
-    fn with_breaks(lines: &[Line], height: f32, mut content_height: f32, breaks: &[publisher_breaks::BoxRules]) -> Result<Self> {
+    fn with_breaks(
+        lines: &[Line],
+        height: f32,
+        mut content_height: f32,
+        breaks: &[publisher_breaks::BoxRules],
+    ) -> Result<Self> {
         let mut intervals: Vec<Range<f32>> = Vec::new();
         for line in lines {
             if !line.top.is_finite() || !line.bottom.is_finite() || line.top > line.bottom {
@@ -408,7 +474,7 @@ impl Pagination {
         for (index, interval) in intervals.iter().enumerate() {
             use publisher_breaks::Edge;
             if interval.end - interval.start > height {
-                return Err("The chapter contains content taller than one reading page".into());
+                return Err(Box::new(PageContentTooTall));
             }
             let origin = *bounds.last().unwrap();
             let edge = boundaries.get(index).copied().unwrap_or_default();
@@ -498,6 +564,7 @@ pub struct Probe {
     settings: Settings,
     spine_rtl: bool,
     source: Source,
+    reading_flow: flow_view::ChapterFlow,
     #[cfg(feature = "kindle")]
     custom_hyphenation_allowed: Vec<bool>,
     lines: Vec<Line>,
@@ -554,7 +621,14 @@ impl Probe {
         excerpt: Option<String>,
     ) -> Result<Self> {
         Self::from_book_with_rules(
-            book, engine, fonts, settings, chapter, excerpt, &user_hyphenation::Rules::default(), &user_styles::Snapshot::default(),
+            book,
+            engine,
+            fonts,
+            settings,
+            chapter,
+            excerpt,
+            &user_hyphenation::Rules::default(),
+            &user_styles::Snapshot::default(),
         )
     }
 
@@ -572,14 +646,17 @@ impl Probe {
             return Err("Open this fixed-layout EPUB in Reader".into());
         }
         if engine == Engine::Blitz
-            && (!user_styles.is_empty() || !settings.publisher_styles
+            && (!user_styles.is_empty()
+                || !settings.publisher_styles
                 || !settings.font_kerning
                 || settings.font_hinting != FontHinting::Off
                 || settings.font_gamma_index != font_render::NORMAL_GAMMA
                 || settings.font_weight_delta != 0.0
                 || settings.word_expansion != 0)
         {
-            return Err("Publisher style, font rendering and word expansion controls require Parley".into());
+            return Err(
+                "Publisher style, font rendering and word expansion controls require Parley".into(),
+            );
         }
         let entry = book
             .chapters
@@ -618,6 +695,7 @@ impl Probe {
         #[cfg(feature = "kindle")]
         let mut custom_hyphenation_allowed = Vec::new();
         let mut publisher_edges = Vec::new();
+        let mut reading_flow = flow_view::ChapterFlow::default();
         let (renderer, mut lines, content_height) = match engine {
             Engine::Blitz => {
                 let (layout, lines, extent) =
@@ -627,40 +705,50 @@ impl Probe {
             Engine::Parley => {
                 let author = settings
                     .publisher_styles
-                    .then(|| {
-                        book_style::BookStyle::load(
-                            &mut book,
-                            &href,
-                            &source,
-                            &mut fonts,
-                        )
-                    })
+                    .then(|| book_style::BookStyle::load(&mut book, &href, &source, &mut fonts))
                     .unwrap_or_default()
                     .with_user_css(user_styles)?;
                 let styles = author.compute_for_dpi(&source.elements, settings.render_dpi);
+                reading_flow = flow_view::ChapterFlow::from_styles(&source, &styles)?;
                 #[cfg(feature = "kindle")]
                 {
-                    custom_hyphenation_allowed = styles.iter().map(hyphenation::allows_user_rules).collect();
+                    custom_hyphenation_allowed =
+                        styles.iter().map(hyphenation::allows_user_rules).collect();
                 }
-                let mut text = source
-                    .blocks
-                    .iter()
-                    .filter(|block| !block.text.is_empty())
-                    .peekable();
-                let vertical = text.peek().is_some()
-                    && source.blocks.iter().all(|block| block.images.is_empty())
-                    && !source.elements.iter().any(|element| {
-                        !element.selector_only && element.tag == "table"
-                    })
-                    && text.all(|block| {
-                        styles[block.element].writing_mode == book_style::WritingMode::VerticalRl
+                // Decide writing mode from retained display input. Hidden media or
+                // horizontal-only subtrees cannot force a visible vertical chapter
+                // down the horizontal fallback path.
+                let mut has_text = false;
+                let mut vertical = !source.elements.iter().enumerate().any(|(index, element)| {
+                    !styles[index].flow.suppressed
+                        && !element.selector_only
+                        && element.tag == "table"
+                });
+                for original in &source.blocks {
+                    if styles[original.element].flow.suppressed {
+                        continue;
+                    }
+                    let block = reading_flow.layout_block(&source, original)?;
+                    vertical &= block.images.is_empty();
+                    if !block.text.is_empty() {
+                        has_text = true;
+                        vertical &= styles[block.element].writing_mode
+                            == book_style::WritingMode::VerticalRl
                             && block.styled_text.iter().all(|run| {
                                 styles[run.element].writing_mode
                                     == book_style::WritingMode::VerticalRl
-                            })
-                    });
+                            });
+                    }
+                }
+                vertical &= has_text;
                 let vertical = vertical.then(|| {
-                    vertical_layout::VerticalChapter::new(&source, &styles, fonts.clone(), settings)
+                    vertical_layout::VerticalChapter::with_flow(
+                        &source,
+                        &styles,
+                        fonts.clone(),
+                        settings,
+                        &reading_flow,
+                    )
                 });
                 match vertical {
                     Some(Ok((layout, lines, extent))) => {
@@ -672,8 +760,15 @@ impl Probe {
                         }
                         let has_table = source.blocks.iter().any(|b| b.table_cell.is_some());
                         let mut lay_out = |source: &Source, faces| {
-                            parley_layout::ParleyChapter::new(
-                                &mut book, &href, source, faces, settings, &styles, user_rules,
+                            parley_layout::ParleyChapter::with_flow(
+                                &mut book,
+                                &href,
+                                source,
+                                faces,
+                                settings,
+                                &styles,
+                                user_rules,
+                                &reading_flow,
                             )
                         };
                         let (layout, lines, extent) = if has_table {
@@ -686,14 +781,24 @@ impl Probe {
                             );
                             match grid {
                                 Ok(result) => result,
-                                Err(_) => {
+                                Err(error)
+                                    if error.downcast_ref::<PageContentTooTall>().is_some() =>
+                                {
                                     // A tall row can have no safe horizontal break across
                                     // all its cells. Keep the chapter readable in source order.
-                                    for block in &mut source.blocks {
-                                        block.table_cell = None;
-                                    }
-                                    lay_out(&source, fonts)?
+                                    drop(lay_out);
+                                    parley_layout::ParleyChapter::with_source_order(
+                                        &mut book,
+                                        &href,
+                                        &source,
+                                        fonts,
+                                        settings,
+                                        &styles,
+                                        user_rules,
+                                        &reading_flow,
+                                    )?
                                 }
+                                Err(error) => return Err(error),
                             }
                         } else {
                             lay_out(&source, fonts)?
@@ -711,7 +816,9 @@ impl Probe {
         } else {
             Pagination::with_breaks(&lines, height, content_height, &publisher_edges)?
         };
-        if pages.len() > 1 && let Renderer::Parley(chapter) = &renderer {
+        if pages.len() > 1
+            && let Renderer::Parley(chapter) = &renderer
+        {
             pages.trim_unpainted_tail(chapter.last_paint_bottom(&source));
         }
         Ok(Self {
@@ -741,6 +848,7 @@ impl Probe {
             #[cfg(feature = "kindle")]
             custom_hyphenation_allowed,
             source,
+            reading_flow,
             lines,
             pages,
             renderer,
@@ -772,7 +880,9 @@ impl Probe {
 
     #[cfg(feature = "kindle")]
     pub(crate) fn chapter_is_nonlinear(&self, index: usize) -> bool {
-        self.chapters.get(index).is_some_and(|chapter| chapter.nonlinear)
+        self.chapters
+            .get(index)
+            .is_some_and(|chapter| chapter.nonlinear)
     }
 
     #[cfg(feature = "kindle")]
@@ -781,14 +891,25 @@ impl Probe {
             .source
             .blocks
             .iter()
-            .map(|block| block.text.len())
+            .filter_map(|block| {
+                self.reading_flow
+                    .view(&self.source, block)
+                    .ok()
+                    .map(|view| view.text().len())
+            })
             .sum();
-        let mut remaining = (total.saturating_sub(1) as f64 * fraction).round() as usize;
+        let mut remaining =
+            (total.saturating_sub(1) as f64 * fraction.clamp(0.0, 1.0)).round() as usize;
         for block in &self.source.blocks {
-            if remaining < block.text.len() {
-                return Some(self.anchor(block.key, block.text.floor_char_boundary(remaining)));
+            let view = self.reading_flow.view(&self.source, block).ok()?;
+            if remaining < view.text().len() {
+                let offset = view.text().floor_char_boundary(remaining);
+                return Some(self.anchor(
+                    block.key,
+                    view.source_offset(offset, flow_projection::Affinity::After)?,
+                ));
             }
-            remaining -= block.text.len();
+            remaining -= view.text().len();
         }
         None
     }
@@ -817,19 +938,33 @@ impl Probe {
 
     fn links_to_image(&self, path: &str) -> bool {
         let supported = path.rsplit_once('.').is_some_and(|(_, ext)| {
-            ["png", "jpg", "jpeg", "gif", "svg"].iter().any(|known| ext.eq_ignore_ascii_case(known))
+            ["png", "jpg", "jpeg", "gif", "svg"]
+                .iter()
+                .any(|known| ext.eq_ignore_ascii_case(known))
         });
-        supported && self.source.blocks.iter().any(|block| {
-            block.links.iter().map(|link| link.href.as_str())
-                .chain(block.images.iter().filter_map(|image| image.link.as_deref()))
-                .any(|href| Book::resolve_link(&self.chapter, href)
-                    .is_ok_and(|target| target.fragment.is_none() && target.path == path))
-        })
+        supported
+            && self.source.blocks.iter().any(|block| {
+                block
+                    .links
+                    .iter()
+                    .map(|link| link.href.as_str())
+                    .chain(
+                        block
+                            .images
+                            .iter()
+                            .filter_map(|image| image.link.as_deref()),
+                    )
+                    .any(|href| {
+                        Book::resolve_link(&self.chapter, href)
+                            .is_ok_and(|target| target.fragment.is_none() && target.path == path)
+                    })
+            })
     }
 
     /// Load original pixels for a displayed illustration, reopening the local book as needed.
     pub fn open_illustration(&self, path: &Path, package_path: &str) -> Result<comic::ImagePage> {
-        if !matches!(&self.renderer, Renderer::Parley(layout) if layout.has_illustration(package_path)) && !self.links_to_image(package_path)
+        if !matches!(&self.renderer, Renderer::Parley(layout) if layout.has_illustration(package_path))
+            && !self.links_to_image(package_path)
         {
             return Err("This illustration is unavailable in the current chapter".into());
         }
@@ -837,10 +972,23 @@ impl Probe {
         if book.revision() != self.book || book.chapter_index(&self.chapter).is_none() {
             return Err("This book changed after it was opened".into());
         }
-        if let Some(xml) = self.source.blocks.iter().flat_map(|block| &block.images)
-            .find(|image| image.href == package_path).and_then(|image| image.inline_svg.as_deref()) {
-            let (gray, _) = svg_image::render_inline(&mut book, &self.chapter, xml, svg_image::MAX_SVG_SIDE,
-                svg_image::MAX_SVG_SIDE, 8 * 1024 * 1024, None)?;
+        if let Some(xml) = self
+            .source
+            .blocks
+            .iter()
+            .flat_map(|block| &block.images)
+            .find(|image| image.href == package_path)
+            .and_then(|image| image.inline_svg.as_deref())
+        {
+            let (gray, _) = svg_image::render_inline(
+                &mut book,
+                &self.chapter,
+                xml,
+                svg_image::MAX_SVG_SIDE,
+                svg_image::MAX_SVG_SIDE,
+                8 * 1024 * 1024,
+                None,
+            )?;
             return comic::ImagePage::from_grayscale(gray.width(), gray.height(), gray.into_raw());
         }
         if svg_image::is_package_svg(package_path) {
@@ -912,13 +1060,24 @@ impl Probe {
                 let visible = visible_lines.iter().any(|line| {
                     line.bottom > bounds.start
                         && line.block == block.key
-                        && line.bytes.start < link.bytes.end
-                        && line.bytes.end > link.bytes.start
+                        && line
+                            .source_spans()
+                            .iter()
+                            .any(|span| span.start < link.bytes.end && span.end > link.bytes.start)
                 });
                 if visible && let Ok(destination) = Book::resolve_link(&self.chapter, &link.href) {
-                    let label = block.text[link.bytes.clone()].trim();
-                    if !label.is_empty() {
-                        links.push((label.to_owned(), destination));
+                    let Ok(view) = self.reading_flow.view(&self.source, block) else {
+                        continue;
+                    };
+                    let Some(spans) = view.layout_spans(link.bytes.clone()) else {
+                        continue;
+                    };
+                    let label: String = spans
+                        .iter()
+                        .map(|span| &view.text()[span.clone()])
+                        .collect();
+                    if !label.trim().is_empty() {
+                        links.push((label.trim().to_owned(), destination));
                     }
                 }
             }
@@ -939,23 +1098,153 @@ impl Probe {
         if text.is_empty() {
             return Vec::new();
         }
-        self.source
-            .blocks
-            .iter()
-            .flat_map(|block| {
-                block
-                    .text
-                    .match_indices(text)
-                    .map(move |(offset, _)| self.anchor(block.key, offset))
-            })
-            .collect()
+        let mut result = Vec::new();
+        for block in &self.source.blocks {
+            let Ok(view) = self.reading_flow.view(&self.source, block) else {
+                continue;
+            };
+            for (offset, _) in view.text().match_indices(text) {
+                if let Some(offset) = view.source_offset(offset, flow_projection::Affinity::After) {
+                    result.push(self.anchor(block.key, offset));
+                }
+            }
+        }
+        result
     }
 
     pub fn fragment(&self, name: &str) -> Option<Anchor> {
-        self.source
-            .fragments
-            .get(name)
-            .map(|&(block, offset)| self.anchor(block, offset))
+        if self.fragment_presentation(name)? == SourcePresentation::CssOmitted {
+            return None;
+        }
+        let &(block, offset) = self.source.fragments.get(name)?;
+        let original = self.anchor(block, offset);
+        if self.page_for(&original).is_some() {
+            return Some(original);
+        }
+        // Container IDs can begin with a removed inline prefix. Resolve only
+        // inside their retained subtree; an explicitly hidden ID never reaches
+        // this fallback, even if its old caret aliases a visible neighbour.
+        let owner = self.source.fragment_owner(name)?;
+        for block in &self.source.blocks {
+            let view = self.reading_flow.view(&self.source, block).ok()?;
+            let candidates: Vec<_> = match view.runs() {
+                Some(runs) => runs
+                    .iter()
+                    .filter(|run| self.element_within(run.element, owner))
+                    .map(|run| run.source.start)
+                    .collect(),
+                None => block
+                    .styled_text
+                    .iter()
+                    .filter(|run| self.element_within(run.element, owner))
+                    .map(|run| run.bytes.start)
+                    .collect(),
+            };
+            for offset in candidates {
+                let anchor = self.anchor(block.key, offset);
+                if self.page_for(&anchor).is_some() {
+                    return Some(anchor);
+                }
+            }
+            let input = self.reading_flow.layout_block(&self.source, block).ok()?;
+            for image in input.images.iter() {
+                if self.element_within(image.element, owner) {
+                    let mut anchor = self.anchor(block.key, 0);
+                    anchor.illustration = Some(image.source_index);
+                    if self.page_for(&anchor).is_some() {
+                        return Some(anchor);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn element_within(&self, mut element: usize, owner: usize) -> bool {
+        loop {
+            if element == owner {
+                return true;
+            }
+            let Some(parent) = self
+                .source
+                .elements
+                .get(element)
+                .and_then(|item| item.parent)
+            else {
+                return false;
+            };
+            element = parent;
+        }
+    }
+
+    /// Automatic layout/session restoration may snap a hidden source point to
+    /// retained content. Explicit links/bookmarks use page_for and never snap.
+    /// Saved user flow boundaries are source-order markers, not requests to
+    /// reveal their current glyph. Re-resolve them when publisher CSS removes
+    /// the marker's text, while retaining their original persisted anchors.
+    pub(crate) fn flow_boundary_page(&self, anchor: &Anchor) -> Option<usize> {
+        self.page_for(anchor).or_else(|| {
+            (self.source_presentation(anchor) == Some(SourcePresentation::CssOmitted))
+                .then(|| self.restore_anchor(anchor))
+                .flatten()
+                .and_then(|anchor| self.page_for(&anchor))
+        })
+    }
+
+    pub(crate) fn restore_anchor(&self, anchor: &Anchor) -> Option<Anchor> {
+        if self.page_for(anchor).is_some() {
+            return Some(anchor.clone());
+        }
+        if self.source_presentation(anchor)? != SourcePresentation::CssOmitted {
+            return None;
+        }
+        let (index, offset) = self.project_anchor(anchor)?;
+        let block = &self.source.blocks[index];
+        let view = self.reading_flow.view(&self.source, block).ok()?;
+        for affinity in [
+            flow_projection::Affinity::After,
+            flow_projection::Affinity::Before,
+        ] {
+            if let Some(at) = view
+                .project_nearest(offset, affinity)
+                .and_then(|at| view.source_offset(at, affinity))
+            {
+                let candidate = self.anchor(block.key, at);
+                if self.page_for(&candidate).is_some() {
+                    return Some(candidate);
+                }
+            }
+        }
+        for distance in 1..self.source.blocks.len() {
+            for candidate_index in [
+                index
+                    .checked_add(distance)
+                    .filter(|i| *i < self.source.blocks.len()),
+                index.checked_sub(distance),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                let block = &self.source.blocks[candidate_index];
+                let view = self.reading_flow.view(&self.source, block).ok()?;
+                if let Some(offset) = view.source_offset(0, flow_projection::Affinity::After) {
+                    let candidate = self.anchor(block.key, offset);
+                    if self.page_for(&candidate).is_some() {
+                        return Some(candidate);
+                    }
+                }
+                if let Renderer::Parley(renderer) = &self.renderer {
+                    for ordinal in 0..block.images.len() {
+                        if renderer.image_top(block.key, ordinal).is_some() {
+                            let mut candidate = self.anchor(block.key, 0);
+                            candidate.illustration = Some(ordinal);
+                            return Some(candidate);
+                        }
+                    }
+                }
+            }
+        }
+        None
     }
 
     pub fn page_for(&self, anchor: &Anchor) -> Option<usize> {
@@ -965,8 +1254,17 @@ impl Probe {
     pub(crate) fn anchor_top(&self, anchor: &Anchor) -> Option<f32> {
         let (index, offset) = self.project_anchor(anchor)?;
         let block = &self.source.blocks[index];
+        if self.source_presentation(anchor) == Some(SourcePresentation::CssOmitted) {
+            return None;
+        }
         if let Some(ordinal) = anchor.illustration {
-            if offset != 0 || !block.text.is_empty() || ordinal >= block.images.len() {
+            if offset != 0 || ordinal >= block.images.len() {
+                return None;
+            }
+            if let Renderer::Parley(renderer) = &self.renderer {
+                return renderer.image_top(block.key, ordinal);
+            }
+            if !block.text.is_empty() {
                 return None;
             }
             return self
@@ -979,7 +1277,7 @@ impl Probe {
         let exact = self
             .lines
             .iter()
-            .find(|line| line.block == block.key && line.bytes.contains(&offset))
+            .find(|line| line.block == block.key && line.contains_source(offset))
             .map(|line| line.top);
         exact.or_else(|| {
             if offset != block.text.len() {
@@ -1024,33 +1322,25 @@ impl Probe {
                 !line.bytes.is_empty() && line.bottom > range.start && line.top < range.end
             })
             .or_else(|| {
-                self.lines.iter().find(|line| {
-                    line.bottom > range.start
-                        && line.top < range.end
-                        && self
-                            .source
-                            .blocks
-                            .binary_search_by_key(&line.block, |block| block.key)
-                            .is_ok_and(|index| self.source.blocks[index].text.is_empty())
-                })
+                self.lines
+                    .iter()
+                    .find(|line| line.bottom > range.start && line.top < range.end)
             })
             .map(|line| {
                 let mut anchor = self.anchor(line.block, line.bytes.start);
                 if line.bytes.is_empty()
-                    && let Ok(index) = self
-                        .source
-                        .blocks
-                        .binary_search_by_key(&line.block, |b| b.key)
-                    && self.source.blocks[index].text.is_empty()
-                    && self.source.blocks[index].images.len() > 1
+                    && let Renderer::Parley(renderer) = &self.renderer
+                    && let Some(ordinal) = renderer.image_ordinal(line.block, line.top)
                 {
-                    let ordinal = self
-                        .lines
-                        .iter()
-                        .take_while(|entry| entry.top < line.top)
-                        .filter(|entry| entry.block == line.block && entry.bytes.is_empty())
-                        .count();
-                    if ordinal > 0 {
+                    anchor.offset = 0;
+                    if ordinal != 0
+                        || self
+                            .source
+                            .blocks
+                            .iter()
+                            .find(|block| block.key == line.block)
+                            .is_some_and(|block| !block.text.is_empty())
+                    {
                         anchor.illustration = Some(ordinal);
                     }
                 }
@@ -1082,7 +1372,9 @@ impl Probe {
     pub fn coverage(&self) -> (usize, usize) {
         let mut seen = std::collections::BTreeMap::<usize, Vec<Range<usize>>>::new();
         for line in &self.lines {
-            seen.entry(line.block).or_default().push(line.bytes.clone());
+            seen.entry(line.block)
+                .or_default()
+                .extend(line.source_spans().iter().cloned());
         }
         self.source
             .blocks
@@ -1278,7 +1570,9 @@ fn image_reader(bytes: &[u8]) -> Result<image::ImageReader<std::io::Cursor<&[u8]
 }
 
 fn epub_raster_dimensions(bytes: &[u8]) -> Result<(u32, u32)> {
-    if gif_image::has_signature(bytes) { return gif_image::dimensions(bytes); }
+    if gif_image::has_signature(bytes) {
+        return gif_image::dimensions(bytes);
+    }
     let (width, height) = image_reader(bytes)?.into_dimensions()?;
     if !comic::image_dimensions_valid(width, height) {
         return Err("The EPUB image exceeds Reader's decoded image limit".into());

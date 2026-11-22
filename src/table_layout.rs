@@ -5,6 +5,9 @@ use std::collections::{BTreeMap, HashMap};
 
 const MAX_COLUMNS: usize = 32;
 
+mod flow;
+pub(crate) use flow::{TableFlow, TableFlowError};
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub(crate) struct Cell {
     pub table: NodeId,

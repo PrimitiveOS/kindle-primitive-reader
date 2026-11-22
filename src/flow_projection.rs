@@ -21,17 +21,35 @@ use crate::source::Block;
 /// At most about 2 MiB of event payload per chapter, including all its blocks.
 /// Contiguous text and repeated whitespace from one element are coalesced.
 pub(crate) const MAX_ORIGIN_EVENTS: usize = 65_536;
+const MAX_OWNER_RECORDS: usize = 100_000;
 
 /// One identity allocation and one bounded event allowance per parsed chapter.
 pub(crate) struct Budget {
     remaining: usize,
+    owners_remaining: usize,
     chapter: Arc<()>,
+}
+
+/// An opaque parsed-chapter lifetime token. This does not own source text and
+/// does not retain a chapter after its canonical blocks have been dropped.
+#[derive(Clone)]
+pub(crate) struct SourceBinding(Weak<()>);
+
+impl SourceBinding {
+    pub(crate) fn new(block: &Block) -> Self {
+        Self(Arc::downgrade(&block.flow_origins.chapter))
+    }
+
+    pub(crate) fn matches(&self, block: &Block) -> bool {
+        Weak::ptr_eq(&self.0, &Arc::downgrade(&block.flow_origins.chapter))
+    }
 }
 
 impl Budget {
     pub(crate) fn new() -> Self {
         Self {
             remaining: MAX_ORIGIN_EVENTS,
+            owners_remaining: MAX_OWNER_RECORDS,
             chapter: Arc::new(()),
         }
     }
@@ -77,6 +95,8 @@ impl Event {
 pub(crate) struct Origins {
     events: Vec<Event>,
     complete: bool,
+    owners: Vec<usize>,
+    owners_complete: bool,
     chapter: Arc<()>,
 }
 
@@ -85,6 +105,8 @@ impl Origins {
         Self {
             events: Vec::new(),
             complete: true,
+            owners: Vec::new(),
+            owners_complete: true,
             chapter: Arc::clone(&budget.chapter),
         }
     }
@@ -95,6 +117,29 @@ impl Origins {
     fn push(&mut self, event: Event, budget: &mut Budget) {
         if !self.complete {
             return;
+        }
+        // Internal whitespace within one raw text node has the same owner on
+        // both sides, so its normalized byte belongs in the same Text range.
+        // TextNode/BR/image boundaries prevent crossing a different source
+        // context. Leading/trailing pending spaces remain distinct events.
+        if let Event::Text {
+            bytes: next,
+            element: owner,
+        } = &event
+            && self.events.len() >= 2
+        {
+            let count = self.events.len();
+            let merge = matches!((&self.events[count-2], &self.events[count-1]),
+                (Event::Text { bytes, element }, Event::Space { at, element: space_owner })
+                    if element == owner && space_owner == owner && bytes.end == *at && *at + 1 == next.start);
+            if merge {
+                self.events.pop();
+                if let Some(Event::Text { bytes, .. }) = self.events.last_mut() {
+                    bytes.end = next.end;
+                }
+                budget.remaining += 1;
+                return;
+            }
         }
         match (self.events.last_mut(), &event) {
             (
@@ -155,6 +200,7 @@ impl Origins {
     }
 
     pub(crate) fn hard_break(&mut self, at: usize, element: usize, budget: &mut Budget) {
+        self.owner(element, budget);
         self.push(Event::Break { at, element }, budget);
     }
 
@@ -164,6 +210,7 @@ impl Origins {
         element: usize,
         budget: &mut Budget,
     ) {
+        self.owner(element, budget);
         self.push(
             Event::TextNode {
                 starts_whitespace,
@@ -174,7 +221,21 @@ impl Origins {
     }
 
     pub(crate) fn image(&mut self, index: usize, element: usize, budget: &mut Budget) {
+        self.owner(element, budget);
         self.push(Event::Image { index, element }, budget);
+    }
+
+    fn owner(&mut self, element: usize, budget: &mut Budget) {
+        if !self.owners_complete || self.owners.last() == Some(&element) {
+            return;
+        }
+        if budget.owners_remaining == 0 {
+            self.owners_complete = false;
+            self.owners.clear();
+            return;
+        }
+        budget.owners_remaining -= 1;
+        self.owners.push(element);
     }
 }
 
@@ -272,24 +333,41 @@ impl<'a> Projection<'a> {
     }
 
     pub(crate) fn new(block: &'a Block, flows: &[ElementFlow]) -> Result<Self, ProjectionError> {
-        if flows.iter().all(|flow| *flow == ElementFlow::default()) {
+        if flows.is_empty() {
+            return Ok(Self::identity(block));
+        }
+        let block_flow = flows
+            .get(block.element)
+            .ok_or(ProjectionError::MissingElement(block.element))?;
+        if block_flow.suppressed {
+            return Ok(Self {
+                block,
+                data: Some(Cow::Owned(OwnedProjection::empty(block))),
+            });
+        }
+        if !block.flow_origins.owners_complete {
+            if flows.iter().all(|flow| *flow == ElementFlow::default()) {
+                return Ok(Self::identity(block));
+            }
+            return Err(ProjectionError::IncompleteOrigins);
+        }
+        // A chapter can contain many unaffected blocks under one small hidden
+        // subtree. Inspect local origins once instead of rescanning the entire
+        // element mask vector for every paragraph (quadratic in DOM size).
+        let mut changed = false;
+        for &element in &block.flow_origins.owners {
+            let flow = flows
+                .get(element)
+                .ok_or(ProjectionError::MissingElement(element))?;
+            changed |= *flow != ElementFlow::default();
+        }
+        if !changed {
             return Ok(Self::identity(block));
         }
         if !block.flow_origins.complete {
             return Err(ProjectionError::IncompleteOrigins);
         }
-        let mut data = OwnedProjection {
-            text: String::new(),
-            runs: Vec::new(),
-            images: Vec::new(),
-            chapter: Arc::downgrade(&block.flow_origins.chapter),
-            source_key: block.key,
-            source_len: block.text.len(),
-            source_hash: digest(&SHA256, block.text.as_bytes())
-                .as_ref()
-                .try_into()
-                .unwrap(),
-        };
+        let mut data = OwnedProjection::empty(block);
         let mut pending = None;
         // Image positions after pending whitespace are finalized only when the
         // next text/break decides whether that whitespace becomes a real space.
@@ -473,28 +551,9 @@ impl<'a> Projection<'a> {
     }
 
     pub(crate) fn source_offset(&self, offset: usize, affinity: Affinity) -> Option<usize> {
-        if !self.text().is_char_boundary(offset) {
-            return None;
-        }
-        let Some(data) = &self.data else {
-            return Some(offset);
-        };
-        let mut left = None;
-        let mut right = None;
-        for run in &data.runs {
-            if run.layout.start < offset && offset < run.layout.end {
-                return Some(run.source.start + offset - run.layout.start);
-            }
-            if run.layout.end == offset {
-                left = Some(run.source.end);
-            }
-            if run.layout.start == offset && right.is_none() {
-                right = Some(run.source.start);
-            }
-        }
-        match affinity {
-            Affinity::Before => left.or(right),
-            Affinity::After => right.or(left),
+        match &self.data {
+            Some(data) => data.source_offset(offset, affinity),
+            None => self.block.text.is_char_boundary(offset).then_some(offset),
         }
     }
 
@@ -560,6 +619,20 @@ impl<'a> Projection<'a> {
 }
 
 impl OwnedProjection {
+    fn empty(block: &Block) -> Self {
+        Self {
+            text: String::new(),
+            runs: Vec::new(),
+            images: Vec::new(),
+            chapter: Arc::downgrade(&block.flow_origins.chapter),
+            source_key: block.key,
+            source_len: block.text.len(),
+            source_hash: digest(&SHA256, block.text.as_bytes())
+                .as_ref()
+                .try_into()
+                .unwrap(),
+        }
+    }
     /// Rebind only to the same immutable parsed chapter/block. A reparse (even
     /// byte-identical), book switch or source revision change needs a fresh
     /// payload. The Weak identity neither keeps Source alive nor can be reused
@@ -586,6 +659,29 @@ impl OwnedProjection {
     }
     pub(crate) fn images(&self) -> &[Image] {
         &self.images
+    }
+
+    pub(crate) fn source_offset(&self, offset: usize, affinity: Affinity) -> Option<usize> {
+        if !self.text.is_char_boundary(offset) {
+            return None;
+        }
+        let mut left = None;
+        let mut right = None;
+        for run in &self.runs {
+            if run.layout.start < offset && offset < run.layout.end {
+                return Some(run.source.start + offset - run.layout.start);
+            }
+            if run.layout.end == offset {
+                left = Some(run.source.end);
+            }
+            if run.layout.start == offset && right.is_none() {
+                right = Some(run.source.start);
+            }
+        }
+        match affinity {
+            Affinity::Before => left.or(right),
+            Affinity::After => right.or(left),
+        }
     }
 
     fn push(&mut self, text: &str, source: Range<usize>, element: usize, painted: bool) {

@@ -286,20 +286,32 @@ pub(super) fn parse(
         return Err("Numeric-reference history reordered publisher blocks".into());
     }
     // Previously stored TOC targets may contain the pre-normalization attribute value.
+    let owners_by_origin: HashMap<_, _> = current.element_origins.iter().enumerate()
+        .filter_map(|(element, origin)| Some(((*origin)?, element)))
+        .collect();
     for (id, (key, offset)) in &old.fragments {
         if let Some(block) = current.blocks.iter().find(|b| b.key == *key)
             && let Some(offset) = history.project(block, old.revision, *offset)
         {
-            current
-                .fragments
-                .entry(id.clone())
-                .or_insert((*key, offset));
+            if let std::collections::btree_map::Entry::Vacant(entry) =
+                current.fragments.entry(id.clone())
+            {
+                if let Some(owner) = old
+                    .fragment_owner(id)
+                    .and_then(|owner| old.element_origins.get(owner).copied().flatten())
+                    .and_then(|origin| owners_by_origin.get(&origin).copied())
+                {
+                    current.fragment_owners.insert(id.clone(), owner);
+                }
+                entry.insert((*key, offset));
+            }
         }
     }
     current.numeric_history.push(history);
     current.revision ^= TEXT_MODEL;
     current.legacy_revision = current.legacy_revision.map(|r| r ^ TEXT_MODEL);
     current.origins.clear();
+    current.element_origins.clear();
     if current.normalized_xhtml.is_none() {
         current.normalized_xhtml = Some(normalized);
     }

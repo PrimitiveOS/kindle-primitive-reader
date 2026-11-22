@@ -6,6 +6,7 @@ use icu_segmenter::{WordSegmenter, options::WordBreakInvariantOptions};
 use parley::{Affinity, BoundingBox, Cluster, Cursor, Layout, Selection};
 use serde::{Deserialize, Serialize};
 
+use crate::flow_projection::Affinity as SourceAffinity;
 use crate::{Anchor, Probe, Renderer, Settings};
 
 /// A half-open range of source text, ordered in publication reading order.
@@ -31,19 +32,54 @@ impl Probe {
     /// Up to `words` source words on either side of a selected passage.
     /// It uses the selection anchors so repeated words elsewhere on the page
     /// cannot attach their context to a vocabulary entry.
-    pub(crate) fn word_context(&self, selection: &TextSelection, words: usize) -> Option<(String, String)> {
+    pub(crate) fn word_context(
+        &self,
+        selection: &TextSelection,
+        words: usize,
+    ) -> Option<(String, String)> {
         let spans = self.selection_spans(&selection.start, &selection.end)?;
         let mut before = String::new();
-        for (index, block) in self.source.blocks.iter().enumerate().take(spans.first + 1).rev() {
-            let text = if index == spans.first { block.text.get(..spans.first_byte)? } else { &block.text };
-            before = bounded_context(&format!("{} {before}", bounded_context(text, words, true)), words, true);
-            if word_ranges(&before).count() >= words || before.chars().count() == 512 { break; }
+        for (index, block) in self
+            .source
+            .blocks
+            .iter()
+            .enumerate()
+            .take(spans.first + 1)
+            .rev()
+        {
+            let view = self.reading_flow.view(&self.source, block).ok()?;
+            let end = if index == spans.first {
+                view.project_nearest(spans.first_byte, SourceAffinity::Before)?
+            } else {
+                view.text().len()
+            };
+            let text = view.text().get(..end)?;
+            before = bounded_context(
+                &format!("{} {before}", bounded_context(text, words, true)),
+                words,
+                true,
+            );
+            if word_ranges(&before).count() >= words || before.chars().count() == 512 {
+                break;
+            }
         }
         let mut after = String::new();
         for (index, block) in self.source.blocks.iter().enumerate().skip(spans.last) {
-            let text = if index == spans.last { block.text.get(spans.last_byte..)? } else { &block.text };
-            after = bounded_context(&format!("{after} {}", bounded_context(text, words, false)), words, false);
-            if word_ranges(&after).count() >= words || after.chars().count() == 512 { break; }
+            let view = self.reading_flow.view(&self.source, block).ok()?;
+            let start = if index == spans.last {
+                view.project_nearest(spans.last_byte, SourceAffinity::After)?
+            } else {
+                0
+            };
+            let text = view.text().get(start..)?;
+            after = bounded_context(
+                &format!("{after} {}", bounded_context(text, words, false)),
+                words,
+                false,
+            );
+            if word_ranges(&after).count() >= words || after.chars().count() == 512 {
+                break;
+            }
         }
         Some((before, after))
     }
@@ -53,16 +89,34 @@ impl Probe {
     /// The returned endpoint is an actual source anchor, never a lookup form.
     pub(crate) fn dictionary_scan(&self, selection: &TextSelection) -> Option<TextSelection> {
         let spans = self.selection_spans(&selection.start, &selection.end)?;
-        if spans.first != spans.last { return None; }
+        if spans.first != spans.last {
+            return None;
+        }
         let block = &self.source.blocks[spans.first];
-        let tail = block.text.get(spans.first_byte..)?;
-        let length = tail.char_indices().take(crate::dictionary::MAX_SCAN_CHARACTERS)
+        let view = self.reading_flow.view(&self.source, block).ok()?;
+        if !view.source_is_present(spans.first_byte) {
+            return None;
+        }
+        let start = view.project_offset(spans.first_byte, SourceAffinity::After)?;
+        let tail = view.text().get(start..)?;
+        let length = tail
+            .char_indices()
+            .take(crate::dictionary::MAX_SCAN_CHARACTERS)
             .take_while(|(_, c)| crate::dictionary::cjk_word_character(*c))
-            .map(|(i, c)| i + c.len_utf8()).last()?;
-        let length = icu_segmenter::GraphemeClusterSegmenter::new().segment_str(tail)
-            .take_while(|end| *end <= length).last().filter(|end| *end > 0)?;
-        self.select_range(&self.anchor(block.key, spans.first_byte),
-            &self.anchor(block.key, spans.first_byte + length))
+            .map(|(i, c)| i + c.len_utf8())
+            .last()?;
+        let length = icu_segmenter::GraphemeClusterSegmenter::new()
+            .segment_str(tail)
+            .take_while(|end| *end <= length)
+            .last()
+            .filter(|end| *end > 0)?;
+        self.select_range(
+            &self.anchor(block.key, view.source_offset(start, SourceAffinity::After)?),
+            &self.anchor(
+                block.key,
+                view.source_offset(start + length, SourceAffinity::Before)?,
+            ),
+        )
     }
 
     /// Select the Unicode word directly under a page coordinate.
@@ -76,10 +130,16 @@ impl Probe {
         }
         let (key, offset) = self.source_at(range, x, y)?;
         let block = &self.source.blocks[self.selection_block(key)?];
-        let word = word_range(&block.text, offset)?;
-        let start = self.anchor(key, word.start);
-        let end = self.anchor(key, word.end);
-        self.select_range(&start, &end)
+        let view = self.reading_flow.view(&self.source, block).ok()?;
+        if !view.source_is_present(offset) {
+            return None;
+        }
+        let offset = view.project_offset(offset, SourceAffinity::After)?;
+        let word = word_range(view.text(), offset)?;
+        self.select_range(
+            &self.anchor(key, view.source_offset(word.start, SourceAffinity::After)?),
+            &self.anchor(key, view.source_offset(word.end, SourceAffinity::Before)?),
+        )
     }
 
     /// Find the caret nearest the point within a visible paragraph.
@@ -100,7 +160,17 @@ impl Probe {
                 && Cluster::from_point(layout, point.x - left, y).is_some()
             {
                 let cursor = Cursor::from_point(layout, point.x - left, y);
-                return Some(self.anchor(key, cursor.index()));
+                let offset = match renderer.mapping(key) {
+                    Some(mapping) => mapping.source_offset(
+                        cursor.index(),
+                        match cursor.affinity() {
+                            Affinity::Upstream => SourceAffinity::Before,
+                            Affinity::Downstream => SourceAffinity::After,
+                        },
+                    )?,
+                    None => cursor.index(),
+                };
+                return Some(self.anchor(key, offset));
             }
         }
         None
@@ -109,6 +179,20 @@ impl Probe {
     /// Select an anchored range across adjacent blocks and pages of the loaded
     /// chapter. The caller may supply the endpoints in either direction.
     pub fn select_range(&self, start: &Anchor, end: &Anchor) -> Option<TextSelection> {
+        self.select_quote(start, end, false)
+    }
+
+    /// Historical quote recovery must not become corrupt when current CSS
+    /// intentionally omits unchanged canonical text. Never rewrite saved quotes.
+    pub(crate) fn select_source_range(
+        &self,
+        start: &Anchor,
+        end: &Anchor,
+    ) -> Option<TextSelection> {
+        self.select_quote(start, end, true)
+    }
+
+    fn select_quote(&self, start: &Anchor, end: &Anchor, canonical: bool) -> Option<TextSelection> {
         let spans = self.selection_spans(start, end)?;
         let mut quote = String::new();
         for (offset, block) in self.source.blocks[spans.first..=spans.last]
@@ -116,13 +200,26 @@ impl Probe {
             .enumerate()
         {
             let index = spans.first + offset;
-            let original = &block.text;
-            if let Some(span) = spans.in_block(index, original.len()) {
-                if !quote.is_empty() {
-                    quote.push('\n');
+            let Some(span) = spans.in_block(index, block.text.len()) else {
+                continue;
+            };
+            let part = if canonical {
+                block.text.get(span)?.to_owned()
+            } else {
+                let view = self.reading_flow.view(&self.source, block).ok()?;
+                let mut part = String::new();
+                for range in view.layout_spans(span)? {
+                    part.push_str(view.text().get(range)?);
                 }
-                quote.push_str(&original[span]);
+                part
+            };
+            if part.is_empty() {
+                continue;
             }
+            if !quote.is_empty() {
+                quote.push('\n');
+            }
+            quote.push_str(&part);
         }
         if quote.trim().is_empty() {
             return None;
@@ -158,7 +255,16 @@ impl Probe {
                     spans
                         .in_block(index, block.text.len())
                         .map_or_else(Vec::new, |bytes| {
-                            renderer.selection_rects(page.clone(), block.key, bytes)
+                            let Ok(view) = self.reading_flow.view(&self.source, block) else {
+                                return Vec::new();
+                            };
+                            view.layout_spans(bytes)
+                                .unwrap_or_default()
+                                .into_iter()
+                                .flat_map(|bytes| {
+                                    renderer.selection_rects(page.clone(), block.key, bytes)
+                                })
+                                .collect()
                         })
                 })
                 .collect();
@@ -174,50 +280,61 @@ impl Probe {
             let Some(span) = spans.in_block(index, self.source.blocks[index].text.len()) else {
                 continue;
             };
-            let Some(span) = visible_span(layout, origin, &page, span) else {
+            let Ok(view) = self
+                .reading_flow
+                .view(&self.source, &self.source.blocks[index])
+            else {
                 continue;
             };
-            let start = Cursor::from_byte_index(layout, span.start, Affinity::Downstream);
-            let boundary = Cluster::from_byte_index(layout, span.end - 1)
-                .map_or(span.end, |cluster| cluster.text_range().end);
-            let end = Cursor::from_byte_index(layout, boundary, Affinity::Upstream);
-            Selection::new(start, end).geometry_with(layout, |mut rect, row| {
-                rect.x0 += f64::from(left);
-                rect.x1 += f64::from(left);
-                // Parley includes replaced elements at the same caret position
-                // in selection rectangles. Highlight the surrounding text runs.
-                if !self.source.blocks[index].images.is_empty()
-                    && let Some(line) = layout.get(row)
-                {
-                    for item in line.items() {
-                        let parley::PositionedLayoutItem::InlineBox(image) = item else {
-                            continue;
-                        };
-                        let right = f64::from(left + image.x + image.width);
-                        let left = f64::from(left + image.x);
-                        if left >= rect.x1 || right <= rect.x0 {
-                            continue;
-                        }
-                        if rect.x0 < left
-                            && let Some(left_run) = page_rect(
-                                BoundingBox { x1: left, ..rect },
-                                origin,
-                                &page,
-                                self.settings,
-                            )
-                        {
-                            rects.push(left_run);
-                        }
-                        rect.x0 = right;
-                        if rect.x0 >= rect.x1 {
-                            return;
+            let Some(layout_spans) = view.layout_spans(span) else {
+                continue;
+            };
+            for span in layout_spans {
+                let Some(span) = visible_span(layout, origin, &page, span) else {
+                    continue;
+                };
+                let start = Cursor::from_byte_index(layout, span.start, Affinity::Downstream);
+                let boundary = Cluster::from_byte_index(layout, span.end - 1)
+                    .map_or(span.end, |cluster| cluster.text_range().end);
+                let end = Cursor::from_byte_index(layout, boundary, Affinity::Upstream);
+                Selection::new(start, end).geometry_with(layout, |mut rect, row| {
+                    rect.x0 += f64::from(left);
+                    rect.x1 += f64::from(left);
+                    // Parley includes replaced elements at the same caret position
+                    // in selection rectangles. Highlight the surrounding text runs.
+                    if !self.source.blocks[index].images.is_empty()
+                        && let Some(line) = layout.get(row)
+                    {
+                        for item in line.items() {
+                            let parley::PositionedLayoutItem::InlineBox(image) = item else {
+                                continue;
+                            };
+                            let right = f64::from(left + image.x + image.width);
+                            let left = f64::from(left + image.x);
+                            if left >= rect.x1 || right <= rect.x0 {
+                                continue;
+                            }
+                            if rect.x0 < left
+                                && let Some(left_run) = page_rect(
+                                    BoundingBox { x1: left, ..rect },
+                                    origin,
+                                    &page,
+                                    self.settings,
+                                )
+                            {
+                                rects.push(left_run);
+                            }
+                            rect.x0 = right;
+                            if rect.x0 >= rect.x1 {
+                                return;
+                            }
                         }
                     }
-                }
-                if let Some(rect) = page_rect(rect, origin, &page, self.settings) {
-                    rects.push(rect);
-                }
-            });
+                    if let Some(rect) = page_rect(rect, origin, &page, self.settings) {
+                        rects.push(rect);
+                    }
+                });
+            }
         }
         rects
     }
@@ -245,6 +362,9 @@ impl Probe {
     }
 
     fn selection_spans(&self, start: &Anchor, end: &Anchor) -> Option<Spans> {
+        if start.illustration.is_some() || end.illustration.is_some() {
+            return None;
+        }
         let (a, b) = if start.chapter == end.chapter {
             (self.project_anchor(start)?, self.project_anchor(end)?)
         } else {
@@ -291,7 +411,6 @@ impl Probe {
             last_byte,
         })
     }
-
 }
 
 struct PagePoint {
@@ -343,7 +462,9 @@ pub(crate) fn word_ranges(text: &str) -> impl Iterator<Item = Range<usize>> + '_
 
 /// Unicode word context with a scalar cap for space-free text and long tokens.
 pub(crate) fn bounded_context(text: &str, words: usize, from_end: bool) -> String {
-    if words == 0 { return String::new(); }
+    if words == 0 {
+        return String::new();
+    }
     let text = if from_end {
         let start = text.char_indices().rev().nth(2047).map_or(0, |(i, _)| i);
         &text[start..]
@@ -351,14 +472,21 @@ pub(crate) fn bounded_context(text: &str, words: usize, from_end: bool) -> Strin
         &text[..text.char_indices().nth(2048).map_or(text.len(), |(i, _)| i)]
     };
     let ranges: Vec<_> = word_ranges(text).collect();
-    let Some(first) = ranges.first() else { return String::new(); };
+    let Some(first) = ranges.first() else {
+        return String::new();
+    };
     let last = ranges.last().unwrap();
-    let range = if from_end { ranges[ranges.len().saturating_sub(words)].start..last.end }
-        else { first.start..ranges[(words - 1).min(ranges.len()-1)].end };
+    let range = if from_end {
+        ranges[ranges.len().saturating_sub(words)].start..last.end
+    } else {
+        first.start..ranges[(words - 1).min(ranges.len() - 1)].end
+    };
     let selected = &text[range];
     if from_end {
         selected[selected.char_indices().rev().nth(511).map_or(0, |(i, _)| i)..].to_owned()
-    } else { selected.chars().take(512).collect() }
+    } else {
+        selected.chars().take(512).collect()
+    }
 }
 
 pub(crate) fn word_range(text: &str, offset: usize) -> Option<Range<usize>> {
