@@ -174,7 +174,7 @@ impl Reader {
         primitive_ui::Sheet::centered(
             Rect::new(0, 0, WIDTH as i32, HEIGHT as i32),
             "Text size does not fit",
-            "This book's saved layout cannot fit this screen. Reset text settings to open it? Your previous choices will be backed up. Notes and reading position stay the same.",
+            "Reset text to fit? Old settings are backed up; notes and position stay.",
             "Reset text",
         )
     }

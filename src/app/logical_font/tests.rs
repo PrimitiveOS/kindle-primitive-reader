@@ -466,6 +466,18 @@ fn unfit_imported_layout_requires_explicit_reset_backs_up_choices_and_rolls_back
     let model = app.library.bytes().unwrap();
     app.open_path(&path).unwrap();
     assert!(app.logical_recovery.is_some());
+    crate::app::tests::capture_test_screen(
+        &app,
+        &fonts(),
+        "READER_LOGICAL_FONT_RECOVERY_SCREENSHOT",
+        false,
+    );
+    crate::app::tests::capture_test_screen(
+        &app,
+        &fonts(),
+        "READER_LOGICAL_FONT_RECOVERY_DARK_SCREENSHOT",
+        true,
+    );
     assert_eq!(app.library.bytes().unwrap(), model);
     app.input(Input::PageBack);
     assert!(app.logical_recovery.is_none());
