@@ -16,7 +16,7 @@ local pdf_pages
 local authored_pdf=os.getenv("KOSYNC_QA_PDF")
 if authored_pdf then
  local pdf=assert(require("document/documentregistry"):openDocument(authored_pdf))
- assert(pdf.info.has_pages and pdf.provider=="pdf")
+ assert(pdf.info.has_pages and pdf.provider=="mupdf")
  pdf_pages=pdf:getPageCount();assert(pdf_pages==2)
  assert(require("util").partialMD5(authored_pdf)==document)
  pdf:close()

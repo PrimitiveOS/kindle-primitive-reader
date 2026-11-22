@@ -249,6 +249,19 @@ fn actual_stock_client_and_reader_worker_roundtrip_authored_pdf_source_pages() {
     let book = app.kosync_book().unwrap();
     let script =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/helpers/kosync-stock-client.lua");
+    let profile = f.root.join("isolated-stock-profile");
+    fs::create_dir(&profile).unwrap();
+    fs::write(
+        profile.join("settings.reader.lua"),
+        "return {language='en',external_dict_lookup=false,emulator_fake_wifi_connected=false}",
+    )
+    .unwrap();
+    let staging = stock
+        .parent()
+        .and_then(Path::parent)
+        .expect("QA runtime layout")
+        .join("build/staging");
+    assert!(staging.is_dir());
     let output = f.root.join("stock-result.json");
     let run_stock = |mode: &str| {
         let status = std::process::Command::new(&lua)
