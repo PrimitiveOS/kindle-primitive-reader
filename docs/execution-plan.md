@@ -161,3 +161,7 @@ The desktop candidate enables Parley's supported complex-script segmentation mod
 ## Global document defaults
 
 Separate reflow and fixed-page templates now apply only to unseen content. Explicit save/reset/clear controls use the existing icon language. Older saved books retain their settings; reset keeps source position and annotations and retains fixed crop/pan within valid view bounds. Desktop regressions inject reflow/write failures, reopen both formats, preserve unavailable-font recovery and exercise four original EPUB/PDF publications. The optional versioned64KiB configuration shares validators with backup import. Native acceptance remains pending. [Behavior, source comparison and storage](document-defaults.md)
+
+## Combined desktop and compiler checkpoint · 31612701
+
+The aggregate passes 724 ordinary library tests, 14 package tests and four system tests, plus separate original-file/process workflows for backup, defaults, DPI, sync, lookup and acquisition. Static ARM32 hard-float production and five test executables compile; the private draft package verifies 26 files and 325 notices. Native execution, foreground/USB/power behavior, performance, the corrected 37-file resume sweep and release/Store publication remain pending while the owner is offline. User style origins/tweaks and CSS display/visibility projection retain separate implementation worktrees. [Current evidence and limits](simulation-review.md)
