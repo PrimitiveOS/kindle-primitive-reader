@@ -66,6 +66,8 @@ Tap a PDF web link to inspect its address over the current page. **Copy** makes 
 
 Publisher styling can keep a paragraph’s first or last lines together at a page break. [Paragraph settings and two-page comparison](docs/paragraph-ends.md)
 
+Use **Settings › Style tweaks** for live all-books defaults, per-book overrides and supported custom CSS. Review imported or edited CSS before applying it at the same reading position. [User styles, precedence and limits](docs/style-tweaks.md)
+
 Use **Settings › Highlight style** to set how new passages appear. Tap a saved highlight and choose **Style** under its actions to change that passage. [Four highlight styles on a reading page](docs/highlight-drawing-styles.md) · [Named colors and margin note markers](docs/highlight-colors-and-note-markers.md)
 
 Use the book's color for temporary selections, or confirm **Apply to all highlights** to restyle its saved passages together. Filter the bookmark browser by color, and choose several colors when exporting highlights. [Selection and highlight workflows](docs/highlight-workflows.md)

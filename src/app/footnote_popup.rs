@@ -268,6 +268,9 @@ impl Reader {
                 index,
                 Some(excerpt),
                 &reading.config.user_hyphenation,
+                // KOReader's extracted popup has a separate stylesheet context.
+                // Main-book tweaks must not hide or restyle the extracted note.
+                &crate::user_styles::Snapshot::default(),
             )
             .map_err(io::Error::other)?;
             let frame = Footnote::frame(&mut preview, 0).map_err(io::Error::other)?;

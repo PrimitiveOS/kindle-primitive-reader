@@ -30,10 +30,11 @@ pub(crate) enum Key {
     BookMetadata,
     Timer,
     DocumentDefaults,
+    StyleTweaks,
     Pace(u64),
 }
 impl Key {
-    pub(crate) const SETTINGS: [Self; 13] = [
+    pub(crate) const SETTINGS: [Self; 14] = [
         Self::Controls,
         Self::Profiles,
         Self::Gestures,
@@ -46,6 +47,7 @@ impl Key {
         Self::BookMetadata,
         Self::Timer,
         Self::DocumentDefaults,
+        Self::StyleTweaks,
         Self::Library,
     ];
     pub(crate) fn relative(self, state: &Path) -> PathBuf {
@@ -63,6 +65,7 @@ impl Key {
             Self::BookMetadata => "bookmark-metadata.json".into(),
             Self::Timer => "read-timer.json".into(),
             Self::DocumentDefaults => crate::document_defaults::FILE.into(),
+            Self::StyleTweaks => crate::user_styles::FILE.into(),
             Self::Pace(book) => PathBuf::from("reading-pace").join(format!("{book:016x}.json")),
         }
     }
@@ -81,6 +84,7 @@ impl Key {
             Self::BookMetadata => "Retained book metadata".into(),
             Self::Timer => "Read timer preferences".into(),
             Self::DocumentDefaults => "New book defaults".into(),
+            Self::StyleTweaks => "User style tweaks and book CSS".into(),
             Self::Pace(_) => "Reading time estimates".into(),
         }
     }
@@ -95,6 +99,7 @@ impl Key {
             Self::Statistics | Self::Pace(_) => 512 * 1024,
             Self::History => 16 * 1024 * 1024,
             Self::Hyphenation | Self::Browser => 1024 * 1024,
+            Self::StyleTweaks => crate::user_styles::MAX_FILE_BYTES,
         }
     }
 }
