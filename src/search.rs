@@ -2,8 +2,12 @@
 
 #[cfg(feature = "kindle")]
 mod fixed_pattern;
+mod flow;
+#[cfg(test)]
+mod flow_tests;
 mod nearby;
 mod pattern;
+pub(crate) use flow::FlowConfig;
 #[cfg(feature = "kindle")]
 pub(crate) use nearby::ChapterText;
 pub use nearby::{NearbySearch, SearchDirection};
@@ -77,6 +81,9 @@ pub struct SearchHit {
     pub chapter_title: String,
     pub anchor: Anchor,
     pub end: Anchor,
+    /// Retained canonical intervals. An envelope may cross CSS-suppressed text;
+    /// consumers must use the rendered view rather than copy that envelope.
+    pub source_spans: Vec<Range<usize>>,
     /// Original wording with a short amount of context.
     pub snippet: String,
     /// The visible portion of the match in the bounded snippet, in UTF-8 bytes.
@@ -88,6 +95,7 @@ pub struct SearchHit {
 /// the book only during the step, so a device can release the storage lease.
 pub struct Search {
     query: ReflowQuery,
+    flow_config: FlowConfig,
     publication: Option<(u64, usize)>,
     next_chapter: usize,
     hits: usize,
@@ -126,6 +134,7 @@ impl Search {
     fn with_query(query: ReflowQuery) -> Result<Self> {
         Ok(Self {
             query,
+            flow_config: FlowConfig::default(),
             publication: None,
             next_chapter: 0,
             hits: 0,
@@ -140,6 +149,16 @@ impl Search {
     /// Request a smaller result set for an explicit bounded comparison.
     pub fn at_most(mut self, limit: usize) -> Self {
         self.limit = limit.min(MAX_REFLOW_SEARCH_HITS);
+        self
+    }
+
+    pub(crate) fn with_flow_config(mut self, config: FlowConfig) -> Self {
+        self.flow_config = config;
+        self
+    }
+
+    pub(crate) fn for_publication(mut self, book: u64, chapters: usize) -> Self {
+        self.publication = Some((book, chapters));
         self
     }
 
@@ -178,7 +197,7 @@ impl Search {
             self.stopped = true;
             return Ok(Vec::new());
         }
-        let text = nearby::ChapterText::read(book, self.next_chapter)?;
+        let text = nearby::ChapterText::read_with_flow(book, self.next_chapter, &self.flow_config)?;
         self.step_loaded(text, book.chapters.len(), &AtomicBool::new(false))
     }
 
@@ -188,6 +207,10 @@ impl Search {
         chapters: usize,
         cancel: &AtomicBool,
     ) -> Result<Vec<SearchHit>> {
+        if text.flow_config != self.flow_config {
+            self.stopped = true;
+            return Err("The reading styles changed during the search".into());
+        }
         let publication = (text.book, chapters);
         if *self.publication.get_or_insert(publication) != publication {
             self.stopped = true;
@@ -195,11 +218,7 @@ impl Search {
         }
         let chapter = self.next_chapter;
         self.next_chapter += 1;
-        let source = match text
-            .xhtml
-            .as_deref()
-            .and_then(|xhtml| Source::parse(xhtml).ok())
-        {
+        let source = match text.source {
             Some(source) => source,
             None => {
                 self.skipped += 1;
@@ -208,32 +227,44 @@ impl Search {
         };
 
         let mut hits = Vec::new();
-        for block in source.blocks {
+        for block in &source.blocks {
             if cancel.load(Ordering::Relaxed) {
                 break;
             }
+            let view = text
+                .flow
+                .view(&source, block)
+                .map_err(|error| error.to_string())?;
+            let rendered = view.text();
             let ranges = match &self.query {
                 ReflowQuery::Literal(query) => {
-                    query.matches_until(&block.text, self.limit - self.hits, || {
+                    query.matches_until(rendered, self.limit - self.hits, || {
                         cancel.load(Ordering::Relaxed)
                     })
                 }
                 ReflowQuery::Pattern(expression) => expression.ranges(
-                    &block.text,
-                    0..block.text.len(),
+                    rendered,
+                    0..rendered.len(),
                     self.limit - self.hits,
                     false,
                     cancel,
                 )?,
             };
             for range in ranges {
-                let offset = range.start;
-                let end = range.end;
-                let (snippet, matched) = snippet(&block.text, range);
+                let source_spans = view
+                    .source_spans(range.clone())
+                    .ok_or("The result has invalid rendered text boundaries")?;
+                let Some(first) = source_spans.first() else {
+                    continue;
+                };
+                let offset = first.start;
+                let end = source_spans.last().unwrap().end;
+                let (snippet, matched) = snippet(rendered, range);
                 let allocation = std::mem::size_of::<SearchHit>()
                     + text.label.len()
                     + 2 * text.href.len()
-                    + snippet.capacity();
+                    + snippet.capacity()
+                    + source_spans.capacity() * std::mem::size_of::<Range<usize>>();
                 if allocation > MAX_RESULT_BYTES.saturating_sub(self.retained_bytes) {
                     self.memory_limited = true;
                     return Ok(hits);
@@ -258,6 +289,7 @@ impl Search {
                         block: block.key,
                         offset: end,
                     },
+                    source_spans,
                     snippet,
                     matched,
                 });
@@ -523,7 +555,8 @@ impl PdfSearch {
         for range in self.ranges(text, limit.saturating_sub(results.len())) {
             let words = matching_words(text, &range);
             let (snippet, matched) = snippet(&text.text, range);
-            let allocation = size_of::<PdfSearchHit>() + snippet.capacity()
+            let allocation = size_of::<PdfSearchHit>()
+                + snippet.capacity()
                 + words.len() * size_of::<PdfTextRect>();
             if allocation > MAX_FIXED_RESULT_BYTES.saturating_sub(self.retained_bytes) {
                 self.memory_limited = true;
@@ -1001,7 +1034,10 @@ mod tests {
     #[test]
     fn an_exhausted_fixed_list_budget_keeps_the_previous_rows_intact() {
         let mut search = PdfSearch::new("tide", false).unwrap();
-        let page = PdfPageText { text: "Tide at the pier".into(), ..Default::default() };
+        let page = PdfPageText {
+            text: "Tide at the pier".into(),
+            ..Default::default()
+        };
         let mut hits = Vec::new();
         search.append_page(0, &page, &mut hits, MAX_FIXED_SEARCH_HITS);
         assert_eq!(hits.len(), 1);
@@ -1154,7 +1190,9 @@ mod tests {
             book: 1,
             label,
             href: "chapter.xhtml".into(),
-            xhtml: Some(format!("<html><body>{html}</body></html>")),
+            source: Source::parse(&format!("<html><body>{html}</body></html>")).ok(),
+            flow: Default::default(),
+            flow_config: Default::default(),
         }
     }
 

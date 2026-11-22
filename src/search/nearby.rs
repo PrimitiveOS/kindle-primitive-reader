@@ -1,5 +1,5 @@
 //! One offline match from a source position. Searches stop at the book boundary.
-use super::{FoldedText, Query, ReflowQuery, SearchHit, accent_mark, snippet};
+use super::{FlowConfig, FoldedText, Query, ReflowQuery, SearchHit, accent_mark, snippet};
 use crate::{Anchor, Result, epub::Book, source::Source};
 use std::{
     ops::Range,
@@ -15,6 +15,7 @@ pub enum SearchDirection {
 pub struct NearbySearch {
     query: ReflowQuery,
     direction: SearchDirection,
+    flow_config: FlowConfig,
 }
 
 impl NearbySearch {
@@ -27,6 +28,7 @@ impl NearbySearch {
         Ok(Self {
             query: ReflowQuery::Literal(Query::reflow(text, match_case, ignore_accents)?),
             direction,
+            flow_config: FlowConfig::default(),
         })
     }
 
@@ -38,6 +40,7 @@ impl NearbySearch {
         Ok(Self {
             query: ReflowQuery::Pattern(super::pattern::Expression::new(pattern, match_case)?),
             direction,
+            flow_config: FlowConfig::default(),
         })
     }
 
@@ -49,8 +52,13 @@ impl NearbySearch {
         cancel: &AtomicBool,
     ) -> Result<Option<SearchHit>> {
         self.scan(chapter, anchor, cancel, book.chapters.len(), |ci| {
-            ChapterText::read(book, ci)
+            ChapterText::read_with_flow(book, ci, &self.flow_config)
         })
+    }
+
+    pub(crate) fn with_flow_config(mut self, config: FlowConfig) -> Self {
+        self.flow_config = config;
+        self
     }
 
     pub(crate) fn scan(
@@ -71,17 +79,16 @@ impl NearbySearch {
                 return Ok(None);
             }
             let text = read(ci)?;
+            if text.flow_config != self.flow_config {
+                return Err("The reading styles changed during the search".into());
+            }
             if text.book != anchor.book || ci == origin && text.href != anchor.chapter {
                 return Err("The publication changed during the search".into());
             }
             if cancel.load(Ordering::Relaxed) {
                 return Ok(None);
             }
-            if let Some(source) = text
-                .xhtml
-                .as_deref()
-                .and_then(|xml| Source::parse(xml).ok())
-            {
+            if let Some(source) = text.source {
                 let boundary = if ci == origin {
                     let i = source
                         .blocks
@@ -104,13 +111,26 @@ impl NearbySearch {
                     if cancel.load(Ordering::Relaxed) {
                         return Ok(None);
                     }
+                    let view = text
+                        .flow
+                        .view(&source, block)
+                        .map_err(|error| error.to_string())?;
+                    let rendered = view.text();
                     let mut left = 0;
-                    let mut right = block.text.len();
+                    let mut right = rendered.len();
                     if let Some((at, offset)) = boundary {
                         if previous && index > at || !previous && index < at {
                             continue;
                         }
                         if index == at {
+                            let affinity = if previous {
+                                crate::flow_projection::Affinity::Before
+                            } else {
+                                crate::flow_projection::Affinity::After
+                            };
+                            let offset = view
+                                .project_nearest(offset, affinity)
+                                .ok_or("The starting rendered position is unavailable")?;
                             if previous {
                                 right = offset
                             } else {
@@ -118,7 +138,7 @@ impl NearbySearch {
                             }
                         }
                     }
-                    let Some(window) = block.text.get(left..right) else {
+                    let Some(window) = rendered.get(left..right) else {
                         return Err("The starting character is unavailable".into());
                     };
                     let hit = match &self.query {
@@ -126,28 +146,35 @@ impl NearbySearch {
                             .nearest(window, previous, cancel)
                             .map(|r| r.start + left..r.end + left),
                         ReflowQuery::Pattern(expression) => expression
-                            .ranges(&block.text, left..right, 1, previous, cancel)?
+                            .ranges(rendered, left..right, 1, previous, cancel)?
                             .pop(),
                     };
                     if let Some(span) = hit {
+                        let source_spans = view
+                            .source_spans(span.clone())
+                            .ok_or("The result has invalid rendered text boundaries")?;
+                        let Some(first) = source_spans.first() else {
+                            continue;
+                        };
                         let start = Anchor {
                             book: text.book,
                             chapter: text.href.clone(),
                             revision: source.revision,
                             block: block.key,
-                            offset: span.start,
+                            offset: first.start,
                             illustration: None,
                         };
                         let end = Anchor {
-                            offset: span.end,
+                            offset: source_spans.last().unwrap().end,
                             ..start.clone()
                         };
-                        let (snippet, matched) = snippet(&block.text, span);
+                        let (snippet, matched) = snippet(rendered, span);
                         return Ok(Some(SearchHit {
                             chapter: ci,
                             chapter_title: text.label,
                             anchor: start,
                             end,
+                            source_spans,
                             snippet,
                             matched,
                         }));
@@ -172,21 +199,46 @@ pub(crate) struct ChapterText {
     pub(super) book: u64,
     pub(super) label: String,
     pub(super) href: String,
-    pub(super) xhtml: Option<String>,
+    pub(super) source: Option<Source>,
+    pub(super) flow: crate::flow_view::ChapterFlow,
+    pub(super) flow_config: FlowConfig,
 }
 
 impl ChapterText {
     pub(crate) fn read(book: &mut Book, index: usize) -> Result<Self> {
+        Self::read_with_flow(book, index, &FlowConfig::default())
+    }
+
+    pub(crate) fn read_with_flow(
+        book: &mut Book,
+        index: usize,
+        config: &FlowConfig,
+    ) -> Result<Self> {
         let info = book
             .chapters
             .get(index)
             .ok_or("That chapter is unavailable")?
             .clone();
+        let mut source = book
+            .chapter(index)
+            .ok()
+            .and_then(|xhtml| book.chapter_source(&info.href, &xhtml).ok());
+        if let Some(source) = &mut source {
+            for previous in book.previous_mobi_chapters(&info.href) {
+                source.accept_previous_mobi(previous)?;
+            }
+        }
+        let flow = match &source {
+            Some(source) => config.chapter(book, &info.href, source)?,
+            None => Default::default(),
+        };
         Ok(Self {
             book: book.revision(),
             label: info.label,
             href: info.href,
-            xhtml: book.chapter(index).ok(),
+            source,
+            flow,
+            flow_config: config.clone(),
         })
     }
 }
