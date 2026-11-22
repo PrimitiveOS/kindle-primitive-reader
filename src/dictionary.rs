@@ -1,6 +1,9 @@
 //! Offline StarDict 2.4.2 and 3.0.0 lookup from a configured directory.
 //! Stream StarDict indexes and seek definition slices in plain or dictzip data.
 
+mod word_forms;
+use word_forms::{Ranked, WordForms};
+
 use std::cell::{Cell, RefCell};
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
@@ -149,6 +152,11 @@ impl DictionarySources {
 
     pub(crate) fn lookup_ordered(&self, word: &str, book_order: &[PathBuf], order: &[PathBuf],
                                  disabled: &[PathBuf]) -> io::Result<Vec<Definition>> {
+        self.lookup_configured(word, book_order, order, disabled, false)
+    }
+
+    pub(crate) fn lookup_configured(&self, word: &str, book_order: &[PathBuf], order: &[PathBuf],
+                                    disabled: &[PathBuf], with_word_forms: bool) -> io::Result<Vec<Definition>> {
         let word = word.trim();
         if word.len() > MAX_WORD_BYTES {
             return Ok(Vec::new());
@@ -172,7 +180,9 @@ impl DictionarySources {
             (rank, info.title.to_lowercase(), file.key.is_absolute(), file.key.clone())
         });
         let folded = CaseMapper::new().fold_string(term);
+        let forms = with_word_forms.then(|| WordForms::for_word(term));
         let query = Query {
+            forms: forms.as_ref(),
             word,
             folded: &folded,
         };
@@ -184,12 +194,17 @@ impl DictionarySources {
         let mut read_any = false;
         for (DictionaryFile { root, path, .. }, info) in sources {
             let aliases = synonym_targets(&root, &path, &info, query, &mut budget)
-                .unwrap_or_else(|_| Hits::new());
+                .unwrap_or_default();
             let result = lookup_dictionary(&root, &path, &info, IndexQuery { headword: query, aliases }, &mut budget);
             match result {
                 Ok(found) => {
                     read_any = true;
-                    hits.extend(found);
+                    if with_word_forms {
+                        let remaining = MAX_RESULTS - hits.exact.len();
+                        hits.exact.extend(found.into_best().into_iter().take(remaining));
+                    } else {
+                        hits.extend(found);
+                    }
                 }
                 Err(error) => {
                     first_error.get_or_insert(error);
@@ -393,6 +408,7 @@ impl<T> Hits<T> {
 struct Query<'a> {
     word: &'a str,
     folded: &'a str,
+    forms: Option<&'a WordForms>,
 }
 
 impl Query<'_> {
@@ -408,7 +424,16 @@ impl Query<'_> {
 
 struct IndexQuery<'a> {
     headword: Query<'a>,
-    aliases: Hits<usize>,
+    aliases: Aliases,
+}
+
+struct Aliases {
+    direct: Hits<usize>,
+    forms: Ranked<usize>,
+}
+
+impl Default for Aliases {
+    fn default() -> Self { Self { direct: Hits::new(), forms: Ranked::default() } }
 }
 
 struct IndexMatch {
@@ -745,8 +770,8 @@ fn synonym_targets(
     info: &Info,
     query: Query<'_>,
     budget: &mut LookupBudget,
-) -> io::Result<Hits<usize>> {
-    let mut hits = Hits::new();
+) -> io::Result<Aliases> {
+    let mut hits = Aliases::default();
     let Some(count) = info.synonyms else {
         return Ok(hits);
     };
@@ -787,10 +812,15 @@ fn synonym_targets(
             ));
         }
         let matches = if word == query.word {
-            &mut hits.exact
-        } else if hits.fallback.len() < MAX_RESULTS && query.caseless(word, mapper) {
-            &mut hits.fallback
+            &mut hits.direct.exact
+        } else if hits.direct.fallback.len() < MAX_RESULTS && query.caseless(word, mapper) {
+            &mut hits.direct.fallback
         } else {
+            if let Some(rank) = query.forms.and_then(|forms| forms.rank(word))
+                && (rank < hits.forms.rank || !hits.forms.values.contains(&target))
+            {
+                hits.forms.record(rank, || target);
+            }
             continue;
         };
         if matches.len() < MAX_RESULTS && !matches.contains(&target) {
@@ -802,8 +832,10 @@ fn synonym_targets(
             "The dictionary synonym count does not match its index",
         ));
     }
-    hits.exact.sort_unstable();
-    hits.fallback.sort_unstable();
+    hits.direct.exact.sort_unstable();
+    hits.direct.fallback.sort_unstable();
+    hits.forms.values.sort_unstable();
+    hits.forms.values.dedup();
     Ok(hits)
 }
 
@@ -815,6 +847,7 @@ fn scan_index(
 ) -> io::Result<Hits<IndexMatch>> {
     let mut index = BufReader::new(index.take(info.index_size as u64 + 1));
     let mut hits = Hits::new();
+    let mut forms = Ranked::default();
     let mut headword = Vec::with_capacity(MAX_WORD_BYTES + 1);
     let mut position = [0; 12];
     let record_size = info.offset_bytes + 4;
@@ -847,22 +880,21 @@ fn scan_index(
         if size as usize > MAX_ENTRY_BYTES {
             continue;
         }
-        let exact = headword == query.headword.word || query.aliases.exact.binary_search(&ordinal).is_ok();
+        let exact = headword == query.headword.word || query.aliases.direct.exact.binary_search(&ordinal).is_ok();
         let fallback = !exact && hits.fallback.len() < MAX_RESULTS
-            && (query.aliases.fallback.binary_search(&ordinal).is_ok() || query.headword.caseless(headword, mapper));
-        let matches = if exact {
-            &mut hits.exact
+            && (query.aliases.direct.fallback.binary_search(&ordinal).is_ok() || query.headword.caseless(headword, mapper));
+        let entry = || IndexMatch { word: headword.to_owned(), offset, size: size as usize };
+        if exact {
+            if hits.exact.len() < MAX_RESULTS { hits.exact.push(entry()); }
         } else if fallback {
-            &mut hits.fallback
-        } else {
-            continue;
-        };
-        if matches.len() < MAX_RESULTS {
-            matches.push(IndexMatch {
-                word: headword.to_owned(),
-                offset,
-                size: size as usize,
-            });
+            hits.fallback.push(entry());
+        } else if let Some(candidates) = query.headword.forms {
+            let direct = candidates.rank(headword);
+            let synonym = query.aliases.forms.values.binary_search(&ordinal)
+                .ok().map(|_| query.aliases.forms.rank);
+            if let Some(best) = direct.into_iter().chain(synonym).min() {
+                forms.record(best, entry);
+            }
         }
     }
     if bytes_read != info.index_size || !index.fill_buf()?.is_empty() {
@@ -870,6 +902,7 @@ fn scan_index(
             "The dictionary word count does not match its index",
         ));
     }
+    if hits.exact.is_empty() && hits.fallback.is_empty() { hits.fallback = forms.values; }
     Ok(hits)
 }
 
@@ -1487,6 +1520,23 @@ pub(crate) mod tests {
         fs::remove_file(&path).unwrap();
         assert!(lookup(&temp.0, "firelight").unwrap().is_empty());
         assert_eq!(lookup(&temp.0, "lamp").unwrap()[0].text, "Still here.");
+    }
+
+    #[test]
+    fn each_dictionary_can_supply_its_own_headword_or_inflected_synonym() {
+        let temp = TestDirectory::new();
+        write_dictionary(&temp.0,"North","sametypesequence=m\n",&[("moving",b"Travelling.")]);
+        write_dictionary(&temp.0,"South","sametypesequence=m\n",&[("move",b"Change position."),("run",b"Proceed quickly."),("transport",b"Carry from place to place.")]);
+        write_synonyms(&temp.0,"South",&[("carry",2)]);
+        let sources = DictionarySources {local: temp.0.clone(), shared_storage: None};
+        let query = |word,enabled| sources.lookup_configured(word,&[],&[],&[],enabled).unwrap()
+            .into_iter().map(|r|r.word).collect::<Vec<_>>();
+        assert_eq!(query("moving",true), ["moving","move"]);
+        assert_eq!(query("moving",false), ["moving"]);
+        assert_eq!(query("running",true), ["run"]);
+        assert_eq!(query("carried",true), ["transport"]);
+        assert!(query("carried",false).is_empty());
+        assert!(query("đang",true).is_empty());
     }
 
     #[test]

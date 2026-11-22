@@ -5,6 +5,7 @@ use super::*;
 pub(super) struct SourcePreferences {
     order: Vec<PathBuf>,
     disabled: Vec<PathBuf>,
+    disable_word_forms: bool,
 }
 
 impl SourcePreferences {
@@ -23,6 +24,7 @@ impl SourcePreferences {
                 .into_iter()
                 .collect(),
             disabled: Vec::new(),
+            disable_word_forms: false,
         }
     }
 }
@@ -36,6 +38,9 @@ pub(super) enum SourceAction {
     EarlierForBook,
     LaterForBook,
     ResetOrder,
+    DefaultWordForms,
+    BookWordForms,
+    ResetBookWordForms,
 }
 
 fn toggle(paths: &mut Vec<PathBuf>, key: &Path) {
@@ -53,13 +58,22 @@ impl Reader {
             .map_or(&[], |book| book.preferred_dictionaries.as_slice())
     }
 
+    fn book_word_forms(&self) -> Option<bool> {
+        self.open_book_id().and_then(|id| self.library.state(id)).and_then(|s| s.dictionary_word_forms)
+    }
+
+    fn word_forms_enabled(&self) -> bool {
+        self.book_word_forms().unwrap_or(!self.dictionary_settings.disable_word_forms)
+    }
+
     pub(super) fn lookup_sources(&self, word: &str) -> io::Result<Vec<dictionary::Definition>> {
         let prefs = &self.dictionary_settings;
-        self.dictionaries.lookup_ordered(
+        self.dictionaries.lookup_configured(
             word,
             self.book_dictionaries(),
             &prefs.order,
             &prefs.disabled,
+            self.word_forms_enabled(),
         )
     }
 
@@ -122,6 +136,20 @@ impl Reader {
                 "Reset dictionary order",
                 Action::DictionarySource(SourceAction::ResetOrder),
             ));
+        }
+        if !self.installed_dictionaries.is_empty() {
+            rows.push(Item::new("Word forms by default", Action::DictionarySource(SourceAction::DefaultWordForms))
+                .detail(if self.dictionary_settings.disable_word_forms { "Off" } else { "On" }));
+            if self.open_book_id().is_some() {
+                let state = match (self.word_forms_enabled(), self.book_word_forms().is_none()) {
+                    (true, true) => "On · default", (false, true) => "Off · default",
+                    (true, false) => "On", (false, false) => "Off",
+                };
+                rows.push(Item::new("Word forms in this book", Action::DictionarySource(SourceAction::BookWordForms)).detail(state));
+                if self.book_word_forms().is_some() {
+                    rows.push(Item::new("Use the default word forms setting", Action::DictionarySource(SourceAction::ResetBookWordForms)));
+                }
+            }
         }
         rows
     }
@@ -193,9 +221,23 @@ impl Reader {
             self.show(Screen::DictionaryOptions(i));
             return Ok(());
         }
+        if matches!(action, SourceAction::BookWordForms | SourceAction::ResetBookWordForms) {
+            let id = self.open_book_id().ok_or("Open a book first")?;
+            let new = matches!(action, SourceAction::BookWordForms).then(|| !self.word_forms_enabled());
+            let old = self.book_word_forms();
+            self.library.state_mut(id).ok_or("Book unavailable")?.dictionary_word_forms = new;
+            self.mark_dirty();
+            if let Err(error) = self.save_library() {
+                self.library.state_mut(id).unwrap().dictionary_word_forms = old;
+                return Err(error.into());
+            }
+            return Ok(());
+        }
         let mut next = self.dictionary_settings.clone();
         let mut selected_key = None;
-        if matches!(action, SourceAction::ResetOrder) {
+        if matches!(action, SourceAction::DefaultWordForms) {
+            next.disable_word_forms = !next.disable_word_forms;
+        } else if matches!(action, SourceAction::ResetOrder) {
             next.order.clear();
         } else {
             let Screen::DictionaryOptions(i) = self.screen else {
@@ -263,7 +305,8 @@ impl Reader {
                     }
                     next.order = ordered;
                 }
-                SourceAction::ResetOrder | SourceAction::Open(_) => unreachable!(),
+                SourceAction::ResetOrder | SourceAction::Open(_) | SourceAction::DefaultWordForms
+                | SourceAction::BookWordForms | SourceAction::ResetBookWordForms => unreachable!(),
             }
             selected_key = Some(key);
         }
@@ -304,6 +347,65 @@ mod tests {
             (rect.x + rect.w / 2) as f32,
             (rect.y + rect.h / 2) as f32,
         ));
+    }
+
+    #[test]
+    fn inflection_preferences_follow_the_open_book_and_survive_reopening() {
+        let f = Fixture::new();
+        let dictionaries = f.root.join("dictionaries");
+        fs::create_dir(&dictionaries).unwrap();
+        crate::dictionary::tests::write_dictionary(&dictionaries, "Harbour Dictionary",
+            "sametypesequence=m\n", &[("carry", b"To take something from one place to another.")]);
+        let source = f.root.join("Harbour log.xhtml");
+        fs::write(&source, include_str!("../../tests/fixtures/dictionary-word-forms.xhtml")).unwrap();
+        let second = f.root.join("Other.epub");
+        fs::copy(crate::test_fixture("night-landing.epub"), &second).unwrap();
+        let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+        let open = || Reader::open(&f.root, &f.state, vec![font.clone()]).unwrap();
+        let mut app = open();
+        app.open_path(&source).unwrap();
+        let passage = app.current_history_location();
+        app.activate(Action::ShowDictionaries).unwrap();
+        assert_eq!(app.lookup_sources("carried").unwrap()[0].word, "carry");
+        row(&mut app, "Word forms in this book");
+        assert!(app.lookup_sources("carried").unwrap().is_empty());
+        drop(app);
+        let mut app = open();
+        app.open_path(&source).unwrap();
+        assert!(app.lookup_sources("carried").unwrap().is_empty());
+        app.open_path(&second).unwrap();
+        assert_eq!(app.lookup_sources("carried").unwrap()[0].word, "carry");
+        app.activate(Action::ShowDictionaries).unwrap();
+        row(&mut app, "Word forms by default");
+        app.open_path(&source).unwrap();
+        app.activate(Action::ShowDictionaries).unwrap();
+        row(&mut app, "Use the default word forms setting");
+        assert!(app.lookup_sources("carried").unwrap().is_empty());
+        row(&mut app, "Word forms in this book");
+        let before = app.lookup_history.vocabulary.clone();
+        back(&mut app);
+        assert_eq!(app.screen, Screen::Book);
+        let reading = &app.active.as_ref().unwrap().reading;
+        let block = reading.probe.source.blocks.iter().find(|b| b.text.contains("carried")).unwrap();
+        let offset = block.text.find("carried").unwrap();
+        let word = reading.probe.select_range(
+            &reading.probe.anchor(block.key, offset),
+            &reading.probe.anchor(block.key, offset + "carried".len()),
+        ).unwrap();
+        let bounds = reading.highlight_rects(&word)[0];
+        app.input(Input::LongTap((bounds.x + bounds.width / 2) as f32, (bounds.y + bounds.height / 2) as f32));
+        assert_eq!(app.selection.as_ref().unwrap().text, "carried");
+        let rect = app.selection_button(selection_popup::SelectionAction::Dictionary);
+        app.input(Input::Tap((rect.x + rect.w / 2) as f32, (rect.y + rect.h / 2) as f32));
+        assert!(app.definition_over_book());
+        assert_eq!(app.definition_word, "carried");
+        assert_eq!(app.definitions[0].word, "carry");
+        assert_eq!(app.lookup_history.vocabulary, before);
+        crate::app::tests::capture_test_screen(&app, std::slice::from_ref(&font), "READER_WORD_FORM_SCREEN", false);
+        let done = app.definition_layout().1;
+        app.input(Input::Tap((done.x + done.w / 2) as f32, (done.y + done.h / 2) as f32));
+        assert_eq!(app.screen, Screen::Book);
+        assert_eq!(app.current_history_location(), passage);
     }
 
     #[test]
