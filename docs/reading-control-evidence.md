@@ -129,3 +129,11 @@ The Mac rendered 27,652 pages in 1,509 sections across 48 distinct EPUB, AZW3 an
 The Mac and Oasis each passed 456 automated tests. Across nine original EPUBs, both systems resolved all 3,238 available publisher page labels and followed 27 first, middle and last jumps. Eight intact editions agreed with KOReader on the order of every label. In the damaged edition, 927 destinations remained usable. [Publisher page numbers](publisher-page-numbers.md)
 
 For searches in two original EPUBs, the Oasis returned the same 4,983 and 2,371 ordered matches as installed KOReader. The first, middle and last results opened at their source passages. For two editions that assign embedded fonts to regular, bold and italic text, all 31,258 examined Latin glyph groups used the intended face. [Search checks](reflow-search.md) · [Font comparisons](embedded-font-families.md)
+
+## Reader 0.1.16 on the Oasis 3
+
+The Mac and Oasis each passed 471 automated tests. In three original EPUBs, Rust matched 4,328 character-count page boundaries returned by the installed CREngine across three strides. The normal list followed 27 first, middle and last locations and returned to the starting passages. [Stable page tests](character-count-pages.md)
+
+Four original PDFs agreed with installed KOReader on all 16 directional search displays and highlighted word counts. Five Kindle editions and an EPUB exercised embedded font loading and original source preservation. [Fixed-page search](fixed-page-search.md) · [Publisher fonts](kf8-publication-fonts.md)
+
+The complete Mac reflow sweep rendered 27,745 pages in 1,509 sections across 48 original editions. [Original-document evidence](real-document-verification.md)

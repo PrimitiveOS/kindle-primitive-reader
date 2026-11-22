@@ -19,3 +19,5 @@ Installed KOReader on the Oasis generated reference maps for three original EPUB
 | First edition tested | 926 | 314 | 162 |
 | Second edition tested | 919 | 320 | 169 |
 | Third edition tested | 1,001 | 341 | 176 |
+
+The Oasis also compared all 4,328 source boundaries and made the same 27 jumps and returns using isolated profiles and the original EPUBs. Pre- and post-test hashes matched for the books and existing reading data.
