@@ -157,7 +157,7 @@ impl Reader {
         } else {
             state.highlight_style = style;
         }
-        self.mark_dirty();
+        self.mark_book_changed();
         Change::Partial
     }
 
