@@ -45,6 +45,16 @@ fn button(index: usize) -> Rect {
 }
 
 impl Reader {
+    /// Close the optional end prompt through the same Back action used by the reader.
+    /// A verifier can then compare saved document content across a process restart.
+    pub(crate) fn dismiss_end_prompt(&mut self) -> bool {
+        if self.end_dialog.is_none() {
+            return false;
+        }
+        self.input(Input::PageBack);
+        true
+    }
+
     fn current_document(&self) -> Option<(&LibraryBook, u64)> {
         self.fixed
             .as_ref()
@@ -368,6 +378,36 @@ mod tests {
         let chapter = active.reading.probe.chapter_count() - 1;
         let last = active.reading.config.chapter(chapter).unwrap().page_count() - 1;
         app.follow_reflow_page(chapter, last).unwrap();
+    }
+
+    #[test]
+    fn resume_checker_compares_document_pixels_after_closing_the_end_prompt() {
+        let fixture = Fixture::new();
+        let jpeg = fixture.root.join("Single photograph.jpg");
+        image::GrayImage::from_pixel(80, 120, image::Luma([96]))
+            .save(&jpeg).unwrap();
+        let xhtml = fixture.root.join("Short report.xhtml");
+        std::fs::write(&xhtml,
+            "<html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>Short report</title></head><body><p>A single page with a reading position.</p></body></html>")
+            .unwrap();
+        for (number, path) in [jpeg, xhtml].into_iter().enumerate() {
+            let mut app = app(&fixture);
+            app.open_path(&path).unwrap();
+            let paths = app.fonts.iter().map(|p| p.display().to_string()).collect::<Vec<_>>();
+            let mut canvas = Canvas::new(WIDTH, HEIGHT, &paths).unwrap();
+            let document = primitive_app::frame(&app, &mut canvas, false);
+            page_input(&mut app, Input::PageForward);
+            assert_eq!(app.end_dialog, Some(Dialog::Actions));
+            assert_ne!(primitive_app::frame(&app, &mut canvas, false), document);
+            assert!(app.dismiss_end_prompt());
+            assert_eq!(app.end_dialog, None);
+            assert_eq!(primitive_app::frame(&app, &mut canvas, false), document);
+            assert!(!app.dismiss_end_prompt());
+            crate::document_check::verify(
+                &fixture.root, &path, &fixture.root.join(format!("resume-{number}")),
+                app.fonts.clone(), false,
+            ).unwrap();
+        }
     }
 
     #[test]
