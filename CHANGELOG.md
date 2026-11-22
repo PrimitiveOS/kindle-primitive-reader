@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.21
+
+- Reuse parsed resources across neighboring PDF pages during text extraction and search.
+- Adjust word expansion independently on justified lines in EPUB and supported Kindle books.
+- Honor embedded MOBI alignment and legacy font sizes when Publisher CSS is enabled.
+
 ## 0.1.20
 
 - Honor publisher page breaks, keep related blocks together, and preserve the requested number of paragraph lines above and below a page break in horizontal reflow.
