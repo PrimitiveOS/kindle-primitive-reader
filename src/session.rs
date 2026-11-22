@@ -820,7 +820,7 @@ impl Reading {
             draw_highlight_rect(
                 &mut page,
                 rect,
-                crate::highlight_style::Paint::Selection,
+                crate::highlight_style::Paint::ReflowSelection,
                 paint.highlight_appearance,
             );
         }

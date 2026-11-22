@@ -135,6 +135,28 @@ pub(super) fn original_saved_opacity(
     }
     assert!(compared > 400);
     println!("highlight-height-original centered_fill_pixels={compared} unchanged_source_range=1");
+    if app.fixed.is_some() {
+        app.open_highlight_styles(Some(0));
+        app.input(center(app.saved_popup.as_ref().unwrap().style_cell(0)));
+        let Input::Tap(x, y) = center(rect) else {
+            unreachable!()
+        };
+        app.input(Input::LongTap(x, y));
+        assert!(app.pdf_selection.is_some());
+        let frame = primitive_app::frame(app, &mut canvas, false);
+        let overlap = fill.start.max(first)..fill.end.min(last);
+        let mut count = 0;
+        for y in overlap {
+            for x in rect.x + 2..rect.right() - 2 {
+                let k = y as usize * WIDTH as usize + x as usize;
+                assert_eq!(frame[k], mixed(mixed(original[k], 60), 60));
+                count += 1;
+            }
+        }
+        assert!(count > 100);
+        println!("fixed-selection-overlay dual_opacity_pixels={count}");
+        app.pdf_selection = None;
+    }
     // Restore other tests' requested book and stored-mark style.
     reading_settings(app);
     app.input(center(app.saved_popup.as_ref().unwrap().style_cell(1)));
@@ -325,7 +347,7 @@ fn highlight_height_zero_keeps_marks_tappable_and_half_height_applies_to_new_sel
         for y in b.y..b.y + b.height {
             for x in b.x..b.x + b.width {
                 let k = (y as usize) * WIDTH as usize + x as usize;
-                let expected = if (first..first + h).contains(&y) {
+                let expected = if m == &active || (first..first + h).contains(&y) {
                     mixed(before[k], 20)
                 } else {
                     before[k]

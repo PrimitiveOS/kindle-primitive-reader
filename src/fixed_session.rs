@@ -1424,6 +1424,12 @@ impl FixedReading {
         hidden_status: bool,
     ) {
         let mut frame = self.display_frame(paint.visible.clone());
+        let mut appearance=paint.highlight_appearance;
+        if !selection.is_empty() {
+            // Stock ReaderView draws saved gray marks and the temporary selection
+            // with the selection opacity while KOReader's fixed-page temp table is populated.
+            appearance.highlight_opacity=appearance.selection_opacity;
+        }
         let ink = marks.iter().copied().chain(
             selection
                 .iter()
@@ -1452,19 +1458,19 @@ impl FixedReading {
                 let end = (y + height).min(page.rows.end as i32).max(0) as usize;
                 for row in first..end {
                     let start = row * WIDTH as usize;
-                    paint_style.draw_row(&mut frame.pixels[start + x0..start + x1], paint.highlight_appearance);
+                    paint_style.draw_row(&mut frame.pixels[start + x0..start + x1], appearance);
                 }
             } else {
                 let mut first=clip.y0.floor() as i32;
                 let mut last=clip.y1.ceil() as i32;
-                if let Some(fill)=paint_style.fill_band(bounds.y0.floor() as i32,bounds.height().ceil() as i32,paint.highlight_appearance.line_height) {
+                if let Some(fill)=paint_style.fill_band(bounds.y0.floor() as i32,bounds.height().ceil() as i32,appearance.line_height) {
                     first=first.max(fill.start);
                     last=last.min(fill.end);
                 }
                 for y in first.max(0) as usize..last.max(0) as usize {
                     let span = quad.row(y, WIDTH as usize);
                     let start = y * WIDTH as usize;
-                    paint_style.draw_row(&mut frame.pixels[start + span.start..start + span.end], paint.highlight_appearance);
+                    paint_style.draw_row(&mut frame.pixels[start + span.start..start + span.end], appearance);
                 }
             }
         }

@@ -77,6 +77,7 @@ impl Appearance {
 pub(crate) enum Paint {
     Saved(HighlightStyle),
     Selection,
+    ReflowSelection,
     Temporary(u8),
 }
 
@@ -124,12 +125,14 @@ impl Paint {
 
     pub(crate) fn draw_row(self, pixels: &mut [u8], appearance: Appearance) {
         match self {
-            Self::Saved(HighlightStyle::Lighten) | Self::Selection => {
-                let opacity = match self {
-                    Self::Selection => appearance.selection_opacity,
-                    _ => appearance.highlight_opacity,
+            Self::Saved(HighlightStyle::Lighten) | Self::Selection | Self::ReflowSelection => {
+                let multiplier = match self {
+                    Self::ReflowSelection => reflow_selection_gray(appearance.selection_opacity),
+                    Self::Selection => {
+                        255 - u16::from(appearance.selection_opacity.min(100)) * 255 / 100
+                    }
+                    _ => 255 - u16::from(appearance.highlight_opacity.min(100)) * 255 / 100,
                 };
-                let multiplier = 255 - u16::from(opacity.min(100)) * 255 / 100;
                 for pixel in pixels {
                     *pixel = ((u16::from(*pixel) * multiplier + 127) / 255) as u8;
                 }
@@ -150,9 +153,52 @@ impl Paint {
     }
 }
 
+// CREngine receives the hex color emitted by ReaderHighlight::setSelectionColor.
+#[cfg(feature = "kindle")]
+fn reflow_selection_gray(percent: u8) -> u16 {
+    match percent.min(100) {
+        0 => 255,
+        100 => 0,
+        opacity => {
+            let value = 256 * (100 - u16::from(opacity)) / 100;
+            if value < 16 {
+                // Stock repeats a single hex digit three times. CREngine reads it as
+                // a 12-bit integer and weights its RGB channels 1:2:1.
+                (2 * value + 17 * value) / 4
+            } else {
+                value
+            }
+        }
+    }
+}
+
 #[cfg(all(test, feature = "kindle"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reflow_selection_preserves_the_installed_engine_tones_at_full_line_height() {
+        for (p, expected) in [
+            (0, 255),
+            (5, 243),
+            (10, 230),
+            (15, 217),
+            (20, 204),
+            (30, 179),
+            (35, 166),
+            (50, 128),
+            (60, 102),
+            (65, 89),
+            (90, 25),
+            (95, 57),
+            (100, 0),
+        ] {
+            assert_eq!(reflow_selection_gray(p), expected);
+            for h in [0, 49, 100] {
+                assert_eq!(Paint::ReflowSelection.fill_band(0, 93, h), None);
+            }
+        }
+    }
 
     #[test]
     fn height_centers_the_stock_band_for_odd_and_even_lines_without_moving_strokes() {
