@@ -1,5 +1,7 @@
 //! Time spent on a book's reading screen, kept only in Reader's local storage.
 
+pub(crate) mod history;
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Read};
@@ -35,6 +37,13 @@ pub(crate) struct ReadingStats {
 }
 
 impl ReadingStats {
+    pub(crate) fn recorded_totals(&self) -> BTreeMap<u64, u64> {
+        self.totals
+            .iter()
+            .map(|(&id, time)| (id, time.as_secs()))
+            .collect()
+    }
+
     pub fn load(path: &Path) -> Self {
         let totals = with_storage(|| {
             let metadata = fs::symlink_metadata(path)?;

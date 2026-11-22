@@ -134,3 +134,7 @@ It covers the multilingual, long and vertical-page fixtures and writes one
 software timing and peak-memory record per process. The
 hardware batch still verifies the actual panel, Launcher return and storage
 ownership through the Kindle runtime.
+
+## Daily reading history and calendar
+
+Daily history now has a separate bounded, atomic interval journal. It retains older screen-time aggregates as undated data, records filtered reading visits, distinguishes uncapped reread time from capped distinct-screen time, and exposes a calendar and day timeline from Tools, Reading data and book information. Desktop acceptance covers deterministic time accounting, local DST boundaries, source-position preservation in real EPUB/PDF workflows and UI feedback. Native acceptance is pending. The full statistics plugin remains open for page-count rescaling, broader time-range reports, advanced calendar controls and history import/sync. [Implementation, evidence and exact limits](reading-statistics.md)

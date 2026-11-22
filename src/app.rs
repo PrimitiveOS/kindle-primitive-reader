@@ -2,6 +2,7 @@
 mod annotation_search;
 mod bar_icons;
 mod bookmark_browser;
+mod reading_history;
 mod custom_contents;
 mod contents_position;
 pub(crate) mod publisher_pages;
@@ -134,6 +135,7 @@ enum Screen {
     LibraryFind,
     OrganizeLibrary,
     BookmarkBrowser(bookmark_browser::Page),
+    ReadingHistory(reading_history::Page),
     BookList,
     BookDetails,
     CollectionName,
@@ -224,6 +226,7 @@ impl Screen {
             Self::LibraryFind => "Find a document",
             Self::OrganizeLibrary => "Library organization",
             Self::BookmarkBrowser(page) => page.title(),
+            Self::ReadingHistory(page) => page.title(),
             Self::BookList => "Books",
             Self::BookDetails => "Book details",
             Self::CollectionName => "Collection name",
@@ -316,6 +319,7 @@ enum Action {
     ListBooks(BookList),
     OrganizeCurrent,
     BookmarkBrowser(bookmark_browser::Command),
+    ReadingHistory(reading_history::Command),
     ToggleNonlinear,
     Flow(hidden_flows::FlowAction),
     ViewCover,
@@ -557,6 +561,8 @@ pub struct Reader {
     pages_since_refresh: u8,
     touch_locked: bool,
     stats: ReadingStats,
+    reading_history: crate::reading_stats::history::History,
+    history_view: reading_history::View,
     pace: crate::reading_pace::ReadingPace,
     stats_path: PathBuf,
     stats_awake: bool,
@@ -661,6 +667,9 @@ impl Reader {
         let controls = ReadingControls::load(&controls_path, !library.recents().is_empty());
         let stats_path = data.join("reading-stats.json");
         let stats = ReadingStats::load(&stats_path);
+        let reading_history = crate::reading_stats::history::History::load(
+            data.join("reading-history.json"), stats.recorded_totals(),
+        );
         let profiles_path = data.join("reading-profiles.json");
         let profiles = reading_profiles::load(&profiles_path);
         let dictionary_preference = data.join("dictionary-preference.json");
@@ -696,6 +705,8 @@ impl Reader {
             pages_since_refresh: 0,
             touch_locked: false,
             stats,
+            reading_history,
+            history_view: Default::default(),
             pace: crate::reading_pace::ReadingPace::new(data.join("reading-pace")),
             stats_path,
             stats_awake: true,
@@ -1005,7 +1016,7 @@ impl Reader {
             self.scan_columns = None;
         }
         if !matches!(screen, Screen::ReadFixedText | Screen::BookDetails)
-            && !(screen == Screen::Illustration && self.book_details.is_some())
+            && !(matches!(screen, Screen::Illustration | Screen::ReadingHistory(_)) && self.book_details.is_some())
         {
             self.text_flow = None;
         }
@@ -1019,7 +1030,7 @@ impl Reader {
         if screen != Screen::ImportPdfAnnotations {
             self.pdf_annotation_import.clear();
         }
-        if !matches!(screen, Screen::BookDetails | Screen::Illustration) {
+        if !matches!(screen, Screen::BookDetails | Screen::Illustration | Screen::ReadingHistory(_)) {
             self.book_details = None;
         }
         if screen != Screen::PageOverview {
@@ -1068,6 +1079,7 @@ impl Reader {
         self.map_window = fixed_book_map::MapWindow::default();
         self.sync_auto_turn(Instant::now());
         self.update_stats_activity(Instant::now());
+        if screen == Screen::Library { self.reading_history.finish(Instant::now()); }
         self.current_contents_row = if screen == Screen::PublisherPages {
             self.visible_publisher_page()
         } else {
@@ -1136,6 +1148,11 @@ impl Reader {
             }
             _ => None,
         };
+        let book = book.filter(|id| {
+            let options = self.reading_history.options();
+            options.enabled && (!options.freeze_finished
+                || self.library.state(*id).is_none_or(|state| state.status() != ReadingStatus::Finished))
+        });
         self.stats.set_active(book, now);
         let page = book.and_then(|id| {
             if let Some(fixed) = &self.fixed {
@@ -1156,6 +1173,13 @@ impl Reader {
             Some((id, page_key, visible_pages as u8))
         });
         self.pace.set_page(page, now);
+        if let Some(id) = book {
+            let title = self.active.as_ref().filter(|b| b.id == id).map(|b| b.entry.title.as_str())
+                .or_else(|| self.fixed.as_ref().filter(|b| b.id == id).map(|b| b.entry.title.as_str()));
+            if let Some(title) = title { self.reading_history.remember_title(id, title); }
+        }
+        let history_page = page.map(|(book, page, _)| (book, page));
+        self.reading_history.set_page(history_page, now);
     }
 
     fn save_library(&mut self) -> io::Result<()> {
@@ -1209,6 +1233,7 @@ impl Reader {
     }
 
     fn items(&self) -> Vec<Item> {
+        if let Screen::ReadingHistory(page) = self.screen { return self.reading_history_items(page); }
         if matches!(self.screen, Screen::Vocabulary | Screen::VocabularyWord | Screen::VocabularyOptions | Screen::VocabularyBooks) { return self.vocabulary_items(); }
         if let Screen::LibraryExport(page) = self.screen { return self.library_export_items(page); }
         if self.screen == Screen::HiddenFlows { return self.hidden_flow_items(); }
@@ -1329,6 +1354,8 @@ impl Reader {
                 items.push(Item::new("Import a copied KOReader position", Action::PreviewCopiedPosition)
                     .detail("From reader/data/koreader-progress.lua"));
             }
+            items.push(Item::new("Reading statistics", Action::ReadingHistory(reading_history::Command::Open(None)))
+                .detail("Daily history, calendar, and book totals"));
             return items;
         }
         if self.screen == Screen::ClearOcr {
@@ -1888,7 +1915,7 @@ impl Reader {
                 }
                 let seconds = self.stats.seconds_read(book.id, Instant::now());
                 items
-                    .push(Item::new("Reading time", Action::Heading).detail(reading_time(seconds)));
+                    .push(Item::new("Reading time", Action::ReadingHistory(reading_history::Command::Open(Some(book.id)))).detail(reading_time(seconds)));
                 let state = self.library.state(book.id);
                 let favorite = state.is_some_and(|state| state.favorite);
                 items.push(Item::new(
@@ -1938,6 +1965,7 @@ impl Reader {
     fn activate(&mut self, action: Action) -> Result<()> {
         match action {
             Action::BookmarkBrowser(command) => self.activate_bookmark_browser(command)?,
+            Action::ReadingHistory(command) => self.activate_reading_history(command)?,
             Action::Flow(action) => self.flow_action(action)?,
             Action::ToggleNonlinear => {
                 let active = self.active.as_mut().ok_or("Open a book first")?;
@@ -5085,6 +5113,7 @@ impl Reader {
 
 impl Reader {
     fn draw_content(&self, canvas: &mut Canvas) {
+        if self.draw_reading_history(canvas) { return; }
         // The launcher's theme may have changed (it asks for a redraw when it does).
         if let Some(theme) = &self.system_theme {
             theme.refresh();
@@ -5626,6 +5655,7 @@ impl App for Reader {
         if let Some(change) = self.vocabulary_dialog_input(input) { return change; }
         if self.flow_popup.is_some() { return self.flow_popup_input(input); }
         if self.read_alarm.modal() { return self.read_alarm_input(input); }
+        if let Some(change) = self.reading_history_input(input) { return change; }
         if self.end_dialog.is_some() { return self.end_dialog_input(input); }
         if self.range_edit.is_some() { return self.range_input(input); }
         if self.saved_popup_over_book() {
@@ -5689,6 +5719,7 @@ impl App for Reader {
                 self.update_stats_activity(Instant::now());
             } else {
                 self.stats.discard_active();
+                self.reading_history.discard_active();
                 self.pace.storage_returned();
             }
             if let Some(active) = &mut self.active {
@@ -5709,6 +5740,7 @@ impl App for Reader {
             return if input == Input::Wake { self.poll_read_alarm(Instant::now(), true) } else { Change::None };
         }
         if self.read_alarm.modal() { return self.read_alarm_input(input); }
+        if let Some(change) = self.reading_history_input(input) { return change; }
         self.sync_auto_turn(Instant::now());
         if self.flow_popup.is_some() { return self.flow_popup_input(input); }
         self.auto_turn.activity(Instant::now());
@@ -5936,6 +5968,7 @@ impl App for Reader {
                             .map_or(Screen::Library, |book| book.back);
                         self.show(back);
                     }
+                    Screen::ReadingHistory(_) => self.history_back(),
                     Screen::ReadingData => self.show(Screen::Library),
                     Screen::ReadingControls => self.show(if self.fixed.is_some() {
                         Screen::FixedTools
@@ -6055,6 +6088,7 @@ impl App for Reader {
             .chain(self.ocr.as_ref().map(|job| job.deadline))
             .chain(self.text_flow.as_ref().and_then(TextFlow::deadline))
             .chain(self.stats.deadline())
+            .chain(self.reading_history.deadline())
             .chain(
                 self.auto_turn
                     .deadline()
@@ -6086,6 +6120,9 @@ impl App for Reader {
                 return self.report(error);
             }
         }
+        if self.reading_history.deadline().is_some_and(|at| at <= now)
+            && let Err(error) = self.reading_history.save(now, crate::mark_time::now(), false)
+            && error.kind() != io::ErrorKind::WouldBlock { return self.report(error); }
         if self.stats.deadline().is_some_and(|at| at <= now)
             && let Err(error) = self
                 .stats
@@ -6218,6 +6255,7 @@ impl App for Reader {
         self.save_library()?;
         let now = Instant::now();
         self.stats.checkpoint(&self.stats_path, now, true)?;
+        self.reading_history.save(now, crate::mark_time::now(), true)?;
         self.pace.checkpoint(now)?;
         if let Err(error) = self.save_bookmark_metadata() {
             eprintln!("reader metadata_cache_save_failed={error}");
@@ -6234,6 +6272,7 @@ impl App for Reader {
             self.show(Screen::Contents);
         }
         self.stats.discard_active();
+        self.reading_history.discard_active();
         self.pace.storage_returned();
         self.update_stats_activity(Instant::now());
         self.ocr_assets = self
