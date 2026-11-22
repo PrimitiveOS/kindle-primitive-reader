@@ -2,7 +2,8 @@
 
 ## 0.1.20
 
-- Honor publisher page breaks and requests to keep paragraphs or adjacent blocks together in horizontal reflow.
+- Honor publisher page breaks, keep related blocks together, and preserve the requested number of paragraph lines above and below a page break in horizontal reflow.
+- Open supported unencrypted MOBI and KF8 books using HUFF/CDIC compression, including the supported editions of hybrid books.
 - Suggest similar dictionary headwords after a spelling or word-form lookup misses. Close the popup at any time to return to reading.
 
 ## 0.1.19
