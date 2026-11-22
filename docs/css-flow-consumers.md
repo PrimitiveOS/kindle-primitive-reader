@@ -94,8 +94,11 @@ grid fallback.
 
 Focused tests cover 17 provenance, 6 shared-view, 3 existing vertical, 8 Probe,
 2 live session/custom-boundary and 1 marker cases (37 distinct passing focused
-cases). The workspace builds successfully on the Mac; package 14 and system 4
-suites passed. The final serial library receipt is recorded after completion.
+cases). The workspace builds successfully on the Mac. The final serial library suite
+passed 813 tests with 62 opt-in cases ignored; package 14 and system 4 suites also
+passed (831 ordinary tests, zero failures). The authorized original 034 projection
+and independent extracted-popup source contract also passed with its unchanged
+SHA-256; this does not establish namespace-selector or rendered-spine parity.
 Exact Mach-O executable hashes, source hashes, build JSON and screenshots are
 retained privately under `build/parity-review/flow-consumer-evidence/`.
 
