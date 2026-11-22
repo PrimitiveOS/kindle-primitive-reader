@@ -114,6 +114,7 @@ pub fn export_copy(
     for mark in highlights {
         for (page, bounds, text) in mark.parts() {
             by_page.entry(page).or_default().push(PdfHighlight {
+                created_at: mark.created_at,
                 style: mark.style,
                 page, bounds: bounds.to_vec(), text: text.to_owned(), note: mark.note.clone(), continuation: Vec::new(),
             });
@@ -982,6 +983,7 @@ mod tests {
 
     fn mark() -> PdfHighlight {
         PdfHighlight {
+            created_at: None,
             style: Default::default(),
             continuation: Vec::new(),
             page: 1,
@@ -1137,6 +1139,7 @@ mod tests {
         let original = fixture(false);
         let existing = import_highlights(&original, geometry).unwrap().remove(0);
         let external = PdfHighlight {
+            created_at: None,
             style: Default::default(),
             continuation: Vec::new(),
             page: existing.page,

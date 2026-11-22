@@ -128,13 +128,14 @@ impl Reader {
             })
         })?;
         let added = match (entry, mapped) {
-            (SidecarMark::Bookmark { label, .. }, Ok(Resolved::Point(p))) => {
+            (SidecarMark::Bookmark { label, created_at, .. }, Ok(Resolved::Point(p))) => {
                 let label = label.clone().unwrap_or_else(|| {
                     active.reading.probe.chapter_entries()[p.chapter]
                         .label
                         .clone()
                 });
                 import.bookmarks.push(Bookmark {
+                    created_at: *created_at,
                     label,
                     position: ReadingPosition {
                         chapter: p.chapter,
@@ -146,7 +147,7 @@ impl Reader {
             }
             (
                 SidecarMark::Highlight {
-                    text, note, style, ..
+                    text, note, style, created_at, ..
                 },
                 Ok(Resolved::Range(a, b)),
             ) => {
@@ -157,6 +158,7 @@ impl Reader {
                     .filter(|quote| quote.text.split_whitespace().eq(text.split_whitespace()));
                 if let Some(selection) = selection {
                     import.highlights.push(Highlight {
+                        created_at: *created_at,
                         style: *style,
                         selection,
                         note: note.clone(),
@@ -195,7 +197,7 @@ impl Reader {
             .remember(&active.entry, id, &active.reading.probe.title);
         let mut summary = BackupSummary::default();
         merge_text_marks(state, &import.bookmarks, &import.highlights, &mut summary);
-        if summary.bookmarks_added + summary.highlights_added + summary.notes_added > 0 {
+        if summary.bookmarks_added + summary.highlights_added + summary.notes_added + summary.timestamps_added > 0 {
             self.mark_dirty();
             self.save()?;
         }
@@ -241,9 +243,9 @@ mod tests {
             fs::write(dir.join("metadata.epub.lua"), br#"return {
                 cre_dom_version=20240114,partial_md5_checksum="71bcf61d42cc5f9e83a2bceb144ad66f",
                 annotations={
-                    {page="/body/DocFragment[2]/body/p[1]/text().4",text="Evening"},
+                    {page="/body/DocFragment[2]/body/p[1]/text().4",text="Evening",datetime="2024-01-01T00:00:00Z"},
                     {drawer="lighten",pos0="/body/DocFragment[1]/body/p[9]/text().4",
-                     pos1="/body/DocFragment[1]/body/p[9]/text().8",text="tide",note="A repeated word"},
+                     pos1="/body/DocFragment[1]/body/p[9]/text().8",text="tide",note="A repeated word",datetime="2024-01-02 18:32:07",datetime_updated="2026-02-03 04:05:06"},
                     {drawer="lighten",pos0="/body/DocFragment[1]/body/p[9]/text().4",
                      pos1="/body/DocFragment[1]/body/p[9]/text().8",text="different"},
                 } }"#).unwrap();
@@ -311,15 +313,25 @@ mod tests {
             (saved.bookmarks.len(), saved.highlights.len()),
             (counts.0, counts.1)
         );
-        for (mark, expected) in
+        if supplied.is_none() {
+            assert_eq!(saved.bookmarks[0].created_at, Some(1_704_067_200));
+            assert_eq!(saved.highlights[0].created_at, crate::mark_time::parse(b"2024-01-02 18:32:07"));
+        }
+        let expected_bookmark_times = source.marks.iter().filter_map(|mark| match mark {
+            SidecarMark::Bookmark { created_at, .. } => Some(*created_at),
+            _ => None,
+        });
+        assert!(saved.bookmarks.iter().map(|m| m.created_at).eq(expected_bookmark_times));
+        for (mark, (expected, created_at)) in
             saved
                 .highlights
                 .iter()
                 .zip(source.marks.iter().filter_map(|mark| match mark {
-                    koreader_sidecar::SidecarMark::Highlight { text, .. } => Some(text),
+                    SidecarMark::Highlight { text, created_at, .. } => Some((text, created_at)),
                     _ => None,
                 }))
         {
+            assert_eq!(mark.created_at, *created_at);
             assert!(
                 mark.selection
                     .text

@@ -163,11 +163,13 @@ mod tests {
         let mut end = start.clone();
         end.offset += "The first step".len();
         app.selection = reading.probe.select_range(&start, &end);
+        let before_marks = crate::mark_time::now().unwrap();
         app.save_highlight(Some("Check the tide chart".into()))
             .unwrap();
         app.follow_reflow_page(1, 0).unwrap();
         app.activate(Action::AddBookmark).unwrap();
 
+        let mark_window = before_marks..=crate::mark_time::now().unwrap();
         let previous = Library::open(&fixture.root, &fixture.state).unwrap();
         assert_eq!(
             previous
@@ -195,6 +197,9 @@ mod tests {
             saved.state(id).unwrap().highlights[0].note.as_deref(),
             Some("Check the tide chart")
         );
+        let marks = saved.state(id).unwrap();
+        assert!(mark_window.contains(&marks.bookmarks[0].created_at.unwrap()));
+        assert!(mark_window.contains(&marks.highlights[0].created_at.unwrap()));
         lifecycle.input(&mut app, Input::Wake, |error| panic!("{error}"));
         assert_eq!(app.current_position().unwrap().chapter, 1);
         app.follow_reflow_page(0, 0).unwrap();

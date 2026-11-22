@@ -507,12 +507,16 @@ pub struct ReadingPosition {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Bookmark {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<i64>,
     pub label: String,
     pub position: ReadingPosition,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Highlight {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<i64>,
     #[serde(
         default,
         skip_serializing_if = "crate::highlight_style::HighlightStyle::is_default"
@@ -533,6 +537,8 @@ pub struct HighlightPage {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PdfHighlight {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<i64>,
     #[serde(
         default,
         skip_serializing_if = "crate::highlight_style::HighlightStyle::is_default"
@@ -792,6 +798,7 @@ pub struct BackupSummary {
     pub highlights_added: usize,
     pub pdf_highlights_added: usize,
     pub notes_added: usize,
+    pub timestamps_added: usize,
     pub duplicates: usize,
     pub skipped: usize,
     pub note_conflicts: usize,
@@ -1781,6 +1788,7 @@ fn merge_states(current: &[BookState], backup: &[BookState]) -> (Vec<BookState>,
                 .iter_mut()
                 .find(|existing| existing.page == mark.page && existing.bounds == mark.bounds && existing.continuation == mark.continuation)
             {
+                merge_created_at(&mut existing.created_at, mark.created_at, &mut summary);
                 merge_note(&mut existing.note, &mark.note, &mut summary);
             } else if target.pdf_highlights.len() < MAX_PDF_HIGHLIGHTS {
                 target.pdf_highlights.push(mark.clone());
@@ -1804,14 +1812,16 @@ pub(crate) fn merge_text_marks(
         let label = clean_metadata(&bookmark.label);
         if !valid_position(&bookmark.position) || label.is_empty() {
             summary.skipped += 1;
-        } else if target
+        } else if let Some(existing) = target
             .bookmarks
-            .iter()
-            .any(|existing| same_position(&existing.position, &bookmark.position))
+            .iter_mut()
+            .find(|existing| same_position(&existing.position, &bookmark.position))
         {
+            merge_created_at(&mut existing.created_at, bookmark.created_at, summary);
             summary.duplicates += 1;
         } else if target.bookmarks.len() < MAX_IMPORTED_MARKS {
             target.bookmarks.push(Bookmark {
+                created_at: bookmark.created_at,
                 label,
                 position: bookmark.position.clone(),
             });
@@ -1827,6 +1837,7 @@ pub(crate) fn merge_text_marks(
             existing.selection.start == mark.selection.start
                 && existing.selection.end == mark.selection.end
         }) {
+            merge_created_at(&mut existing.created_at, mark.created_at, summary);
             merge_note(&mut existing.note, &mark.note, summary);
         } else if target.highlights.len() < MAX_IMPORTED_MARKS {
             target.highlights.push(mark.clone());
@@ -1835,6 +1846,13 @@ pub(crate) fn merge_text_marks(
         } else {
             summary.skipped += 1;
         }
+    }
+}
+
+fn merge_created_at(current: &mut Option<i64>, imported: Option<i64>, summary: &mut BackupSummary) {
+    if current.is_none() && imported.is_some() {
+        *current = imported;
+        summary.timestamps_added += 1;
     }
 }
 
@@ -2455,10 +2473,12 @@ mod tests {
         first_state.position = Some(position.clone());
         first_state.preferences.font_size = Some(54.0);
         first_state.bookmarks.push(Bookmark {
+            created_at: None,
             label: "Beginning".into(),
             position: position.clone(),
         });
         first_state.highlights.push(Highlight {
+            created_at: None,
             style: Default::default(),
             selection: TextSelection {
                 start: anchor.clone(),
@@ -2723,6 +2743,7 @@ mod tests {
             y1: 0.4,
         };
         let mark = PdfHighlight {
+            created_at: None,
             style: Default::default(),
             continuation: Vec::new(),
             page: 2,
@@ -2786,6 +2807,7 @@ mod tests {
             y1: 0.2,
         }];
         let mut single = PdfHighlight {
+            created_at: None,
             style: Default::default(),
             page: 5,
             bounds: bounds.clone(),
@@ -2942,10 +2964,12 @@ mod tests {
             anchor: Some(anchor(offset)),
         };
         let bookmark = |page, offset| Bookmark {
+            created_at: None,
             label: "A bookmark".into(),
             position: position(page, offset),
         };
         let mark = |offset, note: Option<&str>| Highlight {
+            created_at: None,
             style: Default::default(),
             selection: TextSelection {
                 start: anchor(offset),
@@ -2959,6 +2983,7 @@ mod tests {
         saved.position = Some(position(4, 40));
         saved.preferences.font_size = Some(54.0);
         saved.bookmarks.push(bookmark(1, 2));
+        saved.bookmarks[0].created_at = Some(11);
         saved
             .highlights
             .extend([mark(2, Some("Keep this")), mark(4, None)]);
@@ -2972,6 +2997,9 @@ mod tests {
             mark(4, Some("Fill blank")),
             mark(8, None),
         ]);
+        old.bookmarks[0].created_at = Some(12);
+        old.bookmarks[1].created_at = Some(13);
+        old.highlights[1].created_at = Some(14);
         let another = source.resolve(Path::new("Another.pdf")).unwrap();
         let another_id = source.identify(&another).unwrap();
         let added = source.remember(&another, another_id, "Another document");
@@ -2983,6 +3011,7 @@ mod tests {
         added.fixed_preferences.width_fit = true;
         added
             .add_pdf_highlight(PdfHighlight {
+                created_at: Some(15),
                 style: Default::default(),
                 continuation: Vec::new(),
                 page: 2,
@@ -3008,6 +3037,7 @@ mod tests {
                 highlights_added: 1,
                 pdf_highlights_added: 1,
                 notes_added: 2,
+                timestamps_added: 1,
                 duplicates: 3,
                 skipped: 0,
                 note_conflicts: 1,
@@ -3024,6 +3054,9 @@ mod tests {
         assert_eq!(saved.position, Some(position(4, 40)));
         assert_eq!(saved.preferences.font_size, Some(54.0));
         assert_eq!(saved.bookmarks.len(), 2);
+        assert_eq!(saved.bookmarks.iter().map(|m| m.created_at).collect::<Vec<_>>(), [Some(11), Some(13)]);
+        assert_eq!(saved.highlights.iter().map(|m| m.created_at).collect::<Vec<_>>(), [None, Some(14), None]);
+        assert_eq!(target.state(another_id).unwrap().pdf_highlights[0].created_at, Some(15));
         assert_eq!(saved.highlights[0].note.as_deref(), Some("Keep this"));
         assert_eq!(saved.highlights[1].note.as_deref(), Some("Fill blank"));
         assert!(!current.join("Another.pdf").exists());
@@ -3042,6 +3075,7 @@ mod tests {
         let repeated = target.preview_backup(&backup).unwrap();
         assert_eq!(repeated.summary().new_books, 0);
         assert_eq!(repeated.summary().notes_added, 0);
+        assert_eq!(repeated.summary().timestamps_added, 0);
         target.merge_backup(repeated).unwrap();
         assert_eq!(target.bytes().unwrap(), before);
         target

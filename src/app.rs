@@ -2724,7 +2724,11 @@ impl Reader {
             if state.bookmarks.len() >= 256 {
                 return Err("This book has reached its bookmark limit".into());
             }
-            state.bookmarks.push(Bookmark { label, position });
+            state.bookmarks.push(Bookmark {
+                created_at: crate::mark_time::now(),
+                label,
+                position,
+            });
             self.mark_book_changed();
         }
         self.show(screen);
@@ -4647,6 +4651,7 @@ impl Reader {
                 if let Some(outcome) = resolver.step(&mut book).map_err(io::Error::other)? {
                     if let QuoteMatch::Unique(selection) = outcome {
                         import.matched.push(Highlight {
+                            created_at: entry.time,
                             style: entry.drawer,
                             selection,
                             note: entry.note.clone(),
@@ -4691,12 +4696,17 @@ impl Reader {
             .remember(&active.entry, active.id, &active.reading.probe.title);
         let mut added = 0;
         let mut updated = 0;
+        let mut timestamps_added = 0;
         for mark in import.matched {
             if let Some(existing) = state
                 .highlights
                 .iter_mut()
                 .find(|existing| existing.selection == mark.selection)
             {
+                if existing.created_at.is_none() && mark.created_at.is_some() {
+                    existing.created_at = mark.created_at;
+                    timestamps_added += 1;
+                }
                 if existing.note.is_none() && mark.note.is_some() {
                     existing.note = mark.note;
                     updated += 1;
@@ -4706,7 +4716,7 @@ impl Reader {
                 added += 1;
             }
         }
-        if added > 0 || updated > 0 {
+        if added > 0 || updated > 0 || timestamps_added > 0 {
             self.mark_dirty();
         }
         self.show(Screen::Highlights);
@@ -4791,6 +4801,7 @@ impl Reader {
                 return Err("This book has reached its highlight limit".into());
             }
             state.highlights.push(Highlight {
+                created_at: crate::mark_time::now(),
                 style: state
                     .highlight_style
                     .unwrap_or(self.controls.highlight_style),
@@ -4869,6 +4880,7 @@ impl Reader {
             .into_iter()
             .filter_map(|annotation| {
                 let mark = PdfHighlight {
+                    created_at: None,
                     style: annotation.style,
                     continuation: Vec::new(),
                     page: annotation.page,
@@ -4972,6 +4984,7 @@ impl Reader {
             }
         } else {
             state.add_pdf_highlight(PdfHighlight {
+                created_at: crate::mark_time::now(),
                 style: state
                     .highlight_style
                     .unwrap_or(self.controls.highlight_style),
@@ -7545,6 +7558,7 @@ mod tests {
         assert_eq!(state.pdf_highlights.len(), 1);
         state
             .add_pdf_highlight(PdfHighlight {
+                created_at: None,
                 style: Default::default(),
                 continuation: Vec::new(),
                 page: 0,
@@ -9744,18 +9758,16 @@ mod tests {
         let id = fixed.id;
         let layer = fixed.reading.page_text(0).unwrap();
         let first = layer.words.last().unwrap();
-        let initial = PdfHighlight {
-            style: Default::default(),
-            page: 0,
-            bounds: vec![first.bounds],
-            text: layer.text[first.bytes.clone()].into(),
-            note: Some("Check the harbor".into()),
-            continuation: vec![],
-        };
-        app.library
-            .remember(&fixed.entry, id, &fixed.entry.title)
-            .add_pdf_highlight(initial.clone())
-            .unwrap();
+        let point = fixed.reading.visible_rectangle(0, first.bounds).unwrap().center();
+        let before = crate::mark_time::now().unwrap();
+        app.input(Input::LongTap(point.x as f32, point.y as f32));
+        app.save_pdf_highlight(Some("Check the harbor".into())).unwrap();
+        let fixed = app.fixed.as_ref().unwrap();
+        let mark = &mut app.library.remember(&fixed.entry, id, &fixed.entry.title).pdf_highlights[0];
+        assert!((before..=crate::mark_time::now().unwrap()).contains(&mark.created_at.unwrap()));
+        // An edit of an older annotation must keep its independently saved creation time.
+        mark.created_at = Some(1_600_000_001);
+        let initial = mark.clone();
         app.follow_fixed(1, None).unwrap();
         let origin = app.current_history_location().unwrap();
         let history = app.back.clone();
@@ -9818,6 +9830,7 @@ mod tests {
         assert_eq!(records.len(), 1);
         let mark = &records[0];
         assert_eq!(mark.note.as_deref(), Some("Check the harbor"));
+        assert_eq!(mark.created_at, Some(1_600_000_001));
         assert_eq!(mark.continuation.len(), 2);
         let fixed = app.fixed.as_ref().unwrap();
         let geometry = |page| fixed.reading.pdf_geometry(page);
@@ -9851,6 +9864,7 @@ mod tests {
             .remember(&fixed.entry, fixed.id, &fixed.entry.title);
         state
             .add_pdf_highlight(PdfHighlight {
+                created_at: None,
                 style: Default::default(),
                 continuation: Vec::new(),
                 page: 1,
@@ -10470,6 +10484,7 @@ mod tests {
         app.library
             .remember(&fixed.entry, fixed.id, "Signal chart")
             .add_pdf_highlight(PdfHighlight {
+                created_at: None,
                 style: Default::default(),
                 continuation: Vec::new(),
                 page: 1,
@@ -11207,7 +11222,7 @@ mod tests {
         let export = serde_json::json!({
             "title": title,
             "entries": [
-                {"text":"The copper lantern stood beside the door.","note":"Check the lantern"},
+                {"text":"The copper lantern stood beside the door.","note":"Check the lantern","time":1750000001},
                 {"text":"The tide keeps its own time.","note":"Repeated quote"}
             ]
         });
@@ -11230,5 +11245,8 @@ mod tests {
         let highlights = &app.library.state(id).unwrap().highlights;
         assert_eq!(highlights.len(), 1);
         assert_eq!(highlights[0].note.as_deref(), Some("Check the lantern"));
+        assert_eq!(highlights[0].created_at, Some(1_750_000_001));
+        app.save().unwrap();
+        assert_eq!(fixture.app().library.state(id).unwrap().highlights[0].created_at, Some(1_750_000_001));
     }
 }
