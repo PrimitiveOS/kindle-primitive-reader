@@ -163,3 +163,13 @@ Dictionary selections from eight original EPUBs returned the same 77 visible def
 Reader and installed KOReader returned 360, 1,150, 4,131 and 5,000 results across four original PDFs. The fourth total reached the result limit. All four returned to the original viewport. The 1,066-page document took Reader 319 seconds to finish, compared with 44 seconds in KOReader. The first selectable result appeared in 0.64 seconds. [Search results and word-boundary differences](fixed-page-search.md)
 
 The desktop run checked 1,509 sections and painted 27,779 pages across 48 distinct original reflowable editions.
+
+## Reader 0.1.20 on the Oasis 3
+
+The Mac and Oasis each passed 515 automated tests. Original EPUBs supplied 31 explicit interior page breaks and 36 requests to keep passages together. The Oasis reproduced all 16 checked repairs to split paragraphs and retained the original source positions. [Publisher page breaks](publisher-page-breaks.md) · [Paragraph ends](paragraph-ends.md)
+
+Dictionary lookups found all 82 definitions from installed sdcv across nine spelling cases and recovered one independently verified headword. Holding a match on two original EPUBs and two original PDFs displayed the same emphasized words and nested chapter paths as KOReader. [Dictionary suggestions](dictionary-word-forms.md) · [Find result context](search-result-context.md)
+
+Eight Kindle-format controls opened, turned pages and resumed in the native picker. The 58 distinct public HUFF/CDIC text records matched independent libmobi output. [Compressed Kindle reading](kindle-format-reading.md)
+
+The desktop run inspected 1,509 sections and painted 27,911 pages across 48 distinct original reflowable editions.
