@@ -8752,7 +8752,11 @@ mod tests {
             fs::copy(crate::test_fixture(file), &fixture.book).unwrap();
             let mut app = fixture.app();
             app.open_path(&fixture.book).unwrap();
+            assert!(app.controls.footnote_popups);
             toggle_footnote_menu(&mut app);
+            assert!(!app.controls.footnote_popups);
+            toggle_footnote_menu(&mut app);
+            assert!(app.controls.footnote_popups);
             let original = position(&app.active.as_ref().unwrap().reading);
             let (x, y) = source_link_point(&app, "[1]");
             app.input(Input::Tap(x, y));
@@ -8777,6 +8781,8 @@ mod tests {
         app.open_path(&fixture.book).unwrap();
         let original = position(&app.active.as_ref().unwrap().reading);
         let (x, y) = source_link_point(&app, "[1]");
+        assert!(app.controls.footnote_popups);
+        toggle_footnote_menu(&mut app);
         assert!(!app.controls.footnote_popups);
         assert_eq!(app.input(Input::Tap(x, y)), Change::Partial);
         assert_eq!(app.active.as_ref().unwrap().reading.chapter, 1);
