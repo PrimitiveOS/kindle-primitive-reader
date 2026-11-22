@@ -63,3 +63,5 @@ A full independent Poppler extraction identified the first and last physical pag
 | 1,041 | 521 | 1 | 1,041 | 1,025 |
 | 1,066 | 542 | 3 | 1,066 | 673 |
 | 41 | 21 | 1 | 41 | 41 |
+
+The installed KOReader KOpt search, the ARM Reader on Oasis 3, the Mac Reader and Poppler agreed on all sixteen visited page numbers and twelve counts of highlighted word boxes. Both readers found no match beyond either end of each four-step route. The six authored controls and the four original comparisons ran in 110 seconds on the Kindle. Reader restored each original viewport and the four source files retained their checksums.
