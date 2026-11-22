@@ -477,7 +477,6 @@ struct ActiveFixed {
     entry: LibraryBook,
     id: u64,
     reading: FixedReading,
-    password_supplied: bool,
 }
 
 struct ActiveOcr {
@@ -816,9 +815,10 @@ impl Reader {
             {
                 self.locked = Some(entry);
                 self.show(Screen::PdfPassword);
-                self.editor = Editor::new(64);
+                self.editor = Editor::new(127);
                 if password.is_some() {
-                    self.notice = Some("Password rejected or encryption unsupported".into());
+                    self.notice =
+                        Some("Password rejected. Enter the document or owner password.".into());
                 }
                 return Ok(());
             }
@@ -851,7 +851,6 @@ impl Reader {
                 entry,
                 id,
                 reading,
-                password_supplied: password.is_some_and(|value| !value.is_empty()),
             });
             self.pdf_result_regions.clear();
             self.pdf_selection = None;
@@ -1449,7 +1448,9 @@ impl Reader {
                                 .map(|mark| (mark.text.as_str(), mark.note.as_deref())),
                         )
                     });
-                    if fixed.entry.format == DocumentFormat::Pdf && !fixed.password_supplied {
+                    if fixed.entry.format == DocumentFormat::Pdf
+                        && !fixed.reading.is_encrypted_pdf()
+                    {
                         items.push(Item::new(
                             "Read embedded annotations",
                             Action::PreviewPdfAnnotations,
@@ -4814,7 +4815,7 @@ impl Reader {
         if fixed.entry.format != DocumentFormat::Pdf {
             return Err("Open a PDF first".into());
         }
-        if fixed.password_supplied {
+        if fixed.reading.is_encrypted_pdf() {
             return Err("PDF annotation interchange requires an unencrypted document".into());
         }
         if fixed.entry.size > pdf_annotations::MAX_INPUT_BYTES as u64 {
@@ -11004,6 +11005,102 @@ mod tests {
         }
         assert_eq!(app.text_flow.as_ref().unwrap().document_page(), 1);
         assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 1);
+    }
+
+    #[test]
+    fn protected_pdf_prompt_search_and_resume_preserve_both_location_and_secret() {
+        let fixture = Fixture::new();
+        let bytes = include_bytes!("../tests/fixtures/pdf-password/r6-long.pdf");
+        let path = fixture.root.join("Weather survey.pdf");
+        fs::write(&path, bytes).unwrap();
+        let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+        let fonts = vec![font.clone()];
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        app.open_path(&path).unwrap();
+        assert_eq!(app.screen, Screen::PdfPassword);
+        let press = |app: &mut Reader, target: primitive_ui::Key| {
+            let keys =
+                Layout::new(WIDTH, HEIGHT, 4, 5).keyboard_keys_with(app.editor.layer, "Open");
+            let (_, rect) = keys.into_iter().find(|(key, _)| key.key == target).unwrap();
+            let (x, y) = rectangle_center(rect);
+            assert_eq!(app.input(Input::Tap(x, y)), Change::Partial);
+        };
+        for c in "wrong".chars() {
+            press(&mut app, primitive_ui::Key::Char(c));
+        }
+        press(&mut app, primitive_ui::Key::Go);
+        assert_eq!(app.screen, Screen::PdfPassword);
+        assert!(app.notice.as_deref().unwrap().contains("Password rejected"));
+        let secret = format!("estuary{}river", "n".repeat(88));
+        for (i, c) in secret.chars().enumerate() {
+            press(&mut app, primitive_ui::Key::Char(c));
+            if i == 6 {
+                capture_test_screen(&app, &fonts, "READER_PROTECTED_PDF_SCREENSHOT", false);
+            }
+        }
+        assert_eq!(app.editor.string().len(), secret.len());
+        press(&mut app, primitive_ui::Key::Go);
+        assert_eq!(app.screen, Screen::Fixed);
+        assert!(app.editor.string().is_empty());
+        assert!(app.fixed.as_ref().unwrap().reading.is_encrypted_pdf());
+        let opening = app.current_position().unwrap();
+        app.start_document_search("Wind survey").unwrap();
+        while app.search_at.is_some() {
+            app.step_pdf_search(Instant::now()).unwrap();
+        }
+        assert_eq!(app.pdf_hits.len(), 1);
+        app.activate(Action::PdfSearchHit(0)).unwrap();
+        assert_eq!(app.current_position().unwrap().page, 1);
+        assert!(!app.pdf_result_regions.is_empty());
+        app.activate(Action::ReturnToLocation).unwrap();
+        assert!(app.current_position().as_ref() == Some(&opening));
+        app.input(Input::PageForward);
+        app.tick(Instant::now() + Duration::from_secs(1));
+        let saved = app.current_position().unwrap();
+        assert_eq!(saved.page, 1);
+        app.save().unwrap();
+        drop(app);
+        let mut reopened = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+        reopened.open_path(&path).unwrap();
+        assert_eq!(reopened.screen, Screen::PdfPassword);
+        let entry = reopened.locked.clone().unwrap();
+        reopened.open_with_password(entry, Some(&secret)).unwrap();
+        assert!(reopened.current_position().as_ref() == Some(&saved));
+        assert_eq!(fs::read(&path).unwrap().as_slice(), bytes);
+        assert!(
+            !fs::read_to_string(&fixture.state)
+                .unwrap()
+                .contains(&secret)
+        );
+    }
+
+    #[test]
+    fn protected_pdf_with_an_empty_reading_password_leaves_local_annotations_available() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Weather survey.pdf");
+        fs::write(
+            &path,
+            include_bytes!("../tests/fixtures/pdf-password/r4-owner-only.pdf"),
+        )
+        .unwrap();
+        let mut app = fixture.app();
+        app.open_path(&path).unwrap();
+        assert_eq!(app.screen, Screen::Fixed);
+        assert!(app.fixed.as_ref().unwrap().reading.is_encrypted_pdf());
+        app.show(Screen::Highlights);
+        assert!(!app.items().iter().any(|item| matches!(
+            item.action,
+            Action::PreviewPdfAnnotations | Action::ExportAnnotatedPdf
+        )));
+        assert!(
+            app.verify_pdf_edit_source(app.fixed.as_ref().unwrap())
+                .unwrap_err()
+                .to_string()
+                .contains("unencrypted")
+        );
+        app.show(Screen::Fixed);
+        app.activate(Action::ToggleBookmark).unwrap();
+        assert!(app.page_is_bookmarked());
     }
 
     #[test]

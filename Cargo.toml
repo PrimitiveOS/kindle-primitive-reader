@@ -77,6 +77,7 @@ name = "desktop"
 required-features = ["kindle"]
 
 [patch.crates-io]
+hayro-syntax = { path = "vendor/hayro-syntax" }
 hayro-interpret = { path = "vendor/hayro-interpret" }
 djvu-bzz = { path = "vendor/djvu-bzz" }
 parley = { path = "vendor/parley" }

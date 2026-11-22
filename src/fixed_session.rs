@@ -354,6 +354,10 @@ impl FixedReading {
         }
     }
 
+    pub(crate) fn is_encrypted_pdf(&self) -> bool {
+        matches!(&self.source, FixedDocument::Pdf(pdf) if pdf.is_encrypted())
+    }
+
     pub(crate) fn pdf_geometry(&self, page: usize) -> Option<crate::pdf_annotations::PageGeometry> {
         match &self.source {
             FixedDocument::Pdf(pdf) => pdf.page_geometry(page),

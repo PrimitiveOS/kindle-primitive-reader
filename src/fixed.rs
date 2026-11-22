@@ -5,7 +5,7 @@ use hayro::hayro_syntax::object::{
     Array, Dict, MaybeRef, Name, Object, ObjectIdentifier, Rect as PdfRect, String as PdfString,
 };
 use hayro::hayro_syntax::xref::XRef;
-use hayro::hayro_syntax::{LoadPdfError, Pdf as Document};
+use hayro::hayro_syntax::{DecryptionError, LoadPdfError, Pdf as Document};
 use hayro::kurbo::{Affine, Point, Rect};
 use hayro::vello_cpu::color::palette::css::WHITE;
 use hayro::vello_cpu::{Pixmap, RasterizerSettings, RenderContext, Resources, TargetInit};
@@ -168,6 +168,7 @@ pub enum PdfError {
     TooManyPages,
     Damaged,
     PasswordProtected,
+    UnsupportedEncryption,
     MissingPage,
     InvalidPageSize,
     InvalidViewport,
@@ -182,9 +183,8 @@ impl fmt::Display for PdfError {
             Self::TooLarge => "This PDF exceeds Reader's 128 MiB limit.",
             Self::TooManyPages => "This PDF has more than 10,000 pages.",
             Self::Damaged => "This PDF is damaged or has no readable pages.",
-            Self::PasswordProtected => {
-                "This PDF requires a password or uses unsupported encryption."
-            }
+            Self::PasswordProtected => "This PDF requires a valid password.",
+            Self::UnsupportedEncryption => "Reader does not support this PDF encryption method.",
             Self::MissingPage => "That page is outside this PDF.",
             Self::InvalidPageSize => "This PDF page has unsupported dimensions.",
             Self::InvalidViewport => "This PDF view is too large to draw on the Kindle.",
@@ -225,8 +225,16 @@ impl Pdf {
         let document = catch_unwind(|| Document::new_with_password(bytes, password))
             .map_err(|_| PdfError::Damaged)?
             .map_err(|error| match error {
-                LoadPdfError::Decryption(_) => PdfError::PasswordProtected,
-                LoadPdfError::Invalid => PdfError::Damaged,
+                LoadPdfError::Decryption(DecryptionError::PasswordProtected) => {
+                    PdfError::PasswordProtected
+                }
+                LoadPdfError::Decryption(DecryptionError::UnsupportedAlgorithm) => {
+                    PdfError::UnsupportedEncryption
+                }
+                LoadPdfError::Decryption(
+                    DecryptionError::InvalidEncryption | DecryptionError::MissingIDEntry,
+                )
+                | LoadPdfError::Invalid => PdfError::Damaged,
             })?;
 
         let count = document.pages().len();
@@ -240,6 +248,10 @@ impl Pdf {
             document,
             page_labels: OnceLock::new(),
         })
+    }
+
+    pub fn is_encrypted(&self) -> bool {
+        self.document.xref().is_encrypted()
     }
 
     pub fn page_count(&self) -> usize {
@@ -931,23 +943,11 @@ fn pdf_text(bytes: &[u8]) -> String {
     } else if let Some(bytes) = bytes.strip_prefix(b"\xef\xbb\xbf") {
         String::from_utf8_lossy(bytes).into_owned()
     } else {
-        bytes.iter().copied().map(pdf_doc_char).collect()
-    }
-}
-
-fn pdf_doc_char(byte: u8) -> char {
-    // PDFDocEncoding, ISO 32000-1 Annex D. The remaining printable codes map to Latin-1.
-    const ACCENTS: [char; 8] = ['˘', 'ˇ', 'ˆ', '˙', '˝', '˛', '˚', '˜'];
-    const SYMBOLS: [char; 31] = [
-        '•', '†', '‡', '…', '—', '–', 'ƒ', '⁄', '‹', '›', '−', '‰', '„', '“', '”', '‘', '’', '‚',
-        '™', 'ﬁ', 'ﬂ', 'Ł', 'Œ', 'Š', 'Ÿ', 'Ž', 'ı', 'ł', 'œ', 'š', 'ž',
-    ];
-    match byte {
-        0x18..=0x1f => ACCENTS[(byte - 0x18) as usize],
-        0x80..=0x9e => SYMBOLS[(byte - 0x80) as usize],
-        0x7f | 0x9f | 0xad => char::REPLACEMENT_CHARACTER,
-        0xa0 => '€',
-        _ => char::from(byte),
+        bytes
+            .iter()
+            .copied()
+            .map(hayro::hayro_syntax::object::pdf_doc_char)
+            .collect()
     }
 }
 
@@ -955,6 +955,104 @@ fn pdf_doc_char(byte: u8) -> char {
 pub(crate) mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn protected_pdf_authenticates_standard_roles_and_renders_the_plain_reference() {
+        let plain_bytes = include_bytes!("../tests/fixtures/pdf-password/plain.pdf");
+        let plain = Pdf::open(plain_bytes.to_vec()).unwrap();
+        let frame = RenderRequest {
+            width: 320,
+            height: 480,
+            scale: 1.0,
+            x: 0.0,
+            y: 0.0,
+            turns: 0,
+        };
+        let pixels = (0..3)
+            .map(|page| plain.render(page, frame).unwrap())
+            .collect::<Vec<_>>();
+        let secret = format!("estuary{}river", "n".repeat(88));
+        for (bytes, user, owner) in [
+            (
+                include_bytes!("../tests/fixtures/pdf-password/r2.pdf").as_slice(),
+                "survey-entry",
+                "survey-editor",
+            ),
+            (
+                include_bytes!("../tests/fixtures/pdf-password/r3.pdf").as_slice(),
+                "survey-entry",
+                "survey-editor",
+            ),
+            (
+                include_bytes!("../tests/fixtures/pdf-password/r4.pdf").as_slice(),
+                "survey-entry",
+                "survey-editor",
+            ),
+            (
+                include_bytes!("../tests/fixtures/pdf-password/r5.pdf").as_slice(),
+                "survey-entry",
+                "survey-editor",
+            ),
+            (
+                include_bytes!("../tests/fixtures/pdf-password/r6.pdf").as_slice(),
+                "survey-entry",
+                "survey-editor",
+            ),
+            (
+                include_bytes!("../tests/fixtures/pdf-password/r6-long.pdf").as_slice(),
+                secret.as_str(),
+                "survey-editor",
+            ),
+            (
+                include_bytes!("../tests/fixtures/pdf-password/r4-owner-only.pdf").as_slice(),
+                "",
+                "survey-editor",
+            ),
+            (
+                include_bytes!("../tests/fixtures/pdf-password/r4-latin.pdf").as_slice(),
+                "été",
+                "côté",
+            ),
+            (
+                include_bytes!("../tests/fixtures/pdf-password/r6-latin.pdf").as_slice(),
+                "été",
+                "côté",
+            ),
+            (plain_bytes.as_slice(), "survey-entry", "survey-editor"),
+        ] {
+            let encrypted = bytes != plain_bytes;
+            for (index, password) in ["", "wrong", user, owner].iter().enumerate() {
+                let result = Pdf::open_with_password(bytes.to_vec(), password);
+                if encrypted && (index == 1 || index == 0 && !user.is_empty()) {
+                    assert!(matches!(result, Err(PdfError::PasswordProtected)));
+                    continue;
+                }
+                let pdf = result.unwrap();
+                assert_eq!(pdf.is_encrypted(), encrypted);
+                assert_eq!(pdf.page_count(), 3);
+                assert_eq!(pdf.outline(), plain.outline());
+                for (page, expected) in pixels.iter().enumerate() {
+                    assert_eq!(pdf.page_text(page).unwrap(), plain.page_text(page).unwrap());
+                    assert!(pdf.render(page, frame).unwrap() == *expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn protected_pdf_reports_an_unsupported_handler_without_a_password_retry() {
+        let mut bytes = include_bytes!("../tests/fixtures/pdf-password/r4.pdf").to_vec();
+        let filter = b"/Filter /Standard";
+        let start = bytes
+            .windows(filter.len())
+            .position(|part| part == filter)
+            .unwrap();
+        bytes[start..start + filter.len()].copy_from_slice(b"/Filter /ForeignX");
+        assert!(matches!(
+            Pdf::open(bytes),
+            Err(PdfError::UnsupportedEncryption)
+        ));
+    }
 
     pub(crate) fn document() -> Vec<u8> {
         let content = "0 g\n10 60 20 15 re f\nBT /F1 14 Tf 55 60 Td (PDF) Tj ET\n";
