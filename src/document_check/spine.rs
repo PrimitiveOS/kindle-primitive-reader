@@ -533,6 +533,7 @@ mod tests {
 #[cfg(test)]
 mod logical_configuration_tests {
     use super::*;
+    use crate::{Engine,Settings};
     #[test]
     fn configured_receipt_distinguishes_raw_requested_effective_and_legacy_units_without_paths() {
         let mut config=BookConfig {

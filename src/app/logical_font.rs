@@ -266,6 +266,16 @@ impl Reader {
             numbering: None,
         });
         self.logical_recovery = None;
+        self.pages_since_refresh = 0;
+        self.range_edit = None;
+        self.saved_popup = None;
+        self.style_view = Default::default();
+        self.restore_character_pages();
+        self.back.clear();
+        self.forward.clear();
+        self.auto_turn.configure(None, Instant::now());
+        self.annotation_search = annotation_search::AnnotationSearch::default();
+        self.restore_reading_menus(recovery.id);
         self.show(Screen::Book);
         self.record_position();
         self.notice = Some("Text settings reset. Previous choices backed up.".into());
