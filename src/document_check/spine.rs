@@ -1,10 +1,12 @@
 //! Optional content diagnostics. Reports counts and zero-based indices, never document text or paths.
-use crate::{Engine, Probe, Renderer, Result, Settings, epub::Book, fixed_epub::FixedEpub};
+use crate::{Probe, Renderer, Result, epub::Book, fixed_epub::FixedEpub, session::BookConfig};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
 #[derive(Default, Serialize)]
-pub(super) struct Audit {
+pub(crate) struct Audit {
+    configuration_source: Option<&'static str>,
+    session_configuration: Option<SessionConfiguration>,
     chapters: usize,
     checked: usize,
     failed_indices: Vec<usize>,
@@ -35,6 +37,43 @@ pub(super) struct Audit {
     inspected_page_anchors: u64,
     exact_page_anchors: u64,
     issues: Vec<SectionIssues>,
+}
+
+/// Only non-document configuration facts enter public diagnostic receipts.
+/// In particular, font paths, custom CSS and personal words are never serialized.
+#[derive(Serialize)]
+struct SessionConfiguration {
+    requested_width: u32,
+    requested_height: u32,
+    font_size: f32,
+    render_dpi: u16,
+    percent_word_spacing: Option<crate::WordSpacePercent>,
+    font_files: usize,
+    publisher_styles: bool,
+    user_style_snapshot: bool,
+    automatic_hyphenation: bool,
+    personal_hyphenation_rules: bool,
+    facing_pages: bool,
+    scroll: bool,
+}
+
+impl From<&BookConfig> for SessionConfiguration {
+    fn from(config: &BookConfig) -> Self {
+        Self {
+            requested_width: config.settings.width,
+            requested_height: config.settings.height,
+            font_size: config.settings.font_size,
+            render_dpi: config.settings.render_dpi,
+            percent_word_spacing: config.settings.percent_word_spacing,
+            font_files: config.fonts.len(),
+            publisher_styles: config.settings.publisher_styles,
+            user_style_snapshot: !config.user_styles.is_empty(),
+            automatic_hyphenation: config.settings.automatic_hyphenation,
+            personal_hyphenation_rules: config.user_hyphenation.has_rules(),
+            facing_pages: config.facing_pages,
+            scroll: config.scroll,
+        }
+    }
 }
 
 #[derive(Default, PartialEq, Serialize)]
@@ -231,7 +270,12 @@ fn literal_empty_body(markup: &str) -> bool {
     .unwrap_or(false)
 }
 
-pub(super) fn verify_spine(path: &Path, fonts: &[PathBuf], mode: &str) -> Result<Audit> {
+pub(crate) fn verify_spine(
+    path: &Path,
+    fonts: &[PathBuf],
+    mode: &str,
+    session: Option<&BookConfig>,
+) -> Result<Audit> {
     let (all_chapters, all_pages) = match mode {
         "sample" => (false, false),
         "all-sections" => (true, false),
@@ -252,12 +296,23 @@ pub(super) fn verify_spine(path: &Path, fonts: &[PathBuf], mode: &str) -> Result
     } else {
         None
     };
-    let settings = Settings {
-        width: primitive_app::WIDTH,
-        height: crate::session::PAGE_HEIGHT,
-        ..Default::default()
+    let config = if fixed.is_some() {
+        None
+    } else {
+        let config =
+            session.ok_or("Reflow spine verification requires the resumed Reader configuration")?;
+        if config.book != path {
+            return Err("Reflow spine configuration belongs to a different publication".into());
+        }
+        Some(config)
     };
     let mut audit = Audit {
+        configuration_source: Some(if fixed.is_some() {
+            "fixed_epub"
+        } else {
+            "resumed_reader"
+        }),
+        session_configuration: config.map(SessionConfiguration::from),
         chapters: count,
         ..Default::default()
     };
@@ -265,15 +320,21 @@ pub(super) fn verify_spine(path: &Path, fonts: &[PathBuf], mode: &str) -> Result
         audit.checked += 1;
         let result = (|| -> Result<()> {
             if let Some(book) = &fixed {
-                let pixels = book
-                    .decode_page(index)?
-                    .fit(settings.width, settings.height, 0)?;
+                let pixels = book.decode_page(index)?.fit(
+                    primitive_app::WIDTH,
+                    crate::session::PAGE_HEIGHT,
+                    0,
+                )?;
                 audit.fixed_pages += 1;
                 audit.pages_in_checked_sections += 1;
                 audit.painted_pages += 1;
                 audit.painted_pages_with_ink += u64::from(pixels.iter().any(|&v| v < 255));
             } else {
-                let mut chapter = Probe::open(path, Engine::Parley, fonts, settings, index)?;
+                // BookConfig owns the application-selected styles, fonts,
+                // hyphenation and spread fallback. Never reconstruct defaults.
+                let mut chapter = config
+                    .ok_or("Missing resumed reflow configuration")?
+                    .chapter(index)?;
                 let literal_empty = chapter.source.blocks.is_empty()
                     && !placeholders[index]
                     && literal_empty_body(&Book::open(path)?.chapter(index)?);
@@ -297,6 +358,29 @@ pub(super) fn verify_spine(path: &Path, fonts: &[PathBuf], mode: &str) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{Engine, Settings};
+
+    // An intentionally scoped legacy configuration for low-level source recovery
+    // fixtures. The public verifier must receive the actual Reader snapshot.
+    fn legacy_test_config(path: &Path, fonts: &[PathBuf]) -> BookConfig {
+        BookConfig {
+            book: path.to_owned(),
+            fonts: fonts.to_vec(),
+            engine: Engine::Parley,
+            settings: Settings {
+                width: primitive_app::WIDTH,
+                height: crate::session::PAGE_HEIGHT,
+                ..Settings::default()
+            },
+            user_styles: Default::default(),
+            user_hyphenation: Default::default(),
+            scroll: false,
+            facing_pages: false,
+            hide_nonlinear: false,
+            hidden_flows: Default::default(),
+            chapter_offsets: Default::default(),
+        }
+    }
 
     fn styled_probe(body: &str) -> Probe {
         Probe::from_book_content(
@@ -398,7 +482,8 @@ mod tests {
         let file =
             std::env::temp_dir().join(format!("reader-spine-{}-{nonce}.epub", std::process::id()));
         std::fs::write(&file, &bytes).unwrap();
-        let result = verify_spine(&file, &fonts, "all");
+        let config = legacy_test_config(&file, &fonts);
+        let result = verify_spine(&file, &fonts, "all", Some(&config));
         std::fs::remove_file(&file).unwrap();
         let audit = result.unwrap();
         assert!(audit.failed_indices.is_empty());
@@ -413,5 +498,24 @@ mod tests {
         );
         assert_eq!(audit.painted_pages, audit.pages_in_checked_sections);
         assert!(audit.painted_pages_with_ink > 0);
+    }
+
+    #[test]
+    fn reflow_requires_the_bound_session_and_never_falls_back_to_defaults() {
+        let path = crate::test_fixture("field-notes-epub3.epub");
+        let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let error = verify_spine(&path, &fonts, "sample", None).err().unwrap();
+        assert!(
+            error
+                .to_string()
+                .contains("requires the resumed Reader configuration")
+        );
+        let mut wrong = legacy_test_config(&path, &fonts);
+        wrong.book = crate::test_fixture("field-notes-epub2.epub");
+        let error = verify_spine(&path, &fonts, "sample", Some(&wrong))
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("different publication"));
+        assert!(!error.to_string().contains(&path.display().to_string()));
     }
 }
