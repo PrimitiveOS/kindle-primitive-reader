@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Set automatic page turns to a custom interval from 1 second to 24 hours. The timeout persists across Reader restarts and pauses when Reader leaves the reading page or the Kindle sleeps.
+
 ## 0.1.22
 
 - Open publisher contents in supported MOBI and AZW3 books, including nested entries that point inside a chapter.

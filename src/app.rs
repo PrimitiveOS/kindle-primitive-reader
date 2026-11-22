@@ -284,6 +284,7 @@ impl Screen {
             Self::NumberingValue(NumberField::ContentDpi(_)) => "Content zoom",
             Self::NumberingValue(NumberField::LogicalFont(_)) => "Font size",
             Self::NumberingValue(NumberField::WordSpacing(_)) => "Word spacing",
+            Self::NumberingValue(NumberField::AutoTurn) => "Automatic page turns",
             Self::NumberingValue(NumberField::MarginSize) => "Margin label size",
             Self::NumberingValue(_) => "Characters per page",
             Self::NumberingDefaults => "Page numbering defaults",
@@ -984,7 +985,7 @@ impl Reader {
             self.pdf_selection = None;
             self.back.clear();
             self.forward.clear();
-            self.auto_turn.configure(None, Instant::now());
+            self.auto_turn.configure(self.controls.auto_turn_interval(), Instant::now());
             self.selection = None;
             self.annotation_search = annotation_search::AnnotationSearch::default();
             self.restore_reading_menus(id);
@@ -1067,7 +1068,7 @@ impl Reader {
         self.fixed = None;
         self.back.clear();
         self.forward.clear();
-        self.auto_turn.configure(None, Instant::now());
+        self.auto_turn.configure(self.controls.auto_turn_interval(), Instant::now());
         self.selection = None;
         self.annotation_search = annotation_search::AnnotationSearch::default();
         self.restore_reading_menus(id);
@@ -1161,7 +1162,18 @@ impl Reader {
             self.editor.caret = self.editor.text.len();
         }
         if matches!(screen, Screen::NumberingValue(_)) {
-            self.editor = Editor::new(if matches!(screen,Screen::NumberingValue(NumberField::LogicalFont(_))) {24} else {4});
+            self.editor = Editor::new(if matches!(screen, Screen::NumberingValue(NumberField::LogicalFont(_))) {
+                24
+            } else if matches!(screen, Screen::NumberingValue(NumberField::AutoTurn)) {
+                5
+            } else {
+                4
+            });
+            if matches!(screen, Screen::NumberingValue(NumberField::AutoTurn)) {
+                let seconds = if self.controls.auto_turn_seconds == 0 { 30 } else { self.controls.auto_turn_seconds };
+                self.editor.text = seconds.to_string().chars().collect();
+                self.editor.caret = self.editor.text.len();
+            }
         }
         if screen == Screen::GoToPage {
             self.editor = Editor::new(96);
@@ -1369,7 +1381,7 @@ impl Reader {
             Screen::BookMap => return self.book_map_items(),
             Screen::AutoTurn => {
                 let selected = self.auto_turn.interval();
-                return [0, 10, 30, 60, 120]
+                let mut items: Vec<_> = [0, 10, 30, 60, 120]
                     .into_iter()
                     .map(|seconds| {
                         let interval = (seconds != 0).then(|| Duration::from_secs(seconds));
@@ -1386,6 +1398,19 @@ impl Reader {
                         }
                     })
                     .collect();
+                let current = self.controls.auto_turn_seconds;
+                items.push(
+                    Item::new(
+                        "Custom interval",
+                        Action::Show(Screen::NumberingValue(NumberField::AutoTurn)),
+                    )
+                    .detail(if current > 0 {
+                        format!("{current} seconds")
+                    } else {
+                        "Enter 1 to 86,400 seconds".to_owned()
+                    }),
+                );
+                return items;
             }
             Screen::OnlineHistory | Screen::ClearOnlineHistory => return self.online_history_items(),
             Screen::SearchHistory => {
@@ -2224,9 +2249,10 @@ impl Reader {
                 self.notice = Some("Reading data saved".into());
             }
             Action::AutoTurn(interval) => {
-                let now = Instant::now();
-                self.auto_turn.configure(interval, now);
-                self.sync_auto_turn(now);
+                let seconds = interval
+                    .map(|value| value.as_secs().min(u64::from(crate::reading_controls::MAX_AUTO_TURN_SECONDS)) as u32)
+                    .unwrap_or(0);
+                self.set_auto_turn_seconds(seconds)?;
             }
             Action::LockTouch => {
                 self.selection = None;
@@ -5517,6 +5543,7 @@ impl Reader {
                 Screen::NumberingValue(NumberField::ContentDpi(_)) => ("Content zoom: 0 to 300 dpi", "Set"),
                 Screen::NumberingValue(NumberField::LogicalFont(_)) => ("Logical font size: 12 to 255", "Set"),
                 Screen::NumberingValue(NumberField::WordSpacing(draft)) => (match draft.field { word_spacing::Field::Scaling => "Scaling: 10 to 500%", word_spacing::Field::Minimum => "Reduction: 25 to 100%" }, "Set"),
+                Screen::NumberingValue(NumberField::AutoTurn) => ("Page-turn interval: 1 to 86,400 seconds", "Set"),
                 Screen::NumberingValue(NumberField::MarginSize) => ("Margin text size from 8 to 20", "Set"),
                 Screen::NumberingValue(_) => ("500 to 3,000 characters per page", "Set"),
                 Screen::GoToPage if self.fixed.is_none() => {

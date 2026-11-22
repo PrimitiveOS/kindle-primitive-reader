@@ -348,6 +348,17 @@ mod tests {
         Input::Tap((rect.x + rect.w / 2) as f32, (rect.y + rect.h / 2) as f32)
     }
 
+    fn press_keyboard(app: &mut Reader, key: primitive_ui::Key) {
+        let layout = Layout::new(WIDTH, HEIGHT, 4, 5);
+        let rect = layout
+            .keyboard_keys_with(app.editor.layer, "Set")
+            .into_iter()
+            .find(|(entry, _)| entry.key == key)
+            .unwrap()
+            .1;
+        assert_ne!(app.input(tap(rect)), Change::None);
+    }
+
     fn app(fixture: &Fixture) -> Reader {
         Reader::open(
             &fixture.root,
@@ -572,6 +583,69 @@ mod tests {
         app.activate(Action::Continue).unwrap();
         assert_eq!(app.current_position(), Some(end));
         assert!(app.book_finished());
+    }
+
+    #[test]
+    fn custom_auto_turn_interval_is_validated_saved_and_restored_on_reopen() {
+        let fixture = Fixture::new();
+        let mut app = app(&fixture);
+        app.open_path(&fixture.book).unwrap();
+        app.show(Screen::AutoTurn);
+        let custom = app.items().into_iter().find(|item| item.title == "Custom interval").unwrap();
+        assert!(matches!(custom.action, Action::Show(Screen::NumberingValue(NumberField::AutoTurn))));
+        capture_test_screen(&app, &app.fonts, "READER_AUTO_TURN_SCREENSHOT", false);
+
+        app.activate(custom.action).unwrap();
+        assert_eq!(app.screen, Screen::NumberingValue(NumberField::AutoTurn));
+        assert_eq!(app.editor.string(), "30");
+        for invalid in ["0", "86401", "abc"] {
+            app.editor.text = invalid.chars().collect();
+            app.editor.caret = app.editor.text.len();
+            assert!(app.apply_numbering_input(NumberField::AutoTurn).is_err(), "{invalid}");
+        }
+
+        for _ in 0..app.editor.string().chars().count() {
+            press_keyboard(&mut app, primitive_ui::Key::Delete);
+        }
+        for character in "86400".chars() {
+            press_keyboard(&mut app, primitive_ui::Key::Char(character));
+        }
+        press_keyboard(&mut app, primitive_ui::Key::Go);
+        assert_eq!(app.screen, Screen::AutoTurn);
+        assert_eq!(app.controls.auto_turn_seconds, 86_400);
+        assert_eq!(app.auto_turn.interval(), Some(Duration::from_secs(86_400)));
+        assert_eq!(ReadingControls::load(&app.controls_path, true).auto_turn_seconds, 86_400);
+        assert!(app.items().iter().any(|item| {
+            item.title == "Custom interval" && item.detail.as_deref() == Some("86400 seconds")
+        }));
+
+        app.show(Screen::Book);
+        let due = app.auto_turn.deadline().unwrap();
+        assert!(due >= Instant::now() + Duration::from_secs(74));
+        let before_sleep = app.current_position();
+        app.input(Input::Sleep);
+        assert_eq!(app.auto_turn.deadline(), None);
+        app.tick(due + Duration::from_secs(1));
+        assert_eq!(app.current_position(), before_sleep);
+        app.input(Input::Wake);
+        assert!(app.auto_turn.deadline().unwrap() > Instant::now());
+
+        app.activate(Action::Show(Screen::Library)).unwrap();
+        assert_eq!(app.auto_turn.interval(), None);
+        app.activate(Action::Continue).unwrap();
+        assert_eq!(app.auto_turn.interval(), Some(Duration::from_secs(86_400)));
+        assert!(app.auto_turn.deadline().is_some());
+        drop(app);
+
+        let mut reopened = Reader::open(
+            &fixture.root,
+            &fixture.state,
+            vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+        )
+        .unwrap();
+        reopened.open_path(&fixture.book).unwrap();
+        assert_eq!(reopened.auto_turn.interval(), Some(Duration::from_secs(86_400)));
+        assert!(reopened.auto_turn.deadline().is_some());
     }
 
     #[test]

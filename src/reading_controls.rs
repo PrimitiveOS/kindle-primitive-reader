@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::session::PAGE_HEIGHT;
 
 const MAX_FILE_BYTES: u64 = 4096;
+pub(crate) const MAX_AUTO_TURN_SECONDS: u32 = 86_400;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
@@ -33,6 +34,8 @@ pub(crate) struct ReadingControls {
     pub large_toolbar: bool,
     pub disable_page_taps: bool,
     pub page_refresh: PageRefresh,
+    /// Persistent KOReader-style page-turn timeout. Zero disables automatic turns.
+    pub auto_turn_seconds: u32,
     pub both_toolbars: bool,
     pub orientation: ReadingOrientation,
     pub palette: ScreenPalette,
@@ -419,6 +422,12 @@ impl PageRefresh {
 }
 
 impl ReadingControls {
+    pub(crate) fn auto_turn_interval(self) -> Option<Duration> {
+        (1..=MAX_AUTO_TURN_SECONDS)
+            .contains(&self.auto_turn_seconds)
+            .then(|| Duration::from_secs(u64::from(self.auto_turn_seconds)))
+    }
+
     pub fn load(path: &Path, existing_library: bool) -> Self {
         with_storage(|| {
             let file = fs::File::open(path)?;
@@ -427,7 +436,11 @@ impl ReadingControls {
             if bytes.len() as u64 > MAX_FILE_BYTES {
                 return Err(io::Error::other("Reading controls settings are too large"));
             }
-            serde_json::from_slice(&bytes).map_err(io::Error::other)
+            let mut controls: Self = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+            if controls.auto_turn_seconds > MAX_AUTO_TURN_SECONDS {
+                controls.auto_turn_seconds = 0;
+            }
+            Ok(controls)
         })
         .unwrap_or_else(|_| {
             // Fresh profiles match the stock note-preview behavior. Existing
@@ -525,6 +538,8 @@ mod tests {
     fn old_settings_keep_the_default_partial_page_refresh() {
         let controls: ReadingControls = serde_json::from_str(r#"{"night_pages":true}"#).unwrap();
         assert!(controls.night_pages);
+        assert_eq!(controls.auto_turn_seconds, 0);
+        assert_eq!(controls.auto_turn_interval(), None);
         assert_eq!(controls.page_refresh, PageRefresh::Default);
         let mut since_last = 0;
         assert_eq!(
@@ -532,5 +547,21 @@ mod tests {
             Change::Partial
         );
         assert_eq!(since_last, 0);
+    }
+
+    #[test]
+    fn auto_turn_timeout_round_trips_and_rejects_out_of_range_values() {
+        let mut controls = ReadingControls {
+            auto_turn_seconds: 75,
+            ..ReadingControls::default()
+        };
+        assert_eq!(controls.auto_turn_interval(), Some(Duration::from_secs(75)));
+        let bytes = serde_json::to_vec(&controls).unwrap();
+        controls = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(controls.auto_turn_seconds, 75);
+        assert_eq!(controls.auto_turn_interval(), Some(Duration::from_secs(75)));
+
+        controls.auto_turn_seconds = MAX_AUTO_TURN_SECONDS + 1;
+        assert_eq!(controls.auto_turn_interval(), None);
     }
 }

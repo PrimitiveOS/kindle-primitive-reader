@@ -14,6 +14,7 @@ pub(super) enum NumberField {
     ContentDpi(u64),
     LogicalFont(u64),
     WordSpacing(super::word_spacing::Draft),
+    AutoTurn,
 }
 
 impl NumberField {
@@ -22,6 +23,7 @@ impl NumberField {
             Self::BookStride => Screen::PageNumbering,
             Self::DefaultStride | Self::MarginSize => Screen::NumberingDefaults,
             Self::ContentDpi(_) | Self::LogicalFont(_) | Self::WordSpacing(_) => Screen::Book,
+            Self::AutoTurn => Screen::AutoTurn,
         }
     }
 }
@@ -179,12 +181,24 @@ impl Reader {
 
     pub(super) fn apply_numbering_input(&mut self, field: NumberField) -> Result<()> {
         let value = self.editor.string();
+        if field == NumberField::AutoTurn {
+            let seconds = value
+                .trim()
+                .parse::<u32>()
+                .ok()
+                .filter(|n| (1..=crate::reading_controls::MAX_AUTO_TURN_SECONDS).contains(n))
+                .ok_or("Enter an automatic page-turn interval from 1 to 86,400 seconds")?;
+            self.set_auto_turn_seconds(seconds)?;
+            self.show(field.parent());
+            return Ok(());
+        }
         let number = value.trim().parse::<u16>().ok();
         let mut controls = self.controls;
         match field {
             NumberField::ContentDpi(owner) => return self.apply_content_dpi(owner),
             NumberField::LogicalFont(owner) => return self.apply_logical_font_input(owner),
             NumberField::WordSpacing(draft) => return self.apply_word_spacing_input(draft),
+            NumberField::AutoTurn => unreachable!("handled above"),
             NumberField::MarginSize => {
                 controls.numbering.label_size = number
                     .filter(|n| (8..=20).contains(n))

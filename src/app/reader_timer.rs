@@ -2,6 +2,9 @@
 
 use std::time::{Duration, Instant};
 
+use crate::Result;
+use super::Reader;
+
 #[derive(Default)]
 pub(super) struct AutoTurn {
     interval: Option<Duration>,
@@ -48,6 +51,24 @@ impl AutoTurn {
 
     fn after(&self, now: Instant) -> Option<Instant> {
         self.interval.and_then(|interval| now.checked_add(interval))
+    }
+}
+
+impl Reader {
+    pub(super) fn set_auto_turn_seconds(&mut self, seconds: u32) -> Result<()> {
+        if seconds > crate::reading_controls::MAX_AUTO_TURN_SECONDS {
+            return Err("Automatic page turns must be at most one day".into());
+        }
+        let controls = crate::reading_controls::ReadingControls {
+            auto_turn_seconds: seconds,
+            ..self.controls
+        };
+        controls.save(&self.controls_path)?;
+        self.controls = controls;
+        let now = Instant::now();
+        self.auto_turn.configure(controls.auto_turn_interval(), now);
+        self.sync_auto_turn(now);
+        Ok(())
     }
 }
 
