@@ -2,6 +2,9 @@
 //! The note gets a separate short-lived layout; saved book anchors stay in the original chapter.
 use roxmltree::{Document, Node, ParsingOptions};
 
+mod layout_roots;
+pub(crate) use layout_roots::LayoutRoots;
+
 const EPUB: &str = "http://www.idpf.org/2007/ops";
 const XML: &str = "http://www.w3.org/XML/1998/namespace";
 const MAX_CHARS: usize = 10_000;
@@ -151,6 +154,7 @@ fn attr(value: &str) -> String {
         .replace('"', "&quot;")
 }
 
+#[cfg(test)]
 pub(crate) fn extract(
     xhtml: &str,
     fragment: &str,
@@ -158,6 +162,49 @@ pub(crate) fn extract(
     chapter_order: std::cmp::Ordering,
     toc_target: bool,
     prefer: bool,
+) -> Option<String> {
+    extract_inner(
+        xhtml,
+        fragment,
+        context,
+        chapter_order,
+        toc_target,
+        prefer,
+        None,
+    )
+}
+
+pub(crate) fn extract_with_layout(
+    xhtml: &str,
+    fragment: &str,
+    context: &ReferenceContext,
+    chapter_order: std::cmp::Ordering,
+    toc_target: bool,
+    prefer: bool,
+    roots: &LayoutRoots<'_>,
+) -> Option<String> {
+    if !roots.matches(xhtml) {
+        return None;
+    }
+    extract_inner(
+        xhtml,
+        fragment,
+        context,
+        chapter_order,
+        toc_target,
+        prefer,
+        Some(roots),
+    )
+}
+
+fn extract_inner(
+    xhtml: &str,
+    fragment: &str,
+    context: &ReferenceContext,
+    chapter_order: std::cmp::Ordering,
+    toc_target: bool,
+    prefer: bool,
+    roots: Option<&LayoutRoots<'_>>,
 ) -> Option<String> {
     if context.kind == Reference::Ordinary || fragment.is_empty() {
         return None;
@@ -181,7 +228,10 @@ pub(crate) fn extract(
             || n.attribute((XML, "id")) == Some(fragment)
             || n.has_tag_name("a") && n.attribute("name") == Some(fragment)
     })?;
-    let container = text_container(target)?;
+    let container = match roots {
+        Some(roots) => roots.root(target, fragment)?,
+        None => text_container(target)?,
+    };
     let explicit = context.kind == Reference::Explicit || target.ancestors().any(note_container);
     if !explicit {
         let after = match chapter_order {
