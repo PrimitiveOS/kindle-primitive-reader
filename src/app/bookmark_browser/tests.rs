@@ -42,6 +42,7 @@ fn mount_marks(app: &mut Reader, fixture: &Fixture, pdf: &std::path::Path) -> (u
     state.author = Some("Zani Rivers".into());
     state.bookmarks[0].created_at = Some(1_740_777_900);
     state.highlights.push(Highlight {
+        color: Default::default(),
         selection,
         note: Some("Review the Ámber chart".into()),
         style: HighlightStyle::Underline,
@@ -56,6 +57,7 @@ fn mount_marks(app: &mut Reader, fixture: &Fixture, pdf: &std::path::Path) -> (u
     state.author = Some("Aria Coast".into());
     state
         .add_pdf_highlight(PdfHighlight {
+            color: Default::default(),
             style: HighlightStyle::Lighten,
             page: 1,
             bounds: vec![word.bounds],

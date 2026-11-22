@@ -41,6 +41,8 @@ mod kindle_sections;
 pub mod koreader_import;
 pub mod koreader_sidecar;
 pub mod highlight_style;
+#[cfg(feature = "kindle")]
+mod note_marker;
 pub mod library;
 mod list_marker;
 mod mark_time;

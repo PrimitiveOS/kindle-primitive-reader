@@ -18,6 +18,10 @@ pub(crate) struct ReadingControls {
     pub hide_nonlinear_default: bool,
     #[serde(skip_serializing_if = "crate::highlight_style::HighlightStyle::is_default")]
     pub highlight_style: crate::highlight_style::HighlightStyle,
+    #[serde(skip_serializing_if = "crate::highlight_style::HighlightColor::is_default")]
+    pub highlight_color: crate::highlight_style::HighlightColor,
+    #[serde(skip_serializing_if = "crate::highlight_style::NoteMarker::is_default")]
+    pub note_marker: crate::highlight_style::NoteMarker,
     #[serde(skip_serializing_if = "crate::highlight_style::Appearance::is_default")]
     pub highlight_appearance: crate::highlight_style::Appearance,
     pub night_pages: bool,

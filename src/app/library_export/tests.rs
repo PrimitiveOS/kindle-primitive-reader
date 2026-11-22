@@ -40,6 +40,7 @@ fn save_reflow_mark(app: &mut Reader, path: &std::path::Path) -> u64 {
         .unwrap()
         .highlights
         .push(Highlight {
+            color: Default::default(),
             created_at: Some(1_740_777_900),
             style: HighlightStyle::Underline,
             selection,
@@ -75,6 +76,7 @@ fn exports_history_collections_and_selected_books_through_normal_controls() {
         .state_mut(pdf_id)
         .unwrap()
         .add_pdf_highlight(PdfHighlight {
+            color: Default::default(),
             created_at: None,
             style: HighlightStyle::Lighten,
             page: 1,
@@ -215,6 +217,7 @@ fn export_uses_reading_order_and_rejects_a_source_replaced_during_export() {
     state.highlights.insert(
         0,
         Highlight {
+            color: Default::default(),
             created_at: None,
             style: HighlightStyle::Lighten,
             selection,
@@ -342,6 +345,7 @@ fn exports_original_document_marks_without_changing_sources_or_reading_position(
                 .state_mut(id)
                 .unwrap()
                 .add_pdf_highlight(PdfHighlight {
+                    color: Default::default(),
                     created_at: None,
                     style: HighlightStyle::Lighten,
                     page: found.0,
@@ -387,6 +391,7 @@ fn exports_original_document_marks_without_changing_sources_or_reading_position(
                 .unwrap()
                 .highlights
                 .push(Highlight {
+                    color: Default::default(),
                     created_at: Some(1_740_777_900),
                     style: HighlightStyle::Underline,
                     selection,

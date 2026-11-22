@@ -23,6 +23,7 @@ pub(crate) const PAGE_REFRESH_GAP: Duration = Duration::from_millis(450);
 
 pub(crate) struct PagePaint {
     pub highlight_appearance: crate::highlight_style::Appearance,
+    pub note_marker: crate::highlight_style::NoteMarker,
     pub visible: Range<u32>,
     pub inverted: bool,
 }
@@ -31,6 +32,7 @@ impl PagePaint {
     pub fn full(inverted: bool) -> Self {
         Self {
             highlight_appearance: Default::default(),
+            note_marker: Default::default(),
             visible: 0..PAGE_HEIGHT,
             inverted,
         }
@@ -956,6 +958,9 @@ impl Reading {
         }
         for &(rect, ink) in highlights {
             draw_highlight_rect(&mut page, rect, ink, paint.highlight_appearance);
+            let leaf_x=if self.uses_facing_pages() && rect.x >= (WIDTH/2) as i32 {FACING_PAGE_WIDTH+FACING_GUTTER} else {0};
+            let margin=crate::note_marker::margin(self.probe.settings.width,self.probe.settings.right_margin(),leaf_x,paint.note_marker,false);
+            crate::note_marker::paint(&mut page,rect,ink,paint.note_marker,margin,paint.highlight_appearance);
         }
         for &rect in selection {
             draw_highlight_rect(
@@ -1124,6 +1129,7 @@ impl App for Reading {
             &[],
             PagePaint {
                 highlight_appearance: Default::default(),
+            note_marker: Default::default(),
                 visible: 0..self.frame.height,
                 inverted: false,
             },

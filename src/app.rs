@@ -1,6 +1,7 @@
 //! The daily reader interface and foreground lifecycle.
 mod annotation_search;
 mod bar_icons;
+pub(crate) const NOTE_MARK_ICON: primitive_ui::Icon = bar_icons::HIGHLIGHT;
 mod bookmark_browser;
 mod custom_contents;
 mod contents_position;
@@ -1099,6 +1100,7 @@ impl Reader {
             let saved = self
                 .library
                 .remember(&fixed.entry, fixed.id, &fixed.entry.title);
+            saved.highlight_color.get_or_insert(self.controls.highlight_color);
             let position = fixed_position(&fixed.reading);
             let changed = saved.position.as_ref() != Some(&position);
             saved.position = Some(position);
@@ -1108,6 +1110,7 @@ impl Reader {
         } else if let Some(active) = &self.active {
             let title = &active.reading.probe.title;
             let saved = self.library.remember(&active.entry, active.id, title);
+            saved.highlight_color.get_or_insert(self.controls.highlight_color);
             let position = position(&active.reading);
             let changed = saved.position.as_ref() != Some(&position);
             saved.position = Some(position);
@@ -4733,6 +4736,7 @@ impl Reader {
                 if let Some(outcome) = resolver.step(&mut book).map_err(io::Error::other)? {
                     if let QuoteMatch::Unique(selection) = outcome {
                         import.matched.push(Highlight {
+                            color: Default::default(),
                             created_at: entry.time,
                             style: entry.drawer,
                             selection,
@@ -4883,6 +4887,7 @@ impl Reader {
                 return Err("This book has reached its highlight limit".into());
             }
             state.highlights.push(Highlight {
+                color: state.highlight_color.unwrap_or(self.controls.highlight_color),
                 created_at: crate::mark_time::now(),
                 style: state
                     .highlight_style
@@ -4962,6 +4967,7 @@ impl Reader {
             .into_iter()
             .filter_map(|annotation| {
                 let mark = PdfHighlight {
+                    color: annotation.color,
                     created_at: None,
                     style: annotation.style,
                     continuation: Vec::new(),
@@ -5066,6 +5072,7 @@ impl Reader {
             }
         } else {
             state.add_pdf_highlight(PdfHighlight {
+                color: state.highlight_color.unwrap_or(self.controls.highlight_color),
                 created_at: crate::mark_time::now(),
                 style: state
                     .highlight_style
@@ -5184,12 +5191,12 @@ impl Reader {
                 })
                 .flat_map(|mark| {
                     mark.parts()
-                        .map(move |(page, rects, _)| (page, rects, mark.style))
+                        .map(move |(page, rects, _)| (page, rects, mark.style, mark.color, mark.note.is_some()))
                 })
-                .filter(|(index, _, _)| fixed.reading.visible_pages().any(|page| page == *index))
-                .flat_map(|(page, rects, style)| {
-                    rects.iter().map(move |&bounds| {
-                        ((page, bounds), crate::highlight_style::Paint::Saved(style))
+                .filter(|(index, _, _, _, _)| fixed.reading.visible_pages().any(|page| page == *index))
+                .flat_map(|(page, rects, style, color, note)| {
+                    rects.iter().filter(move |bounds|fixed.reading.visible_rectangle(page,**bounds).is_some()).enumerate().map(move |(i, &bounds)| {
+                        ((page, bounds), crate::highlight_style::Paint::Annotation {style, color, note, first:i==0, night:self.uses_night_pages()})
                     })
                 })
                 .collect();
@@ -5275,8 +5282,8 @@ impl Reader {
                     reading
                         .highlight_rects(selected)
                         .into_iter()
-                        .map(move |rect| {
-                            (rect, crate::highlight_style::Paint::Saved(highlight.style))
+                        .enumerate().map(move |(i, rect)| {
+                            (rect, crate::highlight_style::Paint::Annotation {style:highlight.style, color:highlight.color, note:highlight.note.is_some(), first:i==0, night:self.uses_night_pages()})
                         })
                 })
                 .collect();
@@ -7692,6 +7699,7 @@ mod tests {
         assert_eq!(state.pdf_highlights.len(), 1);
         state
             .add_pdf_highlight(PdfHighlight {
+                color: Default::default(),
                 created_at: None,
                 style: Default::default(),
                 continuation: Vec::new(),
@@ -10008,6 +10016,7 @@ mod tests {
             .remember(&fixed.entry, fixed.id, &fixed.entry.title);
         state
             .add_pdf_highlight(PdfHighlight {
+                color: Default::default(),
                 created_at: None,
                 style: Default::default(),
                 continuation: Vec::new(),
@@ -10628,6 +10637,7 @@ mod tests {
         app.library
             .remember(&fixed.entry, fixed.id, "Signal chart")
             .add_pdf_highlight(PdfHighlight {
+                color: Default::default(),
                 created_at: None,
                 style: Default::default(),
                 continuation: Vec::new(),
