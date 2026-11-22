@@ -101,6 +101,7 @@ enum Content {
     },
     Loose {
         xhtml: BTreeMap<String, String>,
+        prior_mobi: BTreeMap<String, String>,
         resources: BTreeMap<String, Vec<u8>>,
         fonts: Option<kf8::fonts::FontSource>,
     },
@@ -458,6 +459,7 @@ impl Book {
             printed_source: None,
             content: Content::Loose {
                 xhtml: BTreeMap::from([(chapter_path, document.xhtml)]),
+                prior_mobi: BTreeMap::new(),
                 resources: document.resources,
                 fonts: None,
             },
@@ -472,48 +474,64 @@ impl Book {
         }
         let bytes = loose::read_bounded(&mut input, mobi::MAX_MOBI_BYTES)?;
         let fallback_title = loose::fallback_title(path);
-        let mut publication = match mobi::decode(&bytes) {
-            Ok(document) if document.xhtml.len() > 512 * 1024 => {
+        let mut prior_mobi = BTreeMap::new();
+        let mut revision = crate::revision_bytes(&bytes);
+        let mut small_legacy = false;
+        let publication = match mobi::decode_legacy(&bytes) {
+            Ok(document) => {
                 let label = document
                     .title
                     .clone()
                     .unwrap_or_else(|| fallback_title.into());
+                small_legacy = document.xhtml.len() <= 512 * 1024;
+                if small_legacy {
+                    revision = crate::revision(&document.xhtml);
+                }
+                let chapter = kf8::Kf8Chapter {
+                    continued: false,
+                    path: loose::CHAPTER_PATH.into(),
+                    label,
+                    xhtml: document.xhtml,
+                };
+                let chapters = if document.additions.is_empty() {
+                    if small_legacy {
+                        vec![chapter]
+                    } else {
+                        crate::kindle_sections::partition(vec![chapter])?
+                    }
+                } else {
+                    let (current, previous) =
+                        crate::kindle_sections::legacy(chapter, document.additions, !small_legacy)?;
+                    prior_mobi = previous;
+                    current
+                };
                 kf8::Kf8Document {
                     language: document.language,
                     title: document.title,
                     author: document.author,
-                    resources: BTreeMap::new(),
+                    resources: document.resources,
                     font_records: BTreeMap::new(),
-                    chapters: vec![kf8::Kf8Chapter {
-                        continued: false,
-                        path: loose::CHAPTER_PATH.into(),
-                        label,
-                        xhtml: document.xhtml,
-                    }],
+                    chapters,
                 }
             }
-            Ok(document) => {
-                let mut book = Self::from_loose(loose::Document {
-                    title: document.title.unwrap_or_else(|| fallback_title.into()),
-                    author: document.author,
-                    chapter_path: loose::CHAPTER_PATH.to_owned(),
-                    xhtml: document.xhtml,
-                    toc: Vec::new(),
-                    resources: BTreeMap::new(),
-                });
-                book.language = document.language;
-                return Ok(book);
+            Err(error) => {
+                let mut edition = match error {
+                    mobi::MobiError::Kf8 => kf8::decode(&bytes)?,
+                    mobi::MobiError::UnsupportedCompression(_)
+                    | mobi::MobiError::UnsupportedEncoding(_) => {
+                        kf8::hybrid_fallback(&bytes, error)?
+                    }
+                    _ => return Err(error.into()),
+                };
+                edition.chapters = crate::kindle_sections::partition(edition.chapters)?;
+                edition
             }
-            Err(mobi::MobiError::Kf8) => kf8::decode(&bytes)?,
-            Err(error) => return Err(error.into()),
         };
-        publication.chapters = crate::kindle_sections::partition(publication.chapters)?;
-        let revision = crate::revision_bytes(&bytes);
         let mut chapters = Vec::with_capacity(publication.chapters.len());
         let mut toc = Vec::with_capacity(publication.chapters.len());
         let mut xhtml = BTreeMap::new();
         for chapter in publication.chapters {
-            if !chapter.continued {
+            if !small_legacy && !chapter.continued {
                 toc.push(TocEntry {
                     label: chapter.label.clone(),
                     depth: 0,
@@ -546,6 +564,7 @@ impl Book {
             cover: None,
             content: Content::Loose {
                 xhtml,
+                prior_mobi,
                 resources: publication.resources,
                 fonts: (!publication.font_records.is_empty()).then_some(kf8::fonts::FontSource {
                     file: input,
@@ -658,6 +677,13 @@ impl Book {
                 .cloned()
                 .ok_or_else(|| "That chapter is unavailable".into()),
             Content::Chm(chm) => chm.chapter(&chapter.href),
+        }
+    }
+
+    pub(crate) fn previous_mobi_chapter(&self, name: &str) -> Option<&str> {
+        match &self.content {
+            Content::Loose { prior_mobi, .. } => prior_mobi.get(name).map(String::as_str),
+            _ => None,
         }
     }
 

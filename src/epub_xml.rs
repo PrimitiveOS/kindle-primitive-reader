@@ -5,7 +5,7 @@ pub(crate) fn prepare(mut xml: String, limit: usize) -> Result<String> {
     if xml.len() > limit {
         return Err("The EPUB XML exceeds its size limit".into());
     }
-    let Some((start, end, html)) = declaration(&xml) else {
+    let Some((start, end, html)) = declaration(&xml, false) else {
         return Ok(xml);
     };
     // The chapter parser already accepted this exact form. Keep its revision and anchors.
@@ -20,7 +20,7 @@ pub(crate) fn prepare(mut xml: String, limit: usize) -> Result<String> {
 
 /// Preserve all source offsets while parsing the EPUB's conventional HTML declaration.
 pub(crate) fn without_plain_doctype(xml: &str) -> std::borrow::Cow<'_, str> {
-    if let Some((start, end, _)) = declaration(xml)
+    if let Some((start, end, _)) = declaration(xml, false)
         && &xml[start..end] == "<!DOCTYPE html>"
     {
         let mut masked = xml.to_owned();
@@ -59,7 +59,7 @@ impl SourceOffsets {
 /// Kindle links use offsets in the original, unexpanded UTF-8 chapter.
 pub(crate) fn prepare_kf8(xml: &mut String, limit: usize) -> Result<SourceOffsets> {
     let mut positions = SourceOffsets::default();
-    if let Some((start, end, html)) = declaration(xml) {
+    if let Some((start, end, html)) = declaration(xml, true) {
         blank(xml, start, end);
         if html && xml[end..].contains('&') {
             expand_html_names(xml, end, limit, |source, normalized| {
@@ -91,7 +91,7 @@ fn blank(xml: &mut String, start: usize, end: usize) {
 
 /// Accept a simple root name and an optional quoted external identifier. Anything containing
 /// custom declarations or an internal subset stays with the ordinary DTD-disabled XML parser.
-fn declaration(xml: &str) -> Option<(usize, usize, bool)> {
+fn declaration(xml: &str, kindle_html: bool) -> Option<(usize, usize, bool)> {
     let mut rest = xml.trim_start_matches(xml_space);
     loop {
         if rest.starts_with("<?") {
@@ -107,13 +107,26 @@ fn declaration(xml: &str) -> Option<(usize, usize, bool)> {
         }
     }
     let start = xml.len() - rest.len();
-    rest = rest.strip_prefix("<!DOCTYPE")?;
+    let token = rest.get(..9)?;
+    let html_declaration = kindle_html && token.eq_ignore_ascii_case("<!doctype");
+    if token != "<!DOCTYPE" && !html_declaration {
+        return None;
+    }
+    rest = &rest[9..];
     if !rest.starts_with(xml_space) {
         return None;
     }
     rest = rest.trim_start_matches(xml_space);
     let end_name = rest.find(|c| xml_space(c) || c == '>')?;
     let name = &rest[..end_name];
+    if token != "<!DOCTYPE"
+        && (!name.eq_ignore_ascii_case("html")
+            || !rest[end_name..]
+                .trim_start_matches(xml_space)
+                .starts_with('>'))
+    {
+        return None;
+    }
     if !matches!(name, "html" | "ncx" | "package" | "container" | "svg") {
         return None;
     }

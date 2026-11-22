@@ -68,6 +68,81 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Kf8Document> {
         bytes,
         offsets: mobi::record_offsets(bytes)?,
     };
+    decode_edition(&records, None)
+}
+
+/// Locate a second, unprotected edition only through the publisher's EXTH 121
+/// record. A byte sequence resembling BOUNDARY elsewhere is not a record index.
+pub(crate) fn hybrid_fallback(bytes: &[u8], primary_error: MobiError) -> Result<Kf8Document> {
+    if bytes.len() > MAX_MOBI_BYTES || bytes.get(60..68) != Some(b"BOOKMOBI") {
+        return Err(primary_error);
+    }
+    let mut primary = Records {
+        bytes,
+        offsets: mobi::record_offsets(bytes)?,
+    };
+    let record = primary.at(0)?;
+    let end = integer(record, 20)?
+        .checked_add(16)
+        .ok_or(MobiError::InvalidHeader)?;
+    let header = record.get(..end).ok_or(MobiError::InvalidHeader)?;
+    if header.get(16..20) != Some(b"MOBI") || integer(header, 36)? >= 8 {
+        return Err(primary_error);
+    }
+    if mobi::u16_at(header, 12)? != 0
+        || mobi::u32_at(header, 172).is_ok_and(|flags| !matches!(flags, 0 | u32::MAX))
+    {
+        return Err(MobiError::Protected);
+    }
+    let exth = &record[end..];
+    if !exth.starts_with(b"EXTH") {
+        return Err(primary_error);
+    }
+    let count = integer(exth, 8)?;
+    if count > 512 {
+        return Err(MobiError::InvalidHeader);
+    }
+    let mut fields = exth
+        .get(12..integer(exth, 4)?)
+        .ok_or(MobiError::InvalidHeader)?;
+    let mut next = None;
+    for _ in 0..count {
+        let len = integer(fields, 4)?;
+        let value = fields.get(8..len).ok_or(MobiError::InvalidHeader)?;
+        if integer(fields, 0)? == 121 {
+            if value.len() != 4 || next.is_some() {
+                return Err(MobiError::InvalidHeader);
+            }
+            next = Some(integer(value, 0)?);
+        }
+        fields = &fields[len..];
+    }
+    let Some(index) = next.filter(|n| *n != u32::MAX as usize) else {
+        return Err(primary_error);
+    };
+    let first_nontext = usize::from(mobi::u16_at(header, 8)?) + 1;
+    if index <= first_nontext
+        || primary.at(index - 1)? != b"BOUNDARY"
+        || primary.at(index)?.get(16..20) != Some(b"MOBI")
+    {
+        return Err(MobiError::InvalidHeader);
+    }
+    let edition = Records {
+        bytes,
+        offsets: primary.offsets[index..].to_vec(),
+    };
+    // libmobi resolves kindle:embed against the shared legacy resource section.
+    // End the resource view at the boundary, excluding all later structural records.
+    let first_resource = integer(header, 0x6c)?;
+    primary.offsets.truncate(index);
+    decode_edition(&edition, Some((&primary, first_resource, first_nontext)))
+}
+
+fn decode_edition(
+    records: &Records<'_>,
+    shared: Option<(&Records<'_>, usize, usize)>,
+) -> Result<Kf8Document> {
+    let bytes = records.bytes;
     let record = records.at(0)?;
     let end = integer(record, 20)?
         .checked_add(16)
@@ -113,15 +188,9 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Kf8Document> {
     let skeletons = read_index(&records, skel, MAX_CHAPTERS)?;
     let fragments = read_index(&records, div, MAX_FRAGMENTS)?;
     let (chapters, locations) = reconstruct(flow, &skeletons, &fragments)?;
-    let images = integer(header, 0x6c)?;
-    let (chapters, resources) = normalize(
-        chapters,
-        &locations,
-        &records,
-        images,
-        first_nontext,
-        &flows,
-    )?;
+    let (assets, images, first) =
+        shared.unwrap_or((records, integer(header, 0x6c)?, first_nontext));
+    let (chapters, resources) = normalize(chapters, &locations, assets, images, first, &flows)?;
     let labels = mobi::kf8_labels(bytes, record, header);
     Ok(Kf8Document {
         title: labels.title,
@@ -129,7 +198,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Kf8Document> {
         language: labels.language,
         chapters,
         resources,
-        font_records: fonts::index(&records, images, first_nontext),
+        font_records: fonts::index(assets, images, first),
     })
 }
 
@@ -1134,6 +1203,279 @@ pub(crate) mod tests {
             pdb.extend_from_slice(record);
         }
         pdb
+    }
+
+    fn hybrid_fixture() -> Vec<u8> {
+        let standalone = fixture();
+        let offsets = mobi::record_offsets(&standalone).unwrap();
+        let mut kf8: Vec<_> = offsets
+            .windows(2)
+            .map(|p| standalone[p[0]..p[1]].to_vec())
+            .collect();
+        // Only the shared first edition contains the image.
+        *kf8.last_mut().unwrap() = b"not a bitmap".to_vec();
+        let legacy = b"<p>Legacy edition.</p>";
+        let mut header = vec![0; 264];
+        short(&mut header, 0, 1);
+        word(&mut header, 4, legacy.len());
+        short(&mut header, 8, 1);
+        short(&mut header, 10, 4096);
+        header[16..20].copy_from_slice(b"MOBI");
+        word(&mut header, 20, 248);
+        word(&mut header, 24, 2);
+        word(&mut header, 28, 65001);
+        word(&mut header, 36, 6);
+        word(&mut header, 0x6c, 2);
+        word(&mut header, 0x80, 0x40);
+        header.extend(mobi::test_exth(&[(121, &4u32.to_be_bytes())]));
+        let mut records = vec![header, legacy.to_vec(), PNG.to_vec(), b"BOUNDARY".to_vec()];
+        records.extend(kf8);
+        let mut bytes = vec![0; 78 + 8 * records.len()];
+        bytes[60..68].copy_from_slice(b"BOOKMOBI");
+        short(&mut bytes, 76, records.len());
+        for (i, rec) in records.iter().enumerate() {
+            let n = bytes.len();
+            word(&mut bytes, 78 + i * 8, n);
+            bytes.extend_from_slice(rec);
+        }
+        bytes
+    }
+
+    #[test]
+    fn mobi_hybrid_normal_open_prefers_legacy_and_recovers_a_supported_secondary() {
+        use std::io::Write;
+        let open = |bytes: &[u8]| {
+            let path = std::env::temp_dir()
+                .join(format!("reader-hybrid-normal-{}.mobi", std::process::id()));
+            let mut file = std::fs::File::create_new(&path).unwrap();
+            file.write_all(bytes).unwrap();
+            drop(file);
+            let result = crate::epub::Book::open(&path);
+            std::fs::remove_file(path).unwrap();
+            result
+        };
+        let mut bytes = hybrid_fixture();
+        let offsets = mobi::record_offsets(&bytes).unwrap();
+        let mut primary = open(&bytes).unwrap();
+        assert_eq!(primary.chapters.len(), 1);
+        assert_eq!(primary.chapters[0].href, crate::loose::CHAPTER_PATH);
+        assert!(primary.chapter(0).unwrap().contains("Legacy edition."));
+        short(&mut bytes, offsets[0], 17_480);
+        let mut secondary = open(&bytes).unwrap();
+        assert_eq!(secondary.chapters.len(), 2);
+        let xhtml = secondary.chapter(0).unwrap();
+        let xml = Document::parse(&xhtml).unwrap();
+        let path = xml
+            .descendants()
+            .find(|n| n.has_tag_name("img"))
+            .unwrap()
+            .attribute("src")
+            .unwrap();
+        assert_eq!(secondary.resource(path).unwrap(), PNG);
+        assert!(secondary.chapter(1).unwrap().contains("Arrival"));
+        assert!(xhtml.contains(&secondary.chapters[1].href));
+        let mut false_marker = bytes.clone();
+        false_marker[offsets[3]] = b'X';
+        assert!(open(&false_marker).is_err());
+        let mut false_exth = bytes.clone();
+        word(&mut false_exth, offsets[0] + 264 + 12, 120);
+        assert!(open(&false_exth).is_err());
+        let mut protected = bytes.clone();
+        short(&mut protected, offsets[0] + 12, 2);
+        assert!(
+            open(&protected)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("encrypted")
+        );
+        short(&mut bytes, offsets[4], 17_480);
+        assert!(
+            open(&bytes)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("HUFF/CDIC")
+        );
+    }
+
+    #[test]
+    #[ignore = "requires a local unencrypted legacy or hybrid reference file"]
+    fn local_mobi_editions_match_references() {
+        use std::env;
+        let path = env::var_os("READER_TEST_MOBI").unwrap();
+        let path = std::path::Path::new(&path);
+        let bytes = std::fs::read(path).unwrap();
+        if env::var_os("READER_TEST_HUFF").is_some() {
+            assert_eq!(
+                hybrid_fallback(&bytes, MobiError::UnsupportedCompression(17_480)).err(),
+                Some(MobiError::UnsupportedCompression(17_480))
+            );
+            assert!(
+                crate::epub::Book::open(path)
+                    .err()
+                    .unwrap()
+                    .to_string()
+                    .contains("HUFF/CDIC")
+            );
+            eprintln!("primary and secondary HUFF/CDIC explicitly unsupported");
+            return;
+        }
+        if env::var_os("READER_TEST_KF8").is_some() {
+            let edition =
+                hybrid_fallback(&bytes, MobiError::UnsupportedCompression(17_480)).unwrap();
+            assert!(!edition.chapters.is_empty());
+            let mut visible = String::new();
+            for chapter in &edition.chapters {
+                let xml = Document::parse(&chapter.xhtml).unwrap();
+                let body = xml.descendants().find(|n| n.has_tag_name("body")).unwrap();
+                for node in body.descendants().filter(|node| {
+                    node.is_text()
+                        && !node.ancestors().any(|parent| {
+                            matches!(
+                                parent.tag_name().name(),
+                                "script" | "style" | "title" | "iframe"
+                            )
+                        })
+                }) {
+                    visible.extend(node.text().unwrap().chars().filter(|c| !c.is_whitespace()));
+                }
+            }
+            if let Ok(expected) = env::var("READER_TEST_KF8_TEXT") {
+                assert_eq!(format!("{:016x}", crate::revision(&visible)), expected);
+            }
+            eprintln!(
+                "secondary chapters={} resources={}",
+                edition.chapters.len(),
+                edition.resources.len()
+            );
+        }
+        let mut book = crate::epub::Book::open(path).unwrap();
+        let mut image_hashes = Vec::new();
+        let mut images = 0;
+        let mut links = 0;
+        let mut validated = 0;
+        let mut keys = 0;
+        let mut positions = BTreeMap::new();
+        for ci in 0..book.chapters.len() {
+            let xml = book.chapter(ci).unwrap();
+            let mut source = crate::source::Source::parse(&xml).unwrap();
+            if let Some(old) = book.previous_mobi_chapter(&book.chapters[ci].href) {
+                let old_source = crate::source::Source::parse(old).unwrap();
+                source.accept_previous_mobi(old).unwrap();
+                for old in old_source.blocks.iter().filter(|b| !b.text.is_empty()) {
+                    let key = source
+                        .current_key(old.key, old_source.revision)
+                        .expect("saved source block");
+                    let now = source
+                        .blocks
+                        .binary_search_by_key(&key, |block| block.key)
+                        .unwrap();
+                    assert!(
+                        source.blocks[now].text == old.text,
+                        "saved block text differs"
+                    );
+                    keys += 1;
+                }
+            }
+            let doc = Document::parse(&xml).unwrap();
+            let mut destinations = std::collections::BTreeSet::new();
+            for tag in doc.descendants().filter(|n| n.is_element()) {
+                if let Some(id) = tag.attribute("id") {
+                    destinations.insert(id.to_owned());
+                }
+                if tag.has_tag_name("img") {
+                    let asset = book.resource(tag.attribute("src").unwrap()).unwrap();
+                    assert!(!asset.is_empty());
+                    image_hashes.push(format!("{:016x}", crate::revision_bytes(&asset)));
+                    images += 1;
+                }
+                if tag.has_tag_name("a")
+                    && tag
+                        .attribute("href")
+                        .is_some_and(|h| h.contains("mobi-filepos"))
+                {
+                    links += 1;
+                }
+            }
+            positions.insert(book.chapters[ci].href.clone(), destinations);
+        }
+        for ci in 0..book.chapters.len() {
+            let xml = book.chapter(ci).unwrap();
+            for tag in Document::parse(&xml).unwrap().descendants() {
+                let Some((path, fragment)) = tag.attribute("href").and_then(|h| h.split_once('#'))
+                else {
+                    continue;
+                };
+                if !fragment.starts_with("mobi-filepos") {
+                    continue;
+                }
+                let path = if path.is_empty() {
+                    &book.chapters[ci].href
+                } else {
+                    path
+                };
+                assert!(positions[path].contains(fragment));
+                validated += 1;
+            }
+        }
+        if let Ok(expected) = env::var("READER_TEST_MOBI_IMAGES") {
+            assert_eq!(image_hashes.join(","), expected);
+        }
+        if let Some(font) = env::var_os("READER_TEST_MOBI_FONT") {
+            let ci = book.chapters.len() - 1;
+            if let Some(old) = book.previous_mobi_chapter(&book.chapters[ci].href) {
+                let original = crate::source::Source::parse(old).unwrap();
+                let b = original
+                    .blocks
+                    .iter()
+                    .rev()
+                    .find(|block| block.text.split_whitespace().count() >= 2)
+                    .unwrap();
+                let (offset, word) = b
+                    .text
+                    .split_whitespace()
+                    .last()
+                    .map(|word| (b.text.rfind(word).unwrap(), word))
+                    .unwrap();
+                let a = crate::Anchor {
+                    book: book.revision(),
+                    chapter: book.chapters[ci].href.clone(),
+                    revision: original.revision,
+                    block: b.key,
+                    offset,
+                    illustration: None,
+                };
+                let end = crate::Anchor {
+                    offset: a.offset + word.len(),
+                    ..a.clone()
+                };
+                let probe = crate::Probe::open(
+                    path,
+                    crate::Engine::Parley,
+                    &[font.into()],
+                    crate::Settings::default(),
+                    ci,
+                )
+                .unwrap();
+                let page = probe.page_for(&a).expect("saved page");
+                let selection = probe.select_range(&a, &end).expect("saved highlight");
+                assert!(selection.text == word);
+                assert!(!probe.selection_rects(page, &selection).is_empty());
+            }
+        }
+        assert_eq!(validated, links);
+        if let Ok(expected) = env::var("READER_TEST_MOBI_COUNTS") {
+            let counts: Vec<usize> = expected.split(',').map(|v| v.parse().unwrap()).collect();
+            assert_eq!(&counts, &[images, links]);
+        }
+        eprintln!(
+            "primary chapters={} images={} exact_links={} prior_text_blocks={}",
+            book.chapters.len(),
+            images,
+            links,
+            keys
+        );
     }
 
     #[test]

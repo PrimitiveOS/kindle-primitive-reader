@@ -131,6 +131,7 @@ pub(crate) struct InlineLink {
 pub(crate) struct Source {
     pub revision: u64,
     legacy_revision: Option<u64>,
+    previous_mobi: Option<(u64, BTreeMap<usize, usize>)>,
     pub blocks: Vec<Block>,
     pub fragments: BTreeMap<String, (usize, usize)>,
     pub stylesheets: Vec<Stylesheet>,
@@ -714,6 +715,7 @@ impl Source {
         Ok(Self {
             revision,
             legacy_revision,
+            previous_mobi: None,
             blocks,
             fragments,
             stylesheets,
@@ -725,13 +727,52 @@ impl Source {
         })
     }
 
+    /// Legacy MOBI block keys were byte offsets in the image/link-stripped XHTML.
+    /// Retain them only when every historical text block matches in order; this
+    /// also disambiguates repeated paragraphs without matching on quotations.
+    pub(crate) fn accept_previous_mobi(&mut self, xml: &str) -> Result<()> {
+        let previous = Self::parse(xml)?;
+        let mut current = self.blocks.iter().filter(|block| !block.text.is_empty());
+        let mut keys = BTreeMap::new();
+        for old in previous
+            .blocks
+            .iter()
+            .filter(|block| !block.text.is_empty())
+        {
+            let Some(now) = current.next() else {
+                return Ok(());
+            };
+            if old.text != now.text {
+                return Ok(());
+            }
+            keys.insert(old.key, now.key);
+        }
+        if current.next().is_none() {
+            self.previous_mobi = Some((previous.revision, keys));
+        }
+        Ok(())
+    }
+    pub(crate) fn current_key(&self, key: usize, revision: u64) -> Option<usize> {
+        if let Some((old, keys)) = &self.previous_mobi
+            && *old == revision
+            && revision != self.revision
+        {
+            return keys.get(&key).copied();
+        }
+        Some(key)
+    }
     pub(crate) fn project_offset(
         &self,
         block: &Block,
         revision: u64,
         offset: usize,
     ) -> Option<usize> {
-        let current = if revision == self.revision {
+        let current = if revision == self.revision
+            || self
+                .previous_mobi
+                .as_ref()
+                .is_some_and(|(old, _)| *old == revision)
+        {
             offset
         } else if self.legacy_revision == Some(revision) {
             match &block.legacy {

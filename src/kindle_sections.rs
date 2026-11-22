@@ -76,7 +76,22 @@ fn reopening(raw: &str, node: Node<'_, '_>, output: &mut String) -> Result<()> {
     Ok(())
 }
 
-fn split(chapter: Kf8Chapter) -> Result<Vec<Kf8Chapter>> {
+struct Part {
+    chapter: Kf8Chapter,
+    // The contiguous slice from the old chapter follows any reopened ancestors.
+    range: std::ops::Range<usize>,
+    prefix: usize,
+    reopened_links: Vec<(usize, usize)>,
+}
+fn whole(chapter: Kf8Chapter) -> Part {
+    Part {
+        range: 0..chapter.xhtml.len(),
+        prefix: 0,
+        reopened_links: Vec::new(),
+        chapter,
+    }
+}
+fn split(chapter: Kf8Chapter) -> Result<Vec<Part>> {
     if chapter.xhtml.len() <= SECTION_BYTES
         && chapter
             .xhtml
@@ -85,7 +100,7 @@ fn split(chapter: Kf8Chapter) -> Result<Vec<Kf8Chapter>> {
             .count()
             <= SECTION_IMAGES
     {
-        return Ok(vec![chapter]);
+        return Ok(vec![whole(chapter)]);
     }
     let raw = &chapter.xhtml;
     let document = parse(raw)?;
@@ -163,7 +178,7 @@ fn split(chapter: Kf8Chapter) -> Result<Vec<Kf8Chapter>> {
         }
     }
     if cuts.is_empty() {
-        return Ok(vec![chapter]);
+        return Ok(vec![whole(chapter)]);
     }
     if cuts.len() >= MAX_SECTIONS {
         return Err(MobiError::TextTooLarge);
@@ -172,6 +187,7 @@ fn split(chapter: Kf8Chapter) -> Result<Vec<Kf8Chapter>> {
     let mut bytes = 0usize;
     for part in 0..=cuts.len() {
         let mut xhtml = String::new();
+        let mut reopened_links = Vec::new();
         let start = if part == 0 {
             0
         } else {
@@ -183,10 +199,15 @@ fn split(chapter: Kf8Chapter) -> Result<Vec<Kf8Chapter>> {
                 .take_while(|n| *n != body.parent().unwrap())
                 .collect();
             for node in chain.into_iter().rev() {
+                if node.has_tag_name("a") {
+                    reopened_links.push((node.range().start + 2, xhtml.len() + 2));
+                }
                 reopening(raw, node, &mut xhtml)?;
             }
             cut.offset
         };
+        let prefix = xhtml.len();
+        let end = cuts.get(part).map_or(raw.len(), |cut| cut.offset);
         if let Some(end) = cuts.get(part) {
             xhtml.push_str(&raw[start..end.offset]);
             for node in end.parent.ancestors().filter(Node::is_element) {
@@ -199,24 +220,91 @@ fn split(chapter: Kf8Chapter) -> Result<Vec<Kf8Chapter>> {
         if bytes > MAX_SECTION_BYTES {
             return Err(MobiError::TextTooLarge);
         }
-        result.push(Kf8Chapter {
-            continued: part > 0,
-            path: path_for(&chapter.path, part),
-            label: chapter.label.clone(),
-            xhtml,
+        result.push(Part {
+            range: start..end,
+            prefix,
+            reopened_links,
+            chapter: Kf8Chapter {
+                continued: part > 0,
+                path: path_for(&chapter.path, part),
+                label: chapter.label.clone(),
+                xhtml,
+            },
         });
     }
     Ok(result)
 }
 
 pub(crate) fn partition(chapters: Vec<Kf8Chapter>) -> Result<Vec<Kf8Chapter>> {
+    let groups = chapters.into_iter().map(|chapter| {
+        let original = chapter.path.clone();
+        let parts = split(chapter)?
+            .into_iter()
+            .map(|part| part.chapter)
+            .collect();
+        Ok((original, parts))
+    });
+    retarget(groups)
+}
+
+/// Apply new MOBI image/link markup after choosing historical split points.
+/// Long legacy books keep their exact text in every previously saved chapter.
+pub(crate) fn legacy(
+    chapter: Kf8Chapter,
+    additions: Vec<crate::mobi::Addition>,
+    split_long: bool,
+) -> Result<(Vec<Kf8Chapter>, BTreeMap<String, String>)> {
+    let original = chapter.path.clone();
+    let parts = if split_long {
+        split(chapter)?
+    } else {
+        vec![whole(chapter)]
+    };
+    let mut old = Vec::new();
+    let mut new = Vec::new();
+    for part in parts {
+        let raw = &part.chapter.xhtml;
+        let start = additions.partition_point(|edit| edit.at < part.range.start);
+        let end = additions.partition_point(|edit| edit.at < part.range.end);
+        let mut xhtml = crate::mobi::apply_additions(
+            raw,
+            &additions[start..end],
+            part.range.start,
+            part.prefix,
+        )?;
+        for (original, local) in part.reopened_links.into_iter().rev() {
+            let first = additions.partition_point(|edit| edit.at < original);
+            if let Some(href) = additions[first..]
+                .iter()
+                .take_while(|edit| edit.at == original)
+                .find(|edit| edit.xml.starts_with(" href="))
+            {
+                xhtml.insert_str(local, &href.xml);
+            }
+        }
+        new.push(Kf8Chapter {
+            path: part.chapter.path.clone(),
+            label: part.chapter.label.clone(),
+            continued: part.chapter.continued,
+            xhtml,
+        });
+        old.push(part.chapter);
+    }
+    let old = retarget([Ok((original.clone(), old))])?
+        .into_iter()
+        .map(|part| (part.path, part.xhtml))
+        .collect();
+    Ok((retarget([Ok((original, new))])?, old))
+}
+fn retarget(
+    groups: impl IntoIterator<Item = Result<(String, Vec<Kf8Chapter>)>>,
+) -> Result<Vec<Kf8Chapter>> {
     let mut result = Vec::new();
     let mut originals = Vec::new();
     let mut moved = BTreeMap::<String, BTreeMap<String, String>>::new();
     let mut bytes = 0;
-    for chapter in chapters {
-        let original = chapter.path.clone();
-        let parts = split(chapter)?;
+    for group in groups {
+        let (original, parts) = group?;
         for (index, part) in parts.into_iter().enumerate() {
             if result.len() == MAX_SECTIONS || part.xhtml.len() > MAX_SECTION_BYTES - bytes {
                 return Err(MobiError::TextTooLarge);
@@ -296,6 +384,40 @@ fn originals_are_local(path: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[test]
+    fn older_mobi_anchors_and_links_spanning_cuts_keep_their_destination() {
+        let body = "long passage ".repeat(45_000);
+        let raw = format!(
+            "<html><head/><body><p><a>{body}</a></p><p id='arrival'>Arrival.</p></body></html>"
+        );
+        let at = raw.find("<a>").unwrap() + 2;
+        let ch = Kf8Chapter {
+            path: "document.xhtml".into(),
+            label: "Walk".into(),
+            xhtml: raw,
+            continued: false,
+        };
+        let (parts, previous) = legacy(
+            ch,
+            vec![crate::mobi::Addition {
+                at,
+                xml: " href=\"#arrival\"".into(),
+            }],
+            true,
+        )
+        .unwrap();
+        assert!(parts.len() > 3);
+        let last = &parts.last().unwrap().path;
+        for part in &parts {
+            let doc = parse(&part.xhtml).unwrap();
+            assert_eq!(previous[&part.path].contains("href="), false);
+            for link in doc.descendants().filter(|n| n.has_tag_name("a")) {
+                let (prefix, name) = link.attribute("href").unwrap().split_once('#').unwrap();
+                assert_eq!(name, "arrival");
+                assert!(prefix == last || prefix.is_empty() && &part.path == last);
+            }
+        }
+    }
     #[test]
     fn image_sections_keep_nested_markup_and_retarget_cross_section_links() {
         let paragraph = "<p><img src='assets/one.png'/></p>".repeat(30);

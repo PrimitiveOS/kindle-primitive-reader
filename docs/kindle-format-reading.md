@@ -1,6 +1,6 @@
 # Reading MOBI, PalmDOC and AZW3
 
-Reader 0.1.6 imports DRM-free legacy MOBI and PalmDOC text, and standalone reflowable Kindle Format 8 (KF8, commonly stored as AZW3). It uses its Rust importer and the same reading view, page controls and saved-position system as EPUB.
+Reader imports DRM-free legacy MOBI with illustrations and internal links, PalmDOC text, and supported reflowable Kindle Format 8 (KF8, commonly stored as AZW3). It uses its Rust importer and the same reading view, page controls and saved-position system as EPUB.
 
 | Reading feature | Implementation |
 | --- | --- |
@@ -11,7 +11,24 @@ Reader 0.1.6 imports DRM-free legacy MOBI and PalmDOC text, and standalone reflo
 | Large chapters | Split long text and heavily illustrated sections for layout. Continuations retain nested markup, reading order and cross-section link destinations. Contents lists the original chapter once. |
 | Import bounds | The container limit is 32 MiB and the uncompressed text limit is 12 MiB. Separate budgets apply to XML nodes, record counts, images, rendered sections and the accumulated resource bytes. |
 
-HUFF/CDIC compression, fixed-layout KF8 and the KF8 portion of hybrid publications still need separate implementation and evidence. Encrypted input returns a protected-document error.
+A hybrid opens its legacy edition when Reader can read it. If that edition uses an unsupported encoding or compression, Reader can open a reflowable KF8 edition identified by its EXTH 121 record and the corresponding boundary. It resolves illustrations against the shared primary resource records. Fixed-layout KF8 and HUFF/CDIC remain unsupported. Reader reports protected books at opening.
+
+## Legacy illustrations, links and reading positions
+
+![Reader displaying an elevation profile and a linked section in a MOBI field guide](screenshots/legacy-mobi-field-notes.png)
+
+The field guide is an original reproducible fixture with one PNG record and a link to the summit notes. The image above was captured from Reader's normal library picker and reading view. [Fixture generator](../scripts/generate-mobi-fixture.py)
+
+Two unencrypted books from a Kindle had 59 JPEG references and 1,136 links that older Reader builds omitted. An independent libmobi extraction placed all 201 distinct link targets at exact element starts. The Mac simulator opened the original files from the picker, advanced the display and resumed both books. All 59 imported image payloads matched the independently extracted resources. Every original text block mapped to the same text and chapter after the update. Saved highlights from the previous text model returned to the same words and produced visible selection rectangles in both books.
+
+| Original | Historical chapters | Recovered figures | Working links | Distinct targets | Verified saved text blocks |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Longer legacy book | 9 | 23 | 1,008 | 175 | 5,466 |
+| Illustrated legacy book | 1 | 36 | 128 | 26 | 1,641 |
+
+Reader interprets a decimal `recindex` as a one-based image record and checks its signature. Recognized images use JPEG, PNG or GIF. It resolves `filepos` against the original UTF-8 or Windows-1252 byte stream. Destinations at a supported opening element are available. An offset inside text, an attribute, a comment, or a discarded element remains unavailable. Historical chapter boundaries are determined before new markup is applied. A prior highlight translates through matching text blocks in their original order.
+
+The two unmodified hybrid controls in libmobi v0.12 both open from Reader's picker through their primary edition. The secondary-edition verifier reconstructs three chapters from the NCX sample and two from the Unicode sample. The complete visible non-whitespace text matched independent libmobi reconstruction in both secondary editions, amounting to 94 and 23,136 characters respectively. The latter includes a shared JPEG and a lowercase HTML5 doctype. An authored hybrid tests the automatic fallback through the normal opener, including a link between KF8 chapters and an image present only in the primary resource section. The uncompressed Unicode sample also contains an unrelated later `BOUNDARY` record that the importer ignores. Both editions in the pinned HUFF/CDIC sample require unsupported compression. The Kindle collection included sixteen standalone KF8 books and two legacy MOBIs. Hybrid behavior was therefore measured on the public controls. [Pinned sample files](https://github.com/bfabiszewski/libmobi/tree/85dcfe803fc2a21020ddcf15c3eb66b93d388add/tests/samples) · [Boundary lookup](https://github.com/bfabiszewski/libmobi/blob/85dcfe803fc2a21020ddcf15c3eb66b93d388add/src/util.c#L3016-L3036) · [Shared resource index](https://github.com/bfabiszewski/libmobi/blob/85dcfe803fc2a21020ddcf15c3eb66b93d388add/src/util.c#L2915-L2928)
 
 ## Tests with books from a Kindle
 
