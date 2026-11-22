@@ -157,9 +157,9 @@ impl GeneratedBoxes {
             // An inline empty ID inside a canonical paragraph uses its real
             // retained caret. Do not replace it with an unrelated block slot.
             if point {
-                let n = source
-                    .blocks
-                    .partition_point(|block| block.key <= element.source_bytes.start);
+                let n = source.blocks.partition_point(|block| {
+                    source.elements[block.element].source_bytes.start <= element.source_bytes.start
+                });
                 if let Some(block) = n.checked_sub(1).and_then(|n| source.blocks.get(n)) {
                     if block.element != owner
                         && source.elements[block.element].source_bytes.end
@@ -209,9 +209,10 @@ impl GeneratedBoxes {
             } else {
                 let slot = spans[owner].map_or_else(
                     || {
-                        source
-                            .blocks
-                            .partition_point(|block| block.key < element.source_bytes.start)
+                        source.blocks.partition_point(|block| {
+                            source.elements[block.element].source_bytes.start
+                                < element.source_bytes.start
+                        })
                     },
                     |(first, _)| first,
                 );

@@ -973,14 +973,12 @@ impl Source {
         if element.selector_only || element.anonymous {
             return None;
         }
-        let next = self
-            .blocks
-            .partition_point(|block| block.key < element.source_bytes.start);
-        if let Some(block) = self
-            .blocks
-            .get(next)
-            .filter(|block| block.key < element.source_bytes.end)
-        {
+        let next = self.blocks.partition_point(|block| {
+            self.elements[block.element].source_bytes.start < element.source_bytes.start
+        });
+        if let Some(block) = self.blocks.get(next).filter(|block| {
+            self.elements[block.element].source_bytes.start < element.source_bytes.end
+        }) {
             return Some((block.key, 0));
         }
         if let Some(position) = self.fragment_owners.iter().find_map(|(id, &element)| {
