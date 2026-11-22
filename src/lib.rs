@@ -170,6 +170,9 @@ pub enum FontHinting {
 /// Pinned KOReader content-scale presets. Zero disables physical CSS units.
 pub const RENDER_DPI_PRESETS: [u16; 6] = [0, 48, 96, 167, 212, 300];
 
+/// Pinned content-DPI More Options: integer 0..=300, separate from screen DPI.
+pub const fn valid_render_dpi(value: u16) -> bool { value <= 300 }
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Settings {
     pub width: u32,
@@ -300,7 +303,7 @@ impl Settings {
             || self.right_margin() > margin_limit
             || self.top_margin() > self.height / 4
             || self.bottom_margin() > self.height / 4
-            || !RENDER_DPI_PRESETS.contains(&self.render_dpi)
+            || !valid_render_dpi(self.render_dpi)
             || !(12.0..=144.0).contains(&self.font_size)
             || !(1.0..=3.0).contains(&self.line_height)
             || !(-2.0..=12.0).contains(&self.word_spacing)

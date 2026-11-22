@@ -102,7 +102,7 @@ fn dpi_global_defaults_freeze_each_new_book_and_reject_invalid_backup_preference
     }
     let prefs = BookPreferences { render_dpi: Some(65535), ..Default::default() };
     assert!(crate::document_defaults::validate_preferences(&prefs).is_err());
-    let bytes = br#"{"version":1,"reflow":{"render_dpi":72},"fixed":null}"#;
+    let bytes = br#"{"version":1,"reflow":{"render_dpi":301},"fixed":null}"#;
     assert!(crate::document_defaults::validate_backup(bytes).is_err());
 }
 
@@ -115,17 +115,17 @@ fn dpi_legacy_records_inherit_and_invalid_preferences_do_not_reset_other_valid_s
     let bad = BookPreferences { render_dpi: Some(65535), ..old };
     assert_eq!(bad.apply_to(base).render_dpi, 167);
     assert_eq!(bad.apply_to(base).font_size, 54.);
-    for dpi in crate::RENDER_DPI_PRESETS {
+    for dpi in 0..=300 {
         assert!(Settings { render_dpi: dpi, ..base }.validate().is_ok());
     }
-    for dpi in [1, 72, 120, 299, 65535] {
+    for dpi in [301, 600, 65535] {
         assert!(Settings { render_dpi: dpi, ..base }.validate().is_err());
     }
 }
 
 #[test]
 #[ignore = "requires READER_DPI_ORIGINAL pointing to an unchanged authorized original EPUB"]
-fn dpi_original_publication_keeps_text_anchors_and_selection_across_every_preset() {
+fn dpi_original_publication_keeps_text_anchors_and_selection_across_presets_and_custom_values() {
     let fixture = Fixture::new();
     let path = PathBuf::from(std::env::var_os("READER_DPI_ORIGINAL").unwrap());
     let original = fs::read(&path).unwrap();
@@ -145,7 +145,7 @@ fn dpi_original_publication_keeps_text_anchors_and_selection_across_every_preset
     let selected = probe.select_range(&anchor, &end).unwrap();
     reading.jump_to_anchor(chapter, &anchor).unwrap();
     let baseline = reading.probe.capture(reading.probe.page_for(&anchor).unwrap()).unwrap();
-    for dpi in [0, 48, 167, 212, 300, 96] {
+    for dpi in [0, 48, 72, 123, 167, 212, 300, 96] {
         app.activate(Action::Text(Settings { render_dpi: dpi, ..settings(&app) })).unwrap();
         let r = &mut app.active.as_mut().unwrap().reading;
         let page = r.probe.page_for(&anchor).unwrap();
