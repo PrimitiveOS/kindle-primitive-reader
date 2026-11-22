@@ -43,6 +43,8 @@ mod top_config;
 mod hidden_flows;
 #[cfg(test)]
 mod nonlinear_tests;
+#[cfg(test)]
+mod workflow_integration_tests;
 
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
