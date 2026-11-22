@@ -258,6 +258,8 @@ pub struct BookPreferences {
     pub margin_bottom: Option<u32>,
     pub line_height: Option<f32>,
     pub word_spacing: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub word_expansion: Option<u8>,
     pub letter_spacing: f32,
     pub scroll: bool,
     pub facing_pages: bool,
@@ -318,6 +320,10 @@ impl BookPreferences {
             } else {
                 settings.word_spacing
             },
+            word_expansion: self
+                .word_expansion
+                .filter(|&percent| percent <= 20)
+                .unwrap_or(settings.word_expansion),
             letter_spacing: if (-1.0..=4.0).contains(&self.letter_spacing) {
                 self.letter_spacing
             } else {

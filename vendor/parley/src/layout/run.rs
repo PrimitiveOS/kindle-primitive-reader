@@ -126,13 +126,15 @@ impl<'a, B: Brush> Run<'a, B> {
     }
 
     #[inline]
-    pub(crate) fn line_spacing(&self) -> EffectiveSpacing {
-        let justification = if self.line_data.is_some() {
-            self.layout.data.lines[self.line_index as usize].justification
+    pub(crate) fn line_spacing(&self) -> EffectiveSpacing<'a> {
+        if self.line_data.is_some() {
+            let layout = &self.layout.data;
+            let line = &layout.lines[self.line_index as usize];
+            EffectiveSpacing::new(self.data.spacing, line.justification)
+                .with_expansion(&layout.expanded_gaps[line.expanded_gaps.clone()])
         } else {
-            Justification::NONE
-        };
-        EffectiveSpacing::new(self.data.spacing, justification)
+            EffectiveSpacing::new(self.data.spacing, Justification::NONE)
+        }
     }
 
     /// Returns the advance for the run.
@@ -285,7 +287,7 @@ pub(crate) struct Glyphs<'a> {
     slice: ShapedSlice<'a>,
     is_rtl: bool,
     /// The spacing to apply, if any. Without spacing, atoms are not tracked.
-    spacing: Option<EffectiveSpacing>,
+    spacing: Option<EffectiveSpacing<'a>>,
     /// The shaped clusters not yet visited: all of `slice`'s clusters without spacing, otherwise
     /// those of the current atom. Visited in logical order for LTR text and in reverse for RTL.
     shaped_clusters: Range<u32>,
@@ -306,7 +308,7 @@ impl<'a> Glyphs<'a> {
     fn new(
         slice: ShapedSlice<'a>,
         is_rtl: bool,
-        spacing: EffectiveSpacing,
+        spacing: EffectiveSpacing<'a>,
         soft_hyphen: Option<SoftHyphen>,
     ) -> Self {
         let clusters = slice.shaped_clusters_range();

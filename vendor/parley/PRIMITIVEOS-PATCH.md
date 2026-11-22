@@ -33,3 +33,9 @@ Reader also supports a baseline shift expressed as fractions of the parent font
 height and descent. Paragraph layout uses this for superscripts and subscripts
 and their nested inline content. The existing built-in shift values retain
 their original semantics. [Layout comparison and tests](../../docs/inline-text-baselines.md)
+
+The opt-in justification mode can distribute part of the surplus line width
+within words. It uses the original shaping atoms, leaves cursive and ideographic
+text at its normal spacing, and gives layout, selection and painting the same
+adjusted advances. The standard alignment API keeps its upstream behavior.
+[Reader word expansion](../../docs/word-expansion.md)

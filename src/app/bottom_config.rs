@@ -353,6 +353,29 @@ impl Reader {
                                 )
                             }),
                         ),
+                        ConfigRow::new(
+                            "Word expansion",
+                            [(0, "None"), (5, "Some"), (15, "More")].map(|(word_expansion, label)| {
+                                Choice::option(
+                                    label,
+                                    Action::Text(Settings { word_expansion, ..settings }),
+                                    word_expansion == settings.word_expansion,
+                                )
+                            }),
+                        ),
+                        ConfigRow::new(
+                            format!("Fine tune · {}%", settings.word_expansion),
+                            [
+                                text("-1%", Settings {
+                                    word_expansion: settings.word_expansion.saturating_sub(1),
+                                    ..settings
+                                }),
+                                text("+1%", Settings {
+                                    word_expansion: settings.word_expansion.saturating_add(1).min(20),
+                                    ..settings
+                                }),
+                            ],
+                        ),
                     ];
                 }
                 BarPanel::TextRendering => {

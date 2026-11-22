@@ -355,7 +355,7 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
 #[derive(Clone)]
 struct AtomIter<'a> {
     atoms: Atoms<'a>,
-    spacing: EffectiveSpacing,
+    spacing: EffectiveSpacing<'a>,
     is_rtl: bool,
     soft_hyphen: Option<super::data::SoftHyphen>,
     /// The next atom in visual order, if it has been peeked but not yet consumed.

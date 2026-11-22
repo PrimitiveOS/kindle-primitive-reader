@@ -785,10 +785,19 @@ mod tests {
         )));
         let documents = root.0.join("documents");
         fs::create_dir_all(&documents).unwrap();
-        let book = documents.join("Field Notes.epub");
-        fs::copy(crate::test_fixture("field-notes-epub3.epub"), &book).unwrap();
+        let book = documents.join("Sea wall survey.xhtml");
+        fs::write(
+            &book,
+            r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Sea wall survey</title></head>
+            <body><h1>Sea wall survey</h1>
+            <p style="text-align:justify">At low tide, we marked the line where the sandstone met the wall.
+            The survey pole followed the curve of the shore. Two narrow channels carried water back to the bay.</p>
+            <p style="text-align:justify">The next observation was made beside the western pier.
+            A thin layer of salt covered the dry stones, and a pool near the cliff still reflected the sky.</p>
+            </body></html>"#,
+        ).unwrap();
         let state = root.0.join("reading.json");
-        let fonts = vec![crate::test_fixture("fonts/Silkscreen-Regular.ttf")];
+        let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
         let mut app = Reader::open(&documents, &state, fonts.clone()).unwrap();
         app.open_path(&book).unwrap();
 
@@ -811,11 +820,20 @@ mod tests {
             4.0
         );
 
+        assert_eq!(tap(&mut app, "Some"), Change::Partial);
+        assert_eq!(tap(&mut app, "+1%"), Change::Partial);
+        assert_eq!(app.reading_panel, Some(BarPanel::TextSpacing));
+        crate::app::tests::capture_test_screen(
+            &app, &fonts, "READER_WORD_EXPANSION_SCREEN", false,
+        );
         app.open_reading_edge(false, 500.0);
         assert_eq!(app.reading_panel, Some(BarPanel::TextSpacing));
         app.save().unwrap();
         let mut restored = Reader::open(&documents, &state, fonts).unwrap();
         restored.open_path(&book).unwrap();
+        assert_eq!(
+            restored.active.as_ref().unwrap().reading.config.settings.word_expansion, 6
+        );
         assert_eq!(
             restored
                 .active

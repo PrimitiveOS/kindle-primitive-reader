@@ -1862,6 +1862,7 @@ fn commit_line<B: Brush>(
         break_reason,
         soft_hyphen: state.soft_hyphen,
         num_justification_opportunities,
+        expanded_gaps: 0..0,
         justification: Justification {
             justification_end_cluster,
             ..Justification::NONE

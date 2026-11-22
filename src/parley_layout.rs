@@ -1240,8 +1240,32 @@ fn make_paragraph(
         crate::TextAlignment::Center => Alignment::Center,
         crate::TextAlignment::Justify => Alignment::Justify,
     };
-    layout.align(alignment, AlignmentOptions::default());
+    layout.align_with_word_expansion(
+        alignment,
+        AlignmentOptions::default(),
+        &block.text,
+        settings.word_expansion,
+        &can_expand_word_atom,
+    );
     layout
+}
+
+// Track alphabetic and numeric atoms in supported nonjoining scripts. Keep
+// ligatures together and leave connected writing, spaces and ideographs alone.
+fn can_expand_word_atom(atom: &str) -> bool {
+    use icu_properties::CodePointMapData;
+    use icu_properties::props::Script;
+    atom.chars().next().is_some_and(|first| {
+        if first.is_ascii() {
+            return first.is_ascii_alphanumeric();
+        }
+        first.is_numeric()
+            || (first.is_alphabetic()
+                && matches!(
+                    CodePointMapData::<Script>::new().get(first),
+                    Script::Latin | Script::Greek | Script::Cyrillic | Script::Hebrew
+                ))
+    })
 }
 
 fn line_break(language: Option<Language>) -> LineBreak {
@@ -1837,6 +1861,72 @@ mod tests {
         )
         .unwrap();
         assert_eq!(blank.page_count(), 1);
+    }
+
+    #[test]
+    fn word_expansion_keeps_line_breaks_and_selection_geometry() {
+        use parley::Cluster;
+
+        let path = crate::test_fixture("field-notes-epub3.epub");
+        let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let markup = "<html><body><p>Tide pools drift. Longshorewatch observes the moon. Sparse notes.</p></body></html>";
+        let run = |word_expansion| {
+            crate::Probe::from_book_content(
+                Book::open(&path).unwrap(),
+                crate::Engine::Parley,
+                &fonts,
+                Settings {
+                    width: 420,
+                    height: 460,
+                    margin: 0,
+                    font_size: 38.0,
+                    alignment: crate::TextAlignment::Justify,
+                    word_expansion,
+                    disable_soft_hyphens: true,
+                    automatic_hyphenation: false,
+                    ..Settings::default()
+                },
+                0,
+                Some(markup.into()),
+            ).unwrap()
+        };
+        let compare = |probe: &crate::Probe| {
+            let Renderer::Parley(engine) = &probe.renderer else { unreachable!() };
+            let paragraph = &engine.paragraphs[0];
+            let layout = &paragraph.layout;
+            let text = &probe.source.blocks[0].text;
+            let first_word = 0.."Tide".len();
+            let cluster = |at| Cluster::from_byte_index(layout, at).unwrap().advance();
+            let gaps = (cluster(1), cluster(first_word.end));
+            let lines: Vec<_> = layout.lines().map(|line| line.text_range()).collect();
+            let last = lines.last().unwrap().clone();
+            let last_advances: Vec<_> = text[last.clone()].char_indices()
+                .map(|(offset, _)| cluster(last.start + offset)).collect();
+            let choice = probe.select_range(
+                &probe.anchor(paragraph.key, first_word.start),
+                &probe.anchor(paragraph.key, first_word.end),
+            ).unwrap();
+            let rect = probe.selection_rects(0, &choice)[0];
+            let selected = probe.word_at(
+                0,
+                (rect.x + rect.width / 2) as f32,
+                (rect.y + rect.height / 2) as f32,
+            ).unwrap();
+            assert_eq!(selected.text, "Tide");
+            (gaps, lines, last_advances, choice, rect.width)
+        };
+        let mut spaced = run(15);
+        let mut baseline = run(0);
+        let ((base_letter, base_space), base_lines, base_last, before, base_width) = compare(&baseline);
+        let ((wide_letter, narrow_space), expanded_lines, expanded_last, after, expanded_width) = compare(&spaced);
+        assert_eq!(base_lines, expanded_lines);
+        assert_eq!(base_last, expanded_last);
+        assert_eq!(before, after);
+        assert!(wide_letter > base_letter && wide_letter - base_letter <= 5.0);
+        assert!(narrow_space < base_space && expanded_width > base_width);
+        assert_ne!(baseline.capture(0).unwrap(), spaced.capture(0).unwrap());
+        assert!(can_expand_word_atom("fí"));
+        assert!(!can_expand_word_atom("ن") && !can_expand_word_atom("天"));
     }
 
     #[test]
@@ -2950,3 +3040,7 @@ mod inline_baseline_tests;
 
 #[cfg(test)]
 mod publisher_face_tests;
+
+#[cfg(test)]
+#[path = "parley_layout/word_expansion_cases.rs"]
+mod word_expansion_cases;

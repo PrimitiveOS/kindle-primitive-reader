@@ -147,12 +147,13 @@ impl Default for Justification {
 
 /// Additional spacing to apply, including justification (if any).
 #[derive(Copy, Clone, Debug)]
-pub(crate) struct EffectiveSpacing {
+pub(crate) struct EffectiveSpacing<'a> {
     spacing: Spacing,
     justification: Justification,
+    expanded_gaps: &'a [(u32, f32)],
 }
 
-impl EffectiveSpacing {
+impl<'a> EffectiveSpacing<'a> {
     /// The combined [`Spacing`] and [`Justification`] effective for a run.
     ///
     /// To measure text for purposes like line breaking, pass [`Justification::NONE`].
@@ -161,12 +162,20 @@ impl EffectiveSpacing {
         Self {
             spacing,
             justification,
+            expanded_gaps: &[],
         }
+    }
+
+    pub(crate) fn with_expansion(mut self, gaps: &'a [(u32, f32)]) -> Self {
+        self.expanded_gaps = gaps;
+        self
     }
 
     #[inline(always)]
     pub(crate) const fn is_zero(self) -> bool {
-        self.spacing.is_zero() && self.justification.amount_per_opportunity == 0.
+        self.spacing.is_zero()
+            && self.justification.amount_per_opportunity == 0.
+            && self.expanded_gaps.is_empty()
     }
 
     /// The gaps around `atom`.
@@ -179,6 +188,12 @@ impl EffectiveSpacing {
             && atom.shaped_clusters_range().end <= self.justification.justification_end_cluster
         {
             gaps.after += self.justification.amount_per_opportunity;
+        } else if !self.expanded_gaps.is_empty()
+            && let Ok(at) = self
+                .expanded_gaps
+                .binary_search_by_key(&atom.shaped_clusters_range().start, |&(start, _)| start)
+        {
+            gaps.after += self.expanded_gaps[at].1;
         }
 
         gaps

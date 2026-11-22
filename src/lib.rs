@@ -157,6 +157,8 @@ pub struct Settings {
     pub margin_bottom: Option<u32>,
     pub line_height: f32,
     pub word_spacing: f32,
+    /// Maximum tracking in justified words, as a percentage of font size.
+    pub word_expansion: u8,
     pub letter_spacing: f32,
     pub alignment: TextAlignment,
     pub bold_text: bool,
@@ -188,6 +190,7 @@ impl Default for Settings {
             margin_bottom: None,
             line_height: 1.35,
             word_spacing: 0.0,
+            word_expansion: 0,
             letter_spacing: 0.0,
             alignment: TextAlignment::Publisher,
             bold_text: false,
@@ -261,6 +264,7 @@ impl Settings {
             || !(12.0..=144.0).contains(&self.font_size)
             || !(1.0..=3.0).contains(&self.line_height)
             || !(-2.0..=12.0).contains(&self.word_spacing)
+            || self.word_expansion > 20
             || !(-1.0..=4.0).contains(&self.letter_spacing)
             || self.text_height() as f32 <= self.font_size * self.line_height * 2.0
         {
@@ -527,9 +531,10 @@ impl Probe {
         if engine == Engine::Blitz
             && (!settings.publisher_styles
                 || !settings.font_kerning
-                || settings.font_hinting != FontHinting::Off)
+                || settings.font_hinting != FontHinting::Off
+                || settings.word_expansion != 0)
         {
-            return Err("Publisher style, kerning and hinting controls require Parley".into());
+            return Err("Publisher style, kerning, hinting and word expansion controls require Parley".into());
         }
         let entry = book
             .chapters

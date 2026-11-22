@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
 use super::BreakReason;
-use crate::data::LayoutData;
+use alloc::vec::Vec;
+use parley_engine::ShapedText;
+
+use crate::data::{LayoutData, LayoutItemKind, LineData, LineItemData};
 use crate::style::Brush;
 
 /// Alignment of a layout.
@@ -65,19 +68,28 @@ impl Default for AlignmentOptions {
     }
 }
 
+pub(crate) struct WordExpansion<'a> {
+    pub(crate) text: &'a str,
+    pub(crate) max_percent: u8,
+    pub(crate) eligible: &'a dyn Fn(&str) -> bool,
+}
+
 /// Align the layout.
 pub(crate) fn align<B: Brush>(
     layout: &mut LayoutData<B>,
     alignment: Alignment,
     options: AlignmentOptions,
+    expansion: Option<WordExpansion<'_>>,
 ) {
     layout.alignment = Some(alignment);
+    layout.expanded_gaps.clear();
 
     let is_rtl = layout.base_level.is_rtl();
 
     // Apply alignment to line items
     for line in &mut layout.lines {
         line.justification.amount_per_opportunity = 0.;
+        line.expanded_gaps = 0..0;
 
         let indent = line.metrics.indent;
 
@@ -139,9 +151,111 @@ pub(crate) fn align<B: Brush>(
                     continue;
                 }
 
+                let mut space = free_space;
+                if let Some(expansion) = &expansion {
+                    let usable_width = line_width - indent;
+                    if free_space > usable_width * 0.05 {
+                        let from = layout.expanded_gaps.len();
+                        space -= expand_words(
+                            &layout.shaped_text,
+                            &layout.line_items[line.item_range.clone()],
+                            line,
+                            expansion,
+                            free_space,
+                            usable_width * 0.05,
+                            &mut layout.expanded_gaps,
+                        );
+                        line.expanded_gaps = from..layout.expanded_gaps.len();
+                    }
+                }
                 line.justification.amount_per_opportunity =
-                    free_space / line.num_justification_opportunities as f32;
+                    space / line.num_justification_opportunities as f32;
             }
         }
     }
+}
+
+/// Spend part of the excess width on tracking while retaining the shaped glyphs.
+fn expand_words(
+    shaped: &ShapedText,
+    items: &[LineItemData],
+    line: &LineData,
+    expansion: &WordExpansion<'_>,
+    free_space: f32,
+    tolerance: f32,
+    all: &mut Vec<(u32, f32)>,
+) -> f32 {
+    let target = free_space - tolerance;
+    let end = line.justification.justification_end_cluster;
+    let start = all.len();
+    let mut largest: f32 = 0.0;
+    for item in items
+        .iter()
+        .filter(|item| item.kind == LayoutItemKind::TextRun)
+    {
+        let font_size = shaped.runs()[item.index].font_size;
+        let atoms = shaped
+            .run_slice(item.index as u32)
+            .narrow(item.shaped_cluster_range.clone())
+            .atoms_start();
+        for atom in atoms {
+            let cluster = atom.shaped_clusters_range();
+            if cluster.end > end || (cluster.end == end && line.soft_hyphen.is_none()) {
+                continue;
+            }
+            let characters = atom.characters();
+            if characters[0].is_whitespace() || atom.advance() <= 0.0 {
+                continue;
+            }
+            let bytes = characters[0].text_byte_range().start
+                ..characters.last().unwrap().text_byte_range().end;
+            if expansion.text.get(bytes).is_some_and(expansion.eligible) {
+                largest = largest.max(font_size);
+                all.push((cluster.start, font_size));
+            }
+        }
+    }
+    let candidates = &mut all[start..];
+    let cap = (largest * f32::from(expansion.max_percent) / 100.0) as u32;
+    let cap = cap.min(u32::MAX - 1);
+    if cap == 0 || candidates.is_empty() {
+        all.truncate(start);
+        return 0.0;
+    }
+    // Test pixel increments in the largest font, proportionally smaller in
+    // other runs. Respect the maximum and leave enough width for spaces.
+    let per_atom = |step: u32, size: f32| (step as f32 * size / largest) as u32 as f32;
+    let total = |step| {
+        candidates
+            .iter()
+            .map(|&(_, size)| per_atom(step, size))
+            .sum::<f32>()
+    };
+    let mut low = 1;
+    let mut high = cap;
+    let (mut below, mut meets) = (0, None);
+    while low <= high {
+        let step = low + (high - low) / 2;
+        let width = total(step);
+        if width >= target {
+            if width <= free_space {
+                meets = Some(step);
+            }
+            high = step - 1;
+        } else {
+            below = step;
+            low = step + 1;
+        }
+    }
+    let step = meets.unwrap_or(below);
+    if step == 0 {
+        all.truncate(start);
+        return 0.0;
+    }
+    let spent = total(step);
+    for (_, size) in &mut *candidates {
+        *size = per_atom(step, *size);
+    }
+    candidates.sort_unstable_by_key(|gap| gap.0);
+    spent
 }

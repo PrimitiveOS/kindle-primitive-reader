@@ -111,6 +111,7 @@ pub(crate) struct LineData {
     /// The number of justification opportunities on the line.
     pub(crate) num_justification_opportunities: u32,
     pub(crate) justification: Justification,
+    pub(crate) expanded_gaps: Range<usize>,
     /// This line's entries in [`LayoutData::aligned_subtree_offsets`].
     ///
     /// Empty for lines with only baseline-relative content because the root aligned subtree
@@ -249,6 +250,7 @@ pub(crate) struct LayoutData<B: Brush> {
 
     // Output of alignment
     /// The alignment that was applied to the layout, if any.
+    pub(crate) expanded_gaps: Vec<(u32, f32)>,
     pub(crate) alignment: Option<super::Alignment>,
     /// The text-indent amount in layout units.
     pub(crate) indent_amount: f32,
@@ -276,6 +278,7 @@ impl<B: Brush> Default for LayoutData<B> {
             lines: Vec::new(),
             line_items: Vec::new(),
             aligned_subtree_offsets: Vec::new(),
+            expanded_gaps: Vec::new(),
             alignment: None,
             layout_max_advance: 0.0,
             indent_amount: 0.0,
@@ -306,6 +309,7 @@ impl<B: Brush> LayoutData<B> {
         self.lines.clear();
         self.line_items.clear();
         self.aligned_subtree_offsets.clear();
+        self.expanded_gaps.clear();
         self.alignment = None;
     }
 

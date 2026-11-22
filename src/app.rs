@@ -2247,6 +2247,7 @@ impl Reader {
                 preferences.margin_bottom = settings.margin_bottom;
                 preferences.line_height = Some(settings.line_height);
                 preferences.word_spacing = settings.word_spacing;
+                preferences.word_expansion = Some(settings.word_expansion);
                 preferences.letter_spacing = settings.letter_spacing;
                 preferences.scroll = active.reading.config.scroll;
                 preferences.alignment = settings.alignment;
@@ -2489,6 +2490,7 @@ impl Reader {
             margin_bottom: settings.margin_bottom,
             line_height: Some(settings.line_height),
             word_spacing: settings.word_spacing,
+            word_expansion: Some(settings.word_expansion),
             letter_spacing: settings.letter_spacing,
             scroll: config.scroll,
             facing_pages: config.facing_pages,
