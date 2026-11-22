@@ -13,7 +13,10 @@ use html5ever::tokenizer::states::RawKind;
 use html5ever::tokenizer::{
     BufferQueue, Tag, TagKind, Token, TokenSink, TokenSinkResult, Tokenizer,
 };
+mod markup;
+pub(crate) use markup::{Addition, apply as apply_additions};
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::fmt;
 
 /// Read only the Palm database header and the encryption field. A large protected
@@ -58,6 +61,8 @@ pub struct MobiDocument {
     pub title: Option<String>,
     pub author: Option<String>,
     pub xhtml: String,
+    pub(crate) additions: Vec<Addition>,
+    pub resources: BTreeMap<String, Vec<u8>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -132,6 +137,16 @@ pub(crate) struct Labels {
 
 /// Decode the first, legacy text section of a database. All returned content is local.
 pub fn decode(bytes: &[u8]) -> Result<MobiDocument, MobiError> {
+    let mut document = decode_legacy(bytes)?;
+    if !document.additions.is_empty() {
+        document.xhtml = markup::apply(&document.xhtml, &document.additions, 0, 0)?;
+        document.additions.clear();
+    }
+    Ok(document)
+}
+
+/// Preserve the previous text-only markup for chapter splitting and saved anchors.
+pub(crate) fn decode_legacy(bytes: &[u8]) -> Result<MobiDocument, MobiError> {
     if bytes.len() > MAX_MOBI_BYTES {
         return Err(MobiError::TooLarge);
     }
@@ -159,11 +174,22 @@ pub fn decode(bytes: &[u8]) -> Result<MobiDocument, MobiError> {
     )?;
     let encoding = mobi.as_ref().map_or(Encoding::Auto, |mobi| mobi.encoding);
     let text = decode_text(text, encoding)?;
-    let text = text.trim_start_matches('\u{feff}');
-    let xhtml = if mobi.as_ref().is_none_or(|mobi| mobi.is_plain_text) {
-        plain_xhtml(text)?
+    let (xhtml, additions, resources) = if mobi.as_ref().is_none_or(|mobi| mobi.is_plain_text) {
+        (
+            plain_xhtml(text.trim_start_matches('\u{feff}'))?,
+            Vec::new(),
+            BTreeMap::new(),
+        )
     } else {
-        html_xhtml(text)?
+        let first = u32_at(header, 108).ok().map(|n| n as usize).filter(|n| {
+            *n > usize::from(u16_at(header, 8).unwrap_or(u16::MAX)) && *n < records.len() - 1
+        });
+        let (xhtml, features, has_text) = normalize_html(&text, Some(encoding))?;
+        let (additions, resources) = features.finish(bytes, &records, first)?;
+        if !has_text && resources.is_empty() {
+            return Err(MobiError::InvalidText);
+        }
+        (xhtml, additions, resources)
     };
 
     let labels = mobi.map(|header| header.labels).unwrap_or_default();
@@ -172,6 +198,8 @@ pub fn decode(bytes: &[u8]) -> Result<MobiDocument, MobiError> {
         author: labels.author,
         language: labels.language,
         xhtml,
+        additions,
+        resources,
     })
 }
 
@@ -502,23 +530,53 @@ fn plain_xhtml(text: &str) -> Result<String, MobiError> {
 }
 
 pub(crate) fn html_xhtml(text: &str) -> Result<String, MobiError> {
+    Ok(normalize_html(text, None)?.0)
+}
+fn normalize_html(
+    text: &str,
+    encoding: Option<Encoding>,
+) -> Result<(String, markup::Features, bool), MobiError> {
     let input = BufferQueue::default();
-    input.push_back(text.into());
     let tokenizer = Tokenizer::new(
         Normalizer(RefCell::new(Markup::default())),
         Default::default(),
     );
+    let mut cursor = text.len() - text.trim_start_matches('\u{feff}').len();
+    tokenizer.sink.0.borrow_mut().features = encoding.map(|_| markup::Features::default());
+    for (raw, at, end, tag) in encoding.map_or_else(Vec::new, |e| markup::target_tags(text, e)) {
+        input.push_back(text[cursor..at].into());
+        let _ = tokenizer.feed(&input);
+        tokenizer.sink.destination(Some((raw, tag.to_owned())));
+        input.push_back(text[at..end].into());
+        let _ = tokenizer.feed(&input);
+        tokenizer.sink.destination(None);
+        cursor = end;
+    }
+    input.push_back(text[cursor..].into());
     let _ = tokenizer.feed(&input);
     tokenizer.end();
     let mut markup = tokenizer.sink.0.into_inner();
     if let Some(error) = markup.error {
         return Err(error);
     }
-    if !markup.has_text {
+    if !markup.has_text
+        && !markup
+            .features
+            .as_ref()
+            .is_some_and(markup::Features::has_images)
+    {
         return Err(MobiError::InvalidText);
     }
     markup.close_to(0);
-    finish_xhtml(markup.output)
+    if !markup.has_text && markup.output.len() == XHTML_START.len() {
+        markup.output.push_str(XHTML_END);
+        return Ok((markup.output, markup.features.unwrap_or_default(), false));
+    }
+    Ok((
+        finish_xhtml(markup.output)?,
+        markup.features.unwrap_or_default(),
+        markup.has_text,
+    ))
 }
 
 fn finish_xhtml(mut output: String) -> Result<String, MobiError> {
@@ -556,6 +614,7 @@ struct Markup {
     ignore: Option<&'static str>,
     error: Option<MobiError>,
     has_text: bool,
+    features: Option<markup::Features>,
 }
 
 impl Default for Markup {
@@ -566,11 +625,20 @@ impl Default for Markup {
             ignore: None,
             error: None,
             has_text: false,
+            features: None,
         }
     }
 }
 
 struct Normalizer(RefCell<Markup>);
+
+impl Normalizer {
+    fn destination(&self, label: Option<(usize, String)>) {
+        if let Some(features) = &mut self.0.borrow_mut().features {
+            features.next = label;
+        }
+    }
+}
 
 impl TokenSink for Normalizer {
     type Handle = ();
@@ -616,6 +684,12 @@ impl Markup {
                 return TokenSinkResult::RawData(state);
             }
         }
+        if input_name == "img" && tag.kind == TagKind::StartTag {
+            if let Some(features) = &mut self.features {
+                self.error = features.image(&tag, self.output.len()).err();
+            }
+            return TokenSinkResult::Continue;
+        }
         let Some(name) = safe_tag(input_name) else {
             return TokenSinkResult::Continue;
         };
@@ -657,6 +731,9 @@ impl Markup {
         }
         self.output.push('<');
         self.output.push_str(name);
+        if let Some(features) = &mut self.features {
+            features.record(tag, name, self.output.len());
+        }
         let has_id = tag.attrs.iter().any(|attr| {
             let value = attr.value.trim();
             let attribute: &str = attr.name.local.as_ref();
@@ -957,6 +1034,67 @@ mod tests {
         assert!(roxmltree::Document::parse(&marked.xhtml).is_ok());
     }
 
+    #[test]
+    fn mobi_file_positions_use_original_encoding_and_only_real_local_records() {
+        let mut raw = b"<p>Caf".to_vec();
+        raw.extend(b"\xe9, <a filepos='AAAAAAAAAA'>lake</a> <a filepos='BBBBBBBBBB'>comment</a> <a filepos='CCCCCCCCCC'>inside tag</a>. <img recindex='1' alt='Map &amp; scale'/><img recindex='2'/></p><!--<p>--> <p title='<p >'>ignored marker</p><div id='shore'>Arrival.</div>");
+        let index = |needle: &[u8]| raw.windows(needle.len()).position(|s| s == needle).unwrap();
+        let targets = [
+            index(b"<div"),
+            index(b"<!--<p") + 4,
+            index(b"title='<p") + 7,
+        ];
+        for (symbol, target) in [b'A', b'B', b'C'].into_iter().zip(targets) {
+            let place = raw.windows(10).position(|s| s == [symbol; 10]).unwrap();
+            raw[place..place + 10].copy_from_slice(format!("{target:010}").as_bytes());
+        }
+        let mut header = mobi_header_for_test(1, raw.len(), 1252, 6, 0);
+        header[108..112].copy_from_slice(&2u32.to_be_bytes());
+        let doc = decode_legacy(&pdb(
+            b"BOOKMOBI",
+            &[&header, &raw, b"GIF89a-test-resource", b"arbitrary"],
+        ))
+        .unwrap();
+        assert_eq!(doc.resources.len(), 1);
+        let chapter = crate::kf8::Kf8Chapter {
+            path: "document.xhtml".into(),
+            label: "Field notes".into(),
+            xhtml: doc.xhtml,
+            continued: false,
+        };
+        let (parts, _) = crate::kindle_sections::legacy(chapter, doc.additions, false).unwrap();
+        let xml = roxmltree::Document::parse(&parts[0].xhtml).unwrap();
+        let hrefs: Vec<_> = xml
+            .descendants()
+            .filter_map(|n| n.attribute("href"))
+            .collect();
+        assert_eq!(hrefs, ["#shore"]);
+        let images: Vec<_> = xml
+            .descendants()
+            .filter(|n| n.has_tag_name("img"))
+            .collect();
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].attribute("alt"), Some("Map & scale"));
+        assert_eq!(
+            doc.resources[images[0].attribute("src").unwrap()],
+            b"GIF89a-test-resource"
+        );
+        assert!(parts[0].xhtml.contains("Café"));
+    }
+
+    #[test]
+    fn mobi_images_can_stand_alone_with_a_valid_resource() {
+        let xml = b"<img recindex='1' />";
+        let mut header = mobi_header_for_test(1, xml.len(), 65001, 6, 0);
+        header[108..112].copy_from_slice(&2u32.to_be_bytes());
+        let good = decode_legacy(&pdb(b"BOOKMOBI", &[&header, xml, b"GIF87a-record"])).unwrap();
+        assert_eq!(good.additions.len(), 1);
+        assert_eq!(good.resources.len(), 1);
+        assert_eq!(
+            decode(&pdb(b"BOOKMOBI", &[&header, xml, b"unrecognized"])).unwrap_err(),
+            MobiError::InvalidText
+        );
+    }
     #[test]
     fn rejects_encrypted_huff_kf8_and_out_of_range_record_tables() {
         let text = b"<p>Tide</p>";

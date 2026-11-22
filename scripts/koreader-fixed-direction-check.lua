@@ -15,25 +15,66 @@ local factory = assert(loadstring("local util, Utf8Proc = ...\nlocal logger={dbg
 local kopt = factory(require("util"), require("ffi/utf8proc"))
 local pdf = require("ffi/mupdf").openDocument(path)
 local doc = {configurable={text_wrap=0}}
+local page_sizes = {}
 function doc:getPageCount() return pdf:getPages() end
 function doc:getPageTextBoxes(n)
     local p = pdf:openPage(n)
+    if arg[4] == "--find-all" then
+        page_sizes[n] = {p:getSize(require("ffi/drawcontext").new())}
+    end
     local lines = p:getPageText()
     p:close()
     return lines
 end
 if arg[4] == "--find-all" then
     local results = kopt:findAllText(doc, query, true, 5, 5000) or {}
-    local counts, last = {}, 0
+    local counts, visible = {}, {}
+    local last, total_visible = 0, 0
+    local function visible_box(item, page)
+        local size = assert(page_sizes[page])
+        for _, b in ipairs(item.boxes) do
+            if b.x < size[1] and b.y < size[2] and b.x + b.w > 0 and b.y + b.h > 0 then
+                return true
+            end
+        end
+        return false
+    end
     for _, item in ipairs(results) do
         assert(item.start >= last and #item.boxes > 0)
         assert(item.matched_text and #item.matched_text > 0)
         last = item.start
         counts[last] = (counts[last] or 0) + 1
+        if visible_box(item, last) then
+            visible[last] = (visible[last] or 0) + 1
+            total_visible = total_visible + 1
+        end
     end
-    for page = 1, doc:getPageCount() do counts[page] = counts[page] or 0 end
+    local capped = #results == 5000
+    results = nil
+    -- The unmodified stock result above includes word boxes outside the crop.
+    -- If its last page was truncated, extend the visible comparison until it
+    -- has the same number of drawable targets as Reader.
+    if capped and total_visible < 5000 then
+        for page = last, doc:getPageCount() do
+            local one = {getPageCount=function() return 1 end,
+                getPageTextBoxes=function() return doc:getPageTextBoxes(page) end}
+            local entries = kopt:findAllText(one, query, true, 0, 5000) or {}
+            for i = 1 + (counts[page] or 0), #entries do
+                if visible_box(entries[i], page) then
+                    visible[page] = (visible[page] or 0) + 1
+                    total_visible = total_visible + 1
+                    if total_visible == 5000 then break end
+                end
+            end
+            if total_visible == 5000 then break end
+        end
+    end
+    for page = 1, doc:getPageCount() do
+        counts[page] = counts[page] or 0
+        visible[page] = visible[page] or 0
+    end
     pdf:close()
-    print("fixed-all " .. require("json").encode(counts))
+    print("fixed-all " .. require("json").encode({stock=counts, visible=visible}))
     return
 end
 if arg[4] == "--unicode" then

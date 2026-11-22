@@ -547,11 +547,15 @@ impl Probe {
         let printed_pages = book.printed_pages().to_vec();
         #[cfg(feature = "kindle")]
         let printed_source = book.printed_page_source().map(str::to_owned);
+        let complete = excerpt.is_none();
         let xhtml = match excerpt {
             Some(value) => value,
             None => book.chapter(chapter).map_err(|e| e.to_string())?,
         };
         let mut source = Source::parse_with_language(&xhtml, book.language)?;
+        if complete && let Some(previous) = book.previous_mobi_chapter(&href) {
+            source.accept_previous_mobi(previous)?;
+        }
         let mut fonts = font_context(fonts)?;
         #[cfg(feature = "kindle")]
         let mut custom_hyphenation_allowed = Vec::new();
@@ -901,7 +905,7 @@ impl Probe {
         let exact = self
             .lines
             .iter()
-            .find(|line| line.block == anchor.block && line.bytes.contains(&offset))
+            .find(|line| line.block == block.key && line.bytes.contains(&offset))
             .map(|line| line.top);
         exact.or_else(|| {
             if offset != block.text.len() {
@@ -927,9 +931,8 @@ impl Probe {
             return None;
         }
         let blocks = &self.source.blocks;
-        let index = blocks
-            .binary_search_by_key(&anchor.block, |block| block.key)
-            .ok()?;
+        let key = self.source.current_key(anchor.block, anchor.revision)?;
+        let index = blocks.binary_search_by_key(&key, |block| block.key).ok()?;
         let offset = self
             .source
             .project_offset(&blocks[index], anchor.revision, anchor.offset)?;

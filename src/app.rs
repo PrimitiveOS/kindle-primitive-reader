@@ -3636,9 +3636,6 @@ impl Reader {
     }
 
     fn handle_book(&mut self, input: Input) -> Change {
-        if let Some(change) = self.overlay_footer_input(input) {
-            return change;
-        }
         if let Input::LongTap(x, y) = input
             && self.selection.is_none()
             && let Some(change) = self.hold_footer(x, y)
@@ -3768,9 +3765,6 @@ impl Reader {
     }
 
     fn handle_fixed(&mut self, input: Input) -> Change {
-        if let Some(change) = self.overlay_footer_input(input) {
-            return change;
-        }
         let show_zoom = !self.hidden_overlap_footer();
         if let Input::LongTap(x, y) = input
             && self.pdf_selection.is_none()
@@ -5450,6 +5444,11 @@ impl App for Reader {
         if self.range_edit.is_some() { return self.range_input(input); }
         if self.saved_popup_over_book() {
             return self.saved_popup_input(input);
+        }
+        if matches!(self.screen, Screen::Book | Screen::Fixed)
+            && let Some(change) = self.overlay_footer_input(input)
+        {
+            return change;
         }
         if let Input::Tap(x, y) = input && let Some(change) = self.tap_saved_mark(x, y) {
             return change;

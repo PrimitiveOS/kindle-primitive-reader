@@ -449,3 +449,54 @@ fn fixed_pages_fit_the_full_height_and_reveal_status_without_rescaling() {
         std::fs::write(p, serde_json::to_vec(&data).unwrap()).unwrap();
     }
 }
+
+#[test]
+fn exposed_saved_marks_open_while_visible_footer_buttons_stay_in_front() {
+    let fixture = Fixture::new();
+    let path = fixture.root.join("Tides.pdf");
+    std::fs::write(&path, tide_chart()).unwrap();
+    let mut app = Reader::open(
+        &fixture.root,
+        &fixture.state,
+        vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+    )
+    .unwrap();
+    app.open_path(&path).unwrap();
+    app.activate(Action::SetReadingControls(ReadingControls {
+        overlap_footer: true,
+        status_bar: StatusBar::Minimal,
+        ..app.controls
+    }))
+    .unwrap();
+    app.fixed.as_mut().unwrap().reading.fit_height().unwrap();
+    let f = app.fixed.as_ref().unwrap();
+    app.library
+        .remember(&f.entry, f.id, &f.entry.title)
+        .add_pdf_highlight(crate::library::PdfHighlight {
+            page: 0,
+            bounds: vec![crate::fixed_text::PdfTextRect {
+                x0: 0.01,
+                y0: 0.95,
+                x1: 0.99,
+                y1: 0.995,
+            }],
+            text: "Source annotation in the lower band".into(),
+            note: None,
+            continuation: Vec::new(),
+        })
+        .unwrap();
+    app.input(Input::Tap(480., 1640.));
+    assert!(app.saved_popup_over_book());
+    app.input(Input::Tap(500., 420.));
+    assert!(!app.saved_popup_over_book());
+    assert!(app.hidden_overlap_footer());
+    app.input(center(SHOW_STATUS));
+    assert_eq!(app.controls.status_bar, StatusBar::PageNumbers);
+    assert!(!app.saved_popup_over_book());
+    app.activate(Action::SetReadingControls(ReadingControls {
+        status_bar: StatusBar::Minimal,
+        ..app.controls
+    }))
+    .unwrap();
+    assert_eq!(app.input(center(DONE)), Change::Exit);
+}
