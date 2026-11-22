@@ -101,7 +101,11 @@ impl View {
 }
 impl Reader {
     fn kosync_book(&self) -> Result<Book> {
-        let fixed=self.fixed.as_ref().filter(|f|f.entry.format==DocumentFormat::Pdf).ok_or("KOReader server sync currently supports PDF source pages. Reflow XPointer mapping is pending.")?;
+        let fixed = self
+            .fixed
+            .as_ref()
+            .filter(|f| f.entry.format == DocumentFormat::Pdf)
+            .ok_or("PDFs only; use WebDAV for other books.")?;
         let path = self.library.absolute_path(&fixed.entry.path)?;
         Ok(Book {
             id: fixed.id,
@@ -125,7 +129,7 @@ impl Reader {
                 action("KOReader sync", Command::Toggle).detail(if v.config.enabled {
                     "On · Manual actions"
                 } else {
-                    "Off · No background traffic"
+                    "Off"
                 }),
                 action("Server URL", Command::Edit(Field::Server)).detail(&v.config.server),
                 action("Username", Command::Edit(Field::Username)).detail(
@@ -139,13 +143,13 @@ impl Reader {
                     if v.config.key.is_empty() {
                         "Not set"
                     } else {
-                        "Password-equivalent key saved locally"
+                        "Saved on this Kindle"
                     },
                 ),
                 action("Device name", Command::Edit(Field::Device)).detail(&v.config.device),
                 action("Match documents by", Command::Matching).detail(
                     if v.config.matching == Matching::Binary {
-                        "Partial content checksum · KOReader default"
+                        "File contents · KOReader default"
                     } else {
                         "Filename · Same name can match different content"
                     },
@@ -160,12 +164,12 @@ impl Reader {
                 action("Sign in", Command::Authorize).detail(if v.config.authorized {
                     "Signed in · Check account again"
                 } else {
-                    "Explicit account check"
+                    "Use an existing account"
                 }),
                 action("Register account", Command::Register)
-                    .detail("Creates an account only when tapped"),
+                    .detail("Create a KOReader sync account"),
                 action("Sign out", Command::SignOut)
-                    .detail("Remove this account's saved key; keep reading data"),
+                    .detail("Remove this account; keep local reading data"),
             ];
         }
         let mut rows = vec![
@@ -173,7 +177,7 @@ impl Reader {
                 if v.config.enabled {
                     "On · Manual PDF page sync"
                 } else {
-                    "Off · No background traffic"
+                    "Off"
                 },
             ),
         ];
@@ -188,12 +192,12 @@ impl Reader {
             );
             rows.push(
                 action("Push this PDF's position", Command::Push)
-                    .detail("Explicit replacement; this server has no conditional writes"),
+                    .detail("Replaces the page saved by another device"),
             );
         }
         rows.push(
             Item::new("WebDAV progress sync", Action::Show(Screen::ProgressSync))
-                .detail("Separate account and conditional-write protocol"),
+                .detail("Use a separate WebDAV account"),
         );
         rows
     }
@@ -540,7 +544,7 @@ impl Reader {
             }
         }
         if !settings {
-            canvas.text(Rect::new(115,1080,1034,75),"PDF source pages only. Reflow pointers and remote clearing are not available in this provider.",CAPTION.lines(2));
+            canvas.text(Rect::new(115,1080,1034,75),"PDFs only; use WebDAV for other books. Saved server positions cannot be removed here.",CAPTION.lines(2));
         }
         if let Some(notice) = &self.notice {
             canvas.text(

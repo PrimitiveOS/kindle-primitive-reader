@@ -101,10 +101,19 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         Action::Catalog(_) => BOOK,
         Action::Flow(_) | Action::Show(Screen::HiddenFlows) => BOOK,
         Action::Show(Screen::Links | Screen::ProgressSync | Screen::ProgressSyncSettings)
-        | Action::KoSync(_)
+
         | Action::Show(Screen::KoSync | Screen::KoSyncSettings)
         | Action::ProgressSync(_)
         | Action::Wikipedia => LINK,
+        Action::KoSync(command)=>match command {
+            super::kosync::Command::Settings|super::kosync::Command::Toggle|super::kosync::Command::LocalHttp|super::kosync::Command::Matching|super::kosync::Command::Edit(_)=>SLIDERS,
+            super::kosync::Command::Fetch=>SEARCH,
+            super::kosync::Command::Push=>SAVE,
+            super::kosync::Command::Receive=>JUMP,
+            super::kosync::Command::SignOut=>EXIT,
+            super::kosync::Command::Cancel|super::kosync::Command::Close=>CLOSE,
+            _=>LINK,
+        },
         Action::TranslatePage => TEXT,
         Action::ReadAlarm | Action::Show(Screen::OnlineHistory) | Action::ReadingHistory(_) => CLOCK,
         Action::SaveBookData | Action::ExportBackup | Action::PreviewBackup

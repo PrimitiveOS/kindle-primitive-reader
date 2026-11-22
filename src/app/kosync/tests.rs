@@ -372,3 +372,84 @@ fn sleep_usb_and_leaving_provider_cancel_owned_work_without_moving_the_pdf() {
     }
     assert_eq!(server.calls(), 0);
 }
+#[test]
+#[ignore = "requires authorized READER_KOSYNC_ORIGINAL_PDF and built READER_KOSYNC_WORKER; loopback only"]
+fn unchanged_cached_original_pdf_roundtrips_two_reader_profiles_with_the_actual_worker() {
+    let original = PathBuf::from(
+        std::env::var_os("READER_KOSYNC_ORIGINAL_PDF").expect("authorized cached PDF"),
+    );
+    let worker = PathBuf::from(std::env::var_os("READER_KOSYNC_WORKER").expect("built worker"));
+    let digest = |path: &Path| {
+        use std::io::Read;
+        let mut file = fs::File::open(path).unwrap();
+        let mut context = ring::digest::Context::new(&ring::digest::SHA256);
+        let mut buffer = [0u8; 65536];
+        loop {
+            let n = file.read(&mut buffer).unwrap();
+            if n == 0 {
+                break;
+            }
+            context.update(&buffer[..n]);
+        }
+        context.finish()
+    };
+    let hash = digest(&original);
+    let a = Fixture::new();
+    let b = Fixture::new();
+    let server = Server::start();
+    let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let open = |state: &Path| {
+        let mut app = Reader::open(original.parent().unwrap(), state, fonts.clone()).unwrap();
+        app.open_path(&original).unwrap();
+        app
+    };
+    let mut first = open(&a.state);
+    let mut second = open(&b.state);
+    assert_eq!(first.open_book_id(), second.open_book_id());
+    let count = first.fixed.as_ref().unwrap().reading.count();
+    assert!(count >= 2);
+    let target = (count - 1).min(2);
+    for (app, name) in [
+        (&mut first, "Local reader A"),
+        (&mut second, "Local reader B"),
+    ] {
+        let mut config = server.config();
+        config.device = name.into();
+        config.device_id = name.into();
+        app.kosync.persist(config).unwrap();
+        app.kosync.test_worker = Some(worker.clone());
+    }
+    first.jump_fixed(target, None).unwrap();
+    first.kosync_command(Command::Open).unwrap();
+    first.kosync_command(Command::Push).unwrap();
+    settle(&mut first);
+    assert!(
+        first.kosync.remote.is_some(),
+        "The actual worker must acknowledge its write"
+    );
+    second.activate(Action::SetFixedZoom(3)).unwrap();
+    let preferences = second.fixed.as_ref().unwrap().reading.preferences();
+    let before = second.current_position();
+    second.kosync_command(Command::Open).unwrap();
+    second.kosync_command(Command::Fetch).unwrap();
+    settle(&mut second);
+    assert!(second.kosync.preview);
+    tap(&mut second, KEEP);
+    assert_eq!(second.current_position(), before);
+    second.kosync_command(Command::Fetch).unwrap();
+    settle(&mut second);
+    tap(&mut second, OPEN);
+    assert_eq!(second.current_position().unwrap().page, target);
+    let after = second.fixed.as_ref().unwrap().reading.preferences();
+    assert_eq!(after.zoom, preferences.zoom);
+    assert_eq!(after.crop, preferences.crop);
+    second.save().unwrap();
+    let reopened = open(&b.state);
+    assert_eq!(reopened.current_position(), second.current_position());
+    assert_eq!(digest(&original).as_ref(), hash.as_ref());
+    for (_, _, body) in &server.state.lock().unwrap().calls {
+        assert!(body.get("metadata").is_none());
+        assert!(body.get("title").is_none());
+        assert!(body.get("text").is_none());
+    }
+}
