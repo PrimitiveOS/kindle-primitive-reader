@@ -1455,7 +1455,13 @@ impl FixedReading {
                     paint_style.draw_row(&mut frame.pixels[start + x0..start + x1], paint.highlight_appearance);
                 }
             } else {
-                for y in clip.y0.floor() as usize..clip.y1.ceil() as usize {
+                let mut first=clip.y0.floor() as i32;
+                let mut last=clip.y1.ceil() as i32;
+                if let Some(fill)=paint_style.fill_band(bounds.y0.floor() as i32,bounds.height().ceil() as i32,paint.highlight_appearance.line_height) {
+                    first=first.max(fill.start);
+                    last=last.min(fill.end);
+                }
+                for y in first.max(0) as usize..last.max(0) as usize {
                     let span = quad.row(y, WIDTH as usize);
                     let start = y * WIDTH as usize;
                     paint_style.draw_row(&mut frame.pixels[start + span.start..start + span.end], paint.highlight_appearance);

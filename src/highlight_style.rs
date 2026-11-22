@@ -51,6 +51,7 @@ impl HighlightStyle {
 pub(crate) struct Appearance {
     pub highlight_opacity: u8,
     pub selection_opacity: u8,
+    pub line_height: u8,
 }
 
 #[cfg(feature = "kindle")]
@@ -59,6 +60,7 @@ impl Default for Appearance {
         Self {
             highlight_opacity: 20,
             selection_opacity: 20,
+            line_height: 100,
         }
     }
 }
@@ -80,6 +82,26 @@ pub(crate) enum Paint {
 
 #[cfg(feature = "kindle")]
 impl Paint {
+    /// KOReader rounds the filled height down, then centers it with the extra pixel above.
+    pub(crate) fn fill_band(
+        self,
+        top: i32,
+        height: i32,
+        percent: u8,
+    ) -> Option<std::ops::Range<i32>> {
+        if percent >= 100
+            || !matches!(
+                self,
+                Self::Saved(HighlightStyle::Lighten | HighlightStyle::Invert) | Self::Selection
+            )
+        {
+            return None;
+        }
+        let fill = height * i32::from(percent) / 100;
+        let start = top + (height - fill + 1) / 2;
+        Some(start..start + fill)
+    }
+
     pub(crate) fn line_band(
         self,
         y: i32,
@@ -133,6 +155,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn height_centers_the_stock_band_for_odd_and_even_lines_without_moving_strokes() {
+        for h in [13, 14] {
+            for pct in [0, 1, 9, 33, 49, 50, 67, 99, 100] {
+                for style in HighlightStyle::ALL {
+                    let p = Paint::Saved(style);
+                    let band = p
+                        .line_band(3, h, 1264, false)
+                        .map(|(y, n)| y..y + n)
+                        .or_else(|| p.fill_band(3, h, pct))
+                        .unwrap_or(3..3 + h);
+                    let (from, length) = match style {
+                        HighlightStyle::Underline => (3 + h - 1, 4),
+                        HighlightStyle::Strikethrough => (3 + h / 2 + 1, 3),
+                        _ => {
+                            let n = (f64::from(h) * f64::from(pct) / 100.).floor() as i32;
+                            (3 + (f64::from(h - n) / 2.).ceil() as i32, n)
+                        }
+                    };
+                    assert_eq!(band, from..from + length);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn saved_and_selection_opacities_match_the_installed_256_tone_blending() {
         for percent in [0, 5, 10, 15, 20, 30, 35, 50, 65, 90, 95, 100] {
             let gray: Vec<_> = (0..=255u8).collect();
@@ -148,10 +195,12 @@ mod tests {
                     Paint::Selection => Appearance {
                         highlight_opacity: 80,
                         selection_opacity: percent,
+                        ..Default::default()
                     },
                     _ => Appearance {
                         highlight_opacity: percent,
                         selection_opacity: 80,
+                        ..Default::default()
                     },
                 };
                 let mut pixels = gray.clone();

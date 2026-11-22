@@ -50,3 +50,25 @@ if arg[1] == "opacity" then
         end
     end
 end
+
+if arg[1] == "height" then
+    local settings = {}
+    env.G_reader_settings.readSetting = function(_, key) return settings[key] end
+    for _, style in ipairs({"lighten","invert","underscore","strikeout"}) do
+        for _, height in ipairs({13,14}) do
+            for _, percent in ipairs({0,1,9,33,49,50,67,99,100}) do
+                settings.highlight_height_pct = percent
+                local bb = BB.new(8,26,BB.TYPE_BB8)
+                bb:fill(BB.COLOR_WHITE)
+                local view = { highlight = {lighten_factor=0.2}, ui={} }
+                env.ReaderView.drawHighlightRect(view,bb,0,0,{x=1,y=3,w=5,h=height},style)
+                local changed = {}
+                for y=0,25 do
+                    if bb:getPixel(2,y):getColor8().a ~= 255 then changed[#changed+1]=y end
+                end
+                print("height",style,height,percent,table.concat(changed,","))
+                bb:free()
+            end
+        end
+    end
+end

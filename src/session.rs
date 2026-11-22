@@ -869,6 +869,7 @@ fn draw_highlight_rect(
 ) {
     let (top, height) = ink
         .line_band(rect.y, rect.height, page.width, false)
+        .or_else(||ink.fill_band(rect.y,rect.height,appearance.line_height).map(|r| (r.start, r.end-r.start)))
         .unwrap_or((rect.y, rect.height));
     let x0 = rect.x.clamp(0, page.width as i32) as usize;
     let x1 = (rect.x + rect.width).clamp(0, page.width as i32) as usize;

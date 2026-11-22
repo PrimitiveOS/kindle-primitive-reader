@@ -11,28 +11,51 @@ const TEXT: primitive_ui::TextStyle = primitive_ui::TextStyle::new(36).lines(7).
 enum Amount {
     HighlightOpacity,
     SelectionOpacity,
+    LineHeight,
 }
 impl Amount {
+    const ALL: [Self; 3] = [
+        Self::HighlightOpacity,
+        Self::SelectionOpacity,
+        Self::LineHeight,
+    ];
+
+    fn enabled(self, drawer: HighlightStyle) -> bool {
+        match self {
+            Self::HighlightOpacity => drawer == HighlightStyle::Lighten,
+            Self::SelectionOpacity => true,
+            Self::LineHeight => matches!(drawer, HighlightStyle::Lighten | HighlightStyle::Invert),
+        }
+    }
+
     fn title(self) -> &'static str {
         match self {
             Self::HighlightOpacity => "Gray highlight opacity",
             Self::SelectionOpacity => "Gray selection opacity",
+            Self::LineHeight => "Highlight line height",
         }
     }
     fn percent(self, appearance: crate::highlight_style::Appearance) -> u8 {
         match self {
             Self::HighlightOpacity => appearance.highlight_opacity.min(100),
             Self::SelectionOpacity => appearance.selection_opacity.min(100),
+            Self::LineHeight => appearance.line_height.min(100),
         }
     }
     fn write(self, appearance: &mut crate::highlight_style::Appearance, percent: u8) {
         match self {
             Self::HighlightOpacity => appearance.highlight_opacity = percent,
             Self::SelectionOpacity => appearance.selection_opacity = percent,
+            Self::LineHeight => appearance.line_height = percent,
         }
     }
     fn step(self, held: bool) -> i16 {
-        if held { 5 } else { 10 }
+        match (self, held) {
+            (Self::LineHeight, true) => 10,
+            (Self::LineHeight, false) => 1,
+            (_, true) => 5,
+            (_, false) => 10,
+        }
     }
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -124,7 +147,7 @@ impl SavedPopup {
 
     fn amount_entry(&self, i: usize) -> Rect {
         let r = self.rect();
-        let width = (r.w - 60) / 2;
+        let width = (r.w - 72) / 3;
         Rect::new(r.x + 24 + i as i32 * (width + 12), r.y + 375, width, 105)
     }
 
@@ -520,13 +543,9 @@ impl Reader {
                     );
                 }
                 if index.is_none() {
-                    for (i, amount) in [Amount::HighlightOpacity, Amount::SelectionOpacity]
-                        .into_iter()
-                        .enumerate()
-                    {
+                    for (i, amount) in Amount::ALL.into_iter().enumerate() {
                         let r = popup.amount_entry(i);
-                        let active = amount == Amount::SelectionOpacity
-                            || selected == HighlightStyle::Lighten;
+                        let active = amount.enabled(selected);
                         let ink = if active { 0 } else { 145 };
                         if active {
                             canvas.button(r, "", false, false);
@@ -748,13 +767,9 @@ impl Reader {
                     return self.save_highlight_style(index, Some(*style));
                 }
                 if index.is_none() {
-                    for (i, amount) in [Amount::HighlightOpacity, Amount::SelectionOpacity]
-                        .into_iter()
-                        .enumerate()
-                    {
+                    for (i, amount) in Amount::ALL.into_iter().enumerate() {
                         if p.amount_entry(i).contains(x, y)
-                            && (amount == Amount::SelectionOpacity
-                                || self.effective_highlight_style() == HighlightStyle::Lighten)
+                            && amount.enabled(self.effective_highlight_style())
                         {
                             self.saved_popup
                                 .as_mut()

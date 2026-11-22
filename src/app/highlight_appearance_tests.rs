@@ -18,6 +18,7 @@ fn choose_amount(app: &mut Reader, amount: Amount) {
     let entry = p.amount_entry(match amount {
         Amount::HighlightOpacity => 0,
         Amount::SelectionOpacity => 1,
+        Amount::LineHeight => 2,
     });
     assert_eq!(app.input(center(entry)), Change::Partial);
     assert!(matches!(app.saved_popup.as_ref().unwrap().view,View::Adjust(v) if v==amount));
@@ -97,6 +98,43 @@ pub(super) fn original_saved_opacity(
     println!(
         "highlight-opacity-original saved_pixels={count} existing_anchors_and_notes_preserved=1"
     );
+    choose_amount(app, Amount::LineHeight);
+    for _ in 0..5 {
+        press(app, false, true);
+    }
+    assert_eq!(app.controls.highlight_appearance.line_height, 50);
+    dismiss(app);
+    let height = rect.h / 2;
+    let first = rect.y + (rect.h - height + 1) / 2;
+    let last = first + height;
+    let mut compared = 0;
+    for style in [HighlightStyle::Lighten, HighlightStyle::Invert] {
+        app.open_highlight_styles(Some(0));
+        let slot = if style == HighlightStyle::Lighten {
+            0
+        } else {
+            3
+        };
+        app.input(center(app.saved_popup.as_ref().unwrap().style_cell(slot)));
+        let pixels = primitive_app::frame(app, &mut canvas, false);
+        for y in fill.start.max(0)..fill.end.min(PAGE_HEIGHT as i32) {
+            for x in (rect.x + 2).max(0)..(rect.right() - 2).min(WIDTH as i32) {
+                let k = y as usize * WIDTH as usize + x as usize;
+                let src = original[k];
+                let expected = if !(first..last).contains(&y) {
+                    src
+                } else if style == HighlightStyle::Invert {
+                    255 - src
+                } else {
+                    mixed(src, 35)
+                };
+                assert_eq!(pixels[k], expected);
+                compared += 1;
+            }
+        }
+    }
+    assert!(compared > 400);
+    println!("highlight-height-original centered_fill_pixels={compared} unchanged_source_range=1");
     // Restore other tests' requested book and stored-mark style.
     reading_settings(app);
     app.input(center(app.saved_popup.as_ref().unwrap().style_cell(1)));
@@ -197,4 +235,111 @@ fn highlight_opacity_changes_both_saved_and_new_marks_and_word_selection_indepen
             (expected, Some(note), HighlightStyle::Lighten)
         );
     }
+}
+
+#[test]
+fn highlight_height_zero_keeps_marks_tappable_and_half_height_applies_to_new_selections() {
+    let (fixture, mut app, font, _) = fixture(None, false);
+    let probe = app
+        .active
+        .as_ref()
+        .unwrap()
+        .reading
+        .config
+        .chapter(1)
+        .unwrap();
+    let anchor = probe.fragment("door").unwrap();
+    let block = probe
+        .source
+        .blocks
+        .iter()
+        .find(|b| b.key == anchor.block)
+        .unwrap();
+    let words: Vec<_> = crate::selection::word_ranges(&block.text).take(9).collect();
+    let select = |i: usize| {
+        probe
+            .select_range(
+                &probe.anchor(block.key, words[i].start),
+                &probe.anchor(block.key, words[i].end),
+            )
+            .unwrap()
+    };
+    let (saved, new, active) = (select(1), select(3), select(5));
+    app.restore_position(&ReadingPosition {
+        chapter: 1,
+        page: 0,
+        anchor: Some(anchor),
+    })
+    .unwrap();
+    let mut canvas = Canvas::new(WIDTH, HEIGHT, &[font.display().to_string()]).unwrap();
+    let before = primitive_app::frame(&app, &mut canvas, false);
+    app.selection = Some(saved.clone());
+    app.save_highlight(Some("First".into())).unwrap();
+    app.notice = None;
+    choose_amount(&mut app, Amount::LineHeight);
+    for _ in 0..10 {
+        press(&mut app, false, true);
+    }
+    assert_eq!(app.controls.highlight_appearance.line_height, 0);
+    dismiss(&mut app);
+    let bounds = |app: &Reader, mark: &crate::selection::TextSelection| {
+        app.active.as_ref().unwrap().reading.highlight_rects(mark)[0]
+    };
+    let b = bounds(&app, &saved);
+    let hidden = primitive_app::frame(&app, &mut canvas, false);
+    let input = center(Rect::new(b.x, b.y, b.width, b.height));
+    for y in b.y..b.y + b.height {
+        let k = (y as usize) * WIDTH as usize + b.x as usize;
+        assert_eq!(
+            &hidden[k..k + b.width as usize],
+            &before[k..k + b.width as usize]
+        );
+    }
+    app.input(input);
+    assert!(matches!(
+        app.saved_popup.as_ref().unwrap().view,
+        View::Note(0)
+    ));
+    dismiss(&mut app);
+    choose_amount(&mut app, Amount::LineHeight);
+    for _ in 0..5 {
+        press(&mut app, true, true);
+    }
+    press(&mut app, false, false);
+    assert_eq!(app.controls.highlight_appearance.line_height, 49);
+    crate::app::tests::capture_test_screen(&app, &[font.clone()], "READER_HEIGHT_SCREEN", false);
+    dismiss(&mut app);
+    app.selection = Some(new.clone());
+    app.save_highlight(None).unwrap();
+    app.notice = None;
+    let r = bounds(&app, &active);
+    app.input(Input::LongTap(
+        (r.x + r.width / 2) as f32,
+        (r.y + r.height / 2) as f32,
+    ));
+    let pixels = primitive_app::frame(&app, &mut canvas, false);
+    for m in [&saved, &new, &active] {
+        let b = bounds(&app, m);
+        let h = b.height * 49 / 100;
+        let first = b.y + (b.height - h + 1) / 2;
+        for y in b.y..b.y + b.height {
+            for x in b.x..b.x + b.width {
+                let k = (y as usize) * WIDTH as usize + x as usize;
+                let expected = if (first..first + h).contains(&y) {
+                    mixed(before[k], 20)
+                } else {
+                    before[k]
+                };
+                assert_eq!(pixels[k], expected);
+            }
+        }
+    }
+    app.selection = None;
+    app.save().unwrap();
+    let id = app.open_book_id().unwrap();
+    let after = Reader::open(&fixture.root, &fixture.state, vec![font]).unwrap();
+    assert_eq!(after.controls.highlight_appearance.line_height, 49);
+    let marks = &after.library.state(id).unwrap().highlights;
+    assert_eq!(marks.len(), 2);
+    assert_eq!((&marks[0].selection, &marks[1].selection), (&saved, &new));
 }
