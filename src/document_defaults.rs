@@ -125,6 +125,7 @@ impl Store {
                 "The existing document defaults file is read-only",
             ));
         }
+        validate_templates(&templates)?;
         let bytes = serde_json::to_vec(&templates).map_err(io::Error::other)?;
         validate_backup(&bytes)?;
         primitive_app::save(&self.path, &bytes)?;
@@ -138,6 +139,10 @@ fn decode(bytes: &[u8]) -> io::Result<Templates> {
         return Err(invalid());
     }
     let templates: Templates = serde_json::from_slice(bytes).map_err(io::Error::other)?;
+    validate_templates(&templates)?;
+    Ok(templates)
+}
+fn validate_templates(templates: &Templates) -> io::Result<()> {
     if templates.version != 1 {
         return Err(invalid());
     }
@@ -149,7 +154,7 @@ fn decode(bytes: &[u8]) -> io::Result<Templates> {
     {
         return Err(invalid());
     }
-    Ok(templates)
+    Ok(())
 }
 /// Shared with the user-data backup importer. It performs no filesystem work.
 pub(crate) fn validate_backup(bytes: &[u8]) -> io::Result<()> {

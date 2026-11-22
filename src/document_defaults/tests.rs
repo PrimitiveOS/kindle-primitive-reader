@@ -80,6 +80,10 @@ fn defaults_are_optional_distinct_atomic_and_retained_across_reopening() {
         right_to_left: true,
         ..Default::default()
     }));
+    let mut invalid = templates.clone();
+    invalid.reflow.as_mut().unwrap().font_size = Some(f32::NAN);
+    assert!(store.save(invalid).is_err());
+    assert!(!path.exists());
     store.save(templates.clone()).unwrap();
     assert_eq!(Store::load(path.clone()).templates, templates);
     let bytes = fs::read(&path).unwrap();
