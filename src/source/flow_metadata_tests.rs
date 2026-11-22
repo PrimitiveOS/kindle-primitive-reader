@@ -209,3 +209,44 @@ fn ruby_annotation_owner_is_separate_from_the_canonical_base_text() {
         Some(block.ruby[0].element)
     );
 }
+
+#[test]
+fn user_selectors_work_without_publisher_stylesheets_and_keep_hidden_siblings_structural() {
+    let xml = "<html><head></head><body><p id='a'>A</p><p id='b'>B</p><span id='omitted' hidden='hidden'>Omitted</span><p id='c'>C</p></body></html>";
+    let source = Source::parse(xml).unwrap();
+    assert!(source.stylesheets.is_empty());
+    let snapshot = crate::user_styles::Snapshot::new("p:first-child{padding-left:1px!important}p:first-of-type{padding-right:2px!important}p+p{text-indent:3px!important}span+p{font-style:italic!important}".into()).unwrap();
+    // An empty BookStyle is the publisher-CSS-off path. No publication font
+    // resources or stylesheet-presence flag may decide selector structure.
+    let styles = crate::book_style::BookStyle::default()
+        .with_user_css(&snapshot)
+        .unwrap()
+        .compute(&source.elements);
+    let a = &styles[element(&source, "a")];
+    let b = &styles[element(&source, "b")];
+    let c = &styles[element(&source, "c")];
+    assert_eq!(a.padding[0].pixels(1000, 42.), 1.);
+    assert_eq!(a.padding[1].pixels(1000, 42.), 2.);
+    assert_eq!(b.padding[0].pixels(1000, 42.), 0.);
+    assert_eq!(b.padding[1].pixels(1000, 42.), 0.);
+    assert_eq!(b.text_indent.pixels(1000, 42.), 3.);
+    assert_eq!(c.text_indent.pixels(1000, 42.), 0.);
+    assert_eq!(c.font_style, parley::FontStyle::Italic);
+    assert_eq!(
+        source
+            .blocks
+            .iter()
+            .map(|block| block.text.as_str())
+            .collect::<Vec<_>>(),
+        ["A", "B", "C"]
+    );
+    assert_eq!(source.revision, crate::revision(xml));
+    for (index, id) in ["a", "b", "c"].into_iter().enumerate() {
+        assert_eq!(
+            source.blocks[index].key,
+            xml.find(&format!("<p id='{id}'")).unwrap()
+        );
+        assert_eq!(source.fragments[id], (source.blocks[index].key, 0));
+    }
+    assert!(!source.fragments.contains_key("omitted"));
+}
