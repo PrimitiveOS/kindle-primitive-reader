@@ -3,7 +3,8 @@
 ## 0.1.19
 
 - Look up inflected English words in installed dictionaries. Set a library default or change the preference for the current book.
-- Read below the status bar in reflowable books, with compact controls to show reading status or exit.
+- Read below the status bar in reflowable and fixed-page books, with compact controls to show reading status or exit.
+- Recover inline images and internal links in DRM-free legacy MOBI books, while preserving earlier saved text locations. Supported unencrypted hybrid books retain their legacy edition and can use their secondary KF8 content if needed.
 - Browse up to 5,000 PDF and DjVu search results, jump to the first or last page of results, and cancel a scan while it runs.
 
 ## 0.1.18
