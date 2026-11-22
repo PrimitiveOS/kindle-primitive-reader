@@ -67,6 +67,7 @@ pub struct MobiDocument {
     pub xhtml: String,
     pub(crate) additions: Vec<Addition>,
     pub(crate) presentation: Presentation,
+    pub(crate) contents: crate::kf8::legacy_contents::Contents,
     pub resources: BTreeMap<String, Vec<u8>>,
 }
 
@@ -144,6 +145,10 @@ pub(crate) struct Labels {
 /// Decode the first, legacy text section of a database. All returned content is local.
 pub fn decode(bytes: &[u8]) -> Result<MobiDocument, MobiError> {
     let mut document = decode_legacy(bytes)?;
+    if !document.contents.insertions.is_empty() {
+        document.additions.append(&mut document.contents.insertions);
+        document.additions.sort_by_key(|edit| edit.at);
+    }
     if !document.additions.is_empty() || !document.presentation.is_empty() {
         let edits = document
             .presentation
@@ -183,6 +188,9 @@ pub(crate) fn decode_legacy(bytes: &[u8]) -> Result<MobiDocument, MobiError> {
     )?;
     let encoding = mobi.as_ref().map_or(Encoding::Auto, |mobi| mobi.encoding);
     let text = decode_text(text, encoding)?;
+    // A damaged optional navigation index must not hide the publication's text.
+    let mut contents =
+        crate::kf8::legacy_contents::Contents::read(bytes, &records, header).unwrap_or_default();
     let (xhtml, additions, resources, presentation) =
         if mobi.as_ref().is_none_or(|mobi| mobi.is_plain_text) {
             (
@@ -195,9 +203,10 @@ pub(crate) fn decode_legacy(bytes: &[u8]) -> Result<MobiDocument, MobiError> {
             let first = u32_at(header, 108).ok().map(|n| n as usize).filter(|n| {
                 *n > usize::from(u16_at(header, 8).unwrap_or(u16::MAX)) && *n < records.len() - 1
             });
-            let (xhtml, mut features, has_text) = normalize_html(&text, Some(encoding))?;
+            let (xhtml, mut features, has_text) =
+                normalize_contents_html(&text, Some(encoding), &contents)?;
             let presentation = std::mem::take(&mut features.presentation);
-            let (additions, resources) = features.finish(bytes, &records, first)?;
+            let (additions, resources) = features.finish(bytes, &records, first, &mut contents)?;
             if !has_text && resources.is_empty() {
                 return Err(MobiError::InvalidText);
             }
@@ -212,6 +221,7 @@ pub(crate) fn decode_legacy(bytes: &[u8]) -> Result<MobiDocument, MobiError> {
         xhtml,
         additions,
         presentation,
+        contents,
         resources,
     })
 }
@@ -478,6 +488,20 @@ fn decode_text(bytes: Vec<u8>, encoding: Encoding) -> Result<String, MobiError> 
     }
 }
 
+pub(crate) fn navigation_label(bytes: &[u8], encoding: usize) -> Result<String, MobiError> {
+    let encoding = match encoding {
+        65001 => Encoding::Utf8,
+        1252 => Encoding::Cp1252,
+        v if v == u32::MAX as usize => Encoding::Cp1252,
+        _ => return Err(MobiError::InvalidHeader),
+    };
+    let text = decode_text(bytes.to_vec(), encoding)?;
+    if text.chars().any(|c| c.is_control() && !c.is_whitespace()) {
+        return Err(MobiError::InvalidText);
+    }
+    Ok(text.split_whitespace().collect::<Vec<_>>().join(" "))
+}
+
 fn read_label(bytes: &[u8], encoding: Encoding) -> Option<String> {
     if bytes.len() > MAX_METADATA_BYTES {
         return None;
@@ -557,6 +581,17 @@ fn normalize_html(
     text: &str,
     encoding: Option<Encoding>,
 ) -> Result<(String, markup::Features, bool), MobiError> {
+    normalize_contents_html(
+        text,
+        encoding,
+        &crate::kf8::legacy_contents::Contents::default(),
+    )
+}
+fn normalize_contents_html(
+    text: &str,
+    encoding: Option<Encoding>,
+    contents: &crate::kf8::legacy_contents::Contents,
+) -> Result<(String, markup::Features, bool), MobiError> {
     let input = BufferQueue::default();
     let tokenizer = Tokenizer::new(
         Normalizer(RefCell::new(Markup::default())),
@@ -564,7 +599,9 @@ fn normalize_html(
     );
     let mut cursor = text.len() - text.trim_start_matches('\u{feff}').len();
     tokenizer.sink.0.borrow_mut().features = encoding.map(|_| markup::Features::default());
-    for (raw, at, end, tag) in encoding.map_or_else(Vec::new, |e| markup::target_tags(text, e)) {
+    for (raw, at, end, tag) in
+        encoding.map_or_else(Vec::new, |e| markup::target_tags(text, e, contents))
+    {
         input.push_back(text[cursor..at].into());
         let _ = tokenizer.feed(&input);
         tokenizer.sink.destination(Some((raw, tag.to_owned())));
@@ -1102,9 +1139,14 @@ mod tests {
             xhtml: doc.xhtml,
             continued: false,
         };
-        let (parts, _) =
-            crate::kindle_sections::legacy(chapter, doc.additions, doc.presentation, false)
-                .unwrap();
+        let (parts, _) = crate::kindle_sections::legacy(
+            chapter,
+            doc.additions,
+            doc.presentation,
+            &doc.contents.insertions,
+            false,
+        )
+        .unwrap();
         let xml = roxmltree::Document::parse(&parts[0].xhtml).unwrap();
         let hrefs: Vec<_> = xml
             .descendants()

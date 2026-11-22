@@ -539,7 +539,7 @@ impl Reader {
         }
     }
 
-    fn surface_screen(&self) -> Screen {
+    pub(super) fn surface_screen(&self) -> Screen {
         if self.fixed.is_some() {
             Screen::Fixed
         } else {
@@ -682,6 +682,10 @@ impl Reader {
     pub(super) fn reading_tools_input(&mut self, input: Input) -> Change {
         let reading_screen = self.surface_screen();
         match input {
+            Input::LongTap(x, y) if matches!(
+                self.reading_bars().button_at(x, y),
+                Some(Target::Invoke(Action::ReadAlarm))
+            ) => self.read_alarm.stop(),
             Input::Tap(x, y) => {
                 let mut bars = self.reading_bars();
                 match bars.button_at(x, y) {

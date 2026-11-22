@@ -91,7 +91,7 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         Action::Show(Screen::BookMap) | Action::Overview => GRID,
         Action::Show(Screen::Links) | Action::Wikipedia => LINK,
         Action::TranslatePage => TEXT,
-        Action::Show(Screen::OnlineHistory) => CLOCK,
+        Action::ReadAlarm | Action::Show(Screen::OnlineHistory) => CLOCK,
         Action::Show(Screen::Highlights) | Action::ExportHighlights(_) => HIGHLIGHT,
         Action::Show(Screen::PublisherPages | Screen::PageNumbering | Screen::NumberingValue(_) | Screen::NumberingDefaults | Screen::PublisherOffer) | Action::SetCharacterPages(_) | Action::CharacterPage(_) | Action::AcceptPublisherNumbers | Action::TogglePublisherFooter | Action::TogglePublisherMargins => PAGE,
         Action::Show(Screen::GoToPage) | Action::NextLocation => JUMP,

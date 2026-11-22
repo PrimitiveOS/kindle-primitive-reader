@@ -246,12 +246,31 @@ pub(crate) fn partition(chapters: Vec<Kf8Chapter>) -> Result<Vec<Kf8Chapter>> {
     retarget(groups)
 }
 
+pub(crate) fn partition_with_contents(
+    chapters: Vec<Kf8Chapter>,
+    contents: &mut crate::kf8::publisher_contents::Navigation,
+) -> Result<Vec<Kf8Chapter>> {
+    let groups = chapters.into_iter().map(|chapter| {
+        let original = chapter.path.clone();
+        let offsets = contents.requested_offsets(&chapter)?;
+        let parts = split(chapter)?;
+        if parts.len() > 1 && !offsets.is_empty() {
+            for part in &parts {
+                contents.map_section(&part.chapter, part.range.clone(), part.prefix, &offsets)?;
+            }
+        }
+        Ok((original, parts.into_iter().map(|p| p.chapter).collect()))
+    });
+    retarget(groups)
+}
+
 /// Previously shipped editions used the bare normalized XHTML and then its
 /// images and links. Keep both location maps when presentation changes a section.
 pub(crate) fn legacy(
     chapter: Kf8Chapter,
     additions: Vec<crate::mobi::Addition>,
     presentation: crate::mobi::Presentation,
+    navigation: &[crate::mobi::Addition],
     split_long: bool,
 ) -> Result<(Vec<Kf8Chapter>, BTreeMap<String, Vec<String>>)> {
     let original = chapter.path.clone();
@@ -262,6 +281,7 @@ pub(crate) fn legacy(
     };
     let mut bare = Vec::new();
     let mut illustrated = Vec::new();
+    let mut previous_styled = Vec::new();
     let mut current = Vec::new();
     let styled = !presentation.is_empty();
     for part in parts {
@@ -295,19 +315,28 @@ pub(crate) fn legacy(
                 xhtml,
             })
         };
-        if styled {
+        let mut edits = if styled {
             if !additions.is_empty() {
                 illustrated.push(section(base, false)?);
             }
-            let edits = presentation.edits(part.range.clone(), base);
-            current.push(section(&edits, true)?);
+            presentation.edits(part.range.clone(), base)
         } else {
-            current.push(section(base, false)?);
+            base.to_vec()
+        };
+        if !navigation.is_empty() {
+            if styled || !additions.is_empty() {
+                previous_styled.push(section(&edits, styled)?);
+            }
+            let first = navigation.partition_point(|edit| edit.at < part.range.start);
+            let last = navigation.partition_point(|edit| edit.at < part.range.end);
+            edits.extend_from_slice(&navigation[first..last]);
+            edits.sort_by_key(|edit| edit.at);
         }
+        current.push(section(&edits, styled)?);
         bare.push(part.chapter);
     }
     let mut previous = BTreeMap::<String, Vec<String>>::new();
-    for chapters in [bare, illustrated] {
+    for chapters in [bare, illustrated, previous_styled] {
         for part in retarget([Ok((original.clone(), chapters))])? {
             let sources = previous.entry(part.path).or_default();
             if sources.last() != Some(&part.xhtml) {
@@ -431,6 +460,7 @@ mod tests {
                 xml: " href=\"#arrival\"".into(),
             }],
             crate::mobi::Presentation::default(),
+            &[],
             true,
         )
         .unwrap();

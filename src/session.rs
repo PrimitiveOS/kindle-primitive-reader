@@ -161,6 +161,7 @@ pub(crate) struct Reading {
     adjacent: Vec<(usize, GrayImage)>,
     prefetch: Option<Instant>,
     turns: PageTurns<ReadingMotion>,
+    end_attempt: bool,
 }
 
 impl Reading {
@@ -203,6 +204,7 @@ impl Reading {
             adjacent: Vec::new(),
             prefetch: None,
             turns: PageTurns::new(Instant::now()),
+            end_attempt: false,
         };
         session.schedule_prefetch();
         Ok(session)
@@ -259,6 +261,10 @@ impl Reading {
         let previous = (self.chapter, self.page, self.scroll_top);
         let mut change = Change::None;
         for motion in pending {
+            let forward = match motion {
+                ReadingMotion::Page(direction) => direction > 0,
+                ReadingMotion::Pixels(distance) => distance > 0.0,
+            };
             let result = match (motion, self.scroll_top) {
                 (ReadingMotion::Page(direction), Some(top)) => {
                     let distance = (self.config.settings.text_height() as f32 - 90.0).max(1.0);
@@ -268,6 +274,7 @@ impl Reading {
                 (ReadingMotion::Pixels(distance), Some(top)) => self.scroll(top, distance),
                 (ReadingMotion::Pixels(_), None) => continue,
             };
+            self.end_attempt = forward && matches!(result, Ok(Change::None));
             match result {
                 Ok(Change::Partial) => change = Change::Partial,
                 Ok(_) => {}
@@ -741,6 +748,27 @@ impl Reading {
     pub(crate) fn pause_turns(&mut self) {
         self.turns.pending.clear();
         self.prefetch = None;
+        self.end_attempt = false;
+    }
+
+    pub(crate) fn take_end_attempt(&mut self) -> bool {
+        std::mem::take(&mut self.end_attempt)
+    }
+
+    pub(crate) fn page_status(&self) -> String {
+        let first = first_frame_page(&self.probe, self.page) + 1;
+        let count = self.probe.page_count();
+        let last = self.last_visible_page() + 1;
+        let pages = if first == last {
+            format!("Page {first} of {count}")
+        } else {
+            format!("Pages {first}–{last} of {count}")
+        };
+        format!(
+            "Chapter {} of {}  ·  {pages}",
+            self.chapter + 1,
+            self.probe.chapter_count()
+        )
     }
 
     pub(crate) fn draw_page(
@@ -760,19 +788,7 @@ impl Reading {
             return;
         };
         let Some(action) = action else { return };
-        let first = first_frame_page(&self.probe, self.page) + 1;
-        let count = self.probe.page_count();
-        let last = self.last_visible_page() + 1;
-        let pages = if first == last {
-            format!("Page {first} of {count}")
-        } else {
-            format!("Pages {first}–{last} of {count}")
-        };
-        let progress = format!(
-            "Chapter {} of {}  ·  {pages}",
-            self.chapter + 1,
-            self.probe.chapter_count()
-        );
+        let progress = self.page_status();
         canvas.text(
             Rect::new(38, PAGE_HEIGHT as i32 + 12, DONE.x - 60, 48),
             self.error.as_deref().or(notice).unwrap_or(&progress),

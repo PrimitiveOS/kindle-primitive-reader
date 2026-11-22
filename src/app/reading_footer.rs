@@ -311,6 +311,37 @@ impl Reader {
     }
 
     pub(super) fn status_caption(&self) -> Option<String> {
+        let base = self.progress_caption();
+        if self.controls.status_bar == StatusBar::Minimal {
+            return base;
+        }
+        let Some(remaining) = self.read_alarm.footer() else { return base };
+        let page = base.filter(|s| !s.is_empty())
+            .or_else(|| self.fixed.as_ref().map(|f| f.reading.page_status()))
+            .or_else(|| self.active.as_ref().map(|a| a.reading.page_status()));
+        Some(match page {
+            Some(label) => format!("{label}  ·  Timer {remaining}"),
+            None => format!("Timer {remaining}"),
+        })
+    }
+
+    pub(super) fn alarm_progress(&self, token: char) -> Option<String> {
+        let progress = self.footer_progress()?;
+        match token {
+            'l' => Some(progress.pages_left().to_string()),
+            'C' => Some(progress.section_name.to_owned()),
+            'P' => Some(format!("{:.0}", progress.section_page as f64 * 100. / progress.section_len.max(1) as f64)),
+            'p' => Some(format!("{:.0}", progress.book_fraction * 100.)),
+            'H' | 'h' => {
+                let id = self.fixed.as_ref().map(|f|f.id).or_else(||self.active.as_ref().map(|a|a.id))?;
+                let pages = if token == 'H' {progress.book_pages_left} else {progress.pages_left()};
+                Some(super::reading_time((self.pace.rate(id) * pages as f64).round() as u64))
+            }
+            _ => None,
+        }
+    }
+
+    fn progress_caption(&self) -> Option<String> {
         let mode = self.controls.status_bar;
         if mode == StatusBar::Minimal {
             return Some(String::new());

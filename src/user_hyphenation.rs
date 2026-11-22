@@ -172,6 +172,7 @@ pub(crate) fn marked(word: &str, positions: &[usize]) -> String {
     }
     marked
 }
+#[derive(Default)]
 pub(crate) struct Opportunities {
     pub(crate) breaks: Vec<usize>,
     pub(crate) custom_words: Vec<Range<usize>>,

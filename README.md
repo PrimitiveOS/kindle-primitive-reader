@@ -40,6 +40,8 @@ When you long-press an inflected English word, Reader looks up its base form in 
 
 **Text › Spacing › Word expansion** redistributes part of the space on a justified line into the words. [Word expansion](docs/word-expansion.md)
 
+At the end of a book, Reader can show actions, mark the book as finished, open the next readable file or return to Library. [End-of-book actions](docs/document-end.md)
+
 EPUB chapters can start a section on a fresh page and keep a heading with its opening paragraph when the publisher requests it. [Publisher page breaks](docs/publisher-page-breaks.md)
 
 In fixed-page books, Book map shows where you are and where you saved bookmarks and highlights. Open a group to see individual pages. [Book map on the Oasis display](docs/screenshots/fixed-book-map.png)
@@ -55,6 +57,8 @@ Publisher styling can keep a paragraph’s first or last lines together at a pag
 Tap a saved passage to read its note. When marks overlap, Reader shows the matching passages so you can choose one. In **Find**, the arrows start at your current passage. [Overlapping highlights](docs/screenshots/overlapping-highlights.png) · [Note on the page](docs/screenshots/tapped-note.png) · [Find from this passage](docs/screenshots/nearby-find.png)
 
 Read with publisher fonts on supported Kindle editions, or find the previous or next matching page directly from the current PDF or DjVu view. [Embedded font support](docs/kf8-publication-fonts.md) · [Fixed-page search](docs/fixed-page-search.md)
+
+The upper **Tools** menu includes **Read timer** for a countdown or a local clock alarm. You can repeat an interval or dismiss the message and return to the same passage. [Read timer controls](docs/read-timer.md)
 
 The reading footer can estimate how long the current chapter or book will take. Superscripts and subscripts follow the publisher's text, keeping footnotes and formulas legible. [Reading time](docs/reading-time-estimates.md) · [Sample reading page](docs/screenshots/inline-scripts.png)
 
@@ -172,7 +176,7 @@ device. [Reading parity and device results](docs/reading-parity-plan.md)
 | JPEG 2000 (.jp2 and .j2k) | Open a grayscale or color still image directly from Library or read it as a comic page. Supports lossless and lossy Part 1 images with up to 16 bits per component. [Simulated Kindle page](docs/screenshots/jpeg2000-beacon.png) |
 | WebP and TIFF | Lossy, single-image VP8 WebP. Single-page uncompressed strip-based TIFF with top-left orientation and 1-bit or 8-bit grayscale. |
 | TXT, HTML/XHTML, HTMLZ, Markdown and FB2 | Shared text search and reading positions. Single-document HTMLZ archives use local illustrations and stylesheets. FB2 preserves section navigation and supported embedded images, including ZIP and gzip packages. Markdown builds a contents list from headings. |
-| MOBI, PalmDOC and AZW3 | DRM-free legacy MOBI with publisher alignment, HTML font sizes, embedded illustrations and local links, and PalmDOC text. Hybrids open their readable legacy edition and can fall back to supported KF8. Legacy MOBI and reflowable KF8/AZW3 open uncompressed, PalmDOC and HUFF/CDIC text. KF8 supports contents, local links, KindleGen stylesheets, JPEG, PNG, first-frame GIF and supported SVG artwork. Large chapters open in bounded sections that retain link destinations. |
+| MOBI, PalmDOC and AZW3 | DRM-free legacy MOBI with publisher contents, paragraph alignment, HTML font sizes, embedded illustrations and local links, and PalmDOC text. Hybrids open their readable legacy edition and can fall back to supported KF8. Legacy MOBI and reflowable KF8/AZW3 open uncompressed, PalmDOC and HUFF/CDIC text. KF8 supports nested publisher contents with in-chapter destinations, local links, KindleGen stylesheets, JPEG, PNG, first-frame GIF and supported SVG artwork. Large chapters open in bounded sections that retain link destinations. |
 | DOCX | Macro-free Strict and Transitional Word documents. Text, headings, basic emphasis, table reading order, and title and author metadata. |
 | CHM | Static help topics in single archives, with nested contents, headings, links and local JPEG or PNG illustrations. |
 | RTF and TCR | RTF preserves paragraphs and basic character styling. TCR opens bounded 8-bit dictionary-compressed text in the reflow reader. |

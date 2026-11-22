@@ -477,8 +477,10 @@ impl Book {
         let mut prior_mobi = BTreeMap::new();
         let mut revision = crate::revision_bytes(&bytes);
         let mut small_legacy = false;
+        let mut publisher_contents = crate::kf8::legacy_contents::Contents::default();
         let publication = match kf8::open_edition(&bytes)? {
             kf8::Edition::Legacy(document) => {
+                publisher_contents = document.contents;
                 let label = document
                     .title
                     .clone()
@@ -493,15 +495,23 @@ impl Book {
                     label,
                     xhtml: document.xhtml,
                 };
-                let chapters = if document.additions.is_empty() && document.presentation.is_empty() {
+                let chapters = if document.additions.is_empty()
+                    && document.presentation.is_empty()
+                    && publisher_contents.insertions.is_empty()
+                {
                     if small_legacy {
                         vec![chapter]
                     } else {
                         crate::kindle_sections::partition(vec![chapter])?
                     }
                 } else {
-                    let (current, previous) =
-                        crate::kindle_sections::legacy(chapter, document.additions, document.presentation, !small_legacy)?;
+                    let (current, previous) = crate::kindle_sections::legacy(
+                        chapter,
+                        document.additions,
+                        document.presentation,
+                        &publisher_contents.insertions,
+                        !small_legacy,
+                    )?;
                     prior_mobi = previous;
                     current
                 };
@@ -510,12 +520,16 @@ impl Book {
                     title: document.title,
                     author: document.author,
                     resources: document.resources,
+                    contents: Default::default(),
                     font_records: BTreeMap::new(),
                     chapters,
                 }
             }
             kf8::Edition::Kf8(mut edition) => {
-                edition.chapters = crate::kindle_sections::partition(edition.chapters)?;
+                edition.chapters = crate::kindle_sections::partition_with_contents(
+                    edition.chapters,
+                    &mut edition.contents,
+                )?;
                 edition
             }
         };
@@ -539,6 +553,11 @@ impl Book {
                 is_svg: false,
             });
             xhtml.insert(chapter.path, chapter.xhtml);
+        }
+        if !publisher_contents.items.is_empty() {
+            toc = publisher_contents.entries(&xhtml);
+        } else if !publication.contents.rows.is_empty() {
+            toc = publication.contents.finish(&xhtml);
         }
         let title = publication.title.unwrap_or_else(|| fallback_title.into());
         Ok(Self {
@@ -670,6 +689,25 @@ impl Book {
                 .ok_or_else(|| "That chapter is unavailable".into()),
             Content::Chm(chm) => chm.chapter(&chapter.href),
         }
+    }
+
+    pub(crate) fn chapter_source(
+        &self,
+        href: &str,
+        xhtml: &str,
+    ) -> crate::Result<crate::source::Source> {
+        if !matches!(self.content, Content::Loose { .. }) {
+            return crate::source::Source::parse_with_language(xhtml, self.language);
+        }
+        let ordinals = self
+            .toc
+            .iter()
+            .filter_map(|row| row.destination.as_ref())
+            .filter(|destination| destination.path == href)
+            .filter_map(|destination| destination.fragment.as_deref())
+            .filter_map(crate::kf8::publisher_contents::element_index)
+            .collect();
+        crate::source::Source::parse_with_kindle_elements(xhtml, self.language, &ordinals)
     }
 
     pub(crate) fn previous_mobi_chapters(&self, name: &str) -> &[String] {

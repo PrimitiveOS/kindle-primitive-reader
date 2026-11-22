@@ -2166,7 +2166,7 @@ dependencies = [
 
 [[package]]
 name = "reader"
-version = "0.1.21"
+version = "0.1.22"
 dependencies = [
  "ab_glyph_rasterizer",
  "anyrender_vello_cpu",
@@ -2191,6 +2191,7 @@ dependencies = [
  "icu_properties",
  "icu_segmenter",
  "image",
+ "libc",
  "libchm",
  "lopdf",
  "md5",
@@ -2198,6 +2199,7 @@ dependencies = [
  "percent-encoding",
  "png 0.17.16",
  "primitive-app",
+ "primitive-device",
  "primitive-ui",
  "pulldown-cmark",
  "qrcodegen",

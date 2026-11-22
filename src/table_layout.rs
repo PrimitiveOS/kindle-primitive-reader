@@ -202,6 +202,10 @@ fn add_column(
 }
 
 impl Cell {
+    pub(crate) fn has_column_tracks(self) -> bool {
+        self.fractions.is_some()
+    }
+
     pub fn bounds(self, width: u32, padding: u32) -> (u32, u32) {
         let (left, right) = match self.fractions {
             Some((mut left, mut right)) => {

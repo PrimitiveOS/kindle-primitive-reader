@@ -219,6 +219,8 @@ impl Reader {
         let mut items = vec![
             Item::new("Reading gestures", Action::Show(Screen::Gestures))
                 .detail("Assign taps, holds and swipes"),
+            Item::new("At the end of a book", Action::Show(Screen::EndActionSettings))
+                .detail(current.end_action.label()),
         ];
         items.extend(self.quick_display_items());
         // Under Primitive Launcher the pages follow the launcher's theme: no Night pages switch here.
@@ -350,6 +352,9 @@ impl Reader {
 
     fn document_tool_items(&self) -> Vec<Item> {
         let mut items = self.scan_items();
+        let timer = self.read_alarm.caption(std::time::Instant::now())
+            .unwrap_or_else(|| "Set an interval or alarm".into());
+        items.insert(0, Item::new("Read timer", Action::ReadAlarm).detail(timer));
         if self.searchable_document() {
             items.push(Item::new(
                 "Highlights and notes",

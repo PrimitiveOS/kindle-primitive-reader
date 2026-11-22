@@ -224,6 +224,7 @@ pub(crate) struct Style {
     pub line_height: Option<f32>,
     pub text_indent: TextIndent,
     pub padding: [CssLength; 2],
+    pub border_collapse: bool,
     pub background: Option<u8>,
     pub marker: crate::list_marker::MarkerKind,
     pub image_width: Option<ImageLength>,
@@ -251,6 +252,7 @@ impl Default for Style {
             line_height: None,
             text_indent: TextIndent::default(),
             padding: Default::default(),
+            border_collapse: false,
             background: None,
             marker: crate::list_marker::MarkerKind::None,
             image_width: None,
@@ -438,6 +440,9 @@ impl BookStyle {
                     Property::Slant(slant) => style.font_style = *slant,
                     Property::LineBreak(breaking) => style.line_break = *breaking,
                     Property::WordBreak(breaking) => style.word_break = *breaking,
+                    Property::BorderCollapse(mode) => {
+                        style.border_collapse = mode.unwrap_or(parent.border_collapse)
+                    }
                     Property::Orphans(value) => style.orphans = value.unwrap_or(parent.orphans),
                     Property::Widows(value) => style.widows = value.unwrap_or(parent.widows),
                     Property::BreakBefore(value) => {
@@ -966,7 +971,7 @@ fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
 }
 
 type Priority = (bool, bool, Specificity);
-type Winners<'a> = [Option<(Priority, &'a Property)>; 24];
+type Winners<'a> = [Option<(Priority, &'a Property)>; 25];
 
 fn choose<'a>(
     winners: &mut Winners<'a>,
@@ -998,6 +1003,7 @@ fn choose<'a>(
             Property::BreakInside(_) => 19,
             Property::Orphans(_) => 20,
             Property::Widows(_) => 21,
+            Property::BorderCollapse(_) => 24,
             Property::Padding(side, _) => 22 + side,
             Property::PaddingBoth(_) | Property::FontSource(_) => continue,
         };
@@ -1039,6 +1045,7 @@ impl Weight {
 }
 
 enum Property {
+    BorderCollapse(Option<bool>),
     Padding(usize, Option<CssLength>),
     PaddingBoth([Option<CssLength>; 2]),
     Orphans(Option<u8>),
@@ -1083,6 +1090,12 @@ impl<'i> DeclarationParser<'i> for Properties {
                 "padding-left" => Property::Padding(0, parse_padding(input, false)?[0]),
                 "padding-right" => Property::Padding(1, parse_padding(input, false)?[0]),
                 "padding" => Property::PaddingBoth(parse_padding(input, true)?),
+                "border-collapse" => Property::BorderCollapse(match input.expect_ident()?.to_ascii_lowercase().as_str() {
+                    "collapse" => Some(true),
+                    "separate" | "initial" => Some(false),
+                    "inherit" | "unset" => None,
+                    _ => return Err(ParseError::unexpected_token()),
+                }),
                 "orphans" => Property::Orphans(line_minimum(input)?),
                 "widows" => Property::Widows(line_minimum(input)?),
                 "page-break-before" | "break-before" => Property::BreakBefore(break_edge(input)?),

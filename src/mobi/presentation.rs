@@ -216,7 +216,7 @@ mod tests {
             continued: false,
             xhtml: bare,
         };
-        let (parts, old) = kindle_sections::legacy(chapter, Vec::new(), hints, true).unwrap();
+        let (parts, old) = kindle_sections::legacy(chapter, Vec::new(), hints, &[], true).unwrap();
         assert!(parts.len() > 1);
         let mut wind_parts = 0;
         let mut seen = Vec::new();
