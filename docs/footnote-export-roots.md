@@ -49,5 +49,12 @@ uses the real fresh-profile default instead of forcing the option on.
 An additional opt-in workflow reads an unchanged authorized EPUB, finds its real
 semantic note links, taps their actual rendered hit targets and checks each
 popup, close, source frame, history and durable reopen. It neither edits the
-publication nor captures its text into public screenshots. This source slice's
-CI and original-file Mac execution are pending its own receipts.
+publication nor captures its text into public screenshots. Source `13ca6a2`
+passes 845 ordinary Mac library tests and the full GitHub workspace suite. Its
+five focused runs pass, including all seven actual note links in unchanged
+original034, popup close, source-frame/history retention and durable reopen.
+The failed first CI only reflected two old test setups toggling the previous
+fresh default; both now exercise explicit Off/On transitions through the menu.
+The exact logs, source/binary hashes and original SHA are retained privately in
+`build/parity-review/footnote-default-evidence/13ca6a2/proof.json`. Aggregate and
+native acceptance remain separate.
