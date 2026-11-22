@@ -71,9 +71,42 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Kf8Document> {
     decode_edition(&records, None)
 }
 
+pub(crate) enum Edition {
+    Legacy(mobi::MobiDocument),
+    Kf8(Kf8Document),
+}
+
+pub(crate) fn open_edition(bytes: &[u8]) -> Result<Edition> {
+    let compression = mobi::u32_at(bytes, 78)
+        .ok()
+        .and_then(|at| mobi::u16_at(bytes, at as usize).ok());
+    // The previous importer selected a readable KF8 edition when the primary
+    // used HUFF/CDIC. Keep those existing chapter IDs and saved locations.
+    if compression == Some(mobi::HUFF_CDIC)
+        && let Ok(edition) = read_hybrid(bytes, MobiError::InvalidHuffman, true)
+    {
+        return Ok(Edition::Kf8(edition));
+    }
+    match mobi::decode_legacy(bytes) {
+        Ok(edition) => Ok(Edition::Legacy(edition)),
+        Err(MobiError::Kf8) => decode(bytes).map(Edition::Kf8),
+        Err(error @ (MobiError::UnsupportedCompression(_) | MobiError::UnsupportedEncoding(_))) => {
+            hybrid_fallback(bytes, error).map(Edition::Kf8)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 /// Locate a second, unprotected edition only through the publisher's EXTH 121
 /// record. A byte sequence resembling BOUNDARY elsewhere is not a record index.
-pub(crate) fn hybrid_fallback(bytes: &[u8], primary_error: MobiError) -> Result<Kf8Document> {
+fn hybrid_fallback(bytes: &[u8], primary_error: MobiError) -> Result<Kf8Document> {
+    read_hybrid(bytes, primary_error, false)
+}
+fn read_hybrid(
+    bytes: &[u8],
+    primary_error: MobiError,
+    previous_compression_only: bool,
+) -> Result<Kf8Document> {
     if bytes.len() > MAX_MOBI_BYTES || bytes.get(60..68) != Some(b"BOOKMOBI") {
         return Err(primary_error);
     }
@@ -126,6 +159,9 @@ pub(crate) fn hybrid_fallback(bytes: &[u8], primary_error: MobiError) -> Result<
         || primary.at(index)?.get(16..20) != Some(b"MOBI")
     {
         return Err(MobiError::InvalidHeader);
+    }
+    if previous_compression_only && !matches!(mobi::u16_at(primary.at(index)?, 0)?, 1 | 2) {
+        return Err(primary_error);
     }
     let edition = Records {
         bytes,
@@ -1205,7 +1241,7 @@ pub(crate) mod tests {
         pdb
     }
 
-    fn hybrid_fixture() -> Vec<u8> {
+    fn hybrid_fixture(huffman: bool) -> Vec<u8> {
         let standalone = fixture();
         let offsets = mobi::record_offsets(&standalone).unwrap();
         let mut kf8: Vec<_> = offsets
@@ -1227,8 +1263,34 @@ pub(crate) mod tests {
         word(&mut header, 36, 6);
         word(&mut header, 0x6c, 2);
         word(&mut header, 0x80, 0x40);
-        header.extend(mobi::test_exth(&[(121, &4u32.to_be_bytes())]));
-        let mut records = vec![header, legacy.to_vec(), PNG.to_vec(), b"BOUNDARY".to_vec()];
+        let mut records = if huffman {
+            // A single literal phrase stores the complete legacy paragraph. Its
+            // code has width eight, so one zero byte emits it with no padding.
+            let mut huff = vec![0; 1304];
+            huff[..4].copy_from_slice(b"HUFF");
+            for (field, value) in [(4, 24), (8, 24), (12, 1048)] {
+                word(&mut huff, field, value);
+            }
+            for i in 0..256 {
+                word(&mut huff, 24 + i * 4, 0x88);
+            }
+            let mut cdic = b"CDIC".to_vec();
+            for value in [16u32, 1, 1] {
+                cdic.extend(value.to_be_bytes());
+            }
+            cdic.extend(2u16.to_be_bytes());
+            cdic.extend(((legacy.len() as u16) | 0x8000).to_be_bytes());
+            cdic.extend(legacy);
+            short(&mut header, 0, usize::from(mobi::HUFF_CDIC));
+            word(&mut header, 112, 3);
+            word(&mut header, 116, 2);
+            vec![header, vec![0], PNG.to_vec(), huff, cdic]
+        } else {
+            vec![header, legacy.to_vec(), PNG.to_vec()]
+        };
+        let secondary = (records.len() + 1) as u32;
+        records[0].extend(mobi::test_exth(&[(121, &secondary.to_be_bytes())]));
+        records.push(b"BOUNDARY".to_vec());
         records.extend(kf8);
         let mut bytes = vec![0; 78 + 8 * records.len()];
         bytes[60..68].copy_from_slice(b"BOOKMOBI");
@@ -1254,7 +1316,13 @@ pub(crate) mod tests {
             std::fs::remove_file(path).unwrap();
             result
         };
-        let mut bytes = hybrid_fixture();
+        let huff_primary = hybrid_fixture(true);
+        let legacy = mobi::decode_legacy(&huff_primary).unwrap();
+        assert!(legacy.xhtml.contains("Legacy edition."));
+        let mut old_choice = open(&huff_primary).unwrap();
+        assert_eq!(old_choice.chapters.len(), 2);
+        assert!(old_choice.chapter(1).unwrap().contains("Arrival"));
+        let mut bytes = hybrid_fixture(false);
         let offsets = mobi::record_offsets(&bytes).unwrap();
         let mut primary = open(&bytes).unwrap();
         assert_eq!(primary.chapters.len(), 1);
@@ -1306,21 +1374,6 @@ pub(crate) mod tests {
         let path = env::var_os("READER_TEST_MOBI").unwrap();
         let path = std::path::Path::new(&path);
         let bytes = std::fs::read(path).unwrap();
-        if env::var_os("READER_TEST_HUFF").is_some() {
-            assert_eq!(
-                hybrid_fallback(&bytes, MobiError::UnsupportedCompression(17_480)).err(),
-                Some(MobiError::UnsupportedCompression(17_480))
-            );
-            assert!(
-                crate::epub::Book::open(path)
-                    .err()
-                    .unwrap()
-                    .to_string()
-                    .contains("HUFF/CDIC")
-            );
-            eprintln!("primary and secondary HUFF/CDIC explicitly unsupported");
-            return;
-        }
         if env::var_os("READER_TEST_KF8").is_some() {
             let edition =
                 hybrid_fallback(&bytes, MobiError::UnsupportedCompression(17_480)).unwrap();
@@ -1563,12 +1616,12 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn rejects_drm_huff_combined_and_bad_index_extents() {
+    fn rejects_protected_missing_dictionary_and_bad_index_extents() {
         let good = fixture();
         let header = integer(&good, 78).unwrap();
         for (field, value, expected) in [
             (12, 1, MobiError::Protected),
-            (0, 17480, MobiError::UnsupportedCompression(17480)),
+            (0, 17480, MobiError::InvalidHuffman),
         ] {
             let mut damaged = good.clone();
             short(&mut damaged, header + field, value);

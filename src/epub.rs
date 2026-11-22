@@ -477,8 +477,8 @@ impl Book {
         let mut prior_mobi = BTreeMap::new();
         let mut revision = crate::revision_bytes(&bytes);
         let mut small_legacy = false;
-        let publication = match mobi::decode_legacy(&bytes) {
-            Ok(document) => {
+        let publication = match kf8::open_edition(&bytes)? {
+            kf8::Edition::Legacy(document) => {
                 let label = document
                     .title
                     .clone()
@@ -514,15 +514,7 @@ impl Book {
                     chapters,
                 }
             }
-            Err(error) => {
-                let mut edition = match error {
-                    mobi::MobiError::Kf8 => kf8::decode(&bytes)?,
-                    mobi::MobiError::UnsupportedCompression(_)
-                    | mobi::MobiError::UnsupportedEncoding(_) => {
-                        kf8::hybrid_fallback(&bytes, error)?
-                    }
-                    _ => return Err(error.into()),
-                };
+            kf8::Edition::Kf8(mut edition) => {
                 edition.chapters = crate::kindle_sections::partition(edition.chapters)?;
                 edition
             }

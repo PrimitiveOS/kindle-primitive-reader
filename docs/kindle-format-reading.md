@@ -4,14 +4,14 @@ Reader imports DRM-free legacy MOBI with illustrations and internal links, PalmD
 
 | Reading feature | Implementation |
 | --- | --- |
-| Text records | Read uncompressed and PalmDOC-compressed records, including multibyte overlap and trailing-data records. Legacy text supports UTF-8 and Windows-1252. KF8 markup uses UTF-8. |
+| Text records | Read uncompressed, PalmDOC and HUFF/CDIC records, including multibyte overlap and trailing-data records. Legacy text supports UTF-8 and Windows-1252. KF8 markup uses UTF-8. |
 | KF8 chapters | Reassemble skeletons and fragments in reading order. Use the FDST table to locate auxiliary flows when the PalmDOC header declares the length of the main markup flow. |
 | Text and links | Accept standalone HTML with or without the XHTML namespace and ordinary XHTML document type declarations. Resolve Kindle fragment offsets against the original source bytes, including text with standard HTML character references. |
 | Illustrations and style | Resolve local JPEG and PNG illustrations and first-frame GIFs. Recover supported raster covers from SVG wrappers and load local KindleGen stylesheet flows. The reading engine applies supported publisher styles. |
 | Large chapters | Split long text and heavily illustrated sections for layout. Continuations retain nested markup, reading order and cross-section link destinations. Contents lists the original chapter once. |
 | Import bounds | The container limit is 32 MiB and the uncompressed text limit is 12 MiB. Separate budgets apply to XML nodes, record counts, images, rendered sections and the accumulated resource bytes. |
 
-A hybrid opens its legacy edition when Reader can read it. If that edition uses an unsupported encoding or compression, Reader can open a reflowable KF8 edition identified by its EXTH 121 record and the corresponding boundary. It resolves illustrations against the shared primary resource records. Fixed-layout KF8 and HUFF/CDIC remain unsupported. Reader reports protected books at opening.
+A hybrid opens its legacy edition when Reader can read it. If that edition uses an unsupported encoding or compression, Reader can open a reflowable KF8 edition identified by its EXTH 121 record and the corresponding boundary. It resolves illustrations against the shared primary resource records. When a previous Reader release could only read the KF8 half of a hybrid, the same edition and its saved locations remain available. Fixed-layout KF8 is still unsupported. Reader reports protected books at opening.
 
 ## Legacy illustrations, links and reading positions
 
@@ -30,7 +30,35 @@ The same controls ran offscreen on an Oasis 3. Earlier saved highlights reselect
 
 Reader interprets a decimal `recindex` as a one-based image record and checks its signature. Recognized images use JPEG, PNG or GIF. It resolves `filepos` against the original UTF-8 or Windows-1252 byte stream. Destinations at a supported opening element are available. An offset inside text, an attribute, a comment, or a discarded element remains unavailable. Historical chapter boundaries are determined before new markup is applied. A prior highlight translates through matching text blocks in their original order.
 
-The two unmodified hybrid controls in libmobi v0.12 both open from Reader's picker through their primary edition. The secondary-edition verifier reconstructs three chapters from the NCX sample and two from the Unicode sample. The complete visible non-whitespace text matched independent libmobi reconstruction in both secondary editions, amounting to 94 and 23,136 characters respectively. The latter includes a shared JPEG and a lowercase HTML5 doctype. An authored hybrid tests the automatic fallback through the normal opener, including a link between KF8 chapters and an image present only in the primary resource section. The uncompressed Unicode sample also contains an unrelated later `BOUNDARY` record that the importer ignores. Both editions in the pinned HUFF/CDIC sample require unsupported compression. The Kindle collection included sixteen standalone KF8 books and two legacy MOBIs. Hybrid behavior was therefore measured on the public controls. [Pinned sample files](https://github.com/bfabiszewski/libmobi/tree/85dcfe803fc2a21020ddcf15c3eb66b93d388add/tests/samples) · [Boundary lookup](https://github.com/bfabiszewski/libmobi/blob/85dcfe803fc2a21020ddcf15c3eb66b93d388add/src/util.c#L3016-L3036) · [Shared resource index](https://github.com/bfabiszewski/libmobi/blob/85dcfe803fc2a21020ddcf15c3eb66b93d388add/src/util.c#L2915-L2928)
+The two unmodified hybrid controls in libmobi v0.12 both open from Reader's picker through their primary edition. The secondary-edition verifier reconstructs three chapters from the NCX sample and two from the Unicode sample. The complete visible non-whitespace text matched independent libmobi reconstruction in both secondary editions, amounting to 94 and 23,136 characters respectively. The latter includes a shared JPEG and a lowercase HTML5 doctype. An authored hybrid tests the automatic fallback through the normal opener, including a link between KF8 chapters and an image present only in the primary resource section. The uncompressed Unicode sample also contains an unrelated later `BOUNDARY` record that the importer ignores. Both editions in the pinned HUFF/CDIC sample use the separate decoder covered below. The Kindle collection included sixteen standalone KF8 books and two legacy MOBIs. Hybrid behavior was therefore measured on the public controls. [Pinned sample files](https://github.com/bfabiszewski/libmobi/tree/85dcfe803fc2a21020ddcf15c3eb66b93d388add/tests/samples) · [Boundary lookup](https://github.com/bfabiszewski/libmobi/blob/85dcfe803fc2a21020ddcf15c3eb66b93d388add/src/util.c#L3016-L3036) · [Shared resource index](https://github.com/bfabiszewski/libmobi/blob/85dcfe803fc2a21020ddcf15c3eb66b93d388add/src/util.c#L2915-L2928)
+
+## HUFF/CDIC editions
+
+Reader decodes text records with compression ID 17480 in ordinary unencrypted legacy MOBI and reflowable KF8. It reads the edition's HUFF prefix and code-length tables and its CDIC phrase records. A phrase can contain literal bytes or other codes. Decoding writes into the same bounded text buffer as PalmDOC before the normal chapter, image and link import. Each edition has its own dictionary, including in a dual-format file.
+
+| Independent source | Edition verified | Text records | Bytes matched to libmobi |
+| --- | --- | ---: | ---: |
+| libmobi v0.12 Unicode hybrid | Legacy, including its separately exported MOBI | 28 | 111,701 |
+| Same unmodified hybrid | KF8, including its separately exported AZW3 | 27 | 108,331 |
+| Kindling English dictionary | Legacy reading text | 1 | 3,074 |
+| Kindling Japanese dictionary | Legacy reading text | 2 | 4,940 |
+
+These comparisons cover every uncompressed byte across 58 distinct source text records. The two Unicode editions each used two CDIC records, and the two Kindling dictionaries each used three. The legacy Unicode sample also matches its independently distributed uncompressed counterpart. The KF8 comparison uses libmobi's expansion of the actual compressed edition. The two Kindling files exercise reading the dictionary as a book. They do not establish Kindle dictionary-index lookup support. No personal HUFF/CDIC file was present in the Kindle collection. [libmobi sample files](https://github.com/bfabiszewski/libmobi/tree/85dcfe803fc2a21020ddcf15c3eb66b93d388add/tests/samples) · [Kindling fixtures](https://github.com/ciscoriordan/kindling/tree/e4174b70287ddcabfb0490a8141fd05794f7e72d/tests/fixtures/huffdic)
+
+The decoder accepts up to 64 CDIC records, 65,536 phrases and 32 nested phrase references. It checks dictionary offsets and each symbol, stops cyclic expansion and enforces a step budget for each text record and the whole edition. A text record can expand to at most its header's record size, capped at 32 KiB. The 12 MiB book-text limit also applies. Bounds and output tests cover short and long codes, nested phrases, invalid offsets, truncated dictionaries and an exhausted expansion budget. Reader uses its own Rust implementation with borrowed phrase data. In comparison, Kindling’s MIT implementation allocates and caches expanded phrases with a separate 16 MiB output limit. [libmobi decompression](https://github.com/bfabiszewski/libmobi/blob/85dcfe803fc2a21020ddcf15c3eb66b93d388add/src/compression.c#L106-L211) · [Dictionary layout](https://github.com/bfabiszewski/libmobi/blob/85dcfe803fc2a21020ddcf15c3eb66b93d388add/src/read.c#L550-L741) · [Kindling implementation](https://github.com/ciscoriordan/kindling/blob/e4174b70287ddcabfb0490a8141fd05794f7e72d/src/huffcdic.rs) · [Kindling license](https://github.com/ciscoriordan/kindling/blob/e4174b70287ddcabfb0490a8141fd05794f7e72d/Cargo.toml)
+
+The Mac's normal library picker opened all eight test files, changed the reading frame after a forward page turn and resumed the saved page. The complete first-frame PNG matched across the compressed hybrid, its standalone legacy edition and the uncompressed hybrid. The illustrated field guide also produced identical PNGs in plain and compressed form. Both its image bytes and its internal destination matched the original. In the compressed hybrid’s KF8 edition, both reconstructed chapters and all 23,136 visible non-whitespace characters matched independent reconstruction.
+
+To reproduce the illustrated field guide in both encodings and compare its complete reading frames, generate the two files with the same book name in separate directories. Reader's normal picker verifier accepts a fresh profile for each run.
+
+```sh
+mkdir -p build/huff-book build/plain-book
+python3 scripts/generate-mobi-fixture.py --huff build/huff-book/field-notes.mobi
+python3 scripts/generate-mobi-fixture.py build/plain-book/field-notes.mobi
+READER_VERIFY_PICKER=1 READER_VERIFY_FRAME=build/huff.png cargo run --locked --example verify_document -- build/huff-book field-notes.mobi build/huff-profile tests/fixtures/fonts/NotoSans-Regular.ttf
+READER_VERIFY_PICKER=1 READER_VERIFY_FRAME=build/plain.png cargo run --locked --example verify_document -- build/plain-book field-notes.mobi build/plain-profile tests/fixtures/fonts/NotoSans-Regular.ttf
+cmp build/huff.png build/plain.png
+```
 
 ## Tests with books from a Kindle
 

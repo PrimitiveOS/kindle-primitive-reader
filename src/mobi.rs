@@ -13,6 +13,8 @@ use html5ever::tokenizer::states::RawKind;
 use html5ever::tokenizer::{
     BufferQueue, Tag, TagKind, Token, TokenSink, TokenSinkResult, Tokenizer,
 };
+mod huff;
+pub(crate) use huff::COMPRESSION as HUFF_CDIC;
 mod markup;
 pub(crate) use markup::{Addition, apply as apply_additions};
 use std::cell::RefCell;
@@ -73,6 +75,7 @@ pub enum MobiError {
     UnsupportedCompression(u16),
     UnsupportedEncoding(u32),
     InvalidHeader,
+    InvalidHuffman,
     InvalidText,
     TooLarge,
     TextTooLarge,
@@ -90,9 +93,9 @@ impl fmt::Display for MobiError {
             Self::Kf8 => formatter.write_str(
                 "This Kindle file uses a KF8 variant or feature Reader does not support.",
             ),
-            Self::UnsupportedCompression(17_480) => {
-                formatter.write_str("This MOBI file uses HUFF/CDIC compression.")
-            }
+            Self::InvalidHuffman => formatter.write_str(
+                "The MOBI HUFF/CDIC dictionary is invalid or exceeds its decoding limits.",
+            ),
             Self::UnsupportedCompression(value) => {
                 write!(formatter, "Unsupported MOBI compression type {value}.")
             }
@@ -211,7 +214,7 @@ pub(crate) fn decode_records(
     text_length: usize,
 ) -> Result<Vec<u8>, MobiError> {
     let compression = u16_at(header, 0)?;
-    if !matches!(compression, 1 | 2) {
+    if !matches!(compression, 1 | 2 | huff::COMPRESSION) {
         return Err(MobiError::UnsupportedCompression(compression));
     }
     let text_records = usize::from(u16_at(header, 8)?);
@@ -227,14 +230,22 @@ pub(crate) fn decode_records(
         return Err(MobiError::InvalidHeader);
     }
 
+    let dictionary = (compression == huff::COMPRESSION)
+        .then(|| huff::Dictionary::read(bytes, records, header, text_records))
+        .transpose()?;
     let mut text = Vec::with_capacity(text_length);
+    let mut huff_work = (text_length + record_size) * 16 + 4096;
     for pair in records[1..=text_records + 1].windows(2) {
         let payload = without_trailers(&bytes[pair[0]..pair[1]], extra_data)?;
         let limit = record_size.min((text_length + record_size).saturating_sub(text.len()));
         match compression {
             1 if payload.len() <= limit => text.extend_from_slice(payload),
             1 => return Err(MobiError::InvalidText),
-            _ => decode_palmdoc_record(payload, limit, &mut text)?,
+            2 => decode_palmdoc_record(payload, limit, &mut text)?,
+            _ => dictionary
+                .as_ref()
+                .ok_or(MobiError::InvalidHuffman)?
+                .expand(payload, limit, &mut text, &mut huff_work)?,
         }
     }
     if text.len() < text_length || text[text_length..].iter().any(|&byte| byte != 0) {
@@ -1096,15 +1107,16 @@ mod tests {
         );
     }
     #[test]
-    fn rejects_encrypted_huff_kf8_and_out_of_range_record_tables() {
+    fn rejects_protected_or_invalid_mobi_headers_and_unknown_compression() {
         let text = b"<p>Tide</p>";
         let header = |compression, encoding, version| {
             mobi_header_for_test(compression, text.len(), encoding, version, 0)
         };
         for (metadata, expected) in [
+            (header(17_480, 65001, 6), MobiError::InvalidHuffman),
             (
-                header(17_480, 65001, 6),
-                MobiError::UnsupportedCompression(17_480),
+                header(12345, 65001, 6),
+                MobiError::UnsupportedCompression(12345),
             ),
             (header(1, 65001, 8), MobiError::Kf8),
             (header(1, 65000, 6), MobiError::UnsupportedEncoding(65000)),
