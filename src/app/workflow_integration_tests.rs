@@ -126,12 +126,14 @@ fn run_browser_and_export(epub: Option<&Path>, pdf_original: Option<&Path>, chap
     let epub_id = app.open_book_id().unwrap();
     app.library.state_mut(epub_id).unwrap().highlights.extend([
         Highlight {
+            color: Default::default(),
             selection: spanning.clone(),
             note: Some("Spanning reading flow".into()),
             style: crate::highlight_style::HighlightStyle::Underline,
             created_at: Some(1_740_777_900),
         },
         Highlight {
+            color: Default::default(),
             selection: hidden.clone(),
             note: Some("Hidden EPUB passage".into()),
             style: crate::highlight_style::HighlightStyle::Lighten,
@@ -192,6 +194,7 @@ fn run_browser_and_export(epub: Option<&Path>, pdf_original: Option<&Path>, chap
         .state_mut(pdf_id)
         .unwrap()
         .add_pdf_highlight(PdfHighlight {
+            color: Default::default(),
             page,
             bounds: vec![word.bounds],
             continuation: Vec::new(),
