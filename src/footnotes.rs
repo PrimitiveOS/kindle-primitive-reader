@@ -120,9 +120,9 @@ fn visible_text(node: Node<'_, '_>) -> bool {
 }
 
 fn text_container<'a, 'i>(target: Node<'a, 'i>) -> Option<Node<'a, 'i>> {
-    if let Some(note) = target.ancestors().find(|n| note_container(*n)) {
-        return Some(note);
-    }
+    // Note semantics decide whether a link is a note, not which ancestor to
+    // export. In particular, a target paragraph inside an inline-hidden aside
+    // must not acquire that ancestor's display:none in its separate popup.
     if !visible_text(target) && !target.has_tag_name("img") {
         // Anchor-only elements are commonly placed between adjacent paragraphs.
         // An otherwise empty paragraph may wrap the anchor. Stop walking outward
@@ -182,7 +182,7 @@ pub(crate) fn extract(
             || n.has_tag_name("a") && n.attribute("name") == Some(fragment)
     })?;
     let container = text_container(target)?;
-    let explicit = context.kind == Reference::Explicit || note_container(container);
+    let explicit = context.kind == Reference::Explicit || target.ancestors().any(note_container);
     if !explicit {
         let after = match chapter_order {
             std::cmp::Ordering::Less => true,
@@ -258,7 +258,7 @@ mod tests {
     }
 
     #[test]
-    fn semantic_footnote_keeps_only_its_container_and_inherits_language_and_direction() {
+    fn semantic_footnote_keeps_target_paragraph_and_inherits_language_and_direction() {
         let xml = r##"<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="ar"><body dir="rtl"><p>First paragraph</p><aside epub:type="footnote"><p><span id="n"/>A <em>marked</em> phrase.</p><p><a href="#r" role="doc-backlink">Return</a></p></aside><p>Later paragraph</p></body></html>"##;
         let excerpt = extract(
             xml,
@@ -272,7 +272,8 @@ mod tests {
         let doc = Document::parse(&excerpt).unwrap();
         assert_eq!(doc.root_element().attribute((XML, "lang")), Some("ar"));
         assert_eq!(doc.root_element().attribute("dir"), Some("rtl"));
-        assert!(excerpt.contains("<em>marked</em>") && excerpt.contains("doc-backlink"));
+        assert!(excerpt.contains("<em>marked</em>"));
+        assert!(!excerpt.contains("<aside") && !excerpt.contains("doc-backlink"));
         assert!(!excerpt.contains("First paragraph") && !excerpt.contains("Later paragraph"));
         assert!(
             extract(
@@ -285,6 +286,62 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    /// Four authored inputs independently exercised through stock KOReader's
+    /// onTap -> isLinkToFootnote -> getHTMLFromXPointer -> FootnoteWidget path.
+    #[test]
+    fn export_root_preserves_target_inline_css_without_widening_to_semantic_ancestor() {
+        for inline_hidden in [true, false] {
+            for id_on_aside in [true, false] {
+                let style = if inline_hidden {
+                    "style=\"display:none\""
+                } else {
+                    "class=\"note\""
+                };
+                let (aside_id, paragraph_id) = if id_on_aside {
+                    ("id=\"n\"", "")
+                } else {
+                    ("", "id=\"n\"")
+                };
+                let xml = format!(
+                    r#"<html xmlns:epub="http://www.idpf.org/2007/ops"><head><link rel="stylesheet" href="notes.css"/></head><body><p>Source</p><aside {aside_id} epub:type="footnote" {style}><p {paragraph_id}>Actual note</p><p>Other paragraph</p></aside><p>Following prose</p></body></html>"#
+                );
+                for kind in [Reference::Explicit, Reference::Unknown] {
+                    let excerpt =
+                        extract(&xml, "n", &context(kind, "1"), Ordering::Less, false, false)
+                            .unwrap();
+                    let doc = Document::parse(&excerpt).unwrap();
+                    let body = doc.descendants().find(|n| n.has_tag_name("body")).unwrap();
+                    let exported = body.children().find(Node::is_element).unwrap();
+                    assert_eq!(
+                        exported.tag_name().name(),
+                        if id_on_aside { "aside" } else { "p" }
+                    );
+                    assert_eq!(exported.attribute("id"), Some("n"));
+                    assert_eq!(
+                        extracted_text(body).contains("Other paragraph"),
+                        id_on_aside
+                    );
+                    assert_eq!(
+                        excerpt.contains("display:none"),
+                        id_on_aside && inline_hidden
+                    );
+                    assert_eq!(
+                        excerpt.contains("class=\"note\""),
+                        id_on_aside && !inline_hidden
+                    );
+                    assert!(!excerpt.contains("notes.css") && !excerpt.contains("Following prose"));
+                }
+            }
+        }
+    }
+
+    fn extracted_text(node: Node<'_, '_>) -> String {
+        node.descendants()
+            .filter(Node::is_text)
+            .filter_map(|n| n.text())
+            .collect()
     }
 
     #[test]
