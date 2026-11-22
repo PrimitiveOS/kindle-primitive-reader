@@ -92,13 +92,20 @@ impl Config {
         if !metadata.is_file() || metadata.len() > CONFIG_LIMIT {
             return Self::default();
         }
-        fs::read(path)
+        let mut config: Self = fs::read(path)
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        config.seen.retain(|_, seen| !seen.position.as_ref().is_some_and(|position|
+            position.anchor.as_ref().is_some_and(|anchor| anchor.boundary.is_some())));
+        config
     }
 
     pub fn save(&self, path: &Path) -> io::Result<()> {
+        if self.seen.values().any(|seen| seen.position.as_ref().is_some_and(|position|
+            position.anchor.as_ref().is_some_and(|anchor| anchor.boundary.is_some()))) {
+            return Err(io::Error::other("DOM boundary sync history is unsupported in version1"));
+        }
         let bytes = serde_json::to_vec(self).map_err(io::Error::other)?;
         if bytes.len() as u64 > CONFIG_LIMIT {
             return Err(io::Error::other("Sync state exceeds 2 MiB"));
@@ -160,6 +167,9 @@ impl Record {
         let Some(position) = &self.position else {
             return Ok(());
         };
+        if position.anchor.as_ref().is_some_and(|anchor| anchor.boundary.is_some()) {
+            return Err("DOM boundary positions are unsupported by progress sync version1".into());
+        }
         if position.chapter > 100_000 || position.page > 10_000_000 {
             return Err("The server position exceeds the reading limits".into());
         }

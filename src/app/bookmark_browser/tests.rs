@@ -474,3 +474,42 @@ fn original_documents_restore_bookmarks_through_the_browser() {
         assert_eq!(fs::read(source).unwrap(), before);
     }
 }
+
+#[test]
+fn a_boundary_bookmark_preview_uses_its_label_without_copying_the_fallback_paragraph() {
+    let fixture = Fixture::new();
+    let mut app = fixture.app();
+    app.open_path(&fixture.book).unwrap();
+    let active = app.active.as_ref().unwrap();
+    let id = active.id;
+    let owner = active.reading.probe.source.blocks[0].element;
+    let anchor = active.reading.probe.boundary_anchor(owner).unwrap();
+    let position = ReadingPosition {
+        chapter: 0,
+        page: 0,
+        anchor: Some(anchor.clone()),
+    };
+    app.library
+        .state_mut(id)
+        .unwrap()
+        .bookmarks
+        .push(crate::library::Bookmark {
+            label: "Empty DOM boundary".into(),
+            created_at: None,
+            position,
+        });
+    let state = app.library.state(id).unwrap();
+    let mark = get_mark(state, Locator::Bookmark(0), |_| Some(0), false).unwrap();
+    assert_eq!(mark.quote, "Empty DOM boundary");
+    assert!(mark.note.is_none());
+    assert!(mark.location_label.contains("Page"));
+    assert!(
+        app.active
+            .as_ref()
+            .unwrap()
+            .reading
+            .probe
+            .select_range(&anchor, &anchor)
+            .is_none()
+    );
+}

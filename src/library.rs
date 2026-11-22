@@ -2,6 +2,7 @@
 
 pub(crate) mod custom_contents;
 pub(crate) mod hidden_flows;
+mod boundary_state;
 
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
@@ -1593,11 +1594,12 @@ impl Library {
             return Err(invalid_state("Reader backup exceeds its size limit"));
         }
         let backup: SavedLibrary = serde_json::from_slice(bytes).map_err(io::Error::other)?;
-        if backup.version != BACKUP_VERSION || backup.books.len() > MAX_BACKUP_BOOKS {
+        if backup.books.len() > MAX_BACKUP_BOOKS {
             return Err(invalid_state(
                 "Reader backup version or book count is unsupported",
             ));
         }
+        boundary_state::validate_version(backup.version, &backup.books)?;
         let (merged, mut summary) = merge_states(&self.recent, &backup.books);
         let collections = merge_collections(
             &self.collections,
@@ -1729,7 +1731,7 @@ fn encode_library(
     validate_state(books)?;
     state_json(
         &SavedLibraryRef {
-            version: BACKUP_VERSION,
+            version: boundary_state::version(books),
             books,
             collections,
         },
@@ -1738,6 +1740,7 @@ fn encode_library(
 }
 
 fn validate_state(states: &[BookState]) -> io::Result<()> {
+    boundary_state::validate(states)?;
     if states
         .iter()
         .any(|state| !state.fixed_preferences.is_valid())
@@ -2008,12 +2011,11 @@ fn load_library_state(path: &Path) -> io::Result<(Vec<BookState>, Vec<Collection
     let (mut recent, collections) =
         if bytes.iter().find(|byte| !byte.is_ascii_whitespace()) == Some(&b'[') {
             let books: Vec<BookState> = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+            boundary_state::validate_version(BACKUP_VERSION, &books)?;
             (books, Vec::new())
         } else {
             let state: SavedLibrary = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
-            if state.version != BACKUP_VERSION {
-                return Err(invalid_state("Reader state version is unsupported"));
-            }
+            boundary_state::validate_version(state.version, &state.books)?;
             (state.books, state.collections)
         };
     let mut ids = HashSet::new();
@@ -3174,7 +3176,7 @@ mod tests {
         let mut library = Library::open(&scratch.0, &scratch.0.join("state.json")).unwrap();
         assert!(
             library
-                .preview_backup(br#"{"version":2,"books":[]}"#)
+                .preview_backup(br#"{"version":3,"books":[]}"#)
                 .is_err()
         );
         assert!(

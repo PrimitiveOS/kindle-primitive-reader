@@ -1015,13 +1015,14 @@ impl Reader {
                 .unwrap_or_default().into(),
         };
         let reading = if let Some(position) = position {
+            let boundary = position.anchor.as_ref().is_some_and(|anchor| anchor.boundary.is_some());
             Reading::restore(
                 config.clone(),
                 position.chapter,
                 position.page,
                 position.anchor.as_ref(),
             )
-            .or_else(|_| Reading::open(config))?
+            .or_else(|error| if boundary { Err(error) } else { Reading::open(config) })?
         } else {
             Reading::open(config)?
         };

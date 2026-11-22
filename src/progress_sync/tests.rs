@@ -534,3 +534,60 @@ fn an_actual_lost_put_acknowledgement_is_recovered_by_fetch_without_a_second_wri
         "recovering a lost acknowledgement is read-only"
     );
 }
+
+#[test]
+fn version1_never_transfers_or_downgrades_dom_boundary_positions() {
+    let server = Server::start();
+    let mut boundary = record(0);
+    boundary.position.as_mut().unwrap().anchor = Some(crate::Anchor {
+        book: 7,
+        chapter: "chapter.xhtml".into(),
+        revision: 8,
+        block: 9,
+        offset: 0,
+        illustration: None,
+        boundary: Some(crate::SourceBoundary {
+            origin: 25,
+            relative: 0,
+        }),
+    });
+    assert!(boundary.validate(&boundary.edition, boundary.book).is_err());
+    assert!(
+        execute(&request(
+            &server,
+            Operation::Put {
+                record: boundary.clone(),
+                expected: None
+            }
+        ))
+        .is_err()
+    );
+    assert_eq!(
+        server.calls(),
+        0,
+        "outbound rejection happens before any HTTP request"
+    );
+    server.state.lock().unwrap().record = Some(serde_json::to_vec(&boundary).unwrap());
+    assert!(execute(&request(&server, Operation::Fetch)).is_err());
+    assert_eq!(
+        server.calls(),
+        1,
+        "incoming v1 boundary is explicitly rejected after fetch"
+    );
+    let scratch = Scratch::new();
+    let path = scratch.0.join("sync.json");
+    let mut config = server.config();
+    config.seen.insert(
+        boundary.edition.clone(),
+        Seen {
+            etag: "\"v1\"".into(),
+            position: boundary.position.clone(),
+        },
+    );
+    assert!(config.save(&path).is_err());
+    assert!(!path.exists());
+    fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
+    let loaded = Config::load(&path);
+    assert!(loaded.seen.is_empty());
+    assert_eq!(loaded.folder, config.folder);
+}

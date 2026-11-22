@@ -451,3 +451,75 @@ fn complete_backup_original_document_marks_and_state_round_trip_without_changing
     assert_eq!(digest(&fs::read(source_path).unwrap()), hash);
     assert_eq!(digest(&fs::read(target.root.join(name)).unwrap()), hash);
 }
+
+#[test]
+fn backup_v2_gates_boundary_library_before_any_component_write_and_preserves_typed_bookmarks() {
+    let fixture = Fixture::new();
+    let (mut app, id) = source(&fixture);
+    let reading = &app.active.as_ref().unwrap().reading;
+    let owner = reading.probe.source.blocks[0].element;
+    let anchor = reading.probe.boundary_anchor(owner).unwrap();
+    app.library.state_mut(id).unwrap().bookmarks[0]
+        .position
+        .anchor = Some(anchor.clone());
+    let bytes = app.reading_backup_bytes().unwrap();
+    let mut value: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(value["version"], 2);
+    assert_eq!(value["library"]["version"], 2);
+    let target_fixture = Fixture::new();
+    let mut target = open(&target_fixture);
+    let before = target.library.bytes().unwrap();
+    let controls = target_fixture.root.join("reading-controls.json");
+    let old_controls = fs::read(&controls).ok();
+    value["library"]["version"] = serde_json::json!(1);
+    assert!(
+        target
+            .prepare_reading_backup(&serde_json::to_vec(&value).unwrap())
+            .is_err()
+    );
+    assert_eq!(target.library.bytes().unwrap(), before);
+    assert_eq!(fs::read(&controls).ok(), old_controls);
+    let preview = target.prepare_reading_backup(&bytes).unwrap();
+    target.backup_import = Some(preview);
+    target.apply_reading_backup().unwrap();
+    assert_eq!(
+        target.library.state(id).unwrap().bookmarks[0]
+            .position
+            .anchor,
+        Some(anchor)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&target.library.bytes().unwrap()).unwrap()["version"],
+        2
+    );
+}
+
+#[test]
+fn forged_or_stale_persisted_boundaries_never_reopen_unrelated_fallback_text() {
+    for corrupt in [0, 1, 2] {
+        let fixture = Fixture::new();
+        let (mut app, id) = source(&fixture);
+        let active = app.active.as_ref().unwrap();
+        let owner = active.reading.probe.source.blocks[0].element;
+        let mut anchor = active.reading.probe.boundary_anchor(owner).unwrap();
+        match corrupt {
+            0 => anchor.revision ^= 1,
+            1 => anchor.boundary.as_mut().unwrap().origin += 1,
+            _ => anchor.block += 1,
+        }
+        let saved = crate::library::ReadingPosition {
+            chapter: 0,
+            page: 0,
+            anchor: Some(anchor),
+        };
+        app.library.state_mut(id).unwrap().position = Some(saved.clone());
+        app.library.persist().unwrap();
+        let bytes = fs::read(&fixture.state).unwrap();
+        drop(app);
+        let mut reopened = open(&fixture);
+        assert!(reopened.activate(Action::Continue).is_err());
+        assert!(reopened.active.is_none());
+        assert_eq!(reopened.library.state(id).unwrap().position, Some(saved));
+        assert_eq!(fs::read(&fixture.state).unwrap(), bytes);
+    }
+}
