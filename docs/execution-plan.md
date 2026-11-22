@@ -29,12 +29,12 @@ inventory counts do not measure completed parity.
 ## Current desktop integration gate
 
 Source `e79c7afe` passes 862 ordinary Mac tests, CI and eight original-document
-settings, backup and DPI workflows. It repairs original EPUB053's three rejected
-media-only line ranges. Its full48 replay opens/resumes every edition, checks all
-1,509 sections and28,071frames, and restores all28,061 inspected page anchors.
-The source denominator remains26,592,055 characters:26,591,258 map and797 are
-explicitly omitted by publisherCSS. One eligible fragment in original039,
-zero-based chapter7, remains unresolved alongside eight intentional CSS fragment
+settings, backup and DPI workflows. It repairs original EPUB 053's three rejected
+media-only line ranges. Its full 48-edition replay opens/resumes every edition, checks all
+1,509 sections and 28,071 frames, and restores all 28,061 inspected page anchors.
+The source denominator remains 26,592,055 characters: 26,591,258 map and 797 are
+explicitly omitted by publisher CSS. One eligible fragment in original 039,
+zero-based chapter 7, remains unresolved alongside eight intentional CSS fragment
 omissions; retain that destination gate until its geometry is repaired.
 
 Paired spacing has separate component verification. The newer verifier captures
