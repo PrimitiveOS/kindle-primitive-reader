@@ -11,6 +11,7 @@ pub(super) enum NumberField {
     BookStride,
     DefaultStride,
     MarginSize,
+    ContentDpi(u64),
 }
 
 impl NumberField {
@@ -18,6 +19,7 @@ impl NumberField {
         match self {
             Self::BookStride => Screen::PageNumbering,
             Self::DefaultStride | Self::MarginSize => Screen::NumberingDefaults,
+            Self::ContentDpi(_) => Screen::Book,
         }
     }
 }
@@ -178,6 +180,7 @@ impl Reader {
         let number = value.trim().parse::<u16>().ok();
         let mut controls = self.controls;
         match field {
+            NumberField::ContentDpi(owner) => return self.apply_content_dpi(owner),
             NumberField::MarginSize => {
                 controls.numbering.label_size = number
                     .filter(|n| (8..=20).contains(n))

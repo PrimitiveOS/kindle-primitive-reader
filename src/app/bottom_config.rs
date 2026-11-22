@@ -422,6 +422,15 @@ impl Reader {
                             }),
                         ),
                         ConfigRow::new(
+                            "Custom zoom",
+                            [Choice::option(
+                                if settings.render_dpi == 0 { "Off".to_string() }
+                                    else { format!("{} dpi", settings.render_dpi) },
+                                Action::Heading,
+                                !crate::RENDER_DPI_PRESETS.contains(&settings.render_dpi),
+                            ), Choice::link("Set value", Action::Show(Screen::NumberingValue(super::NumberField::ContentDpi(active.id))))],
+                        ),
+                        ConfigRow::new(
                             "Font kerning",
                             [("Off", false), ("On", true)].map(|(title, font_kerning)| {
                                 Choice::option(

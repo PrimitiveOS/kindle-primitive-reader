@@ -8,6 +8,7 @@ mod custom_contents;
 mod contents_position;
 pub(crate) mod publisher_pages;
 mod character_page_settings;
+mod content_dpi;
 use character_page_settings::NumberField;
 mod dictionary_panel;
 mod default_settings;
@@ -278,6 +279,7 @@ impl Screen {
             | Self::Illustration => "",
             Self::GoToPage => "Go to page",
             Self::PageNumbering => "Page numbering",
+            Self::NumberingValue(NumberField::ContentDpi(_)) => "Content zoom",
             Self::NumberingValue(NumberField::MarginSize) => "Margin label size",
             Self::NumberingValue(_) => "Characters per page",
             Self::NumberingDefaults => "Page numbering defaults",
@@ -1152,6 +1154,7 @@ impl Reader {
         }
         self.link_popup = None;
         self.screen = screen;
+        self.prepare_content_dpi_editor();
         self.map_window = fixed_book_map::MapWindow::default();
         self.sync_auto_turn(Instant::now());
         self.update_stats_activity(Instant::now());
@@ -3408,6 +3411,7 @@ impl Reader {
     }
 
     fn handle_page_number(&mut self, input: Input) -> Change {
+        if let Some(change) = self.content_dpi_input(input) { return change; }
         if matches!(input, Input::PageBack)
             || matches!(input, Input::Tap(x, y) if primitive_ui::back_button(WIDTH as i32).contains(x, y))
         {
@@ -5456,6 +5460,7 @@ impl Reader {
                 Screen::CollectionName => ("Collection name", "Save"),
                 Screen::ProfileName => ("Profile name", "Save"),
                 Screen::PdfPassword => ("PDF password", "Open"),
+                Screen::NumberingValue(NumberField::ContentDpi(_)) => ("Content zoom: 0 to 300 dpi", "Set"),
                 Screen::NumberingValue(NumberField::MarginSize) => ("Margin text size from 8 to 20", "Set"),
                 Screen::NumberingValue(_) => ("500 to 3,000 characters per page", "Set"),
                 Screen::GoToPage if self.fixed.is_none() => {
@@ -5482,6 +5487,7 @@ impl Reader {
                 self.screen == Screen::PdfPassword,
             );
             canvas.keyboard(self.editor.layer, action, None);
+            self.draw_content_dpi(canvas);
             if self.can_paste_address() { external_link::draw_paste(canvas); }
             if self.screen == Screen::BookmarkFind {
                 self.annotation_search.draw_filters(canvas);

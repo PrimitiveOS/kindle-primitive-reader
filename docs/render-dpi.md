@@ -1,7 +1,9 @@
 # Reflow content scaling
 
 The lower reading toolbar's Text → Rendering panel offers **Zoom (dpi)** with
-**Off, 48, 96, 167, 212, 300**. The default is 96. This scales publisher content
+**Off, 48, 96, 167, 212, 300**, plus a separate **Custom zoom** row showing the
+current value without reducing the preset touch targets. Custom values are
+whole numbers from **0 to 300 dpi**. The baseline default is 96. This scales publisher content
 independently of the font size chosen by the reader. It is a reflow control;
 PDF/image zoom remains in the fixed-document controls.
 
@@ -19,6 +21,7 @@ This implementation was compared with the checked-out KOReader
 | Source | Behavior used |
 | --- | --- |
 | `frontend/ui/data/creoptions.lua:331–359` | Exact six presets, default 96, separate content/font scaling. |
+| `frontend/ui/widget/configdialog.lua:1274–1306` | The numeric picker derives minimum 0 and maximum 300 from the preset endpoints; step 1, held step 20, saved global default or 96. |
 | `frontend/apps/reader/modules/readertypeset.lua:168` | Change render DPI then relayout at the existing reading position. |
 | `frontend/document/credocument.lua:1207` | `crengine.render.dpi`; selected font scaling is a separate property. |
 | `crengine/src/lvrend.cpp:54–59,2581–2700` | At 0, px remains unchanged; physical units resolve to 0. Percent/em/rem use their original containing width/font. |
@@ -48,11 +51,22 @@ letting Off distinguish them from px. Image variants include DPI in their cache
 key. The decoder preserves aspect ratio unless both dimensions are authored,
 fits the reading viewport, and keeps every output dimension at least 1 pixel.
 
-The selected preset is stored with the book, included in named reading profiles,
+The selected content DPI is stored with the book, included in named reading profiles,
 and inherited from document defaults. Old records without the field inherit the
 baseline 96 preset (or the selected global default). Invalid stored values do not
-override valid settings. Only the six exposed presets are accepted; this slice
-does not expose KOReader's optional custom numeric picker.
+override valid settings. The same 0–300 validator covers live settings, book
+preferences, profiles, document defaults and typed backup components; 301 and
+larger values remain invalid.
+
+The custom picker reuses Reader's numeric keyboard and has minus/plus buttons
+with held steps of 20. **Default** changes the draft to the explicit reflow
+Document Defaults value, including Off, or 96 when no value was saved. Back
+discards the draft. Set prepares an anchored reading candidate, atomically
+persists its preference and position, then replaces the old page and returns to
+the Rendering panel. A failed layout or save keeps the old frame, location,
+preferences and typed draft. The editor carries the edition identity so a stale
+picker cannot change a different book. Screen DPI and selected font size remain
+independent. No fixed-page PDF/image zoom is changed by this control.
 
 CSS physical and rem image dimensions were previously ignored by Reader. They
 are now supported deliberately. Consequently historical 96-DPI pixel identity
@@ -73,7 +87,7 @@ Tests cover the complete preset set, physical versus pixel Off behavior,
 unchanged relative lengths/font size, inherited dimensions, 96-DPI box
 quantization, image cache isolation, actual decoded archive artwork, viewport
 bounds, touch controls, source selections, book reopening, and profile storage.
-Desktop verification of this slice:
+Historical verification of the initial six-preset slice:
 
 | Check | Result |
 | --- | --- |
@@ -87,3 +101,11 @@ Desktop verification of this slice:
 The ordinary suite and original-file results are recorded in the private
 `build/parity-review/render-dpi-evidence` receipts. No Kindle execution, physical
 e-ink acceptance, publication, or release is claimed by this desktop slice.
+
+The custom-picker follow-up adds six ordinary workflows for real keyboard input
+at 72 and 123 dpi, draft steps/default/cancel and sleep/wake, invalid/stale
+editions, failed layout and atomic save rollback/retry, profile/default/v2 backup
+restore, and compact/large light/dark capture targets. The existing original-file
+opt-in workflow also checks 72 and 123 alongside every preset. Its separate
+`custom-content-dpi-evidence` receipts identify actual executed tests and captures;
+the older preset results above do not establish new custom-picker acceptance.

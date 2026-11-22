@@ -322,7 +322,7 @@ impl BookPreferences {
         let adjusted = Settings {
             font_size: self.font_size.unwrap_or(settings.font_size),
             render_dpi: self.render_dpi
-                .filter(|dpi| crate::RENDER_DPI_PRESETS.contains(dpi))
+                .filter(|dpi| crate::valid_render_dpi(*dpi))
                 .unwrap_or(settings.render_dpi),
             margin: self.margin.unwrap_or(settings.margin),
             margin_sides: self
