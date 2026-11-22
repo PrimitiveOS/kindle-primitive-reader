@@ -291,9 +291,9 @@ impl Bars {
             .any(|rect| rect.contains(x, y))
     }
 
-    fn visible(&self) -> std::ops::Range<u32> {
+    fn visible(&self, height: u32) -> std::ops::Range<u32> {
         let top = self.top.last().map_or(0, |rect| rect.bottom() as u32);
-        let bottom = self.bottom.last().map_or(PAGE_HEIGHT, |rect| rect.y as u32);
+        let bottom = self.bottom.last().map_or(height, |rect| rect.y as u32);
         top..bottom.max(top)
     }
 }
@@ -518,13 +518,17 @@ impl Reader {
 
     pub(super) fn page_paint(&self) -> PagePaint {
         let inverted = self.uses_night_pages();
-        if !matches!(self.screen, Screen::BookTools | Screen::FixedTools) {
-            return PagePaint::full(inverted);
-        }
-        PagePaint {
-            visible: self.reading_bars().visible(),
-            inverted,
-        }
+        let height = if self.overlapping_book_page() {
+            HEIGHT
+        } else {
+            PAGE_HEIGHT
+        };
+        let visible = if matches!(self.screen, Screen::BookTools | Screen::FixedTools) {
+            self.reading_bars().visible(height)
+        } else {
+            0..height
+        };
+        PagePaint { visible, inverted }
     }
 
     pub(super) fn tools_screen(&self) -> Screen {

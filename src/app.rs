@@ -758,7 +758,7 @@ impl Reader {
                 Ok((absolute, self.library.identify(&entry)?, None))
             }
         })?;
-        let mut settings = device_settings();
+        let mut settings = self.reflow_device_settings();
         let mut scroll = false;
         let mut facing_pages = false;
         let mut fixed_preferences = FixedPreferences::default();
@@ -1902,7 +1902,33 @@ impl Reader {
                 self.show(Screen::OrganizeLibrary);
             }
             Action::SetReadingControls(controls) => {
+                let resized = if controls.overlap_footer != self.controls.overlap_footer {
+                    self.active
+                        .as_ref()
+                        .map(|book| {
+                            let reading = &book.reading;
+                            let mut config = reading.config.clone();
+                            config.settings.height = if controls.overlap_footer {
+                                HEIGHT
+                            } else {
+                                PAGE_HEIGHT
+                            };
+                            Reading::restore(
+                                config,
+                                reading.chapter,
+                                reading.page,
+                                reading.anchor().as_ref(),
+                            )
+                        })
+                        .transpose()?
+                } else {
+                    None
+                };
                 controls.save(&self.controls_path)?;
+                if let (Some(reading), Some(book)) = (resized, &mut self.active) {
+                    book.reading = reading;
+                    self.record_position();
+                }
                 if controls.page_refresh != self.controls.page_refresh {
                     self.pages_since_refresh = 0;
                 }
@@ -2396,10 +2422,11 @@ impl Reader {
 
     fn apply_text_profile(&mut self, preferences: BookPreferences) -> Result<()> {
         let fonts = self.fonts_for(preferences.font_file.as_deref())?;
+        let base = self.reflow_device_settings();
         let active = self.active.as_mut().ok_or("Open a book first")?;
         let position = position(&active.reading);
         let mut config = active.reading.config.clone();
-        config.settings = preferences.apply_to(device_settings());
+        config.settings = preferences.apply_to(base);
         config.scroll = preferences.scroll;
         config.facing_pages = preferences.facing_pages;
         config.fonts = fonts;
@@ -3588,6 +3615,9 @@ impl Reader {
     }
 
     fn handle_book(&mut self, input: Input) -> Change {
+        if let Some(change) = self.overlay_footer_input(input) {
+            return change;
+        }
         if let Input::LongTap(x, y) = input
             && self.selection.is_none()
             && let Some(change) = self.hold_footer(x, y)
@@ -5021,6 +5051,7 @@ impl App for Reader {
             reading.draw_page(
                 canvas,
                 self.selection.is_none().then_some("Exit"),
+                self.hidden_overlap_footer(),
                 self.notice
                     .as_deref()
                     .or(search_caption.as_deref())

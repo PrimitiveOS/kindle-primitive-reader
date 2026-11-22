@@ -4,7 +4,7 @@ use crate::library::Bookmark;
 use crate::Probe;
 use crate::fixed_session::FixedReading;
 use crate::reading_controls::{ProgressScope, ReadingControls, StatusBar};
-use crate::session::{DONE, PAGE_HEIGHT};
+use crate::session::{DONE, PAGE_HEIGHT, SHOW_STATUS};
 use primitive_app::{Change, HEIGHT};
 use primitive_ui::{Canvas, Rect};
 
@@ -154,6 +154,73 @@ impl<'a> Progress<'a> {
 }
 
 impl Reader {
+    pub(super) fn reflow_device_settings(&self) -> crate::Settings {
+        crate::Settings {
+            height: if self.controls.overlap_footer {
+                HEIGHT
+            } else {
+                PAGE_HEIGHT
+            },
+            ..super::device_settings()
+        }
+    }
+
+    pub(super) fn overlapping_book_page(&self) -> bool {
+        self.active.is_some()
+            && self.controls.overlap_footer
+            && matches!(self.screen, Screen::Book | Screen::BookTools)
+    }
+
+    pub(super) fn hidden_overlap_footer(&self) -> bool {
+        self.overlapping_book_page()
+            && self.controls.status_bar == StatusBar::Minimal
+            && self.notice.is_none()
+            && self.search_result.is_none()
+            && self.selection.is_none()
+            && !self.touch_locked
+            && self
+                .active
+                .as_ref()
+                .is_some_and(|b| !b.reading.has_page_error())
+    }
+
+    pub(super) fn overlay_footer_input(&mut self, input: primitive_ui::Input) -> Option<Change> {
+        use primitive_ui::Input;
+        if !self.overlapping_book_page() || self.selection.is_some() {
+            return None;
+        }
+        let (Input::Tap(x, y) | Input::LongTap(x, y)) = input else {
+            return None;
+        };
+        if y < PAGE_HEIGHT as f32 {
+            return None;
+        }
+        if DONE.contains(x, y) {
+            return Some(if matches!(input, Input::Tap(..)) {
+                self.exit()
+            } else {
+                Change::None
+            });
+        }
+        if self.hidden_overlap_footer() {
+            if !SHOW_STATUS.contains(x, y) {
+                return None;
+            }
+            if matches!(input, Input::LongTap(..)) || self.controls.footer_tap_locked {
+                self.show(Screen::FooterSettings);
+                return Some(Change::Partial);
+            }
+        }
+        Some(
+            match input {
+                Input::Tap(..) => self.tap_footer(x, y),
+                Input::LongTap(..) => self.hold_footer(x, y),
+                _ => None,
+            }
+            .unwrap_or(Change::None),
+        )
+    }
+
     pub(super) fn fixed_sections<'a>(&'a self, fixed: &'a ActiveFixed) -> PageSections<'a> {
         let custom = self.library.state(fixed.id).map(|state| &state.custom_contents);
         if let Some(chapters) = custom.filter(|chapters| chapters.enabled) {
@@ -370,6 +437,9 @@ impl Reader {
         if self.controls.footer_tap_locked {
             return Some(Change::None);
         }
+        if self.hidden_overlap_footer() && !SHOW_STATUS.contains(x, y) {
+            return None;
+        }
         let status_bar = if self.controls.footer_all_at_once {
             if self.controls.status_bar == StatusBar::Minimal {
                 StatusBar::PageNumbers
@@ -397,6 +467,9 @@ impl Reader {
             || x >= self.footer_right() as f32
             || !(PAGE_HEIGHT as f32..HEIGHT as f32).contains(&y)
         {
+            return None;
+        }
+        if self.hidden_overlap_footer() && !SHOW_STATUS.contains(x, y) {
             return None;
         }
         if !self.controls.skim_on_footer_hold
@@ -454,6 +527,16 @@ impl Reader {
                 },
             ),
         ];
+        if self.active.is_some() {
+            items.push(setting(
+                "Overlap status bar",
+                on_off(c.overlap_footer),
+                ReadingControls {
+                    overlap_footer: !c.overlap_footer,
+                    ..c
+                },
+            ));
+        }
         if c.footer_scope == ProgressScope::Book {
             items.push(setting(
                 "Chapter markers",
@@ -536,3 +619,7 @@ mod tests {
 
 #[cfg(test)]
 mod pace_replay;
+
+#[cfg(test)]
+#[path = "reading_footer/overlap_tests.rs"]
+mod overlap_tests;

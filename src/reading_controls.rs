@@ -25,6 +25,7 @@ pub(crate) struct ReadingControls {
     pub orientation: ReadingOrientation,
     pub palette: ScreenPalette,
     pub status_bar: StatusBar,
+    pub overlap_footer: bool,
     pub footer_scope: ProgressScope,
     pub hide_chapter_markers: bool,
     pub footer_all_at_once: bool,

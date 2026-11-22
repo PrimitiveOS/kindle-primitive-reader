@@ -102,7 +102,12 @@ impl Reader {
     }
 
     pub(super) fn tap_saved_mark(&mut self, x: f32, y: f32) -> Option<Change> {
-        if !(0.0..PAGE_HEIGHT as f32).contains(&y)
+        let bottom = if self.hidden_overlap_footer() {
+            primitive_app::HEIGHT
+        } else {
+            PAGE_HEIGHT
+        };
+        if !(0.0..bottom as f32).contains(&y)
             || self.selection.is_some()
             || self.pdf_selection.is_some()
             || self.footnote.is_some()

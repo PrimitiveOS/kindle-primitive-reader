@@ -11,6 +11,7 @@ use primitive_ui::{CAPTION, Canvas, GrayImage, HAIRLINE, Input, Rect};
 
 const FOOTER_HEIGHT: u32 = 74;
 pub(crate) const PAGE_HEIGHT: u32 = HEIGHT - FOOTER_HEIGHT;
+pub(crate) const SHOW_STATUS: Rect = Rect::new(8, PAGE_HEIGHT as i32 + 5, 148, 60);
 pub(crate) const DONE: Rect = Rect::new(WIDTH as i32 - 154, PAGE_HEIGHT as i32 + 5, 148, 60);
 const FACING_GUTTER: u32 = 32;
 const FACING_PAGE_WIDTH: u32 = (WIDTH - FACING_GUTTER) / 2;
@@ -37,7 +38,8 @@ impl PagePaint {
 
     pub(crate) fn apply(self, mut page: GrayImage) -> (Rect, GrayImage) {
         let Self { visible, inverted } = self;
-        if visible != (0..PAGE_HEIGHT) {
+        let visible = visible.start.min(page.height)..visible.end.min(page.height);
+        if visible != (0..page.height) {
             let rows = (visible.start * WIDTH) as usize..(visible.end * WIDTH) as usize;
             let length = rows.len();
             page.pixels.copy_within(rows, 0);
@@ -349,6 +351,10 @@ impl Reading {
         }
         *self = next;
         Ok(())
+    }
+
+    pub(crate) fn has_page_error(&self) -> bool {
+        self.error.is_some()
     }
 
     pub(crate) fn paged_frame_ready(&self) -> bool {
@@ -745,17 +751,52 @@ impl Reading {
         &self,
         canvas: &mut Canvas,
         action: Option<&str>,
+        hidden_status: bool,
         notice: Option<&str>,
         highlights: &[HighlightRect],
         selection: &[HighlightRect],
         paint: PagePaint,
     ) {
         let page = self.marked_frame(highlights, selection, &paint);
-        let full = paint.is_full();
-        let footer_visible = paint.visible.end == PAGE_HEIGHT;
-        draw_page_picture(canvas, page, paint);
+        let full = paint.visible == (0..self.frame.height);
+        let footer_visible = paint.visible.end == self.frame.height;
+        if self.frame.height == HEIGHT && footer_visible {
+            if hidden_status && action.is_some() {
+                if full {
+                    draw_page_around_footer_buttons(canvas, page, paint);
+                } else {
+                    draw_page_picture(canvas, page, paint);
+                }
+            } else {
+                draw_page_picture(
+                    canvas,
+                    page,
+                    PagePaint {
+                        visible: paint.visible.start.min(PAGE_HEIGHT)..PAGE_HEIGHT,
+                        inverted: paint.inverted,
+                    },
+                );
+            }
+        } else {
+            draw_page_picture(canvas, page, paint);
+        }
         if !footer_visible {
             return;
+        }
+        if self.frame.height == HEIGHT {
+            if hidden_status && action.is_some() {
+                if full {
+                    for (rect, title) in [(SHOW_STATUS, "Status"), (DONE, "Exit")] {
+                        canvas.fill(rect, 255);
+                        canvas.button(rect, title, false, false);
+                    }
+                }
+                return;
+            }
+            canvas.fill(
+                Rect::new(0, PAGE_HEIGHT as i32, WIDTH as i32, FOOTER_HEIGHT as i32),
+                255,
+            );
         }
         canvas.fill(Rect::new(0, PAGE_HEIGHT as i32, WIDTH as i32, 1), HAIRLINE);
         let Some(action) = action else { return };
@@ -812,7 +853,7 @@ impl Reading {
                 }
             }
         }
-        if !paint.is_full() && !self.probe.is_vertical() {
+        if paint.visible != (0..self.frame.height) && !self.probe.is_vertical() {
             self.clear_lines_cut_by_tools(&mut page, &paint.visible);
         }
         page
@@ -849,6 +890,44 @@ impl Reading {
     }
 }
 
+// Canvas paints document bitmaps after its text and buttons. Keep the two controls'
+// rectangles out of the document image while retaining all surrounding page pixels.
+fn draw_page_around_footer_buttons(canvas: &mut Canvas, page: GrayImage, paint: PagePaint) {
+    let (rect, mut page) = paint.apply(page);
+    debug_assert_eq!(rect.y, 0);
+    let bottom = SHOW_STATUS.y + SHOW_STATUS.h;
+    let width = page.width as i32;
+    let strips = [
+        Rect::new(0, SHOW_STATUS.y, SHOW_STATUS.x, SHOW_STATUS.h),
+        Rect::new(
+            SHOW_STATUS.x + SHOW_STATUS.w,
+            SHOW_STATUS.y,
+            DONE.x - (SHOW_STATUS.x + SHOW_STATUS.w),
+            SHOW_STATUS.h,
+        ),
+        Rect::new(DONE.x + DONE.w, DONE.y, width - (DONE.x + DONE.w), DONE.h),
+        Rect::new(0, bottom, width, page.height as i32 - bottom),
+    ];
+    for strip in strips {
+        let mut pixels = Vec::with_capacity((strip.w * strip.h) as usize);
+        for y in strip.y..strip.y + strip.h {
+            let start = (y * width + strip.x) as usize;
+            pixels.extend_from_slice(&page.pixels[start..start + strip.w as usize]);
+        }
+        canvas.picture(
+            strip,
+            GrayImage {
+                width: strip.w as u32,
+                height: strip.h as u32,
+                pixels,
+            },
+        );
+    }
+    page.height = SHOW_STATUS.y as u32;
+    page.pixels.truncate((page.width * page.height) as usize);
+    canvas.picture(Rect::new(0, 0, width, page.height as i32), page);
+}
+
 pub(crate) fn draw_page_picture(canvas: &mut Canvas, page: GrayImage, paint: PagePaint) {
     let (rect, page) = paint.apply(page);
     canvas.picture(rect, page);
@@ -856,7 +935,18 @@ pub(crate) fn draw_page_picture(canvas: &mut Canvas, page: GrayImage, paint: Pag
 
 impl App for Reading {
     fn draw(&self, canvas: &mut Canvas) {
-        self.draw_page(canvas, Some("Exit"), None, &[], &[], PagePaint::full(false));
+        self.draw_page(
+            canvas,
+            Some("Exit"),
+            false,
+            None,
+            &[],
+            &[],
+            PagePaint {
+                visible: 0..self.frame.height,
+                inverted: false,
+            },
+        );
     }
 
     fn input(&mut self, input: Input) -> Change {
@@ -890,8 +980,10 @@ impl App for Reading {
                     -advance
                 }
             }
-            Input::Tap(x, y) if y < PAGE_HEIGHT as f32 && x < WIDTH as f32 / 3.0 => -advance,
-            Input::Tap(x, y) if y < PAGE_HEIGHT as f32 && x > WIDTH as f32 * 2.0 / 3.0 => advance,
+            Input::Tap(x, y) if y < self.frame.height as f32 && x < WIDTH as f32 / 3.0 => -advance,
+            Input::Tap(x, y) if y < self.frame.height as f32 && x > WIDTH as f32 * 2.0 / 3.0 => {
+                advance
+            }
             _ => return Change::None,
         };
         self.prefetch = None;
@@ -1042,12 +1134,13 @@ fn capture(probe: &mut Probe, chapter: usize, page: usize, top: Option<f32>) -> 
         page + 1,
         start.elapsed().as_micros(),
     );
-    if pixels.len() != (WIDTH * PAGE_HEIGHT) as usize {
+    let height = probe.settings.height;
+    if pixels.len() != (WIDTH * height) as usize {
         return Err("The page has incorrect dimensions".into());
     }
     Ok(GrayImage {
         width: WIDTH,
-        height: PAGE_HEIGHT,
+        height,
         pixels,
     })
 }
@@ -1057,10 +1150,11 @@ fn capture_facing_pages(probe: &mut Probe, page: usize) -> Result<Vec<u8>> {
         return Err("That page is unavailable".into());
     }
     let width = FACING_PAGE_WIDTH as usize;
-    let mut frame = vec![255; (WIDTH * PAGE_HEIGHT) as usize];
+    let height = probe.settings.height as usize;
+    let mut frame = vec![255; WIDTH as usize * height];
     for (column, x) in frame_columns(probe, page) {
         let pixels = probe.capture(column)?;
-        if pixels.len() != width * PAGE_HEIGHT as usize {
+        if pixels.len() != width * height {
             return Err("A facing page has incorrect dimensions".into());
         }
         for (row, source) in frame
