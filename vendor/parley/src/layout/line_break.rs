@@ -1755,12 +1755,15 @@ fn commit_line<B: Brush>(
     // The line's source text range, as the union of the ranges of the text runs committed to it.
     let mut text_start = usize::MAX;
     let mut text_end = 0;
+    let mut inline_caret = None::<usize>;
     // Mark line as needing bidi re-ordering if it contains any runs with non-zero bidi level
     // (zero is the default level, so this is equivalent to marking lines that have multiple levels)
     let mut needs_reorder = false;
     for (i, item) in items_to_commit.iter().enumerate() {
         match item.kind {
             LayoutItemKind::InlineBox => {
+                let caret = layout.data.inline_boxes[item.index].inline_box.index;
+                inline_caret = Some(inline_caret.map_or(caret, |previous| previous.min(caret)));
                 lines.line_items.push(LineItemData {
                     kind: LayoutItemKind::InlineBox,
                     index: item.index,
@@ -1859,6 +1862,13 @@ fn commit_line<B: Brush>(
         reorder_line_items(&mut lines.line_items[start_item_idx..end_item_idx]);
     }
 
+    // A committed media-only line has real items but no text run to update
+    // the union above. Preserve its input caret instead of leaking MAX..0.
+    // Text-run ranges retain their strict shaped-cluster bounds unchanged.
+    if !committed_text_run && let Some(caret) = inline_caret {
+        text_start = caret;
+        text_end = caret;
+    }
     lines.lines.push(LineData {
         item_range: start_item_idx..end_item_idx,
         text_range: text_start..text_end,

@@ -53,3 +53,12 @@ cluster-spacing representation as CJK widths. Wrapping, intrinsic table widths,
 caret positions, painting and word hits consume those shared gaps. Zero-advance
 marks retain their original geometry. With no callback, upstream behavior is
 unchanged. [Numeric contrast and weight](../../docs/font-contrast-and-weight.md)
+
+A committed line containing inline boxes without a committed text run now has
+an empty source range at its actual input box caret. The old `usize::MAX..0`
+sentinel could escape through `Line::text_range` after a full-width picture
+wrapped away from its caption. Text-run ranges retain their shaped UTF-8 bounds;
+this change does not clamp invalid text or invent source characters. Reader's
+regression covers one, two and three wrapped pictures, projected captions,
+original picture ordinals and serialized page restoration:
+`cargo test --lib parley_layout::media_line_tests`.
