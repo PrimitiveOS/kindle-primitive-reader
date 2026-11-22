@@ -1,5 +1,9 @@
 # Online catalogs and book acquisition
 
+This implementation note describes an existing optional product workflow.
+Online acquisition is outside the current local-reading parity goal and is not
+a milestone or completion requirement.
+
 This development candidate adds explicit OPDS browsing, search and publication
 acquisition to Reader. It covers the reading path of K21. Kindle acceptance is
 pending the next combined build. The separate calibre wireless device protocol,

@@ -6,18 +6,17 @@ Reader is a standalone, Kindle-first PrimitiveOS application. Its goal is to mat
 
 - Start with the jailbreak-enabled Kindle Oasis 3 on firmware 5.18.2 and ARMHF. Treat each additional Kindle model and firmware combination as a separate verification target. Use the established Launcher entry, foreground session, and USB handoff. [PrimitiveOS hardware and workflow handoff](https://github.com/PrimitiveOS/kindle-primitive/blob/main/docs/handoff/STATE.md) · [PrimitiveOS package contract](https://github.com/PrimitiveOS/kindle-primitive/blob/main/docs/contracts.md)
 - Give the reading surface priority. Show compact controls on demand, use touch and the physical page-turn buttons on supported hardware, and keep essential controls reachable in either portrait orientation. Exit back to the correct host and permit normal device sleep.
-- Open local, DRM-free publications and user-provided files. Core reading, search, annotation, and dictionary workflows work offline. Network workflows are opt-in. Ordinary password-protected PDFs have their own support check. The comparison covers books available as local files.
+- Open local, DRM-free publications and user-provided files. Core reading, search, annotation, and dictionary workflows work offline. Ordinary password-protected PDFs have their own support check. The comparison covers books available as local files.
 - Build original code, screens, artwork, and test fixtures. Use KOReader's documented and observable workflows as the reference. Evaluate every dependency, asset, font, dictionary, and OCR data set before distribution. Keep any reference installation and its files separate from Reader. [KOReader guide](https://koreader.rocks/user_guide/) · [KOReader source and license](https://github.com/koreader/koreader)
 - Kindle is the product platform. The desktop simulator supports development and repeatable tests. Android, Kobo, PocketBook, Cervantes, desktop product releases, KOReader's Lua plugin ABI, user patches, and compatibility with the full KOReader plugin catalogue are outside the parity target. Individual reading workflows can be implemented natively in Reader without adding a plugin host.
 - Do not build a general extension/plugin runtime, plugin manager, or third-party extension catalogue. File extensions are still used to identify supported reading formats.
-- Terminal and shell access, RSS/news downloading, HTTP inspectors or servers, patch management, and unrelated developer utilities are out of scope. Wi-Fi, battery, clock, sleep, wallpaper, and other Kindle-wide controls remain with Launcher.
-- Prioritize document opening and rendering, reading navigation and layout, search and lookup, bookmarks, notes and highlights, reading progress, offline scan tools, and accessibility. OPDS/calibre acquisition and remote progress sync are optional reading-adjacent work; they do not block the core Reader release.
+- Terminal and shell access, RSS/news downloading, HTTP inspectors or servers, patch management, and unrelated developer utilities are out of scope. Online acquisition, remote sync, remote annotation services, and network lookup are excluded. Local reading-data export and import remain in scope. Wi-Fi, battery, clock, sleep, wallpaper, and other Kindle-wide controls remain with Launcher.
+- Prioritize document opening and rendering, reading navigation and layout, local search and lookup, bookmarks, notes and highlights, reading progress, offline scan tools, accessibility, and local reading-data migration.
 
-**Completion rule:** only the core reading requirements and explicitly optional
-reading-adjacent requirements below are tracked as Reader work. An excluded
-KOReader module or menu item is closed scope, not an open gap or a completion
-blocker. Source inventories and captured menus are evidence for comparison, not
-a requirement to reproduce every listed control.
+**Completion rule:** the goal tracks K01–K20 and K23–K24. An excluded KOReader
+module or menu item is closed scope, not an open gap or a completion blocker.
+Source inventories and captured menus are evidence for comparison, not a
+requirement to reproduce every listed control.
 
 ## P0 · EPUB feasibility
 
@@ -71,7 +70,9 @@ Reader can open an EPUB with a small zero-filled suffix after its ZIP footer. If
 
 Expand advanced reading and migration workflows. Use capability-by-capability verification as the basis for parity claims.
 
-K21 book acquisition and K22 remote progress sync are optional reading-adjacent milestones. Complete core local reading first. Do not add a generic extension system or unrelated services to implement these workflows.
+This goal covers local reading features. K21 book acquisition and K22 remote
+progress or annotation sync are excluded integrations; they are not planned
+milestones or completion requirements. Keep their reserved IDs for traceability.
 
 | ID | Reader requirement and KOReader workflow | Acceptance evidence |
 | --- | --- | --- |
@@ -79,12 +80,14 @@ K21 book acquisition and K22 remote progress sync are optional reading-adjacent 
 | K18 | Evaluate additional KOReader formats and enable those that pass dependency, resource, and fidelity gates. Investigate CBR/CBT, MOBI/AZW3 without DRM, RTF, CHM, and office or archive formats independently. | Maintain an explicit format and variant list with a support decision and evidence for each. For enabled readers, open representative files and verify reading order, key media, navigation, and resume. For unsupported formats, identify them and offer an explicit open-in route when an installed app handles them. |
 | K19 | Extend EPUB fidelity to supported fixed-layout publications, complex scripts, hyphenation, bidirectional text, and advanced publisher styling. | Use documented fixtures for fixed pages, bidirectional passages, complex-script shaping, CJK text, and hyphenation. Verify rendering as well as selection, text search, link targets, and location stability. Publish the supported CSS, script, and media limits established by these fixtures. |
 | K20 | Add advanced offline organization and reading controls. Candidate capabilities include collections, reading statistics, skim or page overview, configurable gestures, and reusable reading profiles. | Create and reopen collections containing overlapping books, restore a per-book reading profile, jump from an overview and return, and verify remapped gestures avoid accidental navigation. Compare the reading statistics to a controlled session that includes sleep. Test each supported capability independently. |
-| K21 | Acquire books through OPDS and calibre, as supported by the reference Kindle workflows. Define the supported OPDS versions, authentication methods, and calibre integration. Download supported publications to a user-selected location. | Use fixture feeds and a local calibre library to check catalog browsing, search, and acquisition. Verify download integrity, cancellation, duplicate filenames, an unavailable catalog, and invalid credentials. Open previously downloaded books in airplane mode. [OPDS specifications](https://github.com/opds-community/specs) |
-| K22 | Provide opt-in progress or annotation sync using a documented protocol with clear conflict behavior. Keep the offline reader functional when sync is disabled or unavailable. | Start with sync disabled and verify no update traffic. On two test clients, make offline changes, reconnect, and validate conflicts, deletion, and recovery from interrupted requests. Confirm local reading and export still work after sign-out. |
 | K23 | Import supported KOReader reading positions, bookmarks, highlights, and notes from documented exports or recognized sidecar variants. Treat source data as read-only and preview possible matches and unresolved records. | Use copies of representative KOReader export and sidecar fixtures with missing books, duplicated titles, and established anchors. Preview, import twice, and verify deduplication and unresolved records. Compare source hashes before and after, and verify that a failed import can be retried safely. |
 | K24 | Support user-selected file handlers and coexistence with Viewer and KOReader. Provide local backup and restore of Reader metadata. | Exercise choosing a different app for a shared format and recover if the preferred handler is absent. Restore a backup to a clean test installation and verify reading positions, notes, settings, and failure reporting. |
 
-The [KOReader guide](https://koreader.rocks/user_guide/) documents the reference workflows for OCR, OPDS, progress sync, profiles, collections, and metadata. Support for any imported file variant is determined by its fixture and the documented limitations of the importer.
+**Reserved IDs outside this goal:** K21 (OPDS/calibre acquisition) and K22
+(remote progress or annotation sync) are not part of the active checklist.
+The [KOReader guide](https://koreader.rocks/user_guide/) documents the in-scope
+workflows for OCR, profiles, collections, and local reading data. Support for
+any imported file variant is determined by its fixture and documented limits.
 
 ## Verification and release evidence
 

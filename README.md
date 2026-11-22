@@ -23,8 +23,10 @@
 Reader is a native Rust book and document reader for PrimitiveOS on Kindle.
 It uses Parley for reflowable books and Hayro for PDF pages. The reading
 workflows and format coverage are being compared with KOReader on the same
-Kindle. Parity work covers reading workflows; KOReader's general extension
-system and unrelated utilities such as Terminal are outside the goal. The
+Kindle. Parity work covers local reading workflows; online book acquisition,
+remote sync or annotation services, network lookup, KOReader's extension
+system, and unrelated utilities such as Terminal are outside the goal. Local
+annotation export and reading-data migration remain in scope. The
 [scope checklist](docs/reading-parity-plan.md#scope-and-completion-checklist)
 defines what counts toward completion.
 [EPUB feasibility results](docs/epub-probe-results.md)
@@ -268,7 +270,7 @@ for a local ARMHF build.
 | Reading task | How it works |
 | --- | --- |
 | Preview an EPUB footnote | In the top Navigation panel, turn on **Footnote previews** and tap a note reference. Hold a word for its definition, close the note to keep reading, or choose **Open in book** and use **Previous location** to return. [Footnote preview](docs/screenshots/footnote-preview.png) |
-| Track progress | Tap the footer for progress or time left in the chapter or book. Hold it to skim and return to your place. [Reading-time estimates](docs/reading-time-estimates.md) · [Footer screenshot](docs/screenshots/reading-footer.png) |
+| Track progress | Tap the footer for progress or time left in the chapter or book. Hold it to preview a position, return to your start, or choose where to continue. [Skim workflow and screenshot](docs/skim-navigation.md) · [Reading-time estimates](docs/reading-time-estimates.md) · [Footer screenshot](docs/screenshots/reading-footer.png) |
 | Customize touch | Assign an action to a corner tap, hold or edge swipe in Reading gestures. [Gesture grid](docs/screenshots/reading-gestures.png) |
 | Edit the outline | Add a named entry at a reading location and jump back from Contents. [Custom contents](docs/screenshots/custom-contents.png) |
 | Read a scan | Straighten a tilted PDF or DjVu page. Run offline OCR when the embedded text is missing or inaccurate. [Scan controls](docs/scan-controls.md) |

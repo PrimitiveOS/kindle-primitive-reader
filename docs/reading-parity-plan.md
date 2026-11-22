@@ -1,15 +1,16 @@
 # Kindle reading parity implementation plan
 
-**Goal:** deliver feature-by-feature parity with KOReader for the core reading workflows used on Kindle, using PrimitiveOS Reader's own Rust implementation and e-ink interface. The scope is opening and rendering supported documents, navigating and adjusting a reading view, searching and looking up text, annotating, saving and restoring reading data, and offline scan workflows. Use the same publications and device to compare results. The [requirements](requirements.md) define K01–K24; the [execution plan](execution-plan.md) tracks milestones and the [architecture](architecture.md) defines component boundaries.
+**Goal:** deliver feature-by-feature parity with KOReader for local reading workflows on Kindle, using PrimitiveOS Reader's own Rust implementation and e-ink interface. The scope is opening and rendering supported documents, navigating and adjusting a reading view, searching and looking up text locally, annotating, managing local reading data, and offline scan workflows. Use the same publications and device to compare results. The [requirements](requirements.md) define the in-scope acceptance checks; the [execution plan](execution-plan.md) tracks milestones and the [architecture](architecture.md) defines component boundaries.
 
-Compare against the installed KOReader release for hardware measurements. Record the actual edition, format provider, options, and interaction being compared in each run. Use the current guide and provider inventory to plan capabilities introduced since the benchmark release. Keep those additional capabilities in the parity backlog until they have their own verification. [KOReader user guide](https://koreader.rocks/user_guide/) · [KOReader main features](https://github.com/koreader/koreader#main-features)
+Compare against the installed KOReader release for hardware measurements. Record the actual edition, format provider, options, and interaction being compared in each run. Keep only capabilities that directly support local reading in the parity backlog. [KOReader user guide](https://koreader.rocks/user_guide/) · [KOReader main features](https://github.com/koreader/koreader#main-features)
 
 The [pinned native KOReader interface inventory](koreader-sdl-reference.md) adds
 128 complete desktop frames, including six lower configuration tabs, selection
-and dictionary popups. Its [774-control matrix](koreader-sdl-reference-controls.json)
-pairs visible controls with pinned source handlers and explicit workflow, partial,
-gap or audit states. The capture is a stock macOS SDL reference, separate from
-Oasis acceptance. Use its remaining contracts to schedule implementation; these
+and dictionary popups. Its [774-control source matrix](koreader-sdl-reference-controls.json)
+pairs controls with pinned handlers and workflow, partial, gap, audit,
+system-owned or excluded states. Excluded controls stay as source references,
+not parity tasks. The capture is a stock macOS SDL reference, separate from
+Oasis acceptance. Use only in-scope reading controls to schedule implementation;
 inventory counts do not measure completed parity.
 
 ## Scope and completion checklist
@@ -22,22 +23,22 @@ goal. File extensions remain in scope only as document-format identifiers.
 
 | Scope decision | Status |
 | --- | --- |
-| Implement document opening, reading and rendering, navigation, page/text layout, search, dictionaries, annotations, reading data, accessibility and offline scan workflows. | Core reading scope |
-| Treat timers, AutoTurn, profiles, statistics and reading-specific import/export as reading features even when KOReader supplies them as plug-ins. Implement them natively. | Core or advanced reading scope |
-| Keep OPDS/calibre acquisition and remote progress sync behind the local-reading milestones; do not make them core release blockers. | Optional reading-adjacent scope · K21–K22 |
-| Do not implement a general plugin/extension loader or manager, Terminal/shell, RSS/news tools, HTTP inspectors or servers, patch management, or unrelated developer utilities. | Explicitly excluded |
+| Implement document opening, reading and rendering, navigation, page/text layout, local search and dictionaries, annotations, local reading data, accessibility and offline scan workflows. | Core reading scope · K01–K20, K23–K24 |
+| Keep reading-specific features such as timers, AutoTurn, profiles, statistics, vocabulary and reading-data import/export when they directly support reading. Implement them natively. | Core or advanced reading scope |
+| Do not implement a general plugin/extension loader or manager, Terminal/shell, RSS/news tools, HTTP inspectors or servers, patch management, unrelated developer utilities, online book acquisition, remote progress/annotation sync, remote annotation export or sharing services, or network lookup services. | Explicitly excluded from this goal |
 | Keep battery, Wi-Fi, clock, sleep, wallpaper and other Kindle-wide settings in PrimitiveOS Launcher. | Explicitly excluded from Reader |
 
-Only core and optional reading rows in this table contribute to parity tracking.
-An excluded row is closed scope: it is not an unimplemented feature, release
-blocker, test requirement, or item in the completion denominator. The KOReader
-source and screenshot inventories remain comparison references; their full
-menu and module counts are not Reader requirements.
+Only the in-scope reading requirements contribute to parity tracking. Excluded
+items are closed scope: they are not unimplemented features, release blockers,
+test requirements, or part of the completion denominator. The KOReader source
+and screenshot inventories remain comparison references; their full menu and
+module counts are not Reader requirements.
 
 Completion order: finish the P0–P2 local reading workflow, close the remaining
-in-scope document and reading-data gaps in P3, and validate those workflows on
-the Oasis before taking optional K21–K22 work. Keep the full feature-by-feature
-reading checklist in [requirements](requirements.md) and use the [control matrix](koreader-sdl-reference-controls.json) only to find and compare relevant controls.
+in-scope document and local reading-data gaps in P3, then validate those
+workflows on the Oasis. Keep the feature-by-feature reading checklist in
+[requirements](requirements.md) and use the [control matrix](koreader-sdl-reference-controls.json)
+only to find and compare relevant controls.
 
 ## Implementation checkpoint
 
@@ -156,15 +157,12 @@ P3 includes work that depends on a suitable rendering component or on evidence f
 | DjVu and scanned documents · K17 | Evaluate an ARMHF DjVu decoder, text-layer extraction, and page outlines. Add a scan pipeline that can crop margins, rotate or deskew, adjust contrast, segment columns, and apply configurable reflow. Compare native document reflow, image segmentation, and OCR-assisted reading against the same scans. | Use clean and skewed scans, scans with and without text layers, and multi-column pages. Verify text order and page regions, navigate and reopen at the intended passage, and check latency and memory on large files. |
 | Offline OCR · K17 | Evaluate a compatible engine and separately installable language packs. Run bounded and cancellable recognition, retain page-coordinate results and language metadata, and reuse selection, search and dictionary workflows. Permit a user to clear OCR data or change language packs. | Recognize known text in a scanned PDF and DjVu sample, search for a recognized word, highlight and look it up, cancel a slow page, recover from a missing pack, and confirm normal reading remains usable. |
 | Advanced EPUB and typography · K19 | Add fixed-layout EPUB reading through the fixed-page contract, including viewport/pagination and spread metadata. Extend reflow to more publisher CSS, inherited styles, custom CSS overrides, hyphenation rules and user exceptions, ligatures, ruby, vertical writing, RTL mixed-script layout, tables, SVG and supported complex content. Evaluate nonvisual media one capability at a time on Kindle. | Check EPUB fixtures for mixed scripts, contextual shaping, ruby, fixed spreads, vertical text, and viewport rotation. Compare positions and text selection across repagination. List which reading-system test cases pass and record outstanding script, layout and media gaps. [EPUB reading systems requirements](https://www.w3.org/TR/epub-rs-33/) · [KOReader typography reference](https://github.com/koreader/koreader/blob/master/frontend/apps/reader/modules/readertypography.lua) |
-| Navigation depth and display controls · K07, K20 | Add a skim mode, book map, page browser/thumbnails, history, publisher page references and stable calculated references, custom contents and ignored sections. Offer reading direction, page refresh, frontlight controls where supported, and per-book layout profiles with reset. | Move between a bookmarked passage, a thumbnail, a printed-page label, and an inline link without losing return history. Verify profile precedence, skipped sections, and available hardware controls on each target model. |
+| Navigation depth and display controls · K07, K20 | Skim mode, book map, page browser/thumbnails, history, publisher page references and stable calculated references, custom contents and ignored sections. Skim's EPUB/PDF preview, origin return, cancel, commit history and Exit path pass four focused desktop tests. Offer reading direction, page refresh, and per-book layout profiles with reset. | Compare Skim's controls and dismissal with KOReader on Kindle. Move between a bookmarked passage, a thumbnail, a printed-page label, and an inline link without losing return history. Verify profile precedence, skipped sections, and reading controls on each target model. |
 | Reading library and accessibility · K20 | Add collections, favorites, search/sort/filter, reading statuses, per-book statistics and configurable gestures. Extend accessibility with larger selections and alternate interactions. Evaluate read-aloud or media-overlay playback separately against available Kindle audio and documented reference behavior. | Validate library edits and search offline with thousands of files and multiple editions. Verify a timed session excludes sleep, a custom gesture avoids unwanted navigation, and any supported audio or read-aloud workflow has a model-specific record. |
-| Annotation formats and services · K09, K13 | Extend local export to human-readable HTML, Markdown and Kindle Clippings-compatible text where verified. Add patterns or grayscale marks for different highlight modes and bulk export. Optional remote annotation services are separate from core reading. | Confirm overlapping highlights remain distinct, notes and quotations round-trip, and incomplete exports can be retried. Verify offline use without credentials and confirm service exporters transmit only selected records. [KOReader annotation export guide](https://koreader.rocks/user_guide/) · [W3C Web Annotation Data Model](https://www.w3.org/TR/annotation-model/) |
-| Optional lookup beyond local dictionaries · K15, K21 | Compare contextual language tools such as deinflection, Wikipedia and translation. Keep network lookups opt-in and specify the selected text and service before sending it. Evaluate local language data separately. | Enable a network lookup and return to the original selection. In airplane mode, continue local lookup. Share only the intended selection, and recover from an unavailable service or an unsupported language. |
-| Optional book acquisition · K21 | Implement versioned OPDS browsing, search and acquisition with documented authentication and calibre content integration only after core local reading. Download to a temporary file, validate the book and atomically move it to the chosen library folder. | Browse and acquire from representative OPDS and calibre libraries, cancel a download, retry a partial transfer, and open the downloaded book offline. Handle expired credentials and filename collisions. [OPDS specifications](https://github.com/opds-community/specs) |
-| Optional progress and annotation sync · K22 | Implement opt-in progress synchronization with document identity separate from viewport layout only after core local reading. Verify KOReader progress interoperability against its public API and distinguish numeric fixed-page positions from CREngine text pointers. Treat Reader annotation sync as a separate compatible client contract. Record conflicts without silently overwriting manual jumps or edits. | Use two clients with matching and differing editions. Test offline queues, later and earlier moves, concurrent edits and deletion, pending transfers after reboot, and service authentication. With sync disabled or disconnected, local use continues. [KOReader progress client](https://github.com/koreader/koreader/blob/master/plugins/kosync.koplugin/main.lua) · [KOReader progress service](https://github.com/koreader/koreader-sync-server) |
+| Annotation formats · K09, K13 | Extend local export to human-readable HTML, Markdown and Kindle Clippings-compatible text where verified. Add patterns or grayscale marks for different highlight modes and bulk export. | Confirm overlapping highlights remain distinct, notes and quotations round-trip, and incomplete local exports can be retried. [KOReader annotation export guide](https://koreader.rocks/user_guide/) · [W3C Web Annotation Data Model](https://www.w3.org/TR/annotation-model/) |
 | KOReader import, metadata backup and file associations · K23–K24 | Import known export formats and sidecar snapshots as bounded data. Match publication and revision before mapping source pointers. Show resolvable, ambiguous and missing targets. Add Reader export/restore with duplicate protection and use the existing Files handler choice for shared formats. | Import known progress and highlights twice without duplicate records, produce a useful unresolved list for missing or edited books, verify source hashes, and restore Reader metadata on a fresh test installation. Confirm Reader, Viewer and KOReader all continue to open files through their chosen handlers. |
 
-**Optional network integrations.** Network lookup, OPDS and calibre acquisition, and progress sync can follow the offline reader. These services have their own acceptance criteria and sit outside the core reading release.
+Online book acquisition, remote progress sync, service-based annotation export or sharing, and network lookup services are outside this goal. Existing code or design notes for those integrations do not add parity requirements or release gates. Local reading-data export and import remain in scope.
 
 **P3 acceptance.** For each native format, record its variant coverage, reference version, constraints and Kindle evidence. Complete tests for advanced EPUB, scan reflow, OCR and interoperation before declaring reading parity. Keep unresolved capabilities visible in the status record.
 

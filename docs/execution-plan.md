@@ -20,11 +20,11 @@ recreating its extension system or every item in its utility menus.
 | P2 · Offline parity | Add the fixed-page PDF workflow and the other offline formats and reading tools in scope. K12–K16. | Documents and annotations verified against format-specific fixtures on desktop and Kindle |
 | P3 · Advanced reading, formats, and import | Deliver the remaining local-reading and reading-data requirements, including advanced documents, organization, accessibility, and KOReader data import. K17–K20 and K23–K24. | Each in-scope Kindle workflow has an acceptance result. Import reports matched and unmatched records. |
 
-OPDS/calibre acquisition (K21) and remote progress sync (K22) are optional
-reading-adjacent work, not core release gates. A general extension/plugin host,
-plugin manager or third-party catalogue; Terminal or shell; RSS/news tools;
-HTTP inspectors or servers; patch management; and unrelated utilities are
-closed scope. Do not implement, test or count these as parity gaps. File
+The active goal covers local reading and local reading-data workflows. OPDS or
+calibre acquisition (K21), remote progress or annotation sync (K22), network
+lookup services, service-based annotation export or sharing, a general
+extension/plugin host, Terminal or shell, RSS/news tools, HTTP inspectors or
+servers, patch management, and unrelated utilities are closed scope. Do not implement, test, or count these as parity gaps. File
 extensions identify supported document formats. Keep device-wide controls in
 Launcher. See the [scope checklist](reading-parity-plan.md#scope-and-completion-checklist).
 
@@ -77,13 +77,12 @@ Reader now applies CREngine's defined Windows-1252 numeric-reference substitutio
 ## Private-use source font audit
 
 The remaining 134 private-use characters are already present in an original KF8 source with no font declaration or embedded font. Its reconstructed chapters preserve the exact character sequence. An authored Microsoft Symbol cmap control renders all eight tested values with unchanged source anchors through the existing pipeline. Do not infer the original symbols from low bytes or an unrelated font. Explicit secondary Symbol-map coverage and an actual affected-passage comparison in stock KOReader remain pending device availability. [Provenance and limits](symbol-font-provenance.md)
-## Optional reading-adjacent: OPDS and calibre acquisition · K21
+## Closed scope: network integrations · K21–K22
 
-The development candidate adds explicit configured OPDS catalogs, advertised search, server pagination, publication details, format choice and validated download to a selected Documents folder. Host checks use the real process worker, normal Reader controls and unchanged original EPUB content. The provider gate covers an isolated calibre Content server; additional provider integrations are optional and do not create an extension-host requirement. Native acquisition acceptance is pending the next combined Kindle build. [Protocol scope and evidence](opds-acquisition.md)
-
-## Optional reading-adjacent: opt-in progress sync · K22
-
-The native candidate uses a documented versioned WebDAV progress record, conditional writes, explicit conflict choice and durable clears. Component tests cover actual process workers, two original books, interrupted replies, account changes, cancellation and local-state recovery. Combined and native acceptance remain separate gates. Annotation sync and KOReader-server interoperability retain their own scope. [Behavior and protocol](progress-sync.md)
+OPDS/calibre acquisition, remote progress or annotation sync, and network lookup
+are excluded from the current reading goal. Their existing design and test
+records remain available for reference, but they are not active milestones,
+release gates, or completion checklist items.
 
 ## Complete local reading-data backups · K24
 
@@ -190,7 +189,7 @@ ownership through the Kindle runtime.
 
 ## Daily reading history and calendar
 
-Daily history now has a separate bounded, atomic interval journal. It retains older screen-time aggregates as undated data, records filtered reading visits, distinguishes uncapped reread time from capped distinct-screen time, and exposes a calendar and day timeline from Tools, Reading data and book information. Desktop acceptance covers deterministic time accounting, local DST boundaries, source-position preservation in real EPUB/PDF workflows and UI feedback. Native acceptance is pending. The full statistics plugin remains open for page-count rescaling, broader time-range reports, advanced calendar controls and history import/sync. [Implementation, evidence and exact limits](reading-statistics.md)
+Daily history now has a separate bounded, atomic interval journal. It retains older screen-time aggregates as undated data, records filtered reading visits, distinguishes uncapped reread time from capped distinct-screen time, and exposes a calendar and day timeline from Tools, Reading data and book information. Desktop acceptance covers deterministic time accounting, local DST boundaries, source-position preservation in real EPUB/PDF workflows and UI feedback. Native acceptance is pending. Reading-related work remains open for page-count rescaling, broader time-range reports, advanced calendar controls and local history import or merge. [Implementation, evidence and exact limits](reading-statistics.md)
 
 ## CJK dictionary selection and Japanese forms
 
