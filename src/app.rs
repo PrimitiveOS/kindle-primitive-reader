@@ -2520,7 +2520,7 @@ impl Reader {
                 self.profiles = profiles;
                 self.show(Screen::ReadingProfiles);
             }
-            Action::ResetText => self.apply_text_profile(BookPreferences::default())?,
+            Action::ResetText => self.apply_text_profile(BookPreferences::for_new_reflow())?,
             Action::DocumentDefaults(command) => self.activate_document_defaults(command)?,
             Action::Style(command) => self.activate_style(command)?,
             Action::ReadingMode(scroll) => {

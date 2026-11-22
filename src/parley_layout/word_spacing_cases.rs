@@ -302,8 +302,20 @@ fn trailing_picture_only_line_keeps_source_caret_and_cannot_borrow_old_space_cap
     let mut layout = builder.build(text);
     layout.set_word_spacing_percent(text, 95, 25, &[]);
     layout.break_all_lines(Some(290.0));
-    let last = layout.lines().last().unwrap();
-    assert!(last.runs().next().is_none());
+    // A final cursor line may follow an overflowing inline box; inspect the
+    // line that actually owns the picture rather than assuming it is last.
+    let last = layout
+        .lines()
+        .find(|line| {
+            line.items()
+                .any(|item| matches!(item, PositionedLayoutItem::InlineBox(_)))
+        })
+        .unwrap();
+    assert!(
+        last.runs().next().is_none(),
+        "{:?}",
+        last.runs().map(|run| run.text_range()).collect::<Vec<_>>()
+    );
     assert_eq!(last.text_range(), text.len()..text.len());
     assert_eq!(last.metrics().advance, 350.0);
     for line in layout.lines() {
