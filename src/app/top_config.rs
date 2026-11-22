@@ -72,6 +72,7 @@ impl Reader {
             ),
             Item::new("Go to page", Action::Show(Screen::GoToPage)),
             Item::new("Book map", Action::Show(Screen::BookMap)),
+            Item::new("Custom hidden flows", Action::Show(Screen::HiddenFlows)),
             Item::new("Page browser", Action::Overview).detail("Thumbnails and skim"),
             Item::new("Auto turn", Action::Show(Screen::AutoTurn)).detail(
                 self.auto_turn.interval().map_or_else(
@@ -81,9 +82,14 @@ impl Reader {
             ),
         ]);
         if let Some(book) = self.active.as_ref().filter(|book| book.entry.format == crate::library::DocumentFormat::Epub) {
-            if book.reading.probe.has_nonlinear_chapters() && !book.reading.config.scroll && !book.reading.config.facing_pages {
+            if book.reading.probe.has_nonlinear_chapters() && !book.reading.config.hidden_flows.enabled
+                && !book.reading.config.scroll && !book.reading.config.facing_pages {
                 items.push(Item::new("Hide non-linear fragments", Action::ToggleNonlinear)
                     .detail(if book.reading.config.hide_nonlinear { "On" } else { "Off" }));
+                items.push(Item::new("Default for non-linear fragments", Action::SetReadingControls(ReadingControls {
+                    hide_nonlinear_default: !self.controls.hide_nonlinear_default,
+                    ..self.controls
+                })).detail(if self.controls.hide_nonlinear_default { "Hidden" } else { "Shown" }));
             }
             let mode = book.numbering.as_ref().map_or_else(|| if book.reading.probe.printed_pages.is_empty() { "Screen pages".into() } else { "Publisher labels".into() }, |map| format!("{} characters per page", map.stride));
             items.push(Item::new("Page numbering", Action::Show(Screen::PageNumbering)).detail(mode));

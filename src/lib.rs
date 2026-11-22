@@ -474,6 +474,8 @@ pub struct Probe {
     pace_page: std::cell::Cell<Option<(usize, u64)>>,
     #[cfg(feature = "kindle")]
     publisher_positions: std::cell::OnceCell<app::publisher_pages::PublisherPositions>,
+    #[cfg(feature = "kindle")]
+    pub(crate) flow_pages: Option<crate::library::hidden_flows::PageFlows>,
     settings: Settings,
     spine_rtl: bool,
     source: Source,
@@ -712,6 +714,8 @@ impl Probe {
             pace_page: Default::default(),
             #[cfg(feature = "kindle")]
             publisher_positions: Default::default(),
+            #[cfg(feature = "kindle")]
+            flow_pages: None,
             settings,
             #[cfg(feature = "kindle")]
             custom_hyphenation_allowed,

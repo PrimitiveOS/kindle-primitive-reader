@@ -39,6 +39,7 @@ mod footnote_popup;
 #[cfg(test)]
 mod font_render_tests;
 mod top_config;
+mod hidden_flows;
 #[cfg(test)]
 mod nonlinear_tests;
 
@@ -140,6 +141,7 @@ enum Screen {
     FooterSettings,
     EndActionSettings,
     MetadataSaveSettings,
+    HiddenFlows,
     Gestures,
     GestureBinding(Gesture),
     ReadingData,
@@ -224,6 +226,7 @@ impl Screen {
             Self::FooterSettings => "Reading status bar",
             Self::EndActionSettings => "At the end of a book",
             Self::MetadataSaveSettings => "Save reading data",
+            Self::HiddenFlows => "Custom hidden flows",
             Self::Gestures => "Reading gestures",
             Self::GestureBinding(gesture) => gesture.label(),
             Self::ReadingData => "Reading data",
@@ -303,6 +306,7 @@ enum Action {
     OrganizeCurrent,
     BookmarkBrowser(bookmark_browser::Command),
     ToggleNonlinear,
+    Flow(hidden_flows::FlowAction),
     ViewCover,
     Favorite(bool),
     SetStatus(ReadingStatus),
@@ -527,6 +531,7 @@ pub struct Reader {
     book_list: Option<BookList>,
     book_details: Option<BookDetails>,
     overview: Option<PageOverview>,
+    flow_popup: Option<hidden_flows::FlowPopup>,
     outline: Option<OutlineScan>,
     numbering_scan: Option<character_page_settings::Scan>,
     numbering_directory: PathBuf,
@@ -665,6 +670,7 @@ impl Reader {
             book_list: None,
             book_details: None,
             overview: None,
+            flow_popup: None,
             outline: None,
             numbering_scan: None,
             numbering_directory: data.join("character-pages"),
@@ -851,6 +857,8 @@ impl Reader {
         self.search_result = None;
         self.result_selection = None;
         if let Some(mut reading) = fixed {
+            let flows = self.library.state(id).map(|state| state.hidden_flows.clone()).unwrap_or_default();
+            reading.set_hidden_flows(&flows)?;
             reading.set_ocr_path(self.ocr_root.join(format!("{id:016x}")));
             reading.ocr_language = self.library.state(id).and_then(|state| state.ocr_language.clone())
                 .filter(|code| self.ocr_assets.as_ref().is_none_or(|assets| assets.languages().contains(code)));
@@ -900,7 +908,10 @@ impl Reader {
             settings,
             scroll,
             facing_pages,
-            hide_nonlinear: self.library.state(id).is_some_and(|state| state.hide_nonlinear),
+            hide_nonlinear: self.library.state(id).and_then(|state| state.hide_nonlinear)
+                .unwrap_or(self.controls.hide_nonlinear_default),
+            hidden_flows: self.library.state(id).map(|state| state.hidden_flows.clone())
+                .unwrap_or_default().into(),
         };
         let reading = if let Some(position) = position {
             Reading::restore(
@@ -938,6 +949,7 @@ impl Reader {
     }
 
     fn show(&mut self, screen: Screen) {
+        self.flow_popup = None;
         self.end_dialog = None;
         if screen != Screen::Definition { self.spelling_lookup = None; }
         self.result_context = None;
@@ -1184,6 +1196,7 @@ impl Reader {
 
     fn items(&self) -> Vec<Item> {
         if let Screen::LibraryExport(page) = self.screen { return self.library_export_items(page); }
+        if self.screen == Screen::HiddenFlows { return self.hidden_flow_items(); }
         if matches!(self.screen, Screen::CustomContents | Screen::CustomEdits | Screen::CustomBookmarks) ||
              (matches!(self.screen, Screen::Contents | Screen::FixedContents) && self.custom_contents_enabled()) {
             return self.custom_items();
@@ -1331,8 +1344,8 @@ impl Reader {
                     Action::Heading,
                 )
                 .detail(format!(
-                    "{} notes, {} custom chapters and {} note conflicts",
-                    summary.notes_added, summary.custom_chapters_added, summary.note_conflicts
+                    "{} notes, {} custom chapters, {} flow boundaries and {} note conflicts",
+                    summary.notes_added, summary.custom_chapters_added, summary.custom_flow_points_added, summary.note_conflicts
                 )),
                 Item::new(
                     format!(
@@ -1722,7 +1735,11 @@ impl Reader {
                         fragment: None,
                     }),
                 )
-                .detail(map_detail(index == reading.chapter, marks, highlights))
+                .detail({
+                    let detail = map_detail(index == reading.chapter, marks, highlights);
+                    reading.hidden_chapter(index).map_or(detail.clone(), |all|
+                        format!("{} · {detail}", if all { "Hidden" } else { "Includes hidden pages" }))
+                })
             })
             .collect()
     }
@@ -1910,6 +1927,7 @@ impl Reader {
     fn activate(&mut self, action: Action) -> Result<()> {
         match action {
             Action::BookmarkBrowser(command) => self.activate_bookmark_browser(command)?,
+            Action::Flow(action) => self.flow_action(action)?,
             Action::ToggleNonlinear => {
                 let active = self.active.as_mut().ok_or("Open a book first")?;
                 if active.reading.config.scroll || active.reading.config.facing_pages {
@@ -1918,7 +1936,7 @@ impl Reader {
                 active.reading.set_hide_nonlinear(!active.reading.config.hide_nonlinear);
                 let id = active.id;
                 let enabled = active.reading.config.hide_nonlinear;
-                self.library.state_mut(id).ok_or("This book is unavailable")?.hide_nonlinear = enabled;
+                self.library.state_mut(id).ok_or("This book is unavailable")?.hide_nonlinear = Some(enabled);
                 self.mark_book_changed();
             }
             Action::LibraryExport(command) => self.activate_library_export(command)?,
@@ -3566,10 +3584,16 @@ impl Reader {
             let rect = overview_tile(index);
             canvas.card(rect);
             let page = overview.first + index;
-            let label = self.fixed.as_ref().map_or_else(
+            let hidden = self.active.as_ref().and_then(|active| overview.chapter.and_then(|chapter|
+                active.reading.custom_flow_for_page(chapter, page, overview.count)))
+                .or_else(|| self.fixed.as_ref().and_then(|fixed| fixed.reading.hidden_flow_map().map(|flows| flows.flow(page))))
+                .is_some_and(|flow| flow != 0);
+            if hidden { canvas.panel(rect, 22, 2, 235); }
+            let mut label = self.fixed.as_ref().map_or_else(
                 || format!("Page {}", page + 1),
                 |fixed| fixed_page_label(&fixed.reading, page),
             );
+            if hidden { label.push_str(" · Hidden"); }
             if let Some(tile) = tile {
                 let thumbnail = tile.for_theme(self.uses_night_pages());
                 let width = thumbnail.width as i32;
@@ -3656,6 +3680,12 @@ impl Reader {
             return Change::None;
         };
         let direction = match input {
+            Input::LongTap(x, y) => {
+                let Some(index) = (0..overview.tiles.len()).find(|&index| overview_tile(index).contains(x, y))
+                    else { return Change::None; };
+                let result = self.show_flow_page_popup(overview.chapter, overview.first + index);
+                return match result { Ok(()) => Change::Partial, Err(error) => self.report(error) };
+            }
             Input::PageForward => 1,
             Input::PageBack => -1,
             Input::Swipe { dx, dy, .. } if dy.abs() > dx.abs() => {
@@ -5443,6 +5473,17 @@ impl Reader {
             .collect();
         let group = Rows { bounds: list_rect(rows.len()), rows: &rows };
         group.draw(canvas, None);
+        if self.screen == Screen::BookMap && let Some(active) = &self.active {
+            for (index, item) in items.iter().enumerate() {
+                if let Action::Jump(target) = &item.action
+                    && let Some(chapter) = active.reading.probe.chapter_index(&target.path)
+                    && active.reading.hidden_chapter(chapter).is_some()
+                    && let Some(rect) = group.row_rect(index) {
+                    // Gray rail keeps the shared row's text and disclosure target intact.
+                    canvas.fill(Rect::new(rect.x + 8, rect.y + 14, 12, rect.h - 28), 187);
+                }
+            }
+        }
         if self.screen == Screen::Matches {
             self.draw_match_rows(canvas, &group);
         }
@@ -5543,6 +5584,7 @@ impl Reader {
 impl App for Reader {
     fn draw(&self, canvas: &mut Canvas) {
         self.draw_content(canvas);
+        self.draw_flow_popup(canvas);
         self.read_alarm.draw(canvas, self.screen == Screen::Book);
     }
 
@@ -5558,6 +5600,7 @@ impl App for Reader {
     }
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
+        if self.flow_popup.is_some() { return self.flow_popup_input(input); }
         if self.read_alarm.modal() { return self.read_alarm_input(input); }
         if self.end_dialog.is_some() { return self.end_dialog_input(input); }
         if self.range_edit.is_some() { return self.range_input(input); }
@@ -5642,6 +5685,7 @@ impl App for Reader {
         }
         if self.read_alarm.modal() { return self.read_alarm_input(input); }
         self.sync_auto_turn(Instant::now());
+        if self.flow_popup.is_some() { return self.flow_popup_input(input); }
         self.auto_turn.activity(Instant::now());
         if self.end_dialog.is_some() { return self.end_dialog_input(input); }
         if self.link_popup.is_some() { return self.link_address_input(input); }
@@ -6581,6 +6625,7 @@ pub fn run_probe(engine: Engine, book: PathBuf, fonts: Vec<PathBuf>, home: &Path
         scroll: false,
         facing_pages: false,
         hide_nonlinear: false,
+        hidden_flows: Default::default(),
     })?;
     primitive_app::run(reading, home).map_err(Into::into)
 }

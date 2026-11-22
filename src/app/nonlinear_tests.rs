@@ -3,7 +3,7 @@ use super::tests::{Fixture, capture_test_screen};
 use std::io::Write;
 use zip::{ZipWriter, write::SimpleFileOptions};
 
-fn authored_book(path: &Path) {
+pub(super) fn authored_book(path: &Path) {
     let mut zip = ZipWriter::new(fs::File::create(path).unwrap());
     let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
     let members = [
@@ -119,7 +119,7 @@ fn nonlinear_fragments_are_skipped_only_in_single_page_and_keep_explicit_destina
     app.save().unwrap();
     let mut reopened = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
     reopened.open_path(&fixture.book).unwrap();
-    assert!(reopened.library.state(id).unwrap().hide_nonlinear);
+    assert_eq!(reopened.library.state(id).unwrap().hide_nonlinear, Some(true));
     assert_eq!(reopened.current_position(), Some(note_position));
     reopened.show(Screen::BookTools);
     reopened.top_group = Some(top_config::TopGroup::Navigation);

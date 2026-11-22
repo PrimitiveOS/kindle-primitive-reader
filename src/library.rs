@@ -1,6 +1,7 @@
 //! Local document discovery and reading state. Paths stored in state are relative to the library.
 
 pub(crate) mod custom_contents;
+pub(crate) mod hidden_flows;
 
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
@@ -649,8 +650,10 @@ fn read_status<'de, D: serde::Deserializer<'de>>(
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BookState {
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub hide_nonlinear: bool,
+    #[serde(default, skip_serializing_if = "hidden_flows::HiddenFlows::is_default")]
+    pub(crate) hidden_flows: hidden_flows::HiddenFlows,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hide_nonlinear: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub highlight_style: Option<crate::highlight_style::HighlightStyle>,
     pub id: u64,
@@ -723,7 +726,8 @@ impl BookState {
     fn new(entry: &LibraryBook, id: u64) -> Self {
         Self {
             highlight_style: None,
-            hide_nonlinear: false,
+            hide_nonlinear: None,
+            hidden_flows: Default::default(),
             id,
             path: entry.path.clone(),
             title: entry.title.clone(),
@@ -808,6 +812,7 @@ pub struct BackupSummary {
     pub existing_books: usize,
     pub bookmarks_added: usize,
     pub custom_chapters_added: usize,
+    pub custom_flow_points_added: usize,
     pub highlights_added: usize,
     pub pdf_highlights_added: usize,
     pub notes_added: usize,
@@ -1754,6 +1759,9 @@ fn merge_states(current: &[BookState], backup: &[BookState]) -> (Vec<BookState>,
             added.bookmarks = Vec::new();
             added.custom_contents = custom_contents::CustomContents::default();
             added.custom_contents.enabled = source.custom_contents.enabled;
+            added.hidden_flows = hidden_flows::HiddenFlows::default();
+            added.hidden_flows.enabled = source.hidden_flows.enabled;
+            added.hidden_flows.editing = source.hidden_flows.editing;
             added.highlights = Vec::new();
             added.pdf_highlights = Vec::new();
             added.title = clean_metadata(&added.title);
@@ -1792,6 +1800,14 @@ fn merge_states(current: &[BookState], backup: &[BookState]) -> (Vec<BookState>,
                 summary.skipped += 1;
             }
         }
+        for point in source.hidden_flows.points() {
+            match target.hidden_flows.insert(point.clone()) {
+                Ok(true) => summary.custom_flow_points_added += 1,
+                Ok(false) => summary.duplicates += 1,
+                Err(_) => summary.skipped += 1,
+            }
+        }
+        if target.hide_nonlinear.is_none() { target.hide_nonlinear = source.hide_nonlinear; }
         merge_text_marks(target, &source.bookmarks, &source.highlights, &mut summary);
         for mark in &source.pdf_highlights {
             if !mark.is_valid() {
@@ -1965,6 +1981,7 @@ fn load_library_state(path: &Path) -> io::Result<(Vec<BookState>, Vec<Collection
     });
     for state in &mut recent {
         state.custom_contents.sanitize();
+        state.hidden_flows.sanitize();
         state.pdf_highlights.retain(PdfHighlight::is_valid);
         state.pdf_highlights.truncate(MAX_PDF_HIGHLIGHTS);
     }

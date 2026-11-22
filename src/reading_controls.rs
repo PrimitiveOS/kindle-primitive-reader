@@ -15,6 +15,7 @@ const MAX_FILE_BYTES: u64 = 4096;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 pub(crate) struct ReadingControls {
+    pub hide_nonlinear_default: bool,
     #[serde(skip_serializing_if = "crate::highlight_style::HighlightStyle::is_default")]
     pub highlight_style: crate::highlight_style::HighlightStyle,
     #[serde(skip_serializing_if = "crate::highlight_style::Appearance::is_default")]

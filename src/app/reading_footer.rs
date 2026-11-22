@@ -80,6 +80,7 @@ impl<'a> PageSections<'a> {
 }
 
 struct Progress<'a> {
+    section_range: std::ops::Range<usize>,
     section_name: &'a str,
     section_page: usize,
     section_len: usize,
@@ -93,20 +94,27 @@ struct Progress<'a> {
 
 enum Ticks<'a> {
     Pages(PageSections<'a>, usize),
+    FlowPages(PageSections<'a>, crate::library::hidden_flows::PageFlows, usize),
     Bytes(&'a [u64]),
 }
 
 impl Ticks<'_> {
     fn draw(&self, mut mark: impl FnMut(f64)) {
-        match *self {
+        match self {
             Self::Pages(sections, count) => {
                 for (page, _) in (0..sections.len()).filter_map(|index| sections.at(index)) {
-                    mark(page as f64 / count as f64);
+                    mark(page as f64 / *count as f64);
+                }
+            }
+            Self::FlowPages(sections, flows, flow) => {
+                let total = flows.count_in(*flow, 0..usize::MAX).max(1);
+                for (page, _) in (0..sections.len()).filter_map(|index| sections.at(index)) {
+                    mark(flows.count_in(*flow, 0..page) as f64 / total as f64);
                 }
             }
             Self::Bytes(offsets) => {
                 if let Some(&length) = offsets.last().filter(|&&n| n > 0) {
-                    for &offset in offsets {
+                    for &offset in *offsets {
                         mark(offset as f64 / length as f64);
                     }
                 }
@@ -128,6 +136,7 @@ impl<'a> Progress<'a> {
         let (start, name) = next.checked_sub(1).and_then(|index| sections.at(index)).unwrap_or((0, fallback));
         let end = sections.at(next).map_or(count, |(end, _)| end);
         Self {
+            section_range: start..end,
             section_name: name,
             section_page: page - start + 1,
             section_len: end - start,
@@ -137,6 +146,16 @@ impl<'a> Progress<'a> {
             estimated: false,
             book_ticks: Ticks::Pages(sections, count),
         }
+    }
+
+    fn apply_flows(&mut self, flows: crate::library::hidden_flows::PageFlows, first: usize, last: usize, count: usize, sections: PageSections<'a>) {
+        let flow = flows.flow(first);
+        let total = flows.count_in(flow, 0..count).max(1);
+        self.section_page = flows.count_in(flow, self.section_range.start..last + 1).max(1);
+        self.section_len = flows.count_in(flow, self.section_range.clone()).max(1);
+        self.book_pages_left = flows.count_in(flow, last + 1..count);
+        self.book_fraction = flows.count_in(flow, 0..last + 1) as f64 / total as f64;
+        self.book_ticks = Ticks::FlowPages(sections, flows, flow);
     }
 
     fn percentage(&self) -> String {
@@ -261,12 +280,17 @@ impl Reader {
             } else {
                 reading.page()
             };
-            return Some(Progress::from_pages(
+            let sections = self.fixed_sections(fixed);
+            let mut progress = Progress::from_pages(
                 last,
                 reading.count(),
-                self.fixed_sections(fixed),
+                sections,
                 "Document",
-            ));
+            );
+            if let Some(flows) = reading.hidden_flow_map() {
+                progress.apply_flows(flows.clone(), reading.page(), last, reading.count(), sections);
+            }
+            return Some(progress);
         }
         let reading = &self.active.as_ref()?.reading;
         let probe = &reading.probe;
@@ -276,6 +300,10 @@ impl Reader {
             PageSections::Publisher(probe.footer_sections()),
             &probe.chapter_label,
         );
+        if let Some(flows) = reading.custom_flow_map() {
+            progress.apply_flows(flows, reading.page, reading.last_visible_page(), probe.page_count(),
+                PageSections::Publisher(probe.footer_sections()));
+        }
         if probe.chapter_count() > 1 {
             let ch = reading.chapter;
             let weights = reading.progress_weights();
@@ -309,7 +337,15 @@ impl Reader {
     }
 
     pub(super) fn status_caption(&self) -> Option<String> {
-        let base = self.progress_caption();
+        let flow = self.active.as_ref().and_then(|book| book.reading.custom_flow_map()
+            .map(|map| book.reading.hidden_flow_ordinal(map.flow(book.reading.page)).unwrap_or(0)))
+            .or_else(|| self.fixed.as_ref().and_then(|book| book.reading.hidden_flow_map()
+                .map(|map| map.flow_ordinal(map.flow(book.reading.page())).unwrap_or(0))));
+        let base = self.progress_caption().map(|caption| {
+            if caption.is_empty() { return caption; }
+            flow.map_or(caption.clone(), |flow| if flow == 0 { format!("Custom · {caption}") }
+                else { format!("Hidden {flow} · {caption}") })
+        });
         if self.controls.status_bar == StatusBar::Minimal {
             return base;
         }
@@ -351,7 +387,7 @@ impl Reader {
                 .map(|label| format!("{} page {}", if active.numbering.is_some() { "Stable" } else { "Printed" }, super::publisher_pages::compact_label(&label)))
         };
         if !self.controls.footer_all_at_once && mode == StatusBar::PageNumbers {
-            return printed();
+            return printed().or_else(|| self.custom_page_status());
         }
         let p = self.footer_progress()?;
         let time = |scope| {
@@ -632,6 +668,30 @@ impl Reader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn custom_flow_footer_counts_only_the_opened_flow_and_keeps_main_page_ticks() {
+        use crate::library::hidden_flows::{PageFlows, ResolvedPoint};
+        let flows = PageFlows::new(12, 0, vec![
+            ResolvedPoint { page: 2, hidden: true, index: 0 },
+            ResolvedPoint { page: 5, hidden: false, index: 1 },
+            ResolvedPoint { page: 8, hidden: true, index: 2 },
+            ResolvedPoint { page: 10, hidden: false, index: 3 },
+        ]);
+        let chapters = [(0,"A".into()),(5,"B".into()),(10,"C".into())];
+        let sections = PageSections::Publisher(&chapters);
+        let mut regular = Progress::from_pages(6, 12, sections, "Book");
+        regular.apply_flows(flows.clone(), 6, 6, 12, sections);
+        assert_eq!((regular.section_page,regular.section_len,regular.book_pages_left), (2,3,3));
+        assert_eq!(regular.percentage(), "57%");
+        let mut ticks = Vec::new();
+        regular.book_ticks.draw(|position| ticks.push(position));
+        assert_eq!(ticks, [0.,2. / 7.,5. / 7.]);
+        let mut note = Progress::from_pages(3, 12, sections, "Book");
+        note.apply_flows(flows, 3, 3, 12, sections);
+        assert_eq!((note.section_page,note.section_len,note.book_pages_left), (2,3,1));
+        assert_eq!(note.percentage(), "67%");
+    }
 
     #[test]
     fn chapter_ticks_ignore_duplicate_destinations_and_cover_front_matter_and_the_last_page() {

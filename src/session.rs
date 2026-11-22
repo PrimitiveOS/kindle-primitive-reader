@@ -3,6 +3,8 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+mod hidden_flows;
+
 use crate::epub::{Book, Destination};
 use crate::selection::{HighlightRect, TextSelection};
 use crate::{Anchor, Engine, Probe, Result, Settings};
@@ -84,6 +86,12 @@ enum ReadingMotion {
     Pixels(f32),
 }
 
+pub(crate) struct VisiblePart {
+    pub range: Range<f32>,
+    pub x: u32,
+    pub y: u32,
+}
+
 #[derive(Clone)]
 pub(crate) struct BookConfig {
     pub(crate) user_hyphenation: std::rc::Rc<crate::user_hyphenation::Rules>,
@@ -94,6 +102,7 @@ pub(crate) struct BookConfig {
     pub(crate) scroll: bool,
     pub(crate) facing_pages: bool,
     pub(crate) hide_nonlinear: bool,
+    pub(crate) hidden_flows: std::rc::Rc<crate::library::hidden_flows::HiddenFlows>,
     // Shared across chapter layouts, previews and font changes for the same open publication.
     pub(crate) chapter_offsets: std::rc::Rc<std::cell::OnceCell<Vec<u64>>>,
 }
@@ -166,11 +175,12 @@ pub(crate) struct Reading {
     turns: PageTurns<ReadingMotion>,
     end_attempt: bool,
     flow_weights: Vec<u64>,
+    custom_flows: hidden_flows::Resolved,
 }
 
 impl Reading {
     pub(crate) fn open(config: BookConfig) -> Result<Self> {
-        let chapter = if config.hide_nonlinear && !config.scroll && !config.facing_pages {
+        let chapter = if !config.hidden_flows.enabled && config.hide_nonlinear && !config.scroll && !config.facing_pages {
             with_storage(|| {
                 let book = Book::open(&config.book).map_err(io::Error::other)?;
                 Ok(book.chapters.iter().position(|chapter| !chapter.nonlinear).unwrap_or(0))
@@ -178,7 +188,14 @@ impl Reading {
         } else {
             0
         };
-        Self::restore(config, chapter, 0, None)
+        let mut reading = Self::restore(config, chapter, 0, None)?;
+        if reading.custom_flow_map().is_some_and(|flows| flows.flow(0) != 0) {
+            // A book whose every page is hidden remains openable so the markers can be edited.
+            if let Err(error) = reading.jump_custom_progress(0.0) {
+                eprintln!("reader could not select a regular-flow start: {error}");
+            }
+        }
+        Ok(reading)
     }
 
     pub(crate) fn restore(
@@ -189,14 +206,19 @@ impl Reading {
     ) -> Result<Self> {
         let start = Instant::now();
         let mut probe = config.chapter(chapter)?;
+        let custom_flows = hidden_flows::Resolved::new(&config, &probe, chapter)?;
+        if config.hidden_flows.enabled {
+            probe.flow_pages = Some(custom_flows.map(chapter, probe.page_count()));
+        }
         let focused_page = anchor.and_then(|anchor| probe.page_for(anchor));
         let anchor = anchor.filter(|_| focused_page.is_some());
         let page = focused_page.unwrap_or(fallback_page.min(probe.page_count() - 1));
         let scroll_top = (config.scroll && !probe.is_vertical()).then(|| {
-            anchor
+            let top = anchor
                 .and_then(|anchor| probe.anchor_top(anchor))
-                .unwrap_or_else(|| probe.page_range(page).start)
-                .clamp(0.0, probe.scroll_end())
+                .unwrap_or_else(|| probe.page_range(page).start);
+            if config.hidden_flows.enabled { top.max(0.0) }
+            else { top.clamp(0.0, probe.scroll_end()) }
         });
         let page = scroll_top.map_or(page, |top| probe.page_at(top));
         let frame = capture(&mut probe, chapter, page, scroll_top)?;
@@ -218,6 +240,7 @@ impl Reading {
             turns: PageTurns::new(Instant::now()),
             end_attempt: false,
             flow_weights: Vec::new(),
+            custom_flows,
         };
         session.refresh_flow_weights();
         session.schedule_prefetch();
@@ -225,6 +248,7 @@ impl Reading {
     }
 
     fn turn(&mut self, direction: isize) -> Result<Change> {
+        if self.config.hidden_flows.enabled { return self.turn_in_custom_flow(direction); }
         let start = Instant::now();
         let mut crossed_chapter = false;
         let mut cache_hit = false;
@@ -278,12 +302,12 @@ impl Reading {
     }
 
     pub(crate) fn hides_nonlinear(&self) -> bool {
-        self.config.hide_nonlinear && !self.config.scroll && !self.config.facing_pages
+        !self.config.hidden_flows.enabled && self.config.hide_nonlinear && !self.config.scroll && !self.config.facing_pages
             && self.probe.has_nonlinear_chapters()
     }
 
     pub(crate) fn progress_weights(&self) -> &[u64] {
-        if self.hides_nonlinear() { &self.flow_weights }
+        if self.hides_nonlinear() || self.config.hidden_flows.enabled { &self.flow_weights }
         else { self.config.chapter_offsets.get().map(Vec::as_slice).unwrap_or_default() }
     }
 
@@ -295,6 +319,10 @@ impl Reading {
 
     fn refresh_flow_weights(&mut self) {
         self.flow_weights.clear();
+        if self.config.hidden_flows.enabled {
+            self.flow_weights = self.custom_weights();
+            return;
+        }
         if !self.hides_nonlinear() { return; }
         let hidden = self.probe.chapter_is_nonlinear(self.chapter);
         let mut start = self.chapter;
@@ -458,8 +486,7 @@ impl Reading {
     }
 
     pub(crate) fn last_visible_page(&self) -> usize {
-        let span = frame_span(&self.probe);
-        (first_frame_page(&self.probe, self.page) + span - 1).min(self.probe.page_count() - 1)
+        frame_columns(&self.probe, self.page).map(|(page, _)| page).max().unwrap_or(self.page)
     }
 
     pub(crate) fn uses_facing_pages(&self) -> bool {
@@ -479,34 +506,38 @@ impl Reading {
         self.visible_columns().map(|(range, _)| range.end).fold(0.0, f32::max)
     }
 
-    fn visible_range(&self) -> Range<f32> {
-        self.scroll_top.map_or_else(
-            || self.probe.page_range(self.page),
-            |top| self.probe.scroll_range(top),
-        )
+    pub(crate) fn visible_columns(&self) -> impl Iterator<Item = (Range<f32>, u32)> + '_ {
+        self.visible_parts().into_iter().map(|part| (part.range, part.x))
     }
 
-    pub(crate) fn visible_columns(&self) -> impl Iterator<Item = (Range<f32>, u32)> + '_ {
+    pub(crate) fn visible_parts(&self) -> Vec<VisiblePart> {
+        if let Some(top) = self.scroll_top && self.probe.flow_pages.is_some() {
+            return hidden_flows::scroll_parts(&self.probe, top);
+        }
         frame_columns(&self.probe, self.page).map(|(page, x)| {
             let range = self.scroll_top.map_or_else(
                 || self.probe.page_range(page),
                 |top| self.probe.scroll_range(top),
             );
-            (range, x)
-        })
+            VisiblePart { range, x, y: 0 }
+        }).collect()
     }
 
-    fn column_at(&self, x: f32) -> Option<(Range<f32>, f32)> {
-        self.visible_columns().find_map(|(range, origin)| {
-            let relative = x - origin as f32;
+    fn column_at(&self, x: f32, y: f32) -> Option<(Range<f32>, f32, f32)> {
+        self.visible_parts().into_iter().find_map(|part| {
+            let relative = x - part.x as f32;
+            let top = part.y as f32 + self.probe.settings.top_margin() as f32;
+            let bottom = top + part.range.end - part.range.start;
             (0.0..self.probe.settings.width as f32)
                 .contains(&relative)
-                .then_some((range, relative))
+                .then_some(())
+                .filter(|_| y >= top && y < bottom)
+                .map(|_| (part.range, relative, y - part.y as f32))
         })
     }
 
     pub(crate) fn word_at(&self, x: f32, y: f32) -> Option<TextSelection> {
-        let (range, x) = self.column_at(x)?;
+        let (range, x, y) = self.column_at(x, y)?;
         self.probe.word_in(range, x, y)
     }
 
@@ -575,13 +606,14 @@ impl Reading {
     }
 
     pub(crate) fn highlight_rects(&self, selection: &TextSelection) -> Vec<HighlightRect> {
-        self.visible_columns()
-            .flat_map(|(range, x)| {
+        self.visible_parts().into_iter()
+            .flat_map(|part| {
                 self.probe
-                    .selection_rects_in(range, selection)
+                    .selection_rects_in(part.range, selection)
                     .into_iter()
                     .map(move |mut rect| {
-                        rect.x += x as i32;
+                        rect.x += part.x as i32;
+                        rect.y += part.y as i32;
                         rect
                     })
             })
@@ -593,7 +625,7 @@ impl Reading {
         x: f32,
         y: f32,
     ) -> Option<(crate::footnotes::ReferenceContext, TextSelection)> {
-        let (range, x) = self.column_at(x)?;
+        let (range, x, y) = self.column_at(x, y)?;
         let (key, offset) = self.probe.source_at(range, x, y)?;
         let block = self.probe.source.blocks.iter().find(|b| b.key == key)?;
         let link = block.links.iter().find(|l| l.bytes.contains(&offset))?;
@@ -619,12 +651,12 @@ impl Reading {
     }
 
     pub(crate) fn link_at(&self, x: f32, y: f32) -> Option<Destination> {
-        let (range, x) = self.column_at(x)?;
+        let (range, x, y) = self.column_at(x, y)?;
         self.probe.link_in(range, x, y)
     }
 
     pub(crate) fn illustration_at(&self, x: f32, y: f32) -> Option<&str> {
-        let (range, x) = self.column_at(x)?;
+        let (range, x, y) = self.column_at(x, y)?;
         self.probe.illustration_in(range, x, y)
     }
 
@@ -681,21 +713,23 @@ impl Reading {
     }
 
     pub(crate) fn links(&self) -> Vec<(String, Destination)> {
-        let mut columns = self.visible_columns().map(|(range, _)| range);
-        let Some(first) = columns.next() else {
-            return Vec::new();
-        };
-        let end = columns.last().map_or(first.end, |last| last.end);
-        self.probe.links_in(first.start..end)
+        let mut links = Vec::new();
+        for (range, _) in self.visible_columns() {
+            for link in self.probe.links_in(range) {
+                if !links.contains(&link) { links.push(link); }
+            }
+        }
+        links
     }
 
     pub(crate) fn anchor(&self) -> Option<Anchor> {
         self.focus_anchor
             .clone()
-            .or_else(|| self.probe.anchor_in(self.visible_range()))
+            .or_else(|| self.visible_columns().find_map(|(range, _)| self.probe.anchor_in(range)))
     }
 
     fn scroll(&mut self, top: f32, distance: f32) -> Result<Change> {
+        if self.config.hidden_flows.enabled { return self.scroll_in_custom_flow(top, distance); }
         if distance == 0.0 {
             return Ok(Change::None);
         }
@@ -773,6 +807,7 @@ impl Reading {
     }
 
     pub(crate) fn jump_progress(&mut self, fraction: f64) -> Result<()> {
+        if self.config.hidden_flows.enabled { return self.jump_custom_progress(fraction); }
         let hide = self.hides_nonlinear();
         let (chapter, in_chapter, probe) = with_storage(|| {
             let mut book = Book::open(&self.config.book).map_err(io::Error::other)?;
@@ -801,13 +836,17 @@ impl Reading {
         anchor: Option<&Anchor>,
         fallback_page: usize,
     ) -> Result<()> {
+        if self.config.hidden_flows.enabled {
+            candidate.flow_pages = Some(self.custom_flows.map(chapter, candidate.page_count()));
+        }
         let focused_page = anchor.and_then(|anchor| candidate.page_for(anchor));
         let page = focused_page.unwrap_or(fallback_page);
         let top = (self.config.scroll && !candidate.is_vertical()).then(|| {
-            anchor
+            let top = anchor
                 .and_then(|anchor| candidate.anchor_top(anchor))
-                .unwrap_or_else(|| candidate.page_range(page).start)
-                .clamp(0.0, candidate.scroll_end())
+                .unwrap_or_else(|| candidate.page_range(page).start);
+            if self.config.hidden_flows.enabled { top.max(0.0) }
+            else { top.clamp(0.0, candidate.scroll_end()) }
         });
         let frame = capture(&mut candidate, chapter, page, top)?;
         self.probe = candidate;
@@ -825,6 +864,7 @@ impl Reading {
     }
 
     fn prefetch_page(&self) -> Option<usize> {
+        if self.config.hidden_flows.enabled { return None; }
         let span = frame_span(&self.probe);
         let page = first_frame_page(&self.probe, self.page);
         [Some(page + span), page.checked_sub(span)]
@@ -907,8 +947,11 @@ impl Reading {
     ) -> GrayImage {
         let mut page = self.frame.clone();
         if paint.inverted && !self.config.settings.invert_night_images {
-            for (range, x) in self.visible_columns() {
-                preinvert_images(&self.probe, range, x, page.width, &mut page.pixels);
+            for part in self.visible_parts() {
+                let end = (part.y + self.probe.settings.top_margin()
+                    + (part.range.end - part.range.start).ceil() as u32).min(page.height);
+                preinvert_images_at(&self.probe, part.range, part.x, part.y, end,
+                    page.width, &mut page.pixels);
             }
         }
         for &(rect, ink) in highlights {
@@ -929,8 +972,9 @@ impl Reading {
     }
 
     fn clear_lines_cut_by_tools(&self, page: &mut GrayImage, visible: &Range<u32>) {
-        for (column, x) in self.visible_columns() {
-            let offset = self.probe.settings.top_margin() as f32 - column.start;
+        for part in self.visible_parts() {
+            let offset = self.probe.settings.top_margin() as f32 + part.y as f32 - part.range.start;
+            let x = part.x;
             let (mut start, mut end) = (visible.start, visible.end);
             // The two pages can have different line breaks beneath the bars.
             for line in self
@@ -938,6 +982,7 @@ impl Reading {
                 .lines
                 .iter()
                 .filter(|line| !line.bytes.is_empty())
+                .filter(|line| line.bottom > part.range.start && line.top < part.range.end)
             {
                 let top = line.top + offset;
                 let bottom = line.bottom + offset;
@@ -1162,12 +1207,21 @@ pub(crate) fn preinvert_images(
     stride: u32,
     pixels: &mut [u8],
 ) -> bool {
+    preinvert_images_at(probe, range, column, 0, (pixels.len() / stride as usize) as u32, stride, pixels)
+}
+
+fn preinvert_images_at(
+    probe: &Probe, range: Range<f32>, column: u32, offset_y: u32, clip_end: u32,
+    stride: u32, pixels: &mut [u8],
+) -> bool {
     let crate::Renderer::Parley(layout) = &probe.renderer else {
         return false;
     };
     let mut changed = false;
     for (_, cols, rows) in layout.visible_illustrations(range, probe.settings) {
         for row in rows {
+            let row = row + offset_y as usize;
+            if row >= clip_end as usize { continue; }
             let start = row * stride as usize + column as usize + cols.start;
             for pixel in &mut pixels[start..start + cols.len()] {
                 *pixel = 255 - *pixel;
@@ -1241,6 +1295,7 @@ fn frame_span(probe: &Probe) -> usize {
 }
 
 fn first_frame_page(probe: &Probe, page: usize) -> usize {
+    if probe.flow_pages.is_some() { return page; }
     let span = frame_span(probe);
     page / span * span
 }
@@ -1248,10 +1303,17 @@ fn first_frame_page(probe: &Probe, page: usize) -> usize {
 fn frame_columns(probe: &Probe, page: usize) -> impl Iterator<Item = (usize, u32)> + use<> {
     let first = first_frame_page(probe, page);
     let span = frame_span(probe);
-    let end = (first + span).min(probe.page_count());
+    let mut pages = vec![first];
+    if span == 2 {
+        let second = probe.flow_pages.as_ref().map_or_else(
+            || (first + 1 < probe.page_count()).then_some(first + 1),
+            |flows| flows.next(first, 1),
+        );
+        pages.extend(second);
+    }
     let rtl = probe.pages_right_to_left();
     // Keep logical leaf order for text ranges and links. Only the physical origin changes.
-    (first..end).enumerate().map(move |(index, page)| {
+    pages.into_iter().enumerate().map(move |(index, page)| {
         let slot = if rtl { span - 1 - index } else { index };
         (page, slot as u32 * (FACING_PAGE_WIDTH + FACING_GUTTER))
     })
@@ -1260,6 +1322,7 @@ fn frame_columns(probe: &Probe, page: usize) -> impl Iterator<Item = (usize, u32
 fn capture(probe: &mut Probe, chapter: usize, page: usize, top: Option<f32>) -> Result<GrayImage> {
     let start = Instant::now();
     let pixels = match top {
+        Some(top) if probe.flow_pages.is_some() => hidden_flows::capture_scroll(probe, top)?,
         Some(top) => probe.capture_range(probe.scroll_range(top))?,
         None if frame_span(probe) == 2 => capture_facing_pages(probe, page)?,
         None => probe.capture(page)?,
@@ -1323,6 +1386,7 @@ mod tests {
             scroll: false,
             facing_pages,
             hide_nonlinear: false,
+            hidden_flows: Default::default(),
         })
         .unwrap()
     }
@@ -1828,6 +1892,7 @@ mod tests {
             scroll: true,
             facing_pages: false,
             hide_nonlinear: false,
+            hidden_flows: Default::default(),
         })
         .unwrap();
         assert!(reading.scroll_top.is_some());

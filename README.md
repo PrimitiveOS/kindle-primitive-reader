@@ -48,6 +48,8 @@ Browse page bookmarks, highlights and notes across books from **Library › Book
 
 EPUB chapters can start a section on a fresh page and keep a heading with its opening paragraph when the publisher requests it. [Publisher page breaks](docs/publisher-page-breaks.md)
 
+Use **Navigation › Custom hidden flows** to skip long notes or other source ranges while keeping links and explicit jumps available. Boundaries follow source locations when typography changes. [Controls, screenshots and comparison](docs/custom-hidden-flows.md)
+
 In fixed-page books, Book map shows where you are and where you saved bookmarks and highlights. Open a group to see individual pages. [Book map on the Oasis display](docs/screenshots/fixed-book-map.png)
 
 Preview a saved KOReader position before applying it, or extend a saved passage while keeping its note. [Position preview](docs/screenshots/koreader-position-preview.png) · [Extend an EPUB highlight](docs/screenshots/extend-epub-highlight.png) · [Extend a PDF highlight](docs/screenshots/extend-pdf-highlight.png)

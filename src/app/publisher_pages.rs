@@ -235,7 +235,9 @@ impl Reader {
             *surface = Canvas::new(TILE_WIDTH, line, &fonts).ok();
         }
         let Some(tile) = surface.as_mut() else { return };
-        for (range, x) in reading.visible_columns() {
+        for part in reading.visible_parts() {
+            let range = part.range;
+            let x = part.x;
             let left = reading.uses_facing_pages() && x == 0;
             let width = if left {
                 probe.settings.left_margin()
@@ -257,7 +259,7 @@ impl Reader {
                 if top >= range.end {
                     break;
                 }
-                let y = (top - range.start + probe.settings.top_margin() as f32) as u32;
+                let y = part.y + (top - range.start + probe.settings.top_margin() as f32) as u32;
                 if y < paint.visible.start || y >= paint.visible.end {
                     continue;
                 }
