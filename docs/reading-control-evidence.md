@@ -6,6 +6,8 @@ The custom footer also includes a selectable local clock. Optional minute-bounda
 
 Custom footer items now follow KOReader's **Icons**, **Letters**, and **Compact** symbol modes. Icon mode draws native vector symbols, so it does not depend on a device font containing private-use glyphs. The Mac workflow verifies mode cycling, settings persistence, and item reordering; the [footer capture](screenshots/footer-item-symbols.png) and [settings capture](screenshots/footer-item-symbols-settings.png) show the result. Kindle foreground acceptance remains open.
 
+The footer can now align its status text Left, Center, or Right, matching KOReader's three `ReaderFooter` container choices while keeping the progress track and Exit target fixed. Left remains the default so the requested `Chapter x of y - Page m of n` footer is unchanged. The saved setting, geometry and default pass Mac and ARMHF Kindle suites. Compare [Left](screenshots/footer-alignment-left.png), [Center](screenshots/footer-alignment-center.png), and [Right](screenshots/footer-alignment-right.png). The updated binary is installed; foreground visual acceptance remains open. [Pinned KOReader footer layout](https://github.com/koreader/koreader/blob/v2026.07.1/frontend/apps/reader/modules/readerfooter.lua#L3656-L3684)
+
 ## What the Oasis frames establish
 
 | Captured state | Observed controls | Evidence boundary |

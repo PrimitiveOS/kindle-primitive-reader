@@ -5,8 +5,8 @@ use crate::Probe;
 use crate::fixed_session::FixedReading;
 use crate::library::Bookmark;
 use crate::reading_controls::{
-    FooterItem, FooterSymbolStyle, FooterTrackPosition, HeaderBattery, ProgressScope,
-    ReadingControls, StatusBar, TopHeader,
+    FooterAlignment, FooterItem, FooterSymbolStyle, FooterTrackPosition, HeaderBattery,
+    ProgressScope, ReadingControls, StatusBar, TopHeader,
 };
 use crate::session::{DONE, PAGE_HEIGHT, SHOW_STATUS};
 use primitive_app::{Change, HEIGHT, WIDTH};
@@ -1351,6 +1351,24 @@ impl Reader {
         default
     }
 
+    pub(super) fn footer_caption_rect(
+        &self,
+        slot_width: u32,
+        content_width: i32,
+        font_size: i32,
+    ) -> Rect {
+        let mut rect = crate::session::footer_caption_rect(slot_width as i32, font_size);
+        let width = content_width.clamp(0, rect.w);
+        let remaining = rect.w - width;
+        rect.x += match self.controls.footer_alignment {
+            FooterAlignment::Left => 0,
+            FooterAlignment::Center => remaining / 2,
+            FooterAlignment::Right => remaining,
+        };
+        rect.w = width;
+        rect
+    }
+
     pub(super) fn draw_footer_track(&self, canvas: &mut Canvas, status_text_width: i32) {
         let Some(bar) = self.footer_track_rect(status_text_width) else {
             return;
@@ -1570,6 +1588,19 @@ impl Reader {
                 },
             ),
         ];
+        if c.status_bar != StatusBar::Minimal {
+            items.insert(
+                1,
+                setting(
+                    "Footer alignment",
+                    c.footer_alignment.label(),
+                    ReadingControls {
+                        footer_alignment: c.footer_alignment.next(),
+                        ..c
+                    },
+                ),
+            );
+        }
         let header = c.top_header;
         items.extend([
             Item::new("Top status header", Action::Heading),

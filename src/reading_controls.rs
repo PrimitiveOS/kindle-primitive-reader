@@ -78,6 +78,8 @@ pub(crate) struct ReadingControls {
     pub footer_separator: FooterSeparator,
     #[serde(skip_serializing_if = "FooterSymbolStyle::is_default")]
     pub footer_symbol_style: FooterSymbolStyle,
+    #[serde(skip_serializing_if = "FooterAlignment::is_default")]
+    pub footer_alignment: FooterAlignment,
     #[serde(skip_serializing_if = "is_false")]
     pub footer_pages_left_include_current: bool,
     #[serde(default, skip_serializing_if = "is_zero_u8")]
@@ -722,6 +724,40 @@ impl FooterSymbolStyle {
                 FooterItem::BatteryPercentage => "B ",
             },
         }
+    }
+
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// Horizontal placement for the status text inside the reading footer.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum FooterAlignment {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
+impl FooterAlignment {
+    const ALL: [Self; 3] = [Self::Left, Self::Center, Self::Right];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Left => "Left",
+            Self::Center => "Center",
+            Self::Right => "Right",
+        }
+    }
+
+    pub(crate) fn next(self) -> Self {
+        let index = Self::ALL
+            .iter()
+            .position(|value| *value == self)
+            .unwrap_or(0);
+        Self::ALL[(index + 1) % Self::ALL.len()]
     }
 
     fn is_default(&self) -> bool {
@@ -1389,6 +1425,32 @@ mod tests {
             assert!(FooterSymbolStyle::Letters.prefix(item).is_ascii());
             assert!(FooterSymbolStyle::Compact.prefix(item).is_ascii());
         }
+    }
+
+    #[test]
+    fn footer_alignment_matches_stock_options_and_preserves_the_left_default() {
+        use FooterAlignment::{Center, Left, Right};
+
+        assert_eq!(Left.label(), "Left");
+        assert_eq!(Center.label(), "Center");
+        assert_eq!(Right.label(), "Right");
+        assert_eq!(Left.next(), Center);
+        assert_eq!(Center.next(), Right);
+        assert_eq!(Right.next(), Left);
+
+        let controls = ReadingControls {
+            footer_alignment: Center,
+            ..ReadingControls::default()
+        };
+        let reopened: ReadingControls =
+            serde_json::from_slice(&serde_json::to_vec(&controls).unwrap()).unwrap();
+        assert_eq!(reopened.footer_alignment, Center);
+        assert_eq!(
+            serde_json::from_str::<ReadingControls>("{}")
+                .unwrap()
+                .footer_alignment,
+            Left
+        );
     }
 
     #[test]

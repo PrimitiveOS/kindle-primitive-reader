@@ -102,7 +102,7 @@ use crate::search::{MAX_FIXED_SEARCH_HITS, PdfSearch, PdfSearchHit, Search, Sear
 use crate::selection::TextSelection;
 use crate::session::{
     BookConfig, DONE, PAGE_HEIGHT, PAGE_REFRESH_GAP, PageThumbnail, PageTurns, Reading,
-    footer_caption_rect, page_thumbnail,
+    page_thumbnail,
 };
 use crate::text_flow::TextFlow;
 use crate::{Engine, Probe, Result, Settings, TextAlignment};
@@ -6476,9 +6476,9 @@ impl Reader {
                 } else {
                     0
                 };
-            let status_rect = footer_caption_rect(
-                self.footer_caption_width(SMALLER.x.saturating_sub(60) as u32, status_text_width)
-                    as i32,
+            let status_rect = self.footer_caption_rect(
+                self.footer_caption_width(SMALLER.x.saturating_sub(60) as u32, status_text_width),
+                status_text_width,
                 footer_font_px,
             );
             fixed.reading.draw_with_footer(
@@ -6626,9 +6626,9 @@ impl Reader {
                 } else {
                     0
                 };
-            let status_rect = footer_caption_rect(
-                self.footer_caption_width(DONE.x.saturating_sub(60) as u32, status_text_width)
-                    as i32,
+            let status_rect = self.footer_caption_rect(
+                self.footer_caption_width(DONE.x.saturating_sub(60) as u32, status_text_width),
+                status_text_width,
                 footer_font_px,
             );
             reading.draw_page(
@@ -14096,6 +14096,78 @@ mod tests {
         assert_eq!(
             app.input(Input::Tap(DONE.x as f32 + 30.0, DONE.y as f32 + 30.0)),
             Change::Exit
+        );
+    }
+
+    #[test]
+    fn footer_alignment_cycles_persists_and_positions_status_text() {
+        use crate::reading_controls::FooterAlignment;
+
+        let fixture = Fixture::new();
+        let fonts = simulation_fonts();
+        let mut app = fixture.app();
+        app.open_path(&fixture.book).unwrap();
+
+        let row = app
+            .footer_items()
+            .into_iter()
+            .find(|item| item.title == "Footer alignment")
+            .expect("reading footer exposes KOReader alignment choices");
+        assert_eq!(row.detail.as_deref(), Some("Left"));
+        let left = app.footer_caption_rect(700, 120, 28);
+        assert_eq!(left.x, 38);
+        assert_eq!(left.w, 120);
+        capture_test_screen(
+            &app,
+            &fonts,
+            "READER_FOOTER_ALIGNMENT_LEFT_SCREENSHOT",
+            false,
+        );
+
+        for (alignment, expected_x, screenshot) in [
+            (
+                FooterAlignment::Center,
+                328,
+                "READER_FOOTER_ALIGNMENT_CENTER_SCREENSHOT",
+            ),
+            (
+                FooterAlignment::Right,
+                618,
+                "READER_FOOTER_ALIGNMENT_RIGHT_SCREENSHOT",
+            ),
+        ] {
+            let row = app
+                .footer_items()
+                .into_iter()
+                .find(|item| item.title == "Footer alignment")
+                .unwrap();
+            app.activate(row.action).unwrap();
+            assert_eq!(app.controls.footer_alignment, alignment);
+            assert_eq!(
+                ReadingControls::load(&app.controls_path, true).footer_alignment,
+                alignment
+            );
+            let row = app
+                .footer_items()
+                .into_iter()
+                .find(|item| item.title == "Footer alignment")
+                .unwrap();
+            assert_eq!(row.detail.as_deref(), Some(alignment.label()));
+            let rect = app.footer_caption_rect(700, 120, 28);
+            assert_eq!(rect.x, expected_x);
+            assert_eq!(rect.w, 120);
+            capture_test_screen(&app, &fonts, screenshot, false);
+        }
+
+        app.activate(Action::SetReadingControls(ReadingControls {
+            status_bar: crate::reading_controls::StatusBar::Minimal,
+            ..app.controls
+        }))
+        .unwrap();
+        assert!(
+            app.footer_items()
+                .iter()
+                .all(|item| item.title != "Footer alignment")
         );
     }
 
