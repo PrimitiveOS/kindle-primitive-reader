@@ -58,26 +58,28 @@ vertical chapter ticks below it and Exit at the right. [Default footer](screensh
 [Large PDF footer](screenshots/footer-font-large-fixed.png)
 
 The latest Mac `cargo test --lib --bins --tests --locked --features kindle` run
-passed 959 Reader library tests with 62 ignored for private or device-provided
+passed 960 Reader library tests with 62 ignored for private or device-provided
 inputs, one Kindle binary test, 14 EPUB package tests, and four layout probes.
 The run includes the page-overlap movement, style, settings-panel, alternate
 top status header, battery footer, adjustable footer text size, scaled legacy
-font steps, fixed chapter-caption hyphen, custom footer Icons/Letters/Compact
-modes, left/center/right footer alignment and persistence regressions.
+font steps, fixed chapter-caption hyphen, saved bold text and matching width
+measurement, custom footer Icons/Letters/Compact modes, and left/center/right
+footer alignment and persistence regressions.
 
-The latest test-only ARMHF bundle passed 959 Reader tests (62 ignored), 14 EPUB
+The latest test-only ARMHF bundle passed 960 Reader tests (62 ignored), 14 EPUB
 package tests, and four layout probes on the Oasis. Its log is
-[`footer-alignment-kindleoasis-20261124.log`](device-tests/footer-alignment-kindleoasis-20261124.log)
+[`footer-bold-kindleoasis-20261124.log`](device-tests/footer-bold-kindleoasis-20261124.log)
 (SHA-256
-`c93adde224bda0344317aeb8f065503487b188623444aa85bc5de30b7d3a18a4`). The
-static ARM EABI5 alignment Reader (SHA-256
-`d240219f61afbcba1d20ea3679dc153303b8b523b16ca75c0e129867f37d4581`) is
-installed at `/mnt/us/reader/bin/reader-kindle`; the previous executable is
-kept as `/mnt/us/reader/bin/reader-kindle.pre-footer-alignment-20261124`. The
-test bundle was removed after the run; 3.9 GiB remains free and the Kindle's
-keep-awake flag is on. Launcher, user documents, and reading data were left
-unchanged. No foreground E Ink screenshot was captured, so visual acceptance
-remains open. Simulator captures show the [footer symbol modes](screenshots/footer-item-symbols.png),
+`cc7995bc84968042081b4233f8be659eb04bc97e4abe6e0e5c4032cfd50f29b3`). The
+static ARM EABI5 Reader 0.1.25 (SHA-256
+`dfc5fbd28dbf42ad727e183564ff6b15cdeee56633c8e11c65a8cf9d49265a5b`) is
+installed at `/mnt/us/reader/bin/reader-kindle`; the prior executable is kept
+as `/mnt/us/reader/bin/reader-kindle.pre-footer-bold-20261124`. The test bundle
+and log were removed from the Kindle after the run; 3.9 GiB remains free and
+the keep-awake flag is on. The battery reported 16% and was not charging.
+Launcher, user documents, and reading data were left unchanged. No foreground
+E Ink screenshot was captured, so visual acceptance remains open. Simulator
+captures show the [footer symbol modes](screenshots/footer-item-symbols.png),
 [their settings](screenshots/footer-item-symbols-settings.png), and
 [left](screenshots/footer-alignment-left.png),
 [center](screenshots/footer-alignment-center.png), and

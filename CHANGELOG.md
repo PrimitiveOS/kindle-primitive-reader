@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.1.25
+
+- Keep the chapter/page footer caption hyphenated and add a saved bold-text option with matching progress-track width measurement.
+
 ## 0.1.24
 
 - Add KOReader-style reflow controls for line spacing, kerning and built-in base stylesheets, with saved reading positions across repagination.

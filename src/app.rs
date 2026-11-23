@@ -6470,12 +6470,15 @@ impl Reader {
                 && search_caption.is_none()
                 && self.pdf_selection.is_none()
                 && self.selection.is_none();
-            let status_text_width = canvas.measure(&footer_caption, footer_font_px)
-                + if draw_footer_icons {
-                    self.custom_footer_icon_width()
-                } else {
-                    0
-                };
+            let status_text_width = canvas.measure_with_weight(
+                &footer_caption,
+                footer_font_px,
+                self.controls.footer_item_bold,
+            ) + if draw_footer_icons {
+                self.custom_footer_icon_width()
+            } else {
+                0
+            };
             let status_rect = self.footer_caption_rect(
                 self.footer_caption_width(SMALLER.x.saturating_sub(60) as u32, status_text_width),
                 status_text_width,
@@ -6620,12 +6623,15 @@ impl Reader {
                 && search_caption.is_none()
                 && self.selection.is_none()
                 && self.pdf_selection.is_none();
-            let status_text_width = canvas.measure(&footer_caption, footer_font_px)
-                + if draw_footer_icons {
-                    self.custom_footer_icon_width()
-                } else {
-                    0
-                };
+            let status_text_width = canvas.measure_with_weight(
+                &footer_caption,
+                footer_font_px,
+                self.controls.footer_item_bold,
+            ) + if draw_footer_icons {
+                self.custom_footer_icon_width()
+            } else {
+                0
+            };
             let status_rect = self.footer_caption_rect(
                 self.footer_caption_width(DONE.x.saturating_sub(60) as u32, status_text_width),
                 status_text_width,
@@ -14169,6 +14175,61 @@ mod tests {
                 .iter()
                 .all(|item| item.title != "Footer alignment")
         );
+    }
+
+    #[test]
+    fn footer_bold_is_off_by_default_toggle_persists_and_renders_with_matching_width() {
+        use crate::reading_controls::FooterTrackPosition;
+
+        let fixture = Fixture::new();
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        let font_paths = fonts
+            .iter()
+            .map(|font| font.display().to_string())
+            .collect::<Vec<_>>();
+        let mut canvas = Canvas::new(WIDTH, HEIGHT, &font_paths).unwrap();
+        let mut app = fixture.app();
+        app.open_path(&fixture.book).unwrap();
+
+        assert!(!app.controls.footer_item_bold);
+        let row = app
+            .footer_items()
+            .into_iter()
+            .find(|item| item.title == "Bold text")
+            .expect("KOReader-compatible footer bold control is available");
+        assert_eq!(row.detail.as_deref(), Some("Off"));
+        let regular = primitive_app::frame(&app, &mut canvas, false);
+        capture_test_screen(&app, &fonts, "READER_FOOTER_BOLD_OFF_SCREENSHOT", false);
+
+        app.activate(row.action).unwrap();
+        assert!(app.controls.footer_item_bold);
+        assert!(ReadingControls::load(&app.controls_path, true).footer_item_bold);
+        assert_eq!(
+            app.status_caption().as_deref(),
+            Some("Chapter 1 of 1 - Page 1 of 2")
+        );
+        let row = app
+            .footer_items()
+            .into_iter()
+            .find(|item| item.title == "Bold text")
+            .expect("footer control remains available after changing it");
+        assert_eq!(row.detail.as_deref(), Some("On"));
+        let bold = primitive_app::frame(&app, &mut canvas, false);
+        assert_ne!(regular, bold, "bold weight changes the rendered footer");
+        capture_test_screen(&app, &fonts, "READER_FOOTER_BOLD_ON_SCREENSHOT", false);
+
+        let caption = app.status_caption().unwrap();
+        let size = app.footer_caption_font_px();
+        let bold_width = canvas.measure_with_weight(&caption, size, true);
+        let regular_width = canvas.measure_with_weight(&caption, size, false);
+        assert!(bold_width >= regular_width);
+        app.controls.footer_track_position = FooterTrackPosition::Alongside;
+        if let Some(track) = app.footer_track_rect(bold_width) {
+            assert!(track.x + track.w <= DONE.x);
+        }
     }
 
     #[test]

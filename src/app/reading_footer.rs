@@ -380,7 +380,12 @@ impl Reader {
     }
 
     pub(super) fn footer_caption_style(&self) -> TextStyle {
-        TextStyle::new(self.footer_caption_font_px()).ink(SECONDARY)
+        let style = TextStyle::new(self.footer_caption_font_px()).ink(SECONDARY);
+        if self.controls.footer_item_bold {
+            style.bold()
+        } else {
+            style
+        }
     }
 
     fn reading_status_visible(&self) -> bool {
@@ -1501,6 +1506,14 @@ impl Reader {
                 "{} · 8–36",
                 c.footer_item_font_size.unwrap_or(14).clamp(8, 36)
             )),
+            setting(
+                "Bold text",
+                on_off(c.footer_item_bold),
+                ReadingControls {
+                    footer_item_bold: !c.footer_item_bold,
+                    ..c
+                },
+            ),
             setting(
                 "Progress bar",
                 c.footer_scope.label(),

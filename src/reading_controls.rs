@@ -108,6 +108,9 @@ pub(crate) struct ReadingControls {
     /// KOReader-compatible logical footer text size; absent keeps 14 (28 px in Reader chrome).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub footer_item_font_size: Option<u8>,
+    /// KOReader's optional bold weight for status footer text.
+    #[serde(skip_serializing_if = "is_false")]
+    pub footer_item_bold: bool,
     #[serde(skip_serializing_if = "TopHeader::is_default")]
     pub top_header: TopHeader,
     #[serde(skip_serializing_if = "ChapterMarkerWidth::is_default")]
@@ -1368,6 +1371,7 @@ mod tests {
                 | FooterItem::BatteryPercentage.bit(),
             footer_battery_hide_threshold: Some(80),
             footer_item_font_size: Some(18),
+            footer_item_bold: true,
             footer_symbol_style: FooterSymbolStyle::Letters,
             ..ReadingControls::default()
         };
@@ -1377,6 +1381,7 @@ mod tests {
         assert_eq!(reopened.footer_items, controls.footer_items);
         assert_eq!(reopened.footer_battery_hide_threshold, Some(80));
         assert_eq!(reopened.footer_item_font_size, Some(18));
+        assert!(reopened.footer_item_bold);
         assert_eq!(reopened.footer_symbol_style, FooterSymbolStyle::Letters);
         assert_eq!(FooterItem::BatteryPercentage.label(), "Battery percentage");
         assert!(FooterItem::ordered(0).contains(&FooterItem::BatteryPercentage));
@@ -1385,6 +1390,7 @@ mod tests {
         assert_eq!(legacy.status_bar, StatusBar::Chapter);
         assert_eq!(legacy.footer_items, 0);
         assert_eq!(legacy.footer_symbol_style, FooterSymbolStyle::Icons);
+        assert!(!legacy.footer_item_bold);
         assert_eq!(StatusBar::BookTime.next(), StatusBar::Custom);
         assert_eq!(StatusBar::Custom.next(), StatusBar::Minimal);
     }
