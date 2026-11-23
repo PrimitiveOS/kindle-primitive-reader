@@ -47,11 +47,10 @@ counts do not measure completed parity.
 
 ## Current desktop integration gate
 
-The current worktree passes `cargo-zigbuild test --locked --features kindle --lib`:
-907 library tests passed and 62 remain ignored for private or device-provided
-inputs. `cargo-zigbuild test --locked --features kindle --bins --tests --examples`
-also passed, including the Kindle binary, 14 EPUB package tests, four layout
-probes and the example targets. The isolated shared-input worktree passed 140 `kl-core`, eight
+The current worktree passes `cargo-zigbuild test --locked --features kindle --bins --tests --examples`:
+909 library tests passed and 62 remain ignored for private or device-provided
+inputs, as did the Kindle binary test, 14 EPUB package tests, four layout
+probes and all example targets. The isolated shared-input worktree passed 140 `kl-core`, eight
 `primitive-app`, and four `primitive-input` tests. Reader tests used a temporary
 local Cargo patch to that worktree at the time; subsequent tests now use the
 same revision pinned in Cargo.toml and Cargo.lock. The optional KOReader-style
@@ -64,15 +63,18 @@ highlight and confirmed the input bytes were unchanged. This is not the owner's
 Kindle Documents corpus, which remains pending. Both chooser screenshots are
 in [`docs/screenshots`](screenshots).
 The current static ARMHF candidate was built from Reader commit
-`3b21684f421e372a0257c8819b35684dd1c84188`, with the shared-input dependency
+`d04b155c211f14291e9f193dd6714382eb785ebe`, with the shared-input dependency
 pinned to `d3caf14241facf307699d3ecc37414671496bd1a`.
 `file` identifies it as a 32-bit ARM EABI5 statically linked, stripped ELF; its
-size is 33,390,212 bytes and SHA-256 is
-`556952d7a5012579681c7023c035001b63187c0a88c5f59ef8d11116169007c9`.
+size is 33,387,724 bytes and SHA-256 is
+`21442cec2517d767a08c5b71a12338c11f2783b2b5e36881d327fd508bc7cbd5`.
 It is a development candidate, not a release.
 `rust-objcopy` warned that this Rust
 installation cannot load `libLLVM.dylib`; `file` confirms the resulting ELF is
-stripped. Manual
+stripped. The progress footer now matches KOReader's default placement,
+thickness and minimum width; its configurable placement, thickness and minimum
+width are saved for EPUB/PDF and covered by desktop layout tests and light/dark
+simulator captures. Manual
 fixed-page buttons and tap zones pan through zoomed documents using the saved
 overlap and traversal order; their functional tests and simulator captures are
 recorded. OPDS acquisition and remote progress-sync code and worker entry
