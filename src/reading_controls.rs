@@ -71,6 +71,13 @@ pub(crate) struct ReadingControls {
     pub footer_pages_left_include_current: bool,
     #[serde(default, skip_serializing_if = "is_zero_u8")]
     pub footer_percentage_digits: u8,
+    #[serde(skip_serializing_if = "FooterTrackPosition::is_default")]
+    pub footer_track_position: FooterTrackPosition,
+    #[serde(skip_serializing_if = "FooterTrackThickness::is_default")]
+    pub footer_track_thickness: FooterTrackThickness,
+    /// Minimum share reserved for the progress track; `None` keeps KOReader's 20% default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub footer_track_min_width_pct: Option<u8>,
     pub overlap_footer: bool,
     pub footer_scope: ProgressScope,
     pub hide_chapter_markers: bool,
@@ -514,6 +521,79 @@ impl FooterSeparator {
             Self::Bullet => " • ",
             Self::Dot => " · ",
             Self::None => "  ",
+        }
+    }
+
+    pub(crate) fn next(self) -> Self {
+        let index = Self::ALL
+            .iter()
+            .position(|value| *value == self)
+            .unwrap_or(0);
+        Self::ALL[(index + 1) % Self::ALL.len()]
+    }
+
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// Where the reading progress track sits within the compact page footer.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum FooterTrackPosition {
+    Above,
+    #[default]
+    Alongside,
+    Below,
+}
+
+impl FooterTrackPosition {
+    const ALL: [Self; 3] = [Self::Above, Self::Alongside, Self::Below];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Above => "Above status text",
+            Self::Alongside => "Alongside status text",
+            Self::Below => "Below status text",
+        }
+    }
+
+    pub(crate) fn next(self) -> Self {
+        let index = Self::ALL
+            .iter()
+            .position(|value| *value == self)
+            .unwrap_or(0);
+        Self::ALL[(index + 1) % Self::ALL.len()]
+    }
+
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// Height of the visible progress track.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum FooterTrackThickness {
+    Thin,
+    #[default]
+    Thick,
+}
+
+impl FooterTrackThickness {
+    const ALL: [Self; 2] = [Self::Thin, Self::Thick];
+
+    pub(crate) const fn height(self) -> i32 {
+        match self {
+            Self::Thin => 3,
+            Self::Thick => 7,
+        }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Thin => "Thin",
+            Self::Thick => "Thick",
         }
     }
 
@@ -1004,6 +1084,26 @@ mod tests {
         assert_eq!(FooterSeparator::Bar.text(), " | ");
         assert_eq!(FooterSeparator::Bar.next(), FooterSeparator::Bullet);
         assert_eq!(FooterSeparator::None.text(), "  ");
+    }
+
+    #[test]
+    fn footer_track_preferences_round_trip_and_keep_existing_layout() {
+        let controls = ReadingControls {
+            footer_track_position: FooterTrackPosition::Above,
+            footer_track_thickness: FooterTrackThickness::Thin,
+            footer_track_min_width_pct: Some(35),
+            ..ReadingControls::default()
+        };
+        let reopened: ReadingControls =
+            serde_json::from_slice(&serde_json::to_vec(&controls).unwrap()).unwrap();
+        assert_eq!(reopened.footer_track_position, FooterTrackPosition::Above);
+        assert_eq!(reopened.footer_track_thickness, FooterTrackThickness::Thin);
+        assert_eq!(reopened.footer_track_min_width_pct, Some(35));
+
+        let legacy: ReadingControls = serde_json::from_str("{}").unwrap();
+        assert_eq!(legacy.footer_track_position, FooterTrackPosition::Alongside);
+        assert_eq!(legacy.footer_track_thickness, FooterTrackThickness::Thick);
+        assert_eq!(legacy.footer_track_min_width_pct, None);
     }
 
     #[test]

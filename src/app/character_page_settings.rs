@@ -17,6 +17,7 @@ pub(super) enum NumberField {
     AutoTurn,
     AutoTurnOverlapHorizontal,
     AutoTurnOverlapVertical,
+    FooterTrackMinimumWidth,
 }
 
 impl NumberField {
@@ -27,6 +28,7 @@ impl NumberField {
             Self::ContentDpi(_) | Self::LogicalFont(_) | Self::WordSpacing(_) => Screen::Book,
             Self::AutoTurn => Screen::AutoTurn,
             Self::AutoTurnOverlapHorizontal | Self::AutoTurnOverlapVertical => Screen::AutoTurnPan,
+            Self::FooterTrackMinimumWidth => Screen::FooterSettings,
         }
     }
 }
@@ -195,6 +197,20 @@ impl Reader {
             self.show(field.parent());
             return Ok(());
         }
+        if field == NumberField::FooterTrackMinimumWidth {
+            let width = value
+                .trim()
+                .parse::<u8>()
+                .ok()
+                .filter(|width| (5..=90).contains(width) && width % 5 == 0)
+                .ok_or("Enter a minimum width from 5% to 90% in 5% steps")?;
+            let mut controls = self.controls;
+            controls.footer_track_min_width_pct = Some(width);
+            controls.save(&self.controls_path)?;
+            self.controls = controls;
+            self.show(field.parent());
+            return Ok(());
+        }
         if matches!(
             field,
             NumberField::AutoTurnOverlapHorizontal | NumberField::AutoTurnOverlapVertical
@@ -220,6 +236,7 @@ impl Reader {
             NumberField::AutoTurnOverlapHorizontal | NumberField::AutoTurnOverlapVertical => {
                 unreachable!("handled above")
             }
+            NumberField::FooterTrackMinimumWidth => unreachable!("handled above"),
             NumberField::MarginSize => {
                 controls.numbering.label_size = number
                     .filter(|n| (8..=20).contains(n))

@@ -1819,7 +1819,15 @@ impl FixedReading {
             .copied()
             .map(|r| (r, crate::highlight_style::Paint::Temporary(220)))
             .collect();
-        self.draw_with_footer(canvas, notice, &transient, selection, paint, false);
+        self.draw_with_footer(
+            canvas,
+            notice,
+            &transient,
+            selection,
+            paint,
+            false,
+            SMALLER.x.saturating_sub(60) as u32,
+        );
     }
 
     pub(crate) fn page_status(&self) -> String {
@@ -1842,6 +1850,12 @@ impl FixedReading {
         }
     }
 
+    pub(crate) fn footer_caption(&self, notice: Option<&str>) -> String {
+        notice
+            .map(str::to_owned)
+            .unwrap_or_else(|| self.page_status())
+    }
+
     pub(crate) fn draw_with_footer(
         &self,
         canvas: &mut Canvas,
@@ -1850,6 +1864,7 @@ impl FixedReading {
         selection: &[(usize, PdfTextRect)],
         paint: PagePaint,
         hidden_status: bool,
+        status_width: u32,
     ) {
         let mut frame = self.display_frame(paint.visible.clone());
         let mut appearance = paint.highlight_appearance;
@@ -1947,10 +1962,10 @@ impl FixedReading {
         if !selection.is_empty() {
             return;
         }
-        let label = self.page_status();
+        let label = self.footer_caption(notice);
         canvas.text(
-            Rect::new(38, PAGE_HEIGHT as i32 + 12, SMALLER.x - 60, 48),
-            notice.unwrap_or(&label),
+            Rect::new(38, PAGE_HEIGHT as i32 + 12, status_width as i32, 48),
+            &label,
             CAPTION,
         );
         if !full {

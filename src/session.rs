@@ -1060,12 +1060,21 @@ impl Reading {
         )
     }
 
+    pub(crate) fn footer_caption(&self, notice: Option<&str>) -> String {
+        self.error
+            .as_deref()
+            .or(notice)
+            .map(str::to_owned)
+            .unwrap_or_else(|| self.page_status())
+    }
+
     pub(crate) fn draw_page(
         &self,
         canvas: &mut Canvas,
         action: Option<&str>,
         hidden_status: bool,
         notice: Option<&str>,
+        status_width: u32,
         highlights: &[(HighlightRect, crate::highlight_style::Paint)],
         selection: &[HighlightRect],
         paint: PagePaint,
@@ -1077,10 +1086,10 @@ impl Reading {
             return;
         };
         let Some(action) = action else { return };
-        let progress = self.page_status();
+        let caption = self.footer_caption(notice);
         canvas.text(
-            Rect::new(38, PAGE_HEIGHT as i32 + 12, DONE.x - 60, 48),
-            self.error.as_deref().or(notice).unwrap_or(&progress),
+            Rect::new(38, PAGE_HEIGHT as i32 + 12, status_width as i32, 48),
+            &caption,
             CAPTION,
         );
         if full {
@@ -1317,6 +1326,7 @@ impl App for Reading {
             Some("Exit"),
             false,
             None,
+            DONE.x.saturating_sub(60) as u32,
             &[],
             &[],
             PagePaint {

@@ -75,7 +75,7 @@ use crate::annotation_export;
 use crate::dictionary::{self, DictionarySources, InstalledDictionary};
 use crate::epub::{Book, Destination};
 use crate::fixed::{PdfError, PdfLinkTarget};
-use crate::fixed_session::{FixedJump, FixedReading, PdfSelection};
+use crate::fixed_session::{FixedJump, FixedReading, PdfSelection, SMALLER};
 use crate::fixed_text::PdfTextRect;
 use crate::generated_contents::{GeneratedContents, OutlineTarget};
 use crate::koreader_import::{self, ExportEntry, QuoteMatch, QuoteResolver};
@@ -293,6 +293,7 @@ impl Screen {
             Self::NumberingValue(NumberField::AutoTurn) => "Automatic page turns",
             Self::NumberingValue(NumberField::AutoTurnOverlapHorizontal) => "Horizontal overlap",
             Self::NumberingValue(NumberField::AutoTurnOverlapVertical) => "Vertical overlap",
+            Self::NumberingValue(NumberField::FooterTrackMinimumWidth) => "Progress bar width",
             Self::NumberingValue(NumberField::MarginSize) => "Margin label size",
             Self::NumberingValue(_) => "Characters per page",
             Self::NumberingDefaults => "Page numbering defaults",
@@ -1323,6 +1324,11 @@ impl Reader {
                     )
                 ) {
                     2
+                } else if matches!(
+                    screen,
+                    Screen::NumberingValue(NumberField::FooterTrackMinimumWidth)
+                ) {
+                    2
                 } else {
                     4
                 },
@@ -1334,6 +1340,14 @@ impl Reader {
                     self.controls.auto_turn_seconds
                 };
                 self.editor.text = seconds.to_string().chars().collect();
+                self.editor.caret = self.editor.text.len();
+            }
+            if matches!(
+                screen,
+                Screen::NumberingValue(NumberField::FooterTrackMinimumWidth)
+            ) {
+                let width = self.controls.footer_track_min_width_pct.unwrap_or(20);
+                self.editor.text = width.to_string().chars().collect();
                 self.editor.caret = self.editor.text.len();
             }
             if let Screen::NumberingValue(
@@ -6087,18 +6101,23 @@ impl Reader {
                 .collect();
             let search_caption = self.search_caption();
             let status_caption = self.status_caption();
+            let display_notice = self
+                .notice
+                .as_deref()
+                .or(search_caption.as_deref())
+                .or(status_caption.as_deref());
+            let footer_caption = fixed.reading.footer_caption(display_notice);
+            let status_text_width = canvas.measure(&footer_caption, 28);
             fixed.reading.draw_with_footer(
                 canvas,
-                self.notice
-                    .as_deref()
-                    .or(search_caption.as_deref())
-                    .or(status_caption.as_deref()),
+                display_notice,
                 &marks,
                 &selection,
                 self.page_paint(),
                 self.hidden_overlap_footer(),
+                self.footer_caption_width(SMALLER.x.saturating_sub(60) as u32, status_text_width),
             );
-            self.draw_footer_track(canvas);
+            self.draw_footer_track(canvas, status_text_width);
             if self.saved_popup_over_book() {
                 self.draw_saved_popup(canvas);
                 return;
@@ -6207,20 +6226,25 @@ impl Reader {
                 .map_or_else(Vec::new, |selection| reading.highlight_rects(selection));
             let search_caption = self.search_caption();
             let status_caption = self.status_caption();
+            let display_notice = self
+                .notice
+                .as_deref()
+                .or(search_caption.as_deref())
+                .or(status_caption.as_deref());
+            let footer_caption = reading.footer_caption(display_notice);
+            let status_text_width = canvas.measure(&footer_caption, 28);
             reading.draw_page(
                 canvas,
                 self.selection.is_none().then_some("Exit"),
                 self.hidden_overlap_footer(),
-                self.notice
-                    .as_deref()
-                    .or(search_caption.as_deref())
-                    .or(status_caption.as_deref()),
+                display_notice,
+                self.footer_caption_width(DONE.x.saturating_sub(60) as u32, status_text_width),
                 &highlights,
                 &selection,
                 self.page_paint(),
             );
             self.draw_publisher_margins(canvas);
-            self.draw_footer_track(canvas);
+            self.draw_footer_track(canvas, status_text_width);
             if self.saved_popup_over_book() {
                 self.draw_saved_popup(canvas);
                 return;
@@ -6351,6 +6375,9 @@ impl Reader {
                 Screen::NumberingValue(
                     NumberField::AutoTurnOverlapHorizontal | NumberField::AutoTurnOverlapVertical,
                 ) => ("Zoom overlap: 0 to 90%", "Set"),
+                Screen::NumberingValue(NumberField::FooterTrackMinimumWidth) => {
+                    ("Minimum progress bar width: 5 to 90%, in 5% steps", "Set")
+                }
                 Screen::NumberingValue(NumberField::MarginSize) => {
                     ("Margin text size from 8 to 20", "Set")
                 }
@@ -12608,6 +12635,189 @@ mod tests {
         assert_eq!(
             app.input(Input::Tap(DONE.x as f32 + 30.0, DONE.y as f32 + 30.0)),
             Change::Exit
+        );
+    }
+
+    #[test]
+    fn footer_progress_track_positions_persist_and_reserve_text_space_for_epub_and_pdf() {
+        use crate::reading_controls::{FooterTrackPosition, FooterTrackThickness, StatusBar};
+
+        let fixture = Fixture::new();
+        let fonts = simulation_fonts();
+        let font_paths = fonts
+            .iter()
+            .map(|font| font.display().to_string())
+            .collect::<Vec<_>>();
+        let mut measure_canvas = Canvas::new(WIDTH, HEIGHT, &font_paths).unwrap();
+        let mut app = fixture.app();
+        app.open_path(&fixture.book).unwrap();
+        app.activate(Action::SetReadingControls(ReadingControls {
+            status_bar: StatusBar::Progress,
+            footer_track_thickness: FooterTrackThickness::Thin,
+            ..app.controls
+        }))
+        .unwrap();
+
+        let caption = app.active.as_ref().unwrap().reading.footer_caption(None);
+        let measured_text_width = measure_canvas.measure(&caption, 28);
+        let total_track_width = DONE.x - 76;
+        let min_track_width = (total_track_width * 20 + 99) / 100;
+        let caption_width = measured_text_width.min(total_track_width - 20 - min_track_width);
+        let alongside_track_width = total_track_width - caption_width - 20;
+        let expected = [
+            (
+                FooterTrackPosition::Above,
+                Rect::new(38, PAGE_HEIGHT as i32 + 2, DONE.x - 76, 3),
+            ),
+            (
+                FooterTrackPosition::Alongside,
+                Rect::new(
+                    38 + caption_width + 20,
+                    PAGE_HEIGHT as i32 + 32,
+                    alongside_track_width,
+                    3,
+                ),
+            ),
+            (
+                FooterTrackPosition::Below,
+                Rect::new(38, HEIGHT as i32 - 12, DONE.x - 76, 3),
+            ),
+        ];
+        for (position, rect) in expected {
+            app.activate(Action::SetReadingControls(ReadingControls {
+                footer_track_position: position,
+                ..app.controls
+            }))
+            .unwrap();
+            assert_eq!(app.footer_track_rect(measured_text_width), Some(rect));
+            assert_eq!(
+                app.footer_caption_width((DONE.x - 60) as u32, measured_text_width),
+                if position == FooterTrackPosition::Alongside {
+                    caption_width as u32
+                } else {
+                    (DONE.x - 60) as u32
+                }
+            );
+            assert_eq!(
+                ReadingControls::load(&app.controls_path, true).footer_track_position,
+                position
+            );
+            let (screenshot, dark_screenshot) = match position {
+                FooterTrackPosition::Above => ("READER_FOOTER_ABOVE_SCREENSHOT", None),
+                FooterTrackPosition::Alongside => (
+                    "READER_FOOTER_ALONGSIDE_SCREENSHOT",
+                    Some("READER_FOOTER_ALONGSIDE_DARK_SCREENSHOT"),
+                ),
+                FooterTrackPosition::Below => ("READER_FOOTER_BELOW_SCREENSHOT", None),
+            };
+            capture_test_screen(&app, &fonts, screenshot, false);
+            if position == FooterTrackPosition::Alongside {
+                assert_eq!(rect.x, 38 + caption_width + 20);
+                assert!(rect.w >= min_track_width);
+                capture_test_screen(&app, &fonts, dark_screenshot.unwrap(), true);
+            }
+        }
+        app.activate(Action::SetReadingControls(ReadingControls {
+            footer_track_thickness: FooterTrackThickness::Thick,
+            ..app.controls
+        }))
+        .unwrap();
+        assert_eq!(app.footer_track_rect(measured_text_width).unwrap().h, 7);
+        assert_eq!(
+            ReadingControls::load(&app.controls_path, true).footer_track_thickness,
+            FooterTrackThickness::Thick
+        );
+        let position_row = app
+            .footer_items()
+            .into_iter()
+            .find(|item| item.title == "Progress bar position")
+            .expect("footer settings expose progress placement");
+        app.activate(position_row.action).unwrap();
+        assert_eq!(
+            app.controls.footer_track_position,
+            FooterTrackPosition::Above
+        );
+        let settings = app.footer_items();
+        assert_eq!(
+            settings
+                .iter()
+                .find(|item| item.title == "Progress bar position")
+                .and_then(|item| item.detail.as_deref()),
+            Some("Above status text")
+        );
+        assert_eq!(
+            settings
+                .iter()
+                .find(|item| item.title == "Progress bar thickness")
+                .and_then(|item| item.detail.as_deref()),
+            Some("Thick")
+        );
+        app.activate(Action::SetReadingControls(ReadingControls {
+            footer_track_position: FooterTrackPosition::Alongside,
+            ..app.controls
+        }))
+        .unwrap();
+        let long_text_track = app.footer_track_rect(i32::MAX).unwrap();
+        assert_eq!(long_text_track.w, min_track_width);
+
+        let minimum_width = app
+            .footer_items()
+            .into_iter()
+            .find(|item| item.title == "Progress bar minimum width")
+            .expect("footer settings expose the stock minimum track width");
+        assert_eq!(minimum_width.detail.as_deref(), Some("20%"));
+        app.activate(minimum_width.action).unwrap();
+        assert_eq!(
+            app.screen,
+            Screen::NumberingValue(NumberField::FooterTrackMinimumWidth)
+        );
+        app.editor.text = "4".chars().collect();
+        app.editor.caret = app.editor.text.len();
+        assert!(
+            app.apply_numbering_input(NumberField::FooterTrackMinimumWidth)
+                .is_err()
+        );
+        assert_eq!(app.controls.footer_track_min_width_pct, None);
+        app.editor.text = "35".chars().collect();
+        app.editor.caret = app.editor.text.len();
+        app.apply_numbering_input(NumberField::FooterTrackMinimumWidth)
+            .unwrap();
+        assert_eq!(app.controls.footer_track_min_width_pct, Some(35));
+        assert_eq!(
+            ReadingControls::load(&app.controls_path, true).footer_track_min_width_pct,
+            Some(35)
+        );
+        app.show(Screen::Book);
+        let wider_minimum_track = app.footer_track_rect(i32::MAX).unwrap();
+        assert_eq!(wider_minimum_track.w, (total_track_width * 35 + 99) / 100);
+        app.show(Screen::FooterSettings);
+        capture_test_screen(&app, &fonts, "READER_FOOTER_SETTINGS_SCREENSHOT", false);
+
+        let pdf = fixture.root.join("Footer positions.pdf");
+        fs::write(&pdf, crate::fixed::tests::document()).unwrap();
+        app.activate(Action::SetReadingControls(ReadingControls {
+            footer_track_position: FooterTrackPosition::Alongside,
+            ..app.controls
+        }))
+        .unwrap();
+        app.open_path(&pdf).unwrap();
+        let pdf_caption = app.fixed.as_ref().unwrap().reading.footer_caption(None);
+        let pdf_text_width = measure_canvas.measure(&pdf_caption, 28);
+        let pdf_total_track_width = 840 - 76;
+        let pdf_minimum_width = (pdf_total_track_width * 35 + 99) / 100;
+        let pdf_caption_width = pdf_text_width.min(pdf_total_track_width - 20 - pdf_minimum_width);
+        assert_eq!(
+            app.footer_track_rect(pdf_text_width),
+            Some(Rect::new(
+                38 + pdf_caption_width + 20,
+                PAGE_HEIGHT as i32 + 32,
+                pdf_total_track_width - pdf_caption_width - 20,
+                7,
+            ))
+        );
+        assert_eq!(
+            app.footer_caption_width((840 - 60) as u32, pdf_text_width),
+            pdf_caption_width as u32
         );
     }
 

@@ -1,12 +1,17 @@
 //! Reading status shares the existing compact page footer with document controls.
+use super::character_page_settings::NumberField;
 use super::{Action, ActiveFixed, Item, Reader, Screen};
 use crate::Probe;
 use crate::fixed_session::FixedReading;
 use crate::library::Bookmark;
-use crate::reading_controls::{FooterItem, ProgressScope, ReadingControls, StatusBar};
+use crate::reading_controls::{
+    FooterItem, FooterTrackPosition, ProgressScope, ReadingControls, StatusBar,
+};
 use crate::session::{DONE, PAGE_HEIGHT, SHOW_STATUS};
 use primitive_app::{Change, HEIGHT};
 use primitive_ui::{Canvas, Rect};
+
+const FOOTER_TRACK_GAP: i32 = 20;
 
 pub(super) fn fixed_chapters(reading: &FixedReading) -> Vec<(usize, String)> {
     let mut chapters: Vec<_> = reading
@@ -687,13 +692,27 @@ impl Reader {
         }
     }
 
-    pub(super) fn draw_footer_track(&self, canvas: &mut Canvas) {
+    fn footer_track_layout(&self, right: i32, status_text_width: i32) -> (i32, i32) {
+        let width = (right - 76).max(0);
+        let minimum_pct = i32::from(
+            self.controls
+                .footer_track_min_width_pct
+                .unwrap_or(20)
+                .clamp(5, 90),
+        );
+        let minimum_track_width = (width * minimum_pct + 99) / 100;
+        let caption_width = status_text_width
+            .max(0)
+            .min((width - FOOTER_TRACK_GAP - minimum_track_width).max(0));
+        (caption_width, width)
+    }
+
+    pub(super) fn footer_track_rect(&self, status_text_width: i32) -> Option<Rect> {
         let open_above = matches!(self.screen, Screen::BookTools | Screen::FixedTools)
             && self.reading_top
             && !self.reading_bottom
             && self.reading_panel.is_none();
-        let scope = self.controls.footer_scope;
-        if scope == ProgressScope::Off
+        if self.controls.footer_scope == ProgressScope::Off
             || self.controls.status_bar == StatusBar::Minimal
             || self.touch_locked
             || self.selection.is_some()
@@ -703,17 +722,50 @@ impl Reader {
             || self.ocr.is_some()
             || !(open_above || matches!(self.screen, Screen::Book | Screen::Fixed))
         {
-            return;
+            return None;
         }
-        let Some(p) = self.footer_progress() else {
-            return;
-        };
         let right = if self.next_comic().is_some() {
             super::NEXT_COMIC.x
         } else {
             self.footer_right()
         };
-        let bar = Rect::new(38, HEIGHT as i32 - 12, right - 76, 5);
+        let width = (right - 76).max(0);
+        let thickness = self.controls.footer_track_thickness.height();
+        Some(match self.controls.footer_track_position {
+            FooterTrackPosition::Above => Rect::new(38, PAGE_HEIGHT as i32 + 2, width, thickness),
+            FooterTrackPosition::Alongside => {
+                let (text_width, track_width) = self.footer_track_layout(right, status_text_width);
+                Rect::new(
+                    38 + text_width + FOOTER_TRACK_GAP,
+                    PAGE_HEIGHT as i32 + 32,
+                    track_width - text_width - FOOTER_TRACK_GAP,
+                    thickness,
+                )
+            }
+            FooterTrackPosition::Below => Rect::new(38, HEIGHT as i32 - 12, width, thickness),
+        })
+    }
+
+    pub(super) fn footer_caption_width(&self, default: u32, status_text_width: i32) -> u32 {
+        if self.controls.footer_track_position == FooterTrackPosition::Alongside {
+            let right = if self.next_comic().is_some() {
+                super::NEXT_COMIC.x
+            } else {
+                self.footer_right()
+            };
+            return self.footer_track_layout(right, status_text_width).0 as u32;
+        }
+        default
+    }
+
+    pub(super) fn draw_footer_track(&self, canvas: &mut Canvas, status_text_width: i32) {
+        let Some(bar) = self.footer_track_rect(status_text_width) else {
+            return;
+        };
+        let scope = self.controls.footer_scope;
+        let Some(p) = self.footer_progress() else {
+            return;
+        };
         let fraction = match scope {
             ProgressScope::Chapter => p.section_page as f64 / p.section_len as f64,
             _ => p.book_fraction,
@@ -725,10 +777,11 @@ impl Reader {
         }
         if scope == ProgressScope::Book && !self.controls.hide_chapter_markers {
             let mut last = -3;
+            let marker_width = 2;
             p.book_ticks.draw(|tick| {
                 let x = (tick * bar.w as f64).round() as i32;
                 if x > last + 2 && x > 0 && x < bar.w - 1 {
-                    canvas.fill(Rect::new(bar.x + x, bar.y - 3, 2, bar.h + 6), 0);
+                    canvas.fill(Rect::new(bar.x + x, bar.y - 1, marker_width, bar.h + 2), 0);
                     last = x;
                 }
             });
@@ -829,6 +882,27 @@ impl Reader {
                     ..c
                 },
             ),
+            setting(
+                "Progress bar position",
+                c.footer_track_position.label(),
+                ReadingControls {
+                    footer_track_position: c.footer_track_position.next(),
+                    ..c
+                },
+            ),
+            setting(
+                "Progress bar thickness",
+                c.footer_track_thickness.label(),
+                ReadingControls {
+                    footer_track_thickness: c.footer_track_thickness.next(),
+                    ..c
+                },
+            ),
+            Item::new(
+                "Progress bar minimum width",
+                Action::Show(Screen::NumberingValue(NumberField::FooterTrackMinimumWidth)),
+            )
+            .detail(format!("{}%", c.footer_track_min_width_pct.unwrap_or(20))),
             setting(
                 "Status item separator",
                 c.footer_separator.label(),
