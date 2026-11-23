@@ -21,6 +21,7 @@ pub(super) enum NumberField {
     FooterTrackMinimumWidth,
     FooterTrackMarginWidth,
     FooterBatteryHideThreshold,
+    FooterItemFontSize,
 }
 
 impl NumberField {
@@ -36,7 +37,8 @@ impl NumberField {
             Self::AutoTurnOverlapHorizontal | Self::AutoTurnOverlapVertical => Screen::AutoTurnPan,
             Self::FooterTrackMinimumWidth
             | Self::FooterTrackMarginWidth
-            | Self::FooterBatteryHideThreshold => Screen::FooterSettings,
+            | Self::FooterBatteryHideThreshold
+            | Self::FooterItemFontSize => Screen::FooterSettings,
         }
     }
 }
@@ -219,6 +221,20 @@ impl Reader {
             self.show(field.parent());
             return Ok(());
         }
+        if field == NumberField::FooterItemFontSize {
+            let size = value
+                .trim()
+                .parse::<u8>()
+                .ok()
+                .filter(|size| (8..=36).contains(size))
+                .ok_or("Enter a footer text size from 8 to 36")?;
+            let mut controls = self.controls;
+            controls.footer_item_font_size = Some(size);
+            controls.save(&self.controls_path)?;
+            self.controls = controls;
+            self.show(field.parent());
+            return Ok(());
+        }
         if matches!(
             field,
             NumberField::FooterTrackMinimumWidth | NumberField::FooterTrackMarginWidth
@@ -273,6 +289,7 @@ impl Reader {
             NumberField::FooterTrackMinimumWidth => unreachable!("handled above"),
             NumberField::FooterTrackMarginWidth => unreachable!("handled above"),
             NumberField::FooterBatteryHideThreshold => unreachable!("handled above"),
+            NumberField::FooterItemFontSize => unreachable!("handled above"),
             NumberField::MarginSize => {
                 controls.numbering.label_size = number
                     .filter(|n| (8..=20).contains(n))

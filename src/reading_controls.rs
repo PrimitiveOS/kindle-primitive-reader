@@ -101,6 +101,9 @@ pub(crate) struct ReadingControls {
     /// Hide the custom footer battery item when the charge is above this level; absent keeps 100%.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub footer_battery_hide_threshold: Option<u8>,
+    /// KOReader-compatible logical footer text size; absent keeps 14 (28 px in Reader chrome).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub footer_item_font_size: Option<u8>,
     #[serde(skip_serializing_if = "TopHeader::is_default")]
     pub top_header: TopHeader,
     #[serde(skip_serializing_if = "ChapterMarkerWidth::is_default")]
@@ -479,9 +482,9 @@ impl MenuActivation {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum StatusBar {
-    #[default]
     PageNumbers,
     Progress,
+    #[default]
     Chapter,
     Remaining,
     ChapterTime,
@@ -495,7 +498,7 @@ impl StatusBar {
         match self {
             Self::PageNumbers => "Page numbers",
             Self::Progress => "Book progress",
-            Self::Chapter => "Current chapter",
+            Self::Chapter => "Chapter and page",
             Self::Remaining => "Chapter pages left",
             Self::ChapterTime => "Chapter time left",
             Self::BookTime => "Book time left",
@@ -638,6 +641,7 @@ fn is_false(value: &bool) -> bool {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum FooterSeparator {
     #[default]
+    Hyphen,
     Bar,
     Bullet,
     Dot,
@@ -645,10 +649,11 @@ pub(crate) enum FooterSeparator {
 }
 
 impl FooterSeparator {
-    const ALL: [Self; 4] = [Self::Bar, Self::Bullet, Self::Dot, Self::None];
+    const ALL: [Self; 5] = [Self::Hyphen, Self::Bar, Self::Bullet, Self::Dot, Self::None];
 
     pub(crate) fn label(self) -> &'static str {
         match self {
+            Self::Hyphen => "Hyphen (-)",
             Self::Bar => "Vertical bar (|)",
             Self::Bullet => "Bullet (•)",
             Self::Dot => "Dot (·)",
@@ -658,6 +663,7 @@ impl FooterSeparator {
 
     pub(crate) fn text(self) -> &'static str {
         match self {
+            Self::Hyphen => " - ",
             Self::Bar => " | ",
             Self::Bullet => " • ",
             Self::Dot => " · ",
@@ -683,8 +689,8 @@ impl FooterSeparator {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum FooterTrackPosition {
     Above,
-    #[default]
     Alongside,
+    #[default]
     Below,
 }
 
@@ -1244,6 +1250,7 @@ mod tests {
                 | FooterItem::BookmarkCount.bit()
                 | FooterItem::BatteryPercentage.bit(),
             footer_battery_hide_threshold: Some(80),
+            footer_item_font_size: Some(18),
             ..ReadingControls::default()
         };
         let bytes = serde_json::to_vec(&controls).unwrap();
@@ -1251,11 +1258,12 @@ mod tests {
         assert_eq!(reopened.status_bar, StatusBar::Custom);
         assert_eq!(reopened.footer_items, controls.footer_items);
         assert_eq!(reopened.footer_battery_hide_threshold, Some(80));
+        assert_eq!(reopened.footer_item_font_size, Some(18));
         assert_eq!(FooterItem::BatteryPercentage.label(), "Battery percentage");
         assert!(FooterItem::ordered(0).contains(&FooterItem::BatteryPercentage));
 
         let legacy: ReadingControls = serde_json::from_str("{}").unwrap();
-        assert_eq!(legacy.status_bar, StatusBar::PageNumbers);
+        assert_eq!(legacy.status_bar, StatusBar::Chapter);
         assert_eq!(legacy.footer_items, 0);
         assert_eq!(StatusBar::BookTime.next(), StatusBar::Custom);
         assert_eq!(StatusBar::Custom.next(), StatusBar::Minimal);
@@ -1332,13 +1340,14 @@ mod tests {
         assert!(reopened.footer_auto_refresh);
 
         let legacy: ReadingControls = serde_json::from_str("{}").unwrap();
-        assert_eq!(legacy.footer_separator, FooterSeparator::Bar);
+        assert_eq!(legacy.footer_separator, FooterSeparator::Hyphen);
         assert!(!legacy.footer_pages_left_include_current);
         assert_eq!(legacy.footer_percentage_digits, 0);
         assert!(!legacy.footer_auto_refresh);
 
-        assert_eq!(FooterSeparator::Bar.label(), "Vertical bar (|)");
-        assert_eq!(FooterSeparator::Bar.text(), " | ");
+        assert_eq!(FooterSeparator::Hyphen.label(), "Hyphen (-)");
+        assert_eq!(FooterSeparator::Hyphen.text(), " - ");
+        assert_eq!(FooterSeparator::Hyphen.next(), FooterSeparator::Bar);
         assert_eq!(FooterSeparator::Bar.next(), FooterSeparator::Bullet);
         assert_eq!(FooterSeparator::None.text(), "  ");
     }
@@ -1362,7 +1371,7 @@ mod tests {
         assert_eq!(reopened.chapter_marker_width, ChapterMarkerWidth::Thick);
 
         let legacy: ReadingControls = serde_json::from_str("{}").unwrap();
-        assert_eq!(legacy.footer_track_position, FooterTrackPosition::Alongside);
+        assert_eq!(legacy.footer_track_position, FooterTrackPosition::Below);
         assert_eq!(legacy.footer_track_thickness, FooterTrackThickness::Thick);
         assert_eq!(legacy.footer_track_min_width_pct, None);
         assert_eq!(legacy.footer_track_margin_width, None);

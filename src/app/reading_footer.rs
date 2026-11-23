@@ -10,7 +10,7 @@ use crate::reading_controls::{
 };
 use crate::session::{DONE, PAGE_HEIGHT, SHOW_STATUS};
 use primitive_app::{Change, HEIGHT, WIDTH};
-use primitive_ui::{Canvas, HAIRLINE, Rect, TextStyle};
+use primitive_ui::{Canvas, HAIRLINE, Rect, SECONDARY, TextStyle};
 use std::time::{Duration, Instant};
 
 const FOOTER_TRACK_GAP: i32 = 20;
@@ -89,11 +89,34 @@ impl<'a> PageSections<'a> {
                 .map(|entry| (entry.position.page, entry.label.as_str())),
         }
     }
+
+    fn position(
+        self,
+        page: usize,
+        flow: Option<(&crate::library::hidden_flows::PageFlows, usize)>,
+    ) -> (usize, usize) {
+        let mut current = 0;
+        let mut count = 0;
+        for index in 0..self.len() {
+            let Some((start, _)) = self.at(index) else {
+                continue;
+            };
+            if flow.is_some_and(|(flows, active)| flows.flow(start) != active) {
+                continue;
+            }
+            count += 1;
+            if start <= page {
+                current = count;
+            }
+        }
+        (current.max(1), count.max(1))
+    }
 }
 
 struct Progress<'a> {
     section_range: std::ops::Range<usize>,
     section_index: usize,
+    section_count: usize,
     section_name: &'a str,
     section_page: usize,
     section_len: usize,
@@ -170,9 +193,11 @@ impl<'a> Progress<'a> {
             .and_then(|index| sections.at(index))
             .unwrap_or((0, fallback));
         let end = sections.at(next).map_or(count, |(end, _)| end);
+        let (section_index, section_count) = sections.position(page, None);
         Self {
             section_range: start..end,
-            section_index: next,
+            section_index,
+            section_count,
             section_name: name,
             section_page: page - start + 1,
             section_len: end - start,
@@ -193,6 +218,7 @@ impl<'a> Progress<'a> {
         sections: PageSections<'a>,
     ) {
         let flow = flows.flow(first);
+        (self.section_index, self.section_count) = sections.position(first, Some((&flows, flow)));
         let total = flows.count_in(flow, 0..count).max(1);
         self.section_page = flows
             .count_in(flow, self.section_range.start..last + 1)
@@ -305,6 +331,24 @@ fn battery_footer_text(level: u32, charging: bool, hide_above: u8) -> Option<Str
 }
 
 impl Reader {
+    pub(super) fn footer_caption_font_px(&self) -> i32 {
+        let size = i32::from(
+            self.controls
+                .footer_item_font_size
+                .unwrap_or(14)
+                .clamp(8, 36),
+        );
+        if size <= 14 {
+            size * 2
+        } else {
+            28 + ((size - 14) * 12 + 11) / 22
+        }
+    }
+
+    pub(super) fn footer_caption_style(&self) -> TextStyle {
+        TextStyle::new(self.footer_caption_font_px()).ink(SECONDARY)
+    }
+
     fn reading_status_visible(&self) -> bool {
         self.stats_awake
             && matches!(
@@ -951,8 +995,8 @@ impl Reader {
             StatusBar::BookTime => time(ProgressScope::Book),
             StatusBar::Progress => Some(format!("{percentage} of book")),
             StatusBar::Chapter => Some(format!(
-                "{}{separator}Page {} of {}",
-                p.section_name, p.section_page, p.section_len,
+                "Chapter {} of {}{separator}Page {} of {}",
+                p.section_index, p.section_count, p.section_page, p.section_len,
             )),
             StatusBar::Remaining => Some(format!(
                 "{}{separator}{} {} left",
@@ -1326,6 +1370,14 @@ impl Reader {
                     ..c
                 },
             ),
+            Item::new(
+                "Item font size",
+                Action::Show(Screen::NumberingValue(NumberField::FooterItemFontSize)),
+            )
+            .detail(format!(
+                "{} · 8–36",
+                c.footer_item_font_size.unwrap_or(14).clamp(8, 36)
+            )),
             setting(
                 "Progress bar",
                 c.footer_scope.label(),

@@ -47,14 +47,38 @@ counts do not measure completed parity.
 
 ## Current host and device integration gate
 
-The latest full Mac `cargo test --locked --features kindle` run, against the
-current worktree, passed 953 Reader library tests with 62 ignored for private
-or device-provided inputs, one Kindle binary test, 14 EPUB package tests, and
-four layout probes. The page-overlap movement, style, settings-panel,
-alternate top status header, battery footer and persistence regressions are
-included. The prior test-only ARMHF bundle described below predates the
-page-overlap changes. The two cross-page PDF selection regressions pass in both
-directions, after save and reopen, and with an unreadable intermediate page. The
+On 23 November 2026, the adjustable footer item font size and compact two-row
+layout passed on the Mac and on the Oasis 3 from a test-only static ARMHF bundle.
+The Mac library, binary and integration suites passed 954 Reader tests (62
+ignored), one Kindle binary test, 14 EPUB package tests, and four layout probes.
+The Oasis bundle passed 954 Reader tests (62 ignored), 14 package tests, and
+four layout probes. The Reader, EPUB package, layout probe, reader-probe, and
+run-script SHA-256 values were respectively
+`2ddc9a5a0804cb7e9a0264acf51bceff2ff1bbd463d5f98c805b09b87f1df28a`,
+`61fedcc27b6c9498cf6abede441cf638a4d2ef14e62864c3c83dbec011b55738`,
+`73e3f9f354ffb7ea05a4401b539339033b513036fc8966ae81a0b5ac470ea945`,
+`709d1da62e6ce6c346bad3d5671371e43b691f4a85f8793cf878b4337e6beb95`, and
+`23732a07dcee5618ccdadaa5d138bb6f5d15a7860bd76d120ca3efd9f316eaf7`. The
+archive SHA-256 was
+`74a6ce02f6c584908ac73939c1dbfecabc6dc13f4d3cb31a75c8b6cc826c2c6a` on both
+hosts. The Kindle remained awake; after cleanup it had 4.0 GiB free. This was
+an offscreen test run: Reader and Launcher were not replaced, saved reading data
+and documents were untouched, and the new footer control was not exercised in
+the foreground. A read-only check found no saved track-position override in
+the installed Reader settings. The default simulator frame now matches the
+requested two-row layout: `Chapter x of y - Page m of n`, then the horizontal
+progress line with vertical chapter ticks below it and Exit at the right.
+[Default footer](screenshots/reading-footer-below.png) · [Large EPUB footer](screenshots/footer-font-large-epub.png) · [Large PDF footer](screenshots/footer-font-large-fixed.png)
+
+The latest Mac `cargo test --lib --bins --tests --locked --features kindle` run,
+against the current worktree, passed 954 Reader library tests with 62 ignored
+for private or device-provided inputs, one Kindle binary test, 14 EPUB package
+tests, and four layout probes. The page-overlap movement, style, settings-panel,
+alternate top status header, battery footer, adjustable footer text size, and
+persistence regressions are included. A fresh ARMHF bundle for these changes
+passed the same Reader, package, and layout suites on the Oasis (hashes above).
+The two cross-page PDF selection regressions pass in both directions, after
+save and reopen, and with an unreadable intermediate page. The
 isolated shared-input worktree passed 140 `kl-core`, eight `primitive-app`, and
 four `primitive-input` tests. Reader tests used a temporary local Cargo patch
 to that worktree at the time; subsequent tests now use the same revision pinned

@@ -7,7 +7,7 @@ use std::time::Instant;
 use crate::scan_deskew::{DeskewCache, FULL_PAGE, Quad, source_rect};
 use hayro::kurbo::{Affine, Point};
 use primitive_app::{WIDTH, with_storage};
-use primitive_ui::{CAPTION, Canvas, GrayImage, Input, Rect};
+use primitive_ui::{CAPTION, Canvas, GrayImage, Input, Rect, TextStyle};
 
 use crate::Result;
 use crate::comic::{Comic, ImagePage};
@@ -1978,7 +1978,8 @@ impl FixedReading {
             selection,
             paint,
             false,
-            SMALLER.x.saturating_sub(60) as u32,
+            crate::session::footer_caption_rect(SMALLER.x.saturating_sub(60), 28),
+            CAPTION,
         );
     }
 
@@ -2016,7 +2017,8 @@ impl FixedReading {
         selection: &[(usize, PdfTextRect)],
         paint: PagePaint,
         hidden_status: bool,
-        status_width: u32,
+        status_rect: Rect,
+        status_style: TextStyle,
     ) {
         let mut frame = self.display_frame(paint.visible.clone());
         let mut appearance = paint.highlight_appearance;
@@ -2115,11 +2117,7 @@ impl FixedReading {
             return;
         }
         let label = self.footer_caption(notice);
-        canvas.text(
-            Rect::new(38, PAGE_HEIGHT as i32 + 12, status_width as i32, 48),
-            &label,
-            CAPTION,
-        );
+        canvas.text(status_rect, &label, status_style);
         if !full {
             return;
         }

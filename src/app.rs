@@ -102,7 +102,7 @@ use crate::search::{MAX_FIXED_SEARCH_HITS, PdfSearch, PdfSearchHit, Search, Sear
 use crate::selection::TextSelection;
 use crate::session::{
     BookConfig, DONE, PAGE_HEIGHT, PAGE_REFRESH_GAP, PageThumbnail, PageTurns, Reading,
-    page_thumbnail,
+    footer_caption_rect, page_thumbnail,
 };
 use crate::text_flow::TextFlow;
 use crate::{Engine, Probe, Result, Settings, TextAlignment};
@@ -306,6 +306,7 @@ impl Screen {
             Self::NumberingValue(NumberField::FooterTrackMinimumWidth) => "Progress bar width",
             Self::NumberingValue(NumberField::FooterTrackMarginWidth) => "Progress bar margins",
             Self::NumberingValue(NumberField::FooterBatteryHideThreshold) => "Battery threshold",
+            Self::NumberingValue(NumberField::FooterItemFontSize) => "Footer text size",
             Self::NumberingValue(NumberField::MarginSize) => "Margin label size",
             Self::NumberingValue(_) => "Characters per page",
             Self::NumberingDefaults => "Page numbering defaults",
@@ -1375,9 +1376,17 @@ impl Reader {
                         NumberField::FooterTrackMinimumWidth
                             | NumberField::FooterTrackMarginWidth
                             | NumberField::FooterBatteryHideThreshold
+                            | NumberField::FooterItemFontSize
                     )
                 ) {
-                    3
+                    if matches!(
+                        screen,
+                        Screen::NumberingValue(NumberField::FooterItemFontSize)
+                    ) {
+                        2
+                    } else {
+                        3
+                    }
                 } else {
                     4
                 },
@@ -1405,6 +1414,11 @@ impl Reader {
                 Screen::NumberingValue(NumberField::FooterBatteryHideThreshold) => {
                     let threshold = self.controls.footer_battery_hide_threshold.unwrap_or(100);
                     self.editor.text = threshold.to_string().chars().collect();
+                    self.editor.caret = self.editor.text.len();
+                }
+                Screen::NumberingValue(NumberField::FooterItemFontSize) => {
+                    let size = self.controls.footer_item_font_size.unwrap_or(14);
+                    self.editor.text = size.to_string().chars().collect();
                     self.editor.caret = self.editor.text.len();
                 }
                 _ => {}
@@ -6449,7 +6463,9 @@ impl Reader {
                 .or(search_caption.as_deref())
                 .or(status_caption.as_deref());
             let footer_caption = fixed.reading.footer_caption(display_notice);
-            let status_text_width = canvas.measure(&footer_caption, 28);
+            let footer_font_px = self.footer_caption_font_px();
+            let footer_style = self.footer_caption_style();
+            let status_text_width = canvas.measure(&footer_caption, footer_font_px);
             fixed.reading.draw_with_footer(
                 canvas,
                 display_notice,
@@ -6457,7 +6473,14 @@ impl Reader {
                 &selection,
                 self.page_paint(),
                 self.hidden_overlap_footer(),
-                self.footer_caption_width(SMALLER.x.saturating_sub(60) as u32, status_text_width),
+                footer_caption_rect(
+                    self.footer_caption_width(
+                        SMALLER.x.saturating_sub(60) as u32,
+                        status_text_width,
+                    ) as i32,
+                    footer_font_px,
+                ),
+                footer_style,
             );
             self.draw_footer_track(canvas, status_text_width);
             if self.saved_popup_over_book() {
@@ -6574,13 +6597,20 @@ impl Reader {
                 .or(search_caption.as_deref())
                 .or(status_caption.as_deref());
             let footer_caption = reading.footer_caption(display_notice);
-            let status_text_width = canvas.measure(&footer_caption, 28);
+            let footer_font_px = self.footer_caption_font_px();
+            let footer_style = self.footer_caption_style();
+            let status_text_width = canvas.measure(&footer_caption, footer_font_px);
             reading.draw_page(
                 canvas,
                 self.selection.is_none().then_some("Exit"),
                 self.hidden_overlap_footer(),
                 display_notice,
-                self.footer_caption_width(DONE.x.saturating_sub(60) as u32, status_text_width),
+                footer_caption_rect(
+                    self.footer_caption_width(DONE.x.saturating_sub(60) as u32, status_text_width)
+                        as i32,
+                    footer_font_px,
+                ),
+                footer_style,
                 &highlights,
                 &selection,
                 self.page_paint(),
@@ -6729,6 +6759,9 @@ impl Reader {
                 }
                 Screen::NumberingValue(NumberField::FooterBatteryHideThreshold) => {
                     ("Hide battery when charge is above: 0 to 100%", "Set")
+                }
+                Screen::NumberingValue(NumberField::FooterItemFontSize) => {
+                    ("Footer text size: 8 to 36; default 14", "Set")
                 }
                 Screen::NumberingValue(NumberField::MarginSize) => {
                     ("Margin text size from 8 to 20", "Set")
@@ -10509,6 +10542,11 @@ mod tests {
             .unwrap_or_else(|| vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")]);
         let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
         app.controls.dictionary_on_single_word = Some(false);
+        app.activate(Action::SetReadingControls(ReadingControls {
+            status_bar: crate::reading_controls::StatusBar::PageNumbers,
+            ..app.controls
+        }))
+        .unwrap();
         app.open_path(&fixture.book).unwrap();
         assert_eq!(app.visible_publisher_page(), None);
         assert_eq!(app.status_caption(), None);
@@ -10667,6 +10705,11 @@ mod tests {
         write_outline_fixture(&f.book, Some(nav), None);
         let fonts = simulation_fonts();
         let mut app = Reader::open(&f.root, &f.state, fonts.clone()).unwrap();
+        app.activate(Action::SetReadingControls(ReadingControls {
+            status_bar: crate::reading_controls::StatusBar::PageNumbers,
+            ..app.controls
+        }))
+        .unwrap();
         app.open_path(&f.book).unwrap();
         app.open_reading_edge(true, 520.);
         tap_reading_control(&mut app, "Page numbering");
@@ -12504,13 +12547,13 @@ mod tests {
             app.controls.status_bar = StatusBar::Chapter;
             assert_eq!(
                 app.status_caption().as_deref(),
-                Some("Headland | Page 1 of 12")
+                Some("Chapter 5 of 8 - Page 1 of 12")
             );
             let id = app.open_book_id().unwrap();
             app.library.state_mut(id).unwrap().custom_contents.enabled = false;
             assert_eq!(
                 app.status_caption().as_deref(),
-                Some("Document | Page 49 of 96")
+                Some("Chapter 1 of 1 - Page 49 of 96")
             );
             app.library.state_mut(id).unwrap().custom_contents.enabled = true;
         }
@@ -13303,25 +13346,35 @@ mod tests {
 
     #[test]
     fn epub_footer_cycles_persists_and_keeps_the_anchor_when_skimming() {
-        use crate::reading_controls::{FooterItem, FooterSeparator, StatusBar};
+        use crate::reading_controls::{
+            FooterItem, FooterSeparator, FooterTrackPosition, StatusBar,
+        };
 
         let fixture = Fixture::new();
         let mut app = fixture.app();
         app.open_path(&fixture.book).unwrap();
+        assert_eq!(app.controls.status_bar, StatusBar::Chapter);
+        assert_eq!(
+            app.controls.footer_track_position,
+            FooterTrackPosition::Below
+        );
+        let caption = app.status_caption().unwrap();
+        assert!(caption.starts_with("Chapter 1 of "));
+        assert!(caption.contains(" - Page 1 of "));
         let position_before = position(&app.active.as_ref().unwrap().reading);
         let tap = Input::Tap(250.0, HEIGHT as f32 - 32.0);
         let hold = Input::LongTap(250.0, HEIGHT as f32 - 32.0);
         assert_eq!(app.input(hold), Change::None);
 
         for mode in [
-            StatusBar::Progress,
-            StatusBar::Chapter,
             StatusBar::Remaining,
             StatusBar::ChapterTime,
             StatusBar::BookTime,
             StatusBar::Custom,
             StatusBar::Minimal,
             StatusBar::PageNumbers,
+            StatusBar::Progress,
+            StatusBar::Chapter,
         ] {
             assert_eq!(app.input(tap), Change::Partial);
             assert_eq!(app.screen, Screen::Book);
@@ -13724,6 +13777,76 @@ mod tests {
     }
 
     #[test]
+    fn footer_item_font_size_matches_stock_range_persists_and_draws_for_both_page_types() {
+        let fixture = Fixture::new();
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/Silkscreen-Regular.ttf"),
+        ];
+        let mut app = fixture.app();
+        app.fonts = fonts.clone();
+        app.open_path(&fixture.book).unwrap();
+        assert_eq!(app.controls.footer_item_font_size, None);
+        assert_eq!(app.footer_caption_font_px(), 28);
+
+        app.show(Screen::FooterSettings);
+        let setting = app
+            .items()
+            .into_iter()
+            .find(|item| item.title == "Item font size")
+            .expect("the footer settings expose adjustable item text size");
+        assert_eq!(setting.detail.as_deref(), Some("14 · 8–36"));
+        app.activate(setting.action).unwrap();
+        let field = NumberField::FooterItemFontSize;
+        assert_eq!(app.screen, Screen::NumberingValue(field));
+        assert_eq!(app.editor.string(), "14");
+
+        for invalid in ["7", "37"] {
+            app.editor.text = invalid.chars().collect();
+            app.editor.caret = app.editor.text.len();
+            assert!(app.apply_numbering_input(field).is_err());
+            assert_eq!(app.controls.footer_item_font_size, None);
+        }
+        app.editor.text = "8".chars().collect();
+        app.editor.caret = app.editor.text.len();
+        app.apply_numbering_input(field).unwrap();
+        assert_eq!(app.controls.footer_item_font_size, Some(8));
+        assert_eq!(app.footer_caption_font_px(), 16);
+        assert_eq!(
+            crate::session::footer_caption_rect(500, app.footer_caption_font_px()).h,
+            36
+        );
+
+        app.show(Screen::NumberingValue(field));
+        app.editor.text = "36".chars().collect();
+        app.editor.caret = app.editor.text.len();
+        app.apply_numbering_input(field).unwrap();
+        assert_eq!(app.controls.footer_item_font_size, Some(36));
+        assert_eq!(app.footer_caption_font_px(), 40);
+        let large_rect = crate::session::footer_caption_rect(500, app.footer_caption_font_px());
+        assert_eq!(large_rect.y, PAGE_HEIGHT as i32);
+        assert_eq!(large_rect.h, 60);
+        assert_eq!(
+            ReadingControls::load(&app.controls_path, true).footer_item_font_size,
+            Some(36)
+        );
+
+        app.activate(Action::SetReadingControls(ReadingControls {
+            status_bar: crate::reading_controls::StatusBar::Progress,
+            ..app.controls
+        }))
+        .unwrap();
+        app.show(Screen::Book);
+        capture_test_screen(&app, &fonts, "READER_FOOTER_FONT_LARGE_SCREENSHOT", false);
+
+        let pdf = fixture.root.join("Footer font.pdf");
+        fs::write(&pdf, crate::fixed::tests::document()).unwrap();
+        app.open_path(&pdf).unwrap();
+        capture_test_screen(&app, &fonts, "READER_FOOTER_FONT_FIXED_SCREENSHOT", false);
+        assert!(app.fixed.is_some());
+    }
+
+    #[test]
     fn top_header_relayouts_from_current_anchor_and_displays_configured_reading_metrics() {
         use crate::reading_controls::{HeaderBattery, TopHeader};
 
@@ -13869,6 +13992,11 @@ mod tests {
         let pdf = fixture.root.join("Footer.pdf");
         fs::write(&pdf, crate::fixed::tests::document()).unwrap();
         let mut app = fixture.app();
+        app.activate(Action::SetReadingControls(ReadingControls {
+            status_bar: StatusBar::PageNumbers,
+            ..app.controls
+        }))
+        .unwrap();
         app.open_path(&pdf).unwrap();
         let tap = Input::Tap(240.0, HEIGHT as f32 - 30.0);
         app.input(tap);
@@ -13910,7 +14038,7 @@ mod tests {
         let mut app = fixture.app();
         app.open_path(&fixture.book).unwrap();
         app.activate(Action::SetReadingControls(ReadingControls {
-            status_bar: StatusBar::Progress,
+            status_bar: StatusBar::Chapter,
             footer_track_thickness: FooterTrackThickness::Thin,
             ..app.controls
         }))
@@ -14128,6 +14256,11 @@ mod tests {
         let margined_track = app.footer_track_rect(i32::MAX).unwrap();
         assert_eq!(margined_track.w, min_width_35);
         assert_eq!(margined_track.x + margined_track.w, DONE.x - 24);
+        app.activate(Action::SetReadingControls(ReadingControls {
+            footer_track_position: FooterTrackPosition::Below,
+            ..app.controls
+        }))
+        .unwrap();
         app.show(Screen::FooterSettings);
         capture_test_screen(&app, &fonts, "READER_FOOTER_SETTINGS_SCREENSHOT", false);
 

@@ -11,7 +11,7 @@ use crate::epub::{Book, Destination};
 use crate::selection::{HighlightRect, TextSelection};
 use crate::{Anchor, Engine, Probe, Result, Settings};
 use primitive_app::{App, Change, HEIGHT, WIDTH, with_storage};
-use primitive_ui::{CAPTION, Canvas, GrayImage, HAIRLINE, Input, Rect};
+use primitive_ui::{CAPTION, Canvas, GrayImage, HAIRLINE, Input, Rect, TextStyle};
 
 const FOOTER_HEIGHT: u32 = 74;
 pub(crate) const PAGE_HEIGHT: u32 = HEIGHT - FOOTER_HEIGHT;
@@ -22,6 +22,13 @@ const FACING_PAGE_WIDTH: u32 = (WIDTH - FACING_GUTTER) / 2;
 const PREFETCH_DELAY: Duration = Duration::from_millis(480);
 // Give a partial E Ink update time to settle before submitting another.
 pub(crate) const PAGE_REFRESH_GAP: Duration = Duration::from_millis(450);
+
+pub(crate) fn footer_caption_rect(width: i32, font_size: i32) -> Rect {
+    let caption_region = FOOTER_HEIGHT as i32 - 14;
+    let height = font_size.saturating_add(20).clamp(30, caption_region);
+    let top = PAGE_HEIGHT as i32 + (caption_region - height) / 2;
+    Rect::new(38, top, width, height)
+}
 
 pub(crate) struct PagePaint {
     pub selection_color: Option<crate::highlight_style::HighlightColor>,
@@ -1164,7 +1171,8 @@ impl Reading {
         action: Option<&str>,
         hidden_status: bool,
         notice: Option<&str>,
-        status_width: u32,
+        status_rect: Rect,
+        status_style: TextStyle,
         highlights: &[(HighlightRect, crate::highlight_style::Paint)],
         selection: &[HighlightRect],
         paint: PagePaint,
@@ -1177,11 +1185,7 @@ impl Reading {
         };
         let Some(action) = action else { return };
         let caption = self.footer_caption(notice);
-        canvas.text(
-            Rect::new(38, PAGE_HEIGHT as i32 + 12, status_width as i32, 48),
-            &caption,
-            CAPTION,
-        );
+        canvas.text(status_rect, &caption, status_style);
         if full {
             canvas.button(DONE, action, false, false);
         }
@@ -1484,7 +1488,8 @@ impl App for Reading {
             Some("Exit"),
             false,
             None,
-            DONE.x.saturating_sub(60) as u32,
+            footer_caption_rect(DONE.x.saturating_sub(60), 28),
+            CAPTION,
             &[],
             &[],
             PagePaint {
