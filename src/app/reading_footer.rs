@@ -3,7 +3,7 @@ use super::{Action, ActiveFixed, Item, Reader, Screen};
 use crate::Probe;
 use crate::fixed_session::FixedReading;
 use crate::library::Bookmark;
-use crate::reading_controls::{ProgressScope, ReadingControls, StatusBar};
+use crate::reading_controls::{FooterItem, ProgressScope, ReadingControls, StatusBar};
 use crate::session::{DONE, PAGE_HEIGHT, SHOW_STATUS};
 use primitive_app::{Change, HEIGHT};
 use primitive_ui::{Canvas, Rect};
@@ -470,6 +470,9 @@ impl Reader {
             return printed().or_else(|| self.custom_page_status());
         }
         let p = self.footer_progress()?;
+        if mode == StatusBar::Custom {
+            return Some(self.custom_footer_caption(&p));
+        }
         let time = |scope| {
             let (pages, unit) = if scope == ProgressScope::Book {
                 (p.book_pages_left, "book")
@@ -526,6 +529,117 @@ impl Reader {
                 if p.pages_left() == 1 { "page" } else { "pages" }
             )),
             _ => None,
+        }
+    }
+
+    fn custom_footer_caption(&self, progress: &Progress<'_>) -> String {
+        let (entry, id) = if let Some(book) = &self.fixed {
+            (&book.entry, book.id)
+        } else if let Some(book) = &self.active {
+            (&book.entry, book.id)
+        } else {
+            return String::new();
+        };
+        let time_left = |scope| {
+            let pages = if scope == ProgressScope::Book {
+                progress.book_pages_left
+            } else {
+                progress.pages_left()
+            };
+            let seconds = (self.pace.rate(id) * pages as f64).round() as u64;
+            super::reading_time(seconds)
+        };
+        let current_page = || {
+            if let Some(book) = &self.fixed {
+                let pages: Vec<_> = book.reading.visible_pages().collect();
+                let first = pages
+                    .first()
+                    .copied()
+                    .unwrap_or_else(|| book.reading.page())
+                    + 1;
+                let last = pages.last().copied().unwrap_or(first - 1) + 1;
+                let range = if first == last {
+                    first.to_string()
+                } else {
+                    format!("{first}–{last}")
+                };
+                Some(format!("Page {range} / {}", book.reading.count()))
+            } else {
+                let book = self.active.as_ref()?;
+                let first = book.reading.page + 1;
+                let last = book.reading.last_visible_page() + 1;
+                let range = if first == last {
+                    first.to_string()
+                } else {
+                    format!("{first}–{last}")
+                };
+                Some(format!(
+                    "Page {range} / {}",
+                    book.reading.probe.page_count()
+                ))
+            }
+        };
+        let mut items = Vec::new();
+        for item in FooterItem::ALL {
+            if self.controls.footer_items & item.bit() == 0 {
+                continue;
+            }
+            let text = match item {
+                FooterItem::CurrentPage => current_page(),
+                FooterItem::ChapterTitle => {
+                    let title = progress.section_name.trim();
+                    (!title.is_empty()).then(|| title.to_owned())
+                }
+                FooterItem::BookProgress => Some(progress.percentage()),
+                FooterItem::ChapterPagesLeft => Some(format!(
+                    "{} {} left in chapter",
+                    progress.pages_left(),
+                    if progress.pages_left() == 1 {
+                        "page"
+                    } else {
+                        "pages"
+                    }
+                )),
+                FooterItem::BookPagesLeft => Some(format!(
+                    "{} {} left in book",
+                    progress.book_pages_left,
+                    if progress.book_pages_left == 1 {
+                        "page"
+                    } else {
+                        "pages"
+                    }
+                )),
+                FooterItem::ChapterTimeLeft => Some(format!(
+                    "{} left in chapter",
+                    time_left(ProgressScope::Chapter)
+                )),
+                FooterItem::BookTimeLeft => {
+                    Some(format!("{} left in book", time_left(ProgressScope::Book)))
+                }
+                FooterItem::BookTitle => {
+                    (!entry.title.trim().is_empty()).then(|| entry.title.trim().to_owned())
+                }
+                FooterItem::Author => entry
+                    .author
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|author| !author.is_empty())
+                    .map(str::to_owned),
+                FooterItem::BookmarkCount => Some(format!(
+                    "{} bookmarks",
+                    self.library
+                        .state(id)
+                        .map_or(0, |state| state.bookmarks.len())
+                )),
+            };
+            if let Some(text) = text {
+                items.push(text);
+            }
+        }
+        if items.is_empty() {
+            "No items selected".to_owned()
+        } else {
+            items.join("  ·  ")
         }
     }
 
@@ -655,7 +769,10 @@ impl Reader {
             Item::new(name, Action::SetReadingControls(controls)).detail(value)
         };
         let on_off = |on| if on { "On" } else { "Off" };
-        let next = if c.footer_all_at_once && c.status_bar != StatusBar::Minimal {
+        let next = if c.footer_all_at_once
+            && c.status_bar != StatusBar::Minimal
+            && c.status_bar != StatusBar::Custom
+        {
             StatusBar::Minimal
         } else {
             c.status_bar.next()
@@ -674,14 +791,6 @@ impl Reader {
                 },
             ),
             setting(
-                "Show items together",
-                on_off(c.footer_all_at_once),
-                ReadingControls {
-                    footer_all_at_once: !c.footer_all_at_once,
-                    ..c
-                },
-            ),
-            setting(
                 "Progress bar",
                 c.footer_scope.label(),
                 ReadingControls {
@@ -690,6 +799,19 @@ impl Reader {
                 },
             ),
         ];
+        if c.status_bar != StatusBar::Custom {
+            items.insert(
+                1,
+                setting(
+                    "Show items together",
+                    on_off(c.footer_all_at_once),
+                    ReadingControls {
+                        footer_all_at_once: !c.footer_all_at_once,
+                        ..c
+                    },
+                ),
+            );
+        }
         if self.active.is_some() || self.fixed.is_some() {
             items.push(setting(
                 "Overlap status bar",
@@ -728,7 +850,21 @@ impl Reader {
                 },
             ),
         ]);
-        if c.footer_all_at_once {
+        if c.status_bar == StatusBar::Custom {
+            items.push(Item::new("Visible status items", Action::Heading));
+            for item in FooterItem::ALL {
+                let enabled = c.footer_items & item.bit() != 0;
+                items.push(setting(
+                    item.label(),
+                    on_off(enabled),
+                    ReadingControls {
+                        footer_items: c.footer_items ^ item.bit(),
+                        ..c
+                    },
+                ));
+            }
+        }
+        if c.footer_all_at_once && c.status_bar != StatusBar::Custom {
             let (label, next) = match c.footer_combined_time {
                 Some(ProgressScope::Chapter) => ("Chapter", Some(ProgressScope::Book)),
                 Some(ProgressScope::Book) => ("Book", None),

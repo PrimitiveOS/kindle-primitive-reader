@@ -60,6 +60,9 @@ pub(crate) struct ReadingControls {
     pub orientation: ReadingOrientation,
     pub palette: ScreenPalette,
     pub status_bar: StatusBar,
+    /// Bitset of reading metrics shown when `status_bar` is `Custom`.
+    #[serde(default, skip_serializing_if = "is_zero_u16")]
+    pub footer_items: u16,
     pub overlap_footer: bool,
     pub footer_scope: ProgressScope,
     pub hide_chapter_markers: bool,
@@ -333,6 +336,7 @@ pub(crate) enum StatusBar {
     Remaining,
     ChapterTime,
     BookTime,
+    Custom,
     Minimal,
 }
 
@@ -345,6 +349,7 @@ impl StatusBar {
             Self::Remaining => "Chapter pages left",
             Self::ChapterTime => "Chapter time left",
             Self::BookTime => "Book time left",
+            Self::Custom => "Custom items",
             Self::Minimal => "Minimal",
         }
     }
@@ -356,10 +361,66 @@ impl StatusBar {
             Self::Chapter => Self::Remaining,
             Self::Remaining => Self::ChapterTime,
             Self::ChapterTime => Self::BookTime,
-            Self::BookTime => Self::Minimal,
+            Self::BookTime => Self::Custom,
+            Self::Custom => Self::Minimal,
             Self::Minimal => Self::PageNumbers,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FooterItem {
+    CurrentPage,
+    ChapterTitle,
+    BookProgress,
+    ChapterPagesLeft,
+    BookPagesLeft,
+    ChapterTimeLeft,
+    BookTimeLeft,
+    BookTitle,
+    Author,
+    BookmarkCount,
+}
+
+impl FooterItem {
+    pub(crate) const ALL: [Self; 10] = [
+        Self::CurrentPage,
+        Self::ChapterTitle,
+        Self::BookProgress,
+        Self::ChapterPagesLeft,
+        Self::BookPagesLeft,
+        Self::ChapterTimeLeft,
+        Self::BookTimeLeft,
+        Self::BookTitle,
+        Self::Author,
+        Self::BookmarkCount,
+    ];
+
+    pub(crate) const DEFAULT_MASK: u16 =
+        Self::CurrentPage.bit() | Self::BookProgress.bit() | Self::ChapterPagesLeft.bit();
+
+    pub(crate) const fn bit(self) -> u16 {
+        1 << self as u16
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::CurrentPage => "Current page",
+            Self::ChapterTitle => "Chapter title",
+            Self::BookProgress => "Book progress",
+            Self::ChapterPagesLeft => "Pages left in chapter",
+            Self::BookPagesLeft => "Pages left in book",
+            Self::ChapterTimeLeft => "Time left in chapter",
+            Self::BookTimeLeft => "Time left in book",
+            Self::BookTitle => "Book title",
+            Self::Author => "Author",
+            Self::BookmarkCount => "Bookmark count",
+        }
+    }
+}
+
+fn is_zero_u16(value: &u16) -> bool {
+    *value == 0
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -792,6 +853,25 @@ mod tests {
         assert_eq!(reopened.very_long_press_tenths(), 45);
         let legacy: ReadingControls = serde_json::from_str("{}").unwrap();
         assert_eq!(legacy.very_long_press_tenths(), 30);
+    }
+
+    #[test]
+    fn custom_footer_items_round_trip_and_old_settings_keep_the_legacy_mode() {
+        let controls = ReadingControls {
+            status_bar: StatusBar::Custom,
+            footer_items: FooterItem::DEFAULT_MASK | FooterItem::BookmarkCount.bit(),
+            ..ReadingControls::default()
+        };
+        let bytes = serde_json::to_vec(&controls).unwrap();
+        let reopened: ReadingControls = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(reopened.status_bar, StatusBar::Custom);
+        assert_eq!(reopened.footer_items, controls.footer_items);
+
+        let legacy: ReadingControls = serde_json::from_str("{}").unwrap();
+        assert_eq!(legacy.status_bar, StatusBar::PageNumbers);
+        assert_eq!(legacy.footer_items, 0);
+        assert_eq!(StatusBar::BookTime.next(), StatusBar::Custom);
+        assert_eq!(StatusBar::Custom.next(), StatusBar::Minimal);
     }
 
     #[test]

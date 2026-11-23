@@ -2683,7 +2683,15 @@ impl Reader {
                 self.book_list = None;
                 self.show(Screen::OrganizeLibrary);
             }
-            Action::SetReadingControls(controls) => {
+            Action::SetReadingControls(mut controls) => {
+                if controls.status_bar == crate::reading_controls::StatusBar::Custom
+                    && self.controls.status_bar != crate::reading_controls::StatusBar::Custom
+                {
+                    controls.footer_all_at_once = false;
+                    if controls.footer_items == 0 {
+                        controls.footer_items = crate::reading_controls::FooterItem::DEFAULT_MASK;
+                    }
+                }
                 let resized = if controls.overlap_footer != self.controls.overlap_footer {
                     self.active
                         .as_ref()
@@ -12392,6 +12400,7 @@ mod tests {
             StatusBar::Remaining,
             StatusBar::ChapterTime,
             StatusBar::BookTime,
+            StatusBar::Custom,
             StatusBar::Minimal,
             StatusBar::PageNumbers,
         ] {
@@ -12412,6 +12421,51 @@ mod tests {
                     assert!(app.status_caption().unwrap().contains("in chapter"))
                 }
                 StatusBar::BookTime => assert!(app.status_caption().unwrap().contains("in book")),
+                StatusBar::Custom => {
+                    app.activate(Action::ToggleBookmark).unwrap();
+                    app.activate(Action::SetReadingControls(ReadingControls {
+                        footer_items: app.controls.footer_items
+                            | crate::reading_controls::FooterItem::BookmarkCount.bit(),
+                        ..app.controls
+                    }))
+                    .unwrap();
+                    let caption = app.status_caption().unwrap();
+                    assert!(caption.contains("Page 1"));
+                    assert!(caption.contains("%"));
+                    assert!(caption.contains("left in chapter"));
+                    assert!(caption.contains("1 bookmarks"));
+                    assert_eq!(
+                        app.controls.footer_items
+                            & crate::reading_controls::FooterItem::DEFAULT_MASK,
+                        crate::reading_controls::FooterItem::DEFAULT_MASK
+                    );
+                    // Bookmarking raises a transient notice that would cover
+                    // the status caption in the screenshot.
+                    app.notice = None;
+                    capture_test_screen(
+                        &app,
+                        &simulation_fonts(),
+                        "READER_CUSTOM_FOOTER_STATUS_SCREENSHOT",
+                        false,
+                    );
+                    app.show(Screen::FooterSettings);
+                    capture_test_screen(
+                        &app,
+                        &simulation_fonts(),
+                        "READER_CUSTOM_FOOTER_SETTINGS_SCREENSHOT",
+                        false,
+                    );
+                    let item = app
+                        .items()
+                        .into_iter()
+                        .find(|item| item.title == "Pages left in chapter")
+                        .expect("custom footer exposes its selected items");
+                    app.activate(item.action).unwrap();
+                    let caption = app.status_caption().unwrap();
+                    assert!(caption.contains("Page 1"));
+                    assert!(!caption.contains("left in chapter"));
+                    app.show(Screen::Book);
+                }
                 StatusBar::Minimal => assert_eq!(app.status_caption().unwrap(), ""),
                 StatusBar::PageNumbers => assert!(app.status_caption().is_none()),
             }
