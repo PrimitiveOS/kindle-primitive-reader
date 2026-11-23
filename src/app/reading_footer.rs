@@ -5,11 +5,12 @@ use crate::Probe;
 use crate::fixed_session::FixedReading;
 use crate::library::Bookmark;
 use crate::reading_controls::{
-    FooterItem, FooterTrackPosition, ProgressScope, ReadingControls, StatusBar,
+    FooterItem, FooterTrackPosition, HeaderBattery, ProgressScope, ReadingControls, StatusBar,
+    TopHeader,
 };
 use crate::session::{DONE, PAGE_HEIGHT, SHOW_STATUS};
 use primitive_app::{Change, HEIGHT, WIDTH};
-use primitive_ui::{Canvas, Rect};
+use primitive_ui::{Canvas, HAIRLINE, Rect, TextStyle};
 use std::time::{Duration, Instant};
 
 const FOOTER_TRACK_GAP: i32 = 20;
@@ -241,16 +242,146 @@ fn draw_initial_marker(canvas: &mut Canvas, bar: Rect, fraction: f64) {
     canvas.fill(Rect::new(marker, bar.y - 1, 1, bar.h + 1), 0);
 }
 
+fn ellipsis_to_fit(canvas: &mut Canvas, text: &str, max_width: u32, font_size: i32) -> String {
+    let mut value = text.replace(['\n', '\r'], " ");
+    if canvas.measure(&value, font_size) <= max_width as i32 {
+        return value;
+    }
+    while !value.is_empty() {
+        value.pop();
+        let candidate = format!("{value}…");
+        if canvas.measure(&candidate, font_size) <= max_width as i32 {
+            return candidate;
+        }
+    }
+    String::new()
+}
+
+fn draw_battery_icon(
+    canvas: &mut Canvas,
+    x: i32,
+    y: i32,
+    level: u32,
+    charging: bool,
+    ink: u8,
+    background: u8,
+) {
+    canvas.fill(Rect::new(x, y, 25, 18), ink);
+    canvas.fill(Rect::new(x + 2, y + 2, 21, 14), background);
+    let filled = (19 * level.min(100) / 100) as i32;
+    if filled > 0 {
+        canvas.fill(Rect::new(x + 3, y + 4, filled, 10), ink);
+    }
+    canvas.fill(Rect::new(x + 25, y + 5, 3, 8), ink);
+    if charging {
+        for (dx, dy, width, height) in [
+            (14, 3, 6, 2),
+            (12, 5, 5, 2),
+            (10, 7, 5, 2),
+            (8, 9, 5, 2),
+            (8, 11, 4, 2),
+        ] {
+            let bolt_center = x + dx + width / 2;
+            let filled_end = x + 3 + filled;
+            canvas.fill(
+                Rect::new(x + dx, y + dy, width, height),
+                if bolt_center < filled_end {
+                    background
+                } else {
+                    ink
+                },
+            );
+        }
+    }
+}
+
+fn battery_footer_text(level: u32, charging: bool) -> String {
+    let label = if charging { "Charging" } else { "Battery" };
+    format!("{label} {}%", level.min(100))
+}
+
 impl Reader {
-    fn footer_clock_active(&self) -> bool {
+    fn reading_status_visible(&self) -> bool {
         self.stats_awake
+            && matches!(
+                self.screen,
+                Screen::Book
+                    | Screen::BookTools
+                    | Screen::Fixed
+                    | Screen::FixedTools
+                    | Screen::Footnote
+                    | Screen::OnlineLookup
+                    | Screen::Skim
+            )
+    }
+
+    fn top_header_visible(&self) -> bool {
+        self.controls.top_header.enabled
+            && self
+                .active
+                .as_ref()
+                .is_some_and(|book| !book.reading.is_continuous())
+            && matches!(
+                self.screen,
+                Screen::Book
+                    | Screen::BookTools
+                    | Screen::Footnote
+                    | Screen::OnlineLookup
+                    | Screen::Skim
+            )
+    }
+
+    fn footer_time_visible(&self) -> bool {
+        self.reading_status_visible()
             && self.controls.footer_auto_refresh
             && self.controls.status_bar == StatusBar::Custom
             && self.controls.footer_items & FooterItem::CurrentTime.bit() != 0
-            && matches!(
-                self.screen,
-                Screen::Book | Screen::BookTools | Screen::Fixed | Screen::FixedTools
-            )
+    }
+
+    fn top_header_time_visible(&self) -> bool {
+        self.reading_status_visible()
+            && self.top_header_visible()
+            && self.controls.top_header.auto_refresh
+            && self.controls.top_header.clock
+    }
+
+    fn top_header_battery_visible(&self) -> bool {
+        self.reading_status_visible()
+            && self.top_header_visible()
+            && self.controls.top_header.auto_refresh
+            && self.controls.top_header.battery != HeaderBattery::Off
+    }
+
+    fn footer_battery_visible(&self) -> bool {
+        self.reading_status_visible()
+            && self.controls.footer_auto_refresh
+            && self.controls.status_bar == StatusBar::Custom
+            && self.controls.footer_items & FooterItem::BatteryPercentage.bit() != 0
+    }
+
+    fn footer_clock_active(&self) -> bool {
+        self.footer_time_visible()
+            || self.top_header_time_visible()
+            || self.top_header_battery_visible()
+            || self.footer_battery_visible()
+    }
+
+    pub(super) fn clock_refresh_visible(&self) -> bool {
+        self.footer_time_visible() || self.top_header_time_visible()
+    }
+
+    fn status_battery_reading(&self) -> Option<(u32, bool)> {
+        if !self.top_header_battery_visible() && !self.footer_battery_visible() {
+            return None;
+        }
+        primitive_device::battery().map(|percent| (percent.min(100), primitive_device::charging()))
+    }
+
+    pub(super) fn refresh_status_battery_changed(&mut self) -> bool {
+        let current = self.status_battery_reading();
+        let changed = current != self.status_battery_last;
+        self.status_battery_last = current;
+        changed
     }
 
     pub(super) fn update_footer_clock(&mut self, now: Instant) {
@@ -262,6 +393,7 @@ impl Reader {
         } else {
             None
         };
+        self.status_battery_last = self.status_battery_reading();
     }
 
     pub(super) fn reset_footer_initial_position(&mut self) {
@@ -329,15 +461,24 @@ impl Reader {
         }
     }
 
-    pub(super) fn device_reading_settings(&self) -> crate::Settings {
+    pub(super) fn device_reading_settings_for(&self, controls: ReadingControls) -> crate::Settings {
         crate::Settings {
-            height: if self.controls.overlap_footer {
+            height: if controls.overlap_footer {
                 HEIGHT
             } else {
                 PAGE_HEIGHT
             },
+            status_header_height: if controls.top_header.enabled {
+                TopHeader::HEIGHT
+            } else {
+                0
+            },
             ..super::device_settings()
         }
+    }
+
+    pub(super) fn device_reading_settings(&self) -> crate::Settings {
+        self.device_reading_settings_for(self.controls)
     }
 
     pub(super) fn overlapping_book_page(&self) -> bool {
@@ -553,6 +694,148 @@ impl Reader {
             Some(label) => format!("{label}{separator}Timer {remaining}"),
             None => format!("Timer {remaining}"),
         })
+    }
+
+    fn top_header_parts(&self) -> Option<(String, String)> {
+        let header = self.controls.top_header;
+        if !header.enabled {
+            return None;
+        }
+        let active = self.active.as_ref()?;
+        if active.reading.is_continuous() {
+            return None;
+        }
+        let progress = self.footer_progress();
+        let mut identity = Vec::new();
+        if header.title {
+            let title = active.reading.probe.title.trim();
+            if !title.is_empty() {
+                identity.push(title.to_owned());
+            }
+        }
+        if header.author {
+            if let Some(author) = active
+                .reading
+                .probe
+                .author
+                .as_deref()
+                .map(str::trim)
+                .filter(|author| !author.is_empty())
+            {
+                identity.push(author.to_owned());
+            }
+        }
+
+        let mut status = Vec::new();
+        if header.clock {
+            if let Some(time) = local_footer_time() {
+                status.push(time);
+            }
+        }
+        let page_number = header.page_number.then_some(active.reading.page + 1);
+        let page_count = header
+            .page_count
+            .then_some(active.reading.probe.page_count());
+        match (page_number, page_count) {
+            (Some(page), Some(count)) => status.push(format!("{page}/{count}")),
+            (Some(page), None) => status.push(page.to_string()),
+            (None, Some(count)) => status.push(format!("of {count}")),
+            (None, None) => {}
+        }
+        if header.reading_percent
+            && let Some(progress) = &progress
+        {
+            status.push(progress.percentage_with_digits(self.controls.footer_percentage_digits));
+        }
+        if header.battery == HeaderBattery::Percentage
+            && let Some(level) = primitive_device::battery()
+        {
+            status.push(format!("{level}%"));
+        }
+        Some((identity.join("  ·  "), status.join("  ·  ")))
+    }
+
+    pub(super) fn top_header_caption(&self) -> Option<String> {
+        let (identity, status) = self.top_header_parts()?;
+        Some(match (identity.is_empty(), status.is_empty()) {
+            (true, true) => String::new(),
+            (false, true) => identity,
+            (true, false) => status,
+            (false, false) => format!("{identity}  ·  {status}"),
+        })
+    }
+
+    pub(super) fn draw_top_header(&self, canvas: &mut Canvas) {
+        let header = self.controls.top_header;
+        let Some((identity, status)) = self.top_header_parts() else {
+            return;
+        };
+        let night = self.uses_night_pages();
+        let background = if night { 0 } else { 255 };
+        let ink = if night { 255 } else { 0 };
+        canvas.fill(
+            Rect::new(0, 0, WIDTH as i32, TopHeader::HEIGHT as i32),
+            background,
+        );
+        let font_size = i32::from(header.font_size());
+        let baseline = Rect::new(20, 4, WIDTH as i32 - 40, 38);
+        let battery_width = if header.battery == HeaderBattery::Icon {
+            42
+        } else {
+            0
+        };
+        let right_width = canvas.measure(&status, font_size).min(540) as i32;
+        let right_edge = baseline.right() - battery_width;
+        let right_x = (right_edge - right_width).max(baseline.x + 180);
+        let left_width = (right_x - baseline.x - 20).max(80);
+        let left = ellipsis_to_fit(canvas, &identity, left_width as u32, font_size);
+        let right = ellipsis_to_fit(canvas, &status, (right_edge - right_x) as u32, font_size);
+        let text_style = TextStyle::new(font_size).ink(ink);
+        canvas.text(
+            Rect::new(baseline.x, baseline.y, left_width, baseline.h),
+            &left,
+            text_style,
+        );
+        canvas.text(
+            Rect::new(right_x, baseline.y, right_edge - right_x, baseline.h),
+            &right,
+            text_style,
+        );
+        if header.battery == HeaderBattery::Icon
+            && let Some(level) = primitive_device::battery()
+        {
+            draw_battery_icon(
+                canvas,
+                baseline.right() - 34,
+                11,
+                level,
+                primitive_device::charging(),
+                ink,
+                background,
+            );
+        }
+        if header.chapter_marks {
+            canvas.fill(
+                Rect::new(12, TopHeader::HEIGHT as i32 - 2, WIDTH as i32 - 24, 1),
+                HAIRLINE,
+            );
+            let count = self
+                .active
+                .as_ref()
+                .map_or(0, |book| book.reading.probe.page_count())
+                .max(1);
+            if let Some(book) = &self.active {
+                for (page, _) in book.reading.probe.footer_sections() {
+                    let x = 12 + ((WIDTH - 24) as f64 * *page as f64 / count as f64).round() as i32;
+                    canvas.fill(Rect::new(x, TopHeader::HEIGHT as i32 - 5, 2, 4), ink);
+                }
+            }
+        } else {
+            canvas.fill(
+                Rect::new(0, TopHeader::HEIGHT as i32 - 1, WIDTH as i32, 1),
+                HAIRLINE,
+            );
+        }
     }
 
     pub(super) fn alarm_progress(&self, token: char) -> Option<String> {
@@ -795,6 +1078,9 @@ impl Reader {
                         .map_or(0, |state| state.bookmarks.len())
                 )),
                 FooterItem::CurrentTime => current_time.clone(),
+                FooterItem::BatteryPercentage => primitive_device::battery().map(|percent| {
+                    battery_footer_text(percent.min(100), primitive_device::charging())
+                }),
             };
             if let Some(text) = text {
                 items.push(text);
@@ -1111,6 +1397,128 @@ impl Reader {
                 },
             ),
         ];
+        let header = c.top_header;
+        items.extend([
+            Item::new("Top status header", Action::Heading),
+            setting(
+                "Show status at top",
+                on_off(header.enabled),
+                ReadingControls {
+                    top_header: TopHeader {
+                        enabled: !header.enabled,
+                        ..header
+                    },
+                    ..c
+                },
+            ),
+            setting(
+                "Refresh header clock automatically",
+                on_off(header.auto_refresh),
+                ReadingControls {
+                    top_header: TopHeader {
+                        auto_refresh: !header.auto_refresh,
+                        ..header
+                    },
+                    ..c
+                },
+            ),
+            setting(
+                "Header book title",
+                on_off(header.title),
+                ReadingControls {
+                    top_header: TopHeader {
+                        title: !header.title,
+                        ..header
+                    },
+                    ..c
+                },
+            ),
+            setting(
+                "Header book author",
+                on_off(header.author),
+                ReadingControls {
+                    top_header: TopHeader {
+                        author: !header.author,
+                        ..header
+                    },
+                    ..c
+                },
+            ),
+            setting(
+                "Header current time",
+                on_off(header.clock),
+                ReadingControls {
+                    top_header: TopHeader {
+                        clock: !header.clock,
+                        ..header
+                    },
+                    ..c
+                },
+            ),
+            setting(
+                "Header current page",
+                on_off(header.page_number),
+                ReadingControls {
+                    top_header: TopHeader {
+                        page_number: !header.page_number,
+                        ..header
+                    },
+                    ..c
+                },
+            ),
+            setting(
+                "Header total pages",
+                on_off(header.page_count),
+                ReadingControls {
+                    top_header: TopHeader {
+                        page_count: !header.page_count,
+                        ..header
+                    },
+                    ..c
+                },
+            ),
+            setting(
+                "Header progress percentage",
+                on_off(header.reading_percent),
+                ReadingControls {
+                    top_header: TopHeader {
+                        reading_percent: !header.reading_percent,
+                        ..header
+                    },
+                    ..c
+                },
+            ),
+            setting(
+                "Header chapter marks",
+                on_off(header.chapter_marks),
+                ReadingControls {
+                    top_header: TopHeader {
+                        chapter_marks: !header.chapter_marks,
+                        ..header
+                    },
+                    ..c
+                },
+            ),
+            setting(
+                "Header battery status",
+                header.battery.label(),
+                ReadingControls {
+                    top_header: TopHeader {
+                        battery: header.battery.next(),
+                        ..header
+                    },
+                    ..c
+                },
+            ),
+            Item::new(
+                "Header font size",
+                Action::SetReadingControls(ReadingControls {
+                    top_header: header.next_font_size(),
+                    ..c
+                }),
+            )
+            .detail(format!("{} px", header.font_size())),
+        ]);
         if c.status_bar != StatusBar::Custom {
             items.insert(
                 1,
@@ -1271,6 +1679,30 @@ fn local_footer_time() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn battery_footer_text_reports_level_and_charging_state() {
+        assert_eq!(battery_footer_text(47, false), "Battery 47%");
+        assert_eq!(battery_footer_text(88, true), "Charging 88%");
+        assert_eq!(battery_footer_text(140, false), "Battery 100%");
+    }
+
+    #[test]
+    fn top_header_battery_icon_changes_when_charging() {
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf")
+                .display()
+                .to_string(),
+        ];
+        let render = |charging| {
+            let mut canvas = Canvas::new(WIDTH, 48, &fonts).unwrap();
+            canvas.begin();
+            draw_battery_icon(&mut canvas, 100, 10, 50, charging, 0, 255);
+            canvas.finish(false)
+        };
+
+        assert_ne!(render(false), render(true));
+    }
 
     #[test]
     fn custom_flow_footer_counts_only_the_opened_flow_and_keeps_main_page_ticks() {

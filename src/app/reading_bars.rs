@@ -562,11 +562,30 @@ impl Reader {
         } else {
             PAGE_HEIGHT
         };
-        let visible = if matches!(self.screen, Screen::BookTools | Screen::FixedTools) {
+        let mut visible = if matches!(self.screen, Screen::BookTools | Screen::FixedTools) {
             self.reading_bars().visible(height)
         } else {
             0..height
         };
+        if self.fixed.is_none()
+            && self
+                .active
+                .as_ref()
+                .is_some_and(|book| !book.reading.is_continuous())
+            && self.controls.top_header.enabled
+            && matches!(
+                self.screen,
+                Screen::Book
+                    | Screen::BookTools
+                    | Screen::Footnote
+                    | Screen::OnlineLookup
+                    | Screen::Skim
+            )
+        {
+            visible.start = visible
+                .start
+                .max(crate::reading_controls::TopHeader::HEIGHT);
+        }
         PagePaint {
             visible,
             inverted,

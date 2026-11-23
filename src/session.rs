@@ -204,6 +204,10 @@ pub(crate) struct Reading {
 }
 
 impl Reading {
+    pub(crate) fn is_continuous(&self) -> bool {
+        self.scroll_top.is_some()
+    }
+
     pub(crate) fn automatic_turn(&mut self, distance_tenths: i16) -> Change {
         if distance_tenths == 0 {
             return Change::None;
@@ -606,12 +610,32 @@ impl Reading {
     }
 
     pub(crate) fn set_scroll(&mut self, scroll: bool) -> Result<()> {
+        self.set_scroll_and_header(scroll, self.config.settings.status_header_height)
+    }
+
+    pub(crate) fn set_scroll_and_header(
+        &mut self,
+        scroll: bool,
+        status_header_height: u32,
+    ) -> Result<()> {
         if scroll && self.probe.is_vertical() {
             return Err("Vertical EPUB chapters use page turns".into());
         }
         let anchor = self.anchor();
         let mut config = self.config.clone();
         config.scroll = scroll;
+        config.settings.status_header_height = status_header_height;
+        *self = Self::restore(config, self.chapter, self.page, anchor.as_ref())?;
+        Ok(())
+    }
+
+    pub(crate) fn set_status_header_height(&mut self, status_header_height: u32) -> Result<()> {
+        if self.config.settings.status_header_height == status_header_height {
+            return Ok(());
+        }
+        let anchor = self.anchor();
+        let mut config = self.config.clone();
+        config.settings.status_header_height = status_header_height;
         *self = Self::restore(config, self.chapter, self.page, anchor.as_ref())?;
         Ok(())
     }

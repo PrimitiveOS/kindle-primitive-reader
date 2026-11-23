@@ -47,11 +47,12 @@ counts do not measure completed parity.
 
 ## Current host and device integration gate
 
-The latest full Mac `cargo test --locked` run, against the current worktree,
-passed 946 Reader library tests with 62 ignored for private or device-provided
-inputs, one Kindle binary test, 14 EPUB package tests, and four layout probes.
-The page-overlap movement, style, settings-panel and persistence regressions
-are included. The prior test-only ARMHF bundle described below predates the
+The latest full Mac `cargo test --locked --features kindle` run, against the
+current worktree, passed 952 Reader library tests with 62 ignored for private
+or device-provided inputs, one Kindle binary test, 14 EPUB package tests, and
+four layout probes. The page-overlap movement, style, settings-panel,
+alternate top status header, battery footer and persistence regressions are
+included. The prior test-only ARMHF bundle described below predates the
 page-overlap changes. The two cross-page PDF selection regressions pass in both
 directions, after save and reopen, and with an unreadable intermediate page. The
 isolated shared-input worktree passed 140 `kl-core`, eight `primitive-app`, and
@@ -75,9 +76,11 @@ in-process Reader clipboard and Paste into Reader text fields. The [cross-page
 PDF capture](screenshots/pdf-cross-page-selection.png) shows the range on its
 current page; the [Copy capture](screenshots/selection-copy.png) shows the
 selection action grid. The custom footer now offers a selectable local clock
-and a default-Off minute refresh. The deadline aligns to the next minute,
-pauses during sleep and resumes on wake; the focused Mac workflow test and
-[clock capture](screenshots/current-time-footer.png) pass. The previous ARMHF real-document candidate was a stripped, static ARM EABI5
+and battery percentage/charging state. Clock and battery refresh use the
+default-Off minute refresh, which pauses during sleep and resumes on wake. The
+focused Mac workflow tests and [clock](screenshots/current-time-footer.png) and
+[battery setting](screenshots/battery-footer-settings.png) captures pass. The
+previous ARMHF real-document candidate was a stripped, static ARM EABI5
 executable, 32 MiB, SHA-256
 `d28379bb12cffe9b7906e195465b7c890df4535a3c4bfdd1d1ff11d39c536322`; it is the
 binary used for the 183-entry Documents sweep below. On 23 November 2026, the
@@ -113,6 +116,22 @@ prompt. The aggregate run and its limits are recorded in
 [real-document verification](real-document-verification.md#reader-0124-candidate-on-the-oasis).
 The installed Reader, Launcher, user documents and reading data were not
 replaced or changed. Foreground UI acceptance and publication remain open.
+
+On 23 November 2026, the current uncommitted Reader worktree based on commit
+`8e956e8` was rebuilt as a test-only static ARMHF bundle and run on the Oasis 3
+from `/mnt/us/reader-test-bundle`. It passed 952 Reader tests (62 ignored), 14
+EPUB package tests, and four layout probes. The Reader test binary SHA-256 is
+`9f0ee43c3f688b363095fce0fc2bd0d0ed196ae15125bb49b26ef14a9c6ca3f8`; the EPUB
+package and layout probes are
+`894da8849bec7db89d1f75cdc8d54935e82cf59d6de00644612a447fe801e8db` and
+`fcd411b2d67498769c852c6b91e0baef5b91510ebab69f11bbbe06227e80e293`. The
+reader-probe binary is
+`dbb171732d60d12e4104a110cd6a13e6e5d3d7dd6e3ed93e8f2602e0adb8f091`. Remote
+and local hashes matched. The Kindle's keep-awake setting was already enabled;
+the test bundle used a temporary profile and did not replace Reader or Launcher,
+or alter user documents or saved reading data. The temporary bundle has since
+been removed. This native run validates ARM behavior, not foreground rendering,
+physical buttons or E Ink refresh for the new status controls.
 
 | ARMHF chapter | Characters / pages | Median first frame | Median layout | Median warm raster p95 | Peak RSS | Missing glyphs |
 |---|---:|---:|---:|---:|---:|---:|

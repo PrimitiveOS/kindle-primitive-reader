@@ -98,6 +98,8 @@ pub(crate) struct ReadingControls {
     pub footer_initial_marker: bool,
     #[serde(skip_serializing_if = "is_false")]
     pub footer_auto_refresh: bool,
+    #[serde(skip_serializing_if = "TopHeader::is_default")]
+    pub top_header: TopHeader,
     #[serde(skip_serializing_if = "ChapterMarkerWidth::is_default")]
     pub chapter_marker_width: ChapterMarkerWidth,
     pub overlap_footer: bool,
@@ -113,6 +115,88 @@ pub(crate) struct ReadingControls {
     pub finish_at_end: bool,
     #[serde(default = "legacy_metadata_save")]
     pub metadata_save: MetadataSave,
+}
+
+/// KOReader's optional top status line for reflowable documents.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default)]
+pub(crate) struct TopHeader {
+    pub enabled: bool,
+    pub auto_refresh: bool,
+    pub title: bool,
+    pub author: bool,
+    pub clock: bool,
+    pub page_number: bool,
+    pub page_count: bool,
+    pub reading_percent: bool,
+    pub chapter_marks: bool,
+    pub battery: HeaderBattery,
+    pub font_size: u8,
+}
+
+impl Default for TopHeader {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            auto_refresh: true,
+            title: true,
+            author: true,
+            clock: true,
+            page_number: true,
+            page_count: true,
+            reading_percent: false,
+            chapter_marks: true,
+            battery: HeaderBattery::Icon,
+            font_size: 20,
+        }
+    }
+}
+
+impl TopHeader {
+    pub(crate) const HEIGHT: u32 = 48;
+
+    pub(crate) fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    pub(crate) fn font_size(self) -> u8 {
+        self.font_size.clamp(8, 36)
+    }
+
+    pub(crate) fn next_font_size(self) -> Self {
+        let current = self.font_size();
+        Self {
+            font_size: if current >= 36 { 8 } else { current + 1 },
+            ..self
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum HeaderBattery {
+    Off,
+    #[default]
+    Icon,
+    Percentage,
+}
+
+impl HeaderBattery {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Icon => "Battery icon",
+            Self::Percentage => "Battery percentage",
+        }
+    }
+
+    pub(crate) fn next(self) -> Self {
+        match self {
+            Self::Off => Self::Icon,
+            Self::Icon => Self::Percentage,
+            Self::Percentage => Self::Off,
+        }
+    }
 }
 
 /// Where the selected-text action panel appears over the reading page.
@@ -445,10 +529,11 @@ pub(crate) enum FooterItem {
     Author,
     BookmarkCount,
     CurrentTime,
+    BatteryPercentage,
 }
 
 impl FooterItem {
-    pub(crate) const ALL: [Self; 11] = [
+    pub(crate) const ALL: [Self; 12] = [
         Self::CurrentPage,
         Self::ChapterTitle,
         Self::BookProgress,
@@ -460,6 +545,7 @@ impl FooterItem {
         Self::Author,
         Self::BookmarkCount,
         Self::CurrentTime,
+        Self::BatteryPercentage,
     ];
 
     pub(crate) const DEFAULT_MASK: u16 =
@@ -524,6 +610,7 @@ impl FooterItem {
             Self::Author => "Author",
             Self::BookmarkCount => "Bookmark count",
             Self::CurrentTime => "Current time",
+            Self::BatteryPercentage => "Battery percentage",
         }
     }
 }
@@ -1150,19 +1237,77 @@ mod tests {
     fn custom_footer_items_round_trip_and_old_settings_keep_the_legacy_mode() {
         let controls = ReadingControls {
             status_bar: StatusBar::Custom,
-            footer_items: FooterItem::DEFAULT_MASK | FooterItem::BookmarkCount.bit(),
+            footer_items: FooterItem::DEFAULT_MASK
+                | FooterItem::BookmarkCount.bit()
+                | FooterItem::BatteryPercentage.bit(),
             ..ReadingControls::default()
         };
         let bytes = serde_json::to_vec(&controls).unwrap();
         let reopened: ReadingControls = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(reopened.status_bar, StatusBar::Custom);
         assert_eq!(reopened.footer_items, controls.footer_items);
+        assert_eq!(FooterItem::BatteryPercentage.label(), "Battery percentage");
+        assert!(FooterItem::ordered(0).contains(&FooterItem::BatteryPercentage));
 
         let legacy: ReadingControls = serde_json::from_str("{}").unwrap();
         assert_eq!(legacy.status_bar, StatusBar::PageNumbers);
         assert_eq!(legacy.footer_items, 0);
         assert_eq!(StatusBar::BookTime.next(), StatusBar::Custom);
         assert_eq!(StatusBar::Custom.next(), StatusBar::Minimal);
+    }
+
+    #[test]
+    fn top_header_matches_stock_item_defaults_and_persists_configuration() {
+        let legacy: ReadingControls = serde_json::from_str("{}").unwrap();
+        assert!(!legacy.top_header.enabled);
+        assert!(legacy.top_header.auto_refresh);
+        assert!(legacy.top_header.title);
+        assert!(legacy.top_header.author);
+        assert!(legacy.top_header.clock);
+        assert!(legacy.top_header.page_number);
+        assert!(legacy.top_header.page_count);
+        assert!(!legacy.top_header.reading_percent);
+        assert!(legacy.top_header.chapter_marks);
+        assert_eq!(legacy.top_header.battery, HeaderBattery::Icon);
+        assert_eq!(legacy.top_header.font_size(), 20);
+
+        let controls = ReadingControls {
+            top_header: TopHeader {
+                enabled: true,
+                auto_refresh: false,
+                title: false,
+                author: true,
+                clock: false,
+                page_number: true,
+                page_count: false,
+                reading_percent: true,
+                chapter_marks: false,
+                battery: HeaderBattery::Percentage,
+                font_size: 34,
+            },
+            ..ReadingControls::default()
+        };
+        let bytes = serde_json::to_vec(&controls).unwrap();
+        let reopened: ReadingControls = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(reopened.top_header, controls.top_header);
+        assert!(
+            !serde_json::to_string(&ReadingControls::default())
+                .unwrap()
+                .contains("top_header")
+        );
+    }
+
+    #[test]
+    fn top_header_font_and_battery_options_cycle_with_bounded_values() {
+        let mut header = TopHeader::default();
+        assert_eq!(header.next_font_size().font_size(), 21);
+        header.font_size = 36;
+        assert_eq!(header.next_font_size().font_size(), 8);
+        header.font_size = 255;
+        assert_eq!(header.font_size(), 36);
+        assert_eq!(HeaderBattery::Off.next(), HeaderBattery::Icon);
+        assert_eq!(HeaderBattery::Icon.next(), HeaderBattery::Percentage);
+        assert_eq!(HeaderBattery::Percentage.next(), HeaderBattery::Off);
     }
 
     #[test]

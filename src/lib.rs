@@ -276,6 +276,8 @@ const LEGACY_DEFAULT_LINE_HEIGHT: f32 = 1.35;
 pub struct Settings {
     pub width: u32,
     pub height: u32,
+    /// Space reserved for the optional Kindle status header above reflowed text.
+    pub status_header_height: u32,
     pub font_size: f32,
     /// None preserves the original physical-pixel renderer and bounds.
     pub logical_font_size: Option<f64>,
@@ -335,6 +337,7 @@ impl Default for Settings {
         Self {
             width: 1264,
             height: 1680,
+            status_header_height: 0,
             font_size: 42.0,
             logical_font_size: None,
             font_scale: logical_font::ScaleContext::default(),
@@ -524,7 +527,10 @@ impl Settings {
     }
 
     fn top_margin(self) -> u32 {
-        self.margin_top.unwrap_or(self.margin)
+        self.margin_top
+            .unwrap_or(self.margin)
+            .saturating_add(self.status_header_height)
+            .min(self.height / 4)
     }
 
     fn bottom_margin(self) -> u32 {

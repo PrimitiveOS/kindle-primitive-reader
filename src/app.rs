@@ -656,6 +656,7 @@ pub struct Reader {
     controls: ReadingControls,
     footer_initial_position: Option<reading_footer::InitialPosition>,
     footer_refresh_at: Option<Instant>,
+    status_battery_last: Option<(u32, bool)>,
     end_dialog: Option<end_of_book::Dialog>,
     pages_since_refresh: u8,
     touch_locked: bool,
@@ -828,6 +829,7 @@ impl Reader {
             controls,
             footer_initial_position: None,
             footer_refresh_at: None,
+            status_battery_last: None,
             end_dialog: None,
             pages_since_refresh: 0,
             touch_locked: false,
@@ -993,6 +995,11 @@ impl Reader {
         let mut default_font_missing = false;
         let mut settings = initial_preferences.apply_to(self.device_reading_settings());
         let mut scroll = initial_preferences.scroll;
+        settings.status_header_height = if self.controls.top_header.enabled && !scroll {
+            crate::reading_controls::TopHeader::HEIGHT
+        } else {
+            0
+        };
         let mut facing_pages = initial_preferences.facing_pages;
         let mut fixed_preferences = self
             .document_defaults
@@ -1005,6 +1012,11 @@ impl Reader {
             // template, including older records with empty/default preferences.
             settings = state.preferences.apply_to(self.device_reading_settings());
             scroll = state.preferences.scroll;
+            settings.status_header_height = if self.controls.top_header.enabled && !scroll {
+                crate::reading_controls::TopHeader::HEIGHT
+            } else {
+                0
+            };
             facing_pages = state.preferences.facing_pages;
             fixed_preferences = state.fixed_preferences;
             state.position.clone()
@@ -1180,7 +1192,7 @@ impl Reader {
             return Ok(());
         }
         self.logical_recovery = None;
-        let reading = if let Some(position) = position {
+        let mut reading = if let Some(position) = position {
             Reading::restore(
                 config.clone(),
                 position.chapter,
@@ -1191,6 +1203,12 @@ impl Reader {
         } else {
             Reading::open(config)?
         };
+        let status_header_height = if self.controls.top_header.enabled && !reading.is_continuous() {
+            crate::reading_controls::TopHeader::HEIGHT
+        } else {
+            0
+        };
+        reading.set_status_header_height(status_header_height)?;
         entry.author.clone_from(&reading.probe.author);
         self.save_library()?;
         self.pages_since_refresh = 0;
@@ -2954,7 +2972,9 @@ impl Reader {
                         controls.footer_items = crate::reading_controls::FooterItem::DEFAULT_MASK;
                     }
                 }
-                let resized = if controls.overlap_footer != self.controls.overlap_footer {
+                let reflow_layout_changed = controls.overlap_footer != self.controls.overlap_footer
+                    || controls.top_header.enabled != self.controls.top_header.enabled;
+                let resized = if reflow_layout_changed {
                     self.active
                         .as_ref()
                         .map(|book| {
@@ -2965,6 +2985,12 @@ impl Reader {
                             } else {
                                 PAGE_HEIGHT
                             };
+                            config.settings.status_header_height =
+                                if controls.top_header.enabled && !reading.is_continuous() {
+                                    crate::reading_controls::TopHeader::HEIGHT
+                                } else {
+                                    0
+                                };
                             Reading::restore(
                                 config,
                                 reading.chapter,
@@ -3401,7 +3427,14 @@ impl Reader {
             Action::Style(command) => self.activate_style(command)?,
             Action::ReadingMode(scroll) => {
                 let active = self.active.as_mut().ok_or("No open book")?;
-                active.reading.set_scroll(scroll)?;
+                let status_header_height = if self.controls.top_header.enabled && !scroll {
+                    crate::reading_controls::TopHeader::HEIGHT
+                } else {
+                    0
+                };
+                active
+                    .reading
+                    .set_scroll_and_header(scroll, status_header_height)?;
                 self.library
                     .remember(&active.entry, active.id, &active.reading.probe.title)
                     .preferences
@@ -3562,12 +3595,19 @@ impl Reader {
         config.scroll = preferences.scroll;
         config.facing_pages = preferences.facing_pages;
         config.fonts = fonts;
-        let candidate = Reading::restore(
+        let mut candidate = Reading::restore(
             config,
             location.chapter,
             location.page,
             location.anchor.as_ref(),
         )?;
+        let status_header_height = if self.controls.top_header.enabled && !candidate.is_continuous()
+        {
+            crate::reading_controls::TopHeader::HEIGHT
+        } else {
+            0
+        };
+        candidate.set_status_header_height(status_header_height)?;
         if candidate.probe.book != active.reading.probe.book
             || with_storage(|| self.library.identify(&active.entry))? != id
         {
@@ -6538,6 +6578,7 @@ impl Reader {
                 self.page_paint(),
             );
             self.draw_publisher_margins(canvas);
+            self.draw_top_header(canvas);
             self.draw_footer_track(canvas, status_text_width);
             if self.saved_popup_over_book() {
                 self.draw_saved_popup(canvas);
@@ -7797,8 +7838,14 @@ impl App for Reader {
             .footer_refresh_at
             .is_some_and(|deadline| deadline <= now)
         {
+            let clock_visible = self.clock_refresh_visible();
+            let battery_changed = self.refresh_status_battery_changed();
             self.update_footer_clock(now);
-            return Change::Partial;
+            return if clock_visible || battery_changed {
+                Change::Partial
+            } else {
+                Change::None
+            };
         }
         if self.stats_awake {
             let alarm = self.poll_read_alarm(now, false);
@@ -13501,6 +13548,245 @@ mod tests {
         }))
         .unwrap();
         assert!(app.footer_refresh_at.is_none());
+
+        use crate::reading_controls::TopHeader;
+        app.activate(Action::SetReadingControls(ReadingControls {
+            top_header: TopHeader {
+                enabled: true,
+                ..app.controls.top_header
+            },
+            ..app.controls
+        }))
+        .unwrap();
+        assert!(app.footer_refresh_at.is_some());
+        app.activate(Action::SetReadingControls(ReadingControls {
+            top_header: TopHeader {
+                auto_refresh: false,
+                ..app.controls.top_header
+            },
+            ..app.controls
+        }))
+        .unwrap();
+        assert!(app.footer_refresh_at.is_none());
+        app.activate(Action::SetReadingControls(ReadingControls {
+            top_header: TopHeader {
+                auto_refresh: true,
+                clock: false,
+                battery: crate::reading_controls::HeaderBattery::Off,
+                ..app.controls.top_header
+            },
+            ..app.controls
+        }))
+        .unwrap();
+        assert!(app.footer_refresh_at.is_none());
+        app.activate(Action::SetReadingControls(ReadingControls {
+            top_header: TopHeader {
+                battery: crate::reading_controls::HeaderBattery::Icon,
+                ..app.controls.top_header
+            },
+            ..app.controls
+        }))
+        .unwrap();
+        assert!(app.footer_refresh_at.is_some());
+        app.activate(Action::SetReadingControls(ReadingControls {
+            top_header: TopHeader {
+                battery: crate::reading_controls::HeaderBattery::Off,
+                clock: true,
+                ..app.controls.top_header
+            },
+            ..app.controls
+        }))
+        .unwrap();
+        assert!(app.footer_refresh_at.is_some());
+        app.input(Input::Sleep);
+        assert!(app.footer_refresh_at.is_none());
+        app.input(Input::Wake);
+        assert!(app.footer_refresh_at.is_some());
+
+        app.activate(Action::SetReadingControls(ReadingControls {
+            status_bar: StatusBar::Custom,
+            footer_auto_refresh: false,
+            footer_items: FooterItem::DEFAULT_MASK | FooterItem::BatteryPercentage.bit(),
+            top_header: crate::reading_controls::TopHeader {
+                enabled: false,
+                ..app.controls.top_header
+            },
+            ..app.controls
+        }))
+        .unwrap();
+        assert!(app.footer_refresh_at.is_none());
+        let battery_setting = app.footer_items().into_iter().find(|item| {
+            item.title == "Battery percentage" && item.detail.as_deref() == Some("On")
+        });
+        assert!(battery_setting.is_some());
+        app.show(Screen::FooterSettings);
+        let battery_row = app
+            .items()
+            .iter()
+            .position(|item| item.title == "Battery percentage")
+            .expect("battery percentage appears in custom footer items");
+        app.list_page = battery_row / ROWS_PER_PAGE;
+        capture_test_screen(
+            &app,
+            &fonts,
+            "READER_BATTERY_FOOTER_SETTINGS_SCREENSHOT",
+            false,
+        );
+        app.show(Screen::Book);
+        app.activate(Action::SetReadingControls(ReadingControls {
+            footer_auto_refresh: true,
+            ..app.controls
+        }))
+        .unwrap();
+        assert!(app.footer_refresh_at.is_some());
+        app.input(Input::Sleep);
+        assert!(app.footer_refresh_at.is_none());
+        app.input(Input::Wake);
+        assert!(app.footer_refresh_at.is_some());
+        app.activate(Action::SetReadingControls(ReadingControls {
+            footer_items: app.controls.footer_items & !FooterItem::BatteryPercentage.bit(),
+            ..app.controls
+        }))
+        .unwrap();
+        assert!(app.footer_refresh_at.is_none());
+    }
+
+    #[test]
+    fn top_header_relayouts_from_current_anchor_and_displays_configured_reading_metrics() {
+        use crate::reading_controls::{HeaderBattery, TopHeader};
+
+        let fixture = Fixture::new();
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/Silkscreen-Regular.ttf"),
+        ];
+        let mut app = fixture.app();
+        app.fonts = fonts.clone();
+        app.open_path(&fixture.book).unwrap();
+        let before = position(&app.active.as_ref().unwrap().reading);
+        let before_top_margin = app
+            .active
+            .as_ref()
+            .unwrap()
+            .reading
+            .config
+            .settings
+            .top_margin();
+        app.activate(Action::SetReadingControls(ReadingControls {
+            top_header: TopHeader {
+                enabled: true,
+                battery: HeaderBattery::Percentage,
+                reading_percent: true,
+                ..app.controls.top_header
+            },
+            ..app.controls
+        }))
+        .unwrap();
+
+        let active = app.active.as_ref().unwrap();
+        assert_eq!(
+            active.reading.config.settings.status_header_height,
+            TopHeader::HEIGHT
+        );
+        assert_eq!(
+            active.reading.config.settings.top_margin(),
+            before_top_margin + TopHeader::HEIGHT
+        );
+        assert_eq!(position(&active.reading), before);
+        let caption = app.top_header_caption().unwrap();
+        assert!(caption.contains("Field Notes"));
+        assert!(caption.contains('/'));
+        assert!(caption.contains('%'));
+        let settings = app.footer_items();
+        assert!(
+            settings
+                .iter()
+                .any(|item| item.title == "Header current time")
+        );
+        assert!(
+            settings
+                .iter()
+                .any(|item| item.title == "Header battery status")
+        );
+        assert_eq!(
+            settings
+                .iter()
+                .find(|item| item.title == "Show status at top")
+                .and_then(|item| item.detail.as_deref()),
+            Some("On")
+        );
+        let mut canvas = Canvas::new(
+            WIDTH,
+            HEIGHT,
+            &fonts
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        let pixels = primitive_app::frame(&app, &mut canvas, false);
+        let header_pixels = &pixels[..WIDTH as usize * TopHeader::HEIGHT as usize];
+        assert!(
+            header_pixels.iter().any(|pixel| *pixel < 255),
+            "enabled header should draw pixels in its reserved screen area"
+        );
+        capture_test_screen(&app, &fonts, "READER_TOP_HEADER_SCREENSHOT", false);
+
+        let mut night = app.controls;
+        night.night_pages = true;
+        app.activate(Action::SetReadingControls(night)).unwrap();
+        let night_pixels = primitive_app::frame(&app, &mut canvas, false);
+        assert!(
+            night_pixels[..WIDTH as usize * TopHeader::HEIGHT as usize]
+                .iter()
+                .any(|pixel| *pixel < 50),
+            "night pages should invert the header strip with the reading page"
+        );
+        capture_test_screen(&app, &fonts, "READER_TOP_HEADER_NIGHT_SCREENSHOT", false);
+    }
+
+    #[test]
+    fn top_header_is_removed_for_continuous_scroll_and_restored_for_page_turns() {
+        use crate::reading_controls::TopHeader;
+
+        let fixture = Fixture::new();
+        let long = fixture.root.join("Long Chapter.epub");
+        fs::write(&long, include_bytes!("../tests/fixtures/long-chapter.epub")).unwrap();
+        let mut app = fixture.app();
+        app.open_path(&long).unwrap();
+        app.activate(Action::SetReadingControls(ReadingControls {
+            top_header: TopHeader {
+                enabled: true,
+                ..app.controls.top_header
+            },
+            ..app.controls
+        }))
+        .unwrap();
+        assert_eq!(
+            app.active
+                .as_ref()
+                .unwrap()
+                .reading
+                .config
+                .settings
+                .status_header_height,
+            TopHeader::HEIGHT
+        );
+
+        app.activate(Action::ReadingMode(true)).unwrap();
+        let reading = &app.active.as_ref().unwrap().reading;
+        assert!(reading.is_continuous());
+        assert_eq!(reading.config.settings.status_header_height, 0);
+        assert!(app.top_header_caption().is_none());
+
+        app.activate(Action::ReadingMode(false)).unwrap();
+        let reading = &app.active.as_ref().unwrap().reading;
+        assert!(!reading.is_continuous());
+        assert_eq!(
+            reading.config.settings.status_header_height,
+            TopHeader::HEIGHT
+        );
+        assert!(app.top_header_caption().is_some());
     }
 
     #[test]
