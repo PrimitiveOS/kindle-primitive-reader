@@ -95,6 +95,22 @@ open. It was left undisturbed. This run covers device-side automated suites and
 the software picker/render/resume path, not foreground touch, physical page
 keys, E Ink refresh behavior, or visual acceptance of the new installed app.
 
+## Reader 0.1.25 release on the Oasis
+
+On 24 November 2026, the Reader 0.1.25 GitHub release workflow completed
+successfully. The armhf ZIP SHA-256 is
+`678f42f3e44b1f32a08526c819fda4c7e3cf8efc9a714f4613383a59f274e4db` (21,252,010
+bytes); the installed release binary SHA-256 is
+`04ac6a55c96982737bfff8e41652d7a4a3761cdd5ce7f5ccfe324c89ef4a6c06`.
+
+The exact release binary's `--check-document` diagnostic selected and opened a
+real EPUB from Documents using a fresh scratch profile. The first frame took
+2,174 ms and contained 198,331 ink pixels; a forward page changed the frame,
+Continue reading restored the saved page, and the process reported 51,908 KiB
+peak memory. The scratch profile was removed. The source document, Launcher and
+user reading data were not changed. This automated offscreen diagnostic does not
+claim foreground touch or visual acceptance.
+
 For a single file under an authorized Documents root, run the example with a fresh
 scratch directory and the same Noto Sans fonts as Launcher.
 
