@@ -6465,23 +6465,39 @@ impl Reader {
             let footer_caption = fixed.reading.footer_caption(display_notice);
             let footer_font_px = self.footer_caption_font_px();
             let footer_style = self.footer_caption_style();
-            let status_text_width = canvas.measure(&footer_caption, footer_font_px);
+            let draw_footer_icons = self.custom_footer_icons_enabled()
+                && self.notice.is_none()
+                && search_caption.is_none()
+                && self.pdf_selection.is_none()
+                && self.selection.is_none();
+            let status_text_width = canvas.measure(&footer_caption, footer_font_px)
+                + if draw_footer_icons {
+                    self.custom_footer_icon_width()
+                } else {
+                    0
+                };
+            let status_rect = footer_caption_rect(
+                self.footer_caption_width(SMALLER.x.saturating_sub(60) as u32, status_text_width)
+                    as i32,
+                footer_font_px,
+            );
             fixed.reading.draw_with_footer(
                 canvas,
-                display_notice,
+                if draw_footer_icons {
+                    Some("")
+                } else {
+                    display_notice
+                },
                 &marks,
                 &selection,
                 self.page_paint(),
                 self.hidden_overlap_footer(),
-                footer_caption_rect(
-                    self.footer_caption_width(
-                        SMALLER.x.saturating_sub(60) as u32,
-                        status_text_width,
-                    ) as i32,
-                    footer_font_px,
-                ),
+                status_rect,
                 footer_style,
             );
+            if draw_footer_icons {
+                self.draw_custom_footer_icons(canvas, status_rect, footer_style, footer_font_px);
+            }
             self.draw_footer_track(canvas, status_text_width);
             if self.saved_popup_over_book() {
                 self.draw_saved_popup(canvas);
@@ -6599,22 +6615,40 @@ impl Reader {
             let footer_caption = reading.footer_caption(display_notice);
             let footer_font_px = self.footer_caption_font_px();
             let footer_style = self.footer_caption_style();
-            let status_text_width = canvas.measure(&footer_caption, footer_font_px);
+            let draw_footer_icons = self.custom_footer_icons_enabled()
+                && self.notice.is_none()
+                && search_caption.is_none()
+                && self.selection.is_none()
+                && self.pdf_selection.is_none();
+            let status_text_width = canvas.measure(&footer_caption, footer_font_px)
+                + if draw_footer_icons {
+                    self.custom_footer_icon_width()
+                } else {
+                    0
+                };
+            let status_rect = footer_caption_rect(
+                self.footer_caption_width(DONE.x.saturating_sub(60) as u32, status_text_width)
+                    as i32,
+                footer_font_px,
+            );
             reading.draw_page(
                 canvas,
                 self.selection.is_none().then_some("Exit"),
                 self.hidden_overlap_footer(),
-                display_notice,
-                footer_caption_rect(
-                    self.footer_caption_width(DONE.x.saturating_sub(60) as u32, status_text_width)
-                        as i32,
-                    footer_font_px,
-                ),
+                if draw_footer_icons {
+                    Some("")
+                } else {
+                    display_notice
+                },
+                status_rect,
                 footer_style,
                 &highlights,
                 &selection,
                 self.page_paint(),
             );
+            if draw_footer_icons {
+                self.draw_custom_footer_icons(canvas, status_rect, footer_style, footer_font_px);
+            }
             self.draw_publisher_margins(canvas);
             self.draw_top_header(canvas);
             self.draw_footer_track(canvas, status_text_width);
@@ -13348,7 +13382,7 @@ mod tests {
     #[test]
     fn epub_footer_cycles_persists_and_keeps_the_anchor_when_skimming() {
         use crate::reading_controls::{
-            FooterItem, FooterSeparator, FooterTrackPosition, StatusBar,
+            FooterItem, FooterSeparator, FooterSymbolStyle, FooterTrackPosition, StatusBar,
         };
 
         let fixture = Fixture::new();
@@ -13423,6 +13457,7 @@ mod tests {
                     assert!(caption.contains("left in chapter"));
                     assert!(caption.contains("1 bookmarks"));
                     assert!(caption.starts_with("1 bookmarks • Page 1"));
+                    assert!(app.custom_footer_icons_enabled());
                     assert_eq!(
                         app.controls.footer_items & FooterItem::DEFAULT_MASK,
                         FooterItem::DEFAULT_MASK
@@ -13448,6 +13483,13 @@ mod tests {
                     assert_eq!(
                         items
                             .iter()
+                            .find(|item| item.title == "Status item symbols")
+                            .and_then(|item| item.detail.as_deref()),
+                        Some("Icons")
+                    );
+                    assert_eq!(
+                        items
+                            .iter()
                             .find(|item| item.title == "Pages left includes current page")
                             .and_then(|item| item.detail.as_deref()),
                         Some("On")
@@ -13459,6 +13501,35 @@ mod tests {
                             .and_then(|item| item.detail.as_deref()),
                         Some("2 decimal places")
                     );
+                    let symbols = app
+                        .items()
+                        .into_iter()
+                        .find(|item| item.title == "Status item symbols")
+                        .expect("custom footer exposes KOReader symbol styles");
+                    app.activate(symbols.action).unwrap();
+                    assert_eq!(app.controls.footer_symbol_style, FooterSymbolStyle::Letters);
+                    assert!(!app.custom_footer_icons_enabled());
+                    assert!(
+                        app.status_caption()
+                            .unwrap()
+                            .starts_with("BM: 1 bookmarks • P: Page 1")
+                    );
+                    let symbols = app
+                        .items()
+                        .into_iter()
+                        .find(|item| item.title == "Status item symbols")
+                        .unwrap();
+                    app.activate(symbols.action).unwrap();
+                    assert_eq!(app.controls.footer_symbol_style, FooterSymbolStyle::Compact);
+                    assert!(!app.custom_footer_icons_enabled());
+                    let symbols = app
+                        .items()
+                        .into_iter()
+                        .find(|item| item.title == "Status item symbols")
+                        .unwrap();
+                    app.activate(symbols.action).unwrap();
+                    assert_eq!(app.controls.footer_symbol_style, FooterSymbolStyle::Icons);
+                    assert!(app.custom_footer_icons_enabled());
                     let move_down = app
                         .footer_items()
                         .into_iter()

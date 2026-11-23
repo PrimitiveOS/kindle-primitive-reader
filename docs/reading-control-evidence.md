@@ -4,6 +4,8 @@ This audit compares Reader 0.1.6 and the subsequent dictionary changes with KORe
 
 The custom footer also includes a selectable local clock. Optional minute-boundary refresh defaults Off, pauses during sleep and resumes on wake; the automated Mac workflow and screenshot are recorded at [current-time-footer.png](screenshots/current-time-footer.png). Kindle acceptance remains open.
 
+Custom footer items now follow KOReader's **Icons**, **Letters**, and **Compact** symbol modes. Icon mode draws native vector symbols, so it does not depend on a device font containing private-use glyphs. The Mac workflow verifies mode cycling, settings persistence, and item reordering; the [footer capture](screenshots/footer-item-symbols.png) and [settings capture](screenshots/footer-item-symbols-settings.png) show the result. Kindle foreground acceptance remains open.
+
 ## What the Oasis frames establish
 
 | Captured state | Observed controls | Evidence boundary |

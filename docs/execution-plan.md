@@ -50,41 +50,32 @@ counts do not measure completed parity.
 On 23 November 2026, legacy pixel-size font taps were aligned to KOReader's
 ±0.5 logical-size step using each book's captured screen/DPI context. The
 chapter/page caption now always uses the requested hyphen, even when a saved
-custom separator is a bullet. The Mac suite passed 956 Reader tests (62
-ignored), one Kindle binary test, 14 EPUB package tests and four layout probes.
-A test-only static ARMHF bundle on the Oasis passed 956 Reader tests (62
-ignored), 14 package tests and four layout probes. The Reader, EPUB package,
-layout probe, reader-probe and run-script SHA-256 values were respectively
-`f21a109544237a2bb7855bd98503515e6b8c68afe29a517e6f1af516c576dc42`,
-`009a2b5426f6ab423f7bfbe79acc8eafbea31d647ca5d7e699771833ae2a4e7a`,
-`94b329460083f7d1f0497d6096c29a7425923aef0d39aaf00b5c74a6e75d7372`,
-`38e55c6e1c8bef2b25970edd253d7cd7f92c1efb623d96ae5d615de4a2e3e5c6`, and
-`23732a07dcee5618ccdadaa5d138bb6f5d15a7860bd76d120ca3efd9f316eaf7`. The
-test archive SHA-256 was
-`96d3d8b205d3d9e61f7ed44bf36fcbc34b249ef0127f5cc7afdcd003ee7f322a` on both
-hosts. The device-side app test exercised the caption with a saved bullet
-separator and confirmed the hyphen. The production ARMHF Reader executable
-(SHA-256 `a8cbb9a9581bca63f4ce7d8627ef60c0db6e61a9e318a44ea4161ea71bf9749b`)
-is installed at `/mnt/us/reader/bin/reader-kindle`; its previous executable
-(SHA-256 `3489a7a3f097d503bd490110b3909f64cee5e14acdba9cf96b9a6bd2a09001c7`)
-is retained beside it as a rollback copy. Launcher, `Reader.sh`, Store, reading
-data and Documents were left untouched. Automated device tests passed, but no
-foreground E Ink screenshot was captured. The Kindle remains awake; after
-removing only the temporary test bundles it had 4.0 GiB free. The simulator
-shows the requested two-row layout: `Chapter x of y - Page m of n`, then the
-horizontal progress line with vertical chapter ticks below it and Exit at the
-right. [Default footer](screenshots/reading-footer-below.png) ·
+custom separator is a bullet. Device-side tests exercised a saved bullet
+separator and confirmed the caption remains `Chapter x of y - Page m of n`.
+The simulator shows that caption above the horizontal progress line with
+vertical chapter ticks below it and Exit at the right. [Default footer](screenshots/reading-footer-below.png) ·
 [Large EPUB footer](screenshots/footer-font-large-epub.png) ·
 [Large PDF footer](screenshots/footer-font-large-fixed.png)
 
-The latest Mac `cargo test --lib --bins --tests --locked --features kindle` run,
-against the current worktree, passed 956 Reader library tests with 62 ignored
-for private or device-provided inputs, one Kindle binary test, 14 EPUB package
-tests, and four layout probes. The page-overlap movement, style, settings-panel,
-alternate top status header, battery footer, adjustable footer text size,
-scaled legacy font steps, fixed chapter-caption hyphen, and persistence
-regressions are included. A fresh ARMHF bundle for these changes passed the
-same Reader, package, and layout suites on the Oasis (hashes above).
+The latest Mac `cargo test --lib --bins --tests --locked --features kindle` run
+passed 957 Reader library tests with 62 ignored for private or device-provided
+inputs, one Kindle binary test, 14 EPUB package tests, and four layout probes.
+The page-overlap movement, style, settings-panel, alternate top status header,
+battery footer, adjustable footer text size, scaled legacy font steps, fixed
+chapter-caption hyphen, custom footer Icons/Letters/Compact modes, and
+persistence regressions are included. A fresh test-only ARMHF bundle passed the
+same Reader, package, and layout suites on the Oasis. The device log is
+[`footer-symbols-kindleoasis-20261123.log`](device-tests/footer-symbols-kindleoasis-20261123.log)
+(SHA-256
+`43cc1a0b4fb56c19b975d6f0e78dcffa4af47d97c1c7b1c03ad0a7d84a2c008e`). The
+static ARM EABI5 production Reader (SHA-256
+`bfe4f041cf0238301908abb3d2d862b603a892d0eb2741f9211a08913e23045a`) is
+installed at `/mnt/us/reader/bin/reader-kindle`; the prior executable is kept
+as `/mnt/us/reader/bin/reader-kindle.pre-footer-symbols-20261124`. Automated
+device tests pass. No foreground E Ink screenshot was captured, so visual
+acceptance on the Kindle remains open. The simulator captures for the new
+footer modes are [here](screenshots/footer-item-symbols.png) and
+[here](screenshots/footer-item-symbols-settings.png).
 The two cross-page PDF selection regressions pass in both directions, after
 save and reopen, and with an unreadable intermediate page. The
 isolated shared-input worktree passed 140 `kl-core`, eight `primitive-app`, and

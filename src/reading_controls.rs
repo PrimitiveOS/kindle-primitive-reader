@@ -76,6 +76,8 @@ pub(crate) struct ReadingControls {
     pub footer_order: u64,
     #[serde(skip_serializing_if = "FooterSeparator::is_default")]
     pub footer_separator: FooterSeparator,
+    #[serde(skip_serializing_if = "FooterSymbolStyle::is_default")]
+    pub footer_symbol_style: FooterSymbolStyle,
     #[serde(skip_serializing_if = "is_false")]
     pub footer_pages_left_include_current: bool,
     #[serde(default, skip_serializing_if = "is_zero_u8")]
@@ -646,6 +648,85 @@ pub(crate) enum FooterSeparator {
     Bullet,
     Dot,
     None,
+}
+
+/// Prefixes for the selected custom status items, following KOReader's three styles.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum FooterSymbolStyle {
+    #[default]
+    Icons,
+    Letters,
+    Compact,
+}
+
+impl FooterSymbolStyle {
+    const ALL: [Self; 3] = [Self::Icons, Self::Letters, Self::Compact];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Icons => "Icons",
+            Self::Letters => "Letters",
+            Self::Compact => "Compact",
+        }
+    }
+
+    pub(crate) fn next(self) -> Self {
+        let index = Self::ALL
+            .iter()
+            .position(|value| *value == self)
+            .unwrap_or(0);
+        Self::ALL[(index + 1) % Self::ALL.len()]
+    }
+
+    pub(crate) fn prefix(self, item: FooterItem) -> &'static str {
+        match self {
+            Self::Icons => match item {
+                FooterItem::CurrentPage
+                | FooterItem::ChapterTitle
+                | FooterItem::BookProgress
+                | FooterItem::ChapterPagesLeft
+                | FooterItem::BookPagesLeft
+                | FooterItem::ChapterTimeLeft
+                | FooterItem::BookTimeLeft
+                | FooterItem::BookTitle
+                | FooterItem::Author
+                | FooterItem::BookmarkCount
+                | FooterItem::CurrentTime
+                | FooterItem::BatteryPercentage => "",
+            },
+            Self::Letters => match item {
+                FooterItem::CurrentPage => "P: ",
+                FooterItem::ChapterTitle => "C: ",
+                FooterItem::BookProgress => "R: ",
+                FooterItem::ChapterPagesLeft => "=> ",
+                FooterItem::BookPagesLeft => "-> ",
+                FooterItem::ChapterTimeLeft => "TC: ",
+                FooterItem::BookTimeLeft => "TB: ",
+                FooterItem::BookTitle => "B: ",
+                FooterItem::Author => "A: ",
+                FooterItem::BookmarkCount => "BM: ",
+                FooterItem::CurrentTime => "",
+                FooterItem::BatteryPercentage => "B: ",
+            },
+            Self::Compact => match item {
+                FooterItem::CurrentPage => "P ",
+                FooterItem::ChapterTitle => "C ",
+                FooterItem::BookProgress => "",
+                FooterItem::ChapterPagesLeft => "> ",
+                FooterItem::BookPagesLeft => ">> ",
+                FooterItem::ChapterTimeLeft => "T ",
+                FooterItem::BookTimeLeft => "",
+                FooterItem::BookTitle | FooterItem::Author | FooterItem::CurrentTime => "",
+                FooterItem::BookmarkCount => "BM ",
+                FooterItem::BatteryPercentage => "B ",
+            },
+        }
+    }
+
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 impl FooterSeparator {
@@ -1251,6 +1332,7 @@ mod tests {
                 | FooterItem::BatteryPercentage.bit(),
             footer_battery_hide_threshold: Some(80),
             footer_item_font_size: Some(18),
+            footer_symbol_style: FooterSymbolStyle::Letters,
             ..ReadingControls::default()
         };
         let bytes = serde_json::to_vec(&controls).unwrap();
@@ -1259,14 +1341,54 @@ mod tests {
         assert_eq!(reopened.footer_items, controls.footer_items);
         assert_eq!(reopened.footer_battery_hide_threshold, Some(80));
         assert_eq!(reopened.footer_item_font_size, Some(18));
+        assert_eq!(reopened.footer_symbol_style, FooterSymbolStyle::Letters);
         assert_eq!(FooterItem::BatteryPercentage.label(), "Battery percentage");
         assert!(FooterItem::ordered(0).contains(&FooterItem::BatteryPercentage));
 
         let legacy: ReadingControls = serde_json::from_str("{}").unwrap();
         assert_eq!(legacy.status_bar, StatusBar::Chapter);
         assert_eq!(legacy.footer_items, 0);
+        assert_eq!(legacy.footer_symbol_style, FooterSymbolStyle::Icons);
         assert_eq!(StatusBar::BookTime.next(), StatusBar::Custom);
         assert_eq!(StatusBar::Custom.next(), StatusBar::Minimal);
+    }
+
+    #[test]
+    fn custom_footer_symbol_styles_match_stock_modes_and_cycle() {
+        assert_eq!(FooterSymbolStyle::Icons.label(), "Icons");
+        assert_eq!(FooterSymbolStyle::Letters.label(), "Letters");
+        assert_eq!(FooterSymbolStyle::Compact.label(), "Compact");
+        assert_eq!(FooterSymbolStyle::Icons.next(), FooterSymbolStyle::Letters);
+        assert_eq!(
+            FooterSymbolStyle::Letters.next(),
+            FooterSymbolStyle::Compact
+        );
+        assert_eq!(FooterSymbolStyle::Compact.next(), FooterSymbolStyle::Icons);
+
+        assert_eq!(
+            FooterSymbolStyle::Icons.prefix(FooterItem::BookProgress),
+            ""
+        );
+        assert_eq!(
+            FooterSymbolStyle::Letters.prefix(FooterItem::BookProgress),
+            "R: "
+        );
+        assert_eq!(
+            FooterSymbolStyle::Compact.prefix(FooterItem::BookProgress),
+            ""
+        );
+        assert_eq!(
+            FooterSymbolStyle::Letters.prefix(FooterItem::ChapterTimeLeft),
+            "TC: "
+        );
+        assert_eq!(
+            FooterSymbolStyle::Compact.prefix(FooterItem::ChapterPagesLeft),
+            "> "
+        );
+        for item in FooterItem::ALL {
+            assert!(FooterSymbolStyle::Letters.prefix(item).is_ascii());
+            assert!(FooterSymbolStyle::Compact.prefix(item).is_ascii());
+        }
     }
 
     #[test]
@@ -1350,6 +1472,11 @@ mod tests {
         assert_eq!(FooterSeparator::Hyphen.next(), FooterSeparator::Bar);
         assert_eq!(FooterSeparator::Bar.next(), FooterSeparator::Bullet);
         assert_eq!(FooterSeparator::None.text(), "  ");
+        assert!(
+            !serde_json::to_string(&ReadingControls::default())
+                .unwrap()
+                .contains("footer_symbol_style")
+        );
     }
 
     #[test]

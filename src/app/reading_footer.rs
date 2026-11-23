@@ -5,16 +5,50 @@ use crate::Probe;
 use crate::fixed_session::FixedReading;
 use crate::library::Bookmark;
 use crate::reading_controls::{
-    FooterItem, FooterTrackPosition, HeaderBattery, ProgressScope, ReadingControls, StatusBar,
-    TopHeader,
+    FooterItem, FooterSymbolStyle, FooterTrackPosition, HeaderBattery, ProgressScope,
+    ReadingControls, StatusBar, TopHeader,
 };
 use crate::session::{DONE, PAGE_HEIGHT, SHOW_STATUS};
 use primitive_app::{Change, HEIGHT, WIDTH};
-use primitive_ui::{Canvas, HAIRLINE, Rect, SECONDARY, TextStyle};
+use primitive_ui::{Canvas, HAIRLINE, Icon, Rect, SECONDARY, TextStyle};
 use std::time::{Duration, Instant};
 
 const FOOTER_TRACK_GAP: i32 = 20;
 const FOOTER_CAPTION_LEFT: i32 = 38;
+const FOOTER_ICON_SIZE: i32 = 22;
+const FOOTER_ICON_GAP: i32 = 5;
+const FOOTER_PROGRESS_ICON: Icon = Icon {
+    stroke: &["M3 6 H21 V18 H3 Z", "M6 14 L10 10 L13 13 L18 8"],
+    fill: &[],
+};
+const FOOTER_AUTHOR_ICON: Icon = Icon {
+    stroke: &[
+        "M12 12 A4 4 0 1 0 12 4 A4 4 0 0 0 12 12 Z",
+        "M4 21 C4 17 7 15 12 15 C17 15 20 17 20 21",
+    ],
+    fill: &[],
+};
+const FOOTER_BATTERY_ICON: Icon = Icon {
+    stroke: &["M4 7 H20 V18 H4 Z", "M20 10 H22 V15 H20"],
+    fill: &["M6 9 H18 V16 H6 Z"],
+};
+
+fn footer_item_icon(item: FooterItem) -> Icon {
+    match item {
+        FooterItem::CurrentPage => super::bar_icons::PAGE,
+        FooterItem::ChapterTitle | FooterItem::BookPagesLeft | FooterItem::BookTitle => {
+            super::bar_icons::BOOK
+        }
+        FooterItem::BookProgress => FOOTER_PROGRESS_ICON,
+        FooterItem::ChapterPagesLeft => super::bar_icons::NEXT_PAGE,
+        FooterItem::ChapterTimeLeft | FooterItem::BookTimeLeft | FooterItem::CurrentTime => {
+            super::bar_icons::CLOCK
+        }
+        FooterItem::Author => FOOTER_AUTHOR_ICON,
+        FooterItem::BookmarkCount => super::bar_icons::BOOKMARK,
+        FooterItem::BatteryPercentage => FOOTER_BATTERY_ICON,
+    }
+}
 
 pub(super) fn fixed_chapters(reading: &FixedReading) -> Vec<(usize, String)> {
     let mut chapters: Vec<_> = reading
@@ -1019,13 +1053,13 @@ impl Reader {
         }
     }
 
-    fn custom_footer_caption(&self, progress: &Progress<'_>) -> String {
+    fn custom_footer_parts(&self, progress: &Progress<'_>) -> Vec<(FooterItem, String)> {
         let (entry, id) = if let Some(book) = &self.fixed {
             (&book.entry, book.id)
         } else if let Some(book) = &self.active {
             (&book.entry, book.id)
         } else {
-            return String::new();
+            return Vec::new();
         };
         let time_left = |scope| {
             let pages = if scope == ProgressScope::Book {
@@ -1044,7 +1078,6 @@ impl Reader {
             progress.book_pages_left,
             self.controls.footer_pages_left_include_current,
         );
-        let separator = self.controls.footer_separator.text();
         let percentage = progress.percentage_with_digits(self.controls.footer_percentage_digits);
         let current_time = local_footer_time();
         let current_page = || {
@@ -1135,13 +1168,85 @@ impl Reader {
                 }),
             };
             if let Some(text) = text {
-                items.push(text);
+                items.push((item, text));
             }
         }
+        items
+    }
+
+    fn custom_footer_caption(&self, progress: &Progress<'_>) -> String {
+        let items = self.custom_footer_parts(progress);
         if items.is_empty() {
             "No items selected".to_owned()
         } else {
-            items.join(separator)
+            let separator = self.controls.footer_separator.text();
+            items
+                .iter()
+                .map(|(item, text)| {
+                    format!(
+                        "{}{}",
+                        self.controls.footer_symbol_style.prefix(*item),
+                        text
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(separator)
+        }
+    }
+
+    pub(super) fn custom_footer_icons_enabled(&self) -> bool {
+        self.controls.status_bar == StatusBar::Custom
+            && self.controls.footer_symbol_style == FooterSymbolStyle::Icons
+            && self
+                .footer_progress()
+                .is_some_and(|progress| !self.custom_footer_parts(&progress).is_empty())
+    }
+
+    pub(super) fn custom_footer_icon_width(&self) -> i32 {
+        let Some(progress) = self.footer_progress() else {
+            return 0;
+        };
+        let count = self.custom_footer_parts(&progress).len();
+        count as i32 * (FOOTER_ICON_SIZE + FOOTER_ICON_GAP)
+    }
+
+    pub(super) fn draw_custom_footer_icons(
+        &self,
+        canvas: &mut Canvas,
+        status_rect: Rect,
+        status_style: TextStyle,
+        font_size: i32,
+    ) {
+        let Some(progress) = self.footer_progress() else {
+            return;
+        };
+        let items = self.custom_footer_parts(&progress);
+        let separator = self.controls.footer_separator.text();
+        let mut x = status_rect.x;
+        for (index, (item, text)) in items.iter().enumerate() {
+            if index != 0 {
+                let width = canvas.measure(separator, font_size);
+                canvas.text(
+                    Rect::new(x, status_rect.y, width, status_rect.h),
+                    separator,
+                    status_style,
+                );
+                x += width;
+            }
+            let top = status_rect.y + (status_rect.h - FOOTER_ICON_SIZE) / 2;
+            canvas.icon(
+                Rect::new(x, top, FOOTER_ICON_SIZE, FOOTER_ICON_SIZE),
+                footer_item_icon(*item),
+                0,
+            );
+            x += FOOTER_ICON_SIZE + FOOTER_ICON_GAP;
+            let width = canvas.measure(text, font_size);
+            canvas.text(
+                Rect::new(x, status_rect.y, width.max(1), status_rect.h),
+                text,
+                status_style,
+            );
+            x += width;
         }
     }
 
@@ -1433,6 +1538,14 @@ impl Reader {
                 c.footer_separator.label(),
                 ReadingControls {
                     footer_separator: c.footer_separator.next(),
+                    ..c
+                },
+            ),
+            setting(
+                "Status item symbols",
+                c.footer_symbol_style.label(),
+                ReadingControls {
+                    footer_symbol_style: c.footer_symbol_style.next(),
                     ..c
                 },
             ),

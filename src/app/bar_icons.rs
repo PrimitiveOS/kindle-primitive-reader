@@ -29,7 +29,7 @@ pub(super) const EDIT: Icon = line(&[
     "M14 6.5 L17.5 10",
 ]);
 pub(super) const COPY: Icon = line(&["M8 7 H19 V21 H8 Z M5 17 H3 V3 H15 V5"]);
-const CLOCK: Icon = line(&["M12 3 A9 9 0 1 0 12 21 A9 9 0 1 0 12 3 Z M12 7 V12 L16 15"]);
+pub(super) const CLOCK: Icon = line(&["M12 3 A9 9 0 1 0 12 21 A9 9 0 1 0 12 3 Z M12 7 V12 L16 15"]);
 pub(super) const LINK: Icon =
     line(&["M10 8 L13 5 A4 4 0 0 1 19 11 L16 14 M14 16 L11 19 A4 4 0 0 1 5 13 L8 10 M9 15 L15 9"]);
 const JUMP: Icon = line(&["M4 12 H19 M14 7 L19 12 L14 17 M5 5 V19"]);

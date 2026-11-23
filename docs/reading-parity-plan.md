@@ -50,10 +50,11 @@ parity; many reading requirements and the foreground Kindle acceptance gates
 remain open.
 
 **Control evidence snapshot:** 189 of 541 in-scope reading-control rows are
-marked as complete workflows; 213 are partial, 89 are gaps, and 50 need
-audit. Adjustable footer text size (8–36, default 14) and half-logical font
-steps for legacy pixel settings each move one control from gap to partial; font
-face, bold, and foreground Kindle appearance remain open.
+marked as complete workflows; 214 are partial, 88 are gaps, and 50 need
+audit. Adjustable footer text size (8–36, default 14), half-logical font steps
+for legacy pixel settings, and the custom footer's Icons/Letters/Compact symbol
+styles each move one control from gap to partial. Font face, bold, and
+foreground Kindle appearance remain open.
 Six Kindle display/runtime controls were reclassified as Launcher-owned
 or outside reading scope. This unweighted inventory is a status breakdown, not
 a feature-weighted completion score. Current Kindle acceptance and publication
@@ -72,9 +73,9 @@ remain separate gates.
 - [x] Add KOReader's dictionary pencil: tap edits the original query and long press edits the active result headword. Submitting creates a nested lookup; Back restores the prior result and source passage. EPUB interaction tests pass and the editor screenshot has been inspected. Kindle acceptance remains open. [Dictionary evidence](reading-control-evidence.md#dictionary-navigation-checks)
 - [ ] Compare selection placement, hold timing, corner zones and cross-page PDF selection behavior against KOReader on Kindle.
 - [ ] Compare selection-dialog placement, long-press behavior, highlight appearance and dismissal against KOReader on the Kindle.
-- [x] Run the current desktop library, binary, package and layout test suites against the pinned shared-input revision. The latest full Mac run passes 956 Reader tests with 62 ignored, one Kindle binary test, 14 package tests and four layout probes. The latest test-only ARMHF bundle on the Oasis passes 956 Reader tests with 62 ignored, 14 package tests and four layout probes. The isolated shared-input worktree passes 140 `kl-core`, eight `primitive-app` and four `primitive-input` tests. [Build hashes and device test limits](execution-plan.md#current-host-and-device-integration-gate)
-- [x] Build the static ARMHF candidate from the current worktree, run its native suites on the Oasis, and record its checksum in the [execution plan](execution-plan.md#current-host-and-device-integration-gate). Foreground UI acceptance and release remain open.
-- [x] Add user-reorderable status metrics, KOReader-style footer separator choices, “pages left includes current page,” and 0–2 decimal-place progress percentages. Verify settings persistence, item movement, and actual combined/custom captions; capture and inspect the footer and settings simulator frames. Kindle acceptance remains open.
+- [x] Run the current desktop library, binary, package and layout test suites against the pinned shared-input revision. The latest full Mac run passes 957 Reader tests with 62 ignored, one Kindle binary test, 14 package tests and four layout probes. The latest test-only ARMHF bundle on the Oasis passes 957 Reader tests with 62 ignored, 14 package tests and four layout probes. The isolated shared-input worktree passes 140 `kl-core`, eight `primitive-app` and four `primitive-input` tests. [Build hashes and device test limits](execution-plan.md#current-host-and-device-integration-gate)
+- [x] Build the static ARMHF candidate from the current worktree and run its native suites on the Oasis. The verified binary is installed; foreground UI acceptance and release remain open. [Build hashes and device test limits](execution-plan.md#current-host-and-device-integration-gate)
+- [x] Add user-reorderable status metrics, KOReader-style footer separator and Icons/Letters/Compact symbol choices, “pages left includes current page,” and 0–2 decimal-place progress percentages. Verify settings persistence, item movement, and actual combined/custom captions; capture and inspect the [footer](screenshots/footer-item-symbols.png) and [settings](screenshots/footer-item-symbols-settings.png) simulator frames. Kindle acceptance remains open.
 - [x] Add a selectable local current-time footer item and optional minute-boundary refresh, default Off. Verify local-time rendering, settings persistence, timer scheduling, sleep/wake pause and resume, and inspect the simulator capture; Kindle acceptance remains open. [Clock capture](screenshots/current-time-footer.png)
 - [x] Add an optional battery percentage/charging item to the custom reading footer. Reuse the existing auto-refresh setting, update on minute boundaries, pause during sleep, and stop polling when hidden. Verify formatting, option persistence and scheduling; inspect the settings capture. Kindle battery reporting remains open. [Battery footer behavior and capture](battery-footer.md)
 - [x] Match KOReader's battery hide threshold: saved 0–100% value, default 100%, and hide only when the battery level is higher than the configured threshold. Verify the exact boundary, clamping, persistence and conditional setting row. Kindle battery reporting remains open. [Battery footer behavior and capture](battery-footer.md)
@@ -92,11 +93,10 @@ remain separate gates.
 - [ ] Publish and list the candidate after the desktop and Kindle gates pass, then record the release checksum, Store listing, screenshots, and device evidence.
 
 The checklist applies to PrimitiveOS Reader. Device-wide settings remain in
-Launcher. Native ARM and real-document checks cover earlier candidates; the
-current worktree has not been installed on the Oasis. Foreground UI, physical
-E Ink behavior, package installation and publication still need acceptance.
-The last recorded device state had the Oasis online with keep-awake enabled;
-recheck connectivity and the setting before the foreground acceptance run.
+Launcher. The current ARMHF worktree is installed and its automated suites pass
+on the Oasis. Foreground UI, physical E Ink behavior, a fresh real-document
+sweep, and publication still need acceptance. Recheck device connectivity and
+the keep-awake state before foreground acceptance.
 
 The Text → Rendering panel now offers per-book base styles. Auto follows the
 document format, publisher CSS and inline declarations remain higher in the
