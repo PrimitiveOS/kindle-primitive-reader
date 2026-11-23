@@ -12,6 +12,7 @@ use primitive_app::{Change, HEIGHT, WIDTH};
 use primitive_ui::{Canvas, Rect};
 
 const FOOTER_TRACK_GAP: i32 = 20;
+const FOOTER_CAPTION_LEFT: i32 = 38;
 
 pub(super) fn fixed_chapters(reading: &FixedReading) -> Vec<(usize, String)> {
     let mut chapters: Vec<_> = reading
@@ -707,11 +708,21 @@ impl Reader {
                 .clamp(5, 90),
         );
         let minimum_track_width = (WIDTH as i32 * minimum_pct + 99) / 100;
-        let caption_width = status_text_width
-            .max(0)
-            .min((track_right - 38 - FOOTER_TRACK_GAP - minimum_track_width).max(0));
-        let track_left = 38 + caption_width + FOOTER_TRACK_GAP;
-        (caption_width, track_left, (track_right - track_left).max(0))
+        let first_track_left = FOOTER_CAPTION_LEFT + FOOTER_TRACK_GAP;
+        if self.controls.footer_track_lock_min_width {
+            let locked_width = minimum_track_width.min((track_right - first_track_left).max(0));
+            let track_left = track_right - locked_width;
+            let caption_width = status_text_width
+                .max(0)
+                .min((track_left - first_track_left).max(0));
+            (caption_width, track_left, locked_width)
+        } else {
+            let caption_width = status_text_width
+                .max(0)
+                .min((track_right - first_track_left - minimum_track_width).max(0));
+            let track_left = first_track_left + caption_width;
+            (caption_width, track_left, (track_right - track_left).max(0))
+        }
     }
 
     pub(super) fn footer_track_rect(&self, status_text_width: i32) -> Option<Rect> {
@@ -920,6 +931,14 @@ impl Reader {
                 Action::Show(Screen::NumberingValue(NumberField::FooterTrackMinimumWidth)),
             )
             .detail(format!("{}%", c.footer_track_min_width_pct.unwrap_or(20))),
+            setting(
+                "Lock progress bar width at minimum",
+                on_off(c.footer_track_lock_min_width),
+                ReadingControls {
+                    footer_track_lock_min_width: !c.footer_track_lock_min_width,
+                    ..c
+                },
+            ),
             Item::new(
                 "Progress bar margins",
                 Action::Show(Screen::NumberingValue(NumberField::FooterTrackMarginWidth)),

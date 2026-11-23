@@ -12787,6 +12787,45 @@ mod tests {
         assert_eq!(long_text_track.w, minimum_track_width);
         assert_eq!(long_text_track.x + long_text_track.w, DONE.x - margin);
 
+        let lock_width = app
+            .footer_items()
+            .into_iter()
+            .find(|item| item.title == "Lock progress bar width at minimum")
+            .expect("footer settings expose KOReader's locked minimum-width option");
+        assert_eq!(lock_width.detail.as_deref(), Some("Off"));
+        app.activate(lock_width.action).unwrap();
+        assert!(app.controls.footer_track_lock_min_width);
+        assert_eq!(
+            ReadingControls::load(&app.controls_path, true).footer_track_lock_min_width,
+            true
+        );
+        let locked_track = app.footer_track_rect(measured_text_width).unwrap();
+        assert_eq!(locked_track.w, minimum_track_width);
+        assert_eq!(locked_track.x + locked_track.w, DONE.x - margin);
+        assert_eq!(
+            app.footer_track_rect(0).unwrap(),
+            locked_track,
+            "locked progress width stays anchored when the caption is short"
+        );
+        assert_eq!(
+            app.footer_track_rect(i32::MAX).unwrap(),
+            locked_track,
+            "locked progress width stays anchored when the caption is long"
+        );
+        assert_eq!(
+            app.footer_caption_width(500, measured_text_width),
+            measured_text_width.min((locked_track.x - 38 - 20).max(0)) as u32
+        );
+        capture_test_screen(&app, &fonts, "READER_FOOTER_LOCKED_SCREENSHOT", false);
+        app.show(Screen::FooterSettings);
+        assert_eq!(
+            app.footer_items()
+                .into_iter()
+                .find(|item| item.title == "Lock progress bar width at minimum")
+                .and_then(|item| item.detail),
+            Some("On".to_owned())
+        );
+
         let minimum_width = app
             .footer_items()
             .into_iter()
@@ -12851,6 +12890,7 @@ mod tests {
         fs::write(&pdf, crate::fixed::tests::document()).unwrap();
         app.activate(Action::SetReadingControls(ReadingControls {
             footer_track_position: FooterTrackPosition::Alongside,
+            footer_track_lock_min_width: false,
             ..app.controls
         }))
         .unwrap();
@@ -12872,6 +12912,18 @@ mod tests {
         assert_eq!(
             app.footer_caption_width((840 - 60) as u32, pdf_text_width),
             pdf_caption_width as u32
+        );
+        app.activate(Action::SetReadingControls(ReadingControls {
+            footer_track_lock_min_width: true,
+            ..app.controls
+        }))
+        .unwrap();
+        let pdf_locked_track = app.footer_track_rect(pdf_text_width).unwrap();
+        assert_eq!(pdf_locked_track.w, pdf_minimum_width);
+        assert_eq!(pdf_locked_track.x + pdf_locked_track.w, pdf_track_right);
+        assert_eq!(
+            app.footer_caption_width((840 - 60) as u32, pdf_text_width),
+            pdf_text_width.min((pdf_locked_track.x - 38 - 20).max(0)) as u32
         );
     }
 

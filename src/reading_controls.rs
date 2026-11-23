@@ -78,6 +78,9 @@ pub(crate) struct ReadingControls {
     /// Minimum share reserved for the progress track; `None` keeps KOReader's 20% default.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub footer_track_min_width_pct: Option<u8>,
+    /// Anchor the Alongside track to the minimum width instead of using all remaining space.
+    #[serde(skip_serializing_if = "is_false")]
+    pub footer_track_lock_min_width: bool,
     /// Horizontal progress-track inset; `None` keeps KOReader's 10 px default.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub footer_track_margin_width: Option<u8>,

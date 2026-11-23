@@ -44,7 +44,7 @@ only to find and compare relevant controls.
 
 ### Execution checklist
 
-**Milestone status:** 13 of 19 checklist items (68%) have desktop or scope
+**Milestone status:** 14 of 20 checklist items (70%) have desktop or scope
 evidence. This count tracks plan milestones, not overall feature parity; the
 remaining reading requirements and all Kindle acceptance gates are still open.
 
@@ -63,6 +63,7 @@ remaining reading requirements and all Kindle acceptance gates are still open.
 - [x] Add user-reorderable status metrics, KOReader-style footer separator choices, “pages left includes current page,” and 0–2 decimal-place progress percentages. Verify settings persistence, item movement, and actual combined/custom captions; capture and inspect the footer and settings simulator frames. Kindle acceptance remains open.
 - [x] Match KOReader's progress-track positions and thickness choices, with its Alongside, Thick 7 px, and 20% minimum-width defaults. Measure the displayed caption to reserve space; expose the adjustable 5–90% minimum width, persist it, and verify EPUB/PDF layouts and light/dark simulator captures. Kindle acceptance remains open.
 - [x] Add KOReader's adjustable progress-track inset (0–140 px, 10 px default) and Thin/Medium/Thick chapter ticks (1/2/3 px, 2 px default). Persist both; test their EPUB/PDF geometry and ensure the track stays clear of Zoom, Exit, and the Next Comic control.
+- [x] Add KOReader's optional lock-at-minimum width for Alongside progress tracks. Persist it; verify short and long captions and EPUB/PDF geometry, and capture the simulator frame. Kindle acceptance remains open.
 - [ ] Compare and implement every remaining in-scope reading requirement against the pinned KOReader source and interface evidence. Keep device-owned and excluded controls out of the implementation backlog; update statuses with evidence instead of treating the source inventory as a feature list.
 - [ ] Exercise the supported workflows with the owner's real Kindle Documents files through unit, functional, system, and simulator checks; record format-specific failures and keep original files unchanged.
 - [ ] Complete automated Kindle acceptance for document open/read/resume, physical controls, touch and exit, sleep/wake, USB handoff, and state preservation. Capture comparable device screenshots for the reading surface, top and bottom controls, selection/lookup, and reading settings.
