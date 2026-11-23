@@ -5,7 +5,9 @@
 mod spelling;
 #[cfg(feature = "kindle")]
 pub(crate) use spelling::eligible as spelling_eligible;
+mod cjk_selection;
 mod word_forms;
+pub(crate) use cjk_selection::{MAX_SCAN_CHARACTERS, word_character as cjk_word_character};
 use word_forms::{Ranked, WordForms};
 
 use std::cell::{Cell, RefCell};
@@ -155,31 +157,59 @@ impl DictionarySources {
         self.lookup_ordered(word, &[], &first, &[])
     }
 
-    fn enabled(&self, book_order: &[PathBuf], order: &[PathBuf], disabled: &[PathBuf])
-        -> io::Result<(Vec<(DictionaryFile, Info)>, Option<io::Error>)> {
+    fn enabled(
+        &self,
+        book_order: &[PathBuf],
+        order: &[PathBuf],
+        disabled: &[PathBuf],
+    ) -> io::Result<(Vec<(DictionaryFile, Info)>, Option<io::Error>)> {
         let mut first_error = None;
         let mut sources = Vec::new();
         for file in self.files()? {
-            if disabled.contains(&file.key) && !book_order.contains(&file.key) { continue; }
+            if disabled.contains(&file.key) && !book_order.contains(&file.key) {
+                continue;
+            }
             match open_dictionary_file(&file.root, &file.path).and_then(Info::load) {
                 Ok(info) => sources.push((file, info)),
-                Err(error) => { first_error.get_or_insert(error); }
+                Err(error) => {
+                    first_error.get_or_insert(error);
+                }
             }
         }
         sources.sort_by_cached_key(|(file, info)| {
-            let rank = book_order.iter().chain(order).position(|key| key == &file.key).unwrap_or(usize::MAX);
-            (rank, info.title.to_lowercase(), file.key.is_absolute(), file.key.clone())
+            let rank = book_order
+                .iter()
+                .chain(order)
+                .position(|key| key == &file.key)
+                .unwrap_or(usize::MAX);
+            (
+                rank,
+                info.title.to_lowercase(),
+                file.key.is_absolute(),
+                file.key.clone(),
+            )
         });
         Ok((sources, first_error))
     }
 
-    pub(crate) fn lookup_ordered(&self, word: &str, book_order: &[PathBuf], order: &[PathBuf],
-                                 disabled: &[PathBuf]) -> io::Result<Vec<Definition>> {
+    pub(crate) fn lookup_ordered(
+        &self,
+        word: &str,
+        book_order: &[PathBuf],
+        order: &[PathBuf],
+        disabled: &[PathBuf],
+    ) -> io::Result<Vec<Definition>> {
         self.lookup_configured(word, book_order, order, disabled, false)
     }
 
-    pub(crate) fn lookup_configured(&self, word: &str, book_order: &[PathBuf], order: &[PathBuf],
-                                    disabled: &[PathBuf], with_word_forms: bool) -> io::Result<Vec<Definition>> {
+    pub(crate) fn lookup_configured(
+        &self,
+        word: &str,
+        book_order: &[PathBuf],
+        order: &[PathBuf],
+        disabled: &[PathBuf],
+        with_word_forms: bool,
+    ) -> io::Result<Vec<Definition>> {
         let word = word.trim();
         if word.len() > MAX_WORD_BYTES {
             return Ok(Vec::new());
@@ -204,15 +234,25 @@ impl DictionarySources {
         };
         let mut read_any = false;
         for (DictionaryFile { root, path, .. }, info) in sources {
-            let aliases = synonym_targets(&root, &path, &info, query, &mut budget)
-                .unwrap_or_default();
-            let result = lookup_dictionary(&root, &path, &info, IndexQuery { headword: query, aliases }, &mut budget);
+            let aliases =
+                synonym_targets(&root, &path, &info, query, &mut budget).unwrap_or_default();
+            let result = lookup_dictionary(
+                &root,
+                &path,
+                &info,
+                IndexQuery {
+                    headword: query,
+                    aliases,
+                },
+                &mut budget,
+            );
             match result {
                 Ok(found) => {
                     read_any = true;
                     if with_word_forms {
                         let remaining = MAX_RESULTS - hits.exact.len();
-                        hits.exact.extend(found.into_best().into_iter().take(remaining));
+                        hits.exact
+                            .extend(found.into_best().into_iter().take(remaining));
                     } else {
                         hits.extend(found);
                     }
@@ -225,9 +265,7 @@ impl DictionarySources {
                 break;
             }
         }
-        if !read_any
-            && let Some(error) = first_error
-        {
+        if !read_any && let Some(error) = first_error {
             return Err(error);
         }
         Ok(hits.into_best())
@@ -250,7 +288,6 @@ fn lookup_preferred(
     }
     .lookup(word, preferred)
 }
-
 
 fn dictionary_root(root: &Path) -> io::Result<Option<PathBuf>> {
     match fs::symlink_metadata(root) {
@@ -444,7 +481,12 @@ struct Aliases {
 }
 
 impl Default for Aliases {
-    fn default() -> Self { Self { direct: Hits::new(), forms: Ranked::default() } }
+    fn default() -> Self {
+        Self {
+            direct: Hits::new(),
+            forms: Ranked::default(),
+        }
+    }
 }
 
 struct IndexMatch {
@@ -453,8 +495,12 @@ struct IndexMatch {
     size: usize,
 }
 
-fn open_index_and_data(root: &Path, path: &Path, info: &Info, budget: &mut LookupBudget)
-    -> io::Result<(Box<dyn Read>, Data)> {
+fn open_index_and_data(
+    root: &Path,
+    path: &Path,
+    info: &Info,
+    budget: &mut LookupBudget,
+) -> io::Result<(Box<dyn Read>, Data)> {
     let (index, gzip) = open_variant(root, path, "idx", "idx.gz")?;
     let file_size = index.metadata()?.len();
     if gzip && file_size > MAX_COMPRESSED_INDEX_BYTES {
@@ -479,12 +525,20 @@ fn open_index_and_data(root: &Path, path: &Path, info: &Info, budget: &mut Looku
     } else {
         Data::Plain(file)
     };
-    let index: Box<dyn Read> = if gzip { Box::new(MultiGzDecoder::new(index.take(file_size))) } else { Box::new(index) };
-    Ok((index,data))
+    let index: Box<dyn Read> = if gzip {
+        Box::new(MultiGzDecoder::new(index.take(file_size)))
+    } else {
+        Box::new(index)
+    };
+    Ok((index, data))
 }
 
-fn read_definitions(data: &mut Data, info: &Info, budget: &mut LookupBudget,
-    matches: Vec<IndexMatch>) -> io::Result<Vec<Definition>> {
+fn read_definitions(
+    data: &mut Data,
+    info: &Info,
+    budget: &mut LookupBudget,
+    matches: Vec<IndexMatch>,
+) -> io::Result<Vec<Definition>> {
     let mut definitions = Vec::new();
     for matched in matches {
         let text = if matched.size == 0 {
@@ -775,8 +829,13 @@ fn dictzip_table(mut extra: &[u8]) -> io::Result<(u64, Vec<u16>)> {
     })
 }
 
-fn visit_synonyms(root: &Path, path: &Path, info: &Info, budget: &mut LookupBudget,
-    mut visit: impl FnMut(&str, usize) -> io::Result<()>) -> io::Result<()> {
+fn visit_synonyms(
+    root: &Path,
+    path: &Path,
+    info: &Info,
+    budget: &mut LookupBudget,
+    mut visit: impl FnMut(&str, usize) -> io::Result<()>,
+) -> io::Result<()> {
     let Some(count) = info.synonyms else {
         return Ok(());
     };
@@ -859,8 +918,12 @@ fn synonym_targets(
     Ok(hits)
 }
 
-fn visit_index(index: impl Read, info: &Info, data_size: u64,
-    mut visit: impl FnMut(usize, &str, u64, u32) -> io::Result<()>) -> io::Result<()> {
+fn visit_index(
+    index: impl Read,
+    info: &Info,
+    data_size: u64,
+    mut visit: impl FnMut(usize, &str, u64, u32) -> io::Result<()>,
+) -> io::Result<()> {
     let mut index = BufReader::new(index.take(info.index_size as u64 + 1));
     let mut headword = Vec::with_capacity(MAX_WORD_BYTES + 1);
     let mut position = [0; 12];
@@ -913,25 +976,46 @@ fn scan_index(
     let mut forms = Ranked::default();
     let mapper = CaseMapper::new();
     visit_index(index, info, data_size, |ordinal, headword, offset, size| {
-        let exact = headword == query.headword.word || query.aliases.direct.exact.binary_search(&ordinal).is_ok();
-        let fallback = !exact && hits.fallback.len() < MAX_RESULTS
-            && (query.aliases.direct.fallback.binary_search(&ordinal).is_ok() || query.headword.caseless(headword, mapper));
-        let entry = || IndexMatch { word: headword.to_owned(), offset, size: size as usize };
+        let exact = headword == query.headword.word
+            || query.aliases.direct.exact.binary_search(&ordinal).is_ok();
+        let fallback = !exact
+            && hits.fallback.len() < MAX_RESULTS
+            && (query
+                .aliases
+                .direct
+                .fallback
+                .binary_search(&ordinal)
+                .is_ok()
+                || query.headword.caseless(headword, mapper));
+        let entry = || IndexMatch {
+            word: headword.to_owned(),
+            offset,
+            size: size as usize,
+        };
         if exact {
-            if hits.exact.len() < MAX_RESULTS { hits.exact.push(entry()); }
+            if hits.exact.len() < MAX_RESULTS {
+                hits.exact.push(entry());
+            }
         } else if fallback {
             hits.fallback.push(entry());
         } else if let Some(candidates) = query.headword.forms {
             let direct = candidates.rank(headword);
-            let synonym = query.aliases.forms.values.binary_search(&ordinal)
-                .ok().map(|_| query.aliases.forms.rank);
+            let synonym = query
+                .aliases
+                .forms
+                .values
+                .binary_search(&ordinal)
+                .ok()
+                .map(|_| query.aliases.forms.rank);
             if let Some(best) = direct.into_iter().chain(synonym).min() {
                 forms.record(best, entry);
             }
         }
         Ok(())
     })?;
-    if hits.exact.is_empty() && hits.fallback.is_empty() { hits.fallback = forms.values; }
+    if hits.exact.is_empty() && hits.fallback.is_empty() {
+        hits.fallback = forms.values;
+    }
     Ok(hits)
 }
 
@@ -1050,7 +1134,11 @@ impl TokenSink for PlainText {
                         }
                         ("tr", _) => {
                             if !tag.self_closing {
-                                let bracket = if tag.kind == TagKind::StartTag { '[' } else { ']' };
+                                let bracket = if tag.kind == TagKind::StartTag {
+                                    '['
+                                } else {
+                                    ']'
+                                };
                                 self.text.borrow_mut().push(bracket);
                             }
                             return TokenSinkResult::Continue;
@@ -1086,7 +1174,13 @@ impl TokenSink for PlainText {
 fn markup_text(text: &str, xdxf: bool) -> String {
     let queue = BufferQueue::default();
     queue.push_back(StrTendril::from_slice(text));
-    let tokenizer = Tokenizer::new(PlainText { xdxf, ..Default::default() }, Default::default());
+    let tokenizer = Tokenizer::new(
+        PlainText {
+            xdxf,
+            ..Default::default()
+        },
+        Default::default(),
+    );
     let _ = tokenizer.feed(&queue);
     tokenizer.end();
     display_text(&tokenizer.sink.text.into_inner())
@@ -1105,10 +1199,10 @@ pub(crate) mod tests {
 
     use super::*;
 
-    struct TestDirectory(PathBuf);
+    pub(crate) struct TestDirectory(pub(crate) PathBuf);
 
     impl TestDirectory {
-        fn new() -> Self {
+        pub(crate) fn new() -> Self {
             static NEXT: AtomicUsize = AtomicUsize::new(0);
             let path = std::env::temp_dir().join(format!(
                 "reader-stardict-{}-{}",
@@ -1151,7 +1245,7 @@ pub(crate) mod tests {
         fs::write(root.join(format!("{name}.dict")), data).unwrap();
     }
 
-    fn write_synonyms(root: &Path, name: &str, entries: &[(&str, u32)]) {
+    pub(crate) fn write_synonyms(root: &Path, name: &str, entries: &[(&str, u32)]) {
         let path = root.join(format!("{name}.ifo"));
         let mut info = fs::read_to_string(&path).unwrap();
         info.push_str(&format!("synwordcount={}\n", entries.len()));
@@ -1375,8 +1469,12 @@ pub(crate) mod tests {
     #[test]
     fn an_alias_can_refer_to_a_headword_only_entry_in_the_same_dictionary() {
         let temp = TestDirectory::new();
-        write_dictionary(&temp.0, "Bilingual", "sametypesequence=m\n",
-            &[("alias", b""), ("lamp", b"A portable light.")]);
+        write_dictionary(
+            &temp.0,
+            "Bilingual",
+            "sametypesequence=m\n",
+            &[("alias", b""), ("lamp", b"A portable light.")],
+        );
         write_synonyms(&temp.0, "Bilingual", &[("lamp", 0), ("lamp", 1)]);
         let hits = lookup(&temp.0, "lamp").unwrap();
         assert_eq!(hits.len(), 2);
@@ -1388,9 +1486,18 @@ pub(crate) mod tests {
     #[test]
     fn xdxf_headwords_are_shown_once_and_transcriptions_are_bracketed() {
         let entry = b"<k>Quay</k>\n<tr>ki:</tr> A dock &amp; landing.";
-        assert_eq!(definition(entry, Some(b"x")).as_deref(), Some("[ki:] A dock & landing."));
-        assert_eq!(definition(b"<tr><td>First</td></tr>", Some(b"h")).as_deref(), Some("First"));
-        assert_eq!(definition(b"<k>Unclosed headword", Some(b"x")).as_deref(), Some("Unclosed headword"));
+        assert_eq!(
+            definition(entry, Some(b"x")).as_deref(),
+            Some("[ki:] A dock & landing.")
+        );
+        assert_eq!(
+            definition(b"<tr><td>First</td></tr>", Some(b"h")).as_deref(),
+            Some("First")
+        );
+        assert_eq!(
+            definition(b"<k>Unclosed headword", Some(b"x")).as_deref(),
+            Some("Unclosed headword")
+        );
     }
 
     #[cfg(feature = "kindle")]
@@ -1554,18 +1661,41 @@ pub(crate) mod tests {
     #[test]
     fn each_dictionary_can_supply_its_own_headword_or_inflected_synonym() {
         let temp = TestDirectory::new();
-        write_dictionary(&temp.0,"North","sametypesequence=m\n",&[("moving",b"Travelling.")]);
-        write_dictionary(&temp.0,"South","sametypesequence=m\n",&[("move",b"Change position."),("run",b"Proceed quickly."),("transport",b"Carry from place to place.")]);
-        write_synonyms(&temp.0,"South",&[("carry",2)]);
-        let sources = DictionarySources {local: temp.0.clone(), shared_storage: None};
-        let query = |word,enabled| sources.lookup_configured(word,&[],&[],&[],enabled).unwrap()
-            .into_iter().map(|r|r.word).collect::<Vec<_>>();
-        assert_eq!(query("moving",true), ["moving","move"]);
-        assert_eq!(query("moving",false), ["moving"]);
-        assert_eq!(query("running",true), ["run"]);
-        assert_eq!(query("carried",true), ["transport"]);
-        assert!(query("carried",false).is_empty());
-        assert!(query("đang",true).is_empty());
+        write_dictionary(
+            &temp.0,
+            "North",
+            "sametypesequence=m\n",
+            &[("moving", b"Travelling.")],
+        );
+        write_dictionary(
+            &temp.0,
+            "South",
+            "sametypesequence=m\n",
+            &[
+                ("move", b"Change position."),
+                ("run", b"Proceed quickly."),
+                ("transport", b"Carry from place to place."),
+            ],
+        );
+        write_synonyms(&temp.0, "South", &[("carry", 2)]);
+        let sources = DictionarySources {
+            local: temp.0.clone(),
+            shared_storage: None,
+        };
+        let query = |word, enabled| {
+            sources
+                .lookup_configured(word, &[], &[], &[], enabled)
+                .unwrap()
+                .into_iter()
+                .map(|r| r.word)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(query("moving", true), ["moving", "move"]);
+        assert_eq!(query("moving", false), ["moving"]);
+        assert_eq!(query("running", true), ["run"]);
+        assert_eq!(query("carried", true), ["transport"]);
+        assert!(query("carried", false).is_empty());
+        assert!(query("đang", true).is_empty());
     }
 
     #[test]

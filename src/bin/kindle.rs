@@ -83,7 +83,46 @@ fn reading_fonts(home: &Path) -> Vec<PathBuf> {
             PathBuf::from("/usr/java/lib/fonts/NotoNaskh-Regular.ttf"),
             PathBuf::from("/usr/java/lib/fonts/TBGothicMed_213.ttf"),
             PathBuf::from("/usr/java/lib/fonts/code2000.ttf"),
+            // Bundled with Reader so private-use symbols used by real Kindle
+            // books do not depend on optional KOReader or user font installs.
+            home.join("fonts/PrimitiveSymbols.ttf"),
         ])
         .filter(|path| path.is_file())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn reader_home_symbol_font_is_loaded_after_launcher_and_firmware_fonts() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let home = std::env::temp_dir().join(format!(
+            "primitive-reader-font-path-{}-{nonce}",
+            std::process::id()
+        ));
+        let directory = home.join("fonts");
+        fs::create_dir_all(&directory).unwrap();
+        // The path resolver checks presence; these stand-ins avoid requiring
+        // a real Launcher installation in the desktop test environment.
+        fs::write(directory.join("NotoSans-Regular.ttf"), b"regular").unwrap();
+        fs::write(directory.join("NotoSans-Bold.ttf"), b"bold").unwrap();
+        fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/fonts/PrimitiveSymbols.ttf"),
+            directory.join("PrimitiveSymbols.ttf"),
+        )
+        .unwrap();
+
+        let fonts = reading_fonts(&home);
+        assert_eq!(fonts.first(), Some(&directory.join("NotoSans-Regular.ttf")));
+        assert_eq!(fonts.get(1), Some(&directory.join("NotoSans-Bold.ttf")));
+        assert_eq!(fonts.last(), Some(&directory.join("PrimitiveSymbols.ttf")));
+        fs::remove_dir_all(home).unwrap();
+    }
 }

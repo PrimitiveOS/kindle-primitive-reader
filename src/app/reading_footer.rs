@@ -1,12 +1,54 @@
 //! Reading status shares the existing compact page footer with document controls.
+use super::character_page_settings::NumberField;
 use super::{Action, ActiveFixed, Item, Reader, Screen};
-use crate::library::Bookmark;
 use crate::Probe;
 use crate::fixed_session::FixedReading;
-use crate::reading_controls::{ProgressScope, ReadingControls, StatusBar};
+use crate::library::Bookmark;
+use crate::reading_controls::{
+    FooterAlignment, FooterItem, FooterSymbolStyle, FooterTrackPosition, HeaderBattery,
+    ProgressScope, ReadingControls, StatusBar, TopHeader,
+};
 use crate::session::{DONE, PAGE_HEIGHT, SHOW_STATUS};
-use primitive_app::{Change, HEIGHT};
-use primitive_ui::{Canvas, Rect};
+use primitive_app::{Change, HEIGHT, WIDTH};
+use primitive_ui::{Canvas, HAIRLINE, Icon, Rect, SECONDARY, TextStyle};
+use std::time::{Duration, Instant};
+
+const FOOTER_TRACK_GAP: i32 = 20;
+const FOOTER_CAPTION_LEFT: i32 = 38;
+const FOOTER_ICON_SIZE: i32 = 22;
+const FOOTER_ICON_GAP: i32 = 5;
+const FOOTER_PROGRESS_ICON: Icon = Icon {
+    stroke: &["M3 6 H21 V18 H3 Z", "M6 14 L10 10 L13 13 L18 8"],
+    fill: &[],
+};
+const FOOTER_AUTHOR_ICON: Icon = Icon {
+    stroke: &[
+        "M12 12 A4 4 0 1 0 12 4 A4 4 0 0 0 12 12 Z",
+        "M4 21 C4 17 7 15 12 15 C17 15 20 17 20 21",
+    ],
+    fill: &[],
+};
+const FOOTER_BATTERY_ICON: Icon = Icon {
+    stroke: &["M4 7 H20 V18 H4 Z", "M20 10 H22 V15 H20"],
+    fill: &["M6 9 H18 V16 H6 Z"],
+};
+
+fn footer_item_icon(item: FooterItem) -> Icon {
+    match item {
+        FooterItem::CurrentPage => super::bar_icons::PAGE,
+        FooterItem::ChapterTitle | FooterItem::BookPagesLeft | FooterItem::BookTitle => {
+            super::bar_icons::BOOK
+        }
+        FooterItem::BookProgress => FOOTER_PROGRESS_ICON,
+        FooterItem::ChapterPagesLeft => super::bar_icons::NEXT_PAGE,
+        FooterItem::ChapterTimeLeft | FooterItem::BookTimeLeft | FooterItem::CurrentTime => {
+            super::bar_icons::CLOCK
+        }
+        FooterItem::Author => FOOTER_AUTHOR_ICON,
+        FooterItem::BookmarkCount => super::bar_icons::BOOKMARK,
+        FooterItem::BatteryPercentage => FOOTER_BATTERY_ICON,
+    }
+}
 
 pub(super) fn fixed_chapters(reading: &FixedReading) -> Vec<(usize, String)> {
     let mut chapters: Vec<_> = reading
@@ -73,13 +115,42 @@ impl<'a> PageSections<'a> {
 
     pub(super) fn at(self, index: usize) -> Option<(usize, &'a str)> {
         match self {
-            Self::Publisher(entries) => entries.get(index).map(|(page, title)| (*page, title.as_str())),
-            Self::Custom(entries) => entries.get(index).map(|entry| (entry.position.page, entry.label.as_str())),
+            Self::Publisher(entries) => entries
+                .get(index)
+                .map(|(page, title)| (*page, title.as_str())),
+            Self::Custom(entries) => entries
+                .get(index)
+                .map(|entry| (entry.position.page, entry.label.as_str())),
         }
+    }
+
+    fn position(
+        self,
+        page: usize,
+        flow: Option<(&crate::library::hidden_flows::PageFlows, usize)>,
+    ) -> (usize, usize) {
+        let mut current = 0;
+        let mut count = 0;
+        for index in 0..self.len() {
+            let Some((start, _)) = self.at(index) else {
+                continue;
+            };
+            if flow.is_some_and(|(flows, active)| flows.flow(start) != active) {
+                continue;
+            }
+            count += 1;
+            if start <= page {
+                current = count;
+            }
+        }
+        (current.max(1), count.max(1))
     }
 }
 
 struct Progress<'a> {
+    section_range: std::ops::Range<usize>,
+    section_index: usize,
+    section_count: usize,
     section_name: &'a str,
     section_page: usize,
     section_len: usize,
@@ -91,22 +162,48 @@ struct Progress<'a> {
     book_ticks: Ticks<'a>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FooterLocation {
+    book_id: u64,
+    chapter: usize,
+    flow: usize,
+    section: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct InitialPosition {
+    location: FooterLocation,
+    book_fraction: f64,
+    chapter_fraction: f64,
+}
+
 enum Ticks<'a> {
     Pages(PageSections<'a>, usize),
+    FlowPages(
+        PageSections<'a>,
+        crate::library::hidden_flows::PageFlows,
+        usize,
+    ),
     Bytes(&'a [u64]),
 }
 
 impl Ticks<'_> {
     fn draw(&self, mut mark: impl FnMut(f64)) {
-        match *self {
+        match self {
             Self::Pages(sections, count) => {
                 for (page, _) in (0..sections.len()).filter_map(|index| sections.at(index)) {
-                    mark(page as f64 / count as f64);
+                    mark(page as f64 / *count as f64);
+                }
+            }
+            Self::FlowPages(sections, flows, flow) => {
+                let total = flows.count_in(*flow, 0..usize::MAX).max(1);
+                for (page, _) in (0..sections.len()).filter_map(|index| sections.at(index)) {
+                    mark(flows.count_in(*flow, 0..page) as f64 / total as f64);
                 }
             }
             Self::Bytes(offsets) => {
                 if let Some(&length) = offsets.last().filter(|&&n| n > 0) {
-                    for &offset in offsets {
+                    for &offset in *offsets {
                         mark(offset as f64 / length as f64);
                     }
                 }
@@ -125,9 +222,16 @@ impl<'a> Progress<'a> {
         let count = count.max(1);
         let page = page.min(count - 1);
         let next = sections.before(page.saturating_add(1));
-        let (start, name) = next.checked_sub(1).and_then(|index| sections.at(index)).unwrap_or((0, fallback));
+        let (start, name) = next
+            .checked_sub(1)
+            .and_then(|index| sections.at(index))
+            .unwrap_or((0, fallback));
         let end = sections.at(next).map_or(count, |(end, _)| end);
+        let (section_index, section_count) = sections.position(page, None);
         Self {
+            section_range: start..end,
+            section_index,
+            section_count,
             section_name: name,
             section_page: page - start + 1,
             section_len: end - start,
@@ -139,12 +243,33 @@ impl<'a> Progress<'a> {
         }
     }
 
-    fn percentage(&self) -> String {
+    fn apply_flows(
+        &mut self,
+        flows: crate::library::hidden_flows::PageFlows,
+        first: usize,
+        last: usize,
+        count: usize,
+        sections: PageSections<'a>,
+    ) {
+        let flow = flows.flow(first);
+        (self.section_index, self.section_count) = sections.position(first, Some((&flows, flow)));
+        let total = flows.count_in(flow, 0..count).max(1);
+        self.section_page = flows
+            .count_in(flow, self.section_range.start..last + 1)
+            .max(1);
+        self.section_len = flows.count_in(flow, self.section_range.clone()).max(1);
+        self.book_pages_left = flows.count_in(flow, last + 1..count);
+        self.book_fraction = flows.count_in(flow, 0..last + 1) as f64 / total as f64;
+        self.book_ticks = Ticks::FlowPages(sections, flows, flow);
+    }
+
+    fn percentage_with_digits(&self, digits: u8) -> String {
         let percent = self.book_fraction * 100.0;
+        let percent_text = format!("{percent:.precision$}", precision = digits.min(2) as usize);
         if self.estimated && percent < 100.0 {
-            format!("About {percent:.0}%")
+            format!("About {percent_text}%")
         } else {
-            format!("{percent:.0}%")
+            format!("{percent_text}%")
         }
     }
 
@@ -153,16 +278,294 @@ impl<'a> Progress<'a> {
     }
 }
 
+fn pages_left_display(pages_left: usize, include_current: bool) -> usize {
+    pages_left + usize::from(include_current)
+}
+
+fn draw_initial_marker(canvas: &mut Canvas, bar: Rect, fraction: f64) {
+    if bar.w <= 0 || bar.h <= 0 {
+        return;
+    }
+    let marker = (bar.x as f64 + (bar.w as f64 * fraction.clamp(0.0, 1.0)).round()) as i32;
+    let marker = marker.clamp(bar.x, bar.x + bar.w - 1);
+    for (row, half_width) in [0, 1, 2].into_iter().enumerate() {
+        canvas.fill(
+            Rect::new(
+                marker - half_width,
+                bar.y - 3 + row as i32,
+                half_width * 2 + 1,
+                1,
+            ),
+            0,
+        );
+    }
+    canvas.fill(Rect::new(marker, bar.y - 1, 1, bar.h + 1), 0);
+}
+
+fn ellipsis_to_fit(canvas: &mut Canvas, text: &str, max_width: u32, font_size: i32) -> String {
+    let mut value = text.replace(['\n', '\r'], " ");
+    if canvas.measure(&value, font_size) <= max_width as i32 {
+        return value;
+    }
+    while !value.is_empty() {
+        value.pop();
+        let candidate = format!("{value}…");
+        if canvas.measure(&candidate, font_size) <= max_width as i32 {
+            return candidate;
+        }
+    }
+    String::new()
+}
+
+fn draw_battery_icon(
+    canvas: &mut Canvas,
+    x: i32,
+    y: i32,
+    level: u32,
+    charging: bool,
+    ink: u8,
+    background: u8,
+) {
+    canvas.fill(Rect::new(x, y, 25, 18), ink);
+    canvas.fill(Rect::new(x + 2, y + 2, 21, 14), background);
+    let filled = (19 * level.min(100) / 100) as i32;
+    if filled > 0 {
+        canvas.fill(Rect::new(x + 3, y + 4, filled, 10), ink);
+    }
+    canvas.fill(Rect::new(x + 25, y + 5, 3, 8), ink);
+    if charging {
+        for (dx, dy, width, height) in [
+            (14, 3, 6, 2),
+            (12, 5, 5, 2),
+            (10, 7, 5, 2),
+            (8, 9, 5, 2),
+            (8, 11, 4, 2),
+        ] {
+            let bolt_center = x + dx + width / 2;
+            let filled_end = x + 3 + filled;
+            canvas.fill(
+                Rect::new(x + dx, y + dy, width, height),
+                if bolt_center < filled_end {
+                    background
+                } else {
+                    ink
+                },
+            );
+        }
+    }
+}
+
+fn battery_footer_text(level: u32, charging: bool, hide_above: u8) -> Option<String> {
+    let level = level.min(100);
+    if level > u32::from(hide_above.min(100)) {
+        return None;
+    }
+    let label = if charging { "Charging" } else { "Battery" };
+    Some(format!("{label} {level}%"))
+}
+
 impl Reader {
-    pub(super) fn device_reading_settings(&self) -> crate::Settings {
+    pub(super) fn footer_caption_font_px(&self) -> i32 {
+        let size = i32::from(
+            self.controls
+                .footer_item_font_size
+                .unwrap_or(14)
+                .clamp(8, 36),
+        );
+        if size <= 14 {
+            size * 2
+        } else {
+            28 + ((size - 14) * 12 + 11) / 22
+        }
+    }
+
+    pub(super) fn footer_caption_style(&self) -> TextStyle {
+        let style = TextStyle::new(self.footer_caption_font_px()).ink(SECONDARY);
+        if self.controls.footer_item_bold {
+            style.bold()
+        } else {
+            style
+        }
+    }
+
+    fn reading_status_visible(&self) -> bool {
+        self.stats_awake
+            && matches!(
+                self.screen,
+                Screen::Book
+                    | Screen::BookTools
+                    | Screen::Fixed
+                    | Screen::FixedTools
+                    | Screen::Footnote
+                    | Screen::OnlineLookup
+                    | Screen::Skim
+            )
+    }
+
+    fn top_header_visible(&self) -> bool {
+        self.controls.top_header.enabled
+            && self
+                .active
+                .as_ref()
+                .is_some_and(|book| !book.reading.is_continuous())
+            && matches!(
+                self.screen,
+                Screen::Book
+                    | Screen::BookTools
+                    | Screen::Footnote
+                    | Screen::OnlineLookup
+                    | Screen::Skim
+            )
+    }
+
+    fn footer_time_visible(&self) -> bool {
+        self.reading_status_visible()
+            && self.controls.footer_auto_refresh
+            && self.controls.status_bar == StatusBar::Custom
+            && self.controls.footer_items & FooterItem::CurrentTime.bit() != 0
+    }
+
+    fn top_header_time_visible(&self) -> bool {
+        self.reading_status_visible()
+            && self.top_header_visible()
+            && self.controls.top_header.auto_refresh
+            && self.controls.top_header.clock
+    }
+
+    fn top_header_battery_visible(&self) -> bool {
+        self.reading_status_visible()
+            && self.top_header_visible()
+            && self.controls.top_header.auto_refresh
+            && self.controls.top_header.battery != HeaderBattery::Off
+    }
+
+    fn footer_battery_visible(&self) -> bool {
+        self.reading_status_visible()
+            && self.controls.footer_auto_refresh
+            && self.controls.status_bar == StatusBar::Custom
+            && self.controls.footer_items & FooterItem::BatteryPercentage.bit() != 0
+    }
+
+    fn footer_clock_active(&self) -> bool {
+        self.footer_time_visible()
+            || self.top_header_time_visible()
+            || self.top_header_battery_visible()
+            || self.footer_battery_visible()
+    }
+
+    pub(super) fn clock_refresh_visible(&self) -> bool {
+        self.footer_time_visible() || self.top_header_time_visible()
+    }
+
+    fn status_battery_reading(&self) -> Option<(u32, bool)> {
+        if !self.top_header_battery_visible() && !self.footer_battery_visible() {
+            return None;
+        }
+        primitive_device::battery().map(|percent| (percent.min(100), primitive_device::charging()))
+    }
+
+    pub(super) fn refresh_status_battery_changed(&mut self) -> bool {
+        let current = self.status_battery_reading();
+        let changed = current != self.status_battery_last;
+        self.status_battery_last = current;
+        changed
+    }
+
+    pub(super) fn update_footer_clock(&mut self, now: Instant) {
+        self.footer_refresh_at = if self.footer_clock_active() {
+            current_unix_seconds().and_then(|seconds| {
+                let delay = 61 - seconds.rem_euclid(60) as u64;
+                now.checked_add(Duration::from_secs(delay))
+            })
+        } else {
+            None
+        };
+        self.status_battery_last = self.status_battery_reading();
+    }
+
+    pub(super) fn reset_footer_initial_position(&mut self) {
+        let initial = self.footer_progress().and_then(|progress| {
+            let location = self.footer_location(&progress)?;
+            Some(InitialPosition {
+                location,
+                book_fraction: progress.book_fraction,
+                chapter_fraction: progress.section_page as f64 / progress.section_len.max(1) as f64,
+            })
+        });
+        self.footer_initial_position = initial;
+    }
+
+    #[cfg(test)]
+    pub(super) fn footer_initial_fraction(&self) -> Option<f64> {
+        let progress = self.footer_progress()?;
+        self.initial_marker_fraction(&progress)
+    }
+
+    fn footer_location(&self, progress: &Progress<'_>) -> Option<FooterLocation> {
+        if let Some(active) = &self.active {
+            let flow = active
+                .reading
+                .custom_flow_map()
+                .map_or(0, |flows| flows.flow(active.reading.page));
+            return Some(FooterLocation {
+                book_id: active.id,
+                chapter: active.reading.chapter,
+                flow,
+                section: progress.section_index,
+            });
+        }
+        let fixed = self.fixed.as_ref()?;
+        let flow = fixed
+            .reading
+            .hidden_flow_map()
+            .map_or(0, |flows| flows.flow(fixed.reading.page()));
+        Some(FooterLocation {
+            book_id: fixed.id,
+            chapter: 0,
+            flow,
+            section: progress.section_index,
+        })
+    }
+
+    fn initial_marker_fraction(&self, progress: &Progress<'_>) -> Option<f64> {
+        if !self.controls.footer_initial_marker {
+            return None;
+        }
+        let initial = self.footer_initial_position?;
+        let current = self.footer_location(progress)?;
+        if initial.location.book_id != current.book_id || initial.location.flow != current.flow {
+            return None;
+        }
+        match self.controls.footer_scope {
+            ProgressScope::Book => Some(initial.book_fraction),
+            ProgressScope::Chapter
+                if initial.location.chapter == current.chapter
+                    && initial.location.section == current.section =>
+            {
+                Some(initial.chapter_fraction)
+            }
+            ProgressScope::Chapter | ProgressScope::Off => None,
+        }
+    }
+
+    pub(super) fn device_reading_settings_for(&self, controls: ReadingControls) -> crate::Settings {
         crate::Settings {
-            height: if self.controls.overlap_footer {
+            height: if controls.overlap_footer {
                 HEIGHT
             } else {
                 PAGE_HEIGHT
             },
+            status_header_height: if controls.top_header.enabled {
+                TopHeader::HEIGHT
+            } else {
+                0
+            },
             ..super::device_settings()
         }
+    }
+
+    pub(super) fn device_reading_settings(&self) -> crate::Settings {
+        self.device_reading_settings_for(self.controls)
     }
 
     pub(super) fn overlapping_book_page(&self) -> bool {
@@ -238,7 +641,10 @@ impl Reader {
     }
 
     pub(super) fn fixed_sections<'a>(&'a self, fixed: &'a ActiveFixed) -> PageSections<'a> {
-        let custom = self.library.state(fixed.id).map(|state| &state.custom_contents);
+        let custom = self
+            .library
+            .state(fixed.id)
+            .map(|state| &state.custom_contents);
         if let Some(chapters) = custom.filter(|chapters| chapters.enabled) {
             let entries = chapters.entries();
             // CustomContents orders fixed-page positions before reflow anchors in each chapter.
@@ -257,16 +663,25 @@ impl Reader {
         if let Some(fixed) = &self.fixed {
             let reading = &fixed.reading;
             let last = if reading.is_spread() {
-                reading.visible_pages().max().unwrap_or_else(|| reading.page())
+                reading
+                    .visible_pages()
+                    .max()
+                    .unwrap_or_else(|| reading.page())
             } else {
                 reading.page()
             };
-            return Some(Progress::from_pages(
-                last,
-                reading.count(),
-                self.fixed_sections(fixed),
-                "Document",
-            ));
+            let sections = self.fixed_sections(fixed);
+            let mut progress = Progress::from_pages(last, reading.count(), sections, "Document");
+            if let Some(flows) = reading.hidden_flow_map() {
+                progress.apply_flows(
+                    flows.clone(),
+                    reading.page(),
+                    last,
+                    reading.count(),
+                    sections,
+                );
+            }
+            return Some(progress);
         }
         let reading = &self.active.as_ref()?.reading;
         let probe = &reading.probe;
@@ -276,19 +691,26 @@ impl Reader {
             PageSections::Publisher(probe.footer_sections()),
             &probe.chapter_label,
         );
+        if let Some(flows) = reading.custom_flow_map() {
+            progress.apply_flows(
+                flows,
+                reading.page,
+                reading.last_visible_page(),
+                probe.page_count(),
+                PageSections::Publisher(probe.footer_sections()),
+            );
+        }
         if probe.chapter_count() > 1 {
             let ch = reading.chapter;
-            let weights = reading
-                .config
-                .chapter_offsets
-                .get()
-                .map(Vec::as_slice)
-                .unwrap_or_default();
+            let weights = reading.progress_weights();
             // A publication with an unreadable later item can still display the current chapter.
             // An index based on chapter count is the fallback when sizes were unavailable.
             progress.estimated = true;
             progress.book_ticks = Ticks::Bytes(weights);
-            progress.future_pages_estimated = ch + 1 < probe.chapter_count();
+            progress.future_pages_estimated = match (weights.get(ch + 1), weights.last()) {
+                (Some(end), Some(total)) => end < total,
+                _ => ch + 1 < probe.chapter_count(),
+            };
             let later_pages = match (weights.get(ch..=ch + 1), weights.last()) {
                 (Some([start, end]), Some(&total)) if end > start => {
                     ((total - end) as f64 * probe.page_count() as f64 / (end - start) as f64)
@@ -311,18 +733,196 @@ impl Reader {
     }
 
     pub(super) fn status_caption(&self) -> Option<String> {
-        let base = self.progress_caption();
+        let flow = self
+            .active
+            .as_ref()
+            .and_then(|book| {
+                book.reading.custom_flow_map().map(|map| {
+                    book.reading
+                        .hidden_flow_ordinal(map.flow(book.reading.page))
+                        .unwrap_or(0)
+                })
+            })
+            .or_else(|| {
+                self.fixed.as_ref().and_then(|book| {
+                    book.reading
+                        .hidden_flow_map()
+                        .map(|map| map.flow_ordinal(map.flow(book.reading.page())).unwrap_or(0))
+                })
+            });
+        let base = self.progress_caption().map(|caption| {
+            if caption.is_empty() {
+                return caption;
+            }
+            flow.map_or(caption.clone(), |flow| {
+                if flow == 0 {
+                    format!("Custom{}{}", self.controls.footer_separator.text(), caption)
+                } else {
+                    format!(
+                        "Hidden {flow}{}{}",
+                        self.controls.footer_separator.text(),
+                        caption
+                    )
+                }
+            })
+        });
         if self.controls.status_bar == StatusBar::Minimal {
             return base;
         }
-        let Some(remaining) = self.read_alarm.footer() else { return base };
-        let page = base.filter(|s| !s.is_empty())
+        let Some(remaining) = self.read_alarm.footer() else {
+            return base;
+        };
+        let page = base
+            .filter(|s| !s.is_empty())
             .or_else(|| self.fixed.as_ref().map(|f| f.reading.page_status()))
             .or_else(|| self.active.as_ref().map(|a| a.reading.page_status()));
+        let separator = self.controls.footer_separator.text();
         Some(match page {
-            Some(label) => format!("{label}  ·  Timer {remaining}"),
+            Some(label) => format!("{label}{separator}Timer {remaining}"),
             None => format!("Timer {remaining}"),
         })
+    }
+
+    fn top_header_parts(&self) -> Option<(String, String)> {
+        let header = self.controls.top_header;
+        if !header.enabled {
+            return None;
+        }
+        let active = self.active.as_ref()?;
+        if active.reading.is_continuous() {
+            return None;
+        }
+        let progress = self.footer_progress();
+        let mut identity = Vec::new();
+        if header.title {
+            let title = active.reading.probe.title.trim();
+            if !title.is_empty() {
+                identity.push(title.to_owned());
+            }
+        }
+        if header.author {
+            if let Some(author) = active
+                .reading
+                .probe
+                .author
+                .as_deref()
+                .map(str::trim)
+                .filter(|author| !author.is_empty())
+            {
+                identity.push(author.to_owned());
+            }
+        }
+
+        let mut status = Vec::new();
+        if header.clock {
+            if let Some(time) = local_footer_time() {
+                status.push(time);
+            }
+        }
+        let page_number = header.page_number.then_some(active.reading.page + 1);
+        let page_count = header
+            .page_count
+            .then_some(active.reading.probe.page_count());
+        match (page_number, page_count) {
+            (Some(page), Some(count)) => status.push(format!("{page}/{count}")),
+            (Some(page), None) => status.push(page.to_string()),
+            (None, Some(count)) => status.push(format!("of {count}")),
+            (None, None) => {}
+        }
+        if header.reading_percent
+            && let Some(progress) = &progress
+        {
+            status.push(progress.percentage_with_digits(self.controls.footer_percentage_digits));
+        }
+        if header.battery == HeaderBattery::Percentage
+            && let Some(level) = primitive_device::battery()
+        {
+            status.push(format!("{level}%"));
+        }
+        Some((identity.join("  ·  "), status.join("  ·  ")))
+    }
+
+    pub(super) fn top_header_caption(&self) -> Option<String> {
+        let (identity, status) = self.top_header_parts()?;
+        Some(match (identity.is_empty(), status.is_empty()) {
+            (true, true) => String::new(),
+            (false, true) => identity,
+            (true, false) => status,
+            (false, false) => format!("{identity}  ·  {status}"),
+        })
+    }
+
+    pub(super) fn draw_top_header(&self, canvas: &mut Canvas) {
+        let header = self.controls.top_header;
+        let Some((identity, status)) = self.top_header_parts() else {
+            return;
+        };
+        let night = self.uses_night_pages();
+        let background = if night { 0 } else { 255 };
+        let ink = if night { 255 } else { 0 };
+        canvas.fill(
+            Rect::new(0, 0, WIDTH as i32, TopHeader::HEIGHT as i32),
+            background,
+        );
+        let font_size = i32::from(header.font_size());
+        let baseline = Rect::new(20, 4, WIDTH as i32 - 40, 38);
+        let battery_width = if header.battery == HeaderBattery::Icon {
+            42
+        } else {
+            0
+        };
+        let right_width = canvas.measure(&status, font_size).min(540) as i32;
+        let right_edge = baseline.right() - battery_width;
+        let right_x = (right_edge - right_width).max(baseline.x + 180);
+        let left_width = (right_x - baseline.x - 20).max(80);
+        let left = ellipsis_to_fit(canvas, &identity, left_width as u32, font_size);
+        let right = ellipsis_to_fit(canvas, &status, (right_edge - right_x) as u32, font_size);
+        let text_style = TextStyle::new(font_size).ink(ink);
+        canvas.text(
+            Rect::new(baseline.x, baseline.y, left_width, baseline.h),
+            &left,
+            text_style,
+        );
+        canvas.text(
+            Rect::new(right_x, baseline.y, right_edge - right_x, baseline.h),
+            &right,
+            text_style,
+        );
+        if header.battery == HeaderBattery::Icon
+            && let Some(level) = primitive_device::battery()
+        {
+            draw_battery_icon(
+                canvas,
+                baseline.right() - 34,
+                11,
+                level,
+                primitive_device::charging(),
+                ink,
+                background,
+            );
+        }
+        if header.chapter_marks {
+            canvas.fill(
+                Rect::new(12, TopHeader::HEIGHT as i32 - 2, WIDTH as i32 - 24, 1),
+                HAIRLINE,
+            );
+            let count = self
+                .active
+                .as_ref()
+                .map_or(0, |book| book.reading.probe.page_count())
+                .max(1);
+            if let Some(book) = &self.active {
+                for (page, _) in book.reading.probe.footer_sections() {
+                    let x = 12 + ((WIDTH - 24) as f64 * *page as f64 / count as f64).round() as i32;
+                    canvas.fill(Rect::new(x, TopHeader::HEIGHT as i32 - 5, 2, 4), ink);
+                }
+            }
+        } else {
+            canvas.fill(
+                Rect::new(0, TopHeader::HEIGHT as i32 - 1, WIDTH as i32, 1),
+                HAIRLINE,
+            );
+        }
     }
 
     pub(super) fn alarm_progress(&self, token: char) -> Option<String> {
@@ -330,12 +930,25 @@ impl Reader {
         match token {
             'l' => Some(progress.pages_left().to_string()),
             'C' => Some(progress.section_name.to_owned()),
-            'P' => Some(format!("{:.0}", progress.section_page as f64 * 100. / progress.section_len.max(1) as f64)),
+            'P' => Some(format!(
+                "{:.0}",
+                progress.section_page as f64 * 100. / progress.section_len.max(1) as f64
+            )),
             'p' => Some(format!("{:.0}", progress.book_fraction * 100.)),
             'H' | 'h' => {
-                let id = self.fixed.as_ref().map(|f|f.id).or_else(||self.active.as_ref().map(|a|a.id))?;
-                let pages = if token == 'H' {progress.book_pages_left} else {progress.pages_left()};
-                Some(super::reading_time((self.pace.rate(id) * pages as f64).round() as u64))
+                let id = self
+                    .fixed
+                    .as_ref()
+                    .map(|f| f.id)
+                    .or_else(|| self.active.as_ref().map(|a| a.id))?;
+                let pages = if token == 'H' {
+                    progress.book_pages_left
+                } else {
+                    progress.pages_left()
+                };
+                Some(super::reading_time(
+                    (self.pace.rate(id) * pages as f64).round() as u64,
+                ))
             }
             _ => None,
         }
@@ -348,14 +961,31 @@ impl Reader {
         }
         let printed = || {
             let active = self.active.as_ref()?;
-            self.publisher_footer_enabled().then(|| self.current_publisher_page()).flatten()
+            self.publisher_footer_enabled()
+                .then(|| self.current_publisher_page())
+                .flatten()
                 .and_then(|row| active.page_label(row))
-                .map(|label| format!("{} page {}", if active.numbering.is_some() { "Stable" } else { "Printed" }, super::publisher_pages::compact_label(&label)))
+                .map(|label| {
+                    format!(
+                        "{} page {}",
+                        if active.numbering.is_some() {
+                            "Stable"
+                        } else {
+                            "Printed"
+                        },
+                        super::publisher_pages::compact_label(&label)
+                    )
+                })
         };
         if !self.controls.footer_all_at_once && mode == StatusBar::PageNumbers {
-            return printed();
+            return printed().or_else(|| self.custom_page_status());
         }
         let p = self.footer_progress()?;
+        let separator = self.controls.footer_separator.text();
+        let percentage = p.percentage_with_digits(self.controls.footer_percentage_digits);
+        if mode == StatusBar::Custom {
+            return Some(self.custom_footer_caption(&p));
+        }
         let time = |scope| {
             let (pages, unit) = if scope == ProgressScope::Book {
                 (p.book_pages_left, "book")
@@ -388,30 +1018,240 @@ impl Reader {
             if let Some(scope @ (ProgressScope::Book | ProgressScope::Chapter)) =
                 self.controls.footer_combined_time
             {
-                return Some(format!("{} · {}", p.percentage(), time(scope)?));
+                return Some(format!("{percentage}{separator}{}", time(scope)?));
             }
             return Some(format!(
-                "{} of book  ·  {}  ·  {} left",
-                p.percentage(),
+                "{percentage} of book{separator}{}{separator}{} left",
                 printed().unwrap_or_else(|| format!("{} / {}", p.section_page, p.section_len)),
-                p.pages_left()
+                pages_left_display(
+                    p.pages_left(),
+                    self.controls.footer_pages_left_include_current,
+                )
             ));
         }
         match mode {
             StatusBar::ChapterTime => time(ProgressScope::Chapter),
             StatusBar::BookTime => time(ProgressScope::Book),
-            StatusBar::Progress => Some(format!("{} of book", p.percentage())),
+            StatusBar::Progress => Some(format!("{percentage} of book")),
             StatusBar::Chapter => Some(format!(
-                "{}  ·  Page {} of {}",
-                p.section_name, p.section_page, p.section_len
+                "Chapter {} of {} - Page {} of {}",
+                p.section_index, p.section_count, p.section_page, p.section_len,
             )),
             StatusBar::Remaining => Some(format!(
-                "{}  ·  {} {} left",
+                "{}{separator}{} {} left",
                 p.section_name,
-                p.pages_left(),
-                if p.pages_left() == 1 { "page" } else { "pages" }
+                pages_left_display(
+                    p.pages_left(),
+                    self.controls.footer_pages_left_include_current,
+                ),
+                if pages_left_display(
+                    p.pages_left(),
+                    self.controls.footer_pages_left_include_current,
+                ) == 1
+                {
+                    "page"
+                } else {
+                    "pages"
+                }
             )),
             _ => None,
+        }
+    }
+
+    fn custom_footer_parts(&self, progress: &Progress<'_>) -> Vec<(FooterItem, String)> {
+        let (entry, id) = if let Some(book) = &self.fixed {
+            (&book.entry, book.id)
+        } else if let Some(book) = &self.active {
+            (&book.entry, book.id)
+        } else {
+            return Vec::new();
+        };
+        let time_left = |scope| {
+            let pages = if scope == ProgressScope::Book {
+                progress.book_pages_left
+            } else {
+                progress.pages_left()
+            };
+            let seconds = (self.pace.rate(id) * pages as f64).round() as u64;
+            super::reading_time(seconds)
+        };
+        let left_in_chapter = pages_left_display(
+            progress.pages_left(),
+            self.controls.footer_pages_left_include_current,
+        );
+        let left_in_book = pages_left_display(
+            progress.book_pages_left,
+            self.controls.footer_pages_left_include_current,
+        );
+        let percentage = progress.percentage_with_digits(self.controls.footer_percentage_digits);
+        let current_time = local_footer_time();
+        let current_page = || {
+            if let Some(book) = &self.fixed {
+                let pages: Vec<_> = book.reading.visible_pages().collect();
+                let first = pages
+                    .first()
+                    .copied()
+                    .unwrap_or_else(|| book.reading.page())
+                    + 1;
+                let last = pages.last().copied().unwrap_or(first - 1) + 1;
+                let range = if first == last {
+                    first.to_string()
+                } else {
+                    format!("{first}–{last}")
+                };
+                Some(format!("Page {range} / {}", book.reading.count()))
+            } else {
+                let book = self.active.as_ref()?;
+                let first = book.reading.page + 1;
+                let last = book.reading.last_visible_page() + 1;
+                let range = if first == last {
+                    first.to_string()
+                } else {
+                    format!("{first}–{last}")
+                };
+                Some(format!(
+                    "Page {range} / {}",
+                    book.reading.probe.page_count()
+                ))
+            }
+        };
+        let mut items = Vec::new();
+        for item in FooterItem::ordered(self.controls.footer_order) {
+            if self.controls.footer_items & item.bit() == 0 {
+                continue;
+            }
+            let text = match item {
+                FooterItem::CurrentPage => current_page(),
+                FooterItem::ChapterTitle => {
+                    let title = progress.section_name.trim();
+                    (!title.is_empty()).then(|| title.to_owned())
+                }
+                FooterItem::BookProgress => Some(percentage.clone()),
+                FooterItem::ChapterPagesLeft => Some(format!(
+                    "{} {} left in chapter",
+                    left_in_chapter,
+                    if left_in_chapter == 1 {
+                        "page"
+                    } else {
+                        "pages"
+                    }
+                )),
+                FooterItem::BookPagesLeft => Some(format!(
+                    "{} {} left in book",
+                    left_in_book,
+                    if left_in_book == 1 { "page" } else { "pages" }
+                )),
+                FooterItem::ChapterTimeLeft => Some(format!(
+                    "{} left in chapter",
+                    time_left(ProgressScope::Chapter)
+                )),
+                FooterItem::BookTimeLeft => {
+                    Some(format!("{} left in book", time_left(ProgressScope::Book)))
+                }
+                FooterItem::BookTitle => {
+                    (!entry.title.trim().is_empty()).then(|| entry.title.trim().to_owned())
+                }
+                FooterItem::Author => entry
+                    .author
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|author| !author.is_empty())
+                    .map(str::to_owned),
+                FooterItem::BookmarkCount => Some(format!(
+                    "{} bookmarks",
+                    self.library
+                        .state(id)
+                        .map_or(0, |state| state.bookmarks.len())
+                )),
+                FooterItem::CurrentTime => current_time.clone(),
+                FooterItem::BatteryPercentage => primitive_device::battery().and_then(|percent| {
+                    battery_footer_text(
+                        percent,
+                        primitive_device::charging(),
+                        self.controls.footer_battery_hide_threshold.unwrap_or(100),
+                    )
+                }),
+            };
+            if let Some(text) = text {
+                items.push((item, text));
+            }
+        }
+        items
+    }
+
+    fn custom_footer_caption(&self, progress: &Progress<'_>) -> String {
+        let items = self.custom_footer_parts(progress);
+        if items.is_empty() {
+            "No items selected".to_owned()
+        } else {
+            let separator = self.controls.footer_separator.text();
+            items
+                .iter()
+                .map(|(item, text)| {
+                    format!(
+                        "{}{}",
+                        self.controls.footer_symbol_style.prefix(*item),
+                        text
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(separator)
+        }
+    }
+
+    pub(super) fn custom_footer_icons_enabled(&self) -> bool {
+        self.controls.status_bar == StatusBar::Custom
+            && self.controls.footer_symbol_style == FooterSymbolStyle::Icons
+            && self
+                .footer_progress()
+                .is_some_and(|progress| !self.custom_footer_parts(&progress).is_empty())
+    }
+
+    pub(super) fn custom_footer_icon_width(&self) -> i32 {
+        let Some(progress) = self.footer_progress() else {
+            return 0;
+        };
+        let count = self.custom_footer_parts(&progress).len();
+        count as i32 * (FOOTER_ICON_SIZE + FOOTER_ICON_GAP)
+    }
+
+    pub(super) fn draw_custom_footer_icons(
+        &self,
+        canvas: &mut Canvas,
+        status_rect: Rect,
+        status_style: TextStyle,
+        font_size: i32,
+    ) {
+        let Some(progress) = self.footer_progress() else {
+            return;
+        };
+        let items = self.custom_footer_parts(&progress);
+        let separator = self.controls.footer_separator.text();
+        let mut x = status_rect.x;
+        for (index, (item, text)) in items.iter().enumerate() {
+            if index != 0 {
+                let width = canvas.measure(separator, font_size);
+                canvas.text(
+                    Rect::new(x, status_rect.y, width, status_rect.h),
+                    separator,
+                    status_style,
+                );
+                x += width;
+            }
+            let top = status_rect.y + (status_rect.h - FOOTER_ICON_SIZE) / 2;
+            canvas.icon(
+                Rect::new(x, top, FOOTER_ICON_SIZE, FOOTER_ICON_SIZE),
+                footer_item_icon(*item),
+                0,
+            );
+            x += FOOTER_ICON_SIZE + FOOTER_ICON_GAP;
+            let width = canvas.measure(text, font_size);
+            canvas.text(
+                Rect::new(x, status_rect.y, width.max(1), status_rect.h),
+                text,
+                status_style,
+            );
+            x += width;
         }
     }
 
@@ -428,11 +1268,44 @@ impl Reader {
         }
     }
 
-    pub(super) fn draw_footer_track(&self, canvas: &mut Canvas) {
+    fn footer_track_layout(&self, right: i32, status_text_width: i32) -> (i32, i32, i32) {
+        let margin = i32::from(
+            self.controls
+                .footer_track_margin_width
+                .unwrap_or(10)
+                .min(140),
+        );
+        let track_right = (right - margin).max(margin);
+        let minimum_pct = i32::from(
+            self.controls
+                .footer_track_min_width_pct
+                .unwrap_or(20)
+                .clamp(5, 90),
+        );
+        let minimum_track_width = (WIDTH as i32 * minimum_pct + 99) / 100;
+        let first_track_left = FOOTER_CAPTION_LEFT + FOOTER_TRACK_GAP;
+        if self.controls.footer_track_lock_min_width {
+            let locked_width = minimum_track_width.min((track_right - first_track_left).max(0));
+            let track_left = track_right - locked_width;
+            let caption_width = status_text_width
+                .max(0)
+                .min((track_left - first_track_left).max(0));
+            (caption_width, track_left, locked_width)
+        } else {
+            let caption_width = status_text_width
+                .max(0)
+                .min((track_right - first_track_left - minimum_track_width).max(0));
+            let track_left = first_track_left + caption_width;
+            (caption_width, track_left, (track_right - track_left).max(0))
+        }
+    }
+
+    pub(super) fn footer_track_rect(&self, status_text_width: i32) -> Option<Rect> {
         let open_above = matches!(self.screen, Screen::BookTools | Screen::FixedTools)
-            && self.reading_top && !self.reading_bottom && self.reading_panel.is_none();
-        let scope = self.controls.footer_scope;
-        if scope == ProgressScope::Off
+            && self.reading_top
+            && !self.reading_bottom
+            && self.reading_panel.is_none();
+        if self.controls.footer_scope == ProgressScope::Off
             || self.controls.status_bar == StatusBar::Minimal
             || self.touch_locked
             || self.selection.is_some()
@@ -442,17 +1315,73 @@ impl Reader {
             || self.ocr.is_some()
             || !(open_above || matches!(self.screen, Screen::Book | Screen::Fixed))
         {
-            return;
+            return None;
         }
-        let Some(p) = self.footer_progress() else {
-            return;
-        };
         let right = if self.next_comic().is_some() {
             super::NEXT_COMIC.x
         } else {
             self.footer_right()
         };
-        let bar = Rect::new(38, HEIGHT as i32 - 12, right - 76, 5);
+        let margin = i32::from(
+            self.controls
+                .footer_track_margin_width
+                .unwrap_or(10)
+                .min(140),
+        );
+        let track_width = (right - margin - margin).max(0);
+        let thickness = self.controls.footer_track_thickness.height();
+        Some(match self.controls.footer_track_position {
+            FooterTrackPosition::Above => {
+                Rect::new(margin, PAGE_HEIGHT as i32 + 2, track_width, thickness)
+            }
+            FooterTrackPosition::Alongside => {
+                let (_, track_left, bar_width) = self.footer_track_layout(right, status_text_width);
+                Rect::new(track_left, PAGE_HEIGHT as i32 + 32, bar_width, thickness)
+            }
+            FooterTrackPosition::Below => {
+                Rect::new(margin, HEIGHT as i32 - 12, track_width, thickness)
+            }
+        })
+    }
+
+    pub(super) fn footer_caption_width(&self, default: u32, status_text_width: i32) -> u32 {
+        if self.controls.footer_track_position == FooterTrackPosition::Alongside {
+            let right = if self.next_comic().is_some() {
+                super::NEXT_COMIC.x
+            } else {
+                self.footer_right()
+            };
+            return self.footer_track_layout(right, status_text_width).0 as u32;
+        }
+        default
+    }
+
+    pub(super) fn footer_caption_rect(
+        &self,
+        slot_width: u32,
+        content_width: i32,
+        font_size: i32,
+    ) -> Rect {
+        let mut rect = crate::session::footer_caption_rect(slot_width as i32, font_size);
+        let width = content_width.clamp(0, rect.w);
+        let remaining = rect.w - width;
+        rect.x += match self.controls.footer_alignment {
+            FooterAlignment::Left => 0,
+            FooterAlignment::Center => remaining / 2,
+            FooterAlignment::Right => remaining,
+        };
+        rect.w = width;
+        rect
+    }
+
+    pub(super) fn draw_footer_track(&self, canvas: &mut Canvas, status_text_width: i32) {
+        let Some(bar) = self.footer_track_rect(status_text_width) else {
+            return;
+        };
+        let scope = self.controls.footer_scope;
+        let Some(p) = self.footer_progress() else {
+            return;
+        };
         let fraction = match scope {
             ProgressScope::Chapter => p.section_page as f64 / p.section_len as f64,
             _ => p.book_fraction,
@@ -462,13 +1391,22 @@ impl Reader {
         if fill > 0 {
             canvas.fill(Rect::new(bar.x, bar.y, fill, bar.h), 0);
         }
+        if let Some(fraction) = self.initial_marker_fraction(&p) {
+            draw_initial_marker(canvas, bar, fraction);
+        }
         if scope == ProgressScope::Book && !self.controls.hide_chapter_markers {
-            let mut last = -3;
+            let marker_width = self.controls.chapter_marker_width.width();
+            let mut last = -marker_width;
             p.book_ticks.draw(|tick| {
                 let x = (tick * bar.w as f64).round() as i32;
-                if x > last + 2 && x > 0 && x < bar.w - 1 {
-                    canvas.fill(Rect::new(bar.x + x, bar.y - 3, 2, bar.h + 6), 0);
-                    last = x;
+                let marker_x = x - marker_width / 2;
+                if marker_x > last + marker_width && marker_x > 0 && marker_x < bar.w - marker_width
+                {
+                    canvas.fill(
+                        Rect::new(bar.x + marker_x, bar.y - 1, marker_width, bar.h + 2),
+                        0,
+                    );
+                    last = marker_x;
                 }
             });
         }
@@ -527,7 +1465,7 @@ impl Reader {
         {
             return Some(Change::None);
         }
-        Some(match self.activate(Action::Overview) {
+        Some(match self.activate(Action::Skim) {
             Ok(()) => Change::Partial,
             Err(error) => self.report(error),
         })
@@ -539,7 +1477,10 @@ impl Reader {
             Item::new(name, Action::SetReadingControls(controls)).detail(value)
         };
         let on_off = |on| if on { "On" } else { "Off" };
-        let next = if c.footer_all_at_once && c.status_bar != StatusBar::Minimal {
+        let next = if c.footer_all_at_once
+            && c.status_bar != StatusBar::Minimal
+            && c.status_bar != StatusBar::Custom
+        {
             StatusBar::Minimal
         } else {
             c.status_bar.next()
@@ -557,11 +1498,19 @@ impl Reader {
                     ..c
                 },
             ),
+            Item::new(
+                "Item font size",
+                Action::Show(Screen::NumberingValue(NumberField::FooterItemFontSize)),
+            )
+            .detail(format!(
+                "{} · 8–36",
+                c.footer_item_font_size.unwrap_or(14).clamp(8, 36)
+            )),
             setting(
-                "Show items together",
-                on_off(c.footer_all_at_once),
+                "Bold text",
+                on_off(c.footer_item_bold),
                 ReadingControls {
-                    footer_all_at_once: !c.footer_all_at_once,
+                    footer_item_bold: !c.footer_item_bold,
                     ..c
                 },
             ),
@@ -573,7 +1522,233 @@ impl Reader {
                     ..c
                 },
             ),
+            setting(
+                "Progress bar position",
+                c.footer_track_position.label(),
+                ReadingControls {
+                    footer_track_position: c.footer_track_position.next(),
+                    ..c
+                },
+            ),
+            setting(
+                "Progress bar thickness",
+                c.footer_track_thickness.label(),
+                ReadingControls {
+                    footer_track_thickness: c.footer_track_thickness.next(),
+                    ..c
+                },
+            ),
+            Item::new(
+                "Progress bar minimum width",
+                Action::Show(Screen::NumberingValue(NumberField::FooterTrackMinimumWidth)),
+            )
+            .detail(format!("{}%", c.footer_track_min_width_pct.unwrap_or(20))),
+            setting(
+                "Lock progress bar width at minimum",
+                on_off(c.footer_track_lock_min_width),
+                ReadingControls {
+                    footer_track_lock_min_width: !c.footer_track_lock_min_width,
+                    ..c
+                },
+            ),
+            Item::new(
+                "Progress bar margins",
+                Action::Show(Screen::NumberingValue(NumberField::FooterTrackMarginWidth)),
+            )
+            .detail(format!("{} px", c.footer_track_margin_width.unwrap_or(10))),
+            setting(
+                "Show initial position marker",
+                on_off(c.footer_initial_marker),
+                ReadingControls {
+                    footer_initial_marker: !c.footer_initial_marker,
+                    ..c
+                },
+            ),
+            setting(
+                "Status item separator",
+                c.footer_separator.label(),
+                ReadingControls {
+                    footer_separator: c.footer_separator.next(),
+                    ..c
+                },
+            ),
+            setting(
+                "Status item symbols",
+                c.footer_symbol_style.label(),
+                ReadingControls {
+                    footer_symbol_style: c.footer_symbol_style.next(),
+                    ..c
+                },
+            ),
+            setting(
+                "Pages left includes current page",
+                on_off(c.footer_pages_left_include_current),
+                ReadingControls {
+                    footer_pages_left_include_current: !c.footer_pages_left_include_current,
+                    ..c
+                },
+            ),
+            setting(
+                "Progress percentage digits",
+                match c.footer_percentage_digits.min(2) {
+                    0 => "0 decimal places",
+                    1 => "1 decimal place",
+                    _ => "2 decimal places",
+                },
+                ReadingControls {
+                    footer_percentage_digits: (c.footer_percentage_digits.min(2) + 1) % 3,
+                    ..c
+                },
+            ),
         ];
+        if c.status_bar != StatusBar::Minimal {
+            items.insert(
+                1,
+                setting(
+                    "Footer alignment",
+                    c.footer_alignment.label(),
+                    ReadingControls {
+                        footer_alignment: c.footer_alignment.next(),
+                        ..c
+                    },
+                ),
+            );
+        }
+        let header = c.top_header;
+        items.extend([
+            Item::new("Top status header", Action::Heading),
+            setting(
+                "Show status at top",
+                on_off(header.enabled),
+                ReadingControls {
+                    top_header: TopHeader {
+                        enabled: !header.enabled,
+                        ..header
+                    },
+                    ..c
+                },
+            ),
+            setting(
+                "Refresh header clock automatically",
+                on_off(header.auto_refresh),
+                ReadingControls {
+                    top_header: TopHeader {
+                        auto_refresh: !header.auto_refresh,
+                        ..header
+                    },
+                    ..c
+                },
+            ),
+            setting(
+                "Header book title",
+                on_off(header.title),
+                ReadingControls {
+                    top_header: TopHeader {
+                        title: !header.title,
+                        ..header
+                    },
+                    ..c
+                },
+            ),
+            setting(
+                "Header book author",
+                on_off(header.author),
+                ReadingControls {
+                    top_header: TopHeader {
+                        author: !header.author,
+                        ..header
+                    },
+                    ..c
+                },
+            ),
+            setting(
+                "Header current time",
+                on_off(header.clock),
+                ReadingControls {
+                    top_header: TopHeader {
+                        clock: !header.clock,
+                        ..header
+                    },
+                    ..c
+                },
+            ),
+            setting(
+                "Header current page",
+                on_off(header.page_number),
+                ReadingControls {
+                    top_header: TopHeader {
+                        page_number: !header.page_number,
+                        ..header
+                    },
+                    ..c
+                },
+            ),
+            setting(
+                "Header total pages",
+                on_off(header.page_count),
+                ReadingControls {
+                    top_header: TopHeader {
+                        page_count: !header.page_count,
+                        ..header
+                    },
+                    ..c
+                },
+            ),
+            setting(
+                "Header progress percentage",
+                on_off(header.reading_percent),
+                ReadingControls {
+                    top_header: TopHeader {
+                        reading_percent: !header.reading_percent,
+                        ..header
+                    },
+                    ..c
+                },
+            ),
+            setting(
+                "Header chapter marks",
+                on_off(header.chapter_marks),
+                ReadingControls {
+                    top_header: TopHeader {
+                        chapter_marks: !header.chapter_marks,
+                        ..header
+                    },
+                    ..c
+                },
+            ),
+            setting(
+                "Header battery status",
+                header.battery.label(),
+                ReadingControls {
+                    top_header: TopHeader {
+                        battery: header.battery.next(),
+                        ..header
+                    },
+                    ..c
+                },
+            ),
+            Item::new(
+                "Header font size",
+                Action::SetReadingControls(ReadingControls {
+                    top_header: header.next_font_size(),
+                    ..c
+                }),
+            )
+            .detail(format!("{} px", header.font_size())),
+        ]);
+        if c.status_bar != StatusBar::Custom {
+            items.insert(
+                1,
+                setting(
+                    "Show items together",
+                    on_off(c.footer_all_at_once),
+                    ReadingControls {
+                        footer_all_at_once: !c.footer_all_at_once,
+                        ..c
+                    },
+                ),
+            );
+        }
         if self.active.is_some() || self.fixed.is_some() {
             items.push(setting(
                 "Overlap status bar",
@@ -590,6 +1765,14 @@ impl Reader {
                 on_off(!c.hide_chapter_markers),
                 ReadingControls {
                     hide_chapter_markers: !c.hide_chapter_markers,
+                    ..c
+                },
+            ));
+            items.push(setting(
+                "Chapter marker thickness",
+                c.chapter_marker_width.label(),
+                ReadingControls {
+                    chapter_marker_width: c.chapter_marker_width.next(),
                     ..c
                 },
             ));
@@ -612,7 +1795,79 @@ impl Reader {
                 },
             ),
         ]);
-        if c.footer_all_at_once {
+        if c.status_bar == StatusBar::Custom {
+            items.push(Item::new("Visible status items", Action::Heading));
+            items.push(setting(
+                "Auto refresh items",
+                on_off(c.footer_auto_refresh),
+                ReadingControls {
+                    footer_auto_refresh: !c.footer_auto_refresh,
+                    ..c
+                },
+            ));
+            for item in FooterItem::ordered(c.footer_order) {
+                let enabled = c.footer_items & item.bit() != 0;
+                items.push(setting(
+                    item.label(),
+                    on_off(enabled),
+                    ReadingControls {
+                        footer_items: c.footer_items ^ item.bit(),
+                        ..c
+                    },
+                ));
+            }
+            if c.footer_items & FooterItem::BatteryPercentage.bit() != 0 {
+                items.push(
+                    Item::new(
+                        "Hide battery when above",
+                        Action::Show(Screen::NumberingValue(
+                            NumberField::FooterBatteryHideThreshold,
+                        )),
+                    )
+                    .detail(format!(
+                        "{}% · 0–100%",
+                        c.footer_battery_hide_threshold.unwrap_or(100)
+                    )),
+                );
+            }
+            items.push(Item::new("Status item order", Action::Heading));
+            let ordered = FooterItem::ordered(c.footer_order);
+            for (index, item) in ordered.iter().copied().enumerate() {
+                if index > 0 {
+                    items.push(
+                        Item::new(
+                            format!("Move up: {}", item.label()),
+                            Action::SetReadingControls(ReadingControls {
+                                footer_order: FooterItem::move_order(c.footer_order, item, -1),
+                                ..c
+                            }),
+                        )
+                        .detail(format!(
+                            "Position {} → {}",
+                            index + 1,
+                            index
+                        )),
+                    );
+                }
+                if index + 1 < ordered.len() {
+                    items.push(
+                        Item::new(
+                            format!("Move down: {}", item.label()),
+                            Action::SetReadingControls(ReadingControls {
+                                footer_order: FooterItem::move_order(c.footer_order, item, 1),
+                                ..c
+                            }),
+                        )
+                        .detail(format!(
+                            "Position {} → {}",
+                            index + 1,
+                            index + 2
+                        )),
+                    );
+                }
+            }
+        }
+        if c.footer_all_at_once && c.status_bar != StatusBar::Custom {
             let (label, next) = match c.footer_combined_time {
                 Some(ProgressScope::Chapter) => ("Chapter", Some(ProgressScope::Book)),
                 Some(ProgressScope::Book) => ("Book", None),
@@ -631,9 +1886,132 @@ impl Reader {
     }
 }
 
+#[cfg(feature = "kindle")]
+fn current_unix_seconds() -> Option<i64> {
+    crate::mark_time::now()
+}
+
+#[cfg(not(feature = "kindle"))]
+fn current_unix_seconds() -> Option<i64> {
+    None
+}
+
+#[cfg(feature = "kindle")]
+fn local_footer_time() -> Option<String> {
+    let value = crate::mark_time::local_datetime(current_unix_seconds()?)?;
+    Some(format!("Time {}", value.get(11..16)?))
+}
+
+#[cfg(not(feature = "kindle"))]
+fn local_footer_time() -> Option<String> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn battery_footer_text_reports_level_and_charging_state() {
+        assert_eq!(
+            battery_footer_text(47, false, 100),
+            Some("Battery 47%".to_owned())
+        );
+        assert_eq!(
+            battery_footer_text(88, true, 100),
+            Some("Charging 88%".to_owned())
+        );
+        assert_eq!(
+            battery_footer_text(140, false, 100),
+            Some("Battery 100%".to_owned())
+        );
+        assert_eq!(
+            battery_footer_text(80, false, 80),
+            Some("Battery 80%".to_owned())
+        );
+        assert_eq!(battery_footer_text(81, false, 80), None);
+        assert_eq!(
+            battery_footer_text(0, false, 0),
+            Some("Battery 0%".to_owned())
+        );
+    }
+
+    #[test]
+    fn top_header_battery_icon_changes_when_charging() {
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf")
+                .display()
+                .to_string(),
+        ];
+        let render = |charging| {
+            let mut canvas = Canvas::new(WIDTH, 48, &fonts).unwrap();
+            canvas.begin();
+            draw_battery_icon(&mut canvas, 100, 10, 50, charging, 0, 255);
+            canvas.finish(false)
+        };
+
+        assert_ne!(render(false), render(true));
+    }
+
+    #[test]
+    fn custom_flow_footer_counts_only_the_opened_flow_and_keeps_main_page_ticks() {
+        use crate::library::hidden_flows::{PageFlows, ResolvedPoint};
+        let flows = PageFlows::new(
+            12,
+            0,
+            vec![
+                ResolvedPoint {
+                    page: 2,
+                    hidden: true,
+                    index: 0,
+                },
+                ResolvedPoint {
+                    page: 5,
+                    hidden: false,
+                    index: 1,
+                },
+                ResolvedPoint {
+                    page: 8,
+                    hidden: true,
+                    index: 2,
+                },
+                ResolvedPoint {
+                    page: 10,
+                    hidden: false,
+                    index: 3,
+                },
+            ],
+        );
+        let chapters = [(0, "A".into()), (5, "B".into()), (10, "C".into())];
+        let sections = PageSections::Publisher(&chapters);
+        let mut regular = Progress::from_pages(6, 12, sections, "Book");
+        regular.apply_flows(flows.clone(), 6, 6, 12, sections);
+        assert_eq!(
+            (
+                regular.section_page,
+                regular.section_len,
+                regular.book_pages_left
+            ),
+            (2, 3, 3)
+        );
+        assert_eq!(regular.percentage_with_digits(0), "57%");
+        assert_eq!(regular.percentage_with_digits(1), "57.1%");
+        assert_eq!(regular.percentage_with_digits(2), "57.14%");
+        assert_eq!(regular.percentage_with_digits(9), "57.14%");
+        assert_eq!(pages_left_display(0, false), 0);
+        assert_eq!(pages_left_display(0, true), 1);
+        assert_eq!(pages_left_display(3, true), 4);
+        let mut ticks = Vec::new();
+        regular.book_ticks.draw(|position| ticks.push(position));
+        assert_eq!(ticks, [0., 2. / 7., 5. / 7.]);
+        let mut note = Progress::from_pages(3, 12, sections, "Book");
+        note.apply_flows(flows, 3, 3, 12, sections);
+        assert_eq!(
+            (note.section_page, note.section_len, note.book_pages_left),
+            (2, 3, 1)
+        );
+        assert_eq!(note.percentage_with_digits(0), "67%");
+    }
 
     #[test]
     fn chapter_ticks_ignore_duplicate_destinations_and_cover_front_matter_and_the_last_page() {
@@ -651,7 +2029,8 @@ mod tests {
             (5, "Part II", 1, 2),
             (6, "Part II", 2, 2),
         ] {
-            let p = Progress::from_pages(page, 7, PageSections::Publisher(&sections), "Front matter");
+            let p =
+                Progress::from_pages(page, 7, PageSections::Publisher(&sections), "Front matter");
             assert_eq!(
                 (p.section_name, p.section_page, p.section_len),
                 (title, current, count)

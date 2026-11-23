@@ -1,3 +1,5 @@
+pub mod word_spacing;
+pub use word_spacing::WordSpacePercent;
 #[cfg(feature = "kindle")]
 mod annotation_export;
 #[cfg(feature = "kindle")]
@@ -8,12 +10,14 @@ mod book_style;
 mod cbr;
 mod chm;
 pub mod comic;
+pub mod cre_pointer;
 pub mod dictionary;
+pub mod djvu;
 #[cfg(feature = "kindle")]
 pub mod document_check;
-pub mod djvu;
+#[cfg(feature = "kindle")]
+mod document_defaults;
 mod docx;
-pub mod cre_pointer;
 pub mod epub;
 pub mod epub_cfi;
 mod epub_font;
@@ -25,14 +29,21 @@ pub mod fixed_epub;
 #[cfg(feature = "kindle")]
 mod fixed_session;
 pub mod fixed_text;
+mod flow_probe;
+mod flow_projection;
+mod flow_view;
+mod font_render;
+mod font_synthesis;
 #[cfg(feature = "kindle")]
 mod generated_contents;
 mod gray_glyph;
-mod gif_image;
+pub mod logical_font;
+pub use flow_probe::SourcePresentation;
 #[cfg(feature = "kindle")]
 mod footnotes;
+mod gif_image;
+pub mod highlight_style;
 mod hyphenation;
-mod user_hyphenation;
 mod jpeg2000;
 mod kf8;
 mod kindle_sections;
@@ -41,27 +52,33 @@ pub mod koreader_sidecar;
 pub mod library;
 mod list_marker;
 mod loose;
+mod mark_time;
 pub mod mobi;
+#[cfg(feature = "kindle")]
+mod note_marker;
 pub mod ocr;
 #[cfg(feature = "kindle")]
 mod ocr_job;
 #[cfg(feature = "kindle")]
 pub mod online_lookup;
 mod parley_layout;
-mod publisher_breaks;
 #[cfg(feature = "kindle")]
 mod pdf_annotations;
+mod publication_metadata;
+mod publisher_breaks;
 mod publisher_padding;
+#[cfg(feature = "kindle")]
+mod reading_backup;
 #[cfg(feature = "kindle")]
 mod reading_controls;
 #[cfg(feature = "kindle")]
 mod reading_fonts;
 #[cfg(feature = "kindle")]
+mod reading_pace;
+#[cfg(feature = "kindle")]
 mod reading_profiles;
 #[cfg(feature = "kindle")]
 mod reading_stats;
-#[cfg(feature = "kindle")]
-mod reading_pace;
 mod rtf;
 #[cfg(feature = "kindle")]
 mod scan_columns;
@@ -74,16 +91,20 @@ pub mod selection;
 #[cfg(feature = "kindle")]
 mod session;
 mod source;
+mod svg_image;
 #[cfg(feature = "kindle")]
 mod synthetic_pages;
+mod table_borders;
 mod table_layout;
 mod table_widths;
-mod svg_image;
 mod tcr;
 #[cfg(feature = "kindle")]
 mod text_flow;
 mod tiff_image;
+mod user_hyphenation;
+mod user_styles;
 mod vertical_layout;
+mod vertical_padding;
 
 use std::error::Error;
 use std::fs;
@@ -145,11 +166,124 @@ pub enum FontHinting {
     Auto,
 }
 
+/// Text shaping mode used for glyph kerning and related OpenType features.
+///
+/// `Best` keeps the full shaping behavior. `Good` enables the lightweight
+/// kerning, mark positioning, cursive positioning, and localized-form feature
+/// set used by KOReader's HarfBuzz-light mode. `Fast` limits shaping to basic
+/// pair kerning and disables substitutions. The Rust shaper cannot use
+/// FreeType's separate fast kerning path, so this mode keeps the same reading
+/// contract with a reduced Rust shaping feature set.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FontKerningMode {
+    Off,
+    Fast,
+    Good,
+    #[default]
+    Best,
+}
+
+/// Pinned KOReader content-scale presets. Zero disables physical CSS units.
+pub const RENDER_DPI_PRESETS: [u16; 6] = [0, 48, 96, 167, 212, 300];
+
+/// Pinned content-DPI More Options: integer 0..=300, separate from screen DPI.
+pub const fn valid_render_dpi(value: u16) -> bool {
+    value <= 300
+}
+
+/// KOReader's visible line-spacing presets in the Text/Layout controls.
+pub const LINE_SPACING_PRESETS: [u16; 13] =
+    [70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120, 125, 130];
+pub const DEFAULT_LINE_SPACING_PERCENT: u16 = 100;
+
+/// KOReader's custom interline percentage range.
+pub const fn valid_line_spacing_percent(value: u16) -> bool {
+    value >= 50 && value <= 200
+}
+
+/// Reader's User-Agent stylesheet policy for reflowable documents.
+///
+/// `Auto` follows KOReader's format default; the remaining choices mirror its
+/// base stylesheet selector while staying within the CSS subset this renderer
+/// can faithfully apply.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BaseStylesheet {
+    #[default]
+    Auto,
+    None,
+    Traditional,
+    HtmlStandard,
+    FictionBook,
+}
+
+impl BaseStylesheet {
+    pub const ALL: [Self; 5] = [
+        Self::Auto,
+        Self::None,
+        Self::Traditional,
+        Self::HtmlStandard,
+        Self::FictionBook,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "Auto",
+            Self::None => "None",
+            Self::Traditional => "Traditional",
+            Self::HtmlStandard => "HTML",
+            Self::FictionBook => "FB2",
+        }
+    }
+}
+
+/// KOReader's visual cue for the portion repeated between scroll-page turns.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PageOverlapStyle {
+    None,
+    #[default]
+    Dim,
+    Arrow,
+    Line,
+    DashedLine,
+}
+
+impl PageOverlapStyle {
+    pub const ALL: [Self; 5] = [
+        Self::None,
+        Self::Dim,
+        Self::Arrow,
+        Self::Line,
+        Self::DashedLine,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::None => "No indicator",
+            Self::Dim => "Gray out",
+            Self::Arrow => "Arrow",
+            Self::Line => "Solid line",
+            Self::DashedLine => "Dashed line",
+        }
+    }
+}
+
+const LEGACY_DEFAULT_LINE_HEIGHT: f32 = 1.35;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Settings {
     pub width: u32,
     pub height: u32,
+    /// Space reserved for the optional Kindle status header above reflowed text.
+    pub status_header_height: u32,
     pub font_size: f32,
+    /// None preserves the original physical-pixel renderer and bounds.
+    pub logical_font_size: Option<f64>,
+    pub font_scale: logical_font::ScaleContext,
+    /// Scale CSS absolute lengths and images independently of the reading font.
+    pub render_dpi: u16,
     pub margin: u32,
     pub margin_sides: Option<u32>,
     pub margin_left: Option<u32>,
@@ -158,7 +292,11 @@ pub struct Settings {
     pub margin_top: Option<u32>,
     pub margin_bottom: Option<u32>,
     pub line_height: f32,
+    /// None preserves legacy multiplier-based line spacing for existing profiles.
+    pub line_spacing_percent: Option<u16>,
     pub word_spacing: f32,
+    /// None preserves the existing additive-pixel layout exactly.
+    pub percent_word_spacing: Option<WordSpacePercent>,
     /// Maximum tracking in justified words, as a percentage of font size.
     pub word_expansion: u8,
     pub letter_spacing: f32,
@@ -167,16 +305,31 @@ pub struct Settings {
     pub alignment: TextAlignment,
     pub bold_text: bool,
     pub text_contrast: bool,
+    /// Index into the 57-level reflow glyph contrast scale. Index 15 is neutral.
+    pub font_gamma_index: u8,
+    /// Delta from regular weight, in 100-weight-class units. Range -3 to +5.5.
+    pub font_weight_delta: f32,
     pub override_fonts: bool,
     pub disable_soft_hyphens: bool,
     pub automatic_hyphenation: bool,
     /// Load author stylesheets and apply inline CSS during native reflow.
     pub publisher_styles: bool,
+    /// Select the low-priority base stylesheet used beneath publisher CSS.
+    pub base_stylesheet: BaseStylesheet,
     /// Use each font's normal OpenType kerning when shaping text.
+    /// Kept for old book settings. New settings use `font_kerning_mode`.
     pub font_kerning: bool,
+    /// None interprets the legacy boolean as Off or Best.
+    pub font_kerning_mode: Option<FontKerningMode>,
     pub font_hinting: FontHinting,
     pub smooth_images: bool,
     pub invert_night_images: bool,
+    /// Reuse the last lines on the next full-screen scroll turn.
+    pub page_overlap_enabled: bool,
+    /// Number of text lines retained between scroll turns, from 1 to 10.
+    pub page_overlap_lines: u8,
+    /// Visual marker drawn over the repeated area after a scroll-page turn.
+    pub page_overlap_style: PageOverlapStyle,
 }
 
 impl Default for Settings {
@@ -184,7 +337,11 @@ impl Default for Settings {
         Self {
             width: 1264,
             height: 1680,
+            status_header_height: 0,
             font_size: 42.0,
+            logical_font_size: None,
+            font_scale: logical_font::ScaleContext::default(),
+            render_dpi: 96,
             margin: 54,
             margin_sides: None,
             margin_left: None,
@@ -193,22 +350,82 @@ impl Default for Settings {
             margin_top: None,
             margin_bottom: None,
             line_height: 1.35,
+            line_spacing_percent: None,
             word_spacing: 0.0,
+            percent_word_spacing: None,
             word_expansion: 0,
             letter_spacing: 0.0,
             cjk_width_percent: 100,
             alignment: TextAlignment::Publisher,
             bold_text: false,
             text_contrast: false,
+            font_gamma_index: font_render::NORMAL_GAMMA,
+            font_weight_delta: 0.0,
             override_fonts: false,
             disable_soft_hyphens: false,
             automatic_hyphenation: true,
             publisher_styles: true,
+            base_stylesheet: BaseStylesheet::Auto,
             font_kerning: true,
+            font_kerning_mode: None,
             font_hinting: FontHinting::Off,
             smooth_images: true,
             invert_night_images: false,
+            page_overlap_enabled: false,
+            page_overlap_lines: 1,
+            page_overlap_style: PageOverlapStyle::Dim,
         }
+    }
+}
+
+impl Settings {
+    /// Resolve the four-mode setting while preserving old boolean profiles.
+    pub const fn effective_font_kerning_mode(&self) -> FontKerningMode {
+        match self.font_kerning_mode {
+            Some(mode) => mode,
+            None if self.font_kerning => FontKerningMode::Best,
+            None => FontKerningMode::Off,
+        }
+    }
+
+    /// Resolve the user line-spacing control as a multiplier for authored line height.
+    pub fn line_height_scale(&self) -> f32 {
+        self.line_spacing_percent.map_or_else(
+            || self.line_height / LEGACY_DEFAULT_LINE_HEIGHT,
+            |percent| f32::from(percent) / 100.0,
+        )
+    }
+
+    /// Resolve the line-height multiplier used by the legacy fixed-layout renderer.
+    pub fn effective_line_height(&self) -> f32 {
+        self.line_spacing_percent
+            .map_or(self.line_height, |percent| {
+                LEGACY_DEFAULT_LINE_HEIGHT * f32::from(percent) / 100.0
+            })
+    }
+
+    pub fn effective_line_spacing_percent(&self) -> u16 {
+        self.line_spacing_percent.unwrap_or_else(|| {
+            (self.line_height / LEGACY_DEFAULT_LINE_HEIGHT * 100.0)
+                .round()
+                .clamp(50.0, 200.0) as u16
+        })
+    }
+
+    pub fn with_line_spacing_percent(self, percent: u16) -> Self {
+        Self {
+            line_spacing_percent: Some(percent),
+            ..self
+        }
+    }
+
+    pub fn page_overlap_height(&self) -> f32 {
+        if !self.page_overlap_enabled {
+            return 0.0;
+        }
+        let line_height =
+            self.font_size * 1.1 * f32::from(self.effective_line_spacing_percent()) / 100.0;
+        (line_height * f32::from(self.page_overlap_lines.clamp(1, 10))).max(0.0)
     }
 }
 
@@ -266,13 +483,27 @@ impl Settings {
             || self.right_margin() > margin_limit
             || self.top_margin() > self.height / 4
             || self.bottom_margin() > self.height / 4
-            || !(12.0..=144.0).contains(&self.font_size)
+            || !valid_render_dpi(self.render_dpi)
+            || if let Some(logical) = self.logical_font_size {
+                !logical_font::valid(logical)
+                    || self.font_scale.effective(logical).ok() != Some(self.font_size)
+            } else {
+                !(12.0..=144.0).contains(&self.font_size)
+            }
             || !(1.0..=3.0).contains(&self.line_height)
             || !(-2.0..=12.0).contains(&self.word_spacing)
+            || self.percent_word_spacing.is_some_and(|pair| !pair.valid())
             || self.word_expansion > 20
             || !(-1.0..=4.0).contains(&self.letter_spacing)
             || !(100..=150).contains(&self.cjk_width_percent)
-            || self.text_height() as f32 <= self.font_size * self.line_height * 2.0
+            || self.text_height() as f32
+                <= self.font_size
+                    * self.line_height
+                    * if self.logical_font_size.is_some() {
+                        1.0
+                    } else {
+                        2.0
+                    }
         {
             return Err("Reading layout settings are out of range".into());
         }
@@ -296,7 +527,10 @@ impl Settings {
     }
 
     fn top_margin(self) -> u32 {
-        self.margin_top.unwrap_or(self.margin)
+        self.margin_top
+            .unwrap_or(self.margin)
+            .saturating_add(self.status_header_height)
+            .min(self.height / 4)
     }
 
     fn bottom_margin(self) -> u32 {
@@ -329,18 +563,79 @@ pub struct Anchor {
 struct Line {
     block: usize,
     bytes: Range<usize>,
+    /// Exact canonical spans when projected layout crosses omitted source text.
+    /// `bytes` remains the envelope for pagination endpoints only.
+    spans: Option<std::sync::Arc<[Range<usize>]>>,
     top: f32,
     bottom: f32,
     missing_glyphs: usize,
+}
+
+impl Line {
+    fn source_spans(&self) -> &[Range<usize>] {
+        self.spans
+            .as_deref()
+            .unwrap_or_else(|| std::slice::from_ref(&self.bytes))
+    }
+
+    fn contains_source(&self, offset: usize) -> bool {
+        self.source_spans()
+            .iter()
+            .any(|span| span.contains(&offset))
+    }
+
+    fn project(
+        &mut self,
+        view: &flow_projection::Projection<'_>,
+        bytes: Range<usize>,
+    ) -> Result<()> {
+        let spans = view
+            .source_spans(bytes.clone())
+            .ok_or("A layout line has invalid projected boundaries")?;
+        let mut kept: Vec<Range<usize>> = Vec::new();
+        for span in spans {
+            if let Some(last) = kept.last_mut()
+                && last.end == span.start
+            {
+                last.end = span.end;
+            } else {
+                kept.push(span);
+            }
+        }
+        self.bytes = match (kept.first(), kept.last()) {
+            (Some(first), Some(last)) => first.start..last.end,
+            _ => {
+                let point = view
+                    .source_offset(bytes.start, flow_projection::Affinity::After)
+                    .or_else(|| view.source_offset(bytes.start, flow_projection::Affinity::Before))
+                    .unwrap_or(0);
+                point..point
+            }
+        };
+        self.spans = (kept.len() > 1).then(|| kept.into());
+        Ok(())
+    }
 }
 
 struct Pagination {
     bounds: Vec<f32>,
 }
 
+#[derive(Debug)]
+struct PageContentTooTall;
+impl std::fmt::Display for PageContentTooTall {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("The chapter contains content taller than one reading page")
+    }
+}
+impl Error for PageContentTooTall {}
+
 impl Pagination {
     fn fixed_stride(height: f32, extent: f32) -> Result<Self> {
-        if !extent.is_finite() || !(0.0..=2_000_000.0).contains(&extent) {
+        Self::fixed_stride_capped(height, extent, 2_000_000.0)
+    }
+    fn fixed_stride_capped(height: f32, extent: f32, limit: f32) -> Result<Self> {
+        if !extent.is_finite() || !(0.0..=limit).contains(&extent) {
             return Err("The chapter exceeds the layout height limit".into());
         }
         let pages = (extent / height).ceil().max(1.0) as usize;
@@ -355,7 +650,21 @@ impl Pagination {
         Self::with_breaks(lines, height, content_height, &[])
     }
 
-    fn with_breaks(lines: &[Line], height: f32, mut content_height: f32, breaks: &[publisher_breaks::BoxRules]) -> Result<Self> {
+    fn with_breaks(
+        lines: &[Line],
+        height: f32,
+        content_height: f32,
+        breaks: &[publisher_breaks::BoxRules],
+    ) -> Result<Self> {
+        Self::with_breaks_capped(lines, height, content_height, breaks, 2_000_000.0)
+    }
+    fn with_breaks_capped(
+        lines: &[Line],
+        height: f32,
+        mut content_height: f32,
+        breaks: &[publisher_breaks::BoxRules],
+        limit: f32,
+    ) -> Result<Self> {
         let mut intervals: Vec<Range<f32>> = Vec::new();
         for line in lines {
             if !line.top.is_finite() || !line.bottom.is_finite() || line.top > line.bottom {
@@ -367,7 +676,7 @@ impl Pagination {
                 _ => intervals.push(line.top..line.bottom),
             }
         }
-        if !content_height.is_finite() || !(0.0..=2_000_000.0).contains(&content_height) {
+        if !content_height.is_finite() || !(0.0..=limit).contains(&content_height) {
             return Err("The chapter exceeds the layout height limit".into());
         }
         let boundaries = publisher_breaks::boundaries(&intervals, breaks);
@@ -376,7 +685,7 @@ impl Pagination {
         for (index, interval) in intervals.iter().enumerate() {
             use publisher_breaks::Edge;
             if interval.end - interval.start > height {
-                return Err("The chapter contains content taller than one reading page".into());
+                return Err(Box::new(PageContentTooTall));
             }
             let origin = *bounds.last().unwrap();
             let edge = boundaries.get(index).copied().unwrap_or_default();
@@ -461,9 +770,12 @@ pub struct Probe {
     pace_page: std::cell::Cell<Option<(usize, u64)>>,
     #[cfg(feature = "kindle")]
     publisher_positions: std::cell::OnceCell<app::publisher_pages::PublisherPositions>,
+    #[cfg(feature = "kindle")]
+    pub(crate) flow_pages: Option<crate::library::hidden_flows::PageFlows>,
     settings: Settings,
     spine_rtl: bool,
     source: Source,
+    reading_flow: flow_view::ChapterFlow,
     #[cfg(feature = "kindle")]
     custom_hyphenation_allowed: Vec<bool>,
     lines: Vec<Line>,
@@ -520,7 +832,14 @@ impl Probe {
         excerpt: Option<String>,
     ) -> Result<Self> {
         Self::from_book_with_rules(
-            book, engine, fonts, settings, chapter, excerpt, &user_hyphenation::Rules::default(),
+            book,
+            engine,
+            fonts,
+            settings,
+            chapter,
+            excerpt,
+            &user_hyphenation::Rules::default(),
+            &user_styles::Snapshot::default(),
         )
     }
 
@@ -532,17 +851,23 @@ impl Probe {
         chapter: usize,
         excerpt: Option<String>,
         user_rules: &user_hyphenation::Rules,
+        user_styles: &user_styles::Snapshot,
     ) -> Result<Self> {
         if book.is_fixed_layout() {
             return Err("Open this fixed-layout EPUB in Reader".into());
         }
         if engine == Engine::Blitz
-            && (!settings.publisher_styles
-                || !settings.font_kerning
+            && (!user_styles.is_empty()
+                || !settings.publisher_styles
+                || settings.effective_font_kerning_mode() != FontKerningMode::Best
                 || settings.font_hinting != FontHinting::Off
+                || settings.font_gamma_index != font_render::NORMAL_GAMMA
+                || settings.font_weight_delta != 0.0
                 || settings.word_expansion != 0)
         {
-            return Err("Publisher style, kerning, hinting and word expansion controls require Parley".into());
+            return Err(
+                "Publisher style, font rendering and word expansion controls require Parley".into(),
+            );
         }
         let entry = book
             .chapters
@@ -581,6 +906,7 @@ impl Probe {
         #[cfg(feature = "kindle")]
         let mut custom_hyphenation_allowed = Vec::new();
         let mut publisher_edges = Vec::new();
+        let mut reading_flow = flow_view::ChapterFlow::default();
         let (renderer, mut lines, content_height) = match engine {
             Engine::Blitz => {
                 let (layout, lines, extent) =
@@ -588,41 +914,56 @@ impl Probe {
                 (Renderer::Blitz(Box::new(layout)), lines, extent)
             }
             Engine::Parley => {
-                let author = settings
-                    .publisher_styles
-                    .then(|| {
-                        book_style::BookStyle::load(
-                            &mut book,
-                            &href,
-                            &source,
-                            &mut fonts,
-                        )
-                    })
-                    .unwrap_or_default();
-                let styles = author.compute(&source.elements);
+                let author = book_style::BookStyle::load_with_base(
+                    &mut book,
+                    &href,
+                    &source,
+                    &mut fonts,
+                    settings.publisher_styles,
+                    settings.base_stylesheet,
+                )
+                .with_user_css(user_styles)?;
+                let styles = author.compute_for_settings(&source.elements, settings);
+                reading_flow = flow_view::ChapterFlow::from_styles(&source, &styles)?;
                 #[cfg(feature = "kindle")]
                 {
-                    custom_hyphenation_allowed = styles.iter().map(hyphenation::allows_user_rules).collect();
+                    custom_hyphenation_allowed =
+                        styles.iter().map(hyphenation::allows_user_rules).collect();
                 }
-                let mut text = source
-                    .blocks
-                    .iter()
-                    .filter(|block| !block.text.is_empty())
-                    .peekable();
-                let vertical = text.peek().is_some()
-                    && source.blocks.iter().all(|block| block.images.is_empty())
-                    && !source.elements.iter().any(|element| {
-                        !element.selector_only && element.tag == "table"
-                    })
-                    && text.all(|block| {
-                        styles[block.element].writing_mode == book_style::WritingMode::VerticalRl
+                // Decide writing mode from retained display input. Hidden media or
+                // horizontal-only subtrees cannot force a visible vertical chapter
+                // down the horizontal fallback path.
+                let mut has_text = false;
+                let mut vertical = !source.elements.iter().enumerate().any(|(index, element)| {
+                    !styles[index].flow.suppressed
+                        && !element.selector_only
+                        && element.tag == "table"
+                });
+                for original in &source.blocks {
+                    if styles[original.element].flow.suppressed {
+                        continue;
+                    }
+                    let block = reading_flow.layout_block(&source, original)?;
+                    vertical &= block.images.is_empty();
+                    if !block.text.is_empty() {
+                        has_text = true;
+                        vertical &= styles[block.element].writing_mode
+                            == book_style::WritingMode::VerticalRl
                             && block.styled_text.iter().all(|run| {
                                 styles[run.element].writing_mode
                                     == book_style::WritingMode::VerticalRl
-                            })
-                    });
+                            });
+                    }
+                }
+                vertical &= has_text;
                 let vertical = vertical.then(|| {
-                    vertical_layout::VerticalChapter::new(&source, &styles, fonts.clone(), settings)
+                    vertical_layout::VerticalChapter::with_flow(
+                        &source,
+                        &styles,
+                        fonts.clone(),
+                        settings,
+                        &reading_flow,
+                    )
                 });
                 match vertical {
                     Some(Ok((layout, lines, extent))) => {
@@ -634,28 +975,51 @@ impl Probe {
                         }
                         let has_table = source.blocks.iter().any(|b| b.table_cell.is_some());
                         let mut lay_out = |source: &Source, faces| {
-                            parley_layout::ParleyChapter::new(
-                                &mut book, &href, source, faces, settings, &styles, user_rules,
+                            parley_layout::ParleyChapter::with_flow(
+                                &mut book,
+                                &href,
+                                source,
+                                faces,
+                                settings,
+                                &styles,
+                                user_rules,
+                                &reading_flow,
                             )
                         };
                         let (layout, lines, extent) = if has_table {
                             let grid = lay_out(&source, fonts.clone()).and_then(
                                 |(layout, mut lines, extent)| {
                                     lines.sort_by(|a, b| a.top.total_cmp(&b.top));
-                                    Pagination::new(&lines, settings.text_height() as f32, extent)?;
+                                    Pagination::with_breaks_capped(
+                                        &lines,
+                                        settings.text_height() as f32,
+                                        extent,
+                                        &[],
+                                        settings.chapter_height_limit(),
+                                    )?;
                                     Ok((layout, lines, extent))
                                 },
                             );
                             match grid {
                                 Ok(result) => result,
-                                Err(_) => {
+                                Err(error)
+                                    if error.downcast_ref::<PageContentTooTall>().is_some() =>
+                                {
                                     // A tall row can have no safe horizontal break across
                                     // all its cells. Keep the chapter readable in source order.
-                                    for block in &mut source.blocks {
-                                        block.table_cell = None;
-                                    }
-                                    lay_out(&source, fonts)?
+                                    drop(lay_out);
+                                    parley_layout::ParleyChapter::with_source_order(
+                                        &mut book,
+                                        &href,
+                                        &source,
+                                        fonts,
+                                        settings,
+                                        &styles,
+                                        user_rules,
+                                        &reading_flow,
+                                    )?
                                 }
+                                Err(error) => return Err(error),
                             }
                         } else {
                             lay_out(&source, fonts)?
@@ -669,11 +1033,23 @@ impl Probe {
         lines.sort_by(|a, b| a.top.total_cmp(&b.top));
         let height = settings.text_height() as f32;
         let mut pages = if matches!(&renderer, Renderer::Vertical(_)) {
-            Pagination::fixed_stride(height, content_height)?
+            Pagination::fixed_stride_capped(
+                height,
+                content_height,
+                settings.chapter_height_limit(),
+            )?
         } else {
-            Pagination::with_breaks(&lines, height, content_height, &publisher_edges)?
+            Pagination::with_breaks_capped(
+                &lines,
+                height,
+                content_height,
+                &publisher_edges,
+                settings.chapter_height_limit(),
+            )?
         };
-        if pages.len() > 1 && let Renderer::Parley(chapter) = &renderer {
+        if pages.len() > 1
+            && let Renderer::Parley(chapter) = &renderer
+        {
             pages.trim_unpainted_tail(chapter.last_paint_bottom(&source));
         }
         Ok(Self {
@@ -697,10 +1073,13 @@ impl Probe {
             pace_page: Default::default(),
             #[cfg(feature = "kindle")]
             publisher_positions: Default::default(),
+            #[cfg(feature = "kindle")]
+            flow_pages: None,
             settings,
             #[cfg(feature = "kindle")]
             custom_hyphenation_allowed,
             source,
+            reading_flow,
             lines,
             pages,
             renderer,
@@ -725,19 +1104,43 @@ impl Probe {
     }
 
     #[cfg(feature = "kindle")]
+    pub(crate) fn has_nonlinear_chapters(&self) -> bool {
+        self.chapters.iter().any(|chapter| chapter.nonlinear)
+            && self.chapters.iter().any(|chapter| !chapter.nonlinear)
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn chapter_is_nonlinear(&self, index: usize) -> bool {
+        self.chapters
+            .get(index)
+            .is_some_and(|chapter| chapter.nonlinear)
+    }
+
+    #[cfg(feature = "kindle")]
     pub(crate) fn proportional_anchor(&self, fraction: f64) -> Option<Anchor> {
         let total: usize = self
             .source
             .blocks
             .iter()
-            .map(|block| block.text.len())
+            .filter_map(|block| {
+                self.reading_flow
+                    .view(&self.source, block)
+                    .ok()
+                    .map(|view| view.text().len())
+            })
             .sum();
-        let mut remaining = (total.saturating_sub(1) as f64 * fraction).round() as usize;
+        let mut remaining =
+            (total.saturating_sub(1) as f64 * fraction.clamp(0.0, 1.0)).round() as usize;
         for block in &self.source.blocks {
-            if remaining < block.text.len() {
-                return Some(self.anchor(block.key, block.text.floor_char_boundary(remaining)));
+            let view = self.reading_flow.view(&self.source, block).ok()?;
+            if remaining < view.text().len() {
+                let offset = view.text().floor_char_boundary(remaining);
+                return Some(self.anchor(
+                    block.key,
+                    view.source_offset(offset, flow_projection::Affinity::After)?,
+                ));
             }
-            remaining -= block.text.len();
+            remaining -= view.text().len();
         }
         None
     }
@@ -766,19 +1169,33 @@ impl Probe {
 
     fn links_to_image(&self, path: &str) -> bool {
         let supported = path.rsplit_once('.').is_some_and(|(_, ext)| {
-            ["png", "jpg", "jpeg", "gif", "svg"].iter().any(|known| ext.eq_ignore_ascii_case(known))
+            ["png", "jpg", "jpeg", "gif", "svg"]
+                .iter()
+                .any(|known| ext.eq_ignore_ascii_case(known))
         });
-        supported && self.source.blocks.iter().any(|block| {
-            block.links.iter().map(|link| link.href.as_str())
-                .chain(block.images.iter().filter_map(|image| image.link.as_deref()))
-                .any(|href| Book::resolve_link(&self.chapter, href)
-                    .is_ok_and(|target| target.fragment.is_none() && target.path == path))
-        })
+        supported
+            && self.source.blocks.iter().any(|block| {
+                block
+                    .links
+                    .iter()
+                    .map(|link| link.href.as_str())
+                    .chain(
+                        block
+                            .images
+                            .iter()
+                            .filter_map(|image| image.link.as_deref()),
+                    )
+                    .any(|href| {
+                        Book::resolve_link(&self.chapter, href)
+                            .is_ok_and(|target| target.fragment.is_none() && target.path == path)
+                    })
+            })
     }
 
     /// Load original pixels for a displayed illustration, reopening the local book as needed.
     pub fn open_illustration(&self, path: &Path, package_path: &str) -> Result<comic::ImagePage> {
-        if !matches!(&self.renderer, Renderer::Parley(layout) if layout.has_illustration(package_path)) && !self.links_to_image(package_path)
+        if !matches!(&self.renderer, Renderer::Parley(layout) if layout.has_illustration(package_path))
+            && !self.links_to_image(package_path)
         {
             return Err("This illustration is unavailable in the current chapter".into());
         }
@@ -786,10 +1203,23 @@ impl Probe {
         if book.revision() != self.book || book.chapter_index(&self.chapter).is_none() {
             return Err("This book changed after it was opened".into());
         }
-        if let Some(xml) = self.source.blocks.iter().flat_map(|block| &block.images)
-            .find(|image| image.href == package_path).and_then(|image| image.inline_svg.as_deref()) {
-            let (gray, _) = svg_image::render_inline(&mut book, &self.chapter, xml, svg_image::MAX_SVG_SIDE,
-                svg_image::MAX_SVG_SIDE, 8 * 1024 * 1024, None)?;
+        if let Some(xml) = self
+            .source
+            .blocks
+            .iter()
+            .flat_map(|block| &block.images)
+            .find(|image| image.href == package_path)
+            .and_then(|image| image.inline_svg.as_deref())
+        {
+            let (gray, _) = svg_image::render_inline(
+                &mut book,
+                &self.chapter,
+                xml,
+                svg_image::MAX_SVG_SIDE,
+                svg_image::MAX_SVG_SIDE,
+                8 * 1024 * 1024,
+                None,
+            )?;
             return comic::ImagePage::from_grayscale(gray.width(), gray.height(), gray.into_raw());
         }
         if svg_image::is_package_svg(package_path) {
@@ -861,13 +1291,24 @@ impl Probe {
                 let visible = visible_lines.iter().any(|line| {
                     line.bottom > bounds.start
                         && line.block == block.key
-                        && line.bytes.start < link.bytes.end
-                        && line.bytes.end > link.bytes.start
+                        && line
+                            .source_spans()
+                            .iter()
+                            .any(|span| span.start < link.bytes.end && span.end > link.bytes.start)
                 });
                 if visible && let Ok(destination) = Book::resolve_link(&self.chapter, &link.href) {
-                    let label = block.text[link.bytes.clone()].trim();
-                    if !label.is_empty() {
-                        links.push((label.to_owned(), destination));
+                    let Ok(view) = self.reading_flow.view(&self.source, block) else {
+                        continue;
+                    };
+                    let Some(spans) = view.layout_spans(link.bytes.clone()) else {
+                        continue;
+                    };
+                    let label: String = spans
+                        .iter()
+                        .map(|span| &view.text()[span.clone()])
+                        .collect();
+                    if !label.trim().is_empty() {
+                        links.push((label.trim().to_owned(), destination));
                     }
                 }
             }
@@ -888,23 +1329,258 @@ impl Probe {
         if text.is_empty() {
             return Vec::new();
         }
-        self.source
-            .blocks
-            .iter()
-            .flat_map(|block| {
-                block
-                    .text
-                    .match_indices(text)
-                    .map(move |(offset, _)| self.anchor(block.key, offset))
-            })
-            .collect()
+        let mut result = Vec::new();
+        for block in &self.source.blocks {
+            let Ok(view) = self.reading_flow.view(&self.source, block) else {
+                continue;
+            };
+            for (offset, _) in view.text().match_indices(text) {
+                if let Some(offset) = view.source_offset(offset, flow_projection::Affinity::After) {
+                    result.push(self.anchor(block.key, offset));
+                }
+            }
+        }
+        result
     }
 
     pub fn fragment(&self, name: &str) -> Option<Anchor> {
-        self.source
-            .fragments
-            .get(name)
-            .map(|&(block, offset)| self.anchor(block, offset))
+        if self.fragment_presentation(name)? == SourcePresentation::CssOmitted {
+            return None;
+        }
+        let &(block, offset) = self.source.fragments.get(name)?;
+        let original = self.anchor(block, offset);
+        if self.page_for(&original).is_some() {
+            return Some(original);
+        }
+        // Container IDs can begin with a removed inline prefix. Resolve only
+        // inside their retained subtree; an explicitly hidden ID never reaches
+        // this fallback, even if its old caret aliases a visible neighbour.
+        let owner = self.source.fragment_owner(name)?;
+        for block in &self.source.blocks {
+            let view = self.reading_flow.view(&self.source, block).ok()?;
+            let candidates: Vec<_> = match view.runs() {
+                Some(runs) => runs
+                    .iter()
+                    .filter(|run| self.element_within(run.element, owner))
+                    .map(|run| run.source.start)
+                    .collect(),
+                None => block
+                    .styled_text
+                    .iter()
+                    .filter(|run| self.element_within(run.element, owner))
+                    .map(|run| run.bytes.start)
+                    .collect(),
+            };
+            for offset in candidates {
+                let anchor = self.anchor(block.key, offset);
+                if self.page_for(&anchor).is_some() {
+                    return Some(anchor);
+                }
+            }
+            let input = self.reading_flow.layout_block(&self.source, block).ok()?;
+            for image in input.images.iter() {
+                if self.element_within(image.element, owner) {
+                    let mut anchor = self.anchor(block.key, 0);
+                    anchor.illustration = Some(image.source_index);
+                    if self.page_for(&anchor).is_some() {
+                        return Some(anchor);
+                    }
+                }
+            }
+        }
+        let is_epub_pagebreak = self
+            .source
+            .elements
+            .get(owner)
+            .and_then(|element| element.type_attribute.as_deref())
+            .is_some_and(|value| {
+                value
+                    .split_ascii_whitespace()
+                    .any(|token| token.eq_ignore_ascii_case("pagebreak"))
+            });
+        is_epub_pagebreak
+            .then(|| self.nearest_pagebreak_text(&original))
+            .flatten()
+    }
+
+    /// KOReader hides EPUB pagebreak markers and resolves their destinations to
+    /// the next visible text, falling back to the previous visible text at EOF.
+    fn nearest_pagebreak_text(&self, original: &Anchor) -> Option<Anchor> {
+        let (index, offset) = self.project_anchor(original)?;
+
+        // Prefer source text at or after the marker, including a visible run
+        // later in the same block when publisher CSS removed a leading prefix.
+        for block_index in index..self.source.blocks.len() {
+            let block = &self.source.blocks[block_index];
+            let lower_bound = if block_index == index { offset } else { 0 };
+            let view = self.reading_flow.view(&self.source, block).ok()?;
+            let ranges: Vec<_> = match view.runs() {
+                Some(runs) => runs
+                    .iter()
+                    .filter(|run| run.painted && !run.source.is_empty())
+                    .map(|run| run.source.clone())
+                    .collect(),
+                None => block
+                    .styled_text
+                    .iter()
+                    .filter(|run| {
+                        self.reading_flow
+                            .element(run.element)
+                            .is_ok_and(|flow| !flow.suppressed && flow.painted)
+                    })
+                    .map(|run| run.bytes.clone())
+                    .collect(),
+            };
+            for range in ranges {
+                let floor = range.start.max(lower_bound);
+                if floor >= range.end {
+                    continue;
+                }
+                let Some(candidate_offset) = block
+                    .text
+                    .get(floor..range.end)
+                    .and_then(|text| text.char_indices().next().map(|(at, _)| floor + at))
+                else {
+                    continue;
+                };
+                let candidate = self.anchor(block.key, candidate_offset);
+                if self.page_for(&candidate).is_some() {
+                    return Some(candidate);
+                }
+            }
+        }
+
+        // A trailing pagebreak has no next text. Use the nearest preceding
+        // painted character, matching KOReader's previousVisibleText fallback.
+        for block_index in (0..=index).rev() {
+            let block = &self.source.blocks[block_index];
+            let upper_bound = if block_index == index {
+                offset
+            } else {
+                block.text.len()
+            };
+            let view = self.reading_flow.view(&self.source, block).ok()?;
+            let ranges: Vec<_> = match view.runs() {
+                Some(runs) => runs
+                    .iter()
+                    .filter(|run| run.painted && !run.source.is_empty())
+                    .map(|run| run.source.clone())
+                    .collect(),
+                None => block
+                    .styled_text
+                    .iter()
+                    .filter(|run| {
+                        self.reading_flow
+                            .element(run.element)
+                            .is_ok_and(|flow| !flow.suppressed && flow.painted)
+                    })
+                    .map(|run| run.bytes.clone())
+                    .collect(),
+            };
+            for range in ranges.into_iter().rev() {
+                let ceiling = range.end.min(upper_bound);
+                let candidate_offset = block.text.get(range.start..ceiling).and_then(|text| {
+                    text.char_indices()
+                        .next_back()
+                        .map(|(at, _)| range.start + at)
+                });
+                let Some(candidate_offset) = candidate_offset else {
+                    continue;
+                };
+                let candidate = self.anchor(block.key, candidate_offset);
+                if self.page_for(&candidate).is_some() {
+                    return Some(candidate);
+                }
+            }
+        }
+        None
+    }
+
+    fn element_within(&self, mut element: usize, owner: usize) -> bool {
+        loop {
+            if element == owner {
+                return true;
+            }
+            let Some(parent) = self
+                .source
+                .elements
+                .get(element)
+                .and_then(|item| item.parent)
+            else {
+                return false;
+            };
+            element = parent;
+        }
+    }
+
+    /// Automatic layout/session restoration may snap a hidden source point to
+    /// retained content. Explicit links/bookmarks use page_for and never snap.
+    /// Saved user flow boundaries are source-order markers, not requests to
+    /// reveal their current glyph. Re-resolve them when publisher CSS removes
+    /// the marker's text, while retaining their original persisted anchors.
+    pub(crate) fn flow_boundary_page(&self, anchor: &Anchor) -> Option<usize> {
+        self.page_for(anchor).or_else(|| {
+            (self.source_presentation(anchor) == Some(SourcePresentation::CssOmitted))
+                .then(|| self.restore_anchor(anchor))
+                .flatten()
+                .and_then(|anchor| self.page_for(&anchor))
+        })
+    }
+
+    pub(crate) fn restore_anchor(&self, anchor: &Anchor) -> Option<Anchor> {
+        if self.page_for(anchor).is_some() {
+            return Some(anchor.clone());
+        }
+        if self.source_presentation(anchor)? != SourcePresentation::CssOmitted {
+            return None;
+        }
+        let (index, offset) = self.project_anchor(anchor)?;
+        let block = &self.source.blocks[index];
+        let view = self.reading_flow.view(&self.source, block).ok()?;
+        for affinity in [
+            flow_projection::Affinity::After,
+            flow_projection::Affinity::Before,
+        ] {
+            if let Some(at) = view
+                .project_nearest(offset, affinity)
+                .and_then(|at| view.source_offset(at, affinity))
+            {
+                let candidate = self.anchor(block.key, at);
+                if self.page_for(&candidate).is_some() {
+                    return Some(candidate);
+                }
+            }
+        }
+        for distance in 1..self.source.blocks.len() {
+            for candidate_index in [
+                index
+                    .checked_add(distance)
+                    .filter(|i| *i < self.source.blocks.len()),
+                index.checked_sub(distance),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                let block = &self.source.blocks[candidate_index];
+                let view = self.reading_flow.view(&self.source, block).ok()?;
+                if let Some(offset) = view.source_offset(0, flow_projection::Affinity::After) {
+                    let candidate = self.anchor(block.key, offset);
+                    if self.page_for(&candidate).is_some() {
+                        return Some(candidate);
+                    }
+                }
+                if let Renderer::Parley(renderer) = &self.renderer {
+                    for ordinal in 0..block.images.len() {
+                        if renderer.image_top(block.key, ordinal).is_some() {
+                            let mut candidate = self.anchor(block.key, 0);
+                            candidate.illustration = Some(ordinal);
+                            return Some(candidate);
+                        }
+                    }
+                }
+            }
+        }
+        None
     }
 
     pub fn page_for(&self, anchor: &Anchor) -> Option<usize> {
@@ -914,8 +1590,17 @@ impl Probe {
     pub(crate) fn anchor_top(&self, anchor: &Anchor) -> Option<f32> {
         let (index, offset) = self.project_anchor(anchor)?;
         let block = &self.source.blocks[index];
+        if self.source_presentation(anchor) == Some(SourcePresentation::CssOmitted) {
+            return None;
+        }
         if let Some(ordinal) = anchor.illustration {
-            if offset != 0 || !block.text.is_empty() || ordinal >= block.images.len() {
+            if offset != 0 || ordinal >= block.images.len() {
+                return None;
+            }
+            if let Renderer::Parley(renderer) = &self.renderer {
+                return renderer.image_top(block.key, ordinal);
+            }
+            if !block.text.is_empty() {
                 return None;
             }
             return self
@@ -928,7 +1613,7 @@ impl Probe {
         let exact = self
             .lines
             .iter()
-            .find(|line| line.block == block.key && line.bytes.contains(&offset))
+            .find(|line| line.block == block.key && line.contains_source(offset))
             .map(|line| line.top);
         exact.or_else(|| {
             if offset != block.text.len() {
@@ -973,33 +1658,25 @@ impl Probe {
                 !line.bytes.is_empty() && line.bottom > range.start && line.top < range.end
             })
             .or_else(|| {
-                self.lines.iter().find(|line| {
-                    line.bottom > range.start
-                        && line.top < range.end
-                        && self
-                            .source
-                            .blocks
-                            .binary_search_by_key(&line.block, |block| block.key)
-                            .is_ok_and(|index| self.source.blocks[index].text.is_empty())
-                })
+                self.lines
+                    .iter()
+                    .find(|line| line.bottom > range.start && line.top < range.end)
             })
             .map(|line| {
                 let mut anchor = self.anchor(line.block, line.bytes.start);
                 if line.bytes.is_empty()
-                    && let Ok(index) = self
-                        .source
-                        .blocks
-                        .binary_search_by_key(&line.block, |b| b.key)
-                    && self.source.blocks[index].text.is_empty()
-                    && self.source.blocks[index].images.len() > 1
+                    && let Renderer::Parley(renderer) = &self.renderer
+                    && let Some(ordinal) = renderer.image_ordinal(line.block, line.top)
                 {
-                    let ordinal = self
-                        .lines
-                        .iter()
-                        .take_while(|entry| entry.top < line.top)
-                        .filter(|entry| entry.block == line.block && entry.bytes.is_empty())
-                        .count();
-                    if ordinal > 0 {
+                    anchor.offset = 0;
+                    if ordinal != 0
+                        || self
+                            .source
+                            .blocks
+                            .iter()
+                            .find(|block| block.key == line.block)
+                            .is_some_and(|block| !block.text.is_empty())
+                    {
                         anchor.illustration = Some(ordinal);
                     }
                 }
@@ -1031,7 +1708,9 @@ impl Probe {
     pub fn coverage(&self) -> (usize, usize) {
         let mut seen = std::collections::BTreeMap::<usize, Vec<Range<usize>>>::new();
         for line in &self.lines {
-            seen.entry(line.block).or_default().push(line.bytes.clone());
+            seen.entry(line.block)
+                .or_default()
+                .extend(line.source_spans().iter().cloned());
         }
         self.source
             .blocks
@@ -1194,6 +1873,31 @@ mod firmware_font_tests {
         // Neither test font assigns a glyph to this private-use code point.
         assert_eq!(missing(&mut fonts, "\u{F0000}"), 1);
     }
+
+    #[test]
+    fn bundled_koreader_symbol_subset_covers_seven_observed_private_use_symbols() {
+        let primary = test_fixture("fonts/NotoSans-Regular.ttf");
+        let symbols = std::env::var_os("READER_TEST_FIXTURES").map_or_else(
+            || Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/fonts/PrimitiveSymbols.ttf"),
+            |root| PathBuf::from(root).join("fonts/PrimitiveSymbols.ttf"),
+        );
+        let paths = [primary, symbols];
+        let mut fonts = font_context_with_firmware(&paths, Path::new("/missing-firmware")).unwrap();
+        // Eight private-use scalars were observed in original AZW3 002. The
+        // exact KOReader Nerd Fonts subset includes seven and omits U+F0B9.
+        let kindle_symbols = "\u{F028}\u{F029}\u{F03D}\u{F02D}\u{F02B}\u{F0D0}\u{F040}";
+        for scalar in kindle_symbols.chars() {
+            assert_eq!(
+                missing(&mut fonts, &scalar.to_string()),
+                0,
+                "unsupported private-use scalar U+{:04X}",
+                scalar as u32
+            );
+        }
+        assert_eq!(missing(&mut fonts, kindle_symbols), 0);
+        assert_eq!(missing(&mut fonts, &format!("A{kindle_symbols}Ω")), 0);
+        assert_eq!(missing(&mut fonts, "\u{F0B9}"), 1);
+    }
 }
 
 fn grayscale(rgba: &[u8]) -> impl Iterator<Item = u8> + '_ {
@@ -1227,7 +1931,9 @@ fn image_reader(bytes: &[u8]) -> Result<image::ImageReader<std::io::Cursor<&[u8]
 }
 
 fn epub_raster_dimensions(bytes: &[u8]) -> Result<(u32, u32)> {
-    if gif_image::has_signature(bytes) { return gif_image::dimensions(bytes); }
+    if gif_image::has_signature(bytes) {
+        return gif_image::dimensions(bytes);
+    }
     let (width, height) = image_reader(bytes)?.into_dimensions()?;
     if !comic::image_dimensions_valid(width, height) {
         return Err("The EPUB image exceeds Reader's decoded image limit".into());

@@ -377,8 +377,9 @@ pub(crate) fn page_name(name: &str) -> bool {
     {
         return false;
     }
-    name.rsplit_once('.')
-        .is_some_and(|(_, extension)| crate::library::DocumentFormat::raster_for_extension(extension).is_some())
+    name.rsplit_once('.').is_some_and(|(_, extension)| {
+        crate::library::DocumentFormat::raster_for_extension(extension).is_some()
+    })
 }
 
 /// Compare digit groups by numeric value without converting them to integers.
@@ -626,7 +627,10 @@ impl ImagePage {
         let image = Self::decode_gif(bytes)?;
         let mut output = Vec::new();
         image::codecs::png::PngEncoder::new(&mut output).write_image(
-            &image.gray, image.width, image.height, image::ExtendedColorType::L8,
+            &image.gray,
+            image.width,
+            image.height,
+            image::ExtendedColorType::L8,
         )?;
         Ok(output)
     }

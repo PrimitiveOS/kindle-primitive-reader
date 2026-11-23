@@ -1,6 +1,6 @@
 # Looking up inflected words
 
-Long-press a word on the page and tap Dictionary. If an enabled dictionary has an entry for the selected spelling or an alias, Reader shows that entry. Otherwise it tries common English inflections in that dictionary. For example, selecting *carried* can open the headword *carry*. When those steps find nothing, Reader searches the enabled dictionaries for up to ten similar spellings. The popup stays over the book while results arrive. Closing it returns to the selected word. Save word remains a separate action.
+Long-press a word on the page and tap Dictionary. If an enabled dictionary has an entry for the selected spelling or an alias, Reader shows that entry. Otherwise it tries common English or supported Japanese inflections in that dictionary. For example, selecting *carried* can open the headword *carry*. When those steps find nothing, Reader searches the enabled dictionaries for up to ten similar spellings. The popup stays over the book while results arrive. Closing it returns to the selected word. Save word remains a separate action.
 
 ![Looking up carried in the Harbour Dictionary](screenshots/dictionary-word-form.png)
 
@@ -8,7 +8,7 @@ In Dictionaries, **Word forms by default** sets the preference for the library. 
 
 ## Reference behavior
 
-KOReader routes selections to its dictionary module and passes candidate words to sdcv. Its exact-search setting has global and per-book scope. sdcv first searches direct dictionary entries and synonyms. Its next step considers spelling case and English suffixes, including certain doubled consonants and dropped final letters. With fuzzy matching enabled, sdcv can then suggest words by edit distance. Language-support plugins can supply additional candidates. Reader implements English word forms and edit-distance suggestions. The library and book preferences control both. [KOReader selection and lookup](https://github.com/koreader/koreader/blob/v2026.07.1/frontend/apps/reader/modules/readerdictionary.lua#L1233-L1377) · [sdcv word lookup](https://github.com/Dushistov/sdcv/blob/v0.5.5/src/stardict_lib.cpp#L1026-L1348)
+KOReader routes selections to its dictionary module and passes candidate words to sdcv. Its exact-search setting has global and per-book scope. sdcv first searches direct dictionary entries and synonyms. Its next step considers spelling case and English suffixes, including certain doubled consonants and dropped final letters. With fuzzy matching enabled, sdcv can then suggest words by edit distance. Language-support plugins can supply additional candidates. Reader implements English word forms, bounded independently authored Japanese forms and edit-distance suggestions for eligible non-CJK words. [Japanese and Chinese selection](cjk-dictionary-selection.md) The library and book preferences control both. [KOReader selection and lookup](https://github.com/koreader/koreader/blob/v2026.07.1/frontend/apps/reader/modules/readerdictionary.lua#L1233-L1377) · [sdcv word lookup](https://github.com/Dushistov/sdcv/blob/v0.5.5/src/stardict_lib.cpp#L1026-L1348)
 
 The Reader implementation ranks the candidate spellings while streaming each selected index and keeps the senses for the best available spelling within its existing result and byte limits. Tests cover direct entries, aliases, distinct results across dictionaries, casing, per-book persistence, selecting a word through the reading UI, and returning to that passage.
 
@@ -21,7 +21,7 @@ The median physical lookup was 0.94 seconds with other device checks running. Th
 
 ## Similar spellings
 
-Reader compares Unicode characters and allows an adjacent transposition, an insertion, a deletion or a substitution. It uses sdcv’s cutoff of fewer than three edits and gives closer spellings priority. Each suggestion can open definitions from multiple enabled dictionaries. CJK selections continue to use direct lookup. Closing the popup or putting the Kindle to sleep cancels its background search. [sdcv suggestion ranking](https://github.com/Dushistov/sdcv/blob/v0.5.5/src/stardict_lib.cpp#L1269-L1355) · [KOReader dictionary lookup](https://github.com/koreader/koreader/blob/v2026.07.1/frontend/apps/reader/modules/readerdictionary.lua)
+Reader compares Unicode characters and allows an adjacent transposition, an insertion, a deletion or a substitution. It uses sdcv’s cutoff of fewer than three edits and gives closer spellings priority. Each suggestion can open definitions from multiple enabled dictionaries. CJK selections use literal lookup and supported Japanese forms; they do not use edit-distance spelling suggestions. Closing the popup or putting the Kindle to sleep cancels its background search. [sdcv suggestion ranking](https://github.com/Dushistov/sdcv/blob/v0.5.5/src/stardict_lib.cpp#L1269-L1355) · [KOReader dictionary lookup](https://github.com/koreader/koreader/blob/v2026.07.1/frontend/apps/reader/modules/readerdictionary.lua)
 
 ![Reader suggesting a headword after two adjacent letters were transposed](screenshots/dictionary-spelling.png)
 

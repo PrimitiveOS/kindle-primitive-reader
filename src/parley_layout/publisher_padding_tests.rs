@@ -9,6 +9,7 @@ fn publisher_box_padding_shapes_wrapped_text_and_preserves_source_positions() {
         height: 1240,
         margin: 40,
         font_size: 30.,
+        base_stylesheet: crate::BaseStylesheet::None,
         ..Default::default()
     };
     let open = |enabled| {
@@ -228,6 +229,7 @@ fn negative_first_lines_spend_available_physical_padding_before_shifting_other_l
         height: 1000,
         margin: 24,
         font_size: 28.,
+        base_stylesheet: crate::BaseStylesheet::None,
         ..Default::default()
     };
     let p = Probe::from_book_content(
@@ -415,7 +417,7 @@ fn compares_original_table_coordinates_and_source_hits() {
                 let layout = make_paragraph(
                     &mut ctx,
                     &mut fc,
-                    block,
+                    &LayoutBlock::identity(block),
                     None,
                     cfg,
                     &styles,
@@ -531,6 +533,12 @@ fn collapsed_table_uses_its_header_widths_and_preserves_cross_column_word_hits()
             .replace("width:12%", "width:auto"),
     );
     let narrow = render(html.replace("width:95%", "width:60%"));
+    // Real bold headers can exceed a percentage track's minimum content width.
+    // Keep a separate short normal-weight header case for exact percentages.
+    let percent = render(
+        html.replace("th.depth {", "th.depth {font-weight:normal;")
+            .replace("th.buoy {", "th.buoy {font-weight:normal;"),
+    );
     let rect = |p: &Probe, id: &str, word: &str| {
         let start = p.fragment(id).unwrap();
         let end = crate::Anchor {
@@ -561,7 +569,9 @@ fn collapsed_table_uses_its_header_widths_and_preserves_cross_column_word_hits()
         assert_eq!(rect(&zero, id, word), p);
         assert_eq!(rect(&narrow, id, word), p);
         if id == "buoy-name" {
-            assert!((p.x - (30 + 840 * 68 / 100 + 8)).abs() < 4);
+            let proportional = rect(&percent, id, word);
+            assert!((proportional.x - (30 + 840 * 68 / 100 + 8)).abs() < 4);
+            assert!(p.x <= proportional.x);
             assert!(p.x.abs_diff(rect(&auto, id, word).x) > 8);
         }
     }

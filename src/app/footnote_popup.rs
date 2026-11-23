@@ -12,6 +12,9 @@ const CONTENT_WIDTH: u32 = PANEL_WIDTH as u32 - 32;
 const CONTENT_HEIGHT: u32 = HEIGHT / 3 - 112;
 const HEADER: i32 = 76;
 
+#[cfg(test)]
+mod tests;
+
 pub(super) struct Footnote {
     target: Destination,
     pub(super) reference: Option<TextSelection>,
@@ -227,6 +230,16 @@ impl Reader {
         if context.kind == Reference::Ordinary {
             return false;
         }
+        // Logical document units do not introduce a new popup-size preference.
+        // Preserve the prior compact popup's retained pixel baseline.
+        let popup_font = if reading.config.settings.logical_font_size.is_some() {
+            self.library
+                .state(active.id)
+                .and_then(|state| state.preferences.font_size)
+                .unwrap_or(Settings::default().font_size)
+        } else {
+            reading.config.settings.font_size
+        };
         let settings = Settings {
             width: CONTENT_WIDTH,
             height: CONTENT_HEIGHT,
@@ -236,7 +249,9 @@ impl Reader {
             margin_right: None,
             margin_top: Some(8),
             margin_bottom: Some(8),
-            font_size: (reading.config.settings.font_size - 2.0).clamp(18.0, 64.0),
+            font_size: (popup_font - 2.0).clamp(18.0, 64.0),
+            // The existing compact popup keeps its independent physical-pixel policy.
+            logical_font_size: None,
             ..reading.config.settings
         };
         let toc_target = reading
@@ -250,13 +265,30 @@ impl Reader {
                 return Ok(None);
             }
             let xhtml = book.chapter(index).map_err(io::Error::other)?;
-            let Some(excerpt) = footnotes::extract(
+            let source = book
+                .chapter_source(&target.path, &xhtml)
+                .map_err(io::Error::other)?;
+            let styles = crate::book_style::BookStyle::load_for_flow_with_base(
+                &mut book,
+                &target.path,
+                &source,
+                reading.config.settings.publisher_styles,
+                &reading.config.user_styles,
+                reading.config.settings.base_stylesheet,
+            )
+            .map_err(io::Error::other)?
+            .compute(&source.elements);
+            let Some(roots) = footnotes::LayoutRoots::new(&source, &styles) else {
+                return Ok(None);
+            };
+            let Some(excerpt) = footnotes::extract_with_layout(
                 &xhtml,
                 fragment,
                 &context,
                 reading.chapter.cmp(&index),
                 toc_target,
                 self.controls.prefer_footnotes,
+                &roots,
             ) else {
                 return Ok(None);
             };
@@ -268,6 +300,9 @@ impl Reader {
                 index,
                 Some(excerpt),
                 &reading.config.user_hyphenation,
+                // KOReader's extracted popup has a separate stylesheet context.
+                // Main-book tweaks must not hide or restyle the extracted note.
+                &crate::user_styles::Snapshot::default(),
             )
             .map_err(io::Error::other)?;
             let frame = Footnote::frame(&mut preview, 0).map_err(io::Error::other)?;

@@ -15,3 +15,5 @@ licence texts are in [the dependency notices](../THIRD-PARTY.txt).
 The 32-bit ARM build reuses exact four-channel image colors before Hayro’s DeviceCMYK conversion. The interpreter’s CMYK and Lab reference profiles retain their upstream CC0 terms in the packaged dependency notices. [Profile attribution](https://github.com/LaurenzV/hayro/blob/3f3825c3e50bb41ed6ec6c3f4b6007978bd13def/hayro-interpret/assets/README.md) · [Profile license](../THIRD-PARTY.txt)
 
 Reader uses jpeg-decoder 0.3.2 under the MIT license for oversampled, interleaved Adobe CMYK and YCCK photographs. [Packaged license](JPEG-DECODER-MIT.txt) · [Upstream source](https://github.com/image-rs/jpeg-decoder)
+
+Reader carries the pinned Hayro PDF parser with local owner-password support. The upstream Apache 2.0 and MIT license texts are included in the packaged notices. [Parser change](../../../vendor/hayro-syntax/PRIMITIVEOS.md) · [Packaged licenses](../THIRD-PARTY.txt)

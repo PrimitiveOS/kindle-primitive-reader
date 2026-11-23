@@ -13,6 +13,7 @@ ocr=${READER_OCR_BUILD_DIR:-build/ocr-armhf}
 [ -x "$binary" ] || { echo "Build $binary before staging." >&2; exit 1; }
 [ -r assets/reader-icon.png ] || { echo "Missing the Reader icon." >&2; exit 1; }
 [ -r assets/reader-icon-dark.png ] || { echo "Missing the Reader dark icon." >&2; exit 1; }
+[ -r assets/fonts/PrimitiveSymbols.ttf ] || { echo "Missing the symbol fallback font." >&2; exit 1; }
 icon="# Icon: data:image/png;base64,$(base64 < assets/reader-icon.png | tr -d '\n')"
 icon_dark="# IconDark: data:image/png;base64,$(base64 < assets/reader-icon-dark.png | tr -d '\n')"
 set -- "$binary"
@@ -38,11 +39,12 @@ for name in sys.argv[1:]:
         sys.exit(f"Expected a 32-bit hard-float ARM ELF binary at {name}.")
 PY
 
-install -d "$stage/reader/bin" "$stage/reader/licenses" "$stage/documents"
+install -d "$stage/reader/bin" "$stage/reader/fonts" "$stage/reader/licenses" "$stage/documents"
 install -m 755 "$binary" "$stage/reader/bin/reader-kindle"
+install -m 644 assets/fonts/PrimitiveSymbols.ttf "$stage/reader/fonts/PrimitiveSymbols.ttf"
 awk -v icon="$icon" -v icon_dark="$icon_dark" '{ print } /^# Author:/ { print icon; print icon_dark }' deploy/Reader.sh > "$stage/documents/Reader.sh"
 chmod 755 "$stage/documents/Reader.sh"
-install -m 644 docs/licenses/README.md docs/licenses/THIRD-PARTY.txt docs/licenses/ENGLISH-HYPHENATION.txt docs/licenses/SRELL.txt "$stage/reader/licenses/"
+install -m 644 docs/licenses/README.md docs/licenses/THIRD-PARTY.txt docs/licenses/ENGLISH-HYPHENATION.txt docs/licenses/SRELL.txt docs/licenses/NERDFONTS.txt "$stage/reader/licenses/"
 cp -R docs/licenses/pdf docs/licenses/runtime "$stage/reader/licenses/"
 install -d "$stage/reader/ocr/tessdata" "$stage/reader/licenses/ocr"
 install -m 755 "$ocr_engine" "$stage/reader/ocr/tesseract"

@@ -468,7 +468,13 @@ mod tests {
         let last = &parts.last().unwrap().path;
         for part in &parts {
             let doc = parse(&part.xhtml).unwrap();
-            assert!(!previous.get(&part.path).into_iter().flatten().any(|chapter| chapter.contains("href=")));
+            assert!(
+                !previous
+                    .get(&part.path)
+                    .into_iter()
+                    .flatten()
+                    .any(|chapter| chapter.contains("href="))
+            );
             for link in doc.descendants().filter(|n| n.has_tag_name("a")) {
                 let (prefix, name) = link.attribute("href").unwrap().split_once('#').unwrap();
                 assert_eq!(name, "arrival");

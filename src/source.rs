@@ -7,6 +7,10 @@ use roxmltree::{Document, Node, NodeId, ParsingOptions};
 use crate::Result;
 
 pub(crate) const SOURCE_ATTRIBUTE: &str = "data-primos-source";
+#[cfg(test)]
+mod flow_metadata_tests;
+mod numeric_references;
+
 const RUBY_TEXT_MODEL: u64 = 0xe026_92a4_3415_b12f;
 const MAX_RUBY_GROUPS: usize = 1_024;
 const MAX_RUBY_ANNOTATION_BYTES: usize = 192;
@@ -26,6 +30,8 @@ pub(crate) struct Block {
     pub text: String,
     pub element: usize,
     pub styled_text: Vec<StyledText>,
+    /// Layout-only origins. These never participate in canonical text or revisions.
+    pub flow_origins: crate::flow_projection::Origins,
     pub list_item: Option<crate::list_marker::ListItem>,
     #[cfg(test)]
     pub emphasis: Vec<(Range<usize>, Emphasis)>,
@@ -35,6 +41,7 @@ pub(crate) struct Block {
     pub images: Vec<EmbeddedImage>,
     pub ruby: Vec<Ruby>,
     legacy: Option<LegacyOffsets>,
+    origin: usize,
 }
 
 pub(crate) struct EmbeddedImage {
@@ -53,26 +60,37 @@ pub(crate) struct Ruby {
     pub bytes: Range<usize>,
     pub annotation: String,
     pub language: Option<Language>,
+    /// Annotation paint can differ from the base text's inherited visibility.
+    pub element: usize,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct LegacyOffsets {
     len: usize,
     runs: Vec<OffsetRun>,
 }
 
+#[derive(Clone)]
 struct OffsetRun {
     old: Range<usize>,
-    current: usize,
+    current: Range<usize>,
 }
 
 impl LegacyOffsets {
     fn record(&mut self, old: Range<usize>, current: usize) {
+        let end = current + old.len();
+        self.record_span(old, current..end);
+    }
+
+    fn record_span(&mut self, old: Range<usize>, current: Range<usize>) {
         if let Some(last) = self.runs.last_mut()
+            && last.old.len() == last.current.len()
+            && old.len() == current.len()
             && last.old.end == old.start
-            && last.current + last.old.len() == current
+            && last.current.end == current.start
         {
             last.old.end = old.end;
+            last.current.end = current.end;
             return;
         }
         self.runs.push(OffsetRun { old, current });
@@ -86,13 +104,46 @@ impl LegacyOffsets {
         if let Some(run) = self.runs.get(index)
             && run.old.contains(&offset)
         {
-            return Some(run.current + offset - run.old.start);
+            return Some(run.current.start + offset - run.old.start);
         }
-        // Previously inline pronunciation and fallback punctuation now occupy one caret boundary.
-        Some(index.checked_sub(1).map_or(0, |index| {
-            let run = &self.runs[index];
-            run.current + run.old.len()
-        }))
+        // Previously inline pronunciation and fallback punctuation occupy one caret boundary.
+        Some(
+            index
+                .checked_sub(1)
+                .map_or(0, |index| self.runs[index].current.end),
+        )
+    }
+
+    fn unproject(&self, offset: usize, length: usize) -> Option<usize> {
+        if offset >= length {
+            return (offset == length).then_some(self.len);
+        }
+        let index = self.runs.partition_point(|run| run.current.end <= offset);
+        if let Some(run) = self.runs.get(index)
+            && run.current.contains(&offset)
+        {
+            return Some(run.old.start + offset - run.current.start);
+        }
+        Some(
+            index
+                .checked_sub(1)
+                .map_or(0, |index| self.runs[index].old.end),
+        )
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Extraction {
+    ruby: bool,
+    origins: bool,
+}
+
+impl Default for Extraction {
+    fn default() -> Self {
+        Self {
+            ruby: true,
+            origins: false,
+        }
     }
 }
 
@@ -100,6 +151,8 @@ pub(crate) struct Element {
     pub tag: String,
     pub classes: String,
     pub has_href: bool,
+    /// Pinned CRE selectors identify attributes by local name, ignoring prefixes.
+    pub type_attribute: Option<String>,
     pub list_kind: Option<crate::list_marker::MarkerKind>,
     pub id: Option<String>,
     pub inline_style: Option<String>,
@@ -130,12 +183,23 @@ pub(crate) struct InlineLink {
 
 pub(crate) struct Source {
     pub revision: u64,
+    /// Raw publication identity is independent of Ruby/numeric text-model
+    /// revisions. Internal parse stages are unbound until the outer entry sets it.
+    original_input_sha256: Option<[u8; 32]>,
     legacy_revision: Option<u64>,
     previous_mobi: BTreeMap<u64, BTreeMap<usize, usize>>,
+    numeric_history: Vec<numeric_references::History>,
+    origins: Vec<usize>,
+    // Only populated by the existing numeric-history parse, where normalized
+    // XHTML can have different anonymous wrappers. Not a canonical text model.
+    element_origins: Vec<Option<usize>>,
     pub blocks: Vec<Block>,
     pub fragments: BTreeMap<String, (usize, usize)>,
+    fragment_owners: BTreeMap<String, usize>,
+    pub list_counters: Vec<crate::list_marker::CounterGroup>,
     pub stylesheets: Vec<Stylesheet>,
     pub elements: Vec<Element>,
+    pub table_cells: Vec<(usize, crate::table_layout::Cell)>,
     insertions: Vec<(usize, usize)>,
     normalized_xhtml: Option<String>,
     ruby_exclusions: Vec<Range<usize>>,
@@ -290,13 +354,25 @@ impl Source {
         publication_language: Option<Language>,
         kindle_elements: &BTreeSet<usize>,
     ) -> Result<Self> {
-        Self::parse_document(
-            xhtml,
-            crate::revision(xhtml),
-            None,
-            publication_language,
-            kindle_elements,
-        )
+        let input = ring::digest::digest(&ring::digest::SHA256, xhtml.as_bytes());
+        let mut fingerprint = [0; 32];
+        fingerprint.copy_from_slice(input.as_ref());
+        let mut parsed = if let Some(normalized) = numeric_references::normalize(xhtml) {
+            numeric_references::parse(xhtml, normalized, publication_language, kindle_elements)?
+        } else {
+            Self::parse_document(
+                xhtml,
+                crate::revision(xhtml),
+                None,
+                publication_language,
+                kindle_elements,
+                Extraction::default(),
+            )?
+        };
+        // Bind the original bytes after all numeric/anonymous transformations;
+        // their canonical and historical revisions retain their existing values.
+        parsed.original_input_sha256 = Some(fingerprint);
+        Ok(parsed)
     }
 
     fn parse_document(
@@ -305,6 +381,7 @@ impl Source {
         anonymous_boxes: Option<&[usize]>,
         publication_language: Option<Language>,
         kindle_elements: &BTreeSet<usize>,
+        extraction: Extraction,
     ) -> Result<Self> {
         let options = || ParsingOptions {
             nodes_limit: 100_000,
@@ -327,6 +404,17 @@ impl Source {
             outcome => outcome?,
         };
         let root = html.root_element();
+        let mut origins = Vec::new();
+        let mut node_origins = HashMap::new();
+        if extraction.origins {
+            for node in root.descendants().filter(|node| {
+                !anonymous_boxes
+                    .is_some_and(|starts| starts.binary_search(&node.range().start).is_ok())
+            }) {
+                node_origins.insert(node.id(), origins.len());
+                origins.push(node.range().start);
+            }
+        }
         if root.descendants().any(|node| {
             node.attributes()
                 .any(|attr| attr.name().eq_ignore_ascii_case(SOURCE_ATTRIBUTE))
@@ -382,8 +470,8 @@ impl Source {
         }
         let mut elements: Vec<Element> = Vec::new();
         let mut element_ids = HashMap::new();
+        let mut element_origins = Vec::new();
         let mut languages = Vec::new();
-        let structural = !stylesheets.is_empty();
         let mut selector_only_nodes = Vec::new();
         let mut seen_types = HashSet::new();
         let mut last_children = HashMap::new();
@@ -394,20 +482,28 @@ impl Source {
             if node != root && parent.is_none_or(|index| elements[index].selector_only) {
                 continue;
             }
-            let anonymous = anonymous_boxes.is_some_and(|starts| starts.binary_search(&node.range().start).is_ok());
+            let anonymous = anonymous_boxes
+                .is_some_and(|starts| starts.binary_search(&node.range().start).is_ok());
             // A layout box generated for a loose inline run has no counterpart in
             // the publisher's DOM. Its children keep their original CSS relationships.
-            let parent = parent.and_then(|i| if elements[i].anonymous { elements[i].parent } else { Some(i) });
+            let parent = parent.and_then(|i| {
+                if elements[i].anonymous {
+                    elements[i].parent
+                } else {
+                    Some(i)
+                }
+            });
             // Hidden elements still participate in sibling selectors. Retain their
             // identity but never expose their text, IDs, list items or cells to Reader.
             let selector_only = (parent == Some(0) && node != body) || hidden_element(node);
             if selector_only {
-                if !structural {
-                    continue;
-                }
                 selector_only_nodes.push(node.id());
             }
-            let structural_element = structural && !anonymous;
+            // User-origin CSS can be enabled later, even when the publisher
+            // supplies no sheet or publisher CSS is disabled. Keep real sibling
+            // metadata independently of stylesheet presence. Anonymous layout
+            // wrappers still do not acquire publisher DOM relationships.
+            let structural_element = !anonymous;
             let previous_sibling = if structural_element {
                 parent.and_then(|i| last_children.insert(i, elements.len()))
             } else {
@@ -417,6 +513,9 @@ impl Source {
             let first_of_type =
                 structural_element && seen_types.insert((parent, tag.namespace(), tag.name()));
             element_ids.insert(node.id(), elements.len());
+            if extraction.origins {
+                element_origins.push(node_origins.get(&node.id()).copied());
+            }
             let inherited = if node == root {
                 publication_language
             } else {
@@ -427,9 +526,17 @@ impl Source {
                 tag: node.tag_name().name().to_owned(),
                 list_kind: crate::list_marker::MarkerKind::html(node),
                 has_href: node.has_attribute("href"),
+                type_attribute: node
+                    .attributes()
+                    .find(|a| a.name() == "type")
+                    .map(|a| a.value().to_owned()),
                 classes: node.attribute("class").unwrap_or_default().to_owned(),
                 id: node.attribute("id").map(str::to_owned),
-                inline_style: if selector_only { None } else { node.attribute("style").map(str::to_owned) },
+                inline_style: if selector_only {
+                    None
+                } else {
+                    node.attribute("style").map(str::to_owned)
+                },
                 parent,
                 previous_sibling,
                 first_of_type,
@@ -446,9 +553,11 @@ impl Source {
         let tables = crate::table_layout::TableCells::read(body, &element_ids);
         let mut blocks = Vec::new();
         let mut fragments = BTreeMap::new();
+        let mut fragment_owners = BTreeMap::new();
         let mut insertions = Vec::new();
         let mut ruby_exclusions = Vec::new();
         let mut available_ruby = MAX_RUBY_GROUPS;
+        let mut flow_budget = crate::flow_projection::Budget::new();
         for node in body.descendants().filter(Node::is_element) {
             if !is_block(node)
                 || hidden(node)
@@ -462,6 +571,7 @@ impl Source {
             let key = node.range().start;
             let mut text = String::new();
             let mut styled_text: Vec<StyledText> = Vec::new();
+            let mut flow_origins = crate::flow_projection::Origins::new(&flow_budget);
             #[cfg(test)]
             let mut emphasis: Vec<(Range<usize>, Emphasis)> = Vec::new();
             let mut links: Vec<InlineLink> = Vec::new();
@@ -470,7 +580,11 @@ impl Source {
             let mut images: Vec<EmbeddedImage> = Vec::new();
             let mut image_after_space: Option<usize> = None;
             let mut ids = Vec::new();
-            let (mut ruby, exclusions) = ruby_markup(node, &mut available_ruby);
+            let (mut ruby, exclusions) = if extraction.ruby {
+                ruby_markup(node, &mut available_ruby)
+            } else {
+                (Vec::new(), Vec::new())
+            };
             let mut legacy = (!ruby.is_empty()).then(LegacyExtraction::default);
             for descendant in node.descendants().filter(|d| !hidden(*d)) {
                 let raw = descendant.range();
@@ -491,6 +605,7 @@ impl Source {
                         id,
                         text.len()
                             + usize::from(spaces && !text.is_empty() && !text.ends_with('\n')),
+                        element_ids[&descendant.id()],
                     ));
                 }
                 if descendant.has_tag_name("br") {
@@ -501,7 +616,9 @@ impl Source {
                         legacy.spaces = false;
                         legacy.offsets.record(at..at + 1, text.len());
                     }
+                    let at = text.len();
                     text.push('\n');
+                    flow_origins.hard_break(at, element_ids[&descendant.id()], &mut flow_budget);
                     spaces = false;
                 }
                 let external = illustration_href(descendant);
@@ -520,6 +637,11 @@ impl Source {
                     };
                     image_after_space = (spaces && !text.is_empty() && !text.ends_with('\n'))
                         .then_some(images.len());
+                    flow_origins.image(
+                        images.len(),
+                        element_ids[&descendant.id()],
+                        &mut flow_budget,
+                    );
                     images.push(EmbeddedImage {
                         href: external.map(str::to_owned).unwrap_or_else(|| {
                             format!("reader-inline-svg:{}", descendant.range().start)
@@ -555,10 +677,27 @@ impl Source {
                     images[index].space_after = content.starts_with(char::is_whitespace);
                 }
                 let start = text.len();
+                let flow_element = descendant
+                    .parent()
+                    .and_then(|parent| element_ids.get(&parent.id()).copied())
+                    .ok_or("The chapter's text has no style element")?;
+                flow_origins.text_node(
+                    content.starts_with(char::is_whitespace),
+                    flow_element,
+                    &mut flow_budget,
+                );
                 if let Some(legacy) = &mut legacy {
                     for c in content.chars() {
                         let old = emit(&mut legacy.text, &mut legacy.spaces, c);
+                        let before = text.len();
                         let current = emit(&mut text, &mut spaces, c);
+                        flow_origins.character(
+                            c,
+                            flow_element,
+                            before,
+                            text.len(),
+                            &mut flow_budget,
+                        );
                         if let (Some(old), Some(current)) = (old, current) {
                             let length = old.len().min(current.len());
                             legacy
@@ -576,7 +715,15 @@ impl Source {
                     }
                 } else {
                     content.chars().for_each(|c| {
+                        let before = text.len();
                         emit(&mut text, &mut spaces, c);
+                        flow_origins.character(
+                            c,
+                            flow_element,
+                            before,
+                            text.len(),
+                            &mut flow_budget,
+                        );
                     });
                 }
                 if start < text.len() {
@@ -635,15 +782,23 @@ impl Source {
             for image in &mut images {
                 image.offset = image.offset.min(text.len());
             }
-            for (id, offset) in ids {
-                fragments
-                    .entry(id.to_owned())
-                    .or_insert((key, offset.min(text.len())));
+            for (id, offset, owner) in ids {
+                if let std::collections::btree_map::Entry::Vacant(entry) =
+                    fragments.entry(id.to_owned())
+                {
+                    fragment_owners.insert(id.to_owned(), owner);
+                    entry.insert((key, offset.min(text.len())));
+                }
             }
             if !text.is_empty() || !images.is_empty() {
                 for parent in node.ancestors().skip(1) {
                     for id in fragment_ids(parent, &navigation_ids) {
-                        fragments.entry(id.to_owned()).or_insert((key, 0));
+                        if let std::collections::btree_map::Entry::Vacant(entry) =
+                            fragments.entry(id.to_owned())
+                        {
+                            fragment_owners.insert(id.to_owned(), element_ids[&parent.id()]);
+                            entry.insert((key, 0));
+                        }
                     }
                 }
             }
@@ -655,9 +810,17 @@ impl Source {
             blocks.push(Block {
                 table_cell: tables.containing(node),
                 key,
+                origin: if extraction.origins {
+                    node.descendants()
+                        .find_map(|part| node_origins.get(&part.id()).copied())
+                        .ok_or("A chapter block has no publisher origin")?
+                } else {
+                    0
+                },
                 text,
                 element: element_ids[&node.id()],
                 styled_text,
+                flow_origins,
                 list_item: list_items.block(node),
                 #[cfg(test)]
                 emphasis,
@@ -672,6 +835,7 @@ impl Source {
                             bytes: draft.bytes?,
                             annotation: draft.annotation,
                             language: languages[element_ids[&draft.annotation_node]],
+                            element: element_ids[&draft.annotation_node],
                         })
                     })
                     .collect(),
@@ -694,13 +858,16 @@ impl Source {
                     .ancestors()
                     .any(|parent| selected.contains(&parent.range().start))
         }) {
-            if anonymous_boxes.is_none() && let Some((normalized, starts)) = wrap_inline_runs(xhtml, body) {
+            if anonymous_boxes.is_none()
+                && let Some((normalized, starts)) = wrap_inline_runs(xhtml, body)
+            {
                 let mut parsed = Self::parse_document(
                     &normalized,
                     original_revision,
                     Some(&starts),
                     publication_language,
                     kindle_elements,
+                    extraction,
                 )?;
                 parsed.normalized_xhtml = Some(normalized);
                 return Ok(parsed);
@@ -724,6 +891,7 @@ impl Source {
                     .or_else(|| blocks.last().map(|block| (block.key, block.text.len())));
                 if let Some(position) = position {
                     fragments.insert(id.into(), position);
+                    fragment_owners.insert(id.into(), element_ids[&anchor.id()]);
                 }
             }
         }
@@ -766,16 +934,37 @@ impl Source {
             .unwrap_or(body.range().start);
         Ok(Self {
             revision,
+            original_input_sha256: None,
             legacy_revision,
             previous_mobi: BTreeMap::new(),
+            numeric_history: Vec::new(),
+            origins,
+            element_origins,
             blocks,
             fragments,
+            fragment_owners,
+            list_counters: list_items.counters,
             stylesheets,
+            table_cells: tables.by_element(&element_ids),
             elements,
             insertions,
             normalized_xhtml: None,
             ruby_exclusions,
             head_end,
+        })
+    }
+
+    /// The DOM element that supplied the existing destination, not the element
+    /// of a later paragraph chosen for an empty anchor's canonical position.
+    /// This permits CSS-hidden-target checks without changing saved tuples.
+    pub(crate) fn fragment_owner(&self, id: &str) -> Option<usize> {
+        self.fragment_owners.get(id).copied()
+    }
+
+    pub(crate) fn matches_input(&self, xhtml: &str) -> bool {
+        self.original_input_sha256.is_some_and(|expected| {
+            expected.as_slice()
+                == ring::digest::digest(&ring::digest::SHA256, xhtml.as_bytes()).as_ref()
         })
     }
 
@@ -806,6 +995,12 @@ impl Source {
             keys.insert(old.key, now.key);
         }
         if current.next().is_none() {
+            for history in previous.numeric_history {
+                for revision in history.revisions() {
+                    self.previous_mobi.insert(revision, keys.clone());
+                }
+                self.numeric_history.push(history.remap(&keys));
+            }
             self.previous_mobi.insert(previous.revision, keys);
         }
         Ok(())
@@ -824,7 +1019,11 @@ impl Source {
         revision: u64,
         offset: usize,
     ) -> Option<usize> {
-        let current = if revision == self.revision || self.previous_mobi.contains_key(&revision) {
+        let current = if revision == self.revision {
+            offset
+        } else if let Some(history) = self.numeric_history.iter().find(|h| h.accepts(revision)) {
+            history.project(block, revision, offset)?
+        } else if self.previous_mobi.contains_key(&revision) {
             offset
         } else if self.legacy_revision == Some(revision) {
             match &block.legacy {
@@ -1043,10 +1242,13 @@ mod tests {
     #[test]
     fn standalone_empty_anchors_reach_visible_paragraphs_and_the_chapter_end() {
         let source = Source::parse("<html><body><p>North.</p><p id='marker'><a id='middle'/></p><a id='before'/><p>South.</p><a id='end'/></body></html>").unwrap();
-        assert_eq!(source.fragments["middle"],(source.blocks[1].key,0));
-        assert_eq!(source.fragments["before"],(source.blocks[1].key,0));
-        assert_eq!(source.fragments["marker"],(source.blocks[1].key,0));
-        assert_eq!(source.fragments["end"],(source.blocks[1].key,"South.".len()));
+        assert_eq!(source.fragments["middle"], (source.blocks[1].key, 0));
+        assert_eq!(source.fragments["before"], (source.blocks[1].key, 0));
+        assert_eq!(source.fragments["marker"], (source.blocks[1].key, 0));
+        assert_eq!(
+            source.fragments["end"],
+            (source.blocks[1].key, "South.".len())
+        );
     }
 
     #[test]

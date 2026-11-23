@@ -114,7 +114,7 @@ impl Reader {
             CustomAction::Toggle => {
                 let chapters = self.chapters_mut()?;
                 chapters.enabled = !chapters.enabled;
-                self.mark_dirty();
+                self.mark_book_changed();
                 self.show(self.contents_screen());
                 Ok(())
             }
@@ -146,7 +146,13 @@ impl Reader {
                     self.finish_reflow_jump(previous);
                     Ok(())
                 } else {
-                    if position.chapter != 0 || position.anchor.is_some() || self.fixed.as_ref().is_none_or(|book| position.page >= book.reading.count()) {
+                    if position.chapter != 0
+                        || position.anchor.is_some()
+                        || self
+                            .fixed
+                            .as_ref()
+                            .is_none_or(|book| position.page >= book.reading.count())
+                    {
                         return Err("That chapter belongs to a different document layout".into());
                     }
                     self.follow_fixed(position.page, None)
@@ -237,7 +243,7 @@ impl Reader {
             let title = self.editor.string();
             self.chapters_mut()?.save(position, &title)?;
         }
-        self.mark_dirty();
+        self.mark_book_changed();
         let screen = match back {
             Screen::CustomBookmarks => Screen::CustomContents,
             _ => back,

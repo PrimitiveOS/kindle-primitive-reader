@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+## 0.1.25
+
+- Keep the chapter/page footer caption hyphenated and add a saved bold-text option with matching progress-track width measurement.
+
+## 0.1.24
+
+- Add KOReader-style reflow controls for line spacing, kerning and built-in base stylesheets, with saved reading positions across repagination.
+- Add continuous-page overlap and clearer bookmark/annotation browsing, including adjustable page order and note/excerpt display.
+- Extend selection, dictionary and saved-note workflows across EPUB chapters and PDF pages while preserving the source passage.
+- Add selectable reading-footer metrics and progress-track settings, including a local clock with optional minute-boundary refresh.
+
+## 0.1.23
+
+- Set automatic page turns to a custom interval from 1 second to 24 hours, and adjust signed scroll distance from −20.0 to +20.0 pages. Turning auto-turn off keeps its last interval. These preferences persist across Reader restarts; turns pause when Reader leaves the reading page or the Kindle sleeps.
+- Pan fixed-page documents by KOReader's default 40% overlap before moving to the next row or page, including right-to-left books. Fractional page-turn distances now round away from zero in paged EPUB and fixed-page views.
+
 ## 0.1.22
 
 - Open publisher contents in supported MOBI and AZW3 books, including nested entries that point inside a chapter.

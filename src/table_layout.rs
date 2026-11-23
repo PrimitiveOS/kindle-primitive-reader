@@ -5,11 +5,14 @@ use std::collections::{BTreeMap, HashMap};
 
 const MAX_COLUMNS: usize = 32;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+mod flow;
+pub(crate) use flow::{TableFlow, TableFlowError};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub(crate) struct Cell {
-    table: NodeId,
+    pub table: NodeId,
     pub row: usize,
-    after_row: usize,
+    pub after_row: usize,
     fractions: Option<(u16, u16)>,
     pub column: u8,
     pub span: u8,
@@ -42,6 +45,15 @@ impl TableCells {
         Self(positions)
     }
 
+    pub fn by_element(&self, visible: &HashMap<NodeId, usize>) -> Vec<(usize, Cell)> {
+        let mut result: Vec<_> = self
+            .0
+            .iter()
+            .filter_map(|(node, cell)| Some((*visible.get(node)?, *cell)))
+            .collect();
+        result.sort_unstable_by_key(|(index, _)| *index);
+        result
+    }
     pub fn containing(&self, block: Node<'_, '_>) -> Option<Cell> {
         if self.0.is_empty() {
             return None;

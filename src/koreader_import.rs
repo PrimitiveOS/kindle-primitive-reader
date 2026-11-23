@@ -43,11 +43,22 @@ pub struct ExportDocument {
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 pub struct ExportEntry {
+    #[serde(default, deserialize_with = "read_drawer")]
+    pub drawer: crate::highlight_style::HighlightStyle,
     pub text: String,
     pub note: Option<String>,
     pub page: Option<ExportPage>,
     pub chapter: Option<String>,
     pub time: Option<i64>,
+}
+
+fn read_drawer<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<crate::highlight_style::HighlightStyle, D::Error> {
+    let name = Option::<String>::deserialize(deserializer)?;
+    Ok(crate::highlight_style::HighlightStyle::from_drawer(
+        name.as_deref().unwrap_or(""),
+    ))
 }
 
 /// Page numbering is retained for preview and has no role in text matching.
@@ -456,7 +467,7 @@ mod tests {
         "entries": [
             {"sort": "highlight", "page": 14, "time": 1769019000, "chapter": "The harbor",
              "text": "The boats turned together.", "note": "Review on Friday.\nThen revisit chapter 2.",
-             "pn_xp": "return os.execute('fixture')", "drawer": "lighten", "color": "yellow"},
+             "pn_xp": "return os.execute('fixture')", "drawer": "strikeout", "color": "yellow"},
             {"sort": "highlight", "page": "iv", "text": "A small map."}
         ]
     }"#;
@@ -478,6 +489,14 @@ mod tests {
         assert_eq!(book.entries[0].page, Some(ExportPage::Number(14)));
         assert_eq!(book.entries[0].chapter.as_deref(), Some("The harbor"));
         assert_eq!(book.entries[0].time, Some(1769019000));
+        assert_eq!(
+            book.entries[0].drawer,
+            crate::highlight_style::HighlightStyle::Strikethrough
+        );
+        assert_eq!(
+            book.entries[1].drawer,
+            crate::highlight_style::HighlightStyle::Lighten
+        );
         assert_eq!(
             book.entries[1].page,
             Some(ExportPage::Label("iv".to_owned()))

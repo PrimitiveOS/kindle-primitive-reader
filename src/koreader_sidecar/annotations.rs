@@ -8,10 +8,14 @@ const MAX_MARKS: usize = 256;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SidecarMark {
     Bookmark {
+        created_at: Option<i64>,
         pointer: String,
         label: Option<String>,
     },
     Highlight {
+        created_at: Option<i64>,
+        style: crate::highlight_style::HighlightStyle,
+        color: crate::highlight_style::HighlightColor,
         start: String,
         end: String,
         text: String,
@@ -86,8 +90,32 @@ fn mark(record: &[u8]) -> Result<Option<SidecarMark>, SidecarError> {
     ];
     let mut values: [Option<String>; 7] = Default::default();
     let mut seen = 0u8;
+    let mut color = crate::highlight_style::HighlightColor::default();
+    let mut color_seen = false;
+    let mut date_seen = false;
+    let mut created_at = None;
     let mut supported = true;
     fields(record, &mut |key, value| {
+        if key.as_deref() == Some(b"color") {
+            if !color_seen
+                && let Value::String(bytes) = value
+                && bytes.len() <= 128
+                && let Ok(name) = std::str::from_utf8(&bytes)
+            {
+                color = crate::highlight_style::HighlightColor::from_name(name);
+            }
+            color_seen = true;
+            return Ok(());
+        }
+        if key.as_deref() == Some(b"datetime") {
+            // A bad or repeated date must not discard an otherwise usable annotation.
+            created_at = match value {
+                Value::String(bytes) if !date_seen => crate::mark_time::parse(&bytes),
+                _ => None,
+            };
+            date_seen = true;
+            return Ok(());
+        }
         let Some(index) = KEYS.iter().position(|k| Some(*k) == key.as_deref()) else {
             return Ok(());
         };
@@ -127,9 +155,12 @@ fn mark(record: &[u8]) -> Result<Option<SidecarMark>, SidecarError> {
     let pointer = |s: &String| s.starts_with('/') && !s.chars().any(char::is_control);
     let note = note.filter(|s| !s.trim().is_empty());
     Ok(match (drawer, start, end) {
-        (Some(_), Some(start), Some(end)) if pointer(&start) && pointer(&end) => text
+        (Some(drawer), Some(start), Some(end)) if pointer(&start) && pointer(&end) => text
             .filter(|s| !s.trim().is_empty())
             .map(|text| SidecarMark::Highlight {
+                color,
+                created_at,
+                style: crate::highlight_style::HighlightStyle::from_drawer(&drawer),
                 start,
                 end,
                 text,
@@ -137,6 +168,7 @@ fn mark(record: &[u8]) -> Result<Option<SidecarMark>, SidecarError> {
             }),
         (None, None, None) if note.is_none() => {
             page.filter(pointer).map(|pointer| SidecarMark::Bookmark {
+                created_at,
                 pointer,
                 label: text.filter(|s| !s.trim().is_empty()),
             })
@@ -150,17 +182,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn invalid_or_conflicting_created_dates_keep_marks_undated() {
+        let input = br#"return {annotations={
+            {page="/one",datetime="invalid",datetime_updated="2024-01-01 00:00:00"},
+            {page="/two",datetime="2024-01-01",datetime="2024-02-01"},
+            {page="/three",datetime=12345},
+            {page="/four",datetime_updated="2024-01-01"},
+        }}"#;
+        let marks = parse_annotations(input).unwrap();
+        assert_eq!((marks.marks.len(), marks.unavailable), (4, 0));
+        assert!(marks.marks.iter().all(|mark| matches!(
+            mark,
+            SidecarMark::Bookmark {
+                created_at: None,
+                ..
+            }
+        )));
+    }
+
+    #[test]
     fn separates_page_bookmarks_from_ranged_text_and_keeps_unknown_counts() {
         let data = br#"return { annotations = {
             [1]={page="/node", text="Chapter one"},
-            [2]={drawer="lighten",pos0="/a",pos1="/b",text="Some text",note="Remember"},
+            [2]={drawer="underscore",pos0="/a",pos1="/b",text="Some text",note="Remember"},
             [3]={page=2,pos0={x=12,y=3}}, [4]={page="/note",note="Separate note"},
             [5]={page="/a",page="/b"},
         }, nested={annotations={{page="/wrong"}}} }"#;
         let result = parse_annotations(data).unwrap();
         assert_eq!(result.unavailable, 3);
         assert!(
-            matches!(&result.marks[..], [SidecarMark::Bookmark {pointer,label:Some(label)}, SidecarMark::Highlight{start,end,text,note:Some(note)}] if pointer=="/node" && label=="Chapter one" && start=="/a" && end=="/b" && text=="Some text" && note=="Remember")
+            matches!(&result.marks[..], [SidecarMark::Bookmark {pointer,label:Some(label),created_at:None}, SidecarMark::Highlight{color:crate::highlight_style::HighlightColor::Gray,style:crate::highlight_style::HighlightStyle::Underline,start,end,text,note:Some(note),created_at:None}] if pointer=="/node" && label=="Chapter one" && start=="/a" && end=="/b" && text=="Some text" && note=="Remember")
         );
         assert!(parse_annotations(b"return {annotations={{page=foo()}}}").is_err());
         assert!(parse_annotations(b"return {annotations={},annotations={}}").is_err());

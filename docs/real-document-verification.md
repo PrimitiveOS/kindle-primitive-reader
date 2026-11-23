@@ -7,12 +7,93 @@ screenshots of personal books and saved reading positions are absent from the re
 
 ## What the test exercises
 
-The device driver runs the release Rust code on the Oasis. It browses folders under
-Documents through the normal picker, uses the page button to reach later rows, taps the
-file row, renders the first page and sends a forward page-button event. It writes its own
-scratch profile, quits and opens Continue reading to compare both the saved position
-and the rendered page body. This software path can run while another app is in the
-foreground. Physical touch, e-ink timing and sleep are separate checks.
+The device diagnostic runs the Rust Reader code natively on the Oasis and paints
+to an off-screen canvas. It browses folders under Documents through the normal
+picker, dispatches the same page-button input used to reach later rows, selects
+the file, renders the first page and sends a forward input event. It writes its
+own scratch profile, restarts and opens Continue reading to compare the saved
+position and rendered page body. This software path can run while another app is
+in the foreground. It does not generate physical touch or page-key events;
+foreground touch, E Ink timing and sleep are separate checks.
+
+## Reader 0.1.23 release on the Oasis
+
+On 22 November 2026, Store staging verified the published ARMHF ZIP and its
+SHA-256 (`49562aae41bab0d5e6e635fa284d71e536e7155cd77c42568e45f5a90130d8b8`).
+The package was installed on the owner's awake Oasis 3 through Store's verified
+install transaction. The installed record now reports version 0.1.23. The normal
+picker opened one real EPUB and one real PDF from Documents. Their names and contents
+are intentionally omitted. The release binary's SHA-256 is
+`5c4b23986cb95dcedb1cc9578062986395731b6cf535017195bed9674ca9fb16`.
+
+| Check | EPUB | PDF |
+| --- | ---: | ---: |
+| First frame | 2,087 ms; visible content | 759 ms; visible content |
+| Forward page event | Changed the displayed page | Changed the displayed page |
+| Continue reading after restart | Passed | Passed |
+| Sampled spine | 3 of 24 chapters; 31 pages painted | Not applicable |
+| Source coverage | 24,416 characters mapped; 7/7 page anchors; 1/1 image decoded | Not applicable |
+| Reported issues / missing glyphs | 0 / 0 | No reported error / not measured |
+
+Both diagnostic runs exited successfully. Their scratch profiles and temporary
+installer files were removed afterward; Reader's data folder was preserved. This
+verifies the published executable's picker, parsing, layout, rendering and saved-
+position paths on the actual device. It does not claim a physical touch or e-ink
+timing test.
+
+## Current worktree candidate on the Oasis
+
+On 23 November 2026, the awake Oasis ran the current static ARMHF development
+binary from a temporary test directory; the installed Reader package and user
+data were not replaced. The binary SHA-256 is
+`d28379bb12cffe9b7906e195465b7c890df4535a3c4bfdd1d1ff11d39c536322`. Its
+native test bundle passed 921 Reader tests, 14 EPUB package tests and four layout
+probes; 62 Reader tests were ignored because they require private or
+device-provided inputs.
+
+The candidate's normal picker and resume diagnostic visited 183 filesystem
+entries using a new scratch profile per entry. All 134 selectable supported
+documents passed open and resume: 31 EPUB, 16 AZW3, two MOBI, 20 PDF, four TXT,
+37 JPEG, one PNG and 23 XHTML files. The diagnostic sent a forward input and
+compared the saved reading frame after restarting into Continue reading. Three
+protected AZW files and ten KFX files returned Kindle Library guidance. Thirty-
+six image paths inside sidecar or packaged-book folders were not picker entries
+and were classified as not selectable. One PDF had a transient first-run open
+failure; two independent fresh-profile reruns passed. No personal filenames,
+page text, or screenshots were retained.
+
+This verifies the development binary's ARM software picker, parsing, rendering
+and saved-position paths against the owner's current Documents collection. It
+does not cover foreground touch, physical page keys, E Ink refresh timing, or
+installation of this worktree candidate. A newer test-only ARMHF bundle passed
+927 Reader tests, 14 package tests and four layout probes, but that newer bundle
+was not used for this Documents sweep and was not installed. See the
+[execution plan](execution-plan.md#current-host-and-device-integration-gate)
+for its separate test and offscreen profile evidence.
+
+## Reader 0.1.24 candidate on the Oasis
+
+On 23 November 2026, the 0.1.24 static ARMHF candidate was tested from a
+temporary directory on the awake Oasis. Its SHA-256 is
+`fd55cce42e733bbe5ac3a2304df226e1684198df4e9a868998db76bc9678078b`. The
+installed Reader and Launcher binaries were not replaced. The on-device suite
+passed 946 Reader tests (62 ignored because they require private or
+device-provided inputs), 14 package tests and four layout probes. The Reader
+suite completed in 283.73 seconds.
+
+The same candidate's normal picker diagnostic checked 88 supported file
+candidates under Documents using isolated scratch profiles. Seventy-four opened,
+advanced one page and resumed after restart: 31 EPUB, 16 AZW3, two MOBI, 19
+PDF, four TXT, one PNG and one JPEG. Three protected AZW and ten KFX files
+returned Kindle Library guidance. One additional PDF stopped at a possible
+password prompt; this run does not establish encrypted-PDF acceptance. No
+personal filenames, text, or screenshots were retained. Test folders and
+profiles were temporary; the owner's documents and Reader data were unchanged.
+
+The framebuffer showed an existing reading session with Kindle quick settings
+open. It was left undisturbed. This run covers device-side automated suites and
+the software picker/render/resume path, not foreground touch, physical page
+keys, E Ink refresh behavior, or visual acceptance of the new installed app.
 
 For a single file under an authorized Documents root, run the example with a fresh
 scratch directory and the same Noto Sans fonts as Launcher.

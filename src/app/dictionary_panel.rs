@@ -18,21 +18,31 @@ pub(super) struct SpellingLookup {
 }
 
 impl Drop for SpellingLookup {
-    fn drop(&mut self) { self.cancelled.store(true, std::sync::atomic::Ordering::Relaxed); }
+    fn drop(&mut self) {
+        self.cancelled
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 impl SpellingLookup {
     pub(super) fn start(
         work: impl FnOnce(&std::sync::atomic::AtomicBool) -> io::Result<Vec<dictionary::Definition>>
-            + Send + 'static,
+        + Send
+        + 'static,
     ) -> io::Result<Self> {
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let flag = cancelled.clone();
-        std::thread::Builder::new().name("dictionary-spelling".into()).spawn(move || {
-            let _ = sender.send(work(&flag));
-        })?;
-        Ok(Self { receiver, cancelled, deadline: Instant::now() + Duration::from_millis(150) })
+        std::thread::Builder::new()
+            .name("dictionary-spelling".into())
+            .spawn(move || {
+                let _ = sender.send(work(&flag));
+            })?;
+        Ok(Self {
+            receiver,
+            cancelled,
+            deadline: Instant::now() + Duration::from_millis(150),
+        })
     }
 }
 
@@ -40,6 +50,7 @@ impl SpellingLookup {
 pub(super) struct Navigation {
     origin: Option<(Screen, usize)>,
     origin_editor: Option<Editor>,
+    review_word: Option<String>,
     trail: Vec<Previous>,
     view: View,
     online_return: Option<usize>,
@@ -59,6 +70,8 @@ struct View {
     layout: OnceCell<Vec<TextLine>>,
     find: Option<Find>,
     editing: bool,
+    query_editing: bool,
+    save_highlight: bool,
 }
 impl View {
     fn first_line(&self, visible: usize) -> usize {
@@ -87,13 +100,11 @@ struct TextLine {
 fn body(popup: Rect) -> Rect {
     Rect::new(popup.x + 32, popup.y + 108, popup.w - 84, popup.h - 273)
 }
-pub(super) fn action_row(popup: Rect) -> [Rect; 3] {
+pub(super) fn action_row(popup: Rect) -> [Rect; 5] {
     let save = definition_vocabulary(popup);
-    [
-        save,
-        Rect::new(save.x + save.w + 12, save.y, save.w, save.h),
-        Rect::new(save.x + 2 * (save.w + 12), save.y, save.w, save.h),
-    ]
+    std::array::from_fn(|index| {
+        Rect::new(save.x + index as i32 * (save.w + 8), save.y, save.w, save.h)
+    })
 }
 fn action_button(
     canvas: &mut Canvas,
@@ -102,13 +113,21 @@ fn action_button(
     icon: primitive_ui::Icon,
     selected: bool,
 ) {
-    canvas.button(rect, label, selected, false);
+    canvas.button(rect, "", selected, false);
     let filled = selected != canvas.is_control_pressed(rect);
-    let size = 34;
+    let size = 30;
     canvas.icon(
-        Rect::new(rect.x + 16, rect.y + (rect.h - size) / 2, size, size),
+        Rect::new(rect.x + 12, rect.y + (rect.h - size) / 2, size, size),
         icon,
         if filled { 255 } else { 0 },
+    );
+    let label_size = if label.chars().count() > 9 { 24 } else { 28 };
+    canvas.text(
+        Rect::new(rect.x + 50, rect.y + 2, rect.w - 56, rect.h - 4),
+        label,
+        primitive_ui::TextStyle::new(label_size)
+            .center()
+            .ink(if filled { 255 } else { 0 }),
     );
 }
 
@@ -164,13 +183,27 @@ fn range_boxes(
 }
 
 pub(super) fn definition_vocabulary(popup: Rect) -> Rect {
-    Rect::new(94, popup.bottom() - 152, (popup.w - 90) / 3, 58)
+    let width = (popup.right() - 38 - 94 - 4 * 8) / 5;
+    Rect::new(94, popup.bottom() - 152, width, 58)
 }
 
 const RESULTS_PER_PAGE: usize = 5;
 
 fn definition_results_button(popup: Rect) -> Rect {
     Rect::new(WIDTH as i32 - 434, popup.y + 18, 172, 64)
+}
+
+fn definition_edit_button(popup: Rect, has_results_button: bool) -> Rect {
+    let before = if has_results_button {
+        definition_results_button(popup).x
+    } else {
+        WIDTH as i32 - 254
+    };
+    Rect::new(before - 108, popup.y, 100, 100)
+}
+
+fn definition_edit_glyph(button: Rect) -> Rect {
+    Rect::new(button.x + 18, button.y + 17, 64, 66)
 }
 
 fn definition_result_row(popup: Rect, row: usize) -> Rect {
@@ -268,7 +301,7 @@ impl Reader {
                 .lookup_history
                 .vocabulary
                 .contains(&self.definition_word);
-            let label = if saved { "Word saved" } else { "Save word" };
+            let label = if saved { "Remove word" } else { "Save word" };
             action_button(
                 canvas,
                 rect,
@@ -282,7 +315,9 @@ impl Reader {
     pub(super) fn poll_spelling_lookup(&mut self, now: Instant) -> Option<Change> {
         use std::sync::mpsc::TryRecvError;
         let job = self.spelling_lookup.as_mut()?;
-        if now < job.deadline { return None; }
+        if now < job.deadline {
+            return None;
+        }
         match job.receiver.try_recv() {
             Err(TryRecvError::Empty) => {
                 job.deadline = now + Duration::from_millis(150);
@@ -293,7 +328,9 @@ impl Reader {
                 self.dictionary_navigation.view = View::default();
             }
             Ok(Err(error)) => self.notice = Some(error.to_string()),
-            Err(TryRecvError::Disconnected) => self.notice = Some("Dictionary search ended early".into()),
+            Err(TryRecvError::Disconnected) => {
+                self.notice = Some("Dictionary search ended early".into())
+            }
         }
         self.spelling_lookup = None;
         Some(Change::Partial)
@@ -308,10 +345,27 @@ impl Reader {
         if nested && self.dictionary_navigation.trail.len() >= MAX_DEPTH {
             return Err("Go back one lookup to open another definition".into());
         }
-        let results = with_storage(|| {
-            self.lookup_sources(word)
+        let results = with_storage(|| self.lookup_sources(word))?;
+        let entry = self.vocabulary_entry(word);
+        let reviewing = if self.screen == Screen::VocabularyWord {
+            self.vocabulary_view.word.as_deref() == Some(word)
+        } else {
+            nested && self.dictionary_navigation.review_word.as_deref() == Some(word)
+        };
+        let repeated = self.lookup_history.review.automatic
+            && !reviewing
+            && self.lookup_history.review.words.contains_key(word);
+        self.update_lookup_history(|history| {
+            history.lookup(word);
+            if history.review.automatic && !reviewing && !repeated {
+                if !history.vocabulary.iter().any(|saved| saved == word) {
+                    history.vocabulary.insert(0, word.to_owned());
+                }
+                history
+                    .review
+                    .remember(word, entry.clone(), super::vocabulary::now());
+            }
         })?;
-        self.update_lookup_history(|history| history.lookup(word))?;
         if nested {
             self.dictionary_navigation.trail.push(Previous {
                 word: std::mem::take(&mut self.definition_word),
@@ -326,6 +380,9 @@ impl Reader {
                 origin: Some((self.screen, self.list_page)),
                 origin_editor: (self.screen == Screen::DictionaryEntry)
                     .then(|| self.editor.clone()),
+                review_word: (self.screen == Screen::VocabularyWord)
+                    .then(|| self.vocabulary_view.word.clone())
+                    .flatten(),
                 ..Default::default()
             };
         }
@@ -334,6 +391,9 @@ impl Reader {
         self.definition_expanded = false;
         self.definition_results_page = None;
         self.show(Screen::Definition);
+        if repeated {
+            self.vocabulary_view.repeated = Some((word.to_owned(), entry));
+        }
         self.start_spelling_lookup(word);
         Ok(())
     }
@@ -346,6 +406,16 @@ impl Reader {
     fn return_from_definition(&mut self) {
         self.spelling_lookup = None;
         self.notice = None;
+        if self.dictionary_navigation.view.save_highlight {
+            let result = if self.pdf_selection.is_some() {
+                self.save_pdf_highlight_in_place(None)
+            } else {
+                self.save_highlight_in_place(None)
+            };
+            if let Err(error) = result {
+                self.notice = Some(error.to_string());
+            }
+        }
         if let Some(previous) = self.dictionary_navigation.trail.pop() {
             self.definition_word = previous.word;
             self.definitions = previous.definitions;
@@ -367,6 +437,9 @@ impl Reader {
             0,
         ));
         let editor = self.dictionary_navigation.origin_editor.take();
+        if back.0 == Screen::VocabularyWord {
+            self.vocabulary_view.word = self.dictionary_navigation.review_word.take();
+        }
         self.dictionary_navigation = Navigation::default();
         self.show(back.0);
         self.list_page = back.1;
@@ -462,6 +535,54 @@ impl Reader {
         self.notice = None;
         self.dictionary_navigation.view.editing = true;
     }
+    fn begin_edit_query(&mut self, current_result: bool) {
+        let query = if current_result {
+            self.definitions
+                .get(self.list_page)
+                .map_or(&self.definition_word, |result| &result.word)
+        } else {
+            &self.definition_word
+        };
+        self.editor = Editor::new(96);
+        self.editor.text = query.chars().take(96).collect();
+        self.editor.caret = self.editor.text.len();
+        self.notice = None;
+        self.dictionary_navigation.view.query_editing = true;
+    }
+    fn edit_query_input(&mut self, input: Input) -> Change {
+        if matches!(input, Input::PageBack)
+            || matches!(input,Input::Tap(x,y) if primitive_ui::back_button(WIDTH as i32).contains(x,y))
+        {
+            self.dictionary_navigation.view.query_editing = false;
+            self.notice = None;
+            return Change::Partial;
+        }
+        let Input::Tap(x, y) = input else {
+            return Change::None;
+        };
+        let Some(key) = keyboard_key(
+            &Layout::new(WIDTH, HEIGHT, 4, 5),
+            &self.editor,
+            "Look up",
+            x,
+            y,
+        ) else {
+            return Change::None;
+        };
+        if matches!(self.editor.press(key), Press::Go) {
+            let query = self.editor.string();
+            self.dictionary_navigation.view.query_editing = false;
+            match self.look_up(&query) {
+                Ok(()) => Change::Partial,
+                Err(error) => {
+                    self.dictionary_navigation.view.query_editing = true;
+                    self.report(error)
+                }
+            }
+        } else {
+            Change::Partial
+        }
+    }
     fn finish_find(&mut self, query: &str) -> Change {
         let Some(result) = self.definitions.get(self.list_page) else {
             return Change::None;
@@ -511,10 +632,27 @@ impl Reader {
     }
 
     pub(super) fn definition_input(&mut self, input: Input) -> Change {
+        if self.dictionary_navigation.view.query_editing {
+            return self.edit_query_input(input);
+        }
         if self.dictionary_navigation.view.editing {
             return self.edit_find_input(input);
         }
         let (popup, back, _) = self.definition_layout();
+        let edit = definition_edit_button(popup, self.definitions.len() > 1);
+        if !self.definition_word.is_empty() {
+            match input {
+                Input::LongTap(x, y) if edit.contains(x, y) => {
+                    self.begin_edit_query(true);
+                    return Change::Partial;
+                }
+                Input::Tap(x, y) if edit.contains(x, y) => {
+                    self.begin_edit_query(false);
+                    return Change::Partial;
+                }
+                _ => {}
+            }
+        }
         if let Some(page) = self.definition_results_page {
             if matches!(input,Input::Tap(x,y) if back.contains(x,y) || !popup.contains(x,y) || definition_results_button(popup).contains(x,y))
             {
@@ -579,10 +717,26 @@ impl Reader {
                     }
                     return Change::Partial;
                 }
-                let [save, find, wiki] = action_row(popup);
+                let [save, find, wiki, search_book, highlight] = action_row(popup);
                 if self.vocabulary_available() && save.contains(x, y) {
                     let word = self.definition_word.clone();
-                    return match self.update_lookup_history(|h| h.save_word(&word)) {
+                    if self.lookup_history.review.words.contains_key(&word) {
+                        self.vocabulary_view.word = Some(word);
+                        return match self
+                            .vocabulary_command(super::vocabulary::Command::ConfirmRemove)
+                        {
+                            Ok(()) => Change::Partial,
+                            Err(error) => self.report(error),
+                        };
+                    }
+                    let entry = self.vocabulary_entry(&word);
+                    return match self.update_lookup_history(|h| {
+                        let added = h.save_word(&word);
+                        if added {
+                            h.review.remember(&word, entry, super::vocabulary::now());
+                        }
+                        added
+                    }) {
                         Ok(_) => Change::Partial,
                         Err(e) => self.report(e),
                     };
@@ -602,6 +756,17 @@ impl Reader {
                         Ok(()) => Change::Partial,
                         Err(e) => self.report(e),
                     };
+                }
+                if search_book.contains(x, y) && self.selected_passage().is_ok() {
+                    return match self.find_selection() {
+                        Ok(()) => Change::Partial,
+                        Err(error) => self.report(error),
+                    };
+                }
+                if highlight.contains(x, y) && self.selected_passage().is_ok() {
+                    self.dictionary_navigation.view.save_highlight =
+                        !self.dictionary_navigation.view.save_highlight;
+                    return Change::Partial;
                 }
                 if body(popup).contains(x, y) {
                     let step = if x < (popup.x + popup.w / 2) as f32 {
@@ -623,6 +788,9 @@ impl Reader {
 
     pub(super) fn definition_over_book(&self) -> bool {
         self.screen == Screen::Definition && !self.definition_expanded
+    }
+    pub(super) fn dictionary_editor_active(&self) -> bool {
+        self.dictionary_navigation.view.query_editing || self.dictionary_navigation.view.editing
     }
     pub(super) fn definition_layout(&self) -> (Rect, Rect, usize) {
         let height = if let Some(index) = self.definition_results_page {
@@ -660,6 +828,21 @@ impl Reader {
 
     pub(super) fn draw_definition_popup(&self, canvas: &mut Canvas) {
         let view = &self.dictionary_navigation.view;
+        if view.query_editing {
+            canvas.fill(Rect::new(0, 0, WIDTH as i32, HEIGHT as i32), 255);
+            header(canvas, "Edit lookup word", "Back");
+            canvas.single_line_field(
+                Rect::new(40, 160, 1184, 124),
+                &self.editor,
+                "Word or phrase",
+                false,
+            );
+            if let Some(message) = &self.notice {
+                canvas.text(Rect::new(46, 320, 1172, 90), message, CAPTION);
+            }
+            canvas.keyboard(self.editor.layer, "Look up", None);
+            return;
+        }
         if view.editing {
             canvas.fill(Rect::new(0, 0, WIDTH as i32, HEIGHT as i32), 255);
             header(canvas, "Find in definition", "Back");
@@ -672,14 +855,11 @@ impl Reader {
         }
         let (popup, back, rows) = self.definition_layout();
         let [prev, expand, next] = definition_actions(popup);
-        let [save, find, wiki] = action_row(popup);
+        let [save, find, wiki, search_book, highlight] = action_row(popup);
+        let edit = definition_edit_button(popup, self.definitions.len() > 1);
         canvas.popup(popup);
         let choose = definition_results_button(popup);
-        let end = if self.definitions.len() > 1 {
-            choose.x
-        } else {
-            back.x
-        };
+        let end = edit.x - 12;
         let title = self
             .definitions
             .get(self.list_page)
@@ -690,9 +870,16 @@ impl Reader {
             0,
         );
         canvas.text(
-            Rect::new(popup.x + 84, popup.y + 20, end - popup.x - 100, 64),
+            Rect::new(popup.x + 84, popup.y + 20, end - popup.x - 84, 64),
             title.as_deref().unwrap_or(&self.definition_word),
             BODY.bold(),
+        );
+        let edit_glyph = definition_edit_glyph(edit);
+        canvas.button(edit_glyph, "", false, false);
+        canvas.icon(
+            Rect::new(edit_glyph.x + 17, edit_glyph.y + 13, 34, 34),
+            bar_icons::EDIT,
+            0,
         );
         canvas.button(
             back,
@@ -783,6 +970,27 @@ impl Reader {
         }
         if !self.definition_word.is_empty() {
             action_button(canvas, wiki, "Wikipedia", bar_icons::LINK, false);
+        }
+        if self.selected_passage().is_ok() {
+            action_button(
+                canvas,
+                search_book,
+                "Search book",
+                bar_icons::group_icon(TopGroup::Search),
+                false,
+            );
+            let save_highlight = self.dictionary_navigation.view.save_highlight;
+            action_button(
+                canvas,
+                highlight,
+                if save_highlight {
+                    "Unhighlight"
+                } else {
+                    "Highlight"
+                },
+                bar_icons::HIGHLIGHT,
+                save_highlight,
+            );
         }
         let counter = if let Some(f) = &view.find {
             (f.index, f.hits.len())

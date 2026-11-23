@@ -198,7 +198,7 @@ impl Reader {
                 }
             };
             self.range_edit = None;
-            self.mark_dirty();
+            self.mark_book_changed();
             if self.current_history_location().as_ref() != Some(&origin) {
                 self.push_history(origin);
             }

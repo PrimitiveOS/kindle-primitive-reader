@@ -3,11 +3,15 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+#[cfg(test)]
+mod css_flow_tests;
+mod hidden_flows;
+
 use crate::epub::{Book, Destination};
 use crate::selection::{HighlightRect, TextSelection};
 use crate::{Anchor, Engine, Probe, Result, Settings};
 use primitive_app::{App, Change, HEIGHT, WIDTH, with_storage};
-use primitive_ui::{CAPTION, Canvas, GrayImage, HAIRLINE, Input, Rect};
+use primitive_ui::{CAPTION, Canvas, GrayImage, HAIRLINE, Input, Rect, TextStyle};
 
 const FOOTER_HEIGHT: u32 = 74;
 pub(crate) const PAGE_HEIGHT: u32 = HEIGHT - FOOTER_HEIGHT;
@@ -19,7 +23,17 @@ const PREFETCH_DELAY: Duration = Duration::from_millis(480);
 // Give a partial E Ink update time to settle before submitting another.
 pub(crate) const PAGE_REFRESH_GAP: Duration = Duration::from_millis(450);
 
+pub(crate) fn footer_caption_rect(width: i32, font_size: i32) -> Rect {
+    let caption_region = FOOTER_HEIGHT as i32 - 14;
+    let height = font_size.saturating_add(20).clamp(30, caption_region);
+    let top = PAGE_HEIGHT as i32 + (caption_region - height) / 2;
+    Rect::new(38, top, width, height)
+}
+
 pub(crate) struct PagePaint {
+    pub selection_color: Option<crate::highlight_style::HighlightColor>,
+    pub highlight_appearance: crate::highlight_style::Appearance,
+    pub note_marker: crate::highlight_style::NoteMarker,
     pub visible: Range<u32>,
     pub inverted: bool,
 }
@@ -27,13 +41,18 @@ pub(crate) struct PagePaint {
 impl PagePaint {
     pub fn full(inverted: bool) -> Self {
         Self {
+            selection_color: None,
+            highlight_appearance: Default::default(),
+            note_marker: Default::default(),
             visible: 0..PAGE_HEIGHT,
             inverted,
         }
     }
 
     pub(crate) fn apply(self, mut page: GrayImage) -> (Rect, GrayImage) {
-        let Self { visible, inverted } = self;
+        let Self {
+            visible, inverted, ..
+        } = self;
         let visible = visible.start.min(page.height)..visible.end.min(page.height);
         if visible != (0..page.height) {
             let rows = (visible.start * WIDTH) as usize..(visible.end * WIDTH) as usize;
@@ -77,13 +96,22 @@ impl<T> PageTurns<T> {
     }
 }
 
+#[derive(Clone)]
 enum ReadingMotion {
     Page(isize),
     Pixels(f32),
+    AutoPixels(f32),
+}
+
+pub(crate) struct VisiblePart {
+    pub range: Range<f32>,
+    pub x: u32,
+    pub y: u32,
 }
 
 #[derive(Clone)]
 pub(crate) struct BookConfig {
+    pub(crate) user_styles: crate::user_styles::Snapshot,
     pub(crate) user_hyphenation: std::rc::Rc<crate::user_hyphenation::Rules>,
     pub(crate) engine: Engine,
     pub(crate) book: PathBuf,
@@ -91,6 +119,8 @@ pub(crate) struct BookConfig {
     pub(crate) settings: Settings,
     pub(crate) scroll: bool,
     pub(crate) facing_pages: bool,
+    pub(crate) hide_nonlinear: bool,
+    pub(crate) hidden_flows: std::rc::Rc<crate::library::hidden_flows::HiddenFlows>,
     // Shared across chapter layouts, previews and font changes for the same open publication.
     pub(crate) chapter_offsets: std::rc::Rc<std::cell::OnceCell<Vec<u64>>>,
 }
@@ -133,7 +163,14 @@ impl BookConfig {
         settings.validate()?;
         let narrow = settings.width == FACING_PAGE_WIDTH;
         match Probe::from_book_with_rules(
-            book, self.engine, &self.fonts, settings, index, None, &self.user_hyphenation,
+            book,
+            self.engine,
+            &self.fonts,
+            settings,
+            index,
+            None,
+            &self.user_hyphenation,
+            &self.user_styles,
         ) {
             Ok(probe) if !narrow || !probe.is_vertical() => Ok(probe),
             Err(error) if !narrow => Err(error),
@@ -142,7 +179,14 @@ impl BookConfig {
                 // that only fits the renderer's bounds at its original width.
                 let book = Book::open(&self.book).map_err(|e| e.to_string())?;
                 Probe::from_book_with_rules(
-                    book, self.engine, &self.fonts, self.settings, index, None, &self.user_hyphenation,
+                    book,
+                    self.engine,
+                    &self.fonts,
+                    self.settings,
+                    index,
+                    None,
+                    &self.user_hyphenation,
+                    &self.user_styles,
                 )
             }
         }
@@ -162,11 +206,63 @@ pub(crate) struct Reading {
     prefetch: Option<Instant>,
     turns: PageTurns<ReadingMotion>,
     end_attempt: bool,
+    flow_weights: Vec<u64>,
+    custom_flows: hidden_flows::Resolved,
 }
 
 impl Reading {
+    pub(crate) fn is_continuous(&self) -> bool {
+        self.scroll_top.is_some()
+    }
+
+    pub(crate) fn automatic_turn(&mut self, distance_tenths: i16) -> Change {
+        if distance_tenths == 0 {
+            return Change::None;
+        }
+        let distance = f32::from(distance_tenths) / 10.0;
+        if self.scroll_top.is_some() {
+            let viewport = (self.config.settings.text_height() as f32 - 90.0).max(1.0);
+            self.turns
+                .pending
+                .push(ReadingMotion::AutoPixels(distance * viewport));
+        } else {
+            let direction = if distance > 0.0 { 1 } else { -1 };
+            let pages = distance.abs().ceil().max(1.0) as usize;
+            self.turns
+                .pending
+                .extend(std::iter::repeat(ReadingMotion::Page(direction)).take(pages));
+        }
+        self.present_page_turns(Instant::now())
+    }
+
     pub(crate) fn open(config: BookConfig) -> Result<Self> {
-        Self::restore(config, 0, 0, None)
+        let chapter = if !config.hidden_flows.enabled
+            && config.hide_nonlinear
+            && !config.scroll
+            && !config.facing_pages
+        {
+            with_storage(|| {
+                let book = Book::open(&config.book).map_err(io::Error::other)?;
+                Ok(book
+                    .chapters
+                    .iter()
+                    .position(|chapter| !chapter.nonlinear)
+                    .unwrap_or(0))
+            })?
+        } else {
+            0
+        };
+        let mut reading = Self::restore(config, chapter, 0, None)?;
+        if reading
+            .custom_flow_map()
+            .is_some_and(|flows| flows.flow(0) != 0)
+        {
+            // A book whose every page is hidden remains openable so the markers can be edited.
+            if let Err(error) = reading.jump_custom_progress(0.0) {
+                eprintln!("reader could not select a regular-flow start: {error}");
+            }
+        }
+        Ok(reading)
     }
 
     pub(crate) fn restore(
@@ -177,14 +273,28 @@ impl Reading {
     ) -> Result<Self> {
         let start = Instant::now();
         let mut probe = config.chapter(chapter)?;
-        let focused_page = anchor.and_then(|anchor| probe.page_for(anchor));
-        let anchor = anchor.filter(|_| focused_page.is_some());
+        let custom_flows = hidden_flows::Resolved::new(&config, &probe, chapter)?;
+        if config.hidden_flows.enabled {
+            probe.flow_pages = Some(custom_flows.map(chapter, probe.page_count()));
+        }
+        let display_anchor = anchor.and_then(|anchor| probe.restore_anchor(anchor));
+        let focused_page = display_anchor
+            .as_ref()
+            .and_then(|anchor| probe.page_for(anchor));
+        // Keep a valid canonical focus while CSS temporarily hides its passage.
+        // A real reading motion clears this focus; layout changes alone do not.
+        let anchor = anchor.filter(|anchor| probe.project_anchor(anchor).is_some());
         let page = focused_page.unwrap_or(fallback_page.min(probe.page_count() - 1));
         let scroll_top = (config.scroll && !probe.is_vertical()).then(|| {
-            anchor
+            let top = display_anchor
+                .as_ref()
                 .and_then(|anchor| probe.anchor_top(anchor))
-                .unwrap_or_else(|| probe.page_range(page).start)
-                .clamp(0.0, probe.scroll_end())
+                .unwrap_or_else(|| probe.page_range(page).start);
+            if config.hidden_flows.enabled {
+                top.max(0.0)
+            } else {
+                top.clamp(0.0, probe.scroll_end())
+            }
         });
         let page = scroll_top.map_or(page, |top| probe.page_at(top));
         let frame = capture(&mut probe, chapter, page, scroll_top)?;
@@ -205,12 +315,18 @@ impl Reading {
             prefetch: None,
             turns: PageTurns::new(Instant::now()),
             end_attempt: false,
+            flow_weights: Vec::new(),
+            custom_flows,
         };
+        session.refresh_flow_weights();
         session.schedule_prefetch();
         Ok(session)
     }
 
     fn turn(&mut self, direction: isize) -> Result<Change> {
+        if self.config.hidden_flows.enabled {
+            return self.turn_in_custom_flow(direction);
+        }
         let start = Instant::now();
         let mut crossed_chapter = false;
         let mut cache_hit = false;
@@ -232,11 +348,7 @@ impl Reading {
                 .retain(|(index, _)| index.abs_diff(page) == span);
             self.adjacent.push((frame_page, prior));
             self.page = page;
-        } else if let Some(chapter) = self
-            .chapter
-            .checked_add_signed(direction)
-            .filter(|chapter| *chapter < self.probe.chapter_count())
-        {
+        } else if let Some(chapter) = self.adjacent_reading_chapter(direction) {
             let probe = self.config.chapter(chapter)?;
             self.land_at_chapter_edge(probe, chapter, direction)?;
             crossed_chapter = true;
@@ -252,6 +364,91 @@ impl Reading {
         Ok(Change::Partial)
     }
 
+    /// Consecutive nonlinear spine items form one flow. A link may enter it;
+    /// ordinary turns then traverse that flow before rejoining linear pages.
+    fn adjacent_reading_chapter(&self, direction: isize) -> Option<usize> {
+        let mut chapter = self.chapter;
+        loop {
+            chapter = chapter.checked_add_signed(direction)?;
+            if chapter >= self.probe.chapter_count() {
+                return None;
+            }
+            if !self.hides_nonlinear()
+                || self.probe.chapter_is_nonlinear(self.chapter)
+                || !self.probe.chapter_is_nonlinear(chapter)
+            {
+                return Some(chapter);
+            }
+        }
+    }
+
+    pub(crate) fn hides_nonlinear(&self) -> bool {
+        !self.config.hidden_flows.enabled
+            && self.config.hide_nonlinear
+            && !self.config.scroll
+            && !self.config.facing_pages
+            && self.probe.has_nonlinear_chapters()
+    }
+
+    pub(crate) fn progress_weights(&self) -> &[u64] {
+        if self.hides_nonlinear() || self.config.hidden_flows.enabled {
+            &self.flow_weights
+        } else {
+            self.config
+                .chapter_offsets
+                .get()
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+        }
+    }
+
+    pub(crate) fn set_hide_nonlinear(&mut self, enabled: bool) {
+        self.config.hide_nonlinear = enabled;
+        self.pause_turns();
+        self.refresh_flow_weights();
+    }
+
+    fn refresh_flow_weights(&mut self) {
+        self.flow_weights.clear();
+        if self.config.hidden_flows.enabled {
+            self.flow_weights = self.custom_weights();
+            return;
+        }
+        if !self.hides_nonlinear() {
+            return;
+        }
+        let hidden = self.probe.chapter_is_nonlinear(self.chapter);
+        let mut start = self.chapter;
+        let mut end = self.chapter + 1;
+        if hidden {
+            while start > 0 && self.probe.chapter_is_nonlinear(start - 1) {
+                start -= 1;
+            }
+            while end < self.probe.chapter_count() && self.probe.chapter_is_nonlinear(end) {
+                end += 1;
+            }
+        }
+        let weights = self
+            .config
+            .chapter_offsets
+            .get()
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        let mut total = 0;
+        self.flow_weights.push(0);
+        for (chapter, span) in weights.windows(2).enumerate() {
+            let belongs_to_flow = if hidden {
+                (start..end).contains(&chapter)
+            } else {
+                !self.probe.chapter_is_nonlinear(chapter)
+            };
+            if belongs_to_flow {
+                total += span[1] - span[0];
+            }
+            self.flow_weights.push(total);
+        }
+    }
+
     fn present_page_turns(&mut self, now: Instant) -> Change {
         let pending = self.turns.take_due(now);
         if pending.is_empty() {
@@ -263,17 +460,45 @@ impl Reading {
         for motion in pending {
             let forward = match motion {
                 ReadingMotion::Page(direction) => direction > 0,
-                ReadingMotion::Pixels(distance) => distance > 0.0,
+                ReadingMotion::Pixels(distance) | ReadingMotion::AutoPixels(distance) => {
+                    distance > 0.0
+                }
             };
+            let before = (self.chapter, self.page, self.scroll_top);
+            let mut overlap = 0;
+            let mut show_overlap_marker = false;
             let result = match (motion, self.scroll_top) {
                 (ReadingMotion::Page(direction), Some(top)) => {
                     let distance = (self.config.settings.text_height() as f32 - 90.0).max(1.0);
-                    self.scroll(top, direction as f32 * distance)
+                    let (distance, height) = self.scroll_page_distance(direction as f32 * distance);
+                    overlap = height;
+                    show_overlap_marker = true;
+                    self.scroll(top, distance)
                 }
                 (ReadingMotion::Page(direction), None) => self.turn(direction),
                 (ReadingMotion::Pixels(distance), Some(top)) => self.scroll(top, distance),
+                (ReadingMotion::AutoPixels(distance), Some(top)) => {
+                    let viewport = (self.config.settings.text_height() as f32 - 90.0).max(1.0);
+                    show_overlap_marker = distance.abs() >= viewport - 0.01;
+                    let (distance, height) = self.scroll_page_distance(distance);
+                    overlap = height;
+                    self.scroll(top, distance)
+                }
                 (ReadingMotion::Pixels(_), None) => continue,
+                (ReadingMotion::AutoPixels(_), None) => continue,
             };
+            let near_end = before.2.is_some_and(|top| {
+                top > (self.probe.scroll_end() - self.frame.height as f32 / 2.0).max(0.0)
+            });
+            if show_overlap_marker
+                && !near_end
+                && overlap > 0
+                && self.chapter == before.0
+                && self.scroll_top != before.2
+                && matches!(result, Ok(Change::Partial))
+            {
+                self.paint_page_overlap_indicator(forward, overlap);
+            }
             self.end_attempt = forward && matches!(result, Ok(Change::None));
             match result {
                 Ok(Change::Partial) => change = Change::Partial,
@@ -301,7 +526,70 @@ impl Reading {
         change
     }
 
+    fn scroll_page_distance(&self, distance: f32) -> (f32, u32) {
+        let settings = self.config.settings;
+        if !settings.page_overlap_enabled || !distance.is_finite() {
+            return (distance, 0);
+        }
+        let overlap = settings.page_overlap_height();
+        if overlap <= 0.0 || distance.abs() <= overlap {
+            return (distance, 0);
+        }
+        let adjusted = distance.signum() * (distance.abs() - overlap);
+        (adjusted, overlap.round() as u32)
+    }
+
+    fn paint_page_overlap_indicator(&mut self, forward: bool, height: u32) {
+        paint_page_overlap(
+            &mut self.frame,
+            forward,
+            height,
+            self.config.settings.page_overlap_style,
+        );
+    }
+
     pub(crate) fn reflow(&mut self, settings: Settings) -> Result<()> {
+        if (Settings {
+            page_overlap_enabled: settings.page_overlap_enabled,
+            page_overlap_lines: settings.page_overlap_lines,
+            page_overlap_style: settings.page_overlap_style,
+            ..self.config.settings
+        }) == settings
+            && settings != self.config.settings
+        {
+            self.config.settings = settings;
+            self.probe.settings = settings;
+            self.frame = capture(&mut self.probe, self.chapter, self.page, self.scroll_top)?;
+            self.adjacent.clear();
+            self.schedule_prefetch();
+            return Ok(());
+        }
+        if (Settings {
+            font_gamma_index: settings.font_gamma_index,
+            text_contrast: settings.text_contrast,
+            ..self.config.settings
+        }) == settings
+            && settings != self.config.settings
+        {
+            let previous = self.probe.settings;
+            self.probe.settings = Settings {
+                font_gamma_index: settings.font_gamma_index,
+                text_contrast: settings.text_contrast,
+                ..previous
+            };
+            let frame = match capture(&mut self.probe, self.chapter, self.page, self.scroll_top) {
+                Ok(frame) => frame,
+                Err(error) => {
+                    self.probe.settings = previous;
+                    return Err(error);
+                }
+            };
+            self.config.settings = settings;
+            self.frame = frame;
+            self.adjacent.clear();
+            self.schedule_prefetch();
+            return Ok(());
+        }
         if (Settings {
             invert_night_images: settings.invert_night_images,
             link_vertical_margins: settings.link_vertical_margins,
@@ -329,12 +617,32 @@ impl Reading {
     }
 
     pub(crate) fn set_scroll(&mut self, scroll: bool) -> Result<()> {
+        self.set_scroll_and_header(scroll, self.config.settings.status_header_height)
+    }
+
+    pub(crate) fn set_scroll_and_header(
+        &mut self,
+        scroll: bool,
+        status_header_height: u32,
+    ) -> Result<()> {
         if scroll && self.probe.is_vertical() {
             return Err("Vertical EPUB chapters use page turns".into());
         }
         let anchor = self.anchor();
         let mut config = self.config.clone();
         config.scroll = scroll;
+        config.settings.status_header_height = status_header_height;
+        *self = Self::restore(config, self.chapter, self.page, anchor.as_ref())?;
+        Ok(())
+    }
+
+    pub(crate) fn set_status_header_height(&mut self, status_header_height: u32) -> Result<()> {
+        if self.config.settings.status_header_height == status_header_height {
+            return Ok(());
+        }
+        let anchor = self.anchor();
+        let mut config = self.config.clone();
+        config.settings.status_header_height = status_header_height;
         *self = Self::restore(config, self.chapter, self.page, anchor.as_ref())?;
         Ok(())
     }
@@ -365,8 +673,10 @@ impl Reading {
     }
 
     pub(crate) fn last_visible_page(&self) -> usize {
-        let span = frame_span(&self.probe);
-        (first_frame_page(&self.probe, self.page) + span - 1).min(self.probe.page_count() - 1)
+        frame_columns(&self.probe, self.page)
+            .map(|(page, _)| page)
+            .max()
+            .unwrap_or(self.page)
     }
 
     pub(crate) fn uses_facing_pages(&self) -> bool {
@@ -383,37 +693,49 @@ impl Reading {
     }
 
     pub(crate) fn visible_end(&self) -> f32 {
-        self.visible_columns().map(|(range, _)| range.end).fold(0.0, f32::max)
-    }
-
-    fn visible_range(&self) -> Range<f32> {
-        self.scroll_top.map_or_else(
-            || self.probe.page_range(self.page),
-            |top| self.probe.scroll_range(top),
-        )
+        self.visible_columns()
+            .map(|(range, _)| range.end)
+            .fold(0.0, f32::max)
     }
 
     pub(crate) fn visible_columns(&self) -> impl Iterator<Item = (Range<f32>, u32)> + '_ {
-        frame_columns(&self.probe, self.page).map(|(page, x)| {
-            let range = self.scroll_top.map_or_else(
-                || self.probe.page_range(page),
-                |top| self.probe.scroll_range(top),
-            );
-            (range, x)
-        })
+        self.visible_parts()
+            .into_iter()
+            .map(|part| (part.range, part.x))
     }
 
-    fn column_at(&self, x: f32) -> Option<(Range<f32>, f32)> {
-        self.visible_columns().find_map(|(range, origin)| {
-            let relative = x - origin as f32;
+    pub(crate) fn visible_parts(&self) -> Vec<VisiblePart> {
+        if let Some(top) = self.scroll_top
+            && self.probe.flow_pages.is_some()
+        {
+            return hidden_flows::scroll_parts(&self.probe, top);
+        }
+        frame_columns(&self.probe, self.page)
+            .map(|(page, x)| {
+                let range = self.scroll_top.map_or_else(
+                    || self.probe.page_range(page),
+                    |top| self.probe.scroll_range(top),
+                );
+                VisiblePart { range, x, y: 0 }
+            })
+            .collect()
+    }
+
+    fn column_at(&self, x: f32, y: f32) -> Option<(Range<f32>, f32, f32)> {
+        self.visible_parts().into_iter().find_map(|part| {
+            let relative = x - part.x as f32;
+            let top = part.y as f32 + self.probe.settings.top_margin() as f32;
+            let bottom = top + part.range.end - part.range.start;
             (0.0..self.probe.settings.width as f32)
                 .contains(&relative)
-                .then_some((range, relative))
+                .then_some(())
+                .filter(|_| y >= top && y < bottom)
+                .map(|_| (part.range, relative, y - part.y as f32))
         })
     }
 
     pub(crate) fn word_at(&self, x: f32, y: f32) -> Option<TextSelection> {
-        let (range, x) = self.column_at(x)?;
+        let (range, x, y) = self.column_at(x, y)?;
         self.probe.word_in(range, x, y)
     }
 
@@ -440,13 +762,30 @@ impl Reading {
         } else {
             &word.end
         };
-        self.anchored_quote(start, end)
+        self.rendered_quote(start, end)
+    }
+
+    pub(crate) fn rendered_quote(&self, start: &Anchor, end: &Anchor) -> Result<TextSelection> {
+        self.collect_anchored_quote(start, end, false)
     }
 
     pub(crate) fn anchored_quote(&self, start: &Anchor, end: &Anchor) -> Result<TextSelection> {
-        let first = self.probe.chapter_index(&start.chapter)
+        self.collect_anchored_quote(start, end, true)
+    }
+
+    fn collect_anchored_quote(
+        &self,
+        start: &Anchor,
+        end: &Anchor,
+        canonical: bool,
+    ) -> Result<TextSelection> {
+        let first = self
+            .probe
+            .chapter_index(&start.chapter)
             .ok_or("The saved section is unavailable")?;
-        let last = self.probe.chapter_index(&end.chapter)
+        let last = self
+            .probe
+            .chapter_index(&end.chapter)
             .ok_or("The saved section is unavailable")?;
         if (first, start.block, start.offset) >= (last, end.block, end.offset) {
             return Err("The passage endpoints are out of order".into());
@@ -460,7 +799,11 @@ impl Reading {
                 loaded = self.config.chapter(index)?;
                 &loaded
             };
-            let part = probe.select_range(start, end);
+            let part = if canonical {
+                probe.select_source_range(start, end)
+            } else {
+                probe.select_range(start, end)
+            };
             if let Some(part) = part {
                 let extra = usize::from(!text.is_empty());
                 if text.len() + extra + part.text.len() > crate::library::MAX_HIGHLIGHT_TEXT_BYTES {
@@ -471,8 +814,13 @@ impl Reading {
                 }
                 text.push_str(&part.text);
             } else if index == first || index == last {
-                return Err("The saved selection no longer resolves in this edition".into());
+                if canonical || probe.select_source_range(start, end).is_none() {
+                    return Err("The saved selection no longer resolves in this edition".into());
+                }
             }
+        }
+        if text.trim().is_empty() {
+            return Err("The passage is hidden by the current stylesheet".into());
         }
         Ok(TextSelection {
             start: start.clone(),
@@ -482,13 +830,15 @@ impl Reading {
     }
 
     pub(crate) fn highlight_rects(&self, selection: &TextSelection) -> Vec<HighlightRect> {
-        self.visible_columns()
-            .flat_map(|(range, x)| {
+        self.visible_parts()
+            .into_iter()
+            .flat_map(|part| {
                 self.probe
-                    .selection_rects_in(range, selection)
+                    .selection_rects_in(part.range, selection)
                     .into_iter()
                     .map(move |mut rect| {
-                        rect.x += x as i32;
+                        rect.x += part.x as i32;
+                        rect.y += part.y as i32;
                         rect
                     })
             })
@@ -500,7 +850,7 @@ impl Reading {
         x: f32,
         y: f32,
     ) -> Option<(crate::footnotes::ReferenceContext, TextSelection)> {
-        let (range, x) = self.column_at(x)?;
+        let (range, x, y) = self.column_at(x, y)?;
         let (key, offset) = self.probe.source_at(range, x, y)?;
         let block = self.probe.source.blocks.iter().find(|b| b.key == key)?;
         let link = block.links.iter().find(|l| l.bytes.contains(&offset))?;
@@ -526,12 +876,12 @@ impl Reading {
     }
 
     pub(crate) fn link_at(&self, x: f32, y: f32) -> Option<Destination> {
-        let (range, x) = self.column_at(x)?;
+        let (range, x, y) = self.column_at(x, y)?;
         self.probe.link_in(range, x, y)
     }
 
     pub(crate) fn illustration_at(&self, x: f32, y: f32) -> Option<&str> {
-        let (range, x) = self.column_at(x)?;
+        let (range, x, y) = self.column_at(x, y)?;
         self.probe.illustration_in(range, x, y)
     }
 
@@ -575,12 +925,16 @@ impl Reading {
             let mut visible = self.probe.lines.iter().filter(|line| {
                 !line.bytes.is_empty() && line.bottom > range.start && line.top < range.end
             });
-            let Some(first) = visible.next() else { continue };
+            let Some(first) = visible.next() else {
+                continue;
+            };
             let last = visible.last().unwrap_or(first);
             let start = self.probe.anchor(first.block, first.bytes.start);
             let end = self.probe.anchor(last.block, last.bytes.end);
             if let Some(selection) = self.probe.select_range(&start, &end) {
-                if !text.is_empty() { text.push('\n'); }
+                if !text.is_empty() {
+                    text.push('\n');
+                }
                 text.push_str(&selection.text);
             }
         }
@@ -588,21 +942,28 @@ impl Reading {
     }
 
     pub(crate) fn links(&self) -> Vec<(String, Destination)> {
-        let mut columns = self.visible_columns().map(|(range, _)| range);
-        let Some(first) = columns.next() else {
-            return Vec::new();
-        };
-        let end = columns.last().map_or(first.end, |last| last.end);
-        self.probe.links_in(first.start..end)
+        let mut links = Vec::new();
+        for (range, _) in self.visible_columns() {
+            for link in self.probe.links_in(range) {
+                if !links.contains(&link) {
+                    links.push(link);
+                }
+            }
+        }
+        links
     }
 
     pub(crate) fn anchor(&self) -> Option<Anchor> {
-        self.focus_anchor
-            .clone()
-            .or_else(|| self.probe.anchor_in(self.visible_range()))
+        self.focus_anchor.clone().or_else(|| {
+            self.visible_columns()
+                .find_map(|(range, _)| self.probe.anchor_in(range))
+        })
     }
 
     fn scroll(&mut self, top: f32, distance: f32) -> Result<Change> {
+        if self.config.hidden_flows.enabled {
+            return self.scroll_in_custom_flow(top, distance);
+        }
         if distance == 0.0 {
             return Ok(Change::None);
         }
@@ -654,6 +1015,7 @@ impl Reading {
         self.page = page;
         self.scroll_top = top;
         self.adjacent.clear();
+        self.refresh_flow_weights();
         Ok(())
     }
 
@@ -679,9 +1041,18 @@ impl Reading {
     }
 
     pub(crate) fn jump_progress(&mut self, fraction: f64) -> Result<()> {
+        if self.config.hidden_flows.enabled {
+            return self.jump_custom_progress(fraction);
+        }
+        let hide = self.hides_nonlinear();
         let (chapter, in_chapter, probe) = with_storage(|| {
             let mut book = Book::open(&self.config.book).map_err(io::Error::other)?;
-            let (chapter, in_chapter) = book.progress_target(fraction).map_err(io::Error::other)?;
+            let (chapter, in_chapter) = if hide {
+                book.linear_progress_target(fraction)
+                    .map_err(io::Error::other)?
+            } else {
+                book.progress_target(fraction).map_err(io::Error::other)?
+            };
             let probe = self
                 .config
                 .layout_chapter(book, chapter)
@@ -702,13 +1073,20 @@ impl Reading {
         anchor: Option<&Anchor>,
         fallback_page: usize,
     ) -> Result<()> {
+        if self.config.hidden_flows.enabled {
+            candidate.flow_pages = Some(self.custom_flows.map(chapter, candidate.page_count()));
+        }
         let focused_page = anchor.and_then(|anchor| candidate.page_for(anchor));
         let page = focused_page.unwrap_or(fallback_page);
         let top = (self.config.scroll && !candidate.is_vertical()).then(|| {
-            anchor
+            let top = anchor
                 .and_then(|anchor| candidate.anchor_top(anchor))
-                .unwrap_or_else(|| candidate.page_range(page).start)
-                .clamp(0.0, candidate.scroll_end())
+                .unwrap_or_else(|| candidate.page_range(page).start);
+            if self.config.hidden_flows.enabled {
+                top.max(0.0)
+            } else {
+                top.clamp(0.0, candidate.scroll_end())
+            }
         });
         let frame = capture(&mut candidate, chapter, page, top)?;
         self.probe = candidate;
@@ -720,11 +1098,15 @@ impl Reading {
         self.error = None;
         self.adjacent.clear();
         self.turns = PageTurns::new(Instant::now());
+        self.refresh_flow_weights();
         self.schedule_prefetch();
         Ok(())
     }
 
     fn prefetch_page(&self) -> Option<usize> {
+        if self.config.hidden_flows.enabled {
+            return None;
+        }
         let span = frame_span(&self.probe);
         let page = first_frame_page(&self.probe, self.page);
         [Some(page + span), page.checked_sub(span)]
@@ -751,6 +1133,10 @@ impl Reading {
         self.end_attempt = false;
     }
 
+    pub(crate) fn is_turning(&self) -> bool {
+        !self.turns.pending.is_empty()
+    }
+
     pub(crate) fn take_end_attempt(&mut self) -> bool {
         std::mem::take(&mut self.end_attempt)
     }
@@ -771,13 +1157,23 @@ impl Reading {
         )
     }
 
+    pub(crate) fn footer_caption(&self, notice: Option<&str>) -> String {
+        self.error
+            .as_deref()
+            .or(notice)
+            .map(str::to_owned)
+            .unwrap_or_else(|| self.page_status())
+    }
+
     pub(crate) fn draw_page(
         &self,
         canvas: &mut Canvas,
         action: Option<&str>,
         hidden_status: bool,
         notice: Option<&str>,
-        highlights: &[HighlightRect],
+        status_rect: Rect,
+        status_style: TextStyle,
+        highlights: &[(HighlightRect, crate::highlight_style::Paint)],
         selection: &[HighlightRect],
         paint: PagePaint,
     ) {
@@ -788,12 +1184,8 @@ impl Reading {
             return;
         };
         let Some(action) = action else { return };
-        let progress = self.page_status();
-        canvas.text(
-            Rect::new(38, PAGE_HEIGHT as i32 + 12, DONE.x - 60, 48),
-            self.error.as_deref().or(notice).unwrap_or(&progress),
-            CAPTION,
-        );
+        let caption = self.footer_caption(notice);
+        canvas.text(status_rect, &caption, status_style);
         if full {
             canvas.button(DONE, action, false, false);
         }
@@ -801,33 +1193,74 @@ impl Reading {
 
     fn marked_frame(
         &self,
-        highlights: &[HighlightRect],
+        highlights: &[(HighlightRect, crate::highlight_style::Paint)],
         selection: &[HighlightRect],
         paint: &PagePaint,
     ) -> GrayImage {
         let mut page = self.frame.clone();
         if paint.inverted && !self.config.settings.invert_night_images {
-            for (range, x) in self.visible_columns() {
-                preinvert_images(&self.probe, range, x, page.width, &mut page.pixels);
+            for part in self.visible_parts() {
+                let end = (part.y
+                    + self.probe.settings.top_margin()
+                    + (part.range.end - part.range.start).ceil() as u32)
+                    .min(page.height);
+                preinvert_images_at(
+                    &self.probe,
+                    part.range,
+                    part.x,
+                    part.y,
+                    end,
+                    page.width,
+                    &mut page.pixels,
+                );
             }
         }
-        for (rects, gray) in [(highlights, 220_u8), (selection, 176_u8)] {
-            for rect in rects {
-                let (x, y) = (rect.x as usize, rect.y as usize);
-                let (width, height) = (rect.width as usize, rect.height as usize);
-                for row in page
-                    .pixels
-                    .as_chunks_mut::<{ WIDTH as usize }>()
-                    .0
-                    .iter_mut()
-                    .skip(y)
-                    .take(height)
-                {
-                    for pixel in &mut row[x..x + width] {
-                        *pixel = (*pixel).min(gray);
-                    }
-                }
+        // Named rolling selections are part of CREngine's document frame;
+        // ReaderView paints saved annotations over that native selection.
+        if let Some(color) = paint.selection_color {
+            for &rect in selection {
+                draw_highlight_rect(
+                    &mut page,
+                    rect,
+                    crate::highlight_style::Paint::SelectionColor {
+                        color,
+                        night: paint.inverted,
+                        reflow: true,
+                    },
+                    paint.highlight_appearance,
+                );
             }
+        }
+        for &(rect, ink) in highlights {
+            draw_highlight_rect(&mut page, rect, ink, paint.highlight_appearance);
+            let leaf_x = if self.uses_facing_pages() && rect.x >= (WIDTH / 2) as i32 {
+                FACING_PAGE_WIDTH + FACING_GUTTER
+            } else {
+                0
+            };
+            let margin = crate::note_marker::margin(
+                self.probe.settings.width,
+                self.probe.settings.right_margin(),
+                leaf_x,
+                paint.note_marker,
+                false,
+            );
+            crate::note_marker::paint(
+                &mut page,
+                rect,
+                ink,
+                paint.note_marker,
+                margin,
+                paint.highlight_appearance,
+            );
+        }
+        for &rect in selection.iter().filter(|_| paint.selection_color.is_none()) {
+            draw_highlight_rect(
+                &mut page,
+                rect,
+                crate::highlight_style::Paint::ReflowSelection,
+                paint.highlight_appearance,
+            );
         }
         if paint.visible != (0..self.frame.height) && !self.probe.is_vertical() {
             self.clear_lines_cut_by_tools(&mut page, &paint.visible);
@@ -836,8 +1269,9 @@ impl Reading {
     }
 
     fn clear_lines_cut_by_tools(&self, page: &mut GrayImage, visible: &Range<u32>) {
-        for (column, x) in self.visible_columns() {
-            let offset = self.probe.settings.top_margin() as f32 - column.start;
+        for part in self.visible_parts() {
+            let offset = self.probe.settings.top_margin() as f32 + part.y as f32 - part.range.start;
+            let x = part.x;
             let (mut start, mut end) = (visible.start, visible.end);
             // The two pages can have different line breaks beneath the bars.
             for line in self
@@ -845,6 +1279,7 @@ impl Reading {
                 .lines
                 .iter()
                 .filter(|line| !line.bytes.is_empty())
+                .filter(|line| line.bottom > part.range.start && line.top < part.range.end)
             {
                 let top = line.top + offset;
                 let bottom = line.bottom + offset;
@@ -863,6 +1298,104 @@ impl Reading {
                 }
             }
         }
+    }
+}
+
+fn paint_page_overlap(
+    frame: &mut GrayImage,
+    forward: bool,
+    requested_height: u32,
+    style: crate::PageOverlapStyle,
+) {
+    use crate::PageOverlapStyle;
+
+    if style == PageOverlapStyle::None || frame.width == 0 || frame.height == 0 {
+        return;
+    }
+    let height = requested_height.min(frame.height);
+    if height == 0 {
+        return;
+    }
+    let top = if forward { 0 } else { frame.height - height };
+    let bottom = top + height;
+    let width = frame.width as usize;
+    match style {
+        PageOverlapStyle::None => {}
+        PageOverlapStyle::Dim => {
+            for pixel in &mut frame.pixels[top as usize * width..bottom as usize * width] {
+                *pixel = ((u16::from(*pixel) + 255) / 2) as u8;
+            }
+        }
+        PageOverlapStyle::Arrow => {
+            let boundary = if forward { bottom } else { top };
+            paint_overlap_arrow(frame, boundary);
+        }
+        PageOverlapStyle::Line | PageOverlapStyle::DashedLine => {
+            let boundary = if forward { bottom } else { top };
+            let y = boundary.min(frame.height - 1) as usize;
+            let ink = 102;
+            for row in y..(y + 2).min(frame.height as usize) {
+                let line = &mut frame.pixels[row * width..(row + 1) * width];
+                if style == PageOverlapStyle::Line {
+                    line.fill(ink);
+                } else {
+                    for start in (0..width).step_by(20) {
+                        line[start..(start + 14).min(width)].fill(ink);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn paint_overlap_arrow(frame: &mut GrayImage, boundary: u32) {
+    // KOReader's 16×16 `control.expand.alpha` icon is a right-pointing
+    // triangle, centered on the boundary and kept at the left screen edge.
+    let half_height = 8_i32;
+    for offset in -half_height..=half_height {
+        let y = boundary as i32 + offset;
+        if !(0..frame.height as i32).contains(&y) {
+            continue;
+        }
+        let inward = half_height - offset.abs();
+        let extent = 3 + inward * 10 / half_height;
+        let left = 3.min(frame.width.saturating_sub(1) as i32) as u32;
+        let right = extent
+            .min(frame.width.saturating_sub(1) as i32)
+            .max(left as i32) as u32;
+        for x in left..=right {
+            frame.pixels[y as usize * frame.width as usize + x as usize] = 64;
+        }
+    }
+}
+
+fn draw_highlight_rect(
+    page: &mut GrayImage,
+    rect: HighlightRect,
+    ink: crate::highlight_style::Paint,
+    appearance: crate::highlight_style::Appearance,
+) {
+    let (top, height) = ink
+        .line_band(rect.y, rect.height, page.width, false)
+        .or_else(|| {
+            ink.fill_band(rect.y, rect.height, appearance.line_height)
+                .map(|r| (r.start, r.end - r.start))
+        })
+        .unwrap_or((rect.y, rect.height));
+    let x0 = rect.x.clamp(0, page.width as i32) as usize;
+    let x1 = (rect.x + rect.width).clamp(0, page.width as i32) as usize;
+    let y0 = top.clamp(0, page.height as i32) as usize;
+    let y1 = (top + height).clamp(0, page.height as i32) as usize;
+    if x1 <= x0 || y1 <= y0 {
+        return;
+    }
+    for row in page
+        .pixels
+        .chunks_exact_mut(page.width as usize)
+        .skip(y0)
+        .take(y1 - y0)
+    {
+        ink.draw_row(&mut row[x0..x1], appearance);
     }
 }
 
@@ -955,9 +1488,14 @@ impl App for Reading {
             Some("Exit"),
             false,
             None,
+            footer_caption_rect(DONE.x.saturating_sub(60), 28),
+            CAPTION,
             &[],
             &[],
             PagePaint {
+                selection_color: None,
+                highlight_appearance: Default::default(),
+                note_marker: Default::default(),
                 visible: 0..self.frame.height,
                 inverted: false,
             },
@@ -1041,12 +1579,36 @@ pub(crate) fn preinvert_images(
     stride: u32,
     pixels: &mut [u8],
 ) -> bool {
+    preinvert_images_at(
+        probe,
+        range,
+        column,
+        0,
+        (pixels.len() / stride as usize) as u32,
+        stride,
+        pixels,
+    )
+}
+
+fn preinvert_images_at(
+    probe: &Probe,
+    range: Range<f32>,
+    column: u32,
+    offset_y: u32,
+    clip_end: u32,
+    stride: u32,
+    pixels: &mut [u8],
+) -> bool {
     let crate::Renderer::Parley(layout) = &probe.renderer else {
         return false;
     };
     let mut changed = false;
     for (_, cols, rows) in layout.visible_illustrations(range, probe.settings) {
         for row in rows {
+            let row = row + offset_y as usize;
+            if row >= clip_end as usize {
+                continue;
+            }
             let start = row * stride as usize + column as usize + cols.start;
             for pixel in &mut pixels[start..start + cols.len()] {
                 *pixel = 255 - *pixel;
@@ -1120,6 +1682,9 @@ fn frame_span(probe: &Probe) -> usize {
 }
 
 fn first_frame_page(probe: &Probe, page: usize) -> usize {
+    if probe.flow_pages.is_some() {
+        return page;
+    }
     let span = frame_span(probe);
     page / span * span
 }
@@ -1127,10 +1692,17 @@ fn first_frame_page(probe: &Probe, page: usize) -> usize {
 fn frame_columns(probe: &Probe, page: usize) -> impl Iterator<Item = (usize, u32)> + use<> {
     let first = first_frame_page(probe, page);
     let span = frame_span(probe);
-    let end = (first + span).min(probe.page_count());
+    let mut pages = vec![first];
+    if span == 2 {
+        let second = probe.flow_pages.as_ref().map_or_else(
+            || (first + 1 < probe.page_count()).then_some(first + 1),
+            |flows| flows.next(first, 1),
+        );
+        pages.extend(second);
+    }
     let rtl = probe.pages_right_to_left();
     // Keep logical leaf order for text ranges and links. Only the physical origin changes.
-    (first..end).enumerate().map(move |(index, page)| {
+    pages.into_iter().enumerate().map(move |(index, page)| {
         let slot = if rtl { span - 1 - index } else { index };
         (page, slot as u32 * (FACING_PAGE_WIDTH + FACING_GUTTER))
     })
@@ -1139,6 +1711,7 @@ fn frame_columns(probe: &Probe, page: usize) -> impl Iterator<Item = (usize, u32
 fn capture(probe: &mut Probe, chapter: usize, page: usize, top: Option<f32>) -> Result<GrayImage> {
     let start = Instant::now();
     let pixels = match top {
+        Some(top) if probe.flow_pages.is_some() => hidden_flows::capture_scroll(probe, top)?,
         Some(top) => probe.capture_range(probe.scroll_range(top))?,
         None if frame_span(probe) == 2 => capture_facing_pages(probe, page)?,
         None => probe.capture(page)?,
@@ -1189,6 +1762,7 @@ mod tests {
     fn example(book: &str, font_size: f32, facing_pages: bool) -> Reading {
         Reading::open(BookConfig {
             user_hyphenation: Default::default(),
+            user_styles: Default::default(),
             chapter_offsets: Default::default(),
             engine: Engine::Parley,
             book: crate::test_fixture(book),
@@ -1201,6 +1775,8 @@ mod tests {
             },
             scroll: false,
             facing_pages,
+            hide_nonlinear: false,
+            hidden_flows: Default::default(),
         })
         .unwrap()
     }
@@ -1211,9 +1787,11 @@ mod tests {
 
         let original = std::fs::File::open(crate::test_fixture("field-notes-epub3.epub")).unwrap();
         let mut archive = zip::ZipArchive::new(original).unwrap();
-        let path = std::env::temp_dir().join(format!("reader-spine-cover-{}.epub", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("reader-spine-cover-{}.epub", std::process::id()));
         let mut output = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
-        let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
         let cover = r#"<html><body id="cover"><div><svg xmlns="http://www.w3.org/2000/svg"
             xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 500 2300">
             <image width="500" height="2300" xlink:href="../images/shore.png"/></svg></div></body></html>"#;
@@ -1221,8 +1799,12 @@ mod tests {
         let chapter = r#"<html><body><div id="first">Opening sentence.</div>
             <img src="../images/shore.png"/><p id="end">Last words.</p></body></html>"#;
         let mut photo = Cursor::new(Vec::new());
-        let art = image::GrayImage::from_fn(500, 2300, |x, _| image::Luma([if x < 250 { 40 } else { 180 }]));
-        image::DynamicImage::ImageLuma8(art).write_to(&mut photo, image::ImageFormat::Png).unwrap();
+        let art = image::GrayImage::from_fn(500, 2300, |x, _| {
+            image::Luma([if x < 250 { 40 } else { 180 }])
+        });
+        image::DynamicImage::ImageLuma8(art)
+            .write_to(&mut photo, image::ImageFormat::Png)
+            .unwrap();
         for index in 0..archive.len() {
             let mut file = archive.by_index(index).unwrap();
             output.start_file(file.name(), opts).unwrap();
@@ -1237,7 +1819,9 @@ mod tests {
                 "EPUB/chapters/shore.xhtml" => output.write_all(cover.as_bytes()).unwrap(),
                 "EPUB/chapters/dusk.xhtml" => output.write_all(chapter.as_bytes()).unwrap(),
                 "EPUB/images/shore.png" => output.write_all(photo.get_ref()).unwrap(),
-                _ => { std::io::copy(&mut file, &mut output).unwrap(); }
+                _ => {
+                    std::io::copy(&mut file, &mut output).unwrap();
+                }
             }
         }
         output.start_file("EPUB/blank.xhtml", opts).unwrap();
@@ -1253,11 +1837,18 @@ mod tests {
         let cover_anchor = reading.anchor().unwrap();
         assert_eq!(reading.probe.fragment("cover"), Some(cover_anchor.clone()));
         assert_eq!(reading.probe.page_for(&cover_anchor), Some(0));
-        assert_eq!(reading.open_illustration("EPUB/images/shore.png").unwrap().page_size(), (500.0, 2300.0));
+        assert_eq!(
+            reading
+                .open_illustration("EPUB/images/shore.png")
+                .unwrap()
+                .page_size(),
+            (500.0, 2300.0)
+        );
         reading.turn(1).unwrap();
         assert_eq!((reading.chapter, reading.page), (1, 0));
         assert!(reading.frame.pixels.iter().all(|&p| p == 255));
-        let mut restored_blank = Reading::restore(config.clone(), 1, 0, reading.anchor().as_ref()).unwrap();
+        let mut restored_blank =
+            Reading::restore(config.clone(), 1, 0, reading.anchor().as_ref()).unwrap();
         restored_blank.turn(1).unwrap();
         assert_eq!(restored_blank.chapter, 2);
         let end = restored_blank.probe.fragment("end").unwrap();
@@ -1356,6 +1947,270 @@ mod tests {
         assert!(rects.iter().all(|rect| rect.x + rect.width <= WIDTH as i32));
         let thumbnail = page_thumbnail(&mut reading.probe, 1).unwrap();
         assert_eq!(thumbnail.light.width, FACING_PAGE_WIDTH * 280 / PAGE_HEIGHT);
+    }
+
+    #[test]
+    fn contrast_repaints_both_facing_leaves_and_scroll_without_replacing_their_geometry() {
+        let mut reading = example("long-chapter.epub", 42.0, true);
+        let (x, y, word) = first_hit(|x, y| reading.probe.word_at(1, x, y)).unwrap();
+        let right = (FACING_PAGE_WIDTH + FACING_GUTTER) as f32;
+        let anchor = reading.anchor();
+        let lines = reading.probe.lines.as_ptr();
+        let before = reading.frame.pixels.clone();
+        let pages = reading.probe.page_count();
+        reading
+            .reflow(Settings {
+                font_gamma_index: 25,
+                ..reading.config.settings
+            })
+            .unwrap();
+        assert_eq!(reading.probe.settings.width, FACING_PAGE_WIDTH);
+        assert_eq!(reading.config.settings.width, WIDTH);
+        assert_eq!(reading.last_visible_page(), 1);
+        assert_eq!(reading.probe.page_count(), pages);
+        assert_eq!(reading.probe.lines.as_ptr(), lines);
+        assert_eq!(reading.anchor(), anchor);
+        assert_eq!(reading.word_at(x + right, y), Some(word));
+        assert_ne!(reading.frame.pixels, before);
+        reading
+            .reflow(Settings {
+                font_gamma_index: 15,
+                ..reading.config.settings
+            })
+            .unwrap();
+        assert_eq!(reading.frame.pixels, before);
+
+        reading.set_scroll(true).unwrap();
+        reading.scroll(reading.scroll_top.unwrap(), 185.0).unwrap();
+        let top = reading.scroll_top;
+        let anchor = reading.anchor();
+        let lines = reading.probe.lines.as_ptr();
+        let before = reading.frame.pixels.clone();
+        reading
+            .reflow(Settings {
+                font_gamma_index: 25,
+                ..reading.config.settings
+            })
+            .unwrap();
+        assert_eq!(reading.scroll_top, top);
+        assert_eq!(reading.anchor(), anchor);
+        assert_eq!(reading.probe.lines.as_ptr(), lines);
+        assert_ne!(reading.frame.pixels, before);
+        reading
+            .reflow(Settings {
+                font_gamma_index: 15,
+                ..reading.config.settings
+            })
+            .unwrap();
+        assert_eq!(reading.frame.pixels, before);
+    }
+
+    #[test]
+    fn automatic_turn_uses_signed_fractional_scroll_and_whole_page_motion() {
+        let mut scrolling = example("long-chapter.epub", 42.0, false);
+        scrolling.set_scroll(true).unwrap();
+        let start = scrolling.scroll_top.unwrap();
+        let viewport = (scrolling.config.settings.text_height() as f32 - 90.0).max(1.0);
+        scrolling.turns.next_refresh = Instant::now();
+        assert_eq!(scrolling.automatic_turn(5), Change::Partial);
+        let middle = scrolling.scroll_top.unwrap();
+        assert!((middle - (start + viewport * 0.5)).abs() < 1.0);
+
+        scrolling.turns.next_refresh = Instant::now();
+        assert_eq!(scrolling.automatic_turn(-5), Change::Partial);
+        assert!((scrolling.scroll_top.unwrap() - start).abs() < 1.0);
+
+        let mut paged = example("long-chapter.epub", 42.0, false);
+        paged.turns.next_refresh = Instant::now();
+        assert_eq!(paged.automatic_turn(20), Change::Partial);
+        assert_eq!(paged.page, 2);
+        paged.turns.next_refresh = Instant::now();
+        assert_eq!(paged.automatic_turn(-20), Change::Partial);
+        assert_eq!(paged.page, 0);
+
+        let mut fractional_paged = example("long-chapter.epub", 42.0, false);
+        fractional_paged.turns.next_refresh = Instant::now();
+        assert_eq!(fractional_paged.automatic_turn(11), Change::Partial);
+        assert_eq!(fractional_paged.page, 2);
+        fractional_paged.turns.next_refresh = Instant::now();
+        assert_eq!(fractional_paged.automatic_turn(-11), Change::Partial);
+        assert_eq!(fractional_paged.page, 0);
+    }
+
+    #[test]
+    fn scroll_page_overlap_repeats_configured_lines_and_marks_the_repeated_area() {
+        let mut reading = example("long-chapter.epub", 42.0, false);
+        reading.set_scroll(true).unwrap();
+        let settings = Settings {
+            page_overlap_enabled: true,
+            page_overlap_lines: 2,
+            page_overlap_style: crate::PageOverlapStyle::Dim,
+            ..reading.config.settings
+        };
+        let overlap = settings.page_overlap_height();
+        reading.reflow(settings).unwrap();
+
+        let start = reading.scroll_top.unwrap();
+        let viewport = (settings.text_height() as f32 - 90.0).max(1.0);
+        reading.turns.next_refresh = Instant::now();
+        assert_eq!(reading.input(Input::PageForward), Change::Partial);
+        assert!((reading.scroll_top.unwrap() - (start + viewport - overlap)).abs() < 1.0);
+
+        let plain = capture(
+            &mut reading.probe,
+            reading.chapter,
+            reading.page,
+            reading.scroll_top,
+        )
+        .unwrap();
+        assert_ne!(reading.frame.pixels, plain.pixels);
+        if let Some(path) = std::env::var_os("READER_PAGE_OVERLAP_SCREENSHOT") {
+            image::GrayImage::from_raw(WIDTH, reading.frame.height, reading.frame.pixels.clone())
+                .expect("The captured reading frame has valid dimensions")
+                .save(path)
+                .unwrap();
+        }
+
+        // A direct pan remains a pan; overlap applies to page turns only.
+        let before_pan = reading.scroll_top.unwrap();
+        reading.turns.next_refresh = Instant::now();
+        assert_eq!(
+            reading.input(Input::Swipe {
+                dx: 0.0,
+                dy: -160.0,
+                start_y: PAGE_HEIGHT as f32 / 2.0,
+            }),
+            Change::Partial
+        );
+        assert!((reading.scroll_top.unwrap() - (before_pan + 160.0)).abs() < 1.0);
+    }
+
+    #[test]
+    fn automatic_scroll_overlap_applies_in_both_directions_and_can_be_hidden() {
+        let mut reading = example("long-chapter.epub", 42.0, false);
+        reading.set_scroll(true).unwrap();
+        let settings = Settings {
+            page_overlap_enabled: true,
+            page_overlap_lines: 3,
+            page_overlap_style: crate::PageOverlapStyle::Dim,
+            ..reading.config.settings
+        };
+        let overlap = settings.page_overlap_height();
+        reading.reflow(settings).unwrap();
+        let start = reading.scroll_top.unwrap();
+        let viewport = (settings.text_height() as f32 - 90.0).max(1.0);
+
+        reading.turns.next_refresh = Instant::now();
+        assert_eq!(reading.automatic_turn(5), Change::Partial);
+        let middle = reading.scroll_top.unwrap();
+        assert!((middle - (start + viewport * 0.5 - overlap)).abs() < 1.0);
+        let plain = capture(
+            &mut reading.probe,
+            reading.chapter,
+            reading.page,
+            reading.scroll_top,
+        )
+        .unwrap();
+        assert_eq!(reading.frame.pixels, plain.pixels);
+
+        reading.turns.next_refresh = Instant::now();
+        assert_eq!(reading.automatic_turn(-5), Change::Partial);
+        assert!((reading.scroll_top.unwrap() - start).abs() < 1.0);
+
+        reading.turns.next_refresh = Instant::now();
+        assert_eq!(reading.automatic_turn(10), Change::Partial);
+        assert!((reading.scroll_top.unwrap() - (start + viewport - overlap)).abs() < 1.0);
+        let plain = capture(
+            &mut reading.probe,
+            reading.chapter,
+            reading.page,
+            reading.scroll_top,
+        )
+        .unwrap();
+        assert_ne!(reading.frame.pixels, plain.pixels);
+    }
+
+    #[test]
+    fn scroll_overlap_indicator_is_suppressed_near_the_end_of_a_chapter() {
+        let mut reading = example("long-chapter.epub", 42.0, false);
+        reading.set_scroll(true).unwrap();
+        let settings = Settings {
+            page_overlap_enabled: true,
+            page_overlap_lines: 2,
+            page_overlap_style: crate::PageOverlapStyle::Dim,
+            ..reading.config.settings
+        };
+        reading.reflow(settings).unwrap();
+        let end = reading.probe.scroll_end();
+        let current = reading.scroll_top.unwrap();
+        reading.scroll(current, end - 100.0 - current).unwrap();
+        assert!((reading.scroll_top.unwrap() - (end - 100.0)).abs() < 1.0);
+
+        reading.turns.next_refresh = Instant::now();
+        assert_eq!(reading.input(Input::PageForward), Change::Partial);
+        assert_eq!(reading.scroll_top, Some(end));
+        let plain = capture(
+            &mut reading.probe,
+            reading.chapter,
+            reading.page,
+            reading.scroll_top,
+        )
+        .unwrap();
+        assert_eq!(reading.frame.pixels, plain.pixels);
+    }
+
+    #[test]
+    fn page_overlap_styles_render_their_stock_marker_shapes() {
+        let mut none = GrayImage {
+            width: 100,
+            height: 100,
+            pixels: vec![220; 10_000],
+        };
+        let source = none.pixels.clone();
+        paint_page_overlap(&mut none, true, 20, crate::PageOverlapStyle::None);
+        assert_eq!(none.pixels, source);
+
+        let mut dim = GrayImage {
+            width: 100,
+            height: 100,
+            pixels: source.clone(),
+        };
+        paint_page_overlap(&mut dim, true, 20, crate::PageOverlapStyle::Dim);
+        assert_eq!(dim.pixels[0], 237);
+        assert_eq!(dim.pixels[20 * 100], 220);
+
+        let mut arrow = GrayImage {
+            width: 100,
+            height: 100,
+            pixels: source.clone(),
+        };
+        paint_page_overlap(&mut arrow, true, 20, crate::PageOverlapStyle::Arrow);
+        assert_eq!(arrow.pixels[20 * 100 + 3], 64);
+        assert_eq!(arrow.pixels[20 * 100 + 13], 64);
+        assert_eq!(arrow.pixels[20 * 100 + 14], 220);
+        assert_eq!(arrow.pixels[12 * 100 + 3], 64);
+        assert_eq!(arrow.pixels[12 * 100 + 4], 220);
+
+        let mut line = GrayImage {
+            width: 100,
+            height: 100,
+            pixels: source.clone(),
+        };
+        paint_page_overlap(&mut line, true, 20, crate::PageOverlapStyle::Line);
+        assert!(
+            line.pixels[20 * 100..22 * 100]
+                .iter()
+                .all(|&pixel| pixel == 102)
+        );
+
+        let mut dashed = GrayImage {
+            width: 100,
+            height: 100,
+            pixels: source,
+        };
+        paint_page_overlap(&mut dashed, true, 20, crate::PageOverlapStyle::DashedLine);
+        assert_eq!(dashed.pixels[20 * 100], 102);
+        assert_eq!(dashed.pixels[20 * 100 + 15], 220);
     }
 
     #[test]
@@ -1488,7 +2343,12 @@ mod tests {
         }
 
         // A large type size leaves a full viewport after the image, so scrolling can bisect it.
-        reading.reflow(Settings { font_size: 110.0, ..reading.config.settings }).unwrap();
+        reading
+            .reflow(Settings {
+                font_size: 110.0,
+                ..reading.config.settings
+            })
+            .unwrap();
         reading.set_scroll(true).unwrap();
         let (page, _, rows) = find_image(&reading);
         let top = reading.probe.page_range(page).start + (rows.start + rows.len() / 2) as f32
@@ -1658,6 +2518,7 @@ mod tests {
     fn enters_and_leaves_vertical_chapters_with_scroll_preference_preserved() {
         let mut reading = Reading::open(BookConfig {
             user_hyphenation: Default::default(),
+            user_styles: Default::default(),
             chapter_offsets: Default::default(),
             engine: Engine::Parley,
             book: crate::test_fixture("vertical-chapters.epub"),
@@ -1669,6 +2530,8 @@ mod tests {
             },
             scroll: true,
             facing_pages: false,
+            hide_nonlinear: false,
+            hidden_flows: Default::default(),
         })
         .unwrap();
         assert!(reading.scroll_top.is_some());

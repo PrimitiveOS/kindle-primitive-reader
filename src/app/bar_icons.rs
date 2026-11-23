@@ -24,7 +24,12 @@ const GRID: Icon = line(&[
 pub(super) const SEARCH: Icon = line(&["M12 4 A6 6 0 1 0 12 16 A6 6 0 1 0 12 4 Z M16 16 L21 21"]);
 const FOLDER: Icon = line(&["M3 6 H10 L12 8 H21 V19 H3 Z"]);
 pub(super) const HIGHLIGHT: Icon = line(&["M4 15 L13 6 L18 11 L9 20 H4 Z M4 20 H20"]);
-const CLOCK: Icon = line(&["M12 3 A9 9 0 1 0 12 21 A9 9 0 1 0 12 3 Z M12 7 V12 L16 15"]);
+pub(super) const EDIT: Icon = line(&[
+    "M4 16.5 L16.5 4 A2.1 2.1 0 0 1 19.5 7 L7 19.5 L3 21 Z",
+    "M14 6.5 L17.5 10",
+]);
+pub(super) const COPY: Icon = line(&["M8 7 H19 V21 H8 Z M5 17 H3 V3 H15 V5"]);
+pub(super) const CLOCK: Icon = line(&["M12 3 A9 9 0 1 0 12 21 A9 9 0 1 0 12 3 Z M12 7 V12 L16 15"]);
 pub(super) const LINK: Icon =
     line(&["M10 8 L13 5 A4 4 0 0 1 19 11 L16 14 M14 16 L11 19 A4 4 0 0 1 5 13 L8 10 M9 15 L15 9"]);
 const JUMP: Icon = line(&["M4 12 H19 M14 7 L19 12 L14 17 M5 5 V19"]);
@@ -42,6 +47,7 @@ const FAVORITE: Icon = line(&[
     "M12 4 L14.4 9.2 L20 9.8 L15.8 13.6 L17 19.2 L12 16.3 L7 19.2 L8.2 13.6 L4 9.8 L9.6 9.2 Z",
 ]);
 const INFO: Icon = line(&["M12 3 A9 9 0 1 0 12 21 A9 9 0 1 0 12 3 Z M12 11 V16 M12 8 V8.1"]);
+const SAVE: Icon = line(&["M4 4 H16 L20 8 V20 H4 Z M8 4 V10 H16 V4 M8 20 V14 H16 V20"]);
 
 pub(super) fn group_icon(group: TopGroup) -> Icon {
     match group {
@@ -73,6 +79,7 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         Action::Show(Screen::Library | Screen::OrganizeLibrary) => FOLDER,
         Action::Show(Screen::Contents | Screen::FixedContents) => BOOK,
         Action::Show(Screen::FixedBookmarks | Screen::Bookmarks)
+        | Action::BookmarkBrowser(_)
         | Action::ToggleBookmark
         | Action::AddBookmark => BOOKMARK,
         Action::Show(
@@ -89,13 +96,58 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         )
         | Action::OpenPreviousDocument => CLOCK,
         Action::Show(Screen::BookMap) | Action::Overview => GRID,
+        Action::Skim => JUMP,
+        Action::Show(
+            Screen::DocumentDefaults
+            | Screen::StyleTweaks
+            | Screen::StylePreset
+            | Screen::StyleFiles
+            | Screen::StyleReview
+            | Screen::StyleEditor
+            | Screen::StyleClear,
+        )
+        | Action::Style(_) => SLIDERS,
+        Action::DocumentDefaults(command) => match command {
+            super::default_settings::Command::SaveReflow
+            | super::default_settings::Command::SaveFixed => SAVE,
+            super::default_settings::Command::ResetReflow
+            | super::default_settings::Command::ResetFixed => icons::ROTATE,
+            _ => CLOSE,
+        },
+        Action::ToggleNonlinear => BOOK,
+        Action::Flow(_) | Action::Show(Screen::HiddenFlows) => BOOK,
         Action::Show(Screen::Links) | Action::Wikipedia => LINK,
         Action::TranslatePage => TEXT,
-        Action::ReadAlarm | Action::Show(Screen::OnlineHistory) => CLOCK,
-        Action::Show(Screen::Highlights) | Action::ExportHighlights(_) => HIGHLIGHT,
-        Action::Show(Screen::PublisherPages | Screen::PageNumbering | Screen::NumberingValue(_) | Screen::NumberingDefaults | Screen::PublisherOffer) | Action::SetCharacterPages(_) | Action::CharacterPage(_) | Action::AcceptPublisherNumbers | Action::TogglePublisherFooter | Action::TogglePublisherMargins => PAGE,
+        Action::ReadAlarm | Action::Show(Screen::OnlineHistory) | Action::ReadingHistory(_) => {
+            CLOCK
+        }
+        Action::SaveBookData
+        | Action::ExportBackup
+        | Action::PreviewBackup
+        | Action::MergeBackup
+        | Action::ToggleBackupComponent(_) => SAVE,
+        Action::HighlightStyle | Action::Show(Screen::Highlights) | Action::ExportHighlights(_) => {
+            HIGHLIGHT
+        }
+        Action::Show(
+            Screen::PublisherPages
+            | Screen::PageNumbering
+            | Screen::NumberingValue(_)
+            | Screen::NumberingDefaults
+            | Screen::PublisherOffer,
+        )
+        | Action::SetCharacterPages(_)
+        | Action::CharacterPage(_)
+        | Action::AcceptPublisherNumbers
+        | Action::TogglePublisherFooter
+        | Action::TogglePublisherMargins => PAGE,
         Action::Show(Screen::GoToPage) | Action::NextLocation => JUMP,
-        Action::Show(Screen::Gestures | Screen::ReadingControls | Screen::ReadingData | Screen::FooterSettings) => SLIDERS,
+        Action::Show(
+            Screen::Gestures
+            | Screen::ReadingControls
+            | Screen::ReadingData
+            | Screen::FooterSettings,
+        ) => SLIDERS,
         Action::Show(Screen::Typography | Screen::ReadingProfiles)
         | Action::ShowFonts
         | Action::Text(_) => TEXT,

@@ -11,6 +11,17 @@ pub(super) enum NumberField {
     BookStride,
     DefaultStride,
     MarginSize,
+    ContentDpi(u64),
+    LogicalFont(u64),
+    LineSpacing(u64),
+    WordSpacing(super::word_spacing::Draft),
+    AutoTurn,
+    AutoTurnOverlapHorizontal,
+    AutoTurnOverlapVertical,
+    FooterTrackMinimumWidth,
+    FooterTrackMarginWidth,
+    FooterBatteryHideThreshold,
+    FooterItemFontSize,
 }
 
 impl NumberField {
@@ -18,6 +29,16 @@ impl NumberField {
         match self {
             Self::BookStride => Screen::PageNumbering,
             Self::DefaultStride | Self::MarginSize => Screen::NumberingDefaults,
+            Self::ContentDpi(_)
+            | Self::LogicalFont(_)
+            | Self::LineSpacing(_)
+            | Self::WordSpacing(_) => Screen::Book,
+            Self::AutoTurn => Screen::AutoTurn,
+            Self::AutoTurnOverlapHorizontal | Self::AutoTurnOverlapVertical => Screen::AutoTurnPan,
+            Self::FooterTrackMinimumWidth
+            | Self::FooterTrackMarginWidth
+            | Self::FooterBatteryHideThreshold
+            | Self::FooterItemFontSize => Screen::FooterSettings,
         }
     }
 }
@@ -175,9 +196,100 @@ impl Reader {
 
     pub(super) fn apply_numbering_input(&mut self, field: NumberField) -> Result<()> {
         let value = self.editor.string();
+        if field == NumberField::AutoTurn {
+            let seconds = value
+                .trim()
+                .parse::<u32>()
+                .ok()
+                .filter(|n| (1..=crate::reading_controls::MAX_AUTO_TURN_SECONDS).contains(n))
+                .ok_or("Enter an automatic page-turn interval from 1 to 86,400 seconds")?;
+            self.set_auto_turn_seconds(seconds)?;
+            self.show(field.parent());
+            return Ok(());
+        }
+        if field == NumberField::FooterBatteryHideThreshold {
+            let threshold = value
+                .trim()
+                .parse::<u8>()
+                .ok()
+                .filter(|percent| *percent <= 100)
+                .ok_or("Enter a battery threshold from 0% to 100%")?;
+            let mut controls = self.controls;
+            controls.footer_battery_hide_threshold = Some(threshold);
+            controls.save(&self.controls_path)?;
+            self.controls = controls;
+            self.show(field.parent());
+            return Ok(());
+        }
+        if field == NumberField::FooterItemFontSize {
+            let size = value
+                .trim()
+                .parse::<u8>()
+                .ok()
+                .filter(|size| (8..=36).contains(size))
+                .ok_or("Enter a footer text size from 8 to 36")?;
+            let mut controls = self.controls;
+            controls.footer_item_font_size = Some(size);
+            controls.save(&self.controls_path)?;
+            self.controls = controls;
+            self.show(field.parent());
+            return Ok(());
+        }
+        if matches!(
+            field,
+            NumberField::FooterTrackMinimumWidth | NumberField::FooterTrackMarginWidth
+        ) {
+            let number = value.trim().parse::<u8>().ok();
+            let number = if field == NumberField::FooterTrackMinimumWidth {
+                number
+                    .filter(|width| (5..=90).contains(width) && width % 5 == 0)
+                    .ok_or("Enter a minimum width from 5% to 90% in 5% steps")?
+            } else {
+                number
+                    .filter(|width| *width <= 140)
+                    .ok_or("Enter a progress bar margin from 0 to 140 pixels")?
+            };
+            let mut controls = self.controls;
+            if field == NumberField::FooterTrackMinimumWidth {
+                controls.footer_track_min_width_pct = Some(number);
+            } else {
+                controls.footer_track_margin_width = Some(number);
+            }
+            controls.save(&self.controls_path)?;
+            self.controls = controls;
+            self.show(field.parent());
+            return Ok(());
+        }
+        if matches!(
+            field,
+            NumberField::AutoTurnOverlapHorizontal | NumberField::AutoTurnOverlapVertical
+        ) {
+            let overlap = value
+                .trim()
+                .parse::<u8>()
+                .ok()
+                .filter(|value| *value <= 90)
+                .ok_or("Enter a zoom overlap from 0% to 90%")?;
+            let horizontal = field == NumberField::AutoTurnOverlapHorizontal;
+            self.set_fixed_auto_turn_overlap(horizontal, overlap)?;
+            self.show(field.parent());
+            return Ok(());
+        }
         let number = value.trim().parse::<u16>().ok();
         let mut controls = self.controls;
         match field {
+            NumberField::ContentDpi(owner) => return self.apply_content_dpi(owner),
+            NumberField::LogicalFont(owner) => return self.apply_logical_font_input(owner),
+            NumberField::LineSpacing(owner) => return self.apply_line_spacing_input(owner),
+            NumberField::WordSpacing(draft) => return self.apply_word_spacing_input(draft),
+            NumberField::AutoTurn => unreachable!("handled above"),
+            NumberField::AutoTurnOverlapHorizontal | NumberField::AutoTurnOverlapVertical => {
+                unreachable!("handled above")
+            }
+            NumberField::FooterTrackMinimumWidth => unreachable!("handled above"),
+            NumberField::FooterTrackMarginWidth => unreachable!("handled above"),
+            NumberField::FooterBatteryHideThreshold => unreachable!("handled above"),
+            NumberField::FooterItemFontSize => unreachable!("handled above"),
             NumberField::MarginSize => {
                 controls.numbering.label_size = number
                     .filter(|n| (8..=20).contains(n))

@@ -123,6 +123,7 @@ impl Chm {
         for path in order {
             if added.insert(path) {
                 chapters.push(Chapter {
+                    nonlinear: false,
                     href: path.clone(),
                     label: labels
                         .get(path.as_str())

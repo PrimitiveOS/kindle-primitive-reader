@@ -1,6 +1,5 @@
 //! Actions available from the reading view's grouped top menu.
 
-
 use super::{Action, BookList, Item, Reader, Screen, text_items};
 use crate::reading_controls::ReadingControls;
 
@@ -34,7 +33,15 @@ impl Reader {
             TopGroup::Navigation => self.navigation_items(),
             TopGroup::Appearance if self.fixed.is_some() => self.fixed_display_items(),
             TopGroup::Appearance => self.text_display_items(),
-            TopGroup::Settings => self.reading_settings_items(),
+            TopGroup::Settings => {
+                let mut items = self.reading_settings_items();
+                items.insert(
+                    0,
+                    Item::new("Highlight style", Action::HighlightStyle)
+                        .detail(self.effective_highlight_style().label()),
+                );
+                items
+            }
             TopGroup::Tools => self.document_tool_items(),
             TopGroup::Search => self.document_search_items(),
             TopGroup::Library => self.reading_library_items(),
@@ -64,7 +71,9 @@ impl Reader {
             ),
             Item::new("Go to page", Action::Show(Screen::GoToPage)),
             Item::new("Book map", Action::Show(Screen::BookMap)),
-            Item::new("Page browser", Action::Overview).detail("Thumbnails and skim"),
+            Item::new("Custom hidden flows", Action::Show(Screen::HiddenFlows)),
+            Item::new("Page browser", Action::Overview).detail("Browse page thumbnails"),
+            Item::new("Skim", Action::Skim).detail("Preview a position, then keep it or return"),
             Item::new("Auto turn", Action::Show(Screen::AutoTurn)).detail(
                 self.auto_turn.interval().map_or_else(
                     || "Off".to_owned(),
@@ -72,18 +81,93 @@ impl Reader {
                 ),
             ),
         ]);
-        if let Some(book) = self.active.as_ref().filter(|book| book.entry.format == crate::library::DocumentFormat::Epub) {
-            let mode = book.numbering.as_ref().map_or_else(|| if book.reading.probe.printed_pages.is_empty() { "Screen pages".into() } else { "Publisher labels".into() }, |map| format!("{} characters per page", map.stride));
-            items.push(Item::new("Page numbering", Action::Show(Screen::PageNumbering)).detail(mode));
+        if let Some(book) = self
+            .active
+            .as_ref()
+            .filter(|book| book.entry.format == crate::library::DocumentFormat::Epub)
+        {
+            if book.reading.probe.has_nonlinear_chapters()
+                && !book.reading.config.hidden_flows.enabled
+                && !book.reading.config.scroll
+                && !book.reading.config.facing_pages
+            {
+                items.push(
+                    Item::new("Hide non-linear fragments", Action::ToggleNonlinear).detail(
+                        if book.reading.config.hide_nonlinear {
+                            "On"
+                        } else {
+                            "Off"
+                        },
+                    ),
+                );
+                items.push(
+                    Item::new(
+                        "Default for non-linear fragments",
+                        Action::SetReadingControls(ReadingControls {
+                            hide_nonlinear_default: !self.controls.hide_nonlinear_default,
+                            ..self.controls
+                        }),
+                    )
+                    .detail(if self.controls.hide_nonlinear_default {
+                        "Hidden"
+                    } else {
+                        "Shown"
+                    }),
+                );
+            }
+            let mode = book.numbering.as_ref().map_or_else(
+                || {
+                    if book.reading.probe.printed_pages.is_empty() {
+                        "Screen pages".into()
+                    } else {
+                        "Publisher labels".into()
+                    }
+                },
+                |map| format!("{} characters per page", map.stride),
+            );
+            items.push(
+                Item::new("Page numbering", Action::Show(Screen::PageNumbering)).detail(mode),
+            );
         }
         if let Some(book) = self.active.as_ref().filter(|book| book.page_labels() > 0) {
-            let label = if book.numbering.is_some() { "Stable" } else { "Printed" };
-            items.push(Item::new("Stable page number list", Action::Show(Screen::PublisherPages))
-                .detail(format!("{} {} pages", book.page_labels(), label.to_lowercase())));
-            items.push(Item::new(format!("{label} pages in footer"), Action::TogglePublisherFooter)
-                .detail(if self.publisher_footer_enabled() { "On" } else { "Off" }));
-            items.push(Item::new(format!("{label} pages in margin"), Action::TogglePublisherMargins)
-                .detail(if self.publisher_margins_enabled() { "On" } else { "Off" }));
+            let label = if book.numbering.is_some() {
+                "Stable"
+            } else {
+                "Printed"
+            };
+            items.push(
+                Item::new(
+                    "Stable page number list",
+                    Action::Show(Screen::PublisherPages),
+                )
+                .detail(format!(
+                    "{} {} pages",
+                    book.page_labels(),
+                    label.to_lowercase()
+                )),
+            );
+            items.push(
+                Item::new(
+                    format!("{label} pages in footer"),
+                    Action::TogglePublisherFooter,
+                )
+                .detail(if self.publisher_footer_enabled() {
+                    "On"
+                } else {
+                    "Off"
+                }),
+            );
+            items.push(
+                Item::new(
+                    format!("{label} pages in margin"),
+                    Action::TogglePublisherMargins,
+                )
+                .detail(if self.publisher_margins_enabled() {
+                    "On"
+                } else {
+                    "Off"
+                }),
+            );
         }
         if self
             .active
@@ -145,7 +229,7 @@ impl Reader {
         };
         let reading = &active.reading;
         let settings = reading.config.settings;
-        let mut items = text_items(settings, reading.config.scroll);
+        let mut items = text_items(settings, reading.config.scroll, active.id);
         if reading.probe.is_vertical() {
             items.retain(|item| match item.action {
                 Action::ReadingMode(_) => false,
@@ -217,11 +301,54 @@ impl Reader {
     pub(super) fn reading_settings_items(&self) -> Vec<Item> {
         let current = self.controls;
         let mut items = vec![
+            Item::new(
+                "Bookmarks and notes",
+                Action::Show(Screen::BookmarkListSettings),
+            )
+            .detail(if current.bookmark_sort_by_date {
+                "By date"
+            } else {
+                "By page in reading order"
+            }),
+            Item::new(
+                "Selection dialog position",
+                Action::Show(Screen::SelectionPosition),
+            )
+            .detail(current.selection_popup_position.label()),
+            Item::new(
+                "Long-press on text",
+                Action::Show(Screen::LongPressSettings),
+            )
+            .detail(if current.dictionary_on_single_word.unwrap_or(true) {
+                format!(
+                    "Dictionary on one word · otherwise {}",
+                    current.selection_long_press_action.label()
+                )
+            } else {
+                current.selection_long_press_action.label().to_owned()
+            }),
+            Item::new("Document defaults", Action::Show(Screen::DocumentDefaults))
+                .detail("Settings for new books; existing books stay unchanged"),
             Item::new("Reading gestures", Action::Show(Screen::Gestures))
                 .detail("Assign taps, holds and swipes"),
-            Item::new("At the end of a book", Action::Show(Screen::EndActionSettings))
-                .detail(current.end_action.label()),
+            Item::new(
+                "At the end of a book",
+                Action::Show(Screen::EndActionSettings),
+            )
+            .detail(current.end_action.label()),
+            Item::new(
+                "Save reading data",
+                Action::Show(Screen::MetadataSaveSettings),
+            )
+            .detail(current.metadata_save.label()),
         ];
+        if self.active.is_some() {
+            items.insert(
+                1,
+                Item::new("Style tweaks", Action::Show(Screen::StyleTweaks))
+                    .detail("Supported user CSS and live defaults"),
+            );
+        }
         items.extend(self.quick_display_items());
         // Under Primitive Launcher the pages follow the launcher's theme: no Night pages switch here.
         if !self.under_launcher() {
@@ -352,14 +479,21 @@ impl Reader {
 
     fn document_tool_items(&self) -> Vec<Item> {
         let mut items = self.scan_items();
-        let timer = self.read_alarm.caption(std::time::Instant::now())
+        let timer = self
+            .read_alarm
+            .caption(std::time::Instant::now())
             .unwrap_or_else(|| "Set an interval or alarm".into());
         items.insert(0, Item::new("Read timer", Action::ReadAlarm).detail(timer));
+        items.insert(
+            1,
+            Item::new(
+                "Reading statistics",
+                Action::ReadingHistory(super::reading_history::Command::Open(self.open_book_id())),
+            ),
+        );
+        items.push(Item::new("Save reading data", Action::SaveBookData));
         if self.searchable_document() {
-            items.push(Item::new(
-                "Highlights and notes",
-                Action::Show(Screen::Highlights),
-            ));
+            items.push(Item::new("Saved marks", Action::Show(Screen::Highlights)));
         }
         if self.active.is_some() || self.fixed.is_some() {
             items.push(
@@ -380,7 +514,8 @@ impl Reader {
     }
 
     pub(super) fn preferred_dictionary_item(&self) -> Item {
-        Item::new("Dictionaries", Action::ShowDictionaries).detail("Sources, order and book preferences")
+        Item::new("Dictionaries", Action::ShowDictionaries)
+            .detail("Sources, order and book preferences")
     }
 
     fn document_search_items(&self) -> Vec<Item> {
@@ -426,6 +561,10 @@ impl Reader {
         let mut items = vec![
             Item::new("Browse Documents", Action::Show(Screen::Library)),
             Item::new("Recently read", Action::ListBooks(BookList::Recent)),
+            Item::new(
+                "Bookmark browser",
+                Action::BookmarkBrowser(super::bookmark_browser::Command::Open),
+            ),
         ];
         if self.has_previous_document() {
             items.push(Item::new(

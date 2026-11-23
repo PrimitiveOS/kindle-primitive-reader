@@ -107,6 +107,7 @@ impl FlowLayout {
 /// Paginated text or image crops from a fixed document, one source page at a time.
 pub(crate) struct TextFlow {
     document_page: usize,
+    #[cfg(test)]
     document_pages: usize,
     style: FlowStyle,
     layout: FlowLayout,
@@ -153,6 +154,7 @@ impl TextFlow {
         let frame = layout.capture(0)?;
         Ok(Self {
             document_page,
+            #[cfg(test)]
             document_pages,
             style,
             layout,
@@ -170,7 +172,8 @@ impl TextFlow {
 
     pub(crate) fn from_start(&self, document: &FixedReading) -> Result<Self> {
         let style = self.style.clone();
-        let layout = style.layout_page(document, 0)?
+        let layout = style
+            .layout_page(document, 0)?
             .ok_or_else(|| format!("Page 1 {}", style.missing_text()))?;
         Self::with_layout(0, document.count(), style, layout)
     }
@@ -249,13 +252,31 @@ impl TextFlow {
     }
 
     pub(crate) fn tick(&mut self, now: Instant, document: &FixedReading) -> Result<bool> {
-        self.step(now, |style, page| style.layout_page(document, page))
+        self.step_with_navigation(
+            now,
+            |style, page| style.layout_page(document, page),
+            |page, direction| document.next_reading_page(page, direction),
+        )
     }
 
+    #[cfg(test)]
     fn step(
         &mut self,
         now: Instant,
+        layout_page: impl FnMut(&FlowStyle, usize) -> Result<Option<FlowLayout>>,
+    ) -> Result<bool> {
+        let count = self.document_pages;
+        self.step_with_navigation(now, layout_page, |page, direction| {
+            page.checked_add_signed(direction)
+                .filter(|&page| page < count)
+        })
+    }
+
+    fn step_with_navigation(
+        &mut self,
+        now: Instant,
         mut layout_page: impl FnMut(&FlowStyle, usize) -> Result<Option<FlowLayout>>,
+        mut adjacent_page: impl FnMut(usize, isize) -> Option<usize>,
     ) -> Result<bool> {
         let due = self.turns.take_due(now);
         if due.is_empty() {
@@ -272,11 +293,7 @@ impl TextFlow {
                 page = next;
                 continue;
             }
-            let Some(adjacent) = self
-                .document_page
-                .checked_add_signed(step)
-                .filter(|next| *next < self.document_pages)
-            else {
+            let Some(adjacent) = adjacent_page(self.document_page, step) else {
                 self.end_attempt = step > 0;
                 boundary = Some(
                     if step > 0 {

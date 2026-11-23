@@ -61,6 +61,7 @@ const XHTML_END: &str = "</body></html>";
 
 #[derive(Debug)]
 pub struct MobiDocument {
+    pub(crate) metadata: crate::publication_metadata::Metadata,
     pub language: Option<parley::Language>,
     pub title: Option<String>,
     pub author: Option<String>,
@@ -137,6 +138,7 @@ struct MobiHeader {
 
 #[derive(Default)]
 pub(crate) struct Labels {
+    pub(crate) metadata: crate::publication_metadata::Metadata,
     pub title: Option<String>,
     pub author: Option<String>,
     pub language: Option<parley::Language>,
@@ -215,6 +217,7 @@ pub(crate) fn decode_legacy(bytes: &[u8]) -> Result<MobiDocument, MobiError> {
 
     let labels = mobi.map(|header| header.labels).unwrap_or_default();
     Ok(MobiDocument {
+        metadata: labels.metadata,
         title: labels.title.or_else(|| read_label(&bytes[..32], encoding)),
         author: labels.author,
         language: labels.language,
@@ -387,10 +390,19 @@ fn exth_labels(bytes: &[u8], encoding: Encoding) -> Labels {
         let value = &bytes[8..length];
         match kind {
             100 if labels.author.is_none() => labels.author = read_label(value, encoding),
+            103 if labels.metadata.description.is_none() && value.len() <= 16 * 1024 => {
+                labels.metadata.description = decode_text(value.to_vec(), encoding).ok();
+            }
+            105 if value.len() <= MAX_METADATA_BYTES && labels.metadata.keywords.len() < 128 => {
+                if let Ok(value) = decode_text(value.to_vec(), encoding) {
+                    labels.metadata.keywords.push(value);
+                }
+            }
             503 if labels.title.is_none() => labels.title = read_label(value, encoding),
             524 if labels.language.is_none()
                 && value.len() <= crate::source::MAX_LANGUAGE_BYTES =>
             {
+                labels.metadata.language = std::str::from_utf8(value).ok().map(str::to_owned);
                 labels.language = std::str::from_utf8(value)
                     .ok()
                     .and_then(|tag| parley::Language::parse(tag.trim()).ok());
@@ -398,9 +410,6 @@ fn exth_labels(bytes: &[u8], encoding: Encoding) -> Labels {
             _ => {}
         }
         bytes = &bytes[length..];
-        if labels.title.is_some() && labels.author.is_some() && labels.language.is_some() {
-            break;
-        }
     }
     labels
 }
@@ -1091,6 +1100,9 @@ mod tests {
             (100, b"A. Reader"),
             (503, b"Harbor Notes"),
             (524, b"vi"),
+            (103, b"<p>A coastal description.</p>"),
+            (105, b"Navigation"),
+            (105, b"Tides"),
         ]));
         let mut record = html.to_vec();
         record.extend([0xc3, 1, 0xfa, 0x82]);
@@ -1098,6 +1110,11 @@ mod tests {
         assert_eq!(marked.title.as_deref(), Some("Harbor Notes"));
         assert_eq!(marked.author.as_deref(), Some("A. Reader"));
         assert_eq!(marked.language, parley::Language::parse("vi").ok());
+        assert_eq!(
+            marked.metadata.description.as_deref(),
+            Some("<p>A coastal description.</p>")
+        );
+        assert_eq!(marked.metadata.keywords, ["Navigation", "Tides"]);
         assert!(
             marked
                 .xhtml

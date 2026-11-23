@@ -1,5 +1,7 @@
 //! Time spent on a book's reading screen, kept only in Reader's local storage.
 
+pub(crate) mod history;
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Read};
@@ -20,6 +22,17 @@ struct SavedStats {
     seconds_read: BTreeMap<u64, u64>,
 }
 
+pub(crate) fn backup_value(bytes: &[u8]) -> io::Result<serde_json::Value> {
+    if bytes.len() as u64 > MAX_STATE_BYTES {
+        return Err(invalid_state());
+    }
+    let saved: SavedStats = serde_json::from_slice(bytes)?;
+    if saved.version != VERSION || saved.seconds_read.len() > MAX_BOOKS {
+        return Err(invalid_state());
+    }
+    serde_json::to_value(saved).map_err(io::Error::other)
+}
+
 #[derive(Clone, Copy)]
 struct ActiveReading {
     book: u64,
@@ -35,6 +48,13 @@ pub(crate) struct ReadingStats {
 }
 
 impl ReadingStats {
+    pub(crate) fn recorded_totals(&self) -> BTreeMap<u64, u64> {
+        self.totals
+            .iter()
+            .map(|(&id, time)| (id, time.as_secs()))
+            .collect()
+    }
+
     pub fn load(path: &Path) -> Self {
         let totals = with_storage(|| {
             let metadata = fs::symlink_metadata(path)?;

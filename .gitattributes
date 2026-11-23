@@ -2,3 +2,5 @@ tests/fixtures/*.pdf binary
 tests/fixtures/*.pgm binary
 vendor/srell/srell.hpp -text whitespace=cr-at-eol
 docs/licenses/SRELL.txt -text whitespace=cr-at-eol,-blank-at-eof
+tests/fixtures/pdf-password/*.pdf binary
+vendor/hayro-syntax/** whitespace=-trailing-space,-blank-at-eof

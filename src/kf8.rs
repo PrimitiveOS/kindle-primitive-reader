@@ -31,6 +31,7 @@ const MAX_XHTML_BYTES: usize = 16 * 1024 * 1024;
 const MAX_XML_NODES: u32 = 240_000;
 
 pub(crate) struct Kf8Document {
+    pub(crate) metadata: crate::publication_metadata::Metadata,
     pub language: Option<parley::Language>,
     pub title: Option<String>,
     pub author: Option<String>,
@@ -242,6 +243,7 @@ fn decode_edition(
     )?;
     let labels = mobi::kf8_labels(bytes, record, header);
     Ok(Kf8Document {
+        metadata: labels.metadata,
         title: labels.title,
         author: labels.author,
         language: labels.language,
@@ -1492,7 +1494,11 @@ pub(crate) mod tests {
             for old in book.previous_mobi_chapters(&book.chapters[ci].href) {
                 let old_source = crate::source::Source::parse(old).unwrap();
                 source.accept_previous_mobi(old).unwrap();
-                for old in old_source.blocks.iter().filter(|b| !b.text.is_empty() || !b.images.is_empty()) {
+                for old in old_source
+                    .blocks
+                    .iter()
+                    .filter(|b| !b.text.is_empty() || !b.images.is_empty())
+                {
                     let key = source
                         .current_key(old.key, old_source.revision)
                         .expect("saved source block");
@@ -1505,7 +1511,13 @@ pub(crate) mod tests {
                         "saved block text differs"
                     );
                     if !old.images.is_empty() {
-                        assert!(source.blocks[now].images.iter().map(|im| (&im.href, im.offset)).eq(old.images.iter().map(|im| (&im.href, im.offset))));
+                        assert!(
+                            source.blocks[now]
+                                .images
+                                .iter()
+                                .map(|im| (&im.href, im.offset))
+                                .eq(old.images.iter().map(|im| (&im.href, im.offset)))
+                        );
                     }
                     keys += 1;
                 }

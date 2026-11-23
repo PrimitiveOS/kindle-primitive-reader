@@ -306,7 +306,7 @@ impl Reader {
                 Screen::Bookmarks
             }),
             Binding::Bookmark => Action::ToggleBookmark,
-            Binding::Skim => Action::Overview,
+            Binding::Skim => Action::Skim,
             Binding::Find => Action::Show(Screen::Find),
             Binding::Dictionary => Action::Show(Screen::DictionaryEntry),
             Binding::Highlights => Action::Show(Screen::Highlights),

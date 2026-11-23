@@ -23,7 +23,17 @@
 Reader is a native Rust book and document reader for PrimitiveOS on Kindle.
 It uses Parley for reflowable books and Hayro for PDF pages. The reading
 workflows and format coverage are being compared with KOReader on the same
-Kindle. [EPUB feasibility results](docs/epub-probe-results.md)
+Kindle. Parity work covers local reading workflows, including explicit,
+contextual Wikipedia and translation actions that preserve the book location.
+Online book acquisition, remote sync or annotation services, Wikipedia
+article-to-EPUB export, a general plug-in runtime or catalogue, and unrelated
+utilities such as Terminal or shell access are outside the goal. Local
+annotation export and reading-data migration remain in scope. Reading-specific
+capabilities that KOReader packages as plug-ins can be implemented natively;
+Reader will not add a general plug-in loader or catalogue. The
+[scope checklist](docs/reading-parity-plan.md#scope-and-completion-checklist)
+defines what counts toward completion.
+[EPUB feasibility results](docs/epub-probe-results.md)
 
 At fit page, Reader can decode large print-color PDF photographs at the resolution needed for the Kindle screen. Zoom selects the resolution again to preserve detail. [PDF image rendering](docs/print-image-decoding.md)
 
@@ -33,16 +43,30 @@ At fit page, Reader can decode large print-color PDF photographs at the resoluti
 | --- | --- | --- | --- |
 | <img src="docs/screenshots/documents.png" width="210" alt="Reader showing folders, file types, sizes, and unsupported files"> | <img src="docs/screenshots/reading.png" width="210" alt="Reader displaying an EPUB with a compact Done control"> | <img src="docs/screenshots/reading-controls.png" width="210" alt="Reader’s compact navigation and document tool bars over an EPUB"> | <img src="docs/screenshots/dictionary.png" width="210" alt="A compact dictionary definition displayed over the reading page"> |
 
-These captures use Reader's Kindle interface in the desktop simulator.
+These captures use Reader's Kindle interface in the desktop simulator. The [current desktop workflow review](docs/simulation-review.md) records the combined tests, updated reading controls and pending Kindle checks.
 [Top navigation](docs/screenshots/navigation.png) · [Bottom page settings](docs/screenshots/page-settings.png) · [Selection popup](docs/screenshots/selection.png)
 
-When you long-press an inflected English word, Reader looks up its base form in each enabled dictionary. If the spelling and word forms have no entry, the popup suggests nearby spellings. You can close the popup while the search runs. Set the library or book preference in Dictionaries. [Dictionary popup and settings](docs/dictionary-word-forms.md)
+When you long-press an inflected English or supported Japanese word, Reader looks up its base form in each enabled dictionary. If the spelling and word forms have no entry, the popup suggests nearby spellings. You can close the popup while the search runs. Set the library or book preference in Dictionaries. [Dictionary popup and settings](docs/dictionary-word-forms.md) · [Japanese and Chinese word selection](docs/cjk-dictionary-selection.md)
+
+Save separate text and page settings for new books under **Settings › Document defaults**. Reset the current book explicitly, or clear a template for future books. Existing books retain their saved settings. [Document defaults](docs/document-defaults.md)
 
 **Text › Spacing › Word expansion** redistributes part of the space on a justified line into the words. [Word expansion](docs/word-expansion.md)
 
+The development candidate offers **Text › Type** presets and a decimal **More** picker for logical sizes 12–255. Existing books retain their saved pixel sizes. [Font controls, screenshots and rendering limits](docs/logical-font-size.md)
+
 At the end of a book, Reader can show actions, mark the book as finished, open the next readable file or return to Library. [End-of-book actions](docs/document-end.md)
 
+Choose when Reader saves your position, bookmarks and notes, or save them immediately from the reading tools. [Save reading data](docs/metadata-save.md)
+
+Browse page bookmarks, highlights and notes across books from **Library › Bookmark browser**. Choose History, collections, selected books, archived records or a folder. Select books by author, series, language or keyword, and inspect available covers and descriptions. Preview a mark, then tap **View in book** to open its passage. [Bookmark browser](docs/bookmark-browser.md)
+
+Open **Tools › Reading statistics** for daily reading history, a month calendar and hourly day timelines. Older screen-time totals remain explicitly undated. [Reading statistics and limits](docs/reading-statistics.md)
+
+Publisher numeric references for quotation marks and dashes follow CREngine's compatibility table while preserving older saved positions. [Numeric character references](docs/numeric-character-references.md)
+
 EPUB chapters can start a section on a fresh page and keep a heading with its opening paragraph when the publisher requests it. [Publisher page breaks](docs/publisher-page-breaks.md)
+
+Use **Navigation › Custom hidden flows** to skip long notes or other source ranges while keeping links and explicit jumps available. Boundaries follow source locations when typography changes. [Controls, screenshots and comparison](docs/custom-hidden-flows.md)
 
 In fixed-page books, Book map shows where you are and where you saved bookmarks and highlights. Open a group to see individual pages. [Book map on the Oasis display](docs/screenshots/fixed-book-map.png)
 
@@ -52,7 +76,21 @@ Tap a PDF web link to inspect its address over the current page. **Copy** makes 
 
 **Controls › Reading status bar › Overlap status bar** lets books, PDFs and comics fill the screen. Tap **Status** to reveal progress over the same page. [Status bar settings and screenshots](docs/status-bar-overlap.md)
 
+The reading footer shows `Chapter x of y - Page m of n`, with the horizontal progress bar below and Exit at the right. Choose left, center or right alignment, adjust text size, or turn on bold text. [Footer typography and progress track](docs/footer-font-size.md)
+
 Publisher styling can keep a paragraph’s first or last lines together at a page break. [Paragraph settings and two-page comparison](docs/paragraph-ends.md)
+
+Use **Settings › Style tweaks** for live all-books defaults, per-book overrides and supported custom CSS. Review imported or edited CSS before applying it at the same reading position. [User styles, precedence and limits](docs/style-tweaks.md)
+
+Use **Settings › Highlight style** to set how new passages appear. Tap a saved highlight and choose **Style** under its actions to change that passage. [Four highlight styles on a reading page](docs/highlight-drawing-styles.md) · [Named colors and margin note markers](docs/highlight-colors-and-note-markers.md)
+
+Choose whether the selected-text actions appear at the top, center, bottom or beside the passage. [Selection dialog positions](docs/selection-dialog.md)
+
+In **Settings › Long-press on text**, choose what a held word does. By default, holding a single word opens the local dictionary; turn that option off to use another default such as highlight, note, translation, Wikipedia or full-text search. [Long-press actions and current parity](docs/long-press-behavior.md)
+
+Set **Highlight style and color prompt** to choose an appearance for each new mark. It stays off by default; Style, Color, and Style and color open a small chooser over the page. [Style chooser](docs/screenshots/highlight-style-prompt.png) · [Color chooser](docs/screenshots/highlight-color-prompt.png)
+
+Use the book's color for temporary selections, or confirm **Apply to all highlights** to restyle its saved passages together. Filter the bookmark browser by color, and choose several colors when exporting highlights. [Selection and highlight workflows](docs/highlight-workflows.md)
 
 Tap a saved passage to read its note. When marks overlap, Reader shows the matching passages so you can choose one. In **Find**, the arrows start at your current passage. [Overlapping highlights](docs/screenshots/overlapping-highlights.png) · [Note on the page](docs/screenshots/tapped-note.png) · [Find from this passage](docs/screenshots/nearby-find.png)
 
@@ -61,6 +99,10 @@ Read with publisher fonts on supported Kindle editions, or find the previous or 
 The upper **Tools** menu includes **Read timer** for a countdown or a local clock alarm. You can repeat an interval or dismiss the message and return to the same passage. [Read timer controls](docs/read-timer.md)
 
 The reading footer can estimate how long the current chapter or book will take. Superscripts and subscripts follow the publisher's text, keeping footnotes and formulas legible. [Reading time](docs/reading-time-estimates.md) · [Sample reading page](docs/screenshots/inline-scripts.png)
+
+Reader keeps the reading library local. Add books through Documents and Files. The current source has no online book acquisition or remote progress-sync implementation; local backup, restore, and reading-data migration remain available.
+
+Back up book records together with local reading controls, profiles, vocabulary and daily history. Restore previews each saved component; existing local settings stay skipped until you choose replacement. [Backup scope, controls and recovery](docs/reading-data-backups.md)
 
 ## Reading on Kindle
 
@@ -79,12 +121,19 @@ Install Reader from PrimitiveOS Store or follow the manual install guide.
   Reading controls can set this gesture to open both bars. Start at the
   left, center, or right to open Navigation, the last-used tab, or Library. Navigation has
   contents, bookmarks, location history, a book map, page previews, and
-  automatic page turns. Search has full-text and bookmark search, recent
-  queries, a typed dictionary lookup, and saved vocabulary.
+  automatic page turns with saved preset or custom intervals and an adjustable
+  signed scroll distance. Zoomed fixed-page AutoTurn also has configurable
+  horizontal and vertical overlap and reading direction. Manual page buttons
+  and page-turn tap zones use those same saved settings to pan through enlarged
+  PDF and scan pages before advancing. [Manual fixed-page pan](docs/screenshots/fixed-manual-pan.png).
+  Search has full-text and bookmark search, recent
+  queries, a typed dictionary lookup, and [vocabulary review](docs/vocabulary-review.md)
+  with reading context, due dates and per-word undo.
 - Swipe up from the bottom edge to reopen the last formatting panel for the
   current format. Text controls include font size, line and word spacing,
   [CJK character width](docs/cjk-width.md),
-  [independent page margins](docs/reflow-page-margins.md), facing pages, weight, screen settings, and font profiles. Fixed-page
+  [independent page margins](docs/reflow-page-margins.md), facing pages,
+  [numeric contrast and weight](docs/font-contrast-and-weight.md), screen settings, and font profiles. Fixed-page
   controls include fit, zoom, rotation, scroll mode, and available scan tools.
   Make adjustments with the page visible. Tap the upper center to show both
   bars. Tap the page to dismiss them. **Exit** returns to Launcher.
@@ -95,12 +144,17 @@ Install Reader from PrimitiveOS Store or follow the manual install guide.
   ten pages in paged reading. Default uses the normal refresh behavior.
 - Tap Pages on the reading bar to browse thumbnails across EPUB chapters or
   a fixed-page document. Open a preview and return with Previous location.
-- Open Contents and choose Generated outline to browse EPUB headings or chapter
-  starts when the publisher's contents are missing or incomplete.
+- Open **Contents** from either reading bar. For EPUBs that omit their main table of
+  contents, Reader can show the publisher's landmarks or printed page numbers.
+  Choose **Generated outline** to browse book headings or chapter starts.
+  [Landmark navigation and screenshot](docs/epub-landmarks.md)
 - Long-press a framed panel in a single-page comic view to inspect it at a
   larger size. Done returns to the same page and zoom.
 - At the end of a comic, Next comic opens the following archive in the same
   folder in natural filename order.
+- Open a protected PDF with its document or owner password. Reader remembers
+  your reading position and asks for the password again when you reopen the book.
+  [Supported PDF encryption and password prompt](docs/protected-pdf.md)
 - In a PDF or DjVu, search forward or backward from the visible page. **From start** and **From end** jump to the first earlier or last later match. Reader highlights each matching word and can return to the original viewport. **Find all** lists up to 5,000 occurrences, with page buttons and first/last shortcuts. [Fixed-page search](docs/fixed-page-search.md)
 - In **Find all**, matching words appear in bold. Hold a result for its page and chapter path, then dismiss it with a tap or page button to return to the same row. [Result list and context preview](docs/search-result-context.md)
 - Open **Search › Find bookmarks**, or **Bookmarks › Find bookmarks** on the lower bar, to search page marks, highlighted passages and notes. Select the categories you want and switch on **Case sensitive** for an exact-case match. A result opens its passage in an EPUB or PDF.
@@ -184,6 +238,9 @@ device. [Reading parity and device results](docs/reading-parity-plan.md)
 
 In Library, open Reading data to export or preview and restore a local backup
 of progress, per-book settings, bookmarks and annotations.
+Choose **Reading data › Export highlights** to collect quotations and notes from
+History, selected books or collections. Export KOReader JSON, text, Markdown or
+HTML with source locations and saved creation times. [Library exports](docs/library-highlights-export.md)
 From Highlights, export quotations and notes as text, Markdown or HTML. Reader
 can import visible embedded highlights from supported unencrypted PDFs up to
 16 MiB and save a separate annotated PDF with the original annotations intact.
@@ -227,7 +284,7 @@ for a local ARMHF build.
 | Reading task | How it works |
 | --- | --- |
 | Preview an EPUB footnote | In the top Navigation panel, turn on **Footnote previews** and tap a note reference. Hold a word for its definition, close the note to keep reading, or choose **Open in book** and use **Previous location** to return. [Footnote preview](docs/screenshots/footnote-preview.png) |
-| Track progress | Tap the footer for progress or time left in the chapter or book. Hold it to skim and return to your place. [Reading-time estimates](docs/reading-time-estimates.md) · [Footer screenshot](docs/screenshots/reading-footer.png) |
+| Track progress | Tap the footer for progress or time left in the chapter or book. Hold it to preview a position, return to your start, or choose where to continue. [Skim workflow and screenshot](docs/skim-navigation.md) · [Reading-time estimates](docs/reading-time-estimates.md) · [Footer screenshot](docs/screenshots/reading-footer.png) |
 | Customize touch | Assign an action to a corner tap, hold or edge swipe in Reading gestures. [Gesture grid](docs/screenshots/reading-gestures.png) |
 | Edit the outline | Add a named entry at a reading location and jump back from Contents. [Custom contents](docs/screenshots/custom-contents.png) |
 | Read a scan | Straighten a tilted PDF or DjVu page. Run offline OCR when the embedded text is missing or inaccurate. [Scan controls](docs/scan-controls.md) |

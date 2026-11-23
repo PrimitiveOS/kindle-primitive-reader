@@ -2,10 +2,10 @@ use super::*;
 use crate::app::tests::Fixture;
 use primitive_app::App;
 
-fn center(rect: Rect) -> Input {
+pub(super) fn center(rect: Rect) -> Input {
     Input::Tap((rect.x + rect.w / 2) as f32, (rect.y + rect.h / 2) as f32)
 }
-fn fixture(variable: Option<&str>, pdf: bool) -> (Fixture, Reader, PathBuf, bool) {
+pub(super) fn fixture(variable: Option<&str>, pdf: bool) -> (Fixture, Reader, PathBuf, bool) {
     let fixture = Fixture::new();
     let external = variable.and_then(std::env::var_os).map(PathBuf::from);
     let path = external.clone().unwrap_or_else(|| {
@@ -205,6 +205,9 @@ fn tap_saved_pdf_highlights_matches_zoomed_page_geometry_and_preserves_the_viewp
     for note in [Some("Sounding at the jetty".into()), None] {
         state
             .add_pdf_highlight(PdfHighlight {
+                color: Default::default(),
+                created_at: None,
+                style: Default::default(),
                 page,
                 bounds: vec![bounds],
                 continuation: vec![],
@@ -266,10 +269,17 @@ fn tap_saved_pdf_highlights_matches_zoomed_page_geometry_and_preserves_the_viewp
     } else {
         left.1
     };
+    let before_page = app.fixed.as_ref().unwrap().reading.page();
+    let before_view = app.fixed.as_ref().unwrap().reading.preferences();
     app.input(Input::Tap(left.0, y));
     app.tick(Instant::now() + Duration::from_secs(2));
     assert!(app.saved_popup.is_none());
-    assert_eq!(app.fixed.as_ref().unwrap().reading.page(), page - 1);
+    let reading = &app.fixed.as_ref().unwrap().reading;
+    assert_eq!(reading.page(), before_page);
+    let after_view = reading.preferences();
+    assert!(
+        after_view.offset_x != before_view.offset_x || after_view.offset_y != before_view.offset_y
+    );
 }
 
 #[test]
@@ -339,6 +349,9 @@ fn multiple_boxes_hit_once_and_a_note_can_be_removed_without_removing_the_passag
     for index in 0..6 {
         state
             .add_pdf_highlight(PdfHighlight {
+                color: Default::default(),
+                created_at: None,
+                style: Default::default(),
                 page: 1,
                 bounds: vec![word.bounds, word.bounds],
                 text: layer.text[word.bytes.clone()].into(),
@@ -425,6 +438,9 @@ fn an_annotated_pdf_link_in_a_custom_gesture_corner_still_follows_the_destinatio
     app.library
         .remember(&fixed.entry, fixed.id, &fixed.entry.title)
         .add_pdf_highlight(PdfHighlight {
+            color: Default::default(),
+            created_at: None,
+            style: Default::default(),
             page: 0,
             bounds: vec![word.bounds],
             text: text.text[word.bytes.clone()].into(),

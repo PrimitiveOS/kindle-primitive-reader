@@ -74,6 +74,7 @@ fn reads_and_selects_below_the_old_footer_without_repaginating_when_status_is_re
         .ok()
         .map_or(0, |v| v.parse::<usize>().unwrap() - 1);
     let mut app = Reader::open(path.parent().unwrap(), &fixture.state, fonts.clone()).unwrap();
+    app.controls.dictionary_on_single_word = Some(false);
     app.open_path(&path).unwrap();
     let s = app.active.as_ref().unwrap().reading.config.settings;
     // Make the newly exposed text band reachable even on a short line.
@@ -345,6 +346,7 @@ fn fixed_pages_fit_the_full_height_and_reveal_status_without_rescaling() {
     });
     let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
     let mut app = Reader::open(path.parent().unwrap(), &fixture.state, fonts.clone()).unwrap();
+    app.controls.dictionary_on_single_word = Some(false);
     app.open_path(&path).unwrap();
     let page = std::env::var("READER_FIXED_OVERLAP_PAGE")
         .ok()
@@ -473,6 +475,9 @@ fn exposed_saved_marks_open_while_visible_footer_buttons_stay_in_front() {
     app.library
         .remember(&f.entry, f.id, &f.entry.title)
         .add_pdf_highlight(crate::library::PdfHighlight {
+            color: Default::default(),
+            created_at: None,
+            style: Default::default(),
             page: 0,
             bounds: vec![crate::fixed_text::PdfTextRect {
                 x0: 0.01,

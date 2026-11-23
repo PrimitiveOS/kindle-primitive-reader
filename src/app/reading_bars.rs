@@ -99,6 +99,7 @@ impl Button {
                 }
             }
             Visual::Shortcut(icon) => {
+                let size = self.shortcut_label_size(canvas, size);
                 let ink = if pressed { 255 } else { 0 };
                 if pressed {
                     canvas.panel(rect.inset(4), 16, 2, 0);
@@ -128,6 +129,24 @@ impl Button {
                 self.draw_selected(canvas, ink);
             }
         }
+    }
+
+    fn shortcut_label_size(&self, canvas: &mut Canvas, preferred: i32) -> i32 {
+        let bounds = Rect::new(0, 0, self.rect.w - 8, self.rect.h);
+        [preferred, 28, 26, 24]
+            .into_iter()
+            .filter(|size| *size <= preferred)
+            .find(|size| {
+                canvas
+                    .text_pages(
+                        bounds,
+                        &self.label,
+                        TextStyle::new(*size).bold().break_long_words(),
+                    )
+                    .len()
+                    == 1
+            })
+            .unwrap_or(preferred.min(24))
     }
 
     fn draw_selected(&self, canvas: &mut Canvas, ink: u8) {
@@ -389,13 +408,13 @@ impl Reader {
             let supports_text = fixed.is_none_or(|reading| reading.supports_text());
             let tabs = [
                 Some((
-                        "Contents",
-                        Target::Invoke(Action::Show(if fixed_book {
-                            Screen::FixedContents
-                        } else {
-                            Screen::Contents
-                        })),
-                    )),
+                    "Contents",
+                    Target::Invoke(Action::Show(if fixed_book {
+                        Screen::FixedContents
+                    } else {
+                        Screen::Contents
+                    })),
+                )),
                 Some((
                     "Bookmarks",
                     Target::Invoke(Action::Show(if fixed_book {
@@ -462,9 +481,29 @@ impl Reader {
         bars
     }
 
+    #[cfg(test)]
+    pub(super) fn reading_button_in_row(&self, row_label: &str, button_label: &str) -> Rect {
+        let bars = self.reading_bars();
+        let row = bars
+            .row_labels
+            .iter()
+            .find(|(_, label)| label == row_label)
+            .unwrap_or_else(|| panic!("No reading settings row {row_label}"))
+            .0;
+        bars.buttons
+            .iter()
+            .find(|button| {
+                button.label == button_label
+                    && (row.y..row.y + row.h).contains(&(button.rect.y + button.rect.h / 2))
+            })
+            .unwrap_or_else(|| panic!("No {button_label} choice in {row_label}"))
+            .rect
+    }
+
     fn page_actions(&self) -> Vec<Item> {
         let mut items = vec![
             Item::new("Thumbnails", Action::Overview),
+            Item::new("Skim", Action::Skim),
             Item::new("Add bookmark", Action::AddBookmark),
         ];
         if self
@@ -523,12 +562,41 @@ impl Reader {
         } else {
             PAGE_HEIGHT
         };
-        let visible = if matches!(self.screen, Screen::BookTools | Screen::FixedTools) {
+        let mut visible = if matches!(self.screen, Screen::BookTools | Screen::FixedTools) {
             self.reading_bars().visible(height)
         } else {
             0..height
         };
-        PagePaint { visible, inverted }
+        if self.fixed.is_none()
+            && self
+                .active
+                .as_ref()
+                .is_some_and(|book| !book.reading.is_continuous())
+            && self.controls.top_header.enabled
+            && matches!(
+                self.screen,
+                Screen::Book
+                    | Screen::BookTools
+                    | Screen::Footnote
+                    | Screen::OnlineLookup
+                    | Screen::Skim
+            )
+        {
+            visible.start = visible
+                .start
+                .max(crate::reading_controls::TopHeader::HEIGHT);
+        }
+        PagePaint {
+            visible,
+            inverted,
+            highlight_appearance: self.controls.highlight_appearance,
+            note_marker: self.controls.note_marker,
+            selection_color: (self.controls.selection_uses_highlight_color
+                && self.effective_highlight_style()
+                    != crate::highlight_style::HighlightStyle::Invert)
+                .then(|| self.effective_highlight_color())
+                .filter(|color| !color.is_default()),
+        }
     }
 
     pub(super) fn tools_screen(&self) -> Screen {
@@ -591,7 +659,7 @@ impl Reader {
         let before = state.menus;
         update(&mut state.menus);
         if state.menus != before {
-            self.mark_dirty();
+            self.mark_book_changed();
         }
     }
 
@@ -682,10 +750,14 @@ impl Reader {
     pub(super) fn reading_tools_input(&mut self, input: Input) -> Change {
         let reading_screen = self.surface_screen();
         match input {
-            Input::LongTap(x, y) if matches!(
-                self.reading_bars().button_at(x, y),
-                Some(Target::Invoke(Action::ReadAlarm))
-            ) => self.read_alarm.stop(),
+            Input::LongTap(x, y)
+                if matches!(
+                    self.reading_bars().button_at(x, y),
+                    Some(Target::Invoke(Action::ReadAlarm))
+                ) =>
+            {
+                self.read_alarm.stop()
+            }
             Input::Tap(x, y) => {
                 let mut bars = self.reading_bars();
                 match bars.button_at(x, y) {
@@ -780,6 +852,79 @@ mod tests {
     }
 
     #[test]
+    fn compact_and_large_shortcuts_keep_complete_labels_and_the_reading_anchor() {
+        let fixture = crate::app::tests::Fixture::new();
+        let pdf = fixture.root.join("Harbor chart.pdf");
+        fs::write(&pdf, crate::fixed::tests::document()).unwrap();
+        let fonts = std::env::var_os("READER_TOOLBAR_REVIEW_FONTS")
+            .map(|paths| std::env::split_paths(&paths).collect())
+            .unwrap_or_else(|| vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")]);
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        let font_paths: Vec<_> = fonts.iter().map(|p| p.display().to_string()).collect();
+        let mut canvas = Canvas::new(WIDTH, HEIGHT, &font_paths).unwrap();
+        let mut layouts = Vec::new();
+        for (format, file) in [("epub", &fixture.book), ("pdf", &pdf)] {
+            app.open_path(file).unwrap();
+            let origin = app.current_history_location();
+            for large in [false, true] {
+                app.controls.large_toolbar = large;
+                app.open_reading_edge(false, 500.0);
+                assert!(app.reading_bottom && !app.reading_top);
+                let bars = app.reading_bars();
+                let buttons: Vec<_> = bars
+                    .buttons
+                    .iter()
+                    .filter(|button| button.rect.y >= HEIGHT as i32 - 112)
+                    .map(|button| {
+                        serde_json::json!({
+                            "label":button.label,
+                            "x":button.rect.x,
+                            "y":button.rect.y,
+                            "w":button.rect.w,
+                            "h":button.rect.h,
+                        })
+                    })
+                    .collect();
+                assert!(buttons.len() >= 7);
+                if let Some(directory) = std::env::var_os("READER_TOOLBAR_REVIEW") {
+                    for dark in [false, true] {
+                        let file = format!(
+                            "{format}-{}{}.png",
+                            if large { "large" } else { "compact" },
+                            if dark { "-dark" } else { "" }
+                        );
+                        let path = PathBuf::from(&directory).join(&file);
+                        let image = primitive_app::frame(&app, &mut canvas, dark);
+                        primitive_app::write_png(&path, WIDTH, HEIGHT, &image).unwrap();
+                        layouts
+                            .push(serde_json::json!({"file":file,"dark":dark,"buttons":buttons}));
+                    }
+                }
+                tap(&mut app, "Bookmarks");
+                assert!(matches!(
+                    app.screen,
+                    Screen::Bookmarks | Screen::FixedBookmarks
+                ));
+                assert_eq!(app.current_history_location(), origin);
+                let back = primitive_ui::back_button(WIDTH as i32);
+                app.input(Input::Tap((back.x + 30) as f32, (back.y + 30) as f32));
+                app.show(if app.fixed.is_some() {
+                    Screen::Fixed
+                } else {
+                    Screen::Book
+                });
+            }
+        }
+        if let Some(directory) = std::env::var_os("READER_TOOLBAR_REVIEW") {
+            fs::write(
+                PathBuf::from(directory).join("controls.json"),
+                serde_json::to_vec_pretty(&layouts).unwrap(),
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
     fn live_text_spacing_keeps_its_panel_open_and_reopens_with_saved_preferences() {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let root = Scratch(std::env::temp_dir().join(format!(
@@ -809,7 +954,7 @@ mod tests {
         assert!(!app.reading_top && app.reading_bottom);
         assert_eq!(tap(&mut app, "Spacing"), Change::Partial);
         assert_eq!(app.reading_panel, Some(BarPanel::TextSpacing));
-        assert_eq!(tap(&mut app, "Wide"), Change::Partial);
+        assert_eq!(tap(&mut app, "Small"), Change::Partial);
         assert_eq!(app.screen, Screen::BookTools);
         assert_eq!(app.reading_panel, Some(BarPanel::TextSpacing));
         assert!(!app.reading_top && app.reading_bottom);
@@ -820,23 +965,29 @@ mod tests {
                 .reading
                 .config
                 .settings
-                .word_spacing,
-            4.0
+                .percent_word_spacing,
+            Some(crate::WordSpacePercent::SMALL)
         );
 
         assert_eq!(tap(&mut app, "Some"), Change::Partial);
         assert_eq!(tap(&mut app, "+1%"), Change::Partial);
         assert_eq!(app.reading_panel, Some(BarPanel::TextSpacing));
-        crate::app::tests::capture_test_screen(
-            &app, &fonts, "READER_WORD_EXPANSION_SCREEN", false,
-        );
+        crate::app::tests::capture_test_screen(&app, &fonts, "READER_WORD_EXPANSION_SCREEN", false);
         app.open_reading_edge(false, 500.0);
         assert_eq!(app.reading_panel, Some(BarPanel::TextSpacing));
         app.save().unwrap();
         let mut restored = Reader::open(&documents, &state, fonts).unwrap();
         restored.open_path(&book).unwrap();
         assert_eq!(
-            restored.active.as_ref().unwrap().reading.config.settings.word_expansion, 6
+            restored
+                .active
+                .as_ref()
+                .unwrap()
+                .reading
+                .config
+                .settings
+                .word_expansion,
+            6
         );
         assert_eq!(
             restored
@@ -846,8 +997,8 @@ mod tests {
                 .reading
                 .config
                 .settings
-                .word_spacing,
-            4.0
+                .percent_word_spacing,
+            Some(crate::WordSpacePercent::SMALL)
         );
     }
 }
@@ -859,3 +1010,11 @@ mod cjk_width_tests;
 #[cfg(test)]
 #[path = "reflow_margin_tests.rs"]
 mod margin_tests;
+
+#[cfg(test)]
+#[path = "render_dpi_tests.rs"]
+mod render_dpi_tests;
+
+#[cfg(test)]
+#[path = "kerning_modes_tests.rs"]
+mod kerning_modes_tests;

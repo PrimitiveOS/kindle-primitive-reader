@@ -84,6 +84,8 @@ struct LineState {
     /// These are the line's justification opportunities, before subtracting those that end up in
     /// the line's hanging whitespace.
     num_word_separators: u32,
+    /// Sum of eligible space shrink on the current natural-width line.
+    shrink_capacity: f32,
 }
 
 impl LineState {
@@ -93,6 +95,7 @@ impl LineState {
         self.soft_hyphen = None;
         self.box_metrics.reset();
         self.num_word_separators = 0;
+        self.shrink_capacity = 0.0;
     }
 }
 
@@ -677,6 +680,7 @@ impl BreakerState {
         self.cluster_idx = atom.shaped_clusters_range().end;
         self.line.x = next_x;
         self.line.num_word_separators += u32::from(is_word_separator);
+        self.line.shrink_capacity += data.space_shrink.get(atom.shaped_clusters_range().start as usize).copied().unwrap_or(0.0);
         self.line.box_metrics.add_text(
             self.item_idx,
             self.run_idx,
@@ -1123,14 +1127,14 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                     // Compute the x position of the content being currently processed
                     let next_x = self.state.line.x + width_contribution;
 
-                    let box_will_be_appended = next_x <= max_advance || self.state.line.x == 0.0;
+                    let box_will_be_appended = next_x - self.state.line.shrink_capacity <= max_advance || self.state.line.x == 0.0;
                     if height_contribution > self.state.line_max_height && box_will_be_appended {
                         return self.max_height_break_data(height_contribution);
                     }
 
                     // If the box fits on the current line (or we are at the start of the current line)
                     // then simply move on to the next item
-                    if next_x <= max_advance || self.state.line.text_wrap_mode != TextWrapMode::Wrap
+                    if next_x - self.state.line.shrink_capacity <= max_advance || self.state.line.text_wrap_mode != TextWrapMode::Wrap
                     {
                         self.append_layout_inline_box(item.index, next_x);
 
@@ -1212,7 +1216,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                             if self.state.line.x != 0.0 {
                                 match soft_hyphen {
                                     Some((index, Some(glyph)))
-                                        if self.state.line.x + glyph.advance <= max_advance =>
+                                        if self.state.line.x + glyph.advance - self.state.line.shrink_capacity <= max_advance =>
                                     {
                                         self.state.mark_line_break_opportunity(Some((
                                             index,
@@ -1239,11 +1243,13 @@ impl<'a, B: Brush> BreakLines<'a, B> {
 
                         // Compute the x position of the content being currently processed
                         let next_x = self.state.line.x + advance;
+                        let shrink_capacity = self.state.line.shrink_capacity
+                            + self.layout.data.space_shrink.get(atom.shaped_clusters_range().start as usize).copied().unwrap_or(0.0);
 
                         // If the content fits (the x position does NOT exceed max_advance)
                         //
                         // We simply append the atom to the current line
-                        if next_x <= max_advance {
+                        if next_x - shrink_capacity <= max_advance {
                             if max_height_exceeded {
                                 return self.max_height_break_data(line_height);
                             }
@@ -1271,7 +1277,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                 spacing,
                                 item.bidi_level.is_rtl(),
                             );
-                            if all_hang || next_x - hanging <= max_advance {
+                            if all_hang || next_x - hanging - shrink_capacity <= max_advance {
                                 if max_height_exceeded {
                                     return self.max_height_break_data(line_height);
                                 }
@@ -1755,12 +1761,15 @@ fn commit_line<B: Brush>(
     // The line's source text range, as the union of the ranges of the text runs committed to it.
     let mut text_start = usize::MAX;
     let mut text_end = 0;
+    let mut inline_caret = None::<usize>;
     // Mark line as needing bidi re-ordering if it contains any runs with non-zero bidi level
     // (zero is the default level, so this is equivalent to marking lines that have multiple levels)
     let mut needs_reorder = false;
     for (i, item) in items_to_commit.iter().enumerate() {
         match item.kind {
             LayoutItemKind::InlineBox => {
+                let caret = layout.data.inline_boxes[item.index].inline_box.index;
+                inline_caret = Some(inline_caret.map_or(caret, |previous| previous.min(caret)));
                 lines.line_items.push(LineItemData {
                     kind: LayoutItemKind::InlineBox,
                     index: item.index,
@@ -1853,12 +1862,36 @@ fn commit_line<B: Brush>(
     // hanging whitespace is not stretched by justification.
     let num_justification_opportunities = state.num_word_separators - hanging_opportunities;
 
+    // Spend capacity only when the completed line actually overflows. Hanging
+    // suffixes are excluded: compressing a gap outside the line cannot fit a word.
+    let mut capacity = 0.0;
+    if !layout.data.space_shrink.is_empty() {
+        for item in &lines.line_items[start_item_idx..end_item_idx] {
+            if item.kind != LayoutItemKind::TextRun { continue; }
+            let slice = layout.data.shaped_text.run_slice(item.index as u32);
+            for atom in slice.atoms_from(item.shaped_cluster_range.start) {
+                if atom.shaped_clusters_range().end > item.shaped_cluster_range.end
+                    || atom.shaped_clusters_range().end > justification_end_cluster { break; }
+                capacity += layout.data.space_shrink.get(atom.shaped_clusters_range().start as usize).copied().unwrap_or(0.0);
+            }
+        }
+    }
+    let shrink = (state.x - hanging_advance - max_advance).max(0.0).min(capacity);
+    let space_shrink_fraction = if capacity > 0.0 { shrink / capacity } else { 0.0 };
+
     // Reorder the items within the line (if required). Reordering is required if the line contains
     // a mix of bidi levels (a mix of LTR and RTL text)
     if needs_reorder && end_item_idx - start_item_idx > 1 {
         reorder_line_items(&mut lines.line_items[start_item_idx..end_item_idx]);
     }
 
+    // A committed media-only line has real items but no text run to update
+    // the union above. Preserve its input caret instead of leaking MAX..0.
+    // Text-run ranges retain their strict shaped-cluster bounds unchanged.
+    if !committed_text_run && let Some(caret) = inline_caret {
+        text_start = caret;
+        text_end = caret;
+    }
     lines.lines.push(LineData {
         item_range: start_item_idx..end_item_idx,
         text_range: text_start..text_end,
@@ -1867,13 +1900,14 @@ fn commit_line<B: Brush>(
         soft_hyphen: state.soft_hyphen,
         num_justification_opportunities,
         expanded_gaps: 0..0,
+        space_shrink_fraction,
         justification: Justification {
             justification_end_cluster,
             ..Justification::NONE
         },
         metrics: LineMetrics {
             indent: line_indent,
-            advance: state.x,
+            advance: state.x - shrink,
             hanging_advance,
             ..Default::default()
         },

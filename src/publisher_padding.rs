@@ -12,6 +12,7 @@ pub(crate) struct BoxArea {
     // The background of a paragraph also paints its own padding.
     pub outer_x: u32,
     pub outer_width: u32,
+    border: [u32; 2],
     pub cell: Option<Cell>,
 }
 
@@ -22,6 +23,7 @@ impl BoxArea {
             width,
             outer_x: x,
             outer_width: width,
+            border: [0, 0],
             cell,
         }
     }
@@ -34,17 +36,30 @@ impl BoxArea {
         style: &Style,
         font: f32,
     ) -> (u32, u32) {
+        self.paragraph_bounds_for_text(block.direction, &block.text, style, font)
+    }
+
+    /// The auto direction must use the same text that is shaped. Removed inline
+    /// content must not choose the side from which an outdent borrows padding.
+    pub(crate) fn paragraph_bounds_for_text(
+        self,
+        direction: parley::BaseDirection,
+        text: &str,
+        style: &Style,
+        font: f32,
+    ) -> (u32, u32) {
         let indent = style.text_indent.box_pixels(self.outer_width, font);
         if indent >= 0.0 || self.width == self.outer_width {
             return (self.x, self.width);
         }
-        let rtl = match block.direction {
+        let rtl = match direction {
             parley::BaseDirection::Ltr => false,
             parley::BaseDirection::Rtl => true,
-            parley::BaseDirection::Auto => first_strong_rtl(&block.text),
+            parley::BaseDirection::Auto => first_strong_rtl(text),
         };
-        let before = self.x - self.outer_x;
-        let after = self.outer_width - self.width - before;
+        let inset = self.x - self.outer_x;
+        let before = inset.saturating_sub(self.border[0]);
+        let after = (self.outer_width - self.width - inset).saturating_sub(self.border[1]);
         let outdent = ((-indent).round() as u32).min(if rtl { after } else { before });
         (
             if rtl { self.x } else { self.x - outdent },
@@ -52,6 +67,13 @@ impl BoxArea {
         )
     }
 
+    fn add_border(&mut self, strokes: [crate::table_borders::Stroke; 4]) {
+        let left = strokes[3].width.min(self.width.saturating_sub(1));
+        let right = strokes[1].width.min(self.width - left - 1);
+        self.x += left;
+        self.width -= left + right;
+        self.border = [left, right];
+    }
     fn pad(&mut self, sides: &[CssLength; 2], font: f32) {
         let left = sides[0].box_pixels(self.width, font);
         let right = sides[1].box_pixels(self.width, font);
@@ -98,16 +120,46 @@ pub(crate) fn layout(
     styles: &[Style],
     width: u32,
     font: f32,
+    borders: Option<&crate::table_borders::Borders>,
     measure: impl FnMut(&crate::source::Block) -> (u32, u32),
 ) -> Option<Vec<BoxArea>> {
-    if !styles.iter().zip(&source.elements).any(|(style, element)| {
-        (element.tag == "table" && style.border_collapse)
-            || (matches!(element.tag.as_str(), "th" | "td") && style.image_width.is_some())
-            || style
-                .padding
-                .iter()
-                .any(|edge| edge.pixels(width, font) > 0.0)
-    }) {
+    layout_with_flow(
+        source,
+        styles,
+        width,
+        font,
+        borders,
+        &crate::table_layout::TableFlow::identity(source),
+        measure,
+    )
+}
+
+pub(crate) fn layout_with_flow(
+    source: &Source,
+    styles: &[Style],
+    width: u32,
+    font: f32,
+    borders: Option<&crate::table_borders::Borders>,
+    flow: &crate::table_layout::TableFlow<'_>,
+    measure: impl FnMut(&crate::source::Block) -> (u32, u32),
+) -> Option<Vec<BoxArea>> {
+    if flow.is_identity()
+        && borders.is_none()
+        && !styles.iter().zip(&source.elements).any(|(style, element)| {
+            !style.flow.suppressed
+                && ((element.tag == "table" && style.border_collapse)
+                    || (matches!(element.tag.as_str(), "th" | "td") && style.image_width.is_some())
+                    || (style.background.is_some()
+                        && style
+                            .vertical_padding
+                            .iter()
+                            .any(|edge| edge.pixels(width, font) > 0.))
+                    || style
+                        .padding
+                        .iter()
+                        .any(|edge| edge.pixels(width, font) > 0.0))
+        })
+    {
         return None;
     }
     // The source attaches its row/column metadata to text blocks. Identify
@@ -128,33 +180,45 @@ pub(crate) fn layout(
         });
     }
     let mut cells = vec![None; owners.len()];
-    for block in &source.blocks {
-        if let (Some(owner), Some(cell)) = (owners[block.element], block.table_cell) {
-            cells[owner] = Some(cell);
-        }
+    for &(element, cell) in flow.cells() {
+        cells[element] = Some(cell);
     }
     let mut widths = crate::table_widths::TableWidths::collect(
-        source, styles, &tables, &owners, &cells, font, width, measure,
+        source, styles, &tables, &owners, &cells, flow, font, width, borders, measure,
     );
     let page = BoxArea::new(0, width, None);
     let mut boxes: Vec<BoxArea> = Vec::with_capacity(styles.len());
     for (idx, element) in source.elements.iter().enumerate() {
         let table = tables[idx];
         let parent = element.parent.map_or(page, |i| boxes[i]);
+        if styles[idx].flow.suppressed {
+            boxes.push(BoxArea::new(parent.x, parent.width, None));
+            continue;
+        }
         let mut area = BoxArea::new(parent.x, parent.width, parent.cell);
         if let Some(cell) = cells[idx]
             && area.width as f32 / f32::from(cell.columns) >= 2.5 * font
         {
-            let inset = if table.is_some_and(|id| styles[id].border_collapse) {
+            let decorated = borders.filter(|b| b.cells.contains_key(&cell));
+            let (offset, available) =
+                decorated.map_or((0, area.width), |b| b.horizontal(cell, area.width));
+            let inset = if decorated.is_some() || table.is_some_and(|id| styles[id].border_collapse)
+            {
                 0
             } else {
                 (font * 0.22).round() as u32
             };
             let (start, width) = table
                 .and_then(|id| widths.get(&id))
-                .and_then(|s| s.bounds(cell, area.width, inset))
-                .unwrap_or_else(|| cell.bounds(area.width, inset));
-            area = BoxArea::new(area.x + start, width, Some(cell));
+                .and_then(|s| s.bounds(cell, available, inset))
+                .unwrap_or_else(|| cell.bounds(available, inset));
+            area = BoxArea::new(area.x + offset + start, width, Some(cell));
+            if let Some(b) = decorated {
+                area.add_border(b.cells[&cell].edges);
+            }
+        }
+        if let Some(edges) = borders.and_then(|b| b.outer_edges(idx)) {
+            area.add_border(edges);
         }
         if !element.selector_only
             && !(element.tag == "table" && styles[idx].border_collapse)
@@ -166,7 +230,10 @@ pub(crate) fn layout(
         if let Some(tracks) = widths.get_mut(&idx)
             && area.width >= 32
         {
-            tracks.resolve(area.width);
+            let (space, n) = borders.map_or((0, 0), |b| b.spacing_for_table(idx));
+            let available = area.width
+                - space.min(area.width.saturating_sub(n.saturating_sub(1)) / n.max(1)) * n;
+            tracks.resolve(available);
         }
         boxes.push(area);
     }
@@ -177,6 +244,73 @@ pub(crate) fn layout(
 mod tests {
     use super::*;
     use crate::{Book, book_style::BookStyle};
+
+    #[test]
+    fn projected_auto_direction_chooses_the_remaining_leading_padding() {
+        let source =
+            Source::parse("<html><body><p style='text-indent:-100px'>Latin אבג</p></body></html>")
+                .unwrap();
+        let mut book = Book::open(&crate::test_fixture("field-notes-epub3.epub")).unwrap();
+        let href = book.chapters[0].href.clone();
+        let styles = BookStyle::load_for_flow(&mut book, &href, &source, true, &Default::default())
+            .unwrap()
+            .compute(&source.elements);
+        let style = &styles[source.blocks[0].element];
+        let area = BoxArea {
+            x: 20,
+            width: 150,
+            outer_x: 0,
+            outer_width: 200,
+            border: [0, 0],
+            cell: None,
+        };
+        assert_eq!(
+            area.paragraph_bounds_for_text(parley::BaseDirection::Auto, "Latin אבג", style, 40.),
+            (0, 170)
+        );
+        assert_eq!(
+            area.paragraph_bounds_for_text(parley::BaseDirection::Auto, "אבג", style, 40.),
+            (20, 180)
+        );
+        assert_eq!(
+            area.paragraph_bounds_for_text(parley::BaseDirection::Ltr, "אבג", style, 40.),
+            (0, 170)
+        );
+    }
+
+    #[test]
+    fn hidden_cell_cannot_contribute_measurement_or_padding_and_plain_grids_still_repack() {
+        let source=Source::parse("<html><body><table><tr><td style='display:none;padding:0 200px'>Hidden huge width</td><td id='kept' style='width:100px'>Kept</td></tr></table></body></html>").unwrap();
+        let mut book = Book::open(&crate::test_fixture("field-notes-epub3.epub")).unwrap();
+        let href = book.chapters[0].href.clone();
+        let styles = BookStyle::load_for_flow(&mut book, &href, &source, true, &Default::default())
+            .unwrap()
+            .compute(&source.elements);
+        let flow = crate::table_layout::TableFlow::new(&source, &styles).unwrap();
+        let mut measured = 0;
+        let boxes = layout_with_flow(&source, &styles, 600, 40., None, &flow, |block| {
+            assert!(!styles[block.element].flow.suppressed);
+            measured += 1;
+            (40, 40)
+        })
+        .unwrap();
+        assert_eq!(measured, 1);
+        let kept = source
+            .elements
+            .iter()
+            .position(|element| element.id.as_deref() == Some("kept"))
+            .unwrap();
+        assert_eq!(boxes[kept].cell.unwrap().columns, 1);
+        // The unchanged separate-cell gutter is retained; removed padding is not.
+        assert_eq!((boxes[kept].x, boxes[kept].width), (9, 582));
+        assert!(
+            source
+                .blocks
+                .iter()
+                .filter(|b| styles[b.element].flow.suppressed)
+                .all(|b| boxes[b.element].cell.is_none())
+        );
+    }
 
     #[test]
     fn nested_boxes_resolve_percentage_edges_inside_their_table_cells() {
@@ -192,7 +326,7 @@ mod tests {
             crate::font_context(&[crate::test_fixture("fonts/NotoSans-Regular.ttf")]).unwrap();
         let styles =
             BookStyle::load(&mut book, &href, &source, &mut fonts).compute(&source.elements);
-        let boxes = layout(&source, &styles, 1000, 40., |_| (0, 0)).unwrap();
+        let boxes = layout(&source, &styles, 1000, 40., None, |_| (0, 0)).unwrap();
         let r = |id| {
             boxes[source
                 .elements

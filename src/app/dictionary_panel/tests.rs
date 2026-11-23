@@ -49,7 +49,8 @@ impl Simulation {
             ],
         );
         let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
-        let app = Reader::open(&fixture.root, &fixture.state, vec![font.clone()]).unwrap();
+        let mut app = Reader::open(&fixture.root, &fixture.state, vec![font.clone()]).unwrap();
+        app.controls.dictionary_on_single_word = Some(false);
         let canvas = Canvas::new(WIDTH, HEIGHT, &[font.to_string_lossy().into_owned()]).unwrap();
         Self {
             fixture,
@@ -106,6 +107,26 @@ impl Simulation {
             Change::Partial
         );
         assert_eq!(self.app.definition_word, word);
+    }
+
+    fn tap_keyboard_key(&mut self, key: primitive_ui::Key, action: &str) {
+        let rect = Layout::new(WIDTH, HEIGHT, 4, 5)
+            .keyboard_keys_with(self.app.editor.layer, action)
+            .into_iter()
+            .find(|(candidate, _)| candidate.key == key)
+            .unwrap()
+            .1;
+        self.tap(rect);
+    }
+
+    fn tap_keyboard_character(&mut self, character: char, action: &str) {
+        let rect = Layout::new(WIDTH, HEIGHT, 4, 5)
+            .keyboard_keys_with(self.app.editor.layer, action)
+            .into_iter()
+            .find(|(key, _)| key.label.eq_ignore_ascii_case(&character.to_string()))
+            .unwrap()
+            .1;
+        self.tap(rect);
     }
 
     fn open_epub_selection(&mut self) {
@@ -237,6 +258,212 @@ fn dictionary_navigation_restores_each_result_and_the_epub_selection() {
     assert_eq!(s.app.selection.as_ref(), Some(&first));
     assert_eq!(position(&s.app.active.as_ref().unwrap().reading), initial);
     assert_eq!(s.draw(None), selected_frame);
+}
+
+#[test]
+fn dictionary_search_book_uses_the_original_epub_selection_and_keeps_its_position() {
+    let mut s = Simulation::new();
+    s.open_epub_selection();
+    let initial = position(&s.app.active.as_ref().unwrap().reading);
+    s.tap(s.app.selection_button(SelectionAction::Dictionary));
+    let popup = s.app.definition_layout().0;
+    s.tap(action_row(popup)[3]);
+    assert_eq!(s.app.screen, Screen::Matches);
+    assert_eq!(s.app.editor.string(), "the");
+    assert!(s.app.selection.is_none());
+    assert_eq!(position(&s.app.active.as_ref().unwrap().reading), initial);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while s.app.nearby.searching_all() && s.app.hits.is_empty() && Instant::now() < deadline {
+        s.app.poll_nearby(Instant::now()).unwrap();
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(
+        !s.app.hits.is_empty(),
+        "Search book should find the selection"
+    );
+}
+
+#[test]
+fn dictionary_search_book_uses_the_original_pdf_selection() {
+    let mut s = Simulation::new();
+    let path = s.fixture.root.join("Search selection.pdf");
+    fs::write(&path, crate::fixed::tests::document()).unwrap();
+    s.app.open_path(&path).unwrap();
+    let reading = &s.app.fixed.as_ref().unwrap().reading;
+    let words = reading.page_text(0).unwrap();
+    let (size, viewport) = reading.page_viewport().unwrap();
+    let point = words.words[0]
+        .bounds
+        .in_viewport(size, viewport)
+        .unwrap()
+        .center();
+    s.app.input(Input::LongTap(point.x as f32, point.y as f32));
+    assert_eq!(s.app.pdf_selection.as_ref().unwrap().text(), "PDF");
+    s.tap(s.app.selection_button(SelectionAction::Dictionary));
+    let popup = s.app.definition_layout().0;
+    s.tap(action_row(popup)[3]);
+    assert_eq!(s.app.screen, Screen::Matches);
+    assert_eq!(s.app.editor.string(), "PDF");
+    assert!(s.app.pdf_selection.is_none());
+    assert_eq!(s.app.fixed.as_ref().unwrap().reading.page(), 0);
+    while let Some(deadline) = s.app.search_at {
+        s.app.step_pdf_search(deadline).unwrap();
+    }
+    assert!(
+        !s.app.pdf_hits.is_empty(),
+        "Search book should find the PDF text"
+    );
+}
+
+#[test]
+fn dictionary_highlight_toggle_saves_the_epub_selection_when_lookup_closes() {
+    let mut s = Simulation::new();
+    s.open_epub_selection();
+    let selected = s.app.selection.clone().unwrap();
+    let book_id = s.app.active.as_ref().unwrap().id;
+    s.tap(s.app.selection_button(SelectionAction::Dictionary));
+    let popup = s.app.definition_layout().0;
+    let highlight = action_row(popup)[4];
+    s.tap(highlight);
+    assert!(s.app.dictionary_navigation.view.save_highlight);
+    s.draw(Some("dictionary-highlight.png"));
+    s.tap(highlight);
+    assert!(!s.app.dictionary_navigation.view.save_highlight);
+    s.tap(highlight);
+    assert!(s.app.dictionary_navigation.view.save_highlight);
+    s.back();
+    assert_eq!(s.app.screen, Screen::Book);
+    assert!(s.app.selection.is_none());
+    assert_eq!(
+        s.app.library.state(book_id).unwrap().highlights[0].selection,
+        selected
+    );
+    s.app.save().unwrap();
+    let mut reopened = Reader::open(
+        &s.fixture.root,
+        &s.fixture.state,
+        vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+    )
+    .unwrap();
+    reopened.open_path(&s.fixture.book).unwrap();
+    let reopened_id = reopened.active.as_ref().unwrap().id;
+    assert_eq!(
+        reopened.library.state(reopened_id).unwrap().highlights[0].selection,
+        selected
+    );
+}
+
+#[test]
+fn dictionary_highlight_toggle_saves_the_pdf_selection_when_lookup_closes() {
+    let mut s = Simulation::new();
+    let path = s.fixture.root.join("Dictionary highlight.pdf");
+    fs::write(&path, crate::fixed::tests::document()).unwrap();
+    s.app.open_path(&path).unwrap();
+    let reading = &s.app.fixed.as_ref().unwrap().reading;
+    let words = reading.page_text(0).unwrap();
+    let (size, viewport) = reading.page_viewport().unwrap();
+    let point = words.words[0]
+        .bounds
+        .in_viewport(size, viewport)
+        .unwrap()
+        .center();
+    s.app.input(Input::LongTap(point.x as f32, point.y as f32));
+    let selected = s.app.pdf_selection.as_ref().unwrap().text().to_owned();
+    let book_id = s.app.fixed.as_ref().unwrap().id;
+    s.tap(s.app.selection_button(SelectionAction::Dictionary));
+    let popup = s.app.definition_layout().0;
+    s.tap(action_row(popup)[4]);
+    assert!(s.app.dictionary_navigation.view.save_highlight);
+    s.back();
+    assert_eq!(s.app.screen, Screen::Fixed);
+    assert!(s.app.pdf_selection.is_none());
+    assert_eq!(
+        s.app.library.state(book_id).unwrap().pdf_highlights[0].text,
+        selected
+    );
+    s.app.save().unwrap();
+    let mut reopened = Reader::open(
+        &s.fixture.root,
+        &s.fixture.state,
+        vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+    )
+    .unwrap();
+    reopened.open_path(&path).unwrap();
+    let reopened_id = reopened.fixed.as_ref().unwrap().id;
+    assert_eq!(
+        reopened.library.state(reopened_id).unwrap().pdf_highlights[0].text,
+        selected
+    );
+}
+
+#[test]
+fn dictionary_unhighlight_cancels_saving_and_keeps_the_epub_selection() {
+    let mut s = Simulation::new();
+    s.open_epub_selection();
+    let selected = s.app.selection.clone().unwrap();
+    let book_id = s.app.active.as_ref().unwrap().id;
+    s.tap(s.app.selection_button(SelectionAction::Dictionary));
+    let popup = s.app.definition_layout().0;
+    let highlight = action_row(popup)[4];
+    s.tap(highlight);
+    s.tap(highlight);
+    s.back();
+    assert_eq!(s.app.selection.as_ref(), Some(&selected));
+    assert!(s.app.library.state(book_id).unwrap().highlights.is_empty());
+}
+
+#[test]
+fn dictionary_edit_query_relooks_up_and_returns_through_the_parent_entry() {
+    let mut s = Simulation::new();
+    s.open_epub_selection();
+    let selection = s.app.selection.clone().unwrap();
+    s.tap(s.app.selection_button(SelectionAction::Dictionary));
+    assert_eq!(s.app.definition_word, "the");
+    let popup = s.app.definition_layout().0;
+    let edit = definition_edit_button(popup, s.app.definitions.len() > 1);
+    s.tap(edit);
+    assert!(s.app.dictionary_navigation.view.query_editing);
+    assert_eq!(s.app.screen, Screen::Definition);
+    assert!(s.app.definition_over_book());
+    assert_eq!(s.app.editor.string(), "the");
+    s.draw(Some("dictionary-edit-query.png"));
+    for _ in 0..3 {
+        s.tap_keyboard_key(primitive_ui::Key::Delete, "Look up");
+    }
+    for character in "beacon".chars() {
+        s.tap_keyboard_character(character, "Look up");
+    }
+    s.tap_keyboard_key(primitive_ui::Key::Go, "Look up");
+    assert_eq!(s.app.screen, Screen::Definition);
+    assert_eq!(s.app.definition_word, "beacon");
+    assert_eq!(s.app.dictionary_navigation.trail.len(), 1);
+    s.back();
+    assert_eq!(s.app.definition_word, "the");
+    assert!(!s.app.dictionary_navigation.view.query_editing);
+    s.back();
+    assert_eq!(s.app.screen, Screen::Book);
+    assert_eq!(s.app.selection.as_ref(), Some(&selection));
+}
+
+#[test]
+fn long_press_dictionary_edit_uses_the_current_result_headword() {
+    let mut s = Simulation::new();
+    s.open_epub_selection();
+    s.tap(s.app.selection_button(SelectionAction::Dictionary));
+    let popup = s.app.definition_layout().0;
+    let edit = definition_edit_button(popup, s.app.definitions.len() > 1);
+    assert_eq!(
+        s.app.input(Input::LongTap(
+            (edit.x + edit.w / 2) as f32,
+            (edit.y + edit.h / 2) as f32
+        )),
+        Change::Partial
+    );
+    assert!(s.app.dictionary_navigation.view.query_editing);
+    assert_eq!(s.app.editor.string(), "The");
+    s.app.input(Input::PageBack);
+    assert_eq!(s.app.screen, Screen::Definition);
+    assert!(!s.app.dictionary_navigation.view.query_editing);
 }
 
 #[test]

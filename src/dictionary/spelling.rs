@@ -170,8 +170,7 @@ impl DictionarySources {
             check()?;
             let mut candidate = nearest.clone();
             let scan = primitive_app::with_storage(|| {
-                let (index, data) =
-                    open_index_and_data(&file.root, &file.path, info, &mut budget)?;
+                let (index, data) = open_index_and_data(&file.root, &file.path, info, &mut budget)?;
                 visit_index(index, info, data.len()?, |ordinal, word, _, _| {
                     if ordinal % 128 == 0 {
                         check()?;

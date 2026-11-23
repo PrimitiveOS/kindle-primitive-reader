@@ -31,7 +31,7 @@ pub(crate) fn is_word_separator(whitespace: Whitespace) -> bool {
 /// disable optional ligation when shaping).
 ///
 /// [css-spacing]: https://www.w3.org/TR/css-text-4/#spacing
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) struct Gaps {
     /// For horizontal text, additional spacing visually to the left.
     ///
@@ -146,10 +146,12 @@ impl Default for Justification {
 /// Additional spacing to apply, including justification (if any).
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct EffectiveSpacing<'a> {
-    cluster_spacing: &'a [u16],
+    cluster_spacing: &'a [Gaps],
     spacing: Spacing,
     justification: Justification,
     expanded_gaps: &'a [(u32, f32)],
+    shrink_capacities: &'a [f32],
+    shrink_fraction: f32,
 }
 
 impl<'a> EffectiveSpacing<'a> {
@@ -160,12 +162,14 @@ impl<'a> EffectiveSpacing<'a> {
     pub(crate) const fn new(
         spacing: Spacing,
         justification: Justification,
-        cluster_spacing: &'a [u16],
+        cluster_spacing: &'a [Gaps],
     ) -> Self {
         Self {
             spacing,
             justification,
             expanded_gaps: &[],
+            shrink_capacities: &[],
+            shrink_fraction: 0.0,
             cluster_spacing,
         }
     }
@@ -175,9 +179,15 @@ impl<'a> EffectiveSpacing<'a> {
         self
     }
 
+    pub(crate) fn with_shrink(mut self, capacities: &'a [f32], fraction: f32) -> Self {
+        self.shrink_capacities = capacities;
+        self.shrink_fraction = fraction;
+        self
+    }
+
     #[inline(always)]
     pub(crate) const fn is_zero(self) -> bool {
-        self.spacing.is_zero()
+        self.shrink_fraction == 0.0 && self.spacing.is_zero()
             && self.justification.amount_per_opportunity == 0.
             && self.expanded_gaps.is_empty()
             && self.cluster_spacing.is_empty()
@@ -190,11 +200,15 @@ impl<'a> EffectiveSpacing<'a> {
         let mut gaps = self.spacing.gaps(whitespace);
         let index = atom.shaped_clusters_range().start as usize;
         if let Some(&extra) = self.cluster_spacing.get(index) {
-            let before = extra / 2;
-            gaps.before += f32::from(before);
-            gaps.after += f32::from(extra - before);
+            gaps.before += extra.before;
+            gaps.after += extra.after;
         }
 
+        if self.shrink_fraction > 0.0
+            && atom.shaped_clusters_range().end <= self.justification.justification_end_cluster
+        {
+            gaps.after -= self.shrink_capacities.get(index).copied().unwrap_or(0.0) * self.shrink_fraction;
+        }
         if is_word_separator(whitespace)
             && atom.shaped_clusters_range().end <= self.justification.justification_end_cluster
         {

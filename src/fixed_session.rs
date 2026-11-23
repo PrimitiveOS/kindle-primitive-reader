@@ -7,17 +7,18 @@ use std::time::Instant;
 use crate::scan_deskew::{DeskewCache, FULL_PAGE, Quad, source_rect};
 use hayro::kurbo::{Affine, Point};
 use primitive_app::{WIDTH, with_storage};
-use primitive_ui::{CAPTION, Canvas, GrayImage, Input, Rect};
+use primitive_ui::{CAPTION, Canvas, GrayImage, Input, Rect, TextStyle};
 
 use crate::Result;
 use crate::comic::{Comic, ImagePage};
 use crate::djvu::{Djvu, MAX_DJVU_BYTES};
 use crate::fixed::{MAX_PDF_BYTES, Pdf, PdfLink, PdfOutlineItem, RenderRequest, pdf_open_timing};
-use crate::fixed_epub::{FixedEpub, SpreadPlan};
+use crate::fixed_epub::{FixedEpub, FixedSpread, SpreadPlan};
 use crate::fixed_text::{PdfPageText, PdfTextRect};
+use crate::library::hidden_flows::{HiddenFlows, PageFlows, ResolvedPoint};
 use crate::library::{
-    DocumentFormat, FixedPreferences as View, MAX_CONTINUOUS_GAP, MAX_SCAN_WHITE_LEVEL,
-    MIN_SCAN_WHITE_LEVEL,
+    DocumentFormat, FixedPreferences as View, HighlightPage, MAX_CONTINUOUS_GAP,
+    MAX_HIGHLIGHT_TEXT_BYTES, MAX_SCAN_WHITE_LEVEL, MIN_SCAN_WHITE_LEVEL, PdfHighlight,
 };
 use crate::session::{
     DONE, PAGE_HEIGHT, PAGE_REFRESH_GAP, PagePaint, PageTurns, draw_document_and_footer,
@@ -46,6 +47,7 @@ const SPREAD_GUTTER: u32 = 12;
 const MAX_CONTRAST_SAMPLES: usize = 32_768;
 
 pub(crate) struct FixedReading {
+    hidden_flows: Option<PageFlows>,
     source: FixedDocument,
     page: usize,
     view: View,
@@ -106,11 +108,18 @@ pub(crate) enum WordAtTouch {
     Recognize { page: usize, point: Point },
 }
 
-pub(crate) struct PdfSelection {
+#[derive(Clone)]
+struct PdfSelectionEndpoint {
     page: usize,
     document: PdfPageText,
-    first: usize,
-    last: usize,
+    word: usize,
+}
+
+#[derive(Clone)]
+pub(crate) struct PdfSelection {
+    mark: PdfHighlight,
+    first: PdfSelectionEndpoint,
+    last: PdfSelectionEndpoint,
 }
 
 impl PdfSelection {
@@ -119,27 +128,160 @@ impl PdfSelection {
             .words
             .iter()
             .position(|word| source_rect((1.0, 1.0), word.bounds).contains(point))?;
-        Some(Self {
+        let bounds = document.words[index].bounds;
+        let text = document.text[document.words[index].bytes.clone()].to_owned();
+        let endpoint = PdfSelectionEndpoint {
             page,
             document,
-            first: index,
-            last: index,
+            word: index,
+        };
+        Some(Self {
+            mark: PdfHighlight {
+                created_at: None,
+                style: crate::highlight_style::HighlightStyle::default(),
+                color: crate::highlight_style::HighlightColor::default(),
+                page,
+                bounds: vec![bounds],
+                text,
+                note: None,
+                continuation: Vec::new(),
+            },
+            first: endpoint.clone(),
+            last: endpoint,
         })
     }
 
     pub(crate) fn text(&self) -> &str {
-        let words = &self.document.words;
-        &self.document.text[words[self.first].bytes.start..words[self.last].bytes.end]
+        &self.mark.text
     }
 
+    pub(crate) fn word_context(&self, count: usize) -> (String, String) {
+        let before = if self.first.word == 0 {
+            ""
+        } else {
+            let words = &self.first.document.words;
+            &self.first.document.text[words[self.first.word.saturating_sub(count)].bytes.start
+                ..words[self.first.word].bytes.start]
+        };
+        let after = if self.last.word + 1 == self.last.document.words.len() {
+            ""
+        } else {
+            let words = &self.last.document.words;
+            &self.last.document.text[words[self.last.word].bytes.end
+                ..words[(self.last.word + count).min(words.len() - 1)]
+                    .bytes
+                    .end]
+        };
+        (
+            crate::selection::bounded_context(before, count, true),
+            crate::selection::bounded_context(after, count, false),
+        )
+    }
+
+    pub(crate) fn page_bounds(&self) -> impl Iterator<Item = (usize, PdfTextRect)> + '_ {
+        self.mark
+            .parts()
+            .flat_map(|(page, bounds, _)| bounds.iter().copied().map(move |bounds| (page, bounds)))
+    }
+
+    #[cfg(test)]
     pub(crate) fn bounds(&self) -> impl Iterator<Item = PdfTextRect> + '_ {
-        self.document.words[self.first..=self.last]
-            .iter()
-            .map(|word| word.bounds)
+        self.page_bounds().map(|(_, bounds)| bounds)
     }
 
     pub(crate) fn page(&self) -> usize {
-        self.page
+        self.mark.page
+    }
+
+    pub(crate) fn highlight(&self) -> &PdfHighlight {
+        &self.mark
+    }
+
+    fn endpoints(&self) -> (&PdfSelectionEndpoint, &PdfSelectionEndpoint) {
+        (&self.first, &self.last)
+    }
+}
+
+impl FixedReading {
+    fn selection_document(&self, page: usize) -> Result<PdfPageText> {
+        if self.view.force_ocr {
+            return self
+                .cached_ocr_for(page, self.ocr_language.as_deref())
+                .ok_or_else(|| format!("Run OCR on page {} first", page + 1).into());
+        }
+        self.page_text(page)
+    }
+
+    fn selection_mark(
+        &self,
+        first: &PdfSelectionEndpoint,
+        last: &PdfSelectionEndpoint,
+    ) -> Result<PdfHighlight> {
+        if first.page > last.page || last.page - first.page >= PdfHighlight::MAX_PAGES {
+            return Err("This selection exceeds the 64-page limit".into());
+        }
+        let mut mark = PdfHighlight {
+            created_at: None,
+            style: crate::highlight_style::HighlightStyle::default(),
+            color: crate::highlight_style::HighlightColor::default(),
+            page: first.page,
+            bounds: Vec::new(),
+            text: String::new(),
+            note: None,
+            continuation: Vec::new(),
+        };
+        for page in first.page..=last.page {
+            let loaded;
+            let document = if page == first.page {
+                &first.document
+            } else if page == last.page {
+                &last.document
+            } else {
+                loaded = self.selection_document(page)?;
+                &loaded
+            };
+            if document.words.is_empty() {
+                return Err(format!("Page {} has no selectable text", page + 1).into());
+            }
+            if document.truncated && page != last.page {
+                return Err("The text on an intervening page is incomplete".into());
+            }
+            let from = if page == first.page { first.word } else { 0 };
+            let to = if page == last.page {
+                last.word
+            } else {
+                document.words.len() - 1
+            };
+            if from > to || to >= document.words.len() {
+                return Err("The selected text range is unavailable".into());
+            }
+            let quote = document
+                .text
+                .get(document.words[from].bytes.start..document.words[to].bytes.end)
+                .ok_or("The selected text range is unavailable")?;
+            let bounds = selection_range::line_regions(document, from, to)?;
+            if page == first.page {
+                mark.bounds = bounds;
+            } else {
+                if mark.text.len() + quote.len() + 1 > MAX_HIGHLIGHT_TEXT_BYTES {
+                    return Err("This selection exceeds the 8,192-byte limit".into());
+                }
+                mark.text.push('\n');
+                mark.continuation.push(HighlightPage {
+                    page,
+                    bounds,
+                    text_offset: mark.text.len(),
+                });
+            }
+            if mark.text.len() + quote.len() > MAX_HIGHLIGHT_TEXT_BYTES {
+                return Err("This selection exceeds the 8,192-byte limit".into());
+            }
+            mark.text.push_str(quote);
+        }
+        if !mark.is_valid() {
+            return Err("The selected text range is unavailable".into());
+        }
+        Ok(mark)
     }
 }
 
@@ -163,7 +305,9 @@ pub(crate) fn pdf_bytes(path: &Path, expected_size: Option<u64>) -> io::Result<V
         return Err(io::Error::other("The PDF changed while opening"));
     }
     let mut bytes = Vec::new();
-    bytes.try_reserve_exact(size as usize).map_err(io::Error::other)?;
+    bytes
+        .try_reserve_exact(size as usize)
+        .map_err(io::Error::other)?;
     bytes.resize(size as usize, 0);
     file.read_exact(&mut bytes)?;
     if file.read(&mut [0])? != 0 {
@@ -173,6 +317,10 @@ pub(crate) fn pdf_bytes(path: &Path, expected_size: Option<u64>) -> io::Result<V
 }
 
 impl FixedReading {
+    pub(crate) fn pages_right_to_left(&self) -> bool {
+        self.view.right_to_left
+    }
+
     pub(crate) fn open(
         viewport_height: u32,
         format: DocumentFormat,
@@ -224,6 +372,15 @@ impl FixedReading {
 
     pub(crate) fn inspect_image(image: ImagePage) -> Result<Self> {
         Self::with_source(FixedDocument::Image(image), 0, View::default())
+    }
+
+    /// Keep a rendered first-page cover in an independent, single-image inspection view.
+    pub(crate) fn into_cover_view(self) -> Result<Self> {
+        Self::inspect_image(ImagePage::from_grayscale(
+            self.frame.width,
+            self.frame.height,
+            self.frame.pixels,
+        )?)
     }
 
     /// Fit the touched panel in a separate viewer, leaving this reading view intact.
@@ -286,6 +443,7 @@ impl FixedReading {
                 epub_spreads.as_ref(),
                 &mut deskew_cache,
                 viewport_height,
+                None,
             )
         };
         let (page, view, frame, visible) = if matches!(&source, FixedDocument::Pdf(_)) {
@@ -297,6 +455,7 @@ impl FixedReading {
             book.set_outline_page(page);
         }
         Ok(Self {
+            hidden_flows: None,
             source,
             page,
             view,
@@ -322,6 +481,74 @@ impl FixedReading {
         }
     }
 
+    pub(crate) fn hidden_flow_map(&self) -> Option<&PageFlows> {
+        self.hidden_flows.as_ref()
+    }
+
+    pub(crate) fn set_hidden_flows(&mut self, data: &HiddenFlows) -> Result<()> {
+        self.restore_hidden_flows(data, self.page, self.view)
+    }
+
+    pub(crate) fn restore_hidden_flows(
+        &mut self,
+        data: &HiddenFlows,
+        saved_page: usize,
+        saved_view: View,
+    ) -> Result<()> {
+        let next = data.enabled.then(|| {
+            PageFlows::new(
+                self.count(),
+                0,
+                data.points()
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, point)| {
+                        point.position.chapter == 0 && point.position.anchor.is_none()
+                    })
+                    .map(|(index, point)| ResolvedPoint {
+                        index,
+                        page: point.position.page,
+                        hidden: point.hidden,
+                    })
+                    .collect(),
+            )
+        });
+        // Opening an unmasked continuous document can clamp a short last page
+        // back into the preceding source page. Apply the saved source position
+        // and view again under the restored mask, before saving any new state.
+        let masked = next.as_ref().is_some_and(PageFlows::has_hidden);
+        let (page, view) = if masked {
+            (saved_page.min(self.count() - 1), saved_view.normalized())
+        } else {
+            (self.page, self.view)
+        };
+        if self.hidden_flows == next && page == self.page && view == self.view {
+            return Ok(());
+        }
+        let redraw = self
+            .hidden_flows
+            .as_ref()
+            .is_some_and(PageFlows::has_hidden)
+            || masked;
+        let previous = std::mem::replace(&mut self.hidden_flows, next);
+        if redraw && let Err(error) = self.present(page, view) {
+            self.hidden_flows = previous;
+            return Err(error);
+        }
+        self.pause();
+        Ok(())
+    }
+
+    pub(crate) fn next_reading_page(&self, page: usize, direction: isize) -> Option<usize> {
+        self.hidden_flows.as_ref().map_or_else(
+            || {
+                page.checked_add_signed(direction)
+                    .filter(|&page| page < self.count())
+            },
+            |flows| flows.next(page, direction),
+        )
+    }
+
     pub(crate) fn author(&self) -> Option<String> {
         match &self.source {
             FixedDocument::Epub(book) => book.author().map(str::to_owned),
@@ -332,6 +559,10 @@ impl FixedReading {
 
     pub(crate) fn page(&self) -> usize {
         self.page
+    }
+
+    pub(crate) fn is_turning(&self) -> bool {
+        !self.turns.pending.is_empty()
     }
 
     pub(crate) fn count(&self) -> usize {
@@ -352,6 +583,10 @@ impl FixedReading {
             FixedDocument::Pdf(pdf) => pdf.find_page_label(label),
             _ => None,
         }
+    }
+
+    pub(crate) fn is_encrypted_pdf(&self) -> bool {
+        matches!(&self.source, FixedDocument::Pdf(pdf) if pdf.is_encrypted())
     }
 
     pub(crate) fn pdf_geometry(&self, page: usize) -> Option<crate::pdf_annotations::PageGeometry> {
@@ -484,14 +719,17 @@ impl FixedReading {
     }
 
     pub(crate) fn chapter_outline(&self) -> impl Iterator<Item = &PdfOutlineItem> {
-        self.outline().iter().enumerate().filter_map(|(index, item)| {
-            if let FixedDocument::Djvu(book) = &self.source
-                && !book.stable_outline_destination(index)
-            {
-                return None;
-            }
-            Some(item)
-        })
+        self.outline()
+            .iter()
+            .enumerate()
+            .filter_map(|(index, item)| {
+                if let FixedDocument::Djvu(book) = &self.source
+                    && !book.stable_outline_destination(index)
+                {
+                    return None;
+                }
+                Some(item)
+            })
     }
 
     pub(crate) fn outline(&self) -> &[PdfOutlineItem] {
@@ -503,6 +741,62 @@ impl FixedReading {
 
     pub(crate) fn preferences(&self) -> View {
         self.view
+    }
+
+    pub(crate) fn set_auto_turn_pan(
+        &mut self,
+        horizontal_overlap: Option<u8>,
+        vertical_overlap: Option<u8>,
+        vertical_first: Option<bool>,
+        bottom_to_top: Option<bool>,
+    ) -> Result<()> {
+        if horizontal_overlap.is_some_and(|value| value > 90)
+            || vertical_overlap.is_some_and(|value| value > 90)
+        {
+            return Err("Zoom overlap must be from 0% to 90%".into());
+        }
+        let mut view = self.view;
+        view.zoom_overlap_h = horizontal_overlap;
+        view.zoom_overlap_v = vertical_overlap;
+        view.zoom_direction_vertical = vertical_first;
+        view.zoom_bottom_to_top = bottom_to_top;
+        let direction_changed = self.view.zoom_direction_vertical()
+            != view.zoom_direction_vertical()
+            || self.view.zoom_bottom_to_top() != view.zoom_bottom_to_top();
+        if direction_changed {
+            let size = self
+                .visible
+                .iter()
+                .find(|visible| visible.index == self.page)
+                .map(|visible| visible.size)
+                .map(Ok)
+                .unwrap_or_else(|| self.source.page_size(self.page))?;
+            let metrics = view_metrics(size, &view, self.frame.height);
+            let x_limit = ((metrics.width - WIDTH as f32) / 2.0).max(0.0);
+            let y_limit = ((metrics.height - self.frame.height as f32) / 2.0).max(0.0);
+            let x_start = if view.right_to_left {
+                x_limit * 2.0
+            } else {
+                0.0
+            };
+            let y_start = if view.zoom_bottom_to_top() {
+                y_limit * 2.0
+            } else {
+                0.0
+            };
+            self.present(
+                self.page,
+                View {
+                    offset_x: x_limit - x_start,
+                    offset_y: y_limit - y_start,
+                    ..view
+                },
+            )?;
+            self.pause();
+        } else {
+            self.view = view;
+        }
+        Ok(())
     }
 
     pub(crate) fn supports_scan_contrast(&self) -> bool {
@@ -619,19 +913,31 @@ impl FixedReading {
     }
 
     fn spread_pages(&self) -> [Option<usize>; 2] {
+        self.spread_pages_at(self.page)
+    }
+
+    fn spread_pages_at(&self, page: usize) -> [Option<usize>; 2] {
+        let mut pages = [Some(page), None];
         if self.is_spread() {
             if let Some(epub) = &self.epub_spreads {
-                if let Some(spread) = epub.plan.group(self.page) {
-                    return spread.pages();
+                if let Some(spread) = epub.plan.group(page) {
+                    pages = spread.pages();
                 }
             } else {
-                return [
-                    Some(self.page),
-                    comic_spread_partner(self.page, self.count()),
-                ];
+                let first = comic_spread_start(page);
+                pages = [Some(first), comic_spread_partner(first, self.count())];
             }
         }
-        [Some(self.page), None]
+        if let Some(flows) = &self.hidden_flows {
+            let selected = flows.flow(page);
+            pages = pages.map(|page| {
+                page.filter(|&page| {
+                    let flow = flows.flow(page);
+                    flow == 0 || flow == selected
+                })
+            });
+        }
+        pages
     }
 
     pub(crate) fn supports_crop(&self) -> bool {
@@ -852,8 +1158,8 @@ impl FixedReading {
         let viewport =
             hayro::kurbo::Rect::new(0.0, 0.0, f64::from(WIDTH), f64::from(self.frame.height));
         let bounds = selection
-            .bounds()
-            .filter_map(|bounds| self.visible_rectangle(selection.page(), bounds))
+            .page_bounds()
+            .filter_map(|(page, bounds)| self.visible_rectangle(page, bounds))
             .map(|bounds| bounds.intersect(viewport))
             .filter(|bounds| bounds.width() > 0.0 && bounds.height() > 0.0)
             .reduce(|left, right| left.union(right))?;
@@ -867,18 +1173,53 @@ impl FixedReading {
         ))
     }
 
-    pub(crate) fn extend_selection(&self, selection: &mut PdfSelection, x: f32, y: f32) {
-        if self.page_at(y) != Some(selection.page) {
-            return;
+    pub(crate) fn extend_selection(&self, selection: &mut PdfSelection, x: f32, y: f32) -> bool {
+        let Some(page) = self.page_at(y) else {
+            return false;
+        };
+        let document = if page == selection.first.page {
+            selection.first.document.clone()
+        } else if page == selection.last.page {
+            selection.last.document.clone()
+        } else if page > selection.first.page && page < selection.last.page {
+            return true;
+        } else if let Ok(document) = self.selection_document(page) {
+            document
+        } else {
+            return false;
+        };
+        let Some(word) = self.word_at(page, &document, x, y) else {
+            return false;
+        };
+        let mut first = selection.first.clone();
+        let mut last = selection.last.clone();
+        if page < first.page {
+            first = PdfSelectionEndpoint {
+                page,
+                document,
+                word,
+            };
+        } else if page > last.page {
+            last = PdfSelectionEndpoint {
+                page,
+                document,
+                word,
+            };
+        } else if first.page == last.page {
+            first.word = first.word.min(word);
+            last.word = last.word.max(word);
+        } else if page == first.page {
+            first.word = first.word.min(word);
+        } else if page == last.page {
+            last.word = last.word.max(word);
         }
-        if let Some(word) = self.word_at(selection.page, &selection.document, x, y) {
-            let first = selection.first.min(word);
-            let last = selection.last.max(word);
-            if last - first < 64 {
-                selection.first = first;
-                selection.last = last;
-            }
-        }
+        let Ok(mark) = self.selection_mark(&first, &last) else {
+            return false;
+        };
+        selection.mark = mark;
+        selection.first = first;
+        selection.last = last;
+        true
     }
 
     pub(crate) fn link_at(&self, x: f32, y: f32) -> Option<PdfLink> {
@@ -951,6 +1292,15 @@ impl FixedReading {
         );
         let rect = quad.bounds().intersect(clip);
         (!rect.is_zero_area()).then_some((quad, rect))
+    }
+
+    pub(crate) fn annotation_rectangle(
+        &self,
+        index: usize,
+        bounds: PdfTextRect,
+    ) -> Option<hayro::kurbo::Rect> {
+        self.projected_region(index, bounds)
+            .map(|(quad, _)| quad.bounds())
     }
 
     pub(crate) fn visible_rectangle(
@@ -1134,29 +1484,78 @@ impl FixedReading {
             self.end_attempt = dy < -0.5
                 && previous.0 == self.page
                 && previous.1.offset_y == self.view.offset_y
-                && self.visible.last().is_some_and(|page| page.index + 1 == self.count());
+                && self
+                    .visible
+                    .last()
+                    .is_some_and(|page| self.next_reading_page(page.index, 1).is_none());
             return Ok(previous != (self.page, self.view));
         }
         let count = self.count();
         let mut page = self.page;
+        let mut view = self.view;
         let mut end_attempt = false;
         for step in self.turns.take_due(now) {
-            let next = if self.is_spread() {
-                self.epub_spreads.as_ref().map_or_else(
-                    || comic_spread_step(page, count, step),
-                    |epub| epub.plan.step(page, step),
-                )
+            let candidate = if !self.is_spread() {
+                self.fixed_view_step(page, view, step as f32)?
             } else {
-                page.saturating_add_signed(step).min(count - 1)
+                let next = if let Some(flows) = self
+                    .hidden_flows
+                    .as_ref()
+                    .filter(|flows| flows.has_hidden())
+                {
+                    let pages = self.spread_pages_at(page);
+                    let edge = if step > 0 {
+                        pages.into_iter().flatten().max()
+                    } else {
+                        pages.into_iter().flatten().min()
+                    }
+                    .unwrap_or(page);
+                    let adjacent = edge
+                        .checked_add_signed(step)
+                        .and_then(|start| flows.allowed_page(start, step, flows.flow(page)));
+                    if step < 0 {
+                        adjacent
+                            .map(|previous| {
+                                self.spread_pages_at(previous)
+                                    .into_iter()
+                                    .flatten()
+                                    .min()
+                                    .unwrap_or(previous)
+                            })
+                            .unwrap_or(page)
+                    } else {
+                        adjacent.unwrap_or(page)
+                    }
+                } else {
+                    self.epub_spreads.as_ref().map_or_else(
+                        || comic_spread_step(page, count, step),
+                        |epub| epub.plan.step(page, step),
+                    )
+                };
+                let view = if next == page {
+                    view
+                } else {
+                    View {
+                        offset_x: 0.0,
+                        offset_y: 0.0,
+                        ..view
+                    }
+                };
+                Some((next, view))
             };
-            end_attempt = step > 0 && next == page;
-            page = next;
+            if let Some((next, next_view)) = candidate {
+                end_attempt = step > 0 && next == page && next_view == view;
+                page = next;
+                view = next_view;
+            } else {
+                end_attempt = step > 0;
+            }
         }
-        if page == self.page {
+        if page == self.page && view == self.view {
             self.end_attempt = end_attempt;
             return Ok(false);
         }
-        self.jump(page)?;
+        self.present(page, view)?;
         self.end_attempt = end_attempt;
         Ok(true)
     }
@@ -1213,6 +1612,167 @@ impl FixedReading {
         }
         self.turns.pending.push(direction);
         self.tick(Instant::now())
+    }
+
+    pub(crate) fn automatic_turn(&mut self, distance_tenths: i16) -> Result<bool> {
+        if distance_tenths == 0 {
+            return Ok(false);
+        }
+        let distance = f32::from(distance_tenths) / 10.0;
+        if self.is_continuous() {
+            return self.queue_scroll(0.0, -distance * (self.frame.height as f32 * 0.9));
+        }
+        if !self.is_spread()
+            && let Some((page, view)) = self.automatic_fixed_view(distance)?
+        {
+            self.present(page, view)?;
+            self.end_attempt = false;
+            return Ok(true);
+        }
+        let direction = if distance > 0.0 { 1 } else { -1 };
+        let pages = distance.abs().ceil().max(1.0) as usize;
+        self.turns
+            .pending
+            .extend(std::iter::repeat(direction).take(pages));
+        self.tick(Instant::now())
+    }
+
+    /// Apply the book's KOReader-compatible overlap and pan order for fixed-page AutoTurn.
+    fn automatic_fixed_view(&self, distance: f32) -> Result<Option<(usize, View)>> {
+        self.fixed_view_step(self.page, self.view, distance)
+    }
+
+    /// Apply one fixed-page navigation step, panning through the current viewport first.
+    fn fixed_view_step(
+        &self,
+        page: usize,
+        current_view: View,
+        distance: f32,
+    ) -> Result<Option<(usize, View)>> {
+        const EDGE_EPSILON: f32 = 0.5;
+        let origin_page = page;
+        let origin_view = current_view;
+
+        let size = self
+            .visible
+            .iter()
+            .find(|visible| visible.index == page)
+            .map(|visible| visible.size)
+            .map(Ok)
+            .unwrap_or_else(|| self.source.page_size(page))?;
+        let metrics = view_metrics(size, &current_view, self.frame.height);
+        let x_limit = ((metrics.width - WIDTH as f32) / 2.0).max(0.0);
+        let y_limit = ((metrics.height - self.frame.height as f32) / 2.0).max(0.0);
+        let x_extent = x_limit * 2.0;
+        let y_extent = y_limit * 2.0;
+        let x_direction = distance.signum()
+            * if current_view.right_to_left {
+                -1.0
+            } else {
+                1.0
+            };
+        let y_direction = distance.signum()
+            * if current_view.zoom_bottom_to_top() {
+                -1.0
+            } else {
+                1.0
+            };
+        let x_visible = metrics.width.min(WIDTH as f32);
+        let y_visible = metrics.height.min(self.frame.height as f32);
+        let x_position = (x_limit - current_view.offset_x).clamp(0.0, x_extent);
+        let y_position = (y_limit - current_view.offset_y).clamp(0.0, y_extent);
+        let at_edge = |position: f32, extent: f32, direction: f32| {
+            if direction > 0.0 {
+                position >= extent - EDGE_EPSILON
+            } else {
+                position <= EDGE_EPSILON
+            }
+        };
+
+        let vertical_first = current_view.zoom_direction_vertical();
+        // KOReader keeps overlap tied to the physical axis while the reading
+        // direction only changes which axis is traversed first.
+        let x_overlap = f32::from(current_view.zoom_overlap_h()) / 100.0;
+        let y_overlap = f32::from(current_view.zoom_overlap_v()) / 100.0;
+        let mut view = current_view;
+        for (index, vertical_axis) in [vertical_first, !vertical_first].into_iter().enumerate() {
+            let (limit, extent, position, direction, visible, overlap) = if vertical_axis {
+                (
+                    y_limit,
+                    y_extent,
+                    y_position,
+                    y_direction,
+                    y_visible,
+                    y_overlap,
+                )
+            } else {
+                (
+                    x_limit,
+                    x_extent,
+                    x_position,
+                    x_direction,
+                    x_visible,
+                    x_overlap,
+                )
+            };
+            if limit <= EDGE_EPSILON {
+                continue;
+            }
+            if at_edge(position, extent, direction) {
+                continue;
+            }
+            // When moving to the second axis, reset the first axis to the next row or column.
+            if index == 1 {
+                if vertical_first && y_limit > EDGE_EPSILON {
+                    let start = if y_direction > 0.0 { 0.0 } else { y_extent };
+                    view.offset_y = y_limit - start;
+                } else if !vertical_first && x_limit > EDGE_EPSILON {
+                    let start = if x_direction > 0.0 { 0.0 } else { x_extent };
+                    view.offset_x = x_limit - start;
+                }
+            }
+            let next = (position + direction * visible * (1.0 - overlap) * distance.abs())
+                .clamp(0.0, extent);
+            if (next - position).abs() > EDGE_EPSILON {
+                if vertical_axis {
+                    view.offset_y = y_limit - next;
+                } else {
+                    view.offset_x = x_limit - next;
+                }
+                return Ok(Some((page, view)));
+            }
+        }
+
+        let direction = if distance > 0.0 { 1 } else { -1 };
+        let page_steps = distance.abs().ceil().max(1.0) as usize;
+        let mut page = page;
+        for _ in 0..page_steps {
+            let Some(next) = self.next_reading_page(page, direction) else {
+                break;
+            };
+            page = next;
+        }
+        if page == origin_page && view == origin_view {
+            return Ok(None);
+        }
+
+        let next_size = self.source.page_size(page)?;
+        let next_metrics = view_metrics(next_size, &view, self.frame.height);
+        let next_x_limit = ((next_metrics.width - WIDTH as f32) / 2.0).max(0.0);
+        let next_y_limit = ((next_metrics.height - self.frame.height as f32) / 2.0).max(0.0);
+        let next_x_start = if x_direction > 0.0 {
+            0.0
+        } else {
+            next_x_limit * 2.0
+        };
+        let next_y_start = if y_direction > 0.0 {
+            0.0
+        } else {
+            next_y_limit * 2.0
+        };
+        view.offset_x = next_x_limit - next_x_start;
+        view.offset_y = next_y_limit - next_y_start;
+        Ok(Some((page, view)))
     }
 
     fn queue_scroll(&mut self, dx: f32, dy: f32) -> Result<bool> {
@@ -1312,6 +1872,25 @@ impl FixedReading {
         viewport_height: u32,
         save: impl FnOnce() -> io::Result<()>,
     ) -> Result<()> {
+        self.present_in_saved(page, view, viewport_height, |_, _| save())
+    }
+
+    /// Paint first, persist the effective view, then replace the visible frame.
+    pub(crate) fn restore_view_with(
+        &mut self,
+        view: View,
+        save: impl FnOnce(usize, View) -> io::Result<()>,
+    ) -> Result<()> {
+        self.present_in_saved(self.page, view.normalized(), self.frame.height, save)
+    }
+
+    fn present_in_saved(
+        &mut self,
+        page: usize,
+        view: View,
+        viewport_height: u32,
+        save: impl FnOnce(usize, View) -> io::Result<()>,
+    ) -> Result<()> {
         let new_epub_spreads = if viewport_height != self.frame.height
             || view.epub_spread != self.view.epub_spread
             || view.epub_right_to_left != self.view.epub_right_to_left
@@ -1327,14 +1906,19 @@ impl FixedReading {
             spreads,
             &mut self.deskew_cache,
             viewport_height,
+            self.hidden_flows
+                .as_ref()
+                .filter(|flows| flows.has_hidden()),
         )?;
-        save()?;
+        save(page, view)?;
         if new_epub_spreads.is_some() {
             self.epub_spreads = new_epub_spreads;
         }
         self.frame = frame;
         self.visible = visible;
-        if self.page != page && let FixedDocument::Djvu(book) = &mut self.source {
+        if self.page != page
+            && let FixedDocument::Djvu(book) = &mut self.source
+        {
             book.set_outline_page(page);
         }
         self.page = page;
@@ -1382,7 +1966,21 @@ impl FixedReading {
         selection: &[(usize, PdfTextRect)],
         paint: PagePaint,
     ) {
-        self.draw_with_footer(canvas, notice, marks, selection, paint, false);
+        let transient: Vec<_> = marks
+            .iter()
+            .copied()
+            .map(|r| (r, crate::highlight_style::Paint::Temporary(220)))
+            .collect();
+        self.draw_with_footer(
+            canvas,
+            notice,
+            &transient,
+            selection,
+            paint,
+            false,
+            crate::session::footer_caption_rect(SMALLER.x.saturating_sub(60), 28),
+            CAPTION,
+        );
     }
 
     pub(crate) fn page_status(&self) -> String {
@@ -1405,28 +2003,109 @@ impl FixedReading {
         }
     }
 
+    pub(crate) fn footer_caption(&self, notice: Option<&str>) -> String {
+        notice
+            .map(str::to_owned)
+            .unwrap_or_else(|| self.page_status())
+    }
+
     pub(crate) fn draw_with_footer(
         &self,
         canvas: &mut Canvas,
         notice: Option<&str>,
-        marks: &[(usize, PdfTextRect)],
+        marks: &[((usize, PdfTextRect), crate::highlight_style::Paint)],
         selection: &[(usize, PdfTextRect)],
         paint: PagePaint,
         hidden_status: bool,
+        status_rect: Rect,
+        status_style: TextStyle,
     ) {
         let mut frame = self.display_frame(paint.visible.clone());
-        for (regions, gray) in [(marks, 220), (selection, 180)] {
-            for (quad, clip) in regions
-                .iter()
-                .filter_map(|&(page, bounds)| self.projected_region(page, bounds))
-            {
-                for y in clip.y0.floor() as usize..clip.y1.ceil() as usize {
+        let mut appearance = paint.highlight_appearance;
+        if !selection.is_empty() {
+            // Stock ReaderView draws saved gray marks and the temporary selection
+            // with the selection opacity while KOReader's fixed-page temp table is populated.
+            appearance.highlight_opacity = appearance.selection_opacity;
+        }
+        let ink = marks
+            .iter()
+            .copied()
+            .chain(selection.iter().copied().map(|r| {
+                (
+                    r,
+                    paint.selection_color.map_or(
+                        crate::highlight_style::Paint::Selection,
+                        |color| crate::highlight_style::Paint::SelectionColor {
+                            color,
+                            night: paint.inverted,
+                            reflow: false,
+                        },
+                    ),
+                )
+            }));
+        for ((index, region), paint_style) in ink {
+            let Some((quad, clip)) = self.projected_region(index, region) else {
+                continue;
+            };
+            let bounds = quad.bounds();
+            if let Some((y, height)) = paint_style.line_band(
+                bounds.y0.floor() as i32,
+                bounds.height().ceil() as i32,
+                WIDTH,
+                true,
+            ) {
+                let page = self
+                    .visible
+                    .iter()
+                    .find(|page| page.index == index)
+                    .unwrap();
+                let x0 = clip.x0.floor().max(0.) as usize;
+                let x1 = clip.x1.ceil().min(f64::from(WIDTH)) as usize;
+                let first = y.max(page.rows.start as i32).max(0) as usize;
+                let end = (y + height).min(page.rows.end as i32).max(0) as usize;
+                for row in first..end {
+                    let start = row * WIDTH as usize;
+                    paint_style.draw_row(&mut frame.pixels[start + x0..start + x1], appearance);
+                }
+            } else {
+                let mut first = clip.y0.floor() as i32;
+                let mut last = clip.y1.ceil() as i32;
+                if let Some(fill) = paint_style.fill_band(
+                    bounds.y0.floor() as i32,
+                    bounds.height().ceil() as i32,
+                    appearance.line_height,
+                ) {
+                    first = first.max(fill.start);
+                    last = last.min(fill.end);
+                }
+                for y in first.max(0) as usize..last.max(0) as usize {
                     let span = quad.row(y, WIDTH as usize);
                     let start = y * WIDTH as usize;
-                    for pixel in &mut frame.pixels[start + span.start..start + span.end] {
-                        *pixel = (*pixel).min(gray);
-                    }
+                    paint_style.draw_row(
+                        &mut frame.pixels[start + span.start..start + span.end],
+                        appearance,
+                    );
                 }
+            }
+        }
+        for &((index, region), ink) in marks {
+            if let Some((quad, _clip)) = self.projected_region(index, region) {
+                let b = quad.bounds();
+                let rect = crate::selection::HighlightRect {
+                    x: b.x0.floor() as i32,
+                    y: b.y0.floor() as i32,
+                    width: b.width().ceil() as i32,
+                    height: b.height().ceil() as i32,
+                };
+                let margin = crate::note_marker::margin(WIDTH, 0, 0, paint.note_marker, true);
+                crate::note_marker::paint(
+                    &mut frame,
+                    rect,
+                    ink,
+                    paint.note_marker,
+                    margin,
+                    paint.highlight_appearance,
+                );
             }
         }
         let Some(full) =
@@ -1437,12 +2116,8 @@ impl FixedReading {
         if !selection.is_empty() {
             return;
         }
-        let label = self.page_status();
-        canvas.text(
-            Rect::new(38, PAGE_HEIGHT as i32 + 12, SMALLER.x - 60, 48),
-            notice.unwrap_or(&label),
-            CAPTION,
-        );
+        let label = self.footer_caption(notice);
+        canvas.text(status_rect, &label, status_style);
         if !full {
             return;
         }
@@ -1467,6 +2142,25 @@ impl FixedDocument {
 
     fn supports_comic_spreads(&self) -> bool {
         matches!(self, Self::Comic(comic) if comic.page_count() > 1)
+    }
+
+    fn page_size(&self, page: usize) -> Result<(f32, f32)> {
+        match self {
+            Self::Epub(book) => Ok(with_storage(|| {
+                book.decode_page(page)
+                    .map(|image| image.page_size())
+                    .map_err(io::Error::other)
+            })?),
+            Self::Djvu(book) => Ok(book.page_size(page)?),
+            Self::Pdf(pdf) => Ok(pdf.page_size(page)?),
+            Self::Comic(comic) => Ok(with_storage(|| {
+                comic
+                    .decode_page(page)
+                    .map(|image| image.page_size())
+                    .map_err(io::Error::other)
+            })?),
+            Self::Image(image) => Ok(image.page_size()),
+        }
     }
 
     fn epub_spreads(&self, view: View, viewport_height: u32) -> Option<EpubSpreads> {
@@ -1500,6 +2194,7 @@ impl FixedDocument {
         epub_spreads: Option<&EpubSpreads>,
         cache: &mut DeskewCache,
         viewport_height: u32,
+        flows: Option<&PageFlows>,
     ) -> Result<(usize, View, GrayImage, Vec<VisiblePage>)> {
         if let Some(epub) = epub_spreads {
             view.spread = epub.plan.has_facing();
@@ -1515,10 +2210,10 @@ impl FixedDocument {
             && view.width_fit
             && let Self::Pdf(pdf) = self
         {
-            return continuous_frame(pdf, page, view, cache, viewport_height);
+            return continuous_frame(pdf, page, view, cache, viewport_height, flows);
         }
         view.continuous = false;
-        let page = if view.spread && epub_spreads.is_none() {
+        let page = if view.spread && epub_spreads.is_none() && flows.is_none() {
             comic_spread_start(page)
         } else {
             page
@@ -1545,7 +2240,7 @@ impl FixedDocument {
         }
         view.straighten_limit = 0;
         view.force_ocr = false;
-        let frame = self.frame(page, &mut view, epub_spreads, viewport_height)?;
+        let frame = self.frame(page, &mut view, epub_spreads, viewport_height, flows)?;
         Ok((page, view, frame, Vec::new()))
     }
 
@@ -1555,12 +2250,23 @@ impl FixedDocument {
         view: &mut View,
         epub_spreads: Option<&EpubSpreads>,
         viewport_height: u32,
+        flows: Option<&PageFlows>,
     ) -> Result<GrayImage> {
         let pixels = match self {
             Self::Epub(book) => with_storage(|| {
                 if view.spread
-                    && let Some(spread) = epub_spreads.and_then(|epub| epub.plan.group(page))
+                    && let Some(mut spread) = epub_spreads.and_then(|epub| epub.plan.group(page))
                 {
+                    if let Some(flows) = flows
+                        && let FixedSpread::Facing { left, right } = spread
+                    {
+                        let selected = flows.flow(page);
+                        let allowed = |page| flows.flow(page) == 0 || flows.flow(page) == selected;
+                        spread = FixedSpread::Facing {
+                            left: left.filter(|&page| allowed(page)),
+                            right: right.filter(|&page| allowed(page)),
+                        };
+                    }
                     return book
                         .compose_spread(spread, WIDTH, viewport_height, view.turns)
                         .map_err(io::Error::other);
@@ -1572,7 +2278,7 @@ impl FixedDocument {
             })?,
             Self::Pdf(_) | Self::Djvu(_) => unreachable!("scans use their page transform"),
             Self::Comic(comic) if view.spread => {
-                comic_spread_pixels(comic, page, *view, viewport_height)?
+                comic_spread_pixels(comic, page, *view, viewport_height, flows)?
             }
             Self::Comic(comic) => {
                 let image = with_storage(|| comic.decode_page(page).map_err(io::Error::other))?;
@@ -1672,6 +2378,7 @@ fn comic_spread_pixels(
     page: usize,
     view: View,
     viewport_height: u32,
+    flows: Option<&PageFlows>,
 ) -> Result<Vec<u8>> {
     Ok(with_storage(|| {
         let fit = |index, width| {
@@ -1680,13 +2387,21 @@ fn comic_spread_pixels(
                 .and_then(|image| image.fit(width, viewport_height, view.turns))
                 .map_err(io::Error::other)
         };
-        let Some(partner) = comic_spread_partner(page, comic.page_count()) else {
-            return fit(page, WIDTH);
+        let first = comic_spread_start(page);
+        let Some(partner) = comic_spread_partner(first, comic.page_count()) else {
+            return fit(first, WIDTH);
         };
+        let mut pages = [Some(first), Some(partner)];
+        if let Some(flows) = flows {
+            let selected = flows.flow(page);
+            pages = pages.map(|page| {
+                page.filter(|&page| flows.flow(page) == 0 || flows.flow(page) == selected)
+            });
+        }
         let halves = if view.right_to_left {
-            [partner, page]
+            [pages[1], pages[0]]
         } else {
-            [page, partner]
+            pages
         };
         let first_width = (WIDTH - SPREAD_GUTTER) / 2;
         let second_x = first_width + SPREAD_GUTTER;
@@ -1695,6 +2410,9 @@ fn comic_spread_pixels(
             (halves[0], 0, first_width),
             (halves[1], second_x, WIDTH - second_x),
         ] {
+            let Some(index) = index else {
+                continue;
+            };
             let raster = fit(index, width)?;
             let occupied = x as usize..(x + width) as usize;
             for (row, half_row) in pixels
@@ -1716,13 +2434,19 @@ fn continuous_frame(
     view: View,
     cache: &mut DeskewCache,
     viewport_height: u32,
+    flows: Option<&PageFlows>,
 ) -> Result<(usize, View, GrayImage, Vec<VisiblePage>)> {
-    let (page, view) = continuous_position(pdf, page, view, viewport_height)?;
+    let (page, view) = continuous_position(pdf, page, view, viewport_height, flows)?;
     let mut pixels = vec![255; (WIDTH * viewport_height) as usize];
     let mut visible = Vec::new();
     let mut top = view.offset_y as i32;
-    let last = pdf.page_count() - 1;
-    for index in page..=last {
+    let count = pdf.page_count();
+    let last = flows
+        .and_then(|flows| flows.allowed_page(count - 1, -1, flows.flow(page)))
+        .unwrap_or(count - 1);
+    for index in std::iter::successors(Some(page), |&page| {
+        adjacent_flow_page(page, 1, count, flows)
+    }) {
         if top >= viewport_height as i32 || visible.len() == MAX_VISIBLE_PDF_PAGES {
             break;
         }
@@ -1779,43 +2503,77 @@ fn continuous_position(
     mut page: usize,
     mut view: View,
     viewport_height: u32,
+    flows: Option<&PageFlows>,
 ) -> Result<(usize, View)> {
-    let last = pdf.page_count() - 1;
+    let count = pdf.page_count();
+    let last = flows
+        .and_then(|flows| flows.allowed_page(count - 1, -1, flows.flow(page)))
+        .unwrap_or(count - 1);
     let length = |index| -> Result<i32> {
         let (_, _, height) = continuous_metrics(pdf, index, &view, viewport_height)?;
         Ok(height + continuous_gap_after(index, last, &view))
     };
     let mut offset = (-view.offset_y.round()) as i32;
-    while offset < 0 && page > 0 {
-        page -= 1;
+    while offset < 0 {
+        let Some(previous) = adjacent_flow_page(page, -1, count, flows) else {
+            break;
+        };
+        page = previous;
         offset += length(page)?;
     }
     let mut span = length(page)?;
-    while page < last && offset >= span {
+    while offset >= span {
+        let Some(next) = adjacent_flow_page(page, 1, count, flows) else {
+            break;
+        };
         offset -= span;
-        page += 1;
+        page = next;
         span = length(page)?;
     }
     offset = offset.clamp(0, span);
 
     // Keep the last page flush with the bottom when a full viewport remains.
     let mut available = span - offset;
-    for index in page + 1..=last {
+    for index in std::iter::successors(adjacent_flow_page(page, 1, count, flows), |&page| {
+        adjacent_flow_page(page, 1, count, flows)
+    }) {
         if available >= viewport_height as i32 {
             break;
         }
         available += length(index)?;
     }
     let mut deficit = (viewport_height as i32 - available).max(0);
-    while deficit > offset && page > 0 {
+    let selected_flow = flows.map_or(0, |flows| flows.flow(page));
+    while deficit > offset {
+        let Some(previous) = adjacent_flow_page(page, -1, count, flows) else {
+            break;
+        };
+        if selected_flow != 0 && flows.is_some_and(|flows| flows.flow(previous) != selected_flow) {
+            break;
+        }
         deficit -= offset;
-        page -= 1;
+        page = previous;
         offset = length(page)?;
     }
     let (_, metrics, _) = continuous_metrics(pdf, page, &view, viewport_height)?;
     view.offset_y = -((offset - deficit).max(0) as f32);
     view.offset_x = clamp_offset(view.offset_x, metrics.width, WIDTH as f32);
     Ok((page, view))
+}
+
+fn adjacent_flow_page(
+    page: usize,
+    direction: isize,
+    count: usize,
+    flows: Option<&PageFlows>,
+) -> Option<usize> {
+    flows.map_or_else(
+        || {
+            page.checked_add_signed(direction)
+                .filter(|&page| page < count)
+        },
+        |flows| flows.next(page, direction),
+    )
 }
 
 fn continuous_gap_after(page: usize, last: usize, view: &View) -> i32 {
@@ -1974,7 +2732,7 @@ fn viewport(size: (f32, f32), view: &mut View, viewport_height: u32) -> RenderRe
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::fixed::PdfLinkTarget;
     use std::io::Write;
@@ -1992,12 +2750,18 @@ mod tests {
     struct ComicFixture(PathBuf);
 
     impl ComicFixture {
+        fn owned_path(kind: &str) -> PathBuf {
+            static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            let index = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            std::env::temp_dir().join(format!(
+                "reader-{kind}-test-{}-{index}.cbz",
+                std::process::id()
+            ))
+        }
         fn panels() -> Self {
             use comic_panel::tests::{HEIGHT, WIDTH, grid};
 
-            let fixture = Self(
-                std::env::temp_dir().join(format!("reader-panel-test-{}.cbz", std::process::id(),)),
-            );
+            let fixture = Self(Self::owned_path("panel"));
             let mut archive = zip::ZipWriter::new(File::create(&fixture.0).unwrap());
             let pixels = grid();
             for index in 0..2 {
@@ -2015,9 +2779,7 @@ mod tests {
         }
 
         fn striped() -> Self {
-            let fixture = Self(
-                std::env::temp_dir().join(format!("reader-spread-test-{}.cbz", std::process::id())),
-            );
+            let fixture = Self(Self::owned_path("spread"));
             let mut archive = zip::ZipWriter::new(File::create(&fixture.0).unwrap());
             for (index, intensity) in [32, 64, 128, 192].into_iter().enumerate() {
                 archive
@@ -2185,6 +2947,14 @@ mod tests {
     }
 
     fn striped_pdf(pages: usize) -> Pdf {
+        Pdf::open(striped_pdf_bytes(pages)).unwrap()
+    }
+
+    pub(crate) fn striped_pdf_bytes(pages: usize) -> Vec<u8> {
+        striped_pdf_sized_bytes(pages, 120, 80)
+    }
+
+    fn striped_pdf_sized_bytes(pages: usize, width: u32, height: u32) -> Vec<u8> {
         let kids = (0..pages)
             .map(|index| format!("{} 0 R", 3 + index * 2))
             .collect::<Vec<_>>()
@@ -2199,15 +2969,21 @@ mod tests {
         ];
         for index in 0..pages {
             let contents = 4 + index * 2;
-            let mut stream = format!("{:.2} g 0 0 120 80 re f\n", (index + 1) as f32 * 0.1);
+            let mut stream = format!(
+                "{:.2} g 0 0 {width} {height} re f\n",
+                (index + 1) as f32 * 0.1
+            );
             let annotation = if index == 1 {
-                stream.push_str("0 g BT /F1 12 Tf 10 63 Td (Second) Tj ET\n");
+                stream.push_str(&format!(
+                    "0 g BT /F1 12 Tf 10 {} Td (Second) Tj ET\n",
+                    height.saturating_sub(17)
+                ));
                 format!("/Annots [{link} 0 R]")
             } else {
                 String::new()
             };
             objects.push(format!(
-                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 120 80] /Contents {contents} 0 R {annotation} >>"
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {width} {height}] /Contents {contents} 0 R {annotation} >>"
             ));
             objects.push(format!(
                 "<< /Length {} >>\nstream\n{stream}endstream",
@@ -2233,7 +3009,7 @@ mod tests {
             objects.len() + 1
         )
         .unwrap();
-        Pdf::open(pdf).unwrap()
+        pdf
     }
 
     fn reading(pdf: Pdf, view: View) -> FixedReading {
@@ -2294,7 +3070,8 @@ mod tests {
                 ..View::default()
             };
             let mut reader =
-                FixedReading::with_source(FixedDocument::Pdf(striped_pdf(4).into()), 0, view).unwrap();
+                FixedReading::with_source(FixedDocument::Pdf(striped_pdf(4).into()), 0, view)
+                    .unwrap();
             reader.jump_to(1, Some(&target)).unwrap();
             assert_eq!(reader.page(), 1);
             assert_eq!(reader.preferences().crop, Some(crop));
@@ -2535,6 +3312,237 @@ mod tests {
     }
 
     #[test]
+    fn automatic_turn_scrolls_a_signed_fraction_of_the_pdf_viewport() {
+        let mut reader = reading(
+            striped_pdf(6),
+            View {
+                width_fit: true,
+                continuous: true,
+                ..View::default()
+            },
+        );
+        let start = reader.preferences().offset_y;
+        reader.turns.next_refresh = Instant::now();
+        assert!(reader.automatic_turn(5).unwrap());
+        let middle = reader.preferences().offset_y;
+        assert!(middle < start);
+        reader.turns.next_refresh = Instant::now();
+        assert!(reader.automatic_turn(-5).unwrap());
+        assert!(reader.preferences().offset_y > middle);
+    }
+
+    #[test]
+    fn automatic_turn_pans_zoomed_fixed_pages_with_koreader_overlap_and_edge_turns() {
+        let mut reader = reading(
+            striped_pdf(3),
+            View {
+                height_fit: true,
+                ..View::default()
+            },
+        );
+        let initial = reader.preferences().offset_x;
+
+        assert!(reader.automatic_turn(5).unwrap());
+        assert_eq!(reader.page(), 0);
+        assert!((reader.preferences().offset_x - (initial - WIDTH as f32 * 0.3)).abs() < 1.0);
+
+        assert!(reader.automatic_turn(-5).unwrap());
+        assert_eq!(reader.page(), 0);
+        assert!((reader.preferences().offset_x - initial).abs() < 1.0);
+
+        assert!(reader.automatic_turn(5).unwrap());
+        assert_eq!(reader.page(), 0);
+        assert!(reader.automatic_turn(5).unwrap());
+        assert_eq!(reader.page(), 0);
+        let right_edge = ((view_metrics((120.0, 80.0), &reader.view, reader.frame.height).width
+            - WIDTH as f32)
+            / 2.0)
+            .max(0.0);
+        assert!((reader.preferences().offset_x + right_edge).abs() < 1.0);
+
+        assert!(reader.automatic_turn(5).unwrap());
+        assert_eq!(reader.page(), 1);
+        assert!((reader.preferences().offset_x - right_edge).abs() < 1.0);
+    }
+
+    #[test]
+    fn manual_fixed_page_turns_pan_to_page_edges_before_changing_pages() {
+        let mut reader = reading(
+            Pdf::open(striped_pdf_sized_bytes(3, 200, 80)).unwrap(),
+            View {
+                height_fit: true,
+                ..View::default()
+            },
+        );
+        let turn = |reader: &mut FixedReading, input| {
+            reader.turns.next_refresh = Instant::now();
+            reader.input(input).unwrap()
+        };
+
+        assert!(turn(&mut reader, Input::PageForward));
+        assert_eq!(reader.page(), 0);
+        let first_pan = reader.preferences().offset_x;
+        assert!(first_pan < 0.0);
+
+        assert!(turn(&mut reader, Input::PageForward));
+        assert_eq!(reader.page(), 0);
+        let right_edge = reader.preferences().offset_x;
+        assert!(right_edge < first_pan);
+
+        assert!(turn(&mut reader, Input::PageForward));
+        assert_eq!(reader.page(), 1);
+        assert!(reader.preferences().offset_x > 0.0);
+
+        assert!(turn(&mut reader, Input::PageBack));
+        assert_eq!(reader.page(), 0);
+        assert!((reader.preferences().offset_x - right_edge).abs() < 1.0);
+
+        reader.jump(2).unwrap();
+        let metrics = view_metrics((200.0, 80.0), &reader.view, reader.frame.height);
+        let edge = ((metrics.width - WIDTH as f32) / 2.0).max(0.0);
+        reader
+            .present(
+                2,
+                View {
+                    offset_x: -edge,
+                    ..reader.preferences()
+                },
+            )
+            .unwrap();
+        let final_view = reader.preferences();
+        assert!(!turn(&mut reader, Input::PageForward));
+        assert_eq!(reader.page(), 2);
+        assert_eq!(reader.preferences(), final_view);
+    }
+
+    #[test]
+    fn automatic_turn_uses_configured_horizontal_overlap_percentages() {
+        let mut distances = Vec::new();
+        for overlap in [0, 40, 90] {
+            let mut reader = reading(
+                Pdf::open(striped_pdf_sized_bytes(2, 200, 80)).unwrap(),
+                View {
+                    height_fit: true,
+                    ..View::default()
+                },
+            );
+            reader
+                .set_auto_turn_pan(Some(overlap), Some(40), None, None)
+                .unwrap();
+            let start = reader.preferences().offset_x;
+            assert!(reader.automatic_turn(5).unwrap());
+            distances.push((reader.preferences().offset_x - start).abs());
+        }
+
+        assert!((distances[0] - WIDTH as f32 * 0.5).abs() < 1.0);
+        assert!((distances[1] - WIDTH as f32 * 0.3).abs() < 1.0);
+        assert!((distances[2] - WIDTH as f32 * 0.05).abs() < 1.0);
+        assert!(distances[0] > distances[1] && distances[1] > distances[2]);
+    }
+
+    #[test]
+    fn automatic_turn_uses_vertical_overlap_on_the_vertical_screen_axis() {
+        let mut distances = Vec::new();
+        for overlap in [0, 40, 90] {
+            let mut reader = reading(
+                Pdf::open(striped_pdf_sized_bytes(2, 80, 240)).unwrap(),
+                View {
+                    width_fit: true,
+                    ..View::default()
+                },
+            );
+            reader
+                .set_auto_turn_pan(Some(0), Some(overlap), None, None)
+                .unwrap();
+            let start = reader.preferences().offset_y;
+            assert!(reader.automatic_turn(5).unwrap());
+            distances.push((reader.preferences().offset_y - start).abs());
+        }
+
+        assert!((distances[0] - PAGE_HEIGHT as f32 * 0.5).abs() < 1.0);
+        assert!((distances[1] - PAGE_HEIGHT as f32 * 0.3).abs() < 1.0);
+        assert!((distances[2] - PAGE_HEIGHT as f32 * 0.05).abs() < 1.0);
+        assert!(distances[0] > distances[1] && distances[1] > distances[2]);
+    }
+
+    #[test]
+    fn automatic_turn_reads_vertical_first_and_keeps_overlap_on_screen_axes() {
+        let mut reader = reading(
+            Pdf::open(striped_pdf_sized_bytes(2, 120, 240)).unwrap(),
+            View {
+                zoom: 4,
+                ..View::default()
+            },
+        );
+        reader
+            .set_auto_turn_pan(Some(0), Some(90), Some(true), Some(false))
+            .unwrap();
+        let before = reader.preferences();
+        assert!(reader.automatic_turn(5).unwrap());
+        let after = reader.preferences();
+
+        assert_eq!(after.offset_x, before.offset_x);
+        assert!((after.offset_y - before.offset_y).abs() < PAGE_HEIGHT as f32 * 0.06);
+        assert!(after.offset_y < before.offset_y);
+    }
+
+    #[test]
+    fn automatic_turn_can_read_a_tall_fixed_page_from_bottom_to_top() {
+        let mut reader = reading(
+            Pdf::open(striped_pdf_sized_bytes(2, 80, 240)).unwrap(),
+            View {
+                width_fit: true,
+                ..View::default()
+            },
+        );
+        reader
+            .set_auto_turn_pan(None, None, None, Some(true))
+            .unwrap();
+        let bottom = reader.preferences().offset_y;
+        assert!(bottom < 0.0);
+        assert!(reader.automatic_turn(5).unwrap());
+        assert!(reader.preferences().offset_y > bottom);
+    }
+
+    #[test]
+    fn automatic_turn_respects_fixed_page_reading_direction() {
+        let mut reader = reading(
+            striped_pdf(2),
+            View {
+                height_fit: true,
+                right_to_left: true,
+                ..View::default()
+            },
+        );
+        assert!(reader.automatic_turn(5).unwrap());
+        assert_eq!(reader.page(), 0);
+        assert!(reader.preferences().offset_x > 0.0);
+    }
+
+    #[test]
+    fn automatic_turn_scrolls_down_a_tall_fixed_page_before_turning() {
+        let pdf = Pdf::open(striped_pdf_sized_bytes(3, 80, 120)).unwrap();
+        let mut reader = reading(
+            pdf,
+            View {
+                width_fit: true,
+                ..View::default()
+            },
+        );
+        let metrics = view_metrics((80.0, 120.0), &reader.view, reader.frame.height);
+        let bottom_offset = (metrics.height - reader.frame.height as f32) / 2.0;
+        assert!(bottom_offset > 0.0);
+
+        assert!(reader.automatic_turn(5).unwrap());
+        assert_eq!(reader.page(), 0);
+        assert!((reader.preferences().offset_y + bottom_offset).abs() < 1.0);
+
+        assert!(reader.automatic_turn(5).unwrap());
+        assert_eq!(reader.page(), 1);
+        assert!((reader.preferences().offset_y - bottom_offset).abs() < 1.0);
+    }
+
+    #[test]
     fn continuous_page_gap_preserves_transformed_selection_and_empty_hits() {
         let mut reader = reading(
             striped_pdf(4),
@@ -2699,7 +3707,9 @@ mod tests {
         reader.turns.next_refresh = Instant::now();
         assert!(swipe(&mut reader, 2.0, -100.0));
         assert_eq!(reader.page(), 1);
-        assert_eq!(reader.preferences().offset_x, 0.0);
+        let page_metrics = view_metrics(size, &reader.view, PAGE_HEIGHT);
+        let page_start = ((page_metrics.width - WIDTH as f32) / 2.0).max(0.0);
+        assert!((reader.preferences().offset_x - page_start).abs() < 1.0);
 
         assert!(reader.zoom(1).unwrap());
         assert_eq!(
@@ -2962,10 +3972,92 @@ mod tests {
         reader.set_spread(false).unwrap();
         assert!(!reader.preferences().spread);
         assert_eq!(reader.preferences().zoom, 1);
-        assert!(turn(&mut reader, Input::PageForward));
-        assert_eq!(reader.visible_pages().collect::<Vec<_>>(), [1]);
-        assert!(turn(&mut reader, Input::PageForward));
+        for target in [1, 2] {
+            for _ in 0..16 {
+                if reader.page() == target {
+                    break;
+                }
+                assert!(turn(&mut reader, Input::PageForward));
+            }
+            assert_eq!(reader.page(), target);
+            assert_eq!(reader.visible_pages().collect::<Vec<_>>(), [target]);
+        }
+    }
+
+    #[test]
+    fn custom_flows_keep_hidden_comic_and_fixed_epub_slots_blank_during_navigation() {
+        use crate::library::{ReadingPosition, hidden_flows::FlowPoint};
+        let mut data = HiddenFlows::default();
+        data.enabled = true;
+        for (page, hidden) in [(1, true), (2, false)] {
+            data.insert(FlowPoint {
+                position: ReadingPosition {
+                    chapter: 0,
+                    page,
+                    anchor: None,
+                },
+                hidden,
+            })
+            .unwrap();
+        }
+        let comic = ComicFixture::striped();
+        let mut reader = FixedReading::open(
+            PAGE_HEIGHT,
+            DocumentFormat::Cbz,
+            &comic.0,
+            0,
+            &[],
+            View {
+                spread: true,
+                ..Default::default()
+            },
+            None,
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        reader.set_hidden_flows(&data).unwrap();
+        reader.turns.next_refresh = Instant::now();
+        assert!(reader.input(Input::PageForward).unwrap());
+        assert_eq!(reader.page(), 2);
         assert_eq!(reader.visible_pages().collect::<Vec<_>>(), [2]);
+        let pixel = |reader: &FixedReading, x: u32| {
+            reader.frame.pixels[(PAGE_HEIGHT / 2 * WIDTH + x) as usize]
+        };
+        assert_eq!(pixel(&reader, WIDTH / 4), 255);
+        assert_eq!(pixel(&reader, WIDTH * 3 / 4), 128);
+        reader.reverse_direction().unwrap();
+        assert_eq!(pixel(&reader, WIDTH / 4), 128);
+        assert_eq!(pixel(&reader, WIDTH * 3 / 4), 255);
+        reader.turns.next_refresh = Instant::now();
+        assert!(reader.input(Input::PageBack).unwrap());
+        assert_eq!(reader.page(), 0);
+        // Direct jumps keep the hidden page available and preserve its original partner.
+        reader.jump(1).unwrap();
+        assert_eq!(reader.visible_pages().collect::<Vec<_>>(), [1, 2]);
+        data.enabled = false;
+        reader.set_hidden_flows(&data).unwrap();
+        assert_eq!(reader.visible_pages().collect::<Vec<_>>(), [1, 2]);
+
+        data.enabled = true;
+        let fixture = EpubFixture::striped("both");
+        let mut reader = fixture.open(0, View::default());
+        reader.set_hidden_flows(&data).unwrap();
+        reader.turns.next_refresh = Instant::now();
+        assert!(reader.input(Input::PageForward).unwrap());
+        assert_eq!(reader.page(), 2);
+        assert_eq!(reader.visible_pages().collect::<Vec<_>>(), [2]);
+        assert_eq!(pixel(&reader, WIDTH / 4), 128);
+        assert_eq!(pixel(&reader, WIDTH * 3 / 4), 255);
+        reader.turns.next_refresh = Instant::now();
+        assert!(reader.input(Input::PageForward).unwrap());
+        assert_eq!(reader.page(), 3);
+        reader.turns.next_refresh = Instant::now();
+        assert!(reader.input(Input::PageBack).unwrap());
+        assert_eq!(reader.visible_pages().collect::<Vec<_>>(), [2]);
+        reader.jump(1).unwrap();
+        assert_eq!(reader.page(), 1);
+        assert_eq!(reader.visible_pages().collect::<Vec<_>>(), [1, 2]);
     }
 
     #[test]

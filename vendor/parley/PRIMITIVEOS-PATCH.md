@@ -45,3 +45,20 @@ passes each shaped atom's original text, natural advance and font size to
 the caller. Extra advances are measured before wrapping and shared by line
 measurement, painting and selection. Reader applies this to horizontal CJK
 text. [CJK width and geometry checks](../../docs/cjk-width.md)
+
+The ranged builder accepts an optional signed font-weight advance callback.
+Reader supplies the remaining weight difference after face selection, including
+a publisher's declared face class. Fractional advances use the same before/after
+cluster-spacing representation as CJK widths. Wrapping, intrinsic table widths,
+caret positions, painting and word hits consume those shared gaps. Zero-advance
+marks retain their original geometry. With no callback, upstream behavior is
+unchanged. [Numeric contrast and weight](../../docs/font-contrast-and-weight.md)
+
+A committed line containing inline boxes without a committed text run now has
+an empty source range at its actual input box caret. The old `usize::MAX..0`
+sentinel could escape through `Line::text_range` after a full-width picture
+wrapped away from its caption. Text-run ranges retain their shaped UTF-8 bounds;
+this change does not clamp invalid text or invent source characters. Reader's
+regression covers one, two and three wrapped pictures, projected captions,
+original picture ordinals and serialized page restoration:
+`cargo test --lib parley_layout::media_line_tests`.

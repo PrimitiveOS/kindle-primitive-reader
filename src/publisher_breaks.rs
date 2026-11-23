@@ -44,6 +44,9 @@ fn protect_paragraph_end<'a>(
         else {
             continue;
         };
+        if styles[source.blocks[i].element].flow.suppressed {
+            continue;
+        }
         let limit = minimum(&styles[source.blocks[i].element]);
         let (count, extent) = &mut ends[i];
         if limit > 1 && *count < limit {
@@ -100,6 +103,9 @@ pub(crate) fn geometry(source: &Source, styles: &[Style], lines: &[Line]) -> Vec
     };
     for line in lines {
         if let Ok(i) = source.blocks.binary_search_by_key(&line.block, |b| b.key) {
+            if styles[source.blocks[i].element].flow.suppressed {
+                continue;
+            }
             extend(&mut boxes, source.blocks[i].element, line.top, line.bottom);
         }
     }
@@ -111,6 +117,7 @@ pub(crate) fn geometry(source: &Source, styles: &[Style], lines: &[Line]) -> Vec
     let mut following = None;
     for (i, element) in source.elements.iter().enumerate().rev() {
         if element.selector_only
+            || styles[i].flow.suppressed
             || !(crate::source::is_block_tag(&element.tag)
                 || matches!(element.tag.as_str(), "ol" | "ul" | "table" | "tr" | "hr"))
         {
@@ -168,6 +175,49 @@ mod tests {
     use crate::{Book, Engine, Pagination, Probe, Settings};
 
     #[test]
+    fn suppressed_rules_cannot_force_or_protect_a_page_but_visibility_keeps_geometry() {
+        let book = Book::open(&crate::test_fixture("field-notes-epub3.epub")).unwrap();
+        let probe = Probe::from_book_content(book, Engine::Parley,
+            &[crate::test_fixture("fonts/NotoSans-Regular.ttf")], Settings::default(), 0,
+            Some("<html><body><p>Before</p><p id='target'>Middle paragraph text</p><p>After</p></body></html>".into())).unwrap();
+        let source = &probe.source;
+        let target = source
+            .elements
+            .iter()
+            .position(|element| element.id.as_deref() == Some("target"))
+            .unwrap();
+        let mut styles = vec![Style::default(); source.elements.len()];
+        styles[target].page_breaks = Rules {
+            before: Edge::Force,
+            after: Edge::Avoid,
+            keep_together: true,
+        };
+        let visible = geometry(source, &styles, &probe.lines);
+        assert_eq!(visible.len(), 1);
+        styles[target].flow.painted = false;
+        let unpainted = geometry(source, &styles, &probe.lines);
+        assert_eq!(unpainted[0].extent, visible[0].extent);
+        assert!(unpainted[0].rules == visible[0].rules);
+        styles[target].flow.suppressed = true;
+        assert!(geometry(source, &styles, &probe.lines).is_empty());
+        // A removed block must also not claim the following block's boundary
+        // through the empty-separator fallback when it has no formatted line.
+        let empty: Vec<Line> = probe
+            .lines
+            .into_iter()
+            .filter(|line| {
+                source
+                    .blocks
+                    .iter()
+                    .find(|block| block.key == line.block)
+                    .is_none_or(|block| block.element != target)
+            })
+            .collect();
+        assert!(!empty.is_empty());
+        assert!(geometry(source, &styles, &empty).is_empty());
+    }
+
+    #[test]
     fn block_and_empty_separator_begin_new_pages_and_preserve_source() {
         let settings = Settings {
             width: 840,
@@ -223,6 +273,7 @@ mod tests {
             .map(|i| Line {
                 block: i,
                 bytes: 0..1,
+                spans: None,
                 top: i as f32 * 20.,
                 bottom: i as f32 * 20. + 18.,
                 missing_glyphs: 0,

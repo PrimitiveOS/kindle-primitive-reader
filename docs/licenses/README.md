@@ -11,6 +11,8 @@ Launcher. [Launcher artwork terms](https://github.com/PrimitiveOS/kindle-primiti
 - [American and British English hyphenation patterns](ENGLISH-HYPHENATION.txt) cover the dictionaries compiled into native reflow.
 - [PDF assets](pdf/README.md) covers embedded fonts, character maps, and colour
   profiles supplied by the Hayro PDF libraries.
+- [Nerd Fonts Symbols](NERDFONTS.txt) covers the MIT-licensed private-use
+  symbol fallback font included with Reader.
 - The MIT-licensed [vendored DjVu BZZ decoder](../../vendor/djvu-bzz) pins the
   upstream source and adds Reader's decoded-output limit.
 - [Rust Standard Library notices](runtime/RUST-COPYRIGHT.html),

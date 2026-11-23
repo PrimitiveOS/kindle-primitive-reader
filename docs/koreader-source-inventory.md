@@ -7,19 +7,32 @@ screen states to Rust and Lua handlers and identifies the next acceptance tests.
 
 KOReader commit `9192014d8bd82a91dc1012473be0f238dedfdb54` is the baseline for the Oasis captures. Each row names upstream identifiers, the Reader behavior to compare, and any remaining acceptance work. Some menu registrations depend on the document or device. Counts describe source entries. Functional parity requires a matching result with a real document. [Upstream tree](https://github.com/koreader/koreader/tree/v2026.07.1) · [Reader test evidence and feature comparisons](koreader-controls-parity.md)
 
+This is a source inventory, not a build-every-module checklist. Only reading
+workflows selected by the [scope and completion checklist](reading-parity-plan.md#scope-and-completion-checklist)
+count toward the goal. Items explicitly marked **excluded** are reference-only
+and must not be reopened as missing features or release blockers.
+
 To check coverage, run `python3 scripts/check-koreader-inventory.py /path/to/koreader`. The check reads the pinned Git objects. It covers reader modules, document and file manager modules, bundled plug-ins, top-menu registrations and the outer rows in both configuration dialogs. Dynamic submenus, translation services, the rendering engines and platform-specific hooks require additional comparisons.
+
+The [pinned native KOReader interface inventory](koreader-sdl-reference.md) adds
+128 complete desktop frames, including six lower configuration tabs, selection
+and dictionary popups. Its [774-control matrix](koreader-sdl-reference-controls.json)
+pairs visible controls with pinned source handlers and explicit workflow, partial,
+gap, excluded or audit states. The capture is a stock macOS SDL reference,
+separate from Oasis acceptance. Schedule only in-scope reading contracts from
+it; the excluded rows and inventory counts do not measure completed parity.
 
 ## Reader modules
 
 | Upstream identifiers | Reader behavior and acceptance |
 | --- | --- |
-| `readerannotation`, `readerbookmark`, `readerdogear`, `readerhighlight` | Reader stores bookmarks, highlights and notes. Check drawing styles, cross-page selection, filters, ordering and export for both reflow and fixed pages. |
+| `readerannotation`, `readerbookmark`, `readerdogear`, `readerhighlight` | Reader stores bookmarks, highlights and notes. The [named colors and global note-marker candidate](highlight-colors-and-note-markers.md) has desktop rendering, persistence and original-file checks. The [selection and bulk color workflows](highlight-workflows.md) add temporary colors, confirmed transactional apply-all, bookmark color filters and multi-color exports. Native tests remain pending. Check remaining cross-page/provider cases separately. |
 | `readerback`, `readerflipping`, `readergoto`, `readerlink`, `readerthumbnail` | Location history, page jumps, links and thumbnail skimming are available. Check cancellation, forward history after branching, footnote previews and nonlinear flows. |
-| `readerhandmade`, `readerpagemap`, `readertoc` | Publisher, generated and custom contents have dedicated workflows. The print list follows the publisher’s exact targets and exposes per-book footer and margin controls. Character-count maps and alternate-flow editing have separate acceptance checks. [Print page evidence](publisher-page-numbers.md) |
+| `readerhandmade`, `readerpagemap`, `readertoc` | Publisher, generated and custom contents have dedicated workflows. The print list follows the publisher’s exact targets and exposes per-book footer and margin controls. Publisher non-linear fragments have per-book controls, a reader-wide default and explicit destinations. Reader-authored hidden ranges provide source-anchored boundary editing, inactive-marker cleanup, masked page/scroll/spread navigation and flow-relative status. Reference algorithms and private original EPUB/PDF workflows have separate desktop checks; aggregate native and foreground acceptance remain pending. [Print page evidence](publisher-page-numbers.md) · [Non-linear fragments](nonlinear-reading.md) · [Custom hidden flows](custom-hidden-flows.md) |
 | `readerdictionary`, `readerwikipedia` | Installed dictionary checks cover English inflections, spelling suggestions, per-book source preferences and selection restoration. Compare language-specific candidate generators, vocabulary review, full Wikipedia articles and remote lookup failures separately. [Dictionary evidence](dictionary-word-forms.md) · [Network lookups](online-lookups.md) |
-| `readerfooter`, `readerstatus`, `readeractivityindicator`, `readerdevicestatus` | Check independent footer display, chapter progress, hidden mode and deliberate exit. Compare each device indicator against Launcher ownership. |
+| `readerfooter`, `readerstatus`, `readeractivityindicator`, `readerdevicestatus` | Reader's custom footer exposes selectable reading metrics, including battery percentage, charging state and a saved hide threshold, with optional clock/battery refresh. It supports item text size 8–36 (default 14) and the owner-requested `Chapter x of y - Page m of n` caption above a horizontal progress track with vertical chapter ticks; Exit stays at the right. Font-face/bold controls and foreground Kindle appearance remain open. [Footer text size and layout](footer-font-size.md) · [Battery footer capture](battery-footer.md) |
 | `readerconfig`, `readermenu` | Compare upper groups, lower format controls, remembered selections, current values, outside dismissal and page-button behavior on both document types. |
-| `readerfont`, `readertypeset`, `readertypography`, `readeruserhyph`, `readerstyletweak` | Reader provides font selection, shaping, publisher CSS and authored hyphens. User hyphenation dictionaries, style-tweak selection and per-language behavior need separate evidence. |
+| `readerfont`, `readertypeset`, `readertypography`, `readeruserhyph`, `readerstyletweak` | Reader provides font selection, shaping, publisher CSS, authored hyphens and user exceptions. The [supported user-style candidate](style-tweaks.md) adds live global presets, per-book overrides and reviewed custom CSS with explicit unsupported-input diagnostics. Its own desktop suite and three original-file reopen workflows pass. Full CSS layout, broader language behavior and integrated native acceptance remain separate gates. |
 | `readerhinting`, `readerpaging`, `readerrolling`, `readerscrolling`, `readerview` | Exercise eager and delayed pagination, continuous scroll, mixed writing directions, overlap, source anchors and cache behavior. |
 | `readercoptlistener`, `readerkoptlistener`, `readercropping`, `readerpanning`, `readerzooming` | Compare each provider option, pan to source corners, follow a link, mark text and reopen at the same source position. |
 | `readerkeyselection` | Oasis has two page buttons. Test their configured functions. D-pad-only text selection depends on a device with those keys. |
@@ -44,16 +57,26 @@ To check coverage, run `python3 scripts/check-koreader-inventory.py /path/to/kor
 
 ## Bundled plugins
 
+This table is a source-reading aid, not a requirement to reproduce the plug-in
+system. Implement individual reading tasks as native Reader features. Do not
+add a generic Lua/extension runtime, plug-in manager or third-party plug-in
+catalogue. File-format extensions remain part of document support.
+
 | Upstream identifiers | Reader behavior and acceptance |
 | --- | --- |
 | `gestures`, `hotkeys`, `externalkeyboard` | Assignable single-contact gestures and Oasis page buttons have Rust paths. Multi-contact gestures, sequences, external keyboard and hardware remapping require separate evidence. |
 | `autoturn`, `readtimer` | Timed turns use the ordinary paced page handler. Read timer supports intervals, local alarms, repeat, expiry messages and resume in the normal Tools menu. [Clock semantics and verification](read-timer.md) |
-| `exporter`, `vocabbuilder`, `statistics`, `profiles` | Reader exports annotations, saves vocabulary, time and profiles. Compare export formats, scheduled vocabulary review, calendars, daily histories and action sequences. |
-| `opds`, `calibre`, `kosync`, `cloudstorage`, `wallabag`, `newsdownloader` | Networked reading workflows. Compare discovery, downloading, progress/sync conflict choice, offline cache and user-initiated transmission separately. |
+| `exporter`, `vocabbuilder`, `statistics`, `profiles` | Reader exports annotations and retains time and profiles. The vocabulary development candidate adds source context, exact review scheduling, due/book/search filters, explicit existing-word choices and per-word undo. [Vocabulary evidence](vocabulary-review.md). Compare SQLite migration/sync, additional export formats, calendars, daily histories and profile action sequences separately. |
+| `opds`, `calibre`, `kosync`, `cloudstorage`, `wallabag` | Network acquisition and remote sync are outside the current local-reading goal. Keep the upstream modules as comparison references only; they are not active milestones or parity gaps. |
+| `newsdownloader` | RSS/news reading is outside the agreed Reader scope. |
 | `coverbrowser`, `bookshortcuts`, `movetoarchive`, `archiveviewer` | Check browse views, document shortcuts, completed-book filing and supported archive content through Reader and Files. |
 | `japanese`, `perceptionexpander`, `docsettingtweak` | Compare language deinflection, focused reading guides and per-book overrides on synthetic documents. |
 | `autodim`, `autostandby`, `autosuspend`, `autowarmth`, `batterystat`, `coverimage`, `keepalive`, `timesync`, `systemstat` | System capabilities belong to Primitive Launcher. Verify access, return to the same page and device behavior for applicable Kindle workflows. |
-| `SSH`, `terminal`, `httpinspector`, `hello`, `texteditor`, `qrclipboard` | Previously excluded side tools, developer facilities or external utilities. Listed to make the complete upstream plug-in inventory visible. |
+| `SSH`, `terminal`, `httpinspector`, `hello`, `texteditor`, `qrclipboard` | Explicitly excluded shell/terminal, server/inspection, developer, clipboard and unrelated utilities. Listed for inventory completeness only; do not implement them in Reader. |
+
+An earlier Reader candidate followed the pinned browser/parser reading path for Atom and JSON catalogs, advertised search, explicit format/destination selection and cancellable validated acquisition. Its implementation was removed from the current source candidate; the note remains product history. [OPDS source map, UI and evidence](opds-acquisition.md)
+
+The K24 backup candidate covers non-secret local reading state beyond the Library, with per-component preview, strict typed validation and startup recovery for interrupted multi-file writes. It retains existing book/mark merge behavior and accepts library-only v1 input. [Data scope and recovery evidence](reading-data-backups.md)
 
 ## Reflow controls
 
@@ -62,11 +85,12 @@ To check coverage, run `python3 scripts/check-koreader-inventory.py /path/to/kor
 | `rotation_mode`, `visible_pages`, `view_mode` | Portrait orientation, facing pages, page turns and continuous reading. Compare anchors, selected text and links after each transition. |
 | `h_page_margins`, `t_page_margin`, `b_page_margin` | Reader exposes independent left, right, top and bottom margins. The same word and all rendered rows moved by the chosen offset on two actual EPUBs. [Verification](reflow-page-margins.md) |
 | `sync_t_b_page_margins` | The normal controls link the two edges at their rounded average, adjust either and restore separate changes after unlinking. [Controls and screenshots](reflow-page-margins.md) |
-| `font_size`, `font_fine_tune`, `line_spacing`, `word_spacing`, `font_gamma`, `font_base_weight`, `font_hinting`, `font_kerning` | Available typography covers a subset of detailed settings. Compare steps, actual painted pixels and persistence. |
+| `font_size`, `font_fine_tune`, `line_spacing`, `word_spacing`, `font_gamma`, `font_base_weight`, `font_hinting`, `font_kerning` | [Numeric gamma and base-weight candidate](font-contrast-and-weight.md) covers reference presets, fine ranges, coverage tables and persistence. Native outline checks remain open. Other typography controls have separate comparisons. |
 | `embedded_css`, `embedded_fonts` | Check publisher styles and font override independently in reflow and mixed-script titles. |
-| `status_line` | Reader uses its reading footer. Check displayed information and interaction against the footer workflow. |
+| `style_tweaks`, `book_style_tweak` | The supported user-style slice adds explicit origin/importance, live defaults and book overrides, strict CSS diagnostics and atomic source-anchor-preserving apply. Display/visibility, block margins and floats remain separate rendering gates. [Controls, input limits and comparison](style-tweaks.md) |
+| `status_line` | Reader has an optional CRE-style top header for paged reflow documents, with configurable metadata, page and progress information, clock, chapter marks and battery. It is hidden in continuous scroll. The KOReader About dialog and Kindle acceptance remain open. [Behavior and screenshots](top-status-header.md) |
 | `word_expansion` | Justified paragraphs have the 0–20% expansion control, sampled through live settings and original text anchors. Compare word-space reduction and nested script behavior separately. [Word expansion](word-expansion.md) |
-| `block_rendering_mode`, `render_dpi`, `cjk_width_scaling` | Compare selectable publisher rendering modes, content scale and CJK advance scaling individually. |
+| `block_rendering_mode`, `render_dpi`, `cjk_width_scaling` | [Content DPI](render-dpi.md) and [CJK advance scaling](cjk-width.md) have separate source comparisons and desktop workflows. Publisher rendering modes and CSS display/visibility consumer integration remain open; the source-offset projection foundation alone does not enable hiding or establish rendering parity. |
 | `smooth_scaling`, `nightmode_images` | Compare standalone and embedded pictures in day/night pages with a diagnostic image and both scaling filters. |
 
 ## Fixed-page controls
@@ -111,7 +135,8 @@ To check coverage, run `python3 scripts/check-koreader-inventory.py /path/to/kor
 | Upstream identifiers | Reader behavior and acceptance |
 | --- | --- |
 | `document_end_action` | End-of-book dialog, automatic or manual reading status, next file, beginning, Library, and confirmed deletion. The same end boundary is checked for paged and continuous reading against original EPUB, AZW3 and PDF files. [Controls and reference tests](document-end.md) |
-| `document_auto_save`, `document_metadata_arc`, `document_metadata_location`, `language_support`, `partial_rerendering` | Durable metadata, autosave and rerender behavior. Test individual commands and enabled conditions before declaring the group matched. |
+| `document_auto_save` | Close and sleep saves and the 5, 15, 30 and 60 minute intervals. Checked the timing against installed KOReader and verified original EPUB and PDF positions. [Save reading data](metadata-save.md) |
+| `document_metadata_arc`, `document_metadata_location`, `language_support`, `partial_rerendering` | Durable metadata, language settings and rerender behavior. Test individual commands and enabled conditions before declaring the group matched. |
 
 ## Menu device
 
@@ -147,13 +172,13 @@ To check coverage, run `python3 scripts/check-koreader-inventory.py /path/to/kor
 
 | Upstream identifiers | Reader behavior and acceptance |
 | --- | --- |
-| `calibre`, `cloudstorage`, `exporter`, `more_tools`, `move_to_archive`, `news_downloader`, `profiles`, `progress_sync`, `qrclipboard`, `read_timer`, `statistics`, `text_editor`, `wallabag` | Compare reading tasks individually, including timed reading, statistics, export, sync and profiles. Test individual commands and enabled conditions before declaring the group matched. |
+| `calibre`, `cloudstorage`, `exporter`, `more_tools`, `move_to_archive`, `news_downloader`, `profiles`, `progress_sync`, `qrclipboard`, `read_timer`, `statistics`, `text_editor`, `wallabag` | Compare reading tasks only: timed reading, statistics, export, profiles, and optional acquisition/sync. Exclude RSS/news, text-editor, clipboard and unrelated utilities. Test included commands and enabled conditions individually. |
 
 ## Menu more_tools
 
 | Upstream identifiers | Reader behavior and acceptance |
 | --- | --- |
-| `auto_frontlight`, `battery_statistics`, `book_shortcuts`, `doc_setting_tweak`, `keep_alive`, `patch_management`, `plugin_management`, `synchronize_time`, `terminal` | Separate reading, shared-system and previously excluded side tools. Test individual commands and enabled conditions before declaring the group matched. |
+| `auto_frontlight`, `battery_statistics`, `book_shortcuts`, `doc_setting_tweak`, `keep_alive`, `patch_management`, `plugin_management`, `synchronize_time`, `terminal` | Route device controls to Launcher; keep reading-related document tweaks in Reader. Exclude patch management, generic plug-in management and Terminal. These menu entries do not add an extension-host milestone. |
 
 ## Menu search
 

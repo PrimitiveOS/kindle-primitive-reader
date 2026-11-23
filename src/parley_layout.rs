@@ -1,4 +1,6 @@
 mod cjk_width;
+#[cfg(test)]
+mod special_glyph_tests;
 
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
@@ -7,6 +9,8 @@ use std::sync::Arc;
 use crate::book_style::{Style, TextDecoration};
 use crate::comic::ImagePage;
 use crate::epub::Book;
+use crate::flow_projection::OwnedProjection;
+use crate::flow_view::{ChapterFlow, LayoutBlock};
 use crate::gray_glyph::GlyphCache;
 use crate::source::{Block, EmbeddedImage, Source};
 use crate::svg_image;
@@ -21,12 +25,87 @@ use parley::{
 
 const MAX_TEXT_BYTES: usize = 512 * 1024;
 const MAX_LINES: usize = 30_000;
-const MAX_HEIGHT: f32 = 2_000_000.0;
 const MAX_IMAGE_BOXES: usize = 2_048;
 const MAX_DISTINCT_IMAGE_READS: usize = 512;
 const MAX_IMAGE_PIXELS: usize = 8 * 1024 * 1024;
 const MAX_RUBY_BASE_BYTES: usize = 192;
-const DISABLE_KERNING: [FontFeature; 1] = [FontFeature::new(Tag::new(b"kern"), 0)];
+const KERNING_OFF: [FontFeature; 2] = [
+    FontFeature::new(Tag::new(b"kern"), 0),
+    FontFeature::new(Tag::new(b"vkrn"), 0),
+];
+const KERNING_FAST: [FontFeature; 23] = [
+    FontFeature::new(Tag::new(b"kern"), 1),
+    FontFeature::new(Tag::new(b"vkrn"), 0),
+    FontFeature::new(Tag::new(b"mark"), 0),
+    FontFeature::new(Tag::new(b"mkmk"), 0),
+    FontFeature::new(Tag::new(b"curs"), 0),
+    FontFeature::new(Tag::new(b"locl"), 0),
+    FontFeature::new(Tag::new(b"liga"), 0),
+    FontFeature::new(Tag::new(b"rlig"), 0),
+    FontFeature::new(Tag::new(b"clig"), 0),
+    FontFeature::new(Tag::new(b"ccmp"), 0),
+    FontFeature::new(Tag::new(b"calt"), 0),
+    FontFeature::new(Tag::new(b"rclt"), 0),
+    FontFeature::new(Tag::new(b"rvrn"), 0),
+    FontFeature::new(Tag::new(b"ltra"), 0),
+    FontFeature::new(Tag::new(b"ltrm"), 0),
+    FontFeature::new(Tag::new(b"rtla"), 0),
+    FontFeature::new(Tag::new(b"rtlm"), 0),
+    FontFeature::new(Tag::new(b"frac"), 0),
+    FontFeature::new(Tag::new(b"numr"), 0),
+    FontFeature::new(Tag::new(b"dnom"), 0),
+    FontFeature::new(Tag::new(b"rand"), 0),
+    FontFeature::new(Tag::new(b"trak"), 0),
+    FontFeature::new(Tag::new(b"vert"), 0),
+];
+const KERNING_GOOD: [FontFeature; 22] = [
+    FontFeature::new(Tag::new(b"kern"), 1),
+    FontFeature::new(Tag::new(b"mark"), 1),
+    FontFeature::new(Tag::new(b"mkmk"), 1),
+    FontFeature::new(Tag::new(b"curs"), 1),
+    FontFeature::new(Tag::new(b"locl"), 1),
+    FontFeature::new(Tag::new(b"liga"), 0),
+    FontFeature::new(Tag::new(b"rlig"), 0),
+    FontFeature::new(Tag::new(b"clig"), 0),
+    FontFeature::new(Tag::new(b"ccmp"), 0),
+    FontFeature::new(Tag::new(b"calt"), 0),
+    FontFeature::new(Tag::new(b"rclt"), 0),
+    FontFeature::new(Tag::new(b"rvrn"), 0),
+    FontFeature::new(Tag::new(b"ltra"), 0),
+    FontFeature::new(Tag::new(b"ltrm"), 0),
+    FontFeature::new(Tag::new(b"rtla"), 0),
+    FontFeature::new(Tag::new(b"rtlm"), 0),
+    FontFeature::new(Tag::new(b"frac"), 0),
+    FontFeature::new(Tag::new(b"numr"), 0),
+    FontFeature::new(Tag::new(b"dnom"), 0),
+    FontFeature::new(Tag::new(b"rand"), 0),
+    FontFeature::new(Tag::new(b"trak"), 0),
+    FontFeature::new(Tag::new(b"vert"), 0),
+];
+
+fn kerning_features(mode: crate::FontKerningMode) -> Option<&'static [FontFeature]> {
+    match mode {
+        crate::FontKerningMode::Off => Some(&KERNING_OFF),
+        crate::FontKerningMode::Fast => Some(&KERNING_FAST),
+        crate::FontKerningMode::Good => Some(&KERNING_GOOD),
+        crate::FontKerningMode::Best => None,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct PaintBrush {
+    pub(crate) decoration: TextDecoration,
+    pub(crate) painted: bool,
+}
+
+impl Default for PaintBrush {
+    fn default() -> Self {
+        Self {
+            decoration: Default::default(),
+            painted: true,
+        }
+    }
+}
 
 struct Paragraph {
     column: Range<f32>,
@@ -36,8 +115,9 @@ struct Paragraph {
     y: f32,
     bottom: f32,
     background: Option<u8>,
-    layout: Layout<TextDecoration>,
+    layout: Layout<PaintBrush>,
     ruby: Vec<RubyOverlay>,
+    flow: Option<Arc<OwnedProjection>>,
 }
 
 struct PaintedMarker {
@@ -45,10 +125,11 @@ struct PaintedMarker {
     top: f32,
     bottom: f32,
     paint: MarkerPaint,
+    painted: bool,
 }
 
 enum MarkerPaint {
-    Text { y: f32, layout: Layout<TextDecoration> },
+    Text { y: f32, layout: Layout<PaintBrush> },
     Shape(crate::list_marker::MarkerKind),
 }
 struct RubyOverlay {
@@ -57,22 +138,29 @@ struct RubyOverlay {
     y: f32,
     top: f32,
     bottom: f32,
-    layout: Layout<TextDecoration>,
+    layout: Layout<PaintBrush>,
+    painted: bool,
 }
 
 struct RubyCandidate {
     bytes: Range<usize>,
-    layout: Layout<TextDecoration>,
+    layout: Layout<PaintBrush>,
     line_height: f32,
+    painted: bool,
 }
 
 struct Illustration {
+    block: usize,
+    source_index: usize,
+    painted: bool,
     path: Option<String>,
     link: Option<String>,
     label: String,
     // Inline boxes provide x once the paragraph's line breaks and alignment are known.
     x: Option<usize>,
     y: f32,
+    // Preserve exact layout-line ownership separately from rounded paint Y.
+    line_top: Option<f32>,
     pixels: Arc<GrayImage>,
     display: (u32, u32),
 }
@@ -83,6 +171,9 @@ pub(crate) struct ParleyChapter {
     paragraphs: Vec<Paragraph>,
     illustrations: Vec<Illustration>,
     markers: Vec<PaintedMarker>,
+    table_frames: Vec<crate::table_borders::Frame>,
+    padded_backgrounds: Vec<crate::vertical_padding::Fill>,
+    limitations: Vec<String>,
     glyphs: GlyphCache,
 }
 
@@ -91,10 +182,57 @@ impl ParleyChapter {
         book: &mut Book,
         href: &str,
         source: &Source,
+        fonts: FontContext,
+        settings: Settings,
+        styles: &[Style],
+        user_rules: &crate::user_hyphenation::Rules,
+    ) -> Result<(Self, Vec<Line>, f32)> {
+        let flow = ChapterFlow::from_styles(source, styles)?;
+        Self::with_flow(
+            book, href, source, fonts, settings, styles, user_rules, &flow,
+        )
+    }
+
+    pub(crate) fn with_flow(
+        book: &mut Book,
+        href: &str,
+        source: &Source,
+        fonts: FontContext,
+        settings: Settings,
+        styles: &[Style],
+        user_rules: &crate::user_hyphenation::Rules,
+        flow: &ChapterFlow,
+    ) -> Result<(Self, Vec<Line>, f32)> {
+        Self::with_flow_mode(
+            book, href, source, fonts, settings, styles, user_rules, flow, false,
+        )
+    }
+
+    pub(crate) fn with_source_order(
+        book: &mut Book,
+        href: &str,
+        source: &Source,
+        fonts: FontContext,
+        settings: Settings,
+        styles: &[Style],
+        user_rules: &crate::user_hyphenation::Rules,
+        flow: &ChapterFlow,
+    ) -> Result<(Self, Vec<Line>, f32)> {
+        Self::with_flow_mode(
+            book, href, source, fonts, settings, styles, user_rules, flow, true,
+        )
+    }
+
+    fn with_flow_mode(
+        book: &mut Book,
+        href: &str,
+        source: &Source,
         mut fonts: FontContext,
         settings: Settings,
         styles: &[Style],
         user_rules: &crate::user_hyphenation::Rules,
+        flow: &ChapterFlow,
+        source_order: bool,
     ) -> Result<(Self, Vec<Line>, f32)> {
         if source
             .blocks
@@ -110,7 +248,16 @@ impl ParleyChapter {
             paragraphs: Vec::new(),
             illustrations: Vec::new(),
             markers: Vec::new(),
-            glyphs: GlyphCache::with_hinting(settings.font_hinting),
+            table_frames: Vec::new(),
+            padded_backgrounds: Vec::new(),
+            limitations: Vec::new(),
+            glyphs: GlyphCache::with_hinting(
+                settings.logical_font_size.is_some(),
+                settings.font_hinting,
+                styles
+                    .first()
+                    .map_or_else(Default::default, |style| style.font_weights.clone()),
+            ),
         };
         let mut context = LayoutContext::new();
         let mut lines = Vec::new();
@@ -121,27 +268,95 @@ impl ParleyChapter {
             36,
             Luma([225]),
         ));
-        let group_insets = list_insets(source, styles, settings.font_size);
+        let group_insets = list_insets(source, styles, settings, flow);
         let outer_width = settings.text_width();
-        let publisher_boxes = crate::publisher_padding::layout(
-            source, styles, outer_width, settings.font_size, |block| {
+        let table_flow = if source_order {
+            chapter.limitations.push(
+                "Table rows could not fit a reading page; the table uses readable source order"
+                    .into(),
+            );
+            crate::table_layout::TableFlow::source_order(source)
+        } else {
+            match crate::table_layout::TableFlow::new(source, styles) {
+                Ok(flow) => flow,
+                Err(error)
+                    if error.downcast_ref::<crate::table_layout::TableFlowError>()
+                        == Some(&crate::table_layout::TableFlowError::HintReprojection) =>
+                {
+                    chapter.limitations.push(error.to_string());
+                    crate::table_layout::TableFlow::source_order(source)
+                }
+                Err(error) => return Err(error),
+            }
+        };
+        let mut borders = crate::table_borders::Borders::read_with_settings(
+            source,
+            styles,
+            settings,
+            &table_flow,
+        );
+        let mut flow_error = None;
+        let publisher_boxes = crate::publisher_padding::layout_with_flow(
+            source,
+            styles,
+            outer_width,
+            settings.font_size,
+            borders.as_ref(),
+            &table_flow,
+            |block| {
+                if styles[block.element].flow.suppressed {
+                    return (0, 0);
+                }
+                let input = match flow.layout_block(source, block) {
+                    Ok(input) => input,
+                    Err(error) => {
+                        flow_error = Some(error);
+                        return (0, 0);
+                    }
+                };
                 let indent = LineIndent::resolve(
-                    &styles[block.element], outer_width, outer_width, settings.font_size, 0,
+                    &styles[block.element],
+                    outer_width,
+                    outer_width,
+                    settings.font_size,
+                    0,
                 );
                 let layout = make_paragraph(
-                    &mut context, &mut fonts, block, None, settings, styles,
-                    &[], &[], false, indent, &Default::default(),
+                    &mut context,
+                    &mut fonts,
+                    &input,
+                    None,
+                    settings,
+                    styles,
+                    &[],
+                    &[],
+                    false,
+                    indent,
+                    &Default::default(),
                 );
                 let widths = layout.calculate_content_widths();
                 (widths.min.ceil() as u32, widths.max.ceil() as u32)
             },
+        );
+        if let Some(error) = flow_error {
+            return Err(error);
+        }
+        if let (Some(b), Some(boxes)) = (&mut borders, &publisher_boxes) {
+            b.resolve_padding(boxes, styles, settings);
+        }
+        let vertical_padding = crate::vertical_padding::layout_with_flow(
+            source,
+            styles,
+            publisher_boxes.as_deref(),
+            settings,
+            &table_flow,
         );
         let column_for = |block: &Block| {
             if let Some(boxes) = &publisher_boxes {
                 return boxes[block.element].cell;
             }
 
-            block.table_cell.filter(|cell| {
+            table_flow.block_cell(block).filter(|cell| {
                 outer_width as f32 / f32::from(cell.columns) >= 2.5 * settings.font_size
             })
         };
@@ -166,40 +381,113 @@ impl ParleyChapter {
         };
         // Share the bounded grayscale cache across distinct renderings. Duplicate icons
         // reuse one preview, while large later illustrations still receive space.
-        let image_variants = source
+        let mut variants = HashSet::new();
+        let mut image_boxes = 0;
+        for source_block in source
             .blocks
             .iter()
-            .flat_map(|block| {
-                let image_width = bounds_for(block).1 - gutter_for(block);
-                block.images.iter().map(move |image| {
+            .filter(|block| !block.images.is_empty())
+        {
+            if styles[source_block.element].flow.suppressed {
+                continue;
+            }
+            let block = flow.layout_block(source, source_block)?;
+            let image_width = bounds_for(&block).1 - gutter_for(&block);
+            for image in block.images.iter() {
+                if image_boxes == MAX_IMAGE_BOXES {
+                    break;
+                }
+                variants.insert(
                     ImageSizing::new(
-                        image,
+                        &image,
                         settings,
                         &styles[image.element],
                         !block.text.is_empty(),
                         image_width,
                     )
-                    .key(&image.href)
-                })
-            })
-            .take(MAX_IMAGE_BOXES)
-            .collect::<HashSet<_>>()
-            .len()
-            .min(MAX_DISTINCT_IMAGE_READS);
+                    .key(&image.original().href),
+                );
+                image_boxes += 1;
+            }
+        }
+        let image_variants = variants.len().min(MAX_DISTINCT_IMAGE_READS);
         let mut image_cache = HashMap::new();
         let gap = settings.font_size * 0.32;
         let mut row_flow = crate::table_layout::RowFlow::default();
+        let mut positions = crate::table_borders::Positions::default();
+        let mut fill_positions = (vertical_padding.is_some()
+            && styles.iter().any(|s| {
+                s.background.is_some()
+                    && s.vertical_padding
+                        .iter()
+                        .any(|v| v.pixels(outer_width, settings.font_size) > 0.)
+            }))
+        .then(|| Vec::with_capacity(source.blocks.len()));
+        let mut last_cell = None;
+        // Marker ownership is the LI, not whichever paragraph happens to be
+        // first in canonical extraction. Prefer its first retained content;
+        // if all children disappear, keep an empty marker strut at its old host.
+        let mut marker_hosts = HashMap::new();
+        let mut content_hosts = HashSet::new();
         for block in &source.blocks {
+            let Some(item) = block.list_item else {
+                continue;
+            };
+            if flow.ordinal(item).is_none() || styles[item.element].flow.suppressed {
+                continue;
+            }
+            marker_hosts.entry(item.element).or_insert(block.key);
+            if !content_hosts.contains(&item.element) && !styles[block.element].flow.suppressed {
+                let input = flow.layout_block(source, block)?;
+                if !input.text.is_empty() || !input.images.is_empty() {
+                    marker_hosts.insert(item.element, block.key);
+                    content_hosts.insert(item.element);
+                }
+            }
+        }
+        for (index, source_block) in source.blocks.iter().enumerate() {
+            let marker_host = source_block
+                .list_item
+                .is_some_and(|item| marker_hosts.get(&item.element) == Some(&source_block.key));
+            if styles[source_block.element].flow.suppressed && !marker_host {
+                if let Some(points) = &mut fill_positions {
+                    points.push((y, y));
+                }
+                continue;
+            }
+            let projection = flow
+                .view(source, source_block)
+                .map_err(|error| error.to_string())?;
+            let input = flow.layout_block(source, source_block)?;
+            let block = &input;
             let cell = column_for(block);
+            let padding = vertical_padding
+                .as_ref()
+                .map_or_else(Default::default, |g| g[index]);
+            if padding.before_grid > 0 {
+                y = row_flow.end(y) + padding.before_grid as f32;
+            }
             y = row_flow.enter(cell, y);
+            let start_of_cell = y;
+            let decorated = cell.and_then(|cell| Some((cell, borders.as_ref()?.cells.get(&cell)?)));
+            if let Some((c, _)) = decorated
+                && Some(c) != last_cell
+            {
+                y += borders.as_ref().unwrap().vertical(c).0 as f32;
+            }
+            last_cell = cell;
+            y += padding.before as f32;
             let (column_x, column_width) = bounds_for(block);
             let gutter = gutter_for(block);
             let image_width = column_width - gutter;
-            let marker = block.list_item.filter(|item| item.first).and_then(|item| {
-                let style = &styles[item.element];
-                let size = (settings.font_size * style.size_scale).clamp(12.0, 192.0);
-                Some((style.marker.label(item.ordinal)?, style, size))
-            });
+            let marker = block
+                .list_item
+                .filter(|item| marker_hosts.get(&item.element) == Some(&block.key))
+                .and_then(|item| {
+                    let style = &styles[item.element];
+                    let size = settings.styled_font(style.size_scale);
+                    Some((style.marker.label(flow.ordinal(item)?)?, style, size))
+                });
             let literal = marker.as_ref().and_then(|(label, style, size)| {
                 let prefix = crate::list_marker::authored_prefix(&block.text, label)?;
                 Some(
@@ -219,15 +507,20 @@ impl ParleyChapter {
             let mut inline_boxes = Vec::with_capacity(available);
             for image in block.images.iter().take(available) {
                 let inline = !block.text.is_empty();
-                let sizing =
-                    ImageSizing::new(image, settings, &styles[image.element], inline, image_width);
-                let key = sizing.key(&image.href);
+                let sizing = ImageSizing::new(
+                    &image,
+                    settings,
+                    &styles[image.element],
+                    inline,
+                    image_width,
+                );
+                let key = sizing.key(&image.original().href);
                 let fallback_preview = || (None, Arc::clone(&fallback), fallback.dimensions());
                 let (path, pixels, display) = if let Some(cached) = image_cache.get(&key) {
                     Clone::clone(cached)
                 } else if image_cache.len() < image_variants {
                     let share = image_budget / (image_variants - image_cache.len());
-                    let result = match load_image(book, href, image, settings, sizing, share) {
+                    let result = match load_image(book, href, &image, settings, sizing, share) {
                         Some((path, pixels, display)) => {
                             image_budget -= pixels.as_raw().len();
                             (Some(path), Arc::new(pixels), display)
@@ -257,24 +550,45 @@ impl ParleyChapter {
                     });
                 }
                 chapter.illustrations.push(Illustration {
+                    block: block.key,
+                    source_index: image.source_index,
+                    painted: image.painted,
                     path,
                     link: image.link.clone(),
                     label: image.label.clone(),
                     x: None,
                     y: 0.0,
+                    line_top: None,
                     pixels,
                     display,
                 });
             }
             if !block.text.is_empty() {
                 let style = &styles[block.element];
-                let (text_x,text_width,indent_base) = publisher_boxes.as_ref().map_or((column_x,width,image_width), |boxes| {
-                    let area=boxes[block.element];
-                    let (x, expanded)=area.paragraph_bounds(block,style,settings.font_size);
-                    (x,width+expanded-area.width,area.outer_width.saturating_sub(gutter))
-                });
-                let indent =
-                    LineIndent::resolve(style, indent_base, text_width, settings.font_size, hanging);
+                let (text_x, text_width, indent_base) =
+                    publisher_boxes
+                        .as_ref()
+                        .map_or((column_x, width, image_width), |boxes| {
+                            let area = boxes[block.element];
+                            let (x, expanded) = area.paragraph_bounds_for_text(
+                                block.direction,
+                                block.text,
+                                style,
+                                settings.font_size,
+                            );
+                            (
+                                x,
+                                width + expanded - area.width,
+                                area.outer_width.saturating_sub(gutter),
+                            )
+                        });
+                let indent = LineIndent::resolve(
+                    style,
+                    indent_base,
+                    text_width,
+                    settings.font_size,
+                    hanging,
+                );
                 let (layout, ruby) = layout_with_images(
                     &mut context,
                     &mut fonts,
@@ -314,6 +628,7 @@ impl ParleyChapter {
                             };
                             image.x = Some((x + position.x + after_gap).round().max(0.0) as usize);
                             image.y = (origin + position.y).round();
+                            image.line_top = Some(origin + line.metrics().content_block_min_coord);
                         }
                     }
                     let metrics = line.metrics();
@@ -324,9 +639,10 @@ impl ParleyChapter {
                     let top = origin + top;
                     let line_bottom = origin + metrics.content_block_max_coord;
                     bottom = bottom.max(line_bottom);
-                    lines.push(Line {
+                    let mut source_line = Line {
                         block: block.key,
                         bytes: line.text_range(),
+                        spans: None,
                         top,
                         bottom: line_bottom,
                         missing_glyphs: line
@@ -340,7 +656,9 @@ impl ParleyChapter {
                                 _ => None,
                             })
                             .sum(),
-                    });
+                    };
+                    source_line.project(&projection, line.text_range())?;
+                    lines.push(source_line);
                 }
                 y = bottom + gap;
                 chapter.paragraphs.push(Paragraph {
@@ -356,9 +674,10 @@ impl ParleyChapter {
                     x,
                     y: origin,
                     bottom,
-                    background: style.background,
+                    background: style.flow.painted.then_some(style.background).flatten(),
                     layout,
                     ruby,
+                    flow: flow.shared(block.key),
                 });
             }
 
@@ -369,11 +688,13 @@ impl ParleyChapter {
                     lines.push(Line {
                         block: block.key,
                         bytes: 0..0,
+                        spans: None,
                         top,
                         bottom,
                         missing_glyphs: 0,
                     });
                     image.y = top;
+                    image.line_top = Some(top);
                     if gutter != 0 || cell.is_some() || column_width != outer_width {
                         let inset = if rtl { 0 } else { gutter };
                         image.x = Some(
@@ -409,6 +730,7 @@ impl ParleyChapter {
                         top,
                         bottom: top + diameter,
                         paint: MarkerPaint::Shape(style.marker),
+                        painted: style.flow.painted,
                     }
                 } else {
                     let mut layout =
@@ -435,14 +757,35 @@ impl ParleyChapter {
                         x: column_x as f32 + x,
                         top: y + ink.content_block_min_coord,
                         bottom: y + ink.content_block_max_coord,
+                        painted: style.flow.painted,
                         paint: MarkerPaint::Text { y, layout },
                     }
                 };
                 chapter.markers.push(marker);
+                if block.text.is_empty() && block.images.is_empty() {
+                    y = y.max(block_y + size * settings.line_height.max(1.0)) + gap;
+                }
             }
 
-            if y > MAX_HEIGHT {
+            if !y.is_finite() || y > settings.chapter_height_limit() {
                 return Err("The chapter exceeds the Parley height limit".into());
+            }
+            if let Some(points) = &mut fill_positions {
+                points.push((block_y, (y - gap).max(block_y)));
+            }
+            y += padding.after as f32;
+            if let Some((c, _)) = decorated {
+                let following = source.blocks[index + 1..]
+                    .iter()
+                    .find(|next| !styles[next.element].flow.suppressed)
+                    .and_then(&column_for);
+                if following != Some(c) {
+                    y += borders.as_ref().unwrap().vertical(c).1 as f32;
+                }
+                positions.record(c, start_of_cell, (y - gap).max(start_of_cell));
+            }
+            if padding.after_grid > 0 {
+                y = row_flow.end(y) + padding.after_grid as f32;
             }
         }
 
@@ -454,7 +797,35 @@ impl ParleyChapter {
             maximum = maximum.max(p.bottom);
             p.max_bottom = maximum;
         }
-        let extent = (row_flow.end(y) - gap).max(0.0);
+        if let Some(points) = &fill_positions {
+            chapter.padded_backgrounds = crate::vertical_padding::fills(
+                source,
+                styles,
+                publisher_boxes.as_deref(),
+                points,
+                settings,
+            );
+        }
+        if let (Some(b), Some(boxes)) = (&borders, &publisher_boxes) {
+            chapter.table_frames =
+                positions.finish(b, boxes, styles, &mut chapter.padded_backgrounds);
+            chapter.padded_backgrounds.sort_by_key(|f| f.element);
+        }
+        let painted = chapter
+            .table_frames
+            .iter()
+            .map(|f| f.bottom())
+            .chain(
+                chapter
+                    .padded_backgrounds
+                    .iter()
+                    .map(|f| f.painted_bottom()),
+            )
+            .fold(0., f32::max);
+        let extent = (row_flow.end(y) - gap).max(painted).max(0.0);
+        if !extent.is_finite() || extent > settings.chapter_height_limit() {
+            return Err("The chapter exceeds the Parley height limit".into());
+        }
         Ok((chapter, lines, extent))
     }
 
@@ -465,6 +836,9 @@ impl ParleyChapter {
             .illustrations
             .iter()
             .map(|art| art.y + art.display.1 as f32)
+            .chain(self.table_frames.iter().map(|frame| frame.bottom()))
+            .chain(self.markers.iter().map(|marker| marker.bottom))
+            .chain(self.padded_backgrounds.iter().map(|f| f.painted_bottom()))
             .fold(0.0, f32::max);
         for paragraph in self.paragraphs.iter().rev() {
             if paragraph.background.is_some_and(|gray| gray < 255) {
@@ -476,7 +850,10 @@ impl ParleyChapter {
             else {
                 return artwork.max(paragraph.bottom);
             };
-            let text = &source.blocks[index].text;
+            let text = paragraph
+                .flow
+                .as_ref()
+                .map_or(source.blocks[index].text.as_str(), |flow| flow.text());
             let ruby = paragraph
                 .ruby
                 .iter()
@@ -485,7 +862,7 @@ impl ParleyChapter {
             for line in paragraph.layout.lines().rev() {
                 if text[line.text_range()].chars().any(|ch| !ch.is_whitespace())
                     || line.items().any(|item| matches!(item,
-                        PositionedLayoutItem::GlyphRun(run) if run.advance() > 0.0 && run.style().brush != TextDecoration::default()))
+                        PositionedLayoutItem::GlyphRun(run) if run.advance() > 0.0 && run.style().brush.decoration != TextDecoration::default()))
                 {
                     return ruby.max(paragraph.y + line.metrics().content_block_max_coord);
                 }
@@ -512,7 +889,43 @@ impl ParleyChapter {
         {
             return None;
         }
-        Some((paragraph.key, cluster.text_range().start))
+        let offset = cluster.text_range().start;
+        let offset = match &paragraph.flow {
+            Some(flow) => flow.source_offset(offset, crate::flow_projection::Affinity::After)?,
+            None => offset,
+        };
+        Some((paragraph.key, offset))
+    }
+
+    pub(crate) fn mapping(&self, key: usize) -> Option<&OwnedProjection> {
+        self.paragraphs
+            .iter()
+            .find(|paragraph| paragraph.key == key)?
+            .flow
+            .as_deref()
+    }
+
+    pub(crate) fn limitations(&self) -> &[String] {
+        &self.limitations
+    }
+
+    pub(crate) fn image_top(&self, key: usize, ordinal: usize) -> Option<f32> {
+        self.illustrations
+            .iter()
+            .find(|image| image.block == key && image.source_index == ordinal)
+            .map(|image| image.y)
+    }
+
+    pub(crate) fn image_ordinal(&self, key: usize, top: f32) -> Option<usize> {
+        self.illustrations
+            .iter()
+            .find(|image| {
+                image.block == key
+                    && image
+                        .line_top
+                        .is_some_and(|line_top| (line_top - top).abs() < 0.01)
+            })
+            .map(|image| image.source_index)
     }
 
     pub(crate) fn illustration_at(
@@ -608,7 +1021,7 @@ impl ParleyChapter {
     pub(crate) fn selection_layouts(
         &self,
         page: Range<f32>,
-    ) -> impl Iterator<Item = (usize, f32, f32, Range<f32>, &Layout<TextDecoration>)> {
+    ) -> impl Iterator<Item = (usize, f32, f32, Range<f32>, &Layout<PaintBrush>)> {
         let start = self
             .paragraphs
             .partition_point(|paragraph| paragraph.max_bottom <= page.start);
@@ -620,6 +1033,7 @@ impl ParleyChapter {
     }
 
     pub fn capture(&mut self, range: Range<f32>, settings: Settings) -> Result<Vec<u8>> {
+        self.glyphs.begin_paint();
         let visible_height = visible_rows(&range, settings);
         let mut frame = vec![255; (settings.width * settings.height) as usize];
         let stride = settings.width as usize;
@@ -627,6 +1041,9 @@ impl ParleyChapter {
         let margin = columns.start;
         let top = settings.top_margin() as usize;
         let page = &mut frame[top * stride..(top + visible_height) * stride];
+        for fill in &self.padded_backgrounds {
+            fill.paint(page, stride, margin, &range);
+        }
 
         let index = self
             .paragraphs
@@ -657,6 +1074,9 @@ impl ParleyChapter {
                 }
                 for item in line.items() {
                     if let PositionedLayoutItem::GlyphRun(run) = item {
+                        if !run.style().brush.painted {
+                            continue;
+                        }
                         self.glyphs.draw_run(
                             page,
                             stride,
@@ -664,23 +1084,35 @@ impl ParleyChapter {
                             (paragraph.x, paragraph.y - range.start),
                             &run,
                             settings.text_contrast,
+                            settings.font_gamma_index,
                         );
-                        let decoration = run.style().brush;
+                        let decoration = run.style().brush.decoration;
                         if decoration != TextDecoration::default() {
                             let metrics = run.run().font_metrics();
                             let thickness = metrics.underline_size.round().clamp(1.0, 12.0);
                             let baseline = paragraph.y - range.start + run.baseline();
                             let rows = [
-                                decoration.underline.then_some(baseline - metrics.underline_offset),
-                                decoration.overline.then_some(baseline - metrics.ascent + thickness),
-                                decoration.strike.then_some(baseline - run.run().font_size() * 2.0 / 7.0),
+                                decoration
+                                    .underline
+                                    .then_some(baseline - metrics.underline_offset),
+                                decoration
+                                    .overline
+                                    .then_some(baseline - metrics.ascent + thickness),
+                                decoration
+                                    .strike
+                                    .then_some(baseline - run.run().font_size() * 2.0 / 7.0),
                             ];
                             let limit = columns.len() as f32;
-                            let x0 = margin + (paragraph.x + run.offset()).floor().clamp(0.0, limit) as usize;
-                            let x1 = margin + (paragraph.x + run.offset() + run.advance()).ceil().clamp(0.0, limit) as usize;
+                            let x0 = margin
+                                + (paragraph.x + run.offset()).floor().clamp(0.0, limit) as usize;
+                            let x1 = margin
+                                + (paragraph.x + run.offset() + run.advance())
+                                    .ceil()
+                                    .clamp(0.0, limit) as usize;
                             for y in rows.into_iter().flatten() {
                                 let start = y.round().clamp(0.0, visible_height as f32) as usize;
-                                let end = (y.round() + thickness).clamp(0.0, visible_height as f32) as usize;
+                                let end = (y.round() + thickness).clamp(0.0, visible_height as f32)
+                                    as usize;
                                 for row in start..end {
                                     page[row * stride + x0..row * stride + x1].fill(48);
                                 }
@@ -690,6 +1122,9 @@ impl ParleyChapter {
                 }
             }
             for overlay in &paragraph.ruby {
+                if !overlay.painted {
+                    continue;
+                }
                 if paragraph.y + overlay.top >= range.end
                     || paragraph.y + overlay.bottom <= range.start
                 {
@@ -707,6 +1142,7 @@ impl ParleyChapter {
                             ),
                             &run,
                             settings.text_contrast,
+                            settings.font_gamma_index,
                         );
                     }
                 }
@@ -714,6 +1150,9 @@ impl ParleyChapter {
         }
 
         for marker in &self.markers {
+            if !marker.painted {
+                continue;
+            }
             if marker.top >= range.end || marker.bottom <= range.start {
                 continue;
             }
@@ -728,6 +1167,7 @@ impl ParleyChapter {
                                 (marker.x, *y - range.start),
                                 &run,
                                 settings.text_contrast,
+                                settings.font_gamma_index,
                             );
                         }
                     }
@@ -746,6 +1186,10 @@ impl ParleyChapter {
         for illustration in &self.illustrations {
             illustration.draw(page, &range, stride, &columns);
         }
+        for stroke in &self.table_frames {
+            stroke.paint(page, stride, &columns, &range);
+        }
+        self.glyphs.check_paint()?;
         Ok(frame)
     }
 }
@@ -795,18 +1239,19 @@ impl LineIndent {
 
 #[cfg(test)]
 fn layout_paragraph(
-    context: &mut LayoutContext<TextDecoration>,
+    context: &mut LayoutContext<PaintBrush>,
     fonts: &mut FontContext,
     block: &Block,
     width: u32,
     settings: Settings,
     styles: &[Style],
-) -> (Layout<TextDecoration>, Vec<RubyOverlay>) {
+) -> (Layout<PaintBrush>, Vec<RubyOverlay>) {
+    let input = LayoutBlock::identity(block);
     let indent = LineIndent::resolve(&styles[block.element], width, width, settings.font_size, 0);
     layout_with_images(
         context,
         fonts,
-        block,
+        &input,
         width - indent.common,
         settings,
         styles,
@@ -817,17 +1262,23 @@ fn layout_paragraph(
 }
 
 fn layout_with_images(
-    context: &mut LayoutContext<TextDecoration>,
+    context: &mut LayoutContext<PaintBrush>,
     fonts: &mut FontContext,
-    block: &Block,
+    block: &LayoutBlock<'_>,
     width: u32,
     settings: Settings,
     styles: &[Style],
     images: &[parley::InlineBox],
     indent: LineIndent,
     user_rules: &crate::user_hyphenation::Rules,
-) -> (Layout<TextDecoration>, Vec<RubyOverlay>) {
-    let automatic = crate::hyphenation::with_user_rules(block, styles, settings, user_rules);
+) -> (Layout<PaintBrush>, Vec<RubyOverlay>) {
+    let automatic = crate::hyphenation::with_user_rules_text(
+        block.text,
+        &block.styled_text,
+        styles,
+        settings,
+        user_rules,
+    );
     let mut layout = make_paragraph(
         context,
         fonts,
@@ -861,7 +1312,7 @@ fn layout_with_images(
         );
     }
     let mut candidates = Vec::new();
-    for ruby in &block.ruby {
+    for ruby in block.ruby.iter() {
         if ruby.bytes.len() > MAX_RUBY_BASE_BYTES {
             continue;
         }
@@ -906,6 +1357,7 @@ fn layout_with_images(
             bytes: ruby.bytes.clone(),
             layout: annotation,
             line_height,
+            painted: ruby.painted,
         });
     }
     if candidates.is_empty() {
@@ -947,13 +1399,17 @@ fn layout_with_images(
             top,
             bottom,
             layout: candidate.layout,
+            painted: candidate.painted,
         });
     }
     overlays.sort_by_key(|overlay| overlay.line);
     (layout, overlays)
 }
 
-fn base_geometry(layout: &Layout<TextDecoration>, bytes: &Range<usize>) -> Option<(BoundingBox, usize)> {
+fn base_geometry(
+    layout: &Layout<PaintBrush>,
+    bytes: &Range<usize>,
+) -> Option<(BoundingBox, usize)> {
     let start = Cursor::from_byte_index(layout, bytes.start, Affinity::Downstream);
     let end = Cursor::from_byte_index(layout, bytes.end, Affinity::Upstream);
     if start.index() != bytes.start || end.index() != bytes.end {
@@ -1011,7 +1467,13 @@ fn draw_bullet(
 }
 
 /// Element indices are in document order, so a nested list can inherit its parent's complete inset.
-fn list_insets(source: &Source, styles: &[Style], font_size: f32) -> HashMap<usize, f32> {
+fn list_insets(
+    source: &Source,
+    styles: &[Style],
+    settings: Settings,
+    flow: &ChapterFlow,
+) -> HashMap<usize, f32> {
+    let font_size = settings.font_size;
     let mut groups = std::collections::BTreeMap::new();
     for block in &source.blocks {
         if let Some(item) = block.list_item.filter(|item| item.first) {
@@ -1020,9 +1482,15 @@ fn list_insets(source: &Source, styles: &[Style], font_size: f32) -> HashMap<usi
                 groups
                     .entry(item.group)
                     .or_insert((item.parent_group, item.depth, 0.0_f32));
-            if let Some(label) = style.marker.label(item.ordinal) {
-                let estimate =
-                    font_size * style.size_scale * (0.76 * label.chars().count() as f32 + 0.46);
+            if let Some(label) = flow
+                .ordinal(item)
+                .and_then(|ordinal| style.marker.label(ordinal))
+            {
+                let estimate = if settings.logical_font_size.is_some() {
+                    settings.styled_font(style.size_scale)
+                } else {
+                    font_size * style.size_scale
+                } * (0.76 * label.chars().count() as f32 + 0.46);
                 *width = width.max(estimate);
             }
         }
@@ -1041,14 +1509,19 @@ fn list_insets(source: &Source, styles: &[Style], font_size: f32) -> HashMap<usi
 }
 
 fn marker_layout(
-    context: &mut LayoutContext<TextDecoration>,
+    context: &mut LayoutContext<PaintBrush>,
     fonts: &mut FontContext,
     text: &str,
     style: &Style,
     settings: Settings,
     size: f32,
-) -> Layout<TextDecoration> {
+) -> Layout<PaintBrush> {
     let mut builder = context.ranged_builder(fonts, text, 1.0, true);
+    let font_weights = style.font_weights.clone();
+    let weight_spacing = move |font: &parley::FontData, requested: f32, size: f32| {
+        crate::font_synthesis::strength(font, requested, size, &font_weights)
+    };
+    builder.set_font_weight_spacing(Some(&weight_spacing));
     let cjk_spacing = cjk_width::policy(text, settings.cjk_width_percent);
     if let Some(policy) = &cjk_spacing {
         builder.set_cluster_spacing(Some(policy));
@@ -1060,13 +1533,16 @@ fn marker_layout(
     };
     builder.push_default(StyleProperty::FontFamily(family));
     builder.push_default(StyleProperty::FontSize(size));
-    builder.push_default(StyleProperty::FontWeight(
-        if settings.bold_text && style.font_weight < FontWeight::BOLD {
-            FontWeight::BOLD
-        } else {
-            style.font_weight
-        },
-    ));
+    builder.push_default(StyleProperty::FontWeight(FontWeight::new(
+        crate::font_render::font_weight(
+            if settings.bold_text && style.font_weight < FontWeight::BOLD {
+                FontWeight::BOLD.value()
+            } else {
+                style.font_weight.value()
+            },
+            settings.font_weight_delta,
+        ),
+    )));
     builder.push_default(StyleProperty::FontStyle(style.font_style));
     let mut layout = builder.build(text);
     layout.break_all_lines(None);
@@ -1074,20 +1550,25 @@ fn marker_layout(
 }
 
 fn make_annotation(
-    context: &mut LayoutContext<TextDecoration>,
+    context: &mut LayoutContext<PaintBrush>,
     fonts: &mut FontContext,
     text: &str,
     language: Option<Language>,
     style: &Style,
     settings: Settings,
-) -> Layout<TextDecoration> {
+) -> Layout<PaintBrush> {
     let mut builder = context.ranged_builder(fonts, text, 1.0, true);
+    let font_weights = style.font_weights.clone();
+    let weight_spacing = move |font: &parley::FontData, requested: f32, size: f32| {
+        crate::font_synthesis::strength(font, requested, size, &font_weights)
+    };
+    builder.set_font_weight_spacing(Some(&weight_spacing));
     let cjk_spacing = cjk_width::policy(text, settings.cjk_width_percent);
     if let Some(policy) = &cjk_spacing {
         builder.set_cluster_spacing(Some(policy));
     }
-    if !settings.font_kerning {
-        builder.push_default(StyleProperty::FontFeatures((&DISABLE_KERNING).into()));
+    if let Some(features) = kerning_features(settings.effective_font_kerning_mode()) {
+        builder.push_default(StyleProperty::FontFeatures(features.into()));
     }
     let family: FontFamily<'_> = if settings.override_fonts {
         GenericFamily::Serif.into()
@@ -1096,15 +1577,29 @@ fn make_annotation(
     };
     builder.push_default(StyleProperty::FontFamily(family));
     builder.push_default(StyleProperty::Locale(language));
+    builder.push_default(StyleProperty::FontWeight(FontWeight::new(
+        crate::font_render::font_weight(
+            if settings.bold_text {
+                style.font_weight.value().max(FontWeight::BOLD.value())
+            } else {
+                style.font_weight.value()
+            },
+            settings.font_weight_delta,
+        ),
+    )));
     builder.push_default(StyleProperty::FontSize(
-        (settings.font_size * style.size_scale * 0.48).clamp(8.0, 84.0),
+        if settings.logical_font_size.is_some() {
+            settings.styled_font(style.size_scale * 0.48)
+        } else {
+            (settings.font_size * style.size_scale * 0.48).clamp(8.0, 84.0)
+        },
     ));
     let mut layout = builder.build(text);
     layout.break_all_lines(None);
     layout
 }
 
-fn overlaps_entire_page(layout: &Layout<TextDecoration>, page_height: f32) -> bool {
+fn overlaps_entire_page(layout: &Layout<PaintBrush>, page_height: f32) -> bool {
     if layout.len() < 2 {
         return false;
     }
@@ -1126,9 +1621,9 @@ fn overlaps_entire_page(layout: &Layout<TextDecoration>, page_height: f32) -> bo
 }
 
 fn make_paragraph(
-    context: &mut LayoutContext<TextDecoration>,
+    context: &mut LayoutContext<PaintBrush>,
     fonts: &mut FontContext,
-    block: &Block,
+    block: &LayoutBlock<'_>,
     width: Option<u32>,
     settings: Settings,
     styles: &[Style],
@@ -1137,22 +1632,37 @@ fn make_paragraph(
     fit_font_metrics: bool,
     indent: LineIndent,
     automatic: &crate::user_hyphenation::Opportunities,
-) -> Layout<TextDecoration> {
+) -> Layout<PaintBrush> {
     let style = &styles[block.element];
     let language = block.language;
     let mut builder = context.ranged_builder(fonts, &block.text, 1.0, true);
+    let font_weights = style.font_weights.clone();
+    let weight_spacing = move |font: &parley::FontData, requested: f32, size: f32| {
+        crate::font_synthesis::strength(font, requested, size, &font_weights)
+    };
+    builder.set_font_weight_spacing(Some(&weight_spacing));
     builder.set_automatic_hyphens(&automatic.breaks);
     let cjk_spacing = cjk_width::policy(&block.text, settings.cjk_width_percent);
     if let Some(policy) = &cjk_spacing {
         builder.set_cluster_spacing(Some(policy));
     }
-    if !settings.font_kerning {
-        builder.push_default(StyleProperty::FontFeatures((&DISABLE_KERNING).into()));
+    if let Some(features) = kerning_features(settings.effective_font_kerning_mode()) {
+        builder.push_default(StyleProperty::FontFeatures(features.into()));
     }
     let soft_hyphen = |offset| {
-        let index = automatic.custom_words.partition_point(|range| range.end <= offset);
-        if automatic.custom_words.get(index).is_some_and(|range| range.contains(&offset)) {
-            return if automatic.matching_soft_hyphens.binary_search(&offset).is_ok() {
+        let index = automatic
+            .custom_words
+            .partition_point(|range| range.end <= offset);
+        if automatic
+            .custom_words
+            .get(index)
+            .is_some_and(|range| range.contains(&offset))
+        {
+            return if automatic
+                .matching_soft_hyphens
+                .binary_search(&offset)
+                .is_ok()
+            {
                 SoftHyphenAction::Draw
             } else {
                 SoftHyphenAction::Suppress
@@ -1186,23 +1696,31 @@ fn make_paragraph(
         style.font_family.layout()
     };
     builder.push_default(StyleProperty::FontFamily(family));
-    let default_spacing = Settings::default().line_height;
     let line_height = |style: &Style| {
+        let default_spacing = Settings::default().line_height;
         let publisher = style.line_height.unwrap_or(default_spacing);
-        let spacing = (publisher * settings.line_height / default_spacing).clamp(1.0, 3.0);
+        let minimum_spacing = if settings.line_spacing_percent.is_some() {
+            0.5
+        } else {
+            1.0
+        };
+        let spacing = (publisher * settings.line_height_scale()).clamp(minimum_spacing, 3.0);
         if fit_font_metrics {
             LineHeight::MetricsRelative((spacing / default_spacing).max(1.05))
         } else {
             LineHeight::FontSizeRelative(spacing)
         }
     };
-    let font_size = |style: &Style| (settings.font_size * style.size_scale).clamp(12.0, 192.0);
+    let font_size = |style: &Style| settings.styled_font(style.size_scale);
     let weight = |style: &Style| {
-        if settings.bold_text && style.font_weight < FontWeight::BOLD {
-            FontWeight::BOLD
-        } else {
-            style.font_weight
-        }
+        FontWeight::new(crate::font_render::font_weight(
+            if settings.bold_text && style.font_weight < FontWeight::BOLD {
+                FontWeight::BOLD.value()
+            } else {
+                style.font_weight.value()
+            },
+            settings.font_weight_delta,
+        ))
     };
     builder.push_default(StyleProperty::LineHeight(line_height(style)));
     // An emergency break keeps a placed word within a narrow reading column.
@@ -1211,13 +1729,16 @@ fn make_paragraph(
         builder.push_default(StyleProperty::OverflowWrap(OverflowWrap::Anywhere));
     }
     builder.push_default(StyleProperty::FontSize(font_size(style)));
-    if settings.word_spacing != 0.0 {
+    if settings.percent_word_spacing.is_none() && settings.word_spacing != 0.0 {
         builder.push_default(StyleProperty::WordSpacing(settings.word_spacing));
     }
     if settings.letter_spacing != 0.0 {
         builder.push_default(StyleProperty::LetterSpacing(settings.letter_spacing));
     }
-    builder.push_default(StyleProperty::Brush(style.decoration));
+    builder.push_default(StyleProperty::Brush(PaintBrush {
+        decoration: style.decoration,
+        painted: style.flow.painted,
+    }));
     builder.push_default(StyleProperty::FontWeight(weight(style)));
     builder.push_default(StyleProperty::FontStyle(style.font_style));
     builder.push_default(StyleProperty::Locale(language));
@@ -1225,7 +1746,7 @@ fn make_paragraph(
     builder.push_default(StyleProperty::LineBreak(paragraph_line_break));
     builder.push_default(StyleProperty::WordBreak(style.word_break));
     builder.set_base_direction(block.direction);
-    for text in &block.styled_text {
+    for text in block.styled_text.iter() {
         let run = &styles[text.element];
         if text.language != language {
             builder.push(StyleProperty::Locale(text.language), text.bytes.clone());
@@ -1234,12 +1755,18 @@ fn make_paragraph(
         if run_line_break != paragraph_line_break {
             builder.push(StyleProperty::LineBreak(run_line_break), text.bytes.clone());
         }
-        if run.decoration != style.decoration {
-            builder.push(StyleProperty::Brush(run.decoration), text.bytes.clone());
+        if run.decoration != style.decoration || run.flow.painted != style.flow.painted {
+            builder.push(
+                StyleProperty::Brush(PaintBrush {
+                    decoration: run.decoration,
+                    painted: run.flow.painted,
+                }),
+                text.bytes.clone(),
+            );
         }
         if run.text_rise != style.text_rise {
             builder.push(
-                StyleProperty::VerticalAlign(run.text_rise.from_block(style)),
+                StyleProperty::VerticalAlign(run.text_rise.from_block_at(style, settings)),
                 text.bytes.clone(),
             );
         }
@@ -1278,6 +1805,15 @@ fn make_paragraph(
         builder.push_inline_box(image.clone());
     }
     let mut layout = builder.build(&block.text);
+    if let Some(pair) = settings.percent_word_spacing {
+        let preserved: Vec<_> = block
+            .styled_text
+            .iter()
+            .filter(|run| styles[run.element].preformatted_spaces)
+            .map(|run| run.bytes.clone())
+            .collect();
+        layout.set_word_spacing_percent(&block.text, pair.scaling, pair.minimum, &preserved);
+    }
     if indent.amount > 0.0 {
         layout.set_text_indent(
             indent.amount,
@@ -1338,16 +1874,82 @@ struct ImageSizing {
     height: u32,
     requested_width: Option<f64>,
     requested_height: Option<f64>,
+    render_dpi: u16,
+}
+
+#[cfg(test)]
+mod dpi_tests {
+    use super::*;
+
+    #[test]
+    fn dpi_scales_intrinsic_and_html_images_but_not_relative_constraints_and_bounds_every_target() {
+        let source = Source::parse(
+            r#"<html><body><p><img src="x" width="144" height="96"/></p></body></html>"#,
+        )
+        .unwrap();
+        let image = &source.blocks[0].images[0];
+        for dpi in crate::RENDER_DPI_PRESETS {
+            let settings = Settings {
+                render_dpi: dpi,
+                ..Settings::default()
+            };
+            let scale = if dpi == 0 { 1. } else { f64::from(dpi) / 96. };
+            let mut sizing = ImageSizing::new(image, settings, &Style::default(), false, 1000);
+            assert_eq!(
+                sizing.target(144, 96),
+                ((144. * scale).round() as u32, (96. * scale).round() as u32)
+            );
+            let previous_key = sizing.key("x");
+            sizing.requested_width = None;
+            sizing.requested_height = None;
+            assert_eq!(
+                sizing.target(144, 96),
+                ((144. * scale).round() as u32, (96. * scale).round() as u32)
+            );
+            assert_ne!(sizing.key("x"), previous_key);
+            assert!(sizing.target(100_000, 100_000).0 <= 1000);
+            assert!(sizing.target(1, 100_000).0 >= 1);
+            let style = Style {
+                image_width: Some(crate::book_style::ImageLength::Fraction(0.25)),
+                image_height: Some(crate::book_style::ImageLength::Auto),
+                ..Style::default()
+            };
+            let relative = ImageSizing::new(image, settings, &style, false, 1000);
+            assert_eq!(relative.target(144, 96), (250, 167));
+            let style = Style {
+                image_width: Some(crate::book_style::ImageLength::Em(2.)),
+                image_height: Some(crate::book_style::ImageLength::Auto),
+                ..Style::default()
+            };
+            assert_eq!(
+                ImageSizing::new(image, settings, &style, false, 1000).target(144, 96),
+                (84, 56)
+            );
+        }
+        let old = ImageSizing::new(image, Settings::default(), &Style::default(), false, 1000);
+        let scaled = ImageSizing::new(
+            image,
+            Settings {
+                render_dpi: 212,
+                ..Settings::default()
+            },
+            &Style::default(),
+            false,
+            1000,
+        );
+        assert_ne!(old.key("x"), scaled.key("x"));
+    }
 }
 
 impl ImageSizing {
-    fn key<'a>(&self, path: &'a str) -> (&'a str, Option<u64>, Option<u64>, u32, u32) {
+    fn key<'a>(&self, path: &'a str) -> (&'a str, Option<u64>, Option<u64>, u32, u32, u16) {
         (
             path,
             self.requested_width.map(f64::to_bits),
             self.requested_height.map(f64::to_bits),
             self.height,
             self.width,
+            self.render_dpi,
         )
     }
 
@@ -1367,15 +1969,26 @@ impl ImageSizing {
         } else {
             settings.text_height()
         };
-        let font_size = (settings.font_size * style.size_scale).clamp(12.0, 192.0);
+        let font_size = settings.styled_font(style.size_scale);
+        let html_scale = if settings.render_dpi == 0 {
+            1.
+        } else {
+            f32::from(settings.render_dpi) / 96.
+        };
         let requested_width = style
             .image_width
-            .map_or(image.width, |value| value.pixels(width, font_size))
+            .map_or_else(
+                || image.width.map(|px| px * html_scale),
+                |value| value.pixels(width, font_size),
+            )
             .filter(|v| v.is_finite())
             .map(f64::from);
         let requested_height = style
             .image_height
-            .map_or(image.height, |value| value.pixels(height, font_size))
+            .map_or_else(
+                || image.height.map(|px| px * html_scale),
+                |value| value.pixels(height, font_size),
+            )
             .filter(|v| v.is_finite())
             .map(f64::from);
         Self {
@@ -1383,7 +1996,29 @@ impl ImageSizing {
             height,
             requested_width,
             requested_height,
+            render_dpi: settings.render_dpi,
         }
+    }
+
+    fn target(&self, original_w: u32, original_h: u32) -> (u32, u32) {
+        let intrinsic_scale = if self.render_dpi == 0 {
+            1.
+        } else {
+            f64::from(self.render_dpi) / 96.
+        };
+        let ratio = f64::from(original_w) / f64::from(original_h);
+        let w = self.requested_width.unwrap_or_else(|| {
+            self.requested_height
+                .map_or(f64::from(original_w) * intrinsic_scale, |h| h * ratio)
+        });
+        let h = self.requested_height.unwrap_or(w / ratio);
+        let scale = (f64::from(self.width) / w)
+            .min(f64::from(self.height) / h)
+            .min(1.0);
+        (
+            (w * scale).round().clamp(1.0, f64::from(self.width)) as u32,
+            (h * scale).round().clamp(1.0, f64::from(self.height)) as u32,
+        )
     }
 }
 
@@ -1395,25 +2030,13 @@ fn load_image(
     sizing: ImageSizing,
     cache_pixels: usize,
 ) -> Option<(String, GrayImage, (u32, u32))> {
-    let ImageSizing {
-        width,
-        height,
-        requested_width,
-        requested_height,
-    } = sizing;
-    let target = |original_w: u32, original_h: u32| {
-        let ratio = f64::from(original_w) / f64::from(original_h);
-        let w = requested_width
-            .unwrap_or_else(|| requested_height.map_or(f64::from(original_w), |h| h * ratio));
-        let h = requested_height.unwrap_or(w / ratio);
-        let scale = (f64::from(width) / w).min(f64::from(height) / h).min(1.0);
-        (
-            (w * scale).round().clamp(1.0, f64::from(width)) as u32,
-            (h * scale).round().clamp(1.0, f64::from(height)) as u32,
-        )
-    };
-    let styled_size = (requested_width.is_some() || requested_height.is_some())
-        .then_some(&target as &dyn Fn(u32, u32) -> (u32, u32));
+    let width = sizing.width;
+    let height = sizing.height;
+    let target = |original_w, original_h| sizing.target(original_w, original_h);
+    let styled_size = (sizing.requested_width.is_some()
+        || sizing.requested_height.is_some()
+        || !matches!(sizing.render_dpi, 0 | 96))
+    .then_some(&target as &dyn Fn(u32, u32) -> (u32, u32));
     let filter = if settings.smooth_images {
         FilterType::Triangle
     } else {
@@ -1466,8 +2089,16 @@ fn load_image(
         let bytes = book
             .resource_limited(&path, svg_image::MAX_SVG_BYTES)
             .ok()?;
-        let (art, _) = svg_image::render_inline(book, &path, std::str::from_utf8(&bytes).ok()?,
-            width, height, MAX_IMAGE_PIXELS, styled_size).ok()?;
+        let (art, _) = svg_image::render_inline(
+            book,
+            &path,
+            std::str::from_utf8(&bytes).ok()?,
+            width,
+            height,
+            MAX_IMAGE_PIXELS,
+            styled_size,
+        )
+        .ok()?;
         return cache_vector(path, art);
     }
     let bytes = book.resource(&path).ok()?;
@@ -1490,7 +2121,9 @@ fn load_image(
 }
 
 pub(crate) fn original_illustration(bytes: &[u8]) -> Result<ImagePage> {
-    if crate::gif_image::has_signature(bytes) { return ImagePage::decode_gif(bytes); }
+    if crate::gif_image::has_signature(bytes) {
+        return ImagePage::decode_gif(bytes);
+    }
     let gray = match image_reader(bytes) {
         Ok(reader) => {
             crate::epub_raster_dimensions(bytes)?;
@@ -1525,6 +2158,9 @@ impl Illustration {
     }
 
     fn draw(&self, page: &mut [u8], range: &Range<f32>, stride: usize, columns: &Range<usize>) {
+        if !self.painted {
+            return;
+        }
         let (x, top) = self.origin(range.start, columns);
         let height = (page.len() / stride) as i32;
         let first = (-top).max(0);
@@ -1655,6 +2291,7 @@ mod tests {
             height: 580,
             font_size: 30.0,
             margin: 25,
+            base_stylesheet: crate::BaseStylesheet::None,
             ..Settings::default()
         };
         let fixture = crate::test_fixture("field-notes-epub3.epub");
@@ -1695,6 +2332,7 @@ mod tests {
             height: 800,
             font_size: 32.0,
             margin: 24,
+            base_stylesheet: crate::BaseStylesheet::None,
             ..Settings::default()
         };
         let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
@@ -1791,6 +2429,7 @@ mod tests {
             height: 800,
             font_size: 32.0,
             margin: 24,
+            base_stylesheet: crate::BaseStylesheet::None,
             ..Settings::default()
         };
         let p = crate::Probe::from_book_content(
@@ -1943,10 +2582,13 @@ mod tests {
                 },
                 0,
                 Some(markup.into()),
-            ).unwrap()
+            )
+            .unwrap()
         };
         let compare = |probe: &crate::Probe| {
-            let Renderer::Parley(engine) = &probe.renderer else { unreachable!() };
+            let Renderer::Parley(engine) = &probe.renderer else {
+                unreachable!()
+            };
             let paragraph = &engine.paragraphs[0];
             let layout = &paragraph.layout;
             let text = &probe.source.blocks[0].text;
@@ -1955,25 +2597,33 @@ mod tests {
             let gaps = (cluster(1), cluster(first_word.end));
             let lines: Vec<_> = layout.lines().map(|line| line.text_range()).collect();
             let last = lines.last().unwrap().clone();
-            let last_advances: Vec<_> = text[last.clone()].char_indices()
-                .map(|(offset, _)| cluster(last.start + offset)).collect();
-            let choice = probe.select_range(
-                &probe.anchor(paragraph.key, first_word.start),
-                &probe.anchor(paragraph.key, first_word.end),
-            ).unwrap();
+            let last_advances: Vec<_> = text[last.clone()]
+                .char_indices()
+                .map(|(offset, _)| cluster(last.start + offset))
+                .collect();
+            let choice = probe
+                .select_range(
+                    &probe.anchor(paragraph.key, first_word.start),
+                    &probe.anchor(paragraph.key, first_word.end),
+                )
+                .unwrap();
             let rect = probe.selection_rects(0, &choice)[0];
-            let selected = probe.word_at(
-                0,
-                (rect.x + rect.width / 2) as f32,
-                (rect.y + rect.height / 2) as f32,
-            ).unwrap();
+            let selected = probe
+                .word_at(
+                    0,
+                    (rect.x + rect.width / 2) as f32,
+                    (rect.y + rect.height / 2) as f32,
+                )
+                .unwrap();
             assert_eq!(selected.text, "Tide");
             (gaps, lines, last_advances, choice, rect.width)
         };
         let mut spaced = run(15);
         let mut baseline = run(0);
-        let ((base_letter, base_space), base_lines, base_last, before, base_width) = compare(&baseline);
-        let ((wide_letter, narrow_space), expanded_lines, expanded_last, after, expanded_width) = compare(&spaced);
+        let ((base_letter, base_space), base_lines, base_last, before, base_width) =
+            compare(&baseline);
+        let ((wide_letter, narrow_space), expanded_lines, expanded_last, after, expanded_width) =
+            compare(&spaced);
         assert_eq!(base_lines, expanded_lines);
         assert_eq!(base_last, expanded_last);
         assert_eq!(before, after);
@@ -2320,7 +2970,7 @@ mod tests {
         let expected = "Lead 文".len();
         let witness = (20..160).find(|&width| {
             let first_line_end =
-                |context: &mut LayoutContext<TextDecoration>, fonts: &mut FontContext, block: usize| {
+                |context: &mut LayoutContext<PaintBrush>, fonts: &mut FontContext, block: usize| {
                     let (layout, _) = layout_paragraph(
                         context,
                         fonts,
@@ -2346,17 +2996,18 @@ mod tests {
         for block in source.blocks.iter().take(4) {
             assert_eq!(block.text, "Lead 文〜文.");
         }
-        let layout = |context: &mut LayoutContext<TextDecoration>, fonts: &mut FontContext, block: usize| {
-            layout_paragraph(
-                context,
-                fonts,
-                &source.blocks[block],
-                300,
-                settings,
-                &styles,
-            )
-            .0
-        };
+        let layout =
+            |context: &mut LayoutContext<PaintBrush>, fonts: &mut FontContext, block: usize| {
+                layout_paragraph(
+                    context,
+                    fonts,
+                    &source.blocks[block],
+                    300,
+                    settings,
+                    &styles,
+                )
+                .0
+            };
         assert!(!layout(&mut context, &mut fonts, 4).is_rtl());
         assert!(layout(&mut context, &mut fonts, 5).is_rtl());
     }
@@ -2531,6 +3182,58 @@ mod tests {
     }
 
     #[test]
+    fn dpi_decodes_actual_archive_artwork_with_intrinsic_html_css_and_relative_sizes() {
+        let markup = r#"<html><body style="font-size:150%">
+          <p><img src="../images/shore.png"/></p>
+          <p><img src="../images/shore.png" width="72" height="48"/></p>
+          <p><img src="../images/shore.png" style="width:96px;height:auto"/></p>
+          <p><img src="../images/shore.png" style="width:1in;height:auto"/></p>
+          <p><img src="../images/shore.png" style="width:25%;height:auto"/></p>
+          <p><img src="../images/shore.png" style="width:2em;height:auto"/></p>
+          <p><img src="../images/shore.png" style="width:2rem;height:auto"/></p>
+          <p id="location">The original text anchor follows the illustrations.</p>
+          </body></html>"#;
+        let book = replace_opening("dpi-images", markup);
+        let original = std::fs::read(&book.0).unwrap();
+        let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        for dpi in crate::RENDER_DPI_PRESETS {
+            let settings = Settings {
+                render_dpi: dpi,
+                ..Settings::default()
+            };
+            let mut probe = Probe::open(&book.0, Engine::Parley, &fonts, settings, 0).unwrap();
+            let Renderer::Parley(layout) = &probe.renderer else {
+                unreachable!()
+            };
+            let images = &layout.illustrations;
+            assert_eq!(images.len(), 7);
+            let scale = if dpi == 0 { 1. } else { f32::from(dpi) / 96. };
+            let widths = [
+                144. * scale,
+                72. * scale,
+                96. * scale,
+                if dpi == 0 { 144. } else { 96. * scale },
+                settings.text_width() as f32 / 4.,
+                126.,
+                84.,
+            ];
+            for (image, width) in images.iter().zip(widths) {
+                assert_eq!(image.display.0, width.round() as u32, "DPI {dpi}");
+                assert_eq!(
+                    image.display.1,
+                    (width * 2. / 3.).round() as u32,
+                    "DPI {dpi}"
+                );
+                assert!(image.pixels.as_raw().iter().any(|v| *v < 128));
+            }
+            let anchor = probe.fragment("location").unwrap();
+            let page = probe.page_for(&anchor).unwrap();
+            assert!(probe.capture(page).unwrap().iter().any(|v| *v < 128));
+        }
+        assert_eq!(std::fs::read(&book.0).unwrap(), original);
+    }
+
+    #[test]
     fn composited_inline_svg_draws_an_archive_picture_in_its_transformed_viewport_and_opens_original()
      {
         let xhtml = r##"<html xmlns="http://www.w3.org/1999/xhtml" xmlns:xlink="http://www.w3.org/1999/xlink"><body>
@@ -2618,17 +3321,22 @@ mod tests {
             height: 1200,
             requested_width: Some(144.0),
             requested_height: Some(96.0),
+            render_dpi: 96,
         };
         let (path, preview, display) =
             load_image(&mut book, &href, image, Settings::default(), sizing, 100).unwrap();
         assert!(preview.as_raw().len() <= 100);
         assert_eq!(display, (144, 96));
         let art = Illustration {
+            block: source.blocks[0].key,
+            source_index: 0,
+            painted: true,
             path: Some(path),
             link: None,
             label: String::new(),
             x: Some(0),
             y: 0.0,
+            line_top: None,
             pixels: Arc::new(preview),
             display,
         };
@@ -2716,6 +3424,7 @@ mod tests {
             width: 1000,
             height: 1280,
             font_size: 30.0,
+            base_stylesheet: crate::BaseStylesheet::None,
             ..Settings::default()
         };
         let mut probe = read(settings);
@@ -3043,12 +3752,16 @@ mod tests {
                 font_size: size,
                 ..Settings::default()
             };
-            let (mut chapter, source_lines, height) =
-                ParleyChapter::new(
-                    &mut book, &path, &source, fonts.clone(), settings, &styles,
-                    &crate::user_hyphenation::Rules::default(),
-                )
-                    .unwrap();
+            let (mut chapter, source_lines, height) = ParleyChapter::new(
+                &mut book,
+                &path,
+                &source,
+                fonts.clone(),
+                settings,
+                &styles,
+                &crate::user_hyphenation::Rules::default(),
+            )
+            .unwrap();
             let glyph_runs: Vec<_> = chapter.paragraphs[0]
                 .layout
                 .lines()
@@ -3105,3 +3818,22 @@ mod cjk_width_tests;
 
 #[cfg(test)]
 mod publisher_padding_tests;
+
+#[cfg(test)]
+mod table_border_tests;
+#[cfg(test)]
+mod vertical_padding_tests;
+
+#[cfg(test)]
+mod flow_tests;
+
+#[cfg(test)]
+mod media_line_tests;
+
+#[cfg(test)]
+#[path = "parley_layout/word_spacing_cases.rs"]
+mod word_spacing_cases;
+
+#[cfg(test)]
+#[path = "parley_layout/kerning_mode_tests.rs"]
+mod kerning_mode_tests;

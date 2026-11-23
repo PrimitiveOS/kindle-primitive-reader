@@ -18,6 +18,7 @@ fn protects_each_end_of_a_paragraph_and_relaxes_impossible_keeps() {
                 target.key
             },
             bytes: 0..1,
+            spans: None,
             top: n as f32 * 10.,
             bottom: n as f32 * 10. + 8.,
             missing_glyphs: 0,

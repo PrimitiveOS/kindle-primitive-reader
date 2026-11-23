@@ -1,0 +1,475 @@
+//! Supported style controls, book-specific CSS review and multiline editing.
+use super::*;
+use crate::user_styles::{self, Data, PRESETS, Snapshot};
+use primitive_ui::{TextStyle, editor::Multiline};
+#[derive(Clone)]
+pub(super) enum Command {
+    Preset(String),
+    Choose(String, Option<bool>),
+    Global(String, bool),
+    Master(bool),
+    Files,
+    Import(usize),
+    Edit,
+    Review,
+    Apply,
+    ToggleCustom,
+    Clear,
+    ConfirmClear,
+}
+#[derive(Default)]
+pub(super) struct View {
+    owner: Option<u64>,
+    preset: Option<String>,
+    files: Vec<PathBuf>,
+    draft: Option<String>,
+    error: Option<String>,
+    pub(super) editor: Option<Multiline>,
+}
+const CANCEL: Rect = Rect::new(40, 126, 550, 104);
+const REVIEW: Rect = Rect::new(674, 126, 550, 104);
+const TEXT: Rect = Rect::new(40, 260, 1184, 480);
+impl Reader {
+    fn style_book(&self) -> Result<u64> {
+        self.active
+            .as_ref()
+            .map(|b| b.id)
+            .ok_or_else(|| "Open a reflowable book first".into())
+    }
+    fn apply_style_data(&mut self, next: Data) -> Result<()> {
+        let id = self.style_book()?;
+        next.validate()?;
+        let active = self.active.as_ref().unwrap();
+        let snapshot = next.snapshot(id)?;
+        let candidate = if snapshot == active.reading.config.user_styles {
+            None
+        } else {
+            let mut config = active.reading.config.clone();
+            config.user_styles = snapshot;
+            Some(Reading::restore(
+                config,
+                active.reading.chapter,
+                active.reading.page,
+                active.reading.anchor().as_ref(),
+            )?)
+        };
+        // A failed write leaves the visible page, stored model and old snapshot intact.
+        self.style_store.save(next)?;
+        if let Some(candidate) = candidate {
+            self.active.as_mut().unwrap().reading = candidate;
+        }
+        self.record_position();
+        self.notice = Some("Style tweaks saved".into());
+        Ok(())
+    }
+    pub(super) fn activate_style(&mut self, command: Command) -> Result<()> {
+        let id = self.style_book()?;
+        if self.style_view.owner.is_some_and(|owner| owner != id)
+            && !matches!(
+                &command,
+                Command::Preset(_) | Command::Files | Command::Edit
+            )
+        {
+            return Err("The open book changed; reopen style tweaks before applying".into());
+        }
+        if matches!(
+            &command,
+            Command::Apply | Command::Review | Command::Import(_) | Command::ConfirmClear
+        ) && self.style_view.owner != Some(id)
+        {
+            return Err("Review this book's styles again before applying".into());
+        }
+        match command {
+            Command::Preset(name) => {
+                self.style_view.owner = Some(id);
+                user_styles::preset(&name).ok_or("This style tweak is unavailable")?;
+                self.style_view.preset = Some(name);
+                self.show(Screen::StylePreset);
+            }
+            Command::Choose(name, value) => {
+                let mut next = self.style_store.data.clone();
+                next.choose(id, &name, value)?;
+                self.apply_style_data(next)?;
+            }
+            Command::Global(name, value) => {
+                let mut next = self.style_store.data.clone();
+                next.make_global(id, &name, value)?;
+                self.apply_style_data(next)?;
+            }
+            Command::Master(enabled) => {
+                let mut next = self.style_store.data.clone();
+                next.books.entry(id).or_default().enabled = enabled;
+                self.apply_style_data(next)?;
+            }
+            Command::Files => {
+                self.style_view.owner = Some(id);
+                let directory = self.style_store.path.parent().unwrap().join("style-tweaks");
+                self.style_view.files = with_storage(|| {
+                    fs::create_dir_all(&directory)?;
+                    if !fs::symlink_metadata(&directory)?.file_type().is_dir() {
+                        return Err(io::Error::other(
+                            "Style import folder must be a regular directory",
+                        ));
+                    }
+                    let mut files = Vec::new();
+                    for entry in fs::read_dir(&directory)? {
+                        let entry = entry?;
+                        if entry.file_type()?.is_file()
+                            && entry
+                                .path()
+                                .extension()
+                                .is_some_and(|e| e.eq_ignore_ascii_case("css"))
+                        {
+                            files.push(entry.path());
+                            if files.len() > 64 {
+                                return Err(io::Error::other(
+                                    "The style import folder exceeds 64 CSS files",
+                                ));
+                            }
+                        }
+                    }
+                    files.sort();
+                    Ok(files)
+                })?;
+                self.style_view.editor = None;
+                self.show(Screen::StyleFiles);
+            }
+            Command::Import(index) => {
+                let path = self
+                    .style_view
+                    .files
+                    .get(index)
+                    .ok_or("Choose a CSS file again")?;
+                let bytes = read_import_file(path, user_styles::MAX_BOOK_CSS as u64)?;
+                let css = String::from_utf8(bytes).map_err(|_| "CSS must be valid UTF-8")?;
+                self.review_styles(css);
+            }
+            Command::Edit => {
+                self.style_view.owner = Some(id);
+                let text = self.style_store.data.book(id).custom.unwrap_or_default();
+                let mut editor = Multiline::new(&text, user_styles::MAX_BOOK_CSS);
+                editor.editor.caret = editor.editor.text.len();
+                self.style_view.editor = Some(editor);
+                self.show(Screen::StyleEditor);
+            }
+            Command::Review => {
+                let text = self
+                    .style_view
+                    .editor
+                    .as_ref()
+                    .ok_or("Open the CSS editor again")?
+                    .editor
+                    .string();
+                self.review_styles(text);
+            }
+            Command::Apply => {
+                let text = self
+                    .style_view
+                    .draft
+                    .clone()
+                    .ok_or("Review the CSS again")?;
+                if text.len() > user_styles::MAX_BOOK_CSS {
+                    return Err("Book CSS exceeds 8 KiB; the saved CSS is unchanged".into());
+                }
+                Snapshot::new(text.clone())?;
+                let mut next = self.style_store.data.clone();
+                let b = next.books.entry(id).or_default();
+                let new = b.custom.is_none();
+                b.custom = (!text.trim().is_empty()).then_some(text);
+                if b.custom.is_none() {
+                    b.custom_enabled = false;
+                } else if new {
+                    b.custom_enabled = true;
+                }
+                self.apply_style_data(next)?;
+                self.style_view.draft = None;
+                self.style_view.editor = None;
+                self.show(Screen::Book);
+            }
+            Command::ToggleCustom => {
+                let mut next = self.style_store.data.clone();
+                let b = next.books.entry(id).or_default();
+                if b.custom.is_none() {
+                    return Err("Import or edit book CSS first".into());
+                }
+                b.custom_enabled = !b.custom_enabled;
+                self.apply_style_data(next)?;
+            }
+            Command::Clear => {
+                self.style_view.owner = Some(id);
+                self.show(Screen::StyleClear);
+            }
+            Command::ConfirmClear => {
+                let mut next = self.style_store.data.clone();
+                let b = next.books.entry(id).or_default();
+                b.custom = None;
+                b.custom_enabled = false;
+                self.apply_style_data(next)?;
+                self.show(Screen::StyleTweaks);
+            }
+        }
+        Ok(())
+    }
+    fn review_styles(&mut self, css: String) {
+        self.style_view.error = if css.len() > user_styles::MAX_BOOK_CSS {
+            Some("Book CSS exceeds 8 KiB; shorten it before applying.".into())
+        } else {
+            Snapshot::new(css.clone())
+                .err()
+                .map(|error| error.to_string())
+        };
+        self.style_view.draft = Some(css);
+        self.show(Screen::StyleReview);
+    }
+    pub(super) fn style_items(&self) -> Vec<Item> {
+        let Ok(id) = self.style_book() else {
+            return vec![Item::new("Open a reflowable book first", Action::Heading)];
+        };
+        let data = &self.style_store.data;
+        let b = data.book(id);
+        let action = |title: &str, command: Command| Item::new(title, Action::Style(command));
+        match self.screen {
+            Screen::StyleTweaks => {
+                let mut items = vec![
+                    action("Enable style tweaks", Command::Master(!b.enabled)).detail(
+                        if b.enabled {
+                            "On for this book"
+                        } else {
+                            "Off; choices and CSS retained"
+                        },
+                    ),
+                    action("Edit book CSS", Command::Edit)
+                        .detail("Supported CSS only; review before applying"),
+                    action("Import book CSS", Command::Files)
+                        .detail("Copy a .css file to reader/data/style-tweaks"),
+                ];
+                if b.custom.is_some() {
+                    items.push(action("Book CSS", Command::ToggleCustom).detail(
+                        if b.custom_enabled {
+                            "On"
+                        } else {
+                            "Off; text retained"
+                        },
+                    ));
+                    items.push(action("Clear book CSS", Command::Clear));
+                }
+                if let Some(problem) = &self.style_store.problem {
+                    items.push(
+                        Item::new("Saved settings preserved", Action::Heading).detail(problem),
+                    );
+                }
+                let unavailable: std::collections::BTreeSet<_> = data
+                    .global
+                    .iter()
+                    .chain(b.choices.keys())
+                    .filter(|id| user_styles::preset(id).is_none())
+                    .collect();
+                if !unavailable.is_empty() {
+                    items.push(
+                        Item::new("Unavailable tweaks retained", Action::Heading).detail(format!(
+                            "{} saved IDs are not supported by this build",
+                            unavailable.len()
+                        )),
+                    );
+                }
+                for p in PRESETS {
+                    let source = match b.choices.get(p.id) {
+                        Some(true) => "On for this book",
+                        Some(false) => "Off for this book",
+                        None => {
+                            if data.global.contains(p.id) {
+                                "Use default: On"
+                            } else {
+                                "Use default: Off"
+                            }
+                        }
+                    };
+                    items.push(action(p.title, Command::Preset(p.id.into())).detail(source));
+                }
+                items.push(Item::new("Supported reflow styles",Action::Heading).detail("Margins, hiding, floats, arbitrary selectors and vendor hints are not supported."));
+                items
+            }
+            Screen::StylePreset => {
+                let Some(p) = self
+                    .style_view
+                    .preset
+                    .as_deref()
+                    .and_then(user_styles::preset)
+                else {
+                    return Vec::new();
+                };
+                let current = b.choices.get(p.id).copied();
+                let global = data.global.contains(p.id);
+                vec![Item::new(p.title,Action::Heading).detail("Book choice overrides the live all-books default"),
+                    action("Use default",Command::Choose(p.id.into(),None)).detail(if current.is_none(){"Selected"}else{"Inherit future all-books changes"}),
+                    action("On for this book",Command::Choose(p.id.into(),Some(true))).detail(if current==Some(true){"Selected"}else{"Override the default"}),
+                    action("Off for this book",Command::Choose(p.id.into(),Some(false))).detail(if current==Some(false){"Selected"}else{"Override the default"}),
+                    action(if global{"Stop using on all books"}else{"Use on all books"},Command::Global(p.id.into(),!global)).detail("Existing books inherit unless they override it"),
+                    Item::new("Reader settings still apply",Action::Heading).detail("Explicit alignment, font override and line spacing remain independent controls."),]
+            }
+            Screen::StyleFiles => {
+                let mut items: Vec<_> = self
+                    .style_view
+                    .files
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| {
+                        action(
+                            p.file_name().unwrap().to_string_lossy().as_ref(),
+                            Command::Import(i),
+                        )
+                        .detail("Review a book-specific copy; original file stays unchanged")
+                    })
+                    .collect();
+                if items.is_empty() {
+                    items.push(
+                        Item::new("No CSS files found", Action::Heading)
+                            .detail("Copy UTF-8 CSS files to reader/data/style-tweaks"),
+                    );
+                }
+                items
+            }
+            Screen::StyleReview => {
+                let css = self.style_view.draft.as_deref().unwrap_or("");
+                let mut items = if let Some(error) = &self.style_view.error {
+                    vec![Item::new("CSS cannot be applied", Action::Heading).detail(error)]
+                } else {
+                    let summary = self
+                        .active
+                        .as_ref()
+                        .and_then(|a| {
+                            crate::book_style::user_css_matches(
+                                css,
+                                &a.reading.probe.source.elements,
+                            )
+                            .ok()
+                        })
+                        .map_or_else(
+                            || "Supported CSS".into(),
+                            |(rules, elements)| {
+                                format!("{rules} rules match {elements} elements in this chapter")
+                            },
+                        );
+                    vec![action("Apply to this book", Command::Apply).detail(summary)]
+                };
+                if self.style_view.editor.is_some() {
+                    items.push(Item::new(
+                        "Return to editor",
+                        Action::Show(Screen::StyleEditor),
+                    ));
+                }
+                for (number, line) in css.lines().enumerate() {
+                    let chars: Vec<_> = line.chars().collect();
+                    if chars.is_empty() {
+                        items.push(Item::new(format!("{}: ", number + 1), Action::Heading));
+                    }
+                    for (part, chunk) in chars.chunks(28).enumerate() {
+                        items.push(Item::new(
+                            format!(
+                                "{}{} {}",
+                                number + 1,
+                                if part == 0 { ":" } else { "+" },
+                                chunk.iter().collect::<String>()
+                            ),
+                            Action::Heading,
+                        ));
+                    }
+                }
+                items
+            }
+            Screen::StyleClear => vec![
+                action("Clear this book's CSS", Command::ConfirmClear)
+                    .detail("Built-in choices and all-books defaults stay unchanged"),
+                Item::new("Cancel", Action::Show(Screen::StyleTweaks)),
+            ],
+            _ => Vec::new(),
+        }
+    }
+    pub(super) fn draw_style_editor(&self, canvas: &mut Canvas) -> bool {
+        if self.screen != Screen::StyleEditor {
+            return false;
+        }
+        canvas.text(
+            Rect::new(40, 35, 1184, 72),
+            "Book CSS",
+            TextStyle::new(48).bold(),
+        );
+        canvas.button(CANCEL, "Cancel", false, false);
+        canvas.button(REVIEW, "Review", true, false);
+        if let Some(editor) = &self.style_view.editor {
+            editor.draw(canvas, TEXT, 40, 48, 28);
+            canvas.keyboard(editor.editor.layer, "New line", None);
+        }
+        canvas.text(
+            Rect::new(40, 756, 1184, 60),
+            "8 KiB limit. Unsupported CSS is rejected before saving.",
+            CAPTION,
+        );
+        true
+    }
+    pub(super) fn style_editor_input(&mut self, input: Input) -> Option<Change> {
+        if self.screen != Screen::StyleEditor || matches!(input, Input::Sleep | Input::Wake) {
+            return None;
+        }
+        let result = (|| -> Result<Change> {
+            if let Input::Tap(x, y) = input {
+                if CANCEL.contains(x, y) {
+                    self.style_view.editor = None;
+                    self.show(Screen::StyleTweaks);
+                    return Ok(Change::Partial);
+                }
+                if REVIEW.contains(x, y) {
+                    self.activate_style(Command::Review)?;
+                    return Ok(Change::Partial);
+                }
+                let editor = self
+                    .style_view
+                    .editor
+                    .as_mut()
+                    .ok_or("Open the editor again")?;
+                if TEXT.contains(x, y) {
+                    editor.place(
+                        ((y - TEXT.y as f32) / 48.) as usize,
+                        ((x - TEXT.x as f32) / 18.) as usize,
+                        40,
+                    );
+                } else if let Some(key) = keyboard_key(
+                    &Layout::new(WIDTH, HEIGHT, 4, 5),
+                    &editor.editor,
+                    "New line",
+                    x,
+                    y,
+                ) {
+                    editor.press(key);
+                    editor.show_caret(40, 10);
+                } else {
+                    return Ok(Change::None);
+                }
+            } else {
+                let delta = match input {
+                    Input::PageForward => 1,
+                    Input::PageBack => -1,
+                    Input::Swipe { dy, .. } if dy.abs() > 60. => {
+                        if dy < 0. {
+                            1
+                        } else {
+                            -1
+                        }
+                    }
+                    _ => return Ok(Change::None),
+                };
+                if let Some(editor) = &mut self.style_view.editor {
+                    editor.page(delta, 40, 10);
+                }
+            }
+            Ok(Change::Partial)
+        })();
+        Some(match result {
+            Ok(change) => change,
+            Err(error) => self.report(error),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests;

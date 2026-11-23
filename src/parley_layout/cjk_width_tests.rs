@@ -57,7 +57,7 @@ fn inventory_cjk_source_characters() {
     std::fs::write(out, serde_json::to_vec(&results).unwrap()).unwrap();
 }
 
-fn paragraph<'a>(probe: &'a crate::Probe, key: usize) -> &'a Layout<TextDecoration> {
+fn paragraph<'a>(probe: &'a crate::Probe, key: usize) -> &'a Layout<PaintBrush> {
     let crate::Renderer::Parley(chapter) = &probe.renderer else {
         panic!("Expected horizontal text")
     };
@@ -69,7 +69,7 @@ fn paragraph<'a>(probe: &'a crate::Probe, key: usize) -> &'a Layout<TextDecorati
         .layout
 }
 
-fn glyph_origins(layout: &Layout<TextDecoration>) -> Vec<(u32, i32)> {
+fn glyph_origins(layout: &Layout<PaintBrush>) -> Vec<(u32, i32)> {
     let mut result = Vec::new();
     for line in layout.lines() {
         for item in line.items() {

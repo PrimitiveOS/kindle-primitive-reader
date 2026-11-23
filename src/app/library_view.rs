@@ -63,8 +63,15 @@ impl Reader {
         let directory = path.parent().unwrap_or_else(|| Path::new("")).to_owned();
         self.browse_to(directory)?;
         self.library_query.clear();
-        if let Some(index) = self.browser.listing.entries.iter().position(|entry| entry.path == path) {
-            let continue_row = self.show_continue() && self.library.recently_read().next().is_some();
+        if let Some(index) = self
+            .browser
+            .listing
+            .entries
+            .iter()
+            .position(|entry| entry.path == path)
+        {
+            let continue_row =
+                self.show_continue() && self.library.recently_read().next().is_some();
             self.browser.page = (index + usize::from(continue_row)) / FILE_ROWS;
         }
         Ok(())

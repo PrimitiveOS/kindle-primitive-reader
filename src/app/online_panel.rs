@@ -646,6 +646,7 @@ mod tests {
         let font = test_fixture("fonts/NotoSans-Regular.ttf");
         let state = root.join("library.json");
         let mut app = Reader::open(&root, &state, vec![font.clone()]).unwrap();
+        app.controls.dictionary_on_single_word = Some(false);
         app.open_path(&book).unwrap();
         let mut canvas =
             Canvas::new(WIDTH, HEIGHT, &[font.to_string_lossy().into_owned()]).unwrap();

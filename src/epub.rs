@@ -39,6 +39,7 @@ pub struct Chapter {
     pub href: String,
     pub label: String,
     pub(crate) is_svg: bool,
+    pub(crate) nonlinear: bool,
 }
 
 /// A local reading destination with a decoded archive path and optional element ID.
@@ -100,6 +101,8 @@ enum Content {
         fonts: Option<crate::epub_font::EmbeddedFonts>,
     },
     Loose {
+        metadata: crate::publication_metadata::Metadata,
+        format: loose::Format,
         xhtml: BTreeMap<String, String>,
         prior_mobi: BTreeMap<String, Vec<String>>,
         resources: BTreeMap<String, Vec<u8>>,
@@ -151,7 +154,8 @@ impl Book {
             return match format {
                 loose::Format::Mobi => Self::open_mobi(path),
                 loose::Format::Chm => Self::open_chm(path),
-                _ => loose::Document::open(path, format).map(Self::from_loose),
+                _ => loose::Document::open(path, format)
+                    .map(|document| Self::from_loose(document, format)),
             };
         }
         let mut archive = Archive::open(path)?;
@@ -250,48 +254,51 @@ impl Book {
         let fonts = crate::epub_font::EmbeddedFonts::read(
             &mut archive,
             root,
-            manifest.values().map(|item| (item.path.as_str(), item.media.as_str())),
+            manifest
+                .values()
+                .map(|item| (item.path.as_str(), item.media.as_str())),
         );
         let cover = package_cover(metadata, &manifest);
         let spine = child(root, "spine")?;
         let navigation = manifest.values().find(|item| item.navigation);
         let ncx = spine.attribute("toc").and_then(|id| manifest.get(id));
         // Optional navigation can be missing or malformed even when the spine is readable.
-        let (mut toc, mut printed_pages) = navigation
+        let (mut toc, mut printed_pages, group_headings) = navigation
             .and_then(|nav| {
                 let xml = xml_entry(&mut archive, &nav.path).ok()?;
                 let xml = loose::without_plain_html_doctype(&xml);
                 let doc = parse_xml(&xml).ok()?;
-                Some((
-                    xhtml_nav(&doc, &nav.path, "toc"),
-                    xhtml_nav(&doc, &nav.path, "page-list"),
-                ))
+                Some(publication_navigation(&doc, &nav.path))
             })
             .unwrap_or_default();
-        if let Some(ncx) = ncx {
+        if ncx.is_some() || !group_headings.is_empty() {
             let mut paths = BTreeMap::new();
             for item in spine
                 .children()
                 .filter(|node| node.has_tag_name("itemref"))
                 .filter_map(|node| manifest.get(node.attribute("idref")?))
             {
-                let path = paths.entry(item.path.as_str()).or_insert_with(|| {
-                    (0usize, !archive.missing_after_recovery(&item.path))
-                });
+                let path = paths
+                    .entry(item.path.as_str())
+                    .or_insert_with(|| (0usize, !archive.missing_after_recovery(&item.path)));
                 path.0 += 1;
             }
+            inherit_group_targets(&mut toc, &group_headings, &paths, &mut archive);
             let has_target = |entries: &[TocEntry], print: bool| {
                 entries.iter().any(|entry| {
                     entry.destination.as_ref().is_some_and(|destination| {
-                        paths.get(destination.path.as_str()).is_some_and(|&(count, available)| {
-                            !print || (available && count == 1 && entry.label.len() <= 256)
-                        })
+                        paths
+                            .get(destination.path.as_str())
+                            .is_some_and(|&(count, available)| {
+                                !print || (available && count == 1 && entry.label.len() <= 256)
+                            })
                     })
                 })
             };
             let needs_toc = !has_target(&toc, false);
             let needs_print = !has_target(&printed_pages, true);
             if (needs_toc || needs_print)
+                && let Some(ncx) = ncx
                 && let Ok(xml) = xml_entry(&mut archive, &ncx.path)
                 && let Ok(doc) = parse_xml(&xml)
             {
@@ -358,6 +365,7 @@ impl Book {
                 href: item.path.clone(),
                 label,
                 is_svg,
+                nonlinear: reference.attribute("linear") == Some("no"),
             });
         }
         if chapters.is_empty() {
@@ -372,22 +380,31 @@ impl Book {
                 }
             }
             let valid = |entry: &TocEntry| {
-                entry.label.len() <= 256 && entry.destination.as_ref().is_some_and(|destination| {
-                    paths.get(destination.path.as_str()) == Some(&1)
-                })
+                entry.label.len() <= 256
+                    && entry
+                        .destination
+                        .as_ref()
+                        .is_some_and(|destination| paths.get(destination.path.as_str()) == Some(&1))
             };
             printed_pages.retain(valid);
-            if printed_pages.is_empty() && let Some(item) = adobe_map
+            if printed_pages.is_empty()
+                && let Some(item) = adobe_map
                 && let Ok(xml) = xml_entry(&mut archive, &item.path)
                 && let Ok(doc) = parse_xml(&xml)
             {
-                printed_pages = adobe_pages(&doc, &item.path).filter(valid).take(MAX_PAGE_REFERENCES).collect();
+                printed_pages = adobe_pages(&doc, &item.path)
+                    .filter(valid)
+                    .take(MAX_PAGE_REFERENCES)
+                    .collect();
             }
         }
-        let printed_source = metadata.children()
+        let printed_source = metadata
+            .children()
             .find(|node| node.has_tag_name(("http://purl.org/dc/elements/1.1/", "source")))
-            .and_then(|node| node.text()).map(str::trim)
-            .filter(|source| !source.is_empty() && source.len() <= 1024).map(str::to_owned);
+            .and_then(|node| node.text())
+            .map(str::trim)
+            .filter(|source| !source.is_empty() && source.len() <= 1024)
+            .map(str::to_owned);
         Ok(Self {
             title,
             author,
@@ -426,19 +443,30 @@ impl Book {
         }
     }
 
-    #[cfg(feature = "kindle")]
-    pub(crate) fn from_text(title: String, text: &str) -> Result<Self> {
-        Ok(Self::from_loose(loose::Document {
-            title,
-            author: None,
-            chapter_path: loose::CHAPTER_PATH.to_owned(),
-            xhtml: loose::text_as_xhtml(text)?,
-            toc: Vec::new(),
-            resources: BTreeMap::new(),
-        }))
+    pub(crate) fn publisher_metadata(&self) -> Option<&crate::publication_metadata::Metadata> {
+        match &self.content {
+            Content::Loose { metadata, .. } => Some(metadata),
+            _ => None,
+        }
     }
 
-    fn from_loose(document: loose::Document) -> Self {
+    #[cfg(feature = "kindle")]
+    pub(crate) fn from_text(title: String, text: &str) -> Result<Self> {
+        Ok(Self::from_loose(
+            loose::Document {
+                metadata: Default::default(),
+                title,
+                author: None,
+                chapter_path: loose::CHAPTER_PATH.to_owned(),
+                xhtml: loose::text_as_xhtml(text)?,
+                toc: Vec::new(),
+                resources: BTreeMap::new(),
+            },
+            loose::Format::Text,
+        ))
+    }
+
+    fn from_loose(document: loose::Document, format: loose::Format) -> Self {
         let chapter_path = document.chapter_path;
         Self {
             revision: crate::revision(&document.xhtml),
@@ -449,6 +477,7 @@ impl Book {
             cover: None,
             chapters: vec![Chapter {
                 is_svg: false,
+                nonlinear: false,
                 href: chapter_path.clone(),
                 label: document.title.clone(),
             }],
@@ -458,6 +487,8 @@ impl Book {
             printed_pages: Vec::new(),
             printed_source: None,
             content: Content::Loose {
+                metadata: document.metadata,
+                format,
                 xhtml: BTreeMap::from([(chapter_path, document.xhtml)]),
                 prior_mobi: BTreeMap::new(),
                 resources: document.resources,
@@ -516,6 +547,7 @@ impl Book {
                     current
                 };
                 kf8::Kf8Document {
+                    metadata: document.metadata,
                     language: document.language,
                     title: document.title,
                     author: document.author,
@@ -551,6 +583,7 @@ impl Book {
                 href: chapter.path.clone(),
                 label: chapter.label,
                 is_svg: false,
+                nonlinear: false,
             });
             xhtml.insert(chapter.path, chapter.xhtml);
         }
@@ -574,6 +607,8 @@ impl Book {
             series: Vec::new(),
             cover: None,
             content: Content::Loose {
+                metadata: publication.metadata,
+                format: loose::Format::Mobi,
                 xhtml,
                 prior_mobi,
                 resources: publication.resources,
@@ -622,6 +657,18 @@ impl Book {
 
     pub(crate) fn is_reflowable_epub(&self) -> bool {
         matches!(self.content, Content::Archive { .. }) && !self.is_fixed_layout()
+    }
+
+    pub(crate) fn automatic_stylesheet(&self) -> crate::BaseStylesheet {
+        match &self.content {
+            Content::Loose {
+                format: loose::Format::Fb2 | loose::Format::Text,
+                ..
+            } => crate::BaseStylesheet::FictionBook,
+            Content::Archive { .. } | Content::Loose { .. } | Content::Chm(_) => {
+                crate::BaseStylesheet::Traditional
+            }
+        }
     }
 
     pub(crate) fn take_fixed_spine(&mut self) -> Option<FixedSpine> {
@@ -712,13 +759,17 @@ impl Book {
 
     pub(crate) fn previous_mobi_chapters(&self, name: &str) -> &[String] {
         match &self.content {
-            Content::Loose { prior_mobi, .. } => prior_mobi.get(name).map(Vec::as_slice).unwrap_or_default(),
+            Content::Loose { prior_mobi, .. } => {
+                prior_mobi.get(name).map(Vec::as_slice).unwrap_or_default()
+            }
             _ => &[],
         }
     }
     #[cfg(test)]
     pub(crate) fn previous_mobi_chapter(&self, name: &str) -> Option<&str> {
-        self.previous_mobi_chapters(name).first().map(String::as_str)
+        self.previous_mobi_chapters(name)
+            .first()
+            .map(String::as_str)
     }
 
     /// Look up a canonical archive path in the reading spine.
@@ -752,6 +803,37 @@ impl Book {
     }
 
     #[cfg(feature = "kindle")]
+    pub(crate) fn linear_progress_target(&mut self, fraction: f64) -> Result<(usize, f64)> {
+        let offsets = self.chapter_offsets()?;
+        let chapters: Vec<_> = self
+            .chapters
+            .iter()
+            .enumerate()
+            .filter(|(_, chapter)| !chapter.nonlinear)
+            .map(|(index, _)| (index, offsets[index + 1] - offsets[index]))
+            .collect();
+        let Some(&(first, _)) = chapters.first() else {
+            return self.progress_target(fraction);
+        };
+        let &(last, _) = chapters.last().unwrap();
+        if fraction <= 0.0 {
+            return Ok((first, 0.0));
+        }
+        if fraction >= 1.0 {
+            return Ok((last, 1.0));
+        }
+        let total: u64 = chapters.iter().map(|(_, weight)| weight).sum();
+        let mut target = fraction * total as f64;
+        for (chapter, weight) in chapters {
+            if target < weight as f64 {
+                return Ok((chapter, target / weight as f64));
+            }
+            target -= weight as f64;
+        }
+        Ok((last, 1.0))
+    }
+
+    #[cfg(feature = "kindle")]
     pub(crate) fn chapter_offsets(&mut self) -> Result<Vec<u64>> {
         let mut offsets = Vec::with_capacity(self.chapters.len() + 1);
         let mut total = 0;
@@ -775,7 +857,10 @@ impl Book {
 
     pub(crate) fn local_font(&mut self, path: &str, cap: usize) -> Result<Vec<u8>> {
         let mut bytes = self.resource_limited(path, cap)?;
-        if let Content::Archive { fonts: Some(fonts), .. } = &self.content {
+        if let Content::Archive {
+            fonts: Some(fonts), ..
+        } = &self.content
+        {
             fonts.apply(path, &mut bytes);
         }
         Ok(bytes)
@@ -1116,21 +1201,43 @@ fn agreed_hint<T: PartialEq>(mut hints: impl Iterator<Item = T>, conflict: T) ->
 }
 
 // EPUB 3.3 §7.3–7.4: https://www.w3.org/TR/epub-33/#sec-nav-def-model
-fn xhtml_nav(doc: &Document<'_>, base: &str, kind: &str) -> Vec<TocEntry> {
-    let Some(toc) = doc.descendants().find(|node| {
-        node.has_tag_name("nav")
-            && node
-                .attribute(("http://www.idpf.org/2007/ops", "type"))
-                .or_else(|| node.attribute("type"))
-                .is_some_and(|kinds| kinds.split_ascii_whitespace().any(|value| value == kind))
-    }) else {
-        return Vec::new();
+fn publication_navigation(
+    doc: &Document<'_>,
+    base: &str,
+) -> (Vec<TocEntry>, Vec<TocEntry>, Vec<usize>) {
+    let find = |kind: &str| {
+        doc.descendants().find(|node| {
+            node.has_tag_name("nav")
+                && node
+                    .attribute(("http://www.idpf.org/2007/ops", "type"))
+                    .or_else(|| node.attribute("type"))
+                    .is_some_and(|roles| roles.split_ascii_whitespace().any(|role| role == kind))
+        })
     };
+    let mut page_groups = Vec::new();
+    let printed = find("page-list").map_or_else(Vec::new, |node| {
+        xhtml_nav(node, base, true, &mut page_groups)
+    });
+    if let Some(node) = find("toc").or_else(|| find("landmarks")) {
+        let mut groups = Vec::new();
+        let contents = xhtml_nav(node, base, false, &mut groups);
+        (contents, printed, groups)
+    } else {
+        (printed.clone(), printed, page_groups)
+    }
+}
+
+fn xhtml_nav(
+    toc: Node<'_, '_>,
+    base: &str,
+    page_list: bool,
+    groups: &mut Vec<usize>,
+) -> Vec<TocEntry> {
     let mut entries = Vec::new();
     let mut pending = Vec::new();
     push_xhtml_items(&mut pending, toc, 0);
     while let Some((item, depth)) = pending.pop() {
-        if kind == "page-list" && entries.len() == MAX_PAGE_REFERENCES {
+        if page_list && entries.len() == MAX_PAGE_REFERENCES {
             break;
         }
         if let Some(label) = item
@@ -1141,11 +1248,77 @@ fn xhtml_nav(doc: &Document<'_>, base: &str, kind: &str) -> Vec<TocEntry> {
                 .has_tag_name("a")
                 .then(|| label.attribute("href"))
                 .flatten();
-            entries.extend(toc_entry(base, href, label, depth));
+            if let Some(entry) = toc_entry(base, href, label, depth) {
+                if label.has_tag_name("span") {
+                    groups.push(entries.len());
+                }
+                entries.push(entry);
+            }
         }
         push_xhtml_items(&mut pending, item, depth + 1);
     }
     entries
+}
+
+/// A publisher can name a navigation group with a span. CREngine opens its
+/// first reachable child. Only inspect documents needed by a pending group.
+fn inherit_group_targets(
+    entries: &mut [TocEntry],
+    groups: &[usize],
+    spine: &BTreeMap<&str, (usize, bool)>,
+    archive: &mut Archive,
+) {
+    if groups.is_empty() {
+        return;
+    }
+    let mut pending: Vec<usize> = Vec::new();
+    let mut ids: BTreeMap<String, std::collections::BTreeSet<String>> = BTreeMap::new();
+    let mut remaining = MAX_RESOURCE as u64;
+    for index in 0..entries.len() {
+        while pending
+            .last()
+            .is_some_and(|&parent| entries[parent].depth >= entries[index].depth)
+        {
+            pending.pop();
+        }
+        if groups.binary_search(&index).is_ok() {
+            pending.push(index);
+            continue;
+        }
+        if pending.is_empty() {
+            continue;
+        }
+        let Some(dest) = entries[index].destination.as_ref() else {
+            continue;
+        };
+        let Some(&(1, true)) = spine.get(dest.path.as_str()) else {
+            continue;
+        };
+        let Ok(size) = archive.size(&dest.path) else {
+            continue;
+        };
+        if let Some(fragment) = &dest.fragment {
+            let known = ids.entry(dest.path.clone()).or_insert_with(|| {
+                if size > remaining || size > MAX_XML as u64 {
+                    return Default::default();
+                };
+                remaining -= size;
+                let Ok(xml) = xml_entry(archive, &dest.path) else {
+                    return Default::default();
+                };
+                crate::source::Source::parse(&xml)
+                    .map(|source| source.fragments.into_keys().collect())
+                    .unwrap_or_default()
+            });
+            if !known.contains(fragment) {
+                continue;
+            }
+        }
+        let dest = dest.clone();
+        for parent in pending.drain(..) {
+            entries[parent].destination = Some(dest.clone());
+        }
+    }
 }
 
 fn push_xhtml_items<'a, 'input>(
@@ -1211,11 +1384,20 @@ fn ncx_pages(doc: &Document<'_>, base: &str) -> Vec<TocEntry> {
 
 fn adobe_pages<'a>(doc: &'a Document<'a>, base: &'a str) -> impl Iterator<Item = TocEntry> + 'a {
     let root = doc.root_element();
-    root.children().filter(move |node| root.has_tag_name("page-map") && node.has_tag_name("page"))
+    root.children()
+        .filter(move |node| root.has_tag_name("page-map") && node.has_tag_name("page"))
         .filter_map(move |node| {
-            let label = node.attribute("name")?.split_whitespace().collect::<Vec<_>>().join(" ");
+            let label = node
+                .attribute("name")?
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
             let destination = Book::resolve_link(base, node.attribute("href")?).ok()?;
-            (!label.is_empty()).then_some(TocEntry { label, destination: Some(destination), depth: 0 })
+            (!label.is_empty()).then_some(TocEntry {
+                label,
+                destination: Some(destination),
+                depth: 0,
+            })
         })
 }
 
@@ -1367,7 +1549,10 @@ mod tests {
         for (i, entry) in entries.iter().enumerate() {
             let dest = entry.destination.as_ref().unwrap();
             assert_eq!(dest.path, "Book/text/part.xhtml");
-            assert_eq!(dest.fragment.as_deref(), Some(if i==0 { "p1" } else { "p2" }));
+            assert_eq!(
+                dest.fragment.as_deref(),
+                Some(if i == 0 { "p1" } else { "p2" })
+            );
         }
     }
 
@@ -1609,14 +1794,18 @@ mod tests {
         assert!(archive.resource_limited(path, image.len() - 1).is_err());
         assert_eq!(archive.resource_limited(path, image.len()).unwrap(), image);
 
-        let mut loose = Book::from_loose(loose::Document {
-            title: "Package".into(),
-            author: None,
-            chapter_path: "document.xhtml".into(),
-            xhtml: "<html><body><p>Read.</p></body></html>".into(),
-            toc: Vec::new(),
-            resources: BTreeMap::from([("shore.png".into(), image.clone())]),
-        });
+        let mut loose = Book::from_loose(
+            loose::Document {
+                metadata: Default::default(),
+                title: "Package".into(),
+                author: None,
+                chapter_path: "document.xhtml".into(),
+                xhtml: "<html><body><p>Read.</p></body></html>".into(),
+                toc: Vec::new(),
+                resources: BTreeMap::from([("shore.png".into(), image.clone())]),
+            },
+            loose::Format::Text,
+        );
         assert!(
             loose
                 .resource_limited("shore.png", image.len() - 1)
