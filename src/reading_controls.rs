@@ -63,6 +63,8 @@ pub(crate) struct ReadingControls {
     /// Bitset of reading metrics shown when `status_bar` is `Custom`.
     #[serde(default, skip_serializing_if = "is_zero_u16")]
     pub footer_items: u16,
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub footer_order: u64,
     #[serde(skip_serializing_if = "FooterSeparator::is_default")]
     pub footer_separator: FooterSeparator,
     #[serde(skip_serializing_if = "is_false")]
@@ -375,6 +377,7 @@ impl StatusBar {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
 pub(crate) enum FooterItem {
     CurrentPage,
     ChapterTitle,
@@ -409,6 +412,48 @@ impl FooterItem {
         1 << self as u16
     }
 
+    pub(crate) fn ordered(order: u64) -> Vec<Self> {
+        let mut items = Vec::with_capacity(Self::ALL.len());
+        let mut seen = 0u16;
+        for position in 0..Self::ALL.len() {
+            let value = ((order >> (position * 4)) & 0xf) as usize;
+            if let Some(item) = Self::ALL.get(value)
+                && seen & item.bit() == 0
+            {
+                items.push(*item);
+                seen |= item.bit();
+            }
+        }
+        for item in Self::ALL {
+            if seen & item.bit() == 0 {
+                items.push(item);
+            }
+        }
+        items
+    }
+
+    pub(crate) fn move_order(order: u64, item: Self, direction: i8) -> u64 {
+        let mut items = Self::ordered(order);
+        let Some(index) = items.iter().position(|candidate| *candidate == item) else {
+            return order;
+        };
+        let target = match direction {
+            -1 => index.checked_sub(1),
+            1 => (index + 1 < items.len()).then_some(index + 1),
+            _ => None,
+        };
+        let Some(target) = target else {
+            return order;
+        };
+        items.swap(index, target);
+        items
+            .iter()
+            .enumerate()
+            .fold(0u64, |packed, (position, item)| {
+                packed | (u64::from(*item as u8) << (position * 4))
+            })
+    }
+
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::CurrentPage => "Current page",
@@ -430,6 +475,10 @@ fn is_zero_u16(value: &u16) -> bool {
 }
 
 fn is_zero_u8(value: &u8) -> bool {
+    *value == 0
+}
+
+fn is_zero_u64(value: &u64) -> bool {
     *value == 0
 }
 
@@ -955,6 +1004,34 @@ mod tests {
         assert_eq!(FooterSeparator::Bar.text(), " | ");
         assert_eq!(FooterSeparator::Bar.next(), FooterSeparator::Bullet);
         assert_eq!(FooterSeparator::None.text(), "  ");
+    }
+
+    #[test]
+    fn footer_item_order_moves_metrics_and_repairs_partial_or_duplicate_orders() {
+        let mut order = 0;
+        for _ in 0..9 {
+            order = FooterItem::move_order(order, FooterItem::BookmarkCount, -1);
+        }
+        let ordered = FooterItem::ordered(order);
+        assert_eq!(ordered.len(), FooterItem::ALL.len());
+        assert_eq!(ordered[0], FooterItem::BookmarkCount);
+        assert_eq!(ordered[1], FooterItem::CurrentPage);
+        assert_eq!(
+            FooterItem::move_order(order, FooterItem::BookmarkCount, -1),
+            order
+        );
+
+        let controls = ReadingControls {
+            footer_order: order,
+            ..ReadingControls::default()
+        };
+        let reopened: ReadingControls =
+            serde_json::from_slice(&serde_json::to_vec(&controls).unwrap()).unwrap();
+        assert_eq!(FooterItem::ordered(reopened.footer_order), ordered);
+
+        let legacy: ReadingControls = serde_json::from_str("{}").unwrap();
+        assert_eq!(legacy.footer_order, 0);
+        assert_eq!(FooterItem::ordered(0), FooterItem::ALL);
     }
 
     #[test]

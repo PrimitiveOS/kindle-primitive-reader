@@ -12384,7 +12384,7 @@ mod tests {
 
     #[test]
     fn epub_footer_cycles_persists_and_keeps_the_anchor_when_skimming() {
-        use crate::reading_controls::{FooterSeparator, StatusBar};
+        use crate::reading_controls::{FooterItem, FooterSeparator, StatusBar};
 
         let fixture = Fixture::new();
         let mut app = fixture.app();
@@ -12423,9 +12423,12 @@ mod tests {
                 StatusBar::BookTime => assert!(app.status_caption().unwrap().contains("in book")),
                 StatusBar::Custom => {
                     app.activate(Action::ToggleBookmark).unwrap();
+                    let footer_order = (0..9).fold(0, |order, _| {
+                        FooterItem::move_order(order, FooterItem::BookmarkCount, -1)
+                    });
                     app.activate(Action::SetReadingControls(ReadingControls {
-                        footer_items: app.controls.footer_items
-                            | crate::reading_controls::FooterItem::BookmarkCount.bit(),
+                        footer_items: app.controls.footer_items | FooterItem::BookmarkCount.bit(),
+                        footer_order,
                         footer_separator: FooterSeparator::Bullet,
                         footer_pages_left_include_current: true,
                         footer_percentage_digits: 2,
@@ -12438,10 +12441,10 @@ mod tests {
                     assert!(caption.contains(" • "));
                     assert!(caption.contains("left in chapter"));
                     assert!(caption.contains("1 bookmarks"));
+                    assert!(caption.starts_with("1 bookmarks • Page 1"));
                     assert_eq!(
-                        app.controls.footer_items
-                            & crate::reading_controls::FooterItem::DEFAULT_MASK,
-                        crate::reading_controls::FooterItem::DEFAULT_MASK
+                        app.controls.footer_items & FooterItem::DEFAULT_MASK,
+                        FooterItem::DEFAULT_MASK
                     );
                     // Bookmarking raises a transient notice that would cover
                     // the status caption in the screenshot.
@@ -12475,6 +12478,15 @@ mod tests {
                             .and_then(|item| item.detail.as_deref()),
                         Some("2 decimal places")
                     );
+                    let move_down = app
+                        .footer_items()
+                        .into_iter()
+                        .find(|item| item.title == "Move down: Bookmark count")
+                        .expect("custom footer exposes saved item order controls");
+                    app.activate(move_down.action).unwrap();
+                    let caption = app.status_caption().unwrap();
+                    assert!(caption.starts_with("Page 1"));
+                    assert!(caption.find("Page 1").unwrap() < caption.find("1 bookmarks").unwrap());
                     capture_test_screen(
                         &app,
                         &simulation_fonts(),

@@ -615,7 +615,7 @@ impl Reader {
             }
         };
         let mut items = Vec::new();
-        for item in FooterItem::ALL {
+        for item in FooterItem::ordered(self.controls.footer_order) {
             if self.controls.footer_items & item.bit() == 0 {
                 continue;
             }
@@ -911,7 +911,7 @@ impl Reader {
         ]);
         if c.status_bar == StatusBar::Custom {
             items.push(Item::new("Visible status items", Action::Heading));
-            for item in FooterItem::ALL {
+            for item in FooterItem::ordered(c.footer_order) {
                 let enabled = c.footer_items & item.bit() != 0;
                 items.push(setting(
                     item.label(),
@@ -921,6 +921,42 @@ impl Reader {
                         ..c
                     },
                 ));
+            }
+            items.push(Item::new("Status item order", Action::Heading));
+            let ordered = FooterItem::ordered(c.footer_order);
+            for (index, item) in ordered.iter().copied().enumerate() {
+                if index > 0 {
+                    items.push(
+                        Item::new(
+                            format!("Move up: {}", item.label()),
+                            Action::SetReadingControls(ReadingControls {
+                                footer_order: FooterItem::move_order(c.footer_order, item, -1),
+                                ..c
+                            }),
+                        )
+                        .detail(format!(
+                            "Position {} → {}",
+                            index + 1,
+                            index
+                        )),
+                    );
+                }
+                if index + 1 < ordered.len() {
+                    items.push(
+                        Item::new(
+                            format!("Move down: {}", item.label()),
+                            Action::SetReadingControls(ReadingControls {
+                                footer_order: FooterItem::move_order(c.footer_order, item, 1),
+                                ..c
+                            }),
+                        )
+                        .detail(format!(
+                            "Position {} → {}",
+                            index + 1,
+                            index + 2
+                        )),
+                    );
+                }
             }
         }
         if c.footer_all_at_once && c.status_bar != StatusBar::Custom {
