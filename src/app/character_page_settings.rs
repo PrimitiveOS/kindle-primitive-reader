@@ -18,6 +18,7 @@ pub(super) enum NumberField {
     AutoTurnOverlapHorizontal,
     AutoTurnOverlapVertical,
     FooterTrackMinimumWidth,
+    FooterTrackMarginWidth,
 }
 
 impl NumberField {
@@ -28,7 +29,7 @@ impl NumberField {
             Self::ContentDpi(_) | Self::LogicalFont(_) | Self::WordSpacing(_) => Screen::Book,
             Self::AutoTurn => Screen::AutoTurn,
             Self::AutoTurnOverlapHorizontal | Self::AutoTurnOverlapVertical => Screen::AutoTurnPan,
-            Self::FooterTrackMinimumWidth => Screen::FooterSettings,
+            Self::FooterTrackMinimumWidth | Self::FooterTrackMarginWidth => Screen::FooterSettings,
         }
     }
 }
@@ -197,15 +198,26 @@ impl Reader {
             self.show(field.parent());
             return Ok(());
         }
-        if field == NumberField::FooterTrackMinimumWidth {
-            let width = value
-                .trim()
-                .parse::<u8>()
-                .ok()
-                .filter(|width| (5..=90).contains(width) && width % 5 == 0)
-                .ok_or("Enter a minimum width from 5% to 90% in 5% steps")?;
+        if matches!(
+            field,
+            NumberField::FooterTrackMinimumWidth | NumberField::FooterTrackMarginWidth
+        ) {
+            let number = value.trim().parse::<u8>().ok();
+            let number = if field == NumberField::FooterTrackMinimumWidth {
+                number
+                    .filter(|width| (5..=90).contains(width) && width % 5 == 0)
+                    .ok_or("Enter a minimum width from 5% to 90% in 5% steps")?
+            } else {
+                number
+                    .filter(|width| *width <= 140)
+                    .ok_or("Enter a progress bar margin from 0 to 140 pixels")?
+            };
             let mut controls = self.controls;
-            controls.footer_track_min_width_pct = Some(width);
+            if field == NumberField::FooterTrackMinimumWidth {
+                controls.footer_track_min_width_pct = Some(number);
+            } else {
+                controls.footer_track_margin_width = Some(number);
+            }
             controls.save(&self.controls_path)?;
             self.controls = controls;
             self.show(field.parent());
@@ -237,6 +249,7 @@ impl Reader {
                 unreachable!("handled above")
             }
             NumberField::FooterTrackMinimumWidth => unreachable!("handled above"),
+            NumberField::FooterTrackMarginWidth => unreachable!("handled above"),
             NumberField::MarginSize => {
                 controls.numbering.label_size = number
                     .filter(|n| (8..=20).contains(n))

@@ -78,6 +78,11 @@ pub(crate) struct ReadingControls {
     /// Minimum share reserved for the progress track; `None` keeps KOReader's 20% default.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub footer_track_min_width_pct: Option<u8>,
+    /// Horizontal progress-track inset; `None` keeps KOReader's 10 px default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub footer_track_margin_width: Option<u8>,
+    #[serde(skip_serializing_if = "ChapterMarkerWidth::is_default")]
+    pub chapter_marker_width: ChapterMarkerWidth,
     pub overlap_footer: bool,
     pub footer_scope: ProgressScope,
     pub hide_chapter_markers: bool,
@@ -610,6 +615,48 @@ impl FooterTrackThickness {
     }
 }
 
+/// Chapter tick thickness in the progress track.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ChapterMarkerWidth {
+    Thin,
+    #[default]
+    Medium,
+    Thick,
+}
+
+impl ChapterMarkerWidth {
+    const ALL: [Self; 3] = [Self::Thin, Self::Medium, Self::Thick];
+
+    pub(crate) const fn width(self) -> i32 {
+        match self {
+            Self::Thin => 1,
+            Self::Medium => 2,
+            Self::Thick => 3,
+        }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Thin => "Thin",
+            Self::Medium => "Medium",
+            Self::Thick => "Thick",
+        }
+    }
+
+    pub(crate) fn next(self) -> Self {
+        let index = Self::ALL
+            .iter()
+            .position(|value| *value == self)
+            .unwrap_or(0);
+        Self::ALL[(index + 1) % Self::ALL.len()]
+    }
+
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ProgressScope {
@@ -1092,6 +1139,8 @@ mod tests {
             footer_track_position: FooterTrackPosition::Above,
             footer_track_thickness: FooterTrackThickness::Thin,
             footer_track_min_width_pct: Some(35),
+            footer_track_margin_width: Some(24),
+            chapter_marker_width: ChapterMarkerWidth::Thick,
             ..ReadingControls::default()
         };
         let reopened: ReadingControls =
@@ -1099,11 +1148,15 @@ mod tests {
         assert_eq!(reopened.footer_track_position, FooterTrackPosition::Above);
         assert_eq!(reopened.footer_track_thickness, FooterTrackThickness::Thin);
         assert_eq!(reopened.footer_track_min_width_pct, Some(35));
+        assert_eq!(reopened.footer_track_margin_width, Some(24));
+        assert_eq!(reopened.chapter_marker_width, ChapterMarkerWidth::Thick);
 
         let legacy: ReadingControls = serde_json::from_str("{}").unwrap();
         assert_eq!(legacy.footer_track_position, FooterTrackPosition::Alongside);
         assert_eq!(legacy.footer_track_thickness, FooterTrackThickness::Thick);
         assert_eq!(legacy.footer_track_min_width_pct, None);
+        assert_eq!(legacy.footer_track_margin_width, None);
+        assert_eq!(legacy.chapter_marker_width, ChapterMarkerWidth::Medium);
     }
 
     #[test]
