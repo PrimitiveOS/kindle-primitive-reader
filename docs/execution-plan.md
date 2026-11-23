@@ -62,14 +62,18 @@ layout probe, reader-probe and run-script SHA-256 values were respectively
 `23732a07dcee5618ccdadaa5d138bb6f5d15a7860bd76d120ca3efd9f316eaf7`. The
 test archive SHA-256 was
 `96d3d8b205d3d9e61f7ed44bf36fcbc34b249ef0127f5cc7afdcd003ee7f322a` on both
-hosts. This was an offscreen test run: the Reader and Launcher apps were not
-replaced, saved reading data and documents were untouched, and there was no
-foreground E Ink comparison. The device-side app test did exercise the caption
-with a saved bullet separator and confirmed the hyphen. The Kindle remains
-awake; after removing only the temporary test bundles it had 4.0 GiB free. The
-simulator shows the requested two-row layout: `Chapter x of y - Page m of n`,
-then the horizontal progress line with vertical chapter ticks below it and Exit
-at the right. [Default footer](screenshots/reading-footer-below.png) ·
+hosts. The device-side app test exercised the caption with a saved bullet
+separator and confirmed the hyphen. The production ARMHF Reader executable
+(SHA-256 `a8cbb9a9581bca63f4ce7d8627ef60c0db6e61a9e318a44ea4161ea71bf9749b`)
+is installed at `/mnt/us/reader/bin/reader-kindle`; its previous executable
+(SHA-256 `3489a7a3f097d503bd490110b3909f64cee5e14acdba9cf96b9a6bd2a09001c7`)
+is retained beside it as a rollback copy. Launcher, `Reader.sh`, Store, reading
+data and Documents were left untouched. Automated device tests passed, but no
+foreground E Ink screenshot was captured. The Kindle remains awake; after
+removing only the temporary test bundles it had 4.0 GiB free. The simulator
+shows the requested two-row layout: `Chapter x of y - Page m of n`, then the
+horizontal progress line with vertical chapter ticks below it and Exit at the
+right. [Default footer](screenshots/reading-footer-below.png) ·
 [Large EPUB footer](screenshots/footer-font-large-epub.png) ·
 [Large PDF footer](screenshots/footer-font-large-fixed.png)
 

@@ -128,8 +128,10 @@ and a 5,200-line authored regression reach the last passage above that height.
 Large-font CJK/RTL original-file acceptance, final aggregate 48-edition replay,
 packaging and foreground Kindle checks remain pending. The latest Mac suite and
 a test-only ARMHF bundle passed 956 Reader tests (62 ignored), 14 package tests
-and four layout probes. The bundle did not install or replace the Reader,
-Launcher, or Store. Whole-interface Screen DPI scaling and independent popup
-size preferences are outside this slice. Footnotes retain the existing compact
+and four layout probes. After that run, a production ARMHF Reader binary from
+the same source replaced only `reader/bin/reader-kindle`; the previous binary
+remains available for rollback. Launcher, Store and saved reader data were left
+unchanged. Whole-interface Screen DPI scaling and independent popup size
+preferences are outside this slice. Footnotes retain the existing compact
 18–64 px pixel baseline; stock's separate MuPDF popup and dictionary sizing
 require their own gates.

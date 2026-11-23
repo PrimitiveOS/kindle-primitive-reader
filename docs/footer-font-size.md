@@ -22,4 +22,6 @@ custom-item separator is a bullet. The simulator screenshots show the
 and [PDF](screenshots/footer-font-large-fixed.png) text. A test-only ARMHF run
 on the Oasis passed 956 Reader tests (62 ignored), 14 EPUB package tests and
 four layout probes. That run did not replace the installed app or verify
-foreground visual sizing. Font-face and bold choices remain open.
+foreground visual sizing. The production ARMHF Reader binary is now installed;
+foreground E Ink appearance remains open. Font-face and bold choices remain
+open.
