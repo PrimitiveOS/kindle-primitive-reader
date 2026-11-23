@@ -84,6 +84,9 @@ pub(crate) struct ReadingControls {
     /// Horizontal progress-track inset; `None` keeps KOReader's 10 px default.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub footer_track_margin_width: Option<u8>,
+    /// Show the reading session's starting location on the progress track.
+    #[serde(skip_serializing_if = "is_false")]
+    pub footer_initial_marker: bool,
     #[serde(skip_serializing_if = "ChapterMarkerWidth::is_default")]
     pub chapter_marker_width: ChapterMarkerWidth,
     pub overlap_footer: bool,

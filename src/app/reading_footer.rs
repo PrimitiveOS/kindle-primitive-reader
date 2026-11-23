@@ -91,6 +91,7 @@ impl<'a> PageSections<'a> {
 
 struct Progress<'a> {
     section_range: std::ops::Range<usize>,
+    section_index: usize,
     section_name: &'a str,
     section_page: usize,
     section_len: usize,
@@ -100,6 +101,21 @@ struct Progress<'a> {
     book_fraction: f64,
     estimated: bool,
     book_ticks: Ticks<'a>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FooterLocation {
+    book_id: u64,
+    chapter: usize,
+    flow: usize,
+    section: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct InitialPosition {
+    location: FooterLocation,
+    book_fraction: f64,
+    chapter_fraction: f64,
 }
 
 enum Ticks<'a> {
@@ -154,6 +170,7 @@ impl<'a> Progress<'a> {
         let end = sections.at(next).map_or(count, |(end, _)| end);
         Self {
             section_range: start..end,
+            section_index: next,
             section_name: name,
             section_page: page - start + 1,
             section_len: end - start,
@@ -203,7 +220,92 @@ fn pages_left_display(pages_left: usize, include_current: bool) -> usize {
     pages_left + usize::from(include_current)
 }
 
+fn draw_initial_marker(canvas: &mut Canvas, bar: Rect, fraction: f64) {
+    if bar.w <= 0 || bar.h <= 0 {
+        return;
+    }
+    let marker = (bar.x as f64 + (bar.w as f64 * fraction.clamp(0.0, 1.0)).round()) as i32;
+    let marker = marker.clamp(bar.x, bar.x + bar.w - 1);
+    for (row, half_width) in [0, 1, 2].into_iter().enumerate() {
+        canvas.fill(
+            Rect::new(
+                marker - half_width,
+                bar.y - 3 + row as i32,
+                half_width * 2 + 1,
+                1,
+            ),
+            0,
+        );
+    }
+    canvas.fill(Rect::new(marker, bar.y - 1, 1, bar.h + 1), 0);
+}
+
 impl Reader {
+    pub(super) fn reset_footer_initial_position(&mut self) {
+        let initial = self.footer_progress().and_then(|progress| {
+            let location = self.footer_location(&progress)?;
+            Some(InitialPosition {
+                location,
+                book_fraction: progress.book_fraction,
+                chapter_fraction: progress.section_page as f64 / progress.section_len.max(1) as f64,
+            })
+        });
+        self.footer_initial_position = initial;
+    }
+
+    #[cfg(test)]
+    pub(super) fn footer_initial_fraction(&self) -> Option<f64> {
+        let progress = self.footer_progress()?;
+        self.initial_marker_fraction(&progress)
+    }
+
+    fn footer_location(&self, progress: &Progress<'_>) -> Option<FooterLocation> {
+        if let Some(active) = &self.active {
+            let flow = active
+                .reading
+                .custom_flow_map()
+                .map_or(0, |flows| flows.flow(active.reading.page));
+            return Some(FooterLocation {
+                book_id: active.id,
+                chapter: active.reading.chapter,
+                flow,
+                section: progress.section_index,
+            });
+        }
+        let fixed = self.fixed.as_ref()?;
+        let flow = fixed
+            .reading
+            .hidden_flow_map()
+            .map_or(0, |flows| flows.flow(fixed.reading.page()));
+        Some(FooterLocation {
+            book_id: fixed.id,
+            chapter: 0,
+            flow,
+            section: progress.section_index,
+        })
+    }
+
+    fn initial_marker_fraction(&self, progress: &Progress<'_>) -> Option<f64> {
+        if !self.controls.footer_initial_marker {
+            return None;
+        }
+        let initial = self.footer_initial_position?;
+        let current = self.footer_location(progress)?;
+        if initial.location.book_id != current.book_id || initial.location.flow != current.flow {
+            return None;
+        }
+        match self.controls.footer_scope {
+            ProgressScope::Book => Some(initial.book_fraction),
+            ProgressScope::Chapter
+                if initial.location.chapter == current.chapter
+                    && initial.location.section == current.section =>
+            {
+                Some(initial.chapter_fraction)
+            }
+            ProgressScope::Chapter | ProgressScope::Off => None,
+        }
+    }
+
     pub(super) fn device_reading_settings(&self) -> crate::Settings {
         crate::Settings {
             height: if self.controls.overlap_footer {
@@ -798,6 +900,9 @@ impl Reader {
         if fill > 0 {
             canvas.fill(Rect::new(bar.x, bar.y, fill, bar.h), 0);
         }
+        if let Some(fraction) = self.initial_marker_fraction(&p) {
+            draw_initial_marker(canvas, bar, fraction);
+        }
         if scope == ProgressScope::Book && !self.controls.hide_chapter_markers {
             let marker_width = self.controls.chapter_marker_width.width();
             let mut last = -marker_width;
@@ -944,6 +1049,14 @@ impl Reader {
                 Action::Show(Screen::NumberingValue(NumberField::FooterTrackMarginWidth)),
             )
             .detail(format!("{} px", c.footer_track_margin_width.unwrap_or(10))),
+            setting(
+                "Show initial position marker",
+                on_off(c.footer_initial_marker),
+                ReadingControls {
+                    footer_initial_marker: !c.footer_initial_marker,
+                    ..c
+                },
+            ),
             setting(
                 "Status item separator",
                 c.footer_separator.label(),

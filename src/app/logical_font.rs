@@ -277,6 +277,7 @@ impl Reader {
         self.annotation_search = annotation_search::AnnotationSearch::default();
         self.restore_reading_menus(recovery.id);
         self.show(Screen::Book);
+        self.reset_footer_initial_position();
         self.record_position();
         self.notice = Some("Text settings reset. Previous choices backed up.".into());
         Ok(())

@@ -44,7 +44,7 @@ only to find and compare relevant controls.
 
 ### Execution checklist
 
-**Milestone status:** 14 of 20 checklist items (70%) have desktop or scope
+**Milestone status:** 15 of 21 checklist items (71%) have desktop or scope
 evidence. This count tracks plan milestones, not overall feature parity; the
 remaining reading requirements and all Kindle acceptance gates are still open.
 
@@ -58,12 +58,13 @@ remaining reading requirements and all Kindle acceptance gates are still open.
 - [x] Implement temporary highlight, hold-release/hold-pan selection, configurable very-long-press timing and re-entry corner auto-scroll. Desktop EPUB/PDF tests and the temporary-selection screenshot pass; PDF text selection remains page-local.
 - [ ] Compare selection placement, hold timing, corner zones and selection behavior against KOReader on Kindle, including whether cross-page PDF selection is required.
 - [ ] Compare selection-dialog placement, long-press behavior, highlight appearance and dismissal against KOReader on the Kindle.
-- [x] Run the current desktop library, binary, package and layout test suites against the pinned shared-input revision. The Reader library passes 909 tests with 62 ignored; 14 package tests, four layout probes, the Kindle binary test and examples pass. The isolated shared-input worktree passes 140 `kl-core`, eight `primitive-app` and four `primitive-input` tests.
+- [x] Run the current desktop library, binary, package and layout test suites against the pinned shared-input revision. The Reader library passes 910 tests with 62 ignored; 14 package tests, four layout probes, the Kindle binary test and examples pass. The isolated shared-input worktree passes 140 `kl-core`, eight `primitive-app` and four `primitive-input` tests.
 - [x] Pin shared input at `d3caf14241facf307699d3ecc37414671496bd1a`, rebuild the static ARMHF candidate, and record its checksum in the [execution plan](execution-plan.md#current-desktop-integration-gate). Reader source is committed at `3b21684f421e372a0257c8819b35684dd1c84188`; the candidate still needs Kindle acceptance before release.
 - [x] Add user-reorderable status metrics, KOReader-style footer separator choices, “pages left includes current page,” and 0–2 decimal-place progress percentages. Verify settings persistence, item movement, and actual combined/custom captions; capture and inspect the footer and settings simulator frames. Kindle acceptance remains open.
 - [x] Match KOReader's progress-track positions and thickness choices, with its Alongside, Thick 7 px, and 20% minimum-width defaults. Measure the displayed caption to reserve space; expose the adjustable 5–90% minimum width, persist it, and verify EPUB/PDF layouts and light/dark simulator captures. Kindle acceptance remains open.
 - [x] Add KOReader's adjustable progress-track inset (0–140 px, 10 px default) and Thin/Medium/Thick chapter ticks (1/2/3 px, 2 px default). Persist both; test their EPUB/PDF geometry and ensure the track stays clear of Zoom, Exit, and the Next Comic control.
 - [x] Add KOReader's optional lock-at-minimum width for Alongside progress tracks. Persist it; verify short and long captions and EPUB/PDF geometry, and capture the simulator frame. Kindle acceptance remains open.
+- [x] Add KOReader's starting-position marker to book and chapter progress. Keep it anchored to the opened position, hide it after changing books, chapters, or hidden flows as appropriate, and reset it on wake. Verify its settings, EPUB/PDF behavior, and simulator capture. Kindle acceptance remains open.
 - [ ] Compare and implement every remaining in-scope reading requirement against the pinned KOReader source and interface evidence. Keep device-owned and excluded controls out of the implementation backlog; update statuses with evidence instead of treating the source inventory as a feature list.
 - [ ] Exercise the supported workflows with the owner's real Kindle Documents files through unit, functional, system, and simulator checks; record format-specific failures and keep original files unchanged.
 - [ ] Complete automated Kindle acceptance for document open/read/resume, physical controls, touch and exit, sleep/wake, USB handoff, and state preservation. Capture comparable device screenshots for the reading surface, top and bottom controls, selection/lookup, and reading settings.

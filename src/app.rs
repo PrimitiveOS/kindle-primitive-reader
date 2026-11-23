@@ -636,6 +636,7 @@ pub struct Reader {
     gestures: GestureBindings,
     controls_path: PathBuf,
     controls: ReadingControls,
+    footer_initial_position: Option<reading_footer::InitialPosition>,
     end_dialog: Option<end_of_book::Dialog>,
     pages_since_refresh: u8,
     touch_locked: bool,
@@ -806,6 +807,7 @@ impl Reader {
             rename_collection: None,
             controls_path,
             controls,
+            footer_initial_position: None,
             end_dialog: None,
             pages_since_refresh: 0,
             touch_locked: false,
@@ -944,6 +946,7 @@ impl Reader {
 
     fn open_with_password(&mut self, mut entry: LibraryBook, password: Option<&str>) -> Result<()> {
         self.logical_recovery = None;
+        self.footer_initial_position = None;
         let (absolute, id, prepared_pdf) = with_storage(|| {
             let absolute = self.library.absolute_path(&entry.path)?;
             if entry.format == DocumentFormat::Pdf
@@ -1066,6 +1069,7 @@ impl Reader {
             self.annotation_search = annotation_search::AnnotationSearch::default();
             self.restore_reading_menus(id);
             self.show(Screen::Fixed);
+            self.reset_footer_initial_position();
             self.record_position();
             if let Some(fixed) = &self.fixed {
                 self.library.cache_author(id, fixed.entry.author.as_deref());
@@ -1203,6 +1207,7 @@ impl Reader {
         } else {
             Screen::Book
         });
+        self.reset_footer_initial_position();
         self.record_position();
         if default_font_missing {
             self.notice = Some("Default reading font unavailable; using device fonts".into());
@@ -7011,6 +7016,9 @@ impl App for Reader {
             }
             if let Some(flow) = &mut self.text_flow {
                 flow.pause();
+            }
+            if input == Input::Wake {
+                self.reset_footer_initial_position();
             }
             return if input == Input::Wake {
                 self.poll_read_alarm(Instant::now(), true)
@@ -12925,6 +12933,74 @@ mod tests {
             app.footer_caption_width((840 - 60) as u32, pdf_text_width),
             pdf_text_width.min((pdf_locked_track.x - 38 - 20).max(0)) as u32
         );
+    }
+
+    #[test]
+    fn initial_position_marker_tracks_epub_and_pdf_and_resets_after_wake() {
+        use crate::reading_controls::{ProgressScope, StatusBar};
+
+        let fixture = Fixture::new();
+        let fonts = simulation_fonts();
+        let mut app = fixture.app();
+        app.open_path(&fixture.book).unwrap();
+        app.activate(Action::SetReadingControls(ReadingControls {
+            status_bar: StatusBar::Progress,
+            footer_scope: ProgressScope::Book,
+            ..app.controls
+        }))
+        .unwrap();
+        let marker_setting = app
+            .footer_items()
+            .into_iter()
+            .find(|item| item.title == "Show initial position marker")
+            .expect("footer settings expose KOReader's initial-position marker");
+        assert_eq!(marker_setting.detail.as_deref(), Some("Off"));
+        app.activate(marker_setting.action).unwrap();
+        assert!(app.controls.footer_initial_marker);
+        assert!(ReadingControls::load(&app.controls_path, true).footer_initial_marker);
+        assert_eq!(
+            app.footer_items()
+                .into_iter()
+                .find(|item| item.title == "Show initial position marker")
+                .and_then(|item| item.detail),
+            Some("On".to_owned())
+        );
+        let epub_start = app
+            .footer_initial_fraction()
+            .expect("opening an EPUB captures its starting location");
+        app.follow_reflow_page(0, 1).unwrap();
+        assert_eq!(app.footer_initial_fraction(), Some(epub_start));
+        capture_test_screen(&app, &fonts, "READER_FOOTER_INITIAL_SCREENSHOT", false);
+
+        app.activate(Action::SetReadingControls(ReadingControls {
+            footer_scope: ProgressScope::Chapter,
+            ..app.controls
+        }))
+        .unwrap();
+        app.follow_reflow_page(1, 0).unwrap();
+        assert_eq!(
+            app.footer_initial_fraction(),
+            None,
+            "chapter progress hides the start marker after entering another chapter"
+        );
+        app.input(Input::Sleep);
+        app.input(Input::Wake);
+        assert!(
+            app.footer_initial_fraction().is_some(),
+            "wake resets the initial marker to the current chapter"
+        );
+
+        let pdf = fixture.root.join("Initial position.pdf");
+        fs::write(&pdf, crate::fixed::tests::document()).unwrap();
+        app.open_path(&pdf).unwrap();
+        let pdf_start = app
+            .footer_initial_fraction()
+            .expect("opening a PDF captures its starting location");
+        app.activate(Action::FixedPage(1)).unwrap();
+        assert_eq!(app.footer_initial_fraction(), Some(pdf_start));
+        app.input(Input::Sleep);
+        app.input(Input::Wake);
+        assert!(app.footer_initial_fraction().is_some());
     }
 
     #[test]

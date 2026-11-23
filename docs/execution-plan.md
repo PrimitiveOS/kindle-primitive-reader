@@ -48,7 +48,7 @@ counts do not measure completed parity.
 ## Current desktop integration gate
 
 The current worktree passes `cargo-zigbuild test --locked --features kindle --bins --tests --examples`:
-909 library tests passed and 62 remain ignored for private or device-provided
+910 library tests passed and 62 remain ignored for private or device-provided
 inputs, as did the Kindle binary test, 14 EPUB package tests, four layout
 probes and all example targets. The isolated shared-input worktree passed 140 `kl-core`, eight
 `primitive-app`, and four `primitive-input` tests. Reader tests used a temporary
