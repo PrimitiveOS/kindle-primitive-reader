@@ -178,18 +178,23 @@ impl<'a> Progress<'a> {
         self.book_ticks = Ticks::FlowPages(sections, flows, flow);
     }
 
-    fn percentage(&self) -> String {
+    fn percentage_with_digits(&self, digits: u8) -> String {
         let percent = self.book_fraction * 100.0;
+        let percent_text = format!("{percent:.precision$}", precision = digits.min(2) as usize);
         if self.estimated && percent < 100.0 {
-            format!("About {percent:.0}%")
+            format!("About {percent_text}%")
         } else {
-            format!("{percent:.0}%")
+            format!("{percent_text}%")
         }
     }
 
     fn pages_left(&self) -> usize {
         self.section_len - self.section_page
     }
+}
+
+fn pages_left_display(pages_left: usize, include_current: bool) -> usize {
+    pages_left + usize::from(include_current)
 }
 
 impl Reader {
@@ -392,9 +397,13 @@ impl Reader {
             }
             flow.map_or(caption.clone(), |flow| {
                 if flow == 0 {
-                    format!("Custom · {caption}")
+                    format!("Custom{}{}", self.controls.footer_separator.text(), caption)
                 } else {
-                    format!("Hidden {flow} · {caption}")
+                    format!(
+                        "Hidden {flow}{}{}",
+                        self.controls.footer_separator.text(),
+                        caption
+                    )
                 }
             })
         });
@@ -408,8 +417,9 @@ impl Reader {
             .filter(|s| !s.is_empty())
             .or_else(|| self.fixed.as_ref().map(|f| f.reading.page_status()))
             .or_else(|| self.active.as_ref().map(|a| a.reading.page_status()));
+        let separator = self.controls.footer_separator.text();
         Some(match page {
-            Some(label) => format!("{label}  ·  Timer {remaining}"),
+            Some(label) => format!("{label}{separator}Timer {remaining}"),
             None => format!("Timer {remaining}"),
         })
     }
@@ -470,6 +480,8 @@ impl Reader {
             return printed().or_else(|| self.custom_page_status());
         }
         let p = self.footer_progress()?;
+        let separator = self.controls.footer_separator.text();
+        let percentage = p.percentage_with_digits(self.controls.footer_percentage_digits);
         if mode == StatusBar::Custom {
             return Some(self.custom_footer_caption(&p));
         }
@@ -505,28 +517,41 @@ impl Reader {
             if let Some(scope @ (ProgressScope::Book | ProgressScope::Chapter)) =
                 self.controls.footer_combined_time
             {
-                return Some(format!("{} · {}", p.percentage(), time(scope)?));
+                return Some(format!("{percentage}{separator}{}", time(scope)?));
             }
             return Some(format!(
-                "{} of book  ·  {}  ·  {} left",
-                p.percentage(),
+                "{percentage} of book{separator}{}{separator}{} left",
                 printed().unwrap_or_else(|| format!("{} / {}", p.section_page, p.section_len)),
-                p.pages_left()
+                pages_left_display(
+                    p.pages_left(),
+                    self.controls.footer_pages_left_include_current,
+                )
             ));
         }
         match mode {
             StatusBar::ChapterTime => time(ProgressScope::Chapter),
             StatusBar::BookTime => time(ProgressScope::Book),
-            StatusBar::Progress => Some(format!("{} of book", p.percentage())),
+            StatusBar::Progress => Some(format!("{percentage} of book")),
             StatusBar::Chapter => Some(format!(
-                "{}  ·  Page {} of {}",
-                p.section_name, p.section_page, p.section_len
+                "{}{separator}Page {} of {}",
+                p.section_name, p.section_page, p.section_len,
             )),
             StatusBar::Remaining => Some(format!(
-                "{}  ·  {} {} left",
+                "{}{separator}{} {} left",
                 p.section_name,
-                p.pages_left(),
-                if p.pages_left() == 1 { "page" } else { "pages" }
+                pages_left_display(
+                    p.pages_left(),
+                    self.controls.footer_pages_left_include_current,
+                ),
+                if pages_left_display(
+                    p.pages_left(),
+                    self.controls.footer_pages_left_include_current,
+                ) == 1
+                {
+                    "page"
+                } else {
+                    "pages"
+                }
             )),
             _ => None,
         }
@@ -549,6 +574,16 @@ impl Reader {
             let seconds = (self.pace.rate(id) * pages as f64).round() as u64;
             super::reading_time(seconds)
         };
+        let left_in_chapter = pages_left_display(
+            progress.pages_left(),
+            self.controls.footer_pages_left_include_current,
+        );
+        let left_in_book = pages_left_display(
+            progress.book_pages_left,
+            self.controls.footer_pages_left_include_current,
+        );
+        let separator = self.controls.footer_separator.text();
+        let percentage = progress.percentage_with_digits(self.controls.footer_percentage_digits);
         let current_page = || {
             if let Some(book) = &self.fixed {
                 let pages: Vec<_> = book.reading.visible_pages().collect();
@@ -590,11 +625,11 @@ impl Reader {
                     let title = progress.section_name.trim();
                     (!title.is_empty()).then(|| title.to_owned())
                 }
-                FooterItem::BookProgress => Some(progress.percentage()),
+                FooterItem::BookProgress => Some(percentage.clone()),
                 FooterItem::ChapterPagesLeft => Some(format!(
                     "{} {} left in chapter",
-                    progress.pages_left(),
-                    if progress.pages_left() == 1 {
+                    left_in_chapter,
+                    if left_in_chapter == 1 {
                         "page"
                     } else {
                         "pages"
@@ -602,12 +637,8 @@ impl Reader {
                 )),
                 FooterItem::BookPagesLeft => Some(format!(
                     "{} {} left in book",
-                    progress.book_pages_left,
-                    if progress.book_pages_left == 1 {
-                        "page"
-                    } else {
-                        "pages"
-                    }
+                    left_in_book,
+                    if left_in_book == 1 { "page" } else { "pages" }
                 )),
                 FooterItem::ChapterTimeLeft => Some(format!(
                     "{} left in chapter",
@@ -639,7 +670,7 @@ impl Reader {
         if items.is_empty() {
             "No items selected".to_owned()
         } else {
-            items.join("  ·  ")
+            items.join(separator)
         }
     }
 
@@ -798,6 +829,34 @@ impl Reader {
                     ..c
                 },
             ),
+            setting(
+                "Status item separator",
+                c.footer_separator.label(),
+                ReadingControls {
+                    footer_separator: c.footer_separator.next(),
+                    ..c
+                },
+            ),
+            setting(
+                "Pages left includes current page",
+                on_off(c.footer_pages_left_include_current),
+                ReadingControls {
+                    footer_pages_left_include_current: !c.footer_pages_left_include_current,
+                    ..c
+                },
+            ),
+            setting(
+                "Progress percentage digits",
+                match c.footer_percentage_digits.min(2) {
+                    0 => "0 decimal places",
+                    1 => "1 decimal place",
+                    _ => "2 decimal places",
+                },
+                ReadingControls {
+                    footer_percentage_digits: (c.footer_percentage_digits.min(2) + 1) % 3,
+                    ..c
+                },
+            ),
         ];
         if c.status_bar != StatusBar::Custom {
             items.insert(
@@ -928,7 +987,13 @@ mod tests {
             ),
             (2, 3, 3)
         );
-        assert_eq!(regular.percentage(), "57%");
+        assert_eq!(regular.percentage_with_digits(0), "57%");
+        assert_eq!(regular.percentage_with_digits(1), "57.1%");
+        assert_eq!(regular.percentage_with_digits(2), "57.14%");
+        assert_eq!(regular.percentage_with_digits(9), "57.14%");
+        assert_eq!(pages_left_display(0, false), 0);
+        assert_eq!(pages_left_display(0, true), 1);
+        assert_eq!(pages_left_display(3, true), 4);
         let mut ticks = Vec::new();
         regular.book_ticks.draw(|position| ticks.push(position));
         assert_eq!(ticks, [0., 2. / 7., 5. / 7.]);
@@ -938,7 +1003,7 @@ mod tests {
             (note.section_page, note.section_len, note.book_pages_left),
             (2, 3, 1)
         );
-        assert_eq!(note.percentage(), "67%");
+        assert_eq!(note.percentage_with_digits(0), "67%");
     }
 
     #[test]

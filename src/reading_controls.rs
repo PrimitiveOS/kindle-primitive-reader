@@ -63,6 +63,12 @@ pub(crate) struct ReadingControls {
     /// Bitset of reading metrics shown when `status_bar` is `Custom`.
     #[serde(default, skip_serializing_if = "is_zero_u16")]
     pub footer_items: u16,
+    #[serde(skip_serializing_if = "FooterSeparator::is_default")]
+    pub footer_separator: FooterSeparator,
+    #[serde(skip_serializing_if = "is_false")]
+    pub footer_pages_left_include_current: bool,
+    #[serde(default, skip_serializing_if = "is_zero_u8")]
+    pub footer_percentage_digits: u8,
     pub overlap_footer: bool,
     pub footer_scope: ProgressScope,
     pub hide_chapter_markers: bool,
@@ -421,6 +427,58 @@ impl FooterItem {
 
 fn is_zero_u16(value: &u16) -> bool {
     *value == 0
+}
+
+fn is_zero_u8(value: &u8) -> bool {
+    *value == 0
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum FooterSeparator {
+    #[default]
+    Bar,
+    Bullet,
+    Dot,
+    None,
+}
+
+impl FooterSeparator {
+    const ALL: [Self; 4] = [Self::Bar, Self::Bullet, Self::Dot, Self::None];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Bar => "Vertical bar (|)",
+            Self::Bullet => "Bullet (•)",
+            Self::Dot => "Dot (·)",
+            Self::None => "No separator",
+        }
+    }
+
+    pub(crate) fn text(self) -> &'static str {
+        match self {
+            Self::Bar => " | ",
+            Self::Bullet => " • ",
+            Self::Dot => " · ",
+            Self::None => "  ",
+        }
+    }
+
+    pub(crate) fn next(self) -> Self {
+        let index = Self::ALL
+            .iter()
+            .position(|value| *value == self)
+            .unwrap_or(0);
+        Self::ALL[(index + 1) % Self::ALL.len()]
+    }
+
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -872,6 +930,31 @@ mod tests {
         assert_eq!(legacy.footer_items, 0);
         assert_eq!(StatusBar::BookTime.next(), StatusBar::Custom);
         assert_eq!(StatusBar::Custom.next(), StatusBar::Minimal);
+    }
+
+    #[test]
+    fn footer_presentation_preferences_round_trip_and_keep_stock_defaults() {
+        let controls = ReadingControls {
+            footer_separator: FooterSeparator::Bullet,
+            footer_pages_left_include_current: true,
+            footer_percentage_digits: 2,
+            ..ReadingControls::default()
+        };
+        let reopened: ReadingControls =
+            serde_json::from_slice(&serde_json::to_vec(&controls).unwrap()).unwrap();
+        assert_eq!(reopened.footer_separator, FooterSeparator::Bullet);
+        assert!(reopened.footer_pages_left_include_current);
+        assert_eq!(reopened.footer_percentage_digits, 2);
+
+        let legacy: ReadingControls = serde_json::from_str("{}").unwrap();
+        assert_eq!(legacy.footer_separator, FooterSeparator::Bar);
+        assert!(!legacy.footer_pages_left_include_current);
+        assert_eq!(legacy.footer_percentage_digits, 0);
+
+        assert_eq!(FooterSeparator::Bar.label(), "Vertical bar (|)");
+        assert_eq!(FooterSeparator::Bar.text(), " | ");
+        assert_eq!(FooterSeparator::Bar.next(), FooterSeparator::Bullet);
+        assert_eq!(FooterSeparator::None.text(), "  ");
     }
 
     #[test]

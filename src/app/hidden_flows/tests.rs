@@ -75,7 +75,7 @@ fn custom_fixed_page_flows_skip_pages_in_paged_and_continuous_views_and_resume_n
     assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 2);
     assert_eq!(
         app.status_caption().as_deref(),
-        Some("Hidden 1 · Page 2 of 2")
+        Some("Hidden 1 | Page 2 of 2")
     );
     app.record_position();
     app.save().unwrap();
@@ -888,12 +888,12 @@ fn hidden_flow_numbers_distinguish_separate_notes_and_renumber_after_removal() {
         mark(&mut app, 2, page);
     }
     app.follow_reflow_page(2, 3).unwrap();
-    assert!(app.status_caption().unwrap().starts_with("Hidden 2 ·"));
+    assert!(app.status_caption().unwrap().starts_with("Hidden 2 |"));
     app.follow_reflow_page(2, 0).unwrap();
-    assert!(app.status_caption().unwrap().starts_with("Hidden 1 ·"));
+    assert!(app.status_caption().unwrap().starts_with("Hidden 1 |"));
     let mut data = app.hidden_flow_data().unwrap().clone();
     data.remove(0).unwrap();
     app.apply_hidden_flow_data(data).unwrap();
     app.follow_reflow_page(2, 3).unwrap();
-    assert!(app.status_caption().unwrap().starts_with("Hidden 1 ·"));
+    assert!(app.status_caption().unwrap().starts_with("Hidden 1 |"));
 }

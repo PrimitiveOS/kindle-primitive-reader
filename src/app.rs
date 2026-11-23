@@ -11585,13 +11585,13 @@ mod tests {
             app.controls.status_bar = StatusBar::Chapter;
             assert_eq!(
                 app.status_caption().as_deref(),
-                Some("Headland  ·  Page 1 of 12")
+                Some("Headland | Page 1 of 12")
             );
             let id = app.open_book_id().unwrap();
             app.library.state_mut(id).unwrap().custom_contents.enabled = false;
             assert_eq!(
                 app.status_caption().as_deref(),
-                Some("Document  ·  Page 49 of 96")
+                Some("Document | Page 49 of 96")
             );
             app.library.state_mut(id).unwrap().custom_contents.enabled = true;
         }
@@ -12384,7 +12384,7 @@ mod tests {
 
     #[test]
     fn epub_footer_cycles_persists_and_keeps_the_anchor_when_skimming() {
-        use crate::reading_controls::StatusBar;
+        use crate::reading_controls::{FooterSeparator, StatusBar};
 
         let fixture = Fixture::new();
         let mut app = fixture.app();
@@ -12426,12 +12426,16 @@ mod tests {
                     app.activate(Action::SetReadingControls(ReadingControls {
                         footer_items: app.controls.footer_items
                             | crate::reading_controls::FooterItem::BookmarkCount.bit(),
+                        footer_separator: FooterSeparator::Bullet,
+                        footer_pages_left_include_current: true,
+                        footer_percentage_digits: 2,
                         ..app.controls
                     }))
                     .unwrap();
                     let caption = app.status_caption().unwrap();
                     assert!(caption.contains("Page 1"));
-                    assert!(caption.contains("%"));
+                    assert!(caption.contains("."));
+                    assert!(caption.contains(" • "));
                     assert!(caption.contains("left in chapter"));
                     assert!(caption.contains("1 bookmarks"));
                     assert_eq!(
@@ -12449,6 +12453,28 @@ mod tests {
                         false,
                     );
                     app.show(Screen::FooterSettings);
+                    let items = app.items();
+                    assert_eq!(
+                        items
+                            .iter()
+                            .find(|item| item.title == "Status item separator")
+                            .and_then(|item| item.detail.as_deref()),
+                        Some("Bullet (•)")
+                    );
+                    assert_eq!(
+                        items
+                            .iter()
+                            .find(|item| item.title == "Pages left includes current page")
+                            .and_then(|item| item.detail.as_deref()),
+                        Some("On")
+                    );
+                    assert_eq!(
+                        items
+                            .iter()
+                            .find(|item| item.title == "Progress percentage digits")
+                            .and_then(|item| item.detail.as_deref()),
+                        Some("2 decimal places")
+                    );
                     capture_test_screen(
                         &app,
                         &simulation_fonts(),
