@@ -45,10 +45,11 @@ counts do not measure completed parity.
 
 ## Current desktop integration gate
 
-The current worktree passes `cargo test --lib`: 904 library tests passed and
-62 remain ignored for private or device-provided inputs.
-`cargo test --bins --tests --examples` also passed, covering the Kindle binary, package and layout
-targets. The isolated shared-input worktree passed 140 `kl-core`, eight
+The current worktree passes `cargo-zigbuild test --locked --features kindle --lib`:
+905 library tests passed and 62 remain ignored for private or device-provided
+inputs. `cargo-zigbuild test --locked --features kindle --bins --tests --examples`
+also passed, including the Kindle binary, 14 EPUB package tests, four layout
+probes and the example targets. The isolated shared-input worktree passed 140 `kl-core`, eight
 `primitive-app`, and four `primitive-input` tests. Reader tests used a temporary
 local Cargo patch to that worktree at the time; subsequent tests now use the
 same revision pinned in Cargo.toml and Cargo.lock. The optional KOReader-style
@@ -60,13 +61,13 @@ redistributable `build/reading/real-corpus/Alice.epub`: it saved a styled
 highlight and confirmed the input bytes were unchanged. This is not the owner's
 Kindle Documents corpus, which remains pending. Both chooser screenshots are
 in [`docs/screenshots`](screenshots).
-The current static ARMHF candidate was built from the Reader worktree with the
-shared-input dependency pinned to `d3caf14241facf307699d3ecc37414671496bd1a`.
+The current static ARMHF candidate was built from Reader commit
+`3526eb7cfb78ff731c5b7ba3e29c055fafb504a6`, with the shared-input dependency
+pinned to `d3caf14241facf307699d3ecc37414671496bd1a`.
 `file` identifies it as a 32-bit ARM EABI5 statically linked, stripped ELF; its
-size is 33,396,708 bytes and SHA-256 is
-`7f8d07911053b3d5a91a00dba4381ee932038a64513603a962fbdf494d62e11b`. Its
-Reader source is committed at `d0887f18b0ab5e5831302a06eeec856ce8e67a94` on
-the parity feature branch. It is a development candidate, not a release.
+size is 33,420,052 bytes and SHA-256 is
+`d5c39b62af166d8e3c1a54f7e4d701894c5a6604a80d58ac2adc52c770dff13a`.
+It is a development candidate, not a release.
 `rust-objcopy` warned that this Rust
 installation cannot load `libLLVM.dylib`; `file` confirms the resulting ELF is
 stripped. Manual
