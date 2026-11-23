@@ -55,6 +55,21 @@ fn immutable_full_screen_context_ignores_content_dpi_and_facing_width() {
 }
 
 #[test]
+fn legacy_font_size_steps_scale_like_half_logical_units() {
+    let oasis = ScaleContext::new(1264, 1680);
+    let oasis_half_step = (0.5 * 1264.0 / 600.0) as f32;
+    assert!((oasis.physical_delta(0.5) - oasis_half_step).abs() < 0.0001);
+    assert!((oasis.physical_delta(-0.5) + oasis_half_step).abs() < 0.0001);
+
+    let reference_screen = ScaleContext::new(600, 800);
+    assert_eq!(reference_screen.physical_delta(0.5), 0.5);
+
+    let override_scale = ScaleContext::with_override(1264, 1680, Some(160)).unwrap();
+    let expected_override_step = (0.5 * (1264.0 / 600.0 + 1.0) / 2.0) as f32;
+    assert!((override_scale.physical_delta(0.5) - expected_override_step).abs() < 0.0001);
+}
+
+#[test]
 fn legacy_pixels_and_missing_serialized_fields_keep_the_exact_original_mode() {
     let prefs = crate::library::BookPreferences {
         font_size: Some(42.25),

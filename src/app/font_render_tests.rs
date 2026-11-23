@@ -6,6 +6,68 @@ fn setup(fixture: &Fixture) -> Reader {
     Reader::open(&fixture.root, &fixture.state, vec![font]).unwrap()
 }
 
+#[test]
+fn legacy_font_size_taps_use_half_logical_steps_and_preserve_the_reading_anchor() {
+    let fixture = Fixture::new();
+    let mut app = setup(&fixture);
+    app.open_path(&fixture.book).unwrap();
+    let book_id = app.open_book_id().unwrap();
+    let initial = app.active.as_ref().unwrap().reading.config.settings;
+    let legacy = Settings {
+        font_size: 58.0,
+        logical_font_size: None,
+        ..initial
+    };
+    app.activate(Action::Text(legacy)).unwrap();
+    let origin = app.active.as_ref().unwrap().reading.anchor();
+    let step = legacy.font_scale.physical_delta(0.5);
+
+    let larger = text_size_items(legacy, book_id)
+        .into_iter()
+        .find(|item| item.title == "Larger text")
+        .unwrap()
+        .action;
+    let Action::Text(larger_settings) = larger else {
+        panic!("legacy font-size controls keep pixel settings");
+    };
+    assert!((larger_settings.font_size - (legacy.font_size + step)).abs() < 0.0001);
+    assert_eq!(larger_settings.logical_font_size, None);
+
+    app.open_reading_edge(false, WIDTH as f32 / 2.0);
+    choose(&mut app, "Type");
+    choose(&mut app, "Larger text");
+    let reading = &app.active.as_ref().unwrap().reading;
+    assert!((reading.config.settings.font_size - (legacy.font_size + step)).abs() < 0.0001);
+    assert_eq!(reading.config.settings.logical_font_size, None);
+    assert_eq!(reading.anchor(), origin);
+
+    capture_test_screen(
+        &app,
+        &app.fonts,
+        "READER_LEGACY_FONT_STEPS_SCREENSHOT",
+        false,
+    );
+
+    choose(&mut app, "Smaller text");
+    let reading = &app.active.as_ref().unwrap().reading;
+    assert!((reading.config.settings.font_size - legacy.font_size).abs() < 0.0001);
+    assert_eq!(reading.config.settings.logical_font_size, None);
+    assert_eq!(reading.anchor(), origin);
+
+    app.show(Screen::Typography);
+    let larger = app
+        .items()
+        .into_iter()
+        .find(|item| item.title == "Larger text")
+        .unwrap()
+        .action;
+    app.activate(larger).unwrap();
+    let reading = &app.active.as_ref().unwrap().reading;
+    assert!((reading.config.settings.font_size - (legacy.font_size + step)).abs() < 0.0001);
+    assert_eq!(reading.config.settings.logical_font_size, None);
+    assert_eq!(reading.anchor(), origin);
+}
+
 fn choose(app: &mut Reader, label: &str) {
     let rect = app.reading_button(label);
     let input = Input::Tap((rect.x + rect.w / 2) as f32, (rect.y + rect.h / 2) as f32);

@@ -995,7 +995,7 @@ impl Reader {
             StatusBar::BookTime => time(ProgressScope::Book),
             StatusBar::Progress => Some(format!("{percentage} of book")),
             StatusBar::Chapter => Some(format!(
-                "Chapter {} of {}{separator}Page {} of {}",
+                "Chapter {} of {} - Page {} of {}",
                 p.section_index, p.section_count, p.section_page, p.section_len,
             )),
             StatusBar::Remaining => Some(format!(

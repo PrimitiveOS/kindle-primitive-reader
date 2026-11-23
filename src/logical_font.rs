@@ -47,15 +47,23 @@ impl ScaleContext {
     pub(crate) fn dpi_override(self) -> Option<u16> {
         self.dpi_override
     }
-    pub fn requested(self, logical: f64) -> Result<u32> {
-        if !valid(logical) || !(160..=4096).contains(&self.short_side) {
-            return Err("Enter a font size from 12 to 255".into());
-        }
+    pub(crate) fn physical_delta(self, logical_delta: f64) -> f32 {
+        (logical_delta * self.scale_factor()) as f32
+    }
+
+    fn scale_factor(self) -> f64 {
         let size_scale = f64::from(self.short_side) / 600.0;
         let dpi_scale = self
             .dpi_override
             .map_or(size_scale, |dpi| f64::from(dpi) / 160.0);
-        Ok((logical * (size_scale + dpi_scale) / 2.0).ceil() as u32)
+        (size_scale + dpi_scale) / 2.0
+    }
+
+    pub fn requested(self, logical: f64) -> Result<u32> {
+        if !valid(logical) || !(160..=4096).contains(&self.short_side) {
+            return Err("Enter a font size from 12 to 255".into());
+        }
+        Ok((logical * self.scale_factor()).ceil() as u32)
     }
     pub fn effective(self, logical: f64) -> Result<f32> {
         Ok(self.requested(logical)?.clamp(12, 340) as f32)

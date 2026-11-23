@@ -143,10 +143,11 @@ impl Reader {
             let text = |title, settings: Settings| Choice::live(title, Action::Text(settings));
             match panel {
                 BarPanel::Text => {
+                    let fine_step = settings.font_scale.physical_delta(0.5);
                     let smaller = settings.logical_font_size.map_or_else(
                         || {
                             Action::Text(Settings {
-                                font_size: (settings.font_size - 4.).max(20.),
+                                font_size: (settings.font_size - fine_step).max(20.),
                                 ..settings
                             })
                         },
@@ -155,7 +156,7 @@ impl Reader {
                     let larger = settings.logical_font_size.map_or_else(
                         || {
                             Action::Text(Settings {
-                                font_size: (settings.font_size + 4.).min(100.),
+                                font_size: (settings.font_size + fine_step).min(100.),
                                 ..settings
                             })
                         },

@@ -8417,7 +8417,8 @@ fn text_size_items(settings: Settings, owner: u64) -> [Item; 3] {
         settings.logical_font_size.map_or_else(
             || {
                 Action::Text(Settings {
-                    font_size: (settings.font_size + delta as f32 * 8.).clamp(20., 100.),
+                    font_size: (settings.font_size + settings.font_scale.physical_delta(delta))
+                        .clamp(20., 100.),
                     ..settings
                 })
             },
@@ -13361,6 +13362,14 @@ mod tests {
         let caption = app.status_caption().unwrap();
         assert!(caption.starts_with("Chapter 1 of "));
         assert!(caption.contains(" - Page 1 of "));
+        app.activate(Action::SetReadingControls(ReadingControls {
+            footer_separator: FooterSeparator::Bullet,
+            ..app.controls
+        }))
+        .unwrap();
+        let caption = app.status_caption().unwrap();
+        assert!(caption.contains(" - Page 1 of "));
+        assert!(!caption.contains(" • Page 1 of "));
         let position_before = position(&app.active.as_ref().unwrap().reading);
         let tap = Input::Tap(250.0, HEIGHT as f32 - 32.0);
         let hold = Input::LongTap(250.0, HEIGHT as f32 - 32.0);

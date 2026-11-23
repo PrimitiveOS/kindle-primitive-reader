@@ -3,7 +3,10 @@
 The development candidate supports **Text › Type** presets and **More** for
 logical sizes 12–255. Tap −/+ for half steps, hold for four units, or type a
 decimal such as 22.25 with the shared keyboard. Existing books keep their saved
-pixel sizes until you explicitly choose a logical value.
+pixel sizes until you explicitly choose a logical value. Their smaller/larger
+controls now scale each tap by the same ±0.5 logical interval using the saved
+screen and DPI context, without converting the stored pixel preference. Choosing
+a preset or entering a value in More switches that book to logical mode.
 
 | Type panel | Decimal picker |
 | --- | --- |
@@ -34,6 +37,9 @@ The committed [vector fixture](../tests/fixtures/font-scale/pinned-screen-vector
 contains 7,380 outputs from the actual pinned Screen function: 15 contexts ×
 487 half steps and five additional decimals. Its effective-size column applies
 the separately inspected CRE clamp. These are not 7,380 executed CRE renderings.
+Legacy pixel-size tap behavior is covered at reference, Oasis and DPI-override
+scales; the simulator capture shows its Text panel after one fine-size change.
+[Legacy-size capture](screenshots/logical-font-legacy-step.png)
 
 ## Saved settings and atomic apply
 
@@ -120,8 +126,10 @@ first exposed the old 2-million-pixel cap; the corrected bounded implementation
 and a 5,200-line authored regression reach the last passage above that height.
 
 Large-font CJK/RTL original-file acceptance, final aggregate 48-edition replay,
-native compilation/packaging and physical Kindle checks remain pending. No
-Kindle operation, release tag or Store publication occurred for this slice.
-Whole-interface Screen DPI scaling and independent popup size preferences are
-outside it. Footnotes retain the existing compact 18–64 px pixel baseline;
-stock's separate MuPDF popup and dictionary sizing require their own gates.
+packaging and foreground Kindle checks remain pending. The latest Mac suite and
+a test-only ARMHF bundle passed 956 Reader tests (62 ignored), 14 package tests
+and four layout probes. The bundle did not install or replace the Reader,
+Launcher, or Store. Whole-interface Screen DPI scaling and independent popup
+size preferences are outside this slice. Footnotes retain the existing compact
+18–64 px pixel baseline; stock's separate MuPDF popup and dictionary sizing
+require their own gates.

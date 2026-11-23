@@ -47,36 +47,40 @@ counts do not measure completed parity.
 
 ## Current host and device integration gate
 
-On 23 November 2026, the adjustable footer item font size and compact two-row
-layout passed on the Mac and on the Oasis 3 from a test-only static ARMHF bundle.
-The Mac library, binary and integration suites passed 954 Reader tests (62
-ignored), one Kindle binary test, 14 EPUB package tests, and four layout probes.
-The Oasis bundle passed 954 Reader tests (62 ignored), 14 package tests, and
-four layout probes. The Reader, EPUB package, layout probe, reader-probe, and
-run-script SHA-256 values were respectively
-`2ddc9a5a0804cb7e9a0264acf51bceff2ff1bbd463d5f98c805b09b87f1df28a`,
-`61fedcc27b6c9498cf6abede441cf638a4d2ef14e62864c3c83dbec011b55738`,
-`73e3f9f354ffb7ea05a4401b539339033b513036fc8966ae81a0b5ac470ea945`,
-`709d1da62e6ce6c346bad3d5671371e43b691f4a85f8793cf878b4337e6beb95`, and
+On 23 November 2026, legacy pixel-size font taps were aligned to KOReader's
+±0.5 logical-size step using each book's captured screen/DPI context. The
+chapter/page caption now always uses the requested hyphen, even when a saved
+custom separator is a bullet. The Mac suite passed 956 Reader tests (62
+ignored), one Kindle binary test, 14 EPUB package tests and four layout probes.
+A test-only static ARMHF bundle on the Oasis passed 956 Reader tests (62
+ignored), 14 package tests and four layout probes. The Reader, EPUB package,
+layout probe, reader-probe and run-script SHA-256 values were respectively
+`f21a109544237a2bb7855bd98503515e6b8c68afe29a517e6f1af516c576dc42`,
+`009a2b5426f6ab423f7bfbe79acc8eafbea31d647ca5d7e699771833ae2a4e7a`,
+`94b329460083f7d1f0497d6096c29a7425923aef0d39aaf00b5c74a6e75d7372`,
+`38e55c6e1c8bef2b25970edd253d7cd7f92c1efb623d96ae5d615de4a2e3e5c6`, and
 `23732a07dcee5618ccdadaa5d138bb6f5d15a7860bd76d120ca3efd9f316eaf7`. The
-archive SHA-256 was
-`74a6ce02f6c584908ac73939c1dbfecabc6dc13f4d3cb31a75c8b6cc826c2c6a` on both
-hosts. The Kindle remained awake; after cleanup it had 4.0 GiB free. This was
-an offscreen test run: Reader and Launcher were not replaced, saved reading data
-and documents were untouched, and the new footer control was not exercised in
-the foreground. A read-only check found no saved track-position override in
-the installed Reader settings. The default simulator frame now matches the
-requested two-row layout: `Chapter x of y - Page m of n`, then the horizontal
-progress line with vertical chapter ticks below it and Exit at the right.
-[Default footer](screenshots/reading-footer-below.png) · [Large EPUB footer](screenshots/footer-font-large-epub.png) · [Large PDF footer](screenshots/footer-font-large-fixed.png)
+test archive SHA-256 was
+`96d3d8b205d3d9e61f7ed44bf36fcbc34b249ef0127f5cc7afdcd003ee7f322a` on both
+hosts. This was an offscreen test run: the Reader and Launcher apps were not
+replaced, saved reading data and documents were untouched, and there was no
+foreground E Ink comparison. The device-side app test did exercise the caption
+with a saved bullet separator and confirmed the hyphen. The Kindle remains
+awake; after removing only the temporary test bundles it had 4.0 GiB free. The
+simulator shows the requested two-row layout: `Chapter x of y - Page m of n`,
+then the horizontal progress line with vertical chapter ticks below it and Exit
+at the right. [Default footer](screenshots/reading-footer-below.png) ·
+[Large EPUB footer](screenshots/footer-font-large-epub.png) ·
+[Large PDF footer](screenshots/footer-font-large-fixed.png)
 
 The latest Mac `cargo test --lib --bins --tests --locked --features kindle` run,
-against the current worktree, passed 954 Reader library tests with 62 ignored
+against the current worktree, passed 956 Reader library tests with 62 ignored
 for private or device-provided inputs, one Kindle binary test, 14 EPUB package
 tests, and four layout probes. The page-overlap movement, style, settings-panel,
-alternate top status header, battery footer, adjustable footer text size, and
-persistence regressions are included. A fresh ARMHF bundle for these changes
-passed the same Reader, package, and layout suites on the Oasis (hashes above).
+alternate top status header, battery footer, adjustable footer text size,
+scaled legacy font steps, fixed chapter-caption hyphen, and persistence
+regressions are included. A fresh ARMHF bundle for these changes passed the
+same Reader, package, and layout suites on the Oasis (hashes above).
 The two cross-page PDF selection regressions pass in both directions, after
 save and reopen, and with an unreadable intermediate page. The
 isolated shared-input worktree passed 140 `kl-core`, eight `primitive-app`, and
