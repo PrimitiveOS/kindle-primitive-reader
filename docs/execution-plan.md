@@ -64,11 +64,11 @@ highlight and confirmed the input bytes were unchanged. This is not the owner's
 Kindle Documents corpus, which remains pending. Both chooser screenshots are
 in [`docs/screenshots`](screenshots).
 The current static ARMHF candidate was built from Reader commit
-`3526eb7cfb78ff731c5b7ba3e29c055fafb504a6`, with the shared-input dependency
+`3b21684f421e372a0257c8819b35684dd1c84188`, with the shared-input dependency
 pinned to `d3caf14241facf307699d3ecc37414671496bd1a`.
 `file` identifies it as a 32-bit ARM EABI5 statically linked, stripped ELF; its
-size is 33,420,052 bytes and SHA-256 is
-`d5c39b62af166d8e3c1a54f7e4d701894c5a6604a80d58ac2adc52c770dff13a`.
+size is 33,390,212 bytes and SHA-256 is
+`556952d7a5012579681c7023c035001b63187c0a88c5f59ef8d11116169007c9`.
 It is a development candidate, not a release.
 `rust-objcopy` warned that this Rust
 installation cannot load `libLLVM.dylib`; `file` confirms the resulting ELF is
