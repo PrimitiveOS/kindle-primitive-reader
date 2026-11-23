@@ -29,7 +29,68 @@ const MAX_IMAGE_BOXES: usize = 2_048;
 const MAX_DISTINCT_IMAGE_READS: usize = 512;
 const MAX_IMAGE_PIXELS: usize = 8 * 1024 * 1024;
 const MAX_RUBY_BASE_BYTES: usize = 192;
-const DISABLE_KERNING: [FontFeature; 1] = [FontFeature::new(Tag::new(b"kern"), 0)];
+const KERNING_OFF: [FontFeature; 2] = [
+    FontFeature::new(Tag::new(b"kern"), 0),
+    FontFeature::new(Tag::new(b"vkrn"), 0),
+];
+const KERNING_FAST: [FontFeature; 23] = [
+    FontFeature::new(Tag::new(b"kern"), 1),
+    FontFeature::new(Tag::new(b"vkrn"), 0),
+    FontFeature::new(Tag::new(b"mark"), 0),
+    FontFeature::new(Tag::new(b"mkmk"), 0),
+    FontFeature::new(Tag::new(b"curs"), 0),
+    FontFeature::new(Tag::new(b"locl"), 0),
+    FontFeature::new(Tag::new(b"liga"), 0),
+    FontFeature::new(Tag::new(b"rlig"), 0),
+    FontFeature::new(Tag::new(b"clig"), 0),
+    FontFeature::new(Tag::new(b"ccmp"), 0),
+    FontFeature::new(Tag::new(b"calt"), 0),
+    FontFeature::new(Tag::new(b"rclt"), 0),
+    FontFeature::new(Tag::new(b"rvrn"), 0),
+    FontFeature::new(Tag::new(b"ltra"), 0),
+    FontFeature::new(Tag::new(b"ltrm"), 0),
+    FontFeature::new(Tag::new(b"rtla"), 0),
+    FontFeature::new(Tag::new(b"rtlm"), 0),
+    FontFeature::new(Tag::new(b"frac"), 0),
+    FontFeature::new(Tag::new(b"numr"), 0),
+    FontFeature::new(Tag::new(b"dnom"), 0),
+    FontFeature::new(Tag::new(b"rand"), 0),
+    FontFeature::new(Tag::new(b"trak"), 0),
+    FontFeature::new(Tag::new(b"vert"), 0),
+];
+const KERNING_GOOD: [FontFeature; 22] = [
+    FontFeature::new(Tag::new(b"kern"), 1),
+    FontFeature::new(Tag::new(b"mark"), 1),
+    FontFeature::new(Tag::new(b"mkmk"), 1),
+    FontFeature::new(Tag::new(b"curs"), 1),
+    FontFeature::new(Tag::new(b"locl"), 1),
+    FontFeature::new(Tag::new(b"liga"), 0),
+    FontFeature::new(Tag::new(b"rlig"), 0),
+    FontFeature::new(Tag::new(b"clig"), 0),
+    FontFeature::new(Tag::new(b"ccmp"), 0),
+    FontFeature::new(Tag::new(b"calt"), 0),
+    FontFeature::new(Tag::new(b"rclt"), 0),
+    FontFeature::new(Tag::new(b"rvrn"), 0),
+    FontFeature::new(Tag::new(b"ltra"), 0),
+    FontFeature::new(Tag::new(b"ltrm"), 0),
+    FontFeature::new(Tag::new(b"rtla"), 0),
+    FontFeature::new(Tag::new(b"rtlm"), 0),
+    FontFeature::new(Tag::new(b"frac"), 0),
+    FontFeature::new(Tag::new(b"numr"), 0),
+    FontFeature::new(Tag::new(b"dnom"), 0),
+    FontFeature::new(Tag::new(b"rand"), 0),
+    FontFeature::new(Tag::new(b"trak"), 0),
+    FontFeature::new(Tag::new(b"vert"), 0),
+];
+
+fn kerning_features(mode: crate::FontKerningMode) -> Option<&'static [FontFeature]> {
+    match mode {
+        crate::FontKerningMode::Off => Some(&KERNING_OFF),
+        crate::FontKerningMode::Fast => Some(&KERNING_FAST),
+        crate::FontKerningMode::Good => Some(&KERNING_GOOD),
+        crate::FontKerningMode::Best => None,
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct PaintBrush {
@@ -1506,8 +1567,8 @@ fn make_annotation(
     if let Some(policy) = &cjk_spacing {
         builder.set_cluster_spacing(Some(policy));
     }
-    if !settings.font_kerning {
-        builder.push_default(StyleProperty::FontFeatures((&DISABLE_KERNING).into()));
+    if let Some(features) = kerning_features(settings.effective_font_kerning_mode()) {
+        builder.push_default(StyleProperty::FontFeatures(features.into()));
     }
     let family: FontFamily<'_> = if settings.override_fonts {
         GenericFamily::Serif.into()
@@ -1585,8 +1646,8 @@ fn make_paragraph(
     if let Some(policy) = &cjk_spacing {
         builder.set_cluster_spacing(Some(policy));
     }
-    if !settings.font_kerning {
-        builder.push_default(StyleProperty::FontFeatures((&DISABLE_KERNING).into()));
+    if let Some(features) = kerning_features(settings.effective_font_kerning_mode()) {
+        builder.push_default(StyleProperty::FontFeatures(features.into()));
     }
     let soft_hyphen = |offset| {
         let index = automatic
@@ -1635,10 +1696,15 @@ fn make_paragraph(
         style.font_family.layout()
     };
     builder.push_default(StyleProperty::FontFamily(family));
-    let default_spacing = Settings::default().line_height;
     let line_height = |style: &Style| {
+        let default_spacing = Settings::default().line_height;
         let publisher = style.line_height.unwrap_or(default_spacing);
-        let spacing = (publisher * settings.line_height / default_spacing).clamp(1.0, 3.0);
+        let minimum_spacing = if settings.line_spacing_percent.is_some() {
+            0.5
+        } else {
+            1.0
+        };
+        let spacing = (publisher * settings.line_height_scale()).clamp(minimum_spacing, 3.0);
         if fit_font_metrics {
             LineHeight::MetricsRelative((spacing / default_spacing).max(1.05))
         } else {
@@ -2225,6 +2291,7 @@ mod tests {
             height: 580,
             font_size: 30.0,
             margin: 25,
+            base_stylesheet: crate::BaseStylesheet::None,
             ..Settings::default()
         };
         let fixture = crate::test_fixture("field-notes-epub3.epub");
@@ -2265,6 +2332,7 @@ mod tests {
             height: 800,
             font_size: 32.0,
             margin: 24,
+            base_stylesheet: crate::BaseStylesheet::None,
             ..Settings::default()
         };
         let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
@@ -2361,6 +2429,7 @@ mod tests {
             height: 800,
             font_size: 32.0,
             margin: 24,
+            base_stylesheet: crate::BaseStylesheet::None,
             ..Settings::default()
         };
         let p = crate::Probe::from_book_content(
@@ -3355,6 +3424,7 @@ mod tests {
             width: 1000,
             height: 1280,
             font_size: 30.0,
+            base_stylesheet: crate::BaseStylesheet::None,
             ..Settings::default()
         };
         let mut probe = read(settings);
@@ -3763,3 +3833,7 @@ mod media_line_tests;
 #[cfg(test)]
 #[path = "parley_layout/word_spacing_cases.rs"]
 mod word_spacing_cases;
+
+#[cfg(test)]
+#[path = "parley_layout/kerning_mode_tests.rs"]
+mod kerning_mode_tests;

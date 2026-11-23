@@ -997,6 +997,22 @@ impl Fb2Output<'_> {
             xml_text(&mut self.xhtml, &id)?;
             self.xhtml.push('"');
         }
+        let class = match item.tag_name().name() {
+            "poem" => Some("fb2-poem"),
+            "stanza" => Some("fb2-stanza"),
+            "annotation" => Some("fb2-annotation"),
+            "epigraph" => Some("fb2-epigraph"),
+            "cite" => Some("fb2-cite"),
+            "v" => Some("fb2-verse"),
+            "text-author" => Some("fb2-text-author"),
+            "date" => Some("fb2-date"),
+            _ => None,
+        };
+        if let Some(class) = class {
+            self.xhtml.push_str(" class=\"");
+            self.xhtml.push_str(class);
+            self.xhtml.push('\"');
+        }
         if tag == "a"
             && let Some(href) = item
                 .attribute((XLINK_NS, "href"))

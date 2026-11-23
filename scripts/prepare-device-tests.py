@@ -117,6 +117,10 @@ def main():
         stage = Path(temp) / "bundle"
         stage.mkdir()
         shutil.copytree(ROOT / "tests" / "fixtures", stage / "fixtures")
+        shutil.copy2(
+            ROOT / "assets" / "fonts" / "PrimitiveSymbols.ttf",
+            stage / "fixtures" / "fonts" / "PrimitiveSymbols.ttf",
+        )
         for name, executable in executables.items():
             shutil.copy2(executable, stage / name)
         for filename, contents in (("run.sh", RUN), ("profile.sh", PROFILE)):

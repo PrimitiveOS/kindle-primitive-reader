@@ -302,6 +302,15 @@ impl Reader {
         let current = self.controls;
         let mut items = vec![
             Item::new(
+                "Bookmarks and notes",
+                Action::Show(Screen::BookmarkListSettings),
+            )
+            .detail(if current.bookmark_sort_by_date {
+                "By date"
+            } else {
+                "By page in reading order"
+            }),
+            Item::new(
                 "Selection dialog position",
                 Action::Show(Screen::SelectionPosition),
             )
@@ -484,10 +493,7 @@ impl Reader {
         );
         items.push(Item::new("Save reading data", Action::SaveBookData));
         if self.searchable_document() {
-            items.push(Item::new(
-                "Highlights and notes",
-                Action::Show(Screen::Highlights),
-            ));
+            items.push(Item::new("Saved marks", Action::Show(Screen::Highlights)));
         }
         if self.active.is_some() || self.fixed.is_some() {
             items.push(

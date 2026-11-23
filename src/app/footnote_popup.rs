@@ -268,12 +268,13 @@ impl Reader {
             let source = book
                 .chapter_source(&target.path, &xhtml)
                 .map_err(io::Error::other)?;
-            let styles = crate::book_style::BookStyle::load_for_flow(
+            let styles = crate::book_style::BookStyle::load_for_flow_with_base(
                 &mut book,
                 &target.path,
                 &source,
                 reading.config.settings.publisher_styles,
                 &reading.config.user_styles,
+                reading.config.settings.base_stylesheet,
             )
             .map_err(io::Error::other)?
             .compute(&source.elements);

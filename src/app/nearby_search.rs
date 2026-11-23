@@ -255,6 +255,7 @@ impl Reader {
             publication: active.reading.probe.book,
             flow: FlowConfig {
                 publisher_styles: active.reading.config.settings.publisher_styles,
+                base_stylesheet: active.reading.config.settings.base_stylesheet,
                 user_styles: active.reading.config.user_styles.clone(),
             },
         })

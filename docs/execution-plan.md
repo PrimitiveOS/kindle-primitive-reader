@@ -45,24 +45,102 @@ separate from Oasis acceptance. Schedule only relevant reading controls from
 this inventory; excluded controls are not implementation tasks, and inventory
 counts do not measure completed parity.
 
-## Current desktop integration gate
+## Current host and device integration gate
 
-The current worktree passes `cargo-zigbuild test --locked --features kindle --bins --tests --examples`:
-910 library tests passed and 62 remain ignored for private or device-provided
-inputs, as did the Kindle binary test, 14 EPUB package tests, four layout
-probes and all example targets. The isolated shared-input worktree passed 140 `kl-core`, eight
-`primitive-app`, and four `primitive-input` tests. Reader tests used a temporary
-local Cargo patch to that worktree at the time; subsequent tests now use the
-same revision pinned in Cargo.toml and Cargo.lock. The optional KOReader-style
+The latest full Mac `cargo test --locked` run, against the current worktree,
+passed 946 Reader library tests with 62 ignored for private or device-provided
+inputs, one Kindle binary test, 14 EPUB package tests, and four layout probes.
+The page-overlap movement, style, settings-panel and persistence regressions
+are included. The prior test-only ARMHF bundle described below predates the
+page-overlap changes. The two cross-page PDF selection regressions pass in both
+directions, after save and reopen, and with an unreadable intermediate page. The
+isolated shared-input worktree passed 140 `kl-core`, eight `primitive-app`, and
+four `primitive-input` tests. Reader tests used a temporary local Cargo patch
+to that worktree at the time; subsequent tests now use the same revision pinned
+in Cargo.toml and Cargo.lock. The optional KOReader-style
 highlight prompt now offers Off, Style,
 Color, and Style and color. Desktop workflows verify persistence, cancel,
 per-mark appearance, EPUB and PDF saves, and that the book defaults remain
-unchanged. An additional opt-in original-publication check passed on the
+unchanged. The current suite also verifies page/date/reverse bookmark ordering,
+stable saved-location targets, settings persistence, all three annotation-row
+text modes, and captures the list, annotation and settings screens. An
+additional opt-in original-publication check passed on the
 redistributable `build/reading/real-corpus/Alice.epub`: it saved a styled
-highlight and confirmed the input bytes were unchanged. This is not the owner's
-Kindle Documents corpus, which remains pending. Both chooser screenshots are
-in [`docs/screenshots`](screenshots).
-The current static ARMHF candidate was built from Reader commit
+highlight and confirmed the input bytes were unchanged. Both chooser screenshots
+are in [`docs/screenshots`](screenshots).
+
+The current local worktree adds cross-page PDF Select mode using the existing
+per-page annotation-continuation format and selected-text Copy with an
+in-process Reader clipboard and Paste into Reader text fields. The [cross-page
+PDF capture](screenshots/pdf-cross-page-selection.png) shows the range on its
+current page; the [Copy capture](screenshots/selection-copy.png) shows the
+selection action grid. The custom footer now offers a selectable local clock
+and a default-Off minute refresh. The deadline aligns to the next minute,
+pauses during sleep and resumes on wake; the focused Mac workflow test and
+[clock capture](screenshots/current-time-footer.png) pass. The previous ARMHF real-document candidate was a stripped, static ARM EABI5
+executable, 32 MiB, SHA-256
+`d28379bb12cffe9b7906e195465b7c890df4535a3c4bfdd1d1ff11d39c536322`; it is the
+binary used for the 183-entry Documents sweep below. On 23 November 2026, the
+pre-overlap test-only ARMHF bundle passed 927 Reader tests, 14 EPUB package
+tests, and four layout probes on the Oasis; 62 Reader tests remained ignored
+because they require private or device-provided inputs. The
+bundle's Reader test binary SHA-256 is
+`e37d6fcad932068377ca04c6eaaab19842e3b63139dab9bf2238644e6d618a58`. This
+bundle was copied only to a temporary test folder, not installed over the
+current Reader package. A fresh ARMHF bundle from the current feature source
+also passed on the Oasis: 946 Reader tests (62 ignored), 14 package tests and
+four layout probes. The Reader suite took 283.73 seconds with no failures. Its
+SHA-256 was
+`ceeab4b2869ad594aad26c88084f44677491ac663eb43e6c30b67abd1f0dfd83`; package
+and layout binaries were
+`22e99336737484dcada83e708e1c8b048e243b69759c922109a5999c0c166039` and
+`7c0125bbc85934f1f764e41621649655e78c378b9c9544ccca9f5eec77b7c569`.
+This bundle was built before the 0.1.24 package-version-only bump and ran from
+a separate test directory; it did not replace Reader or Launcher. The suite
+tests app logic and document engines offscreen, not physical touch, E Ink
+refresh, or foreground visual acceptance. An offscreen software profile also
+ran against three EPUB chapters; the figures below are not E Ink or
+interactive UI timings.
+
+The versioned 0.1.24 ARMHF candidate has now passed the same device suite from a
+separate directory: 946 Reader tests (62 ignored), 14 package tests and four
+layout probes. Its binary SHA-256 is
+`fd55cce42e733bbe5ac3a2304df226e1684198df4e9a868998db76bc9678078b`. The new
+candidate also opened and resumed 74 of 88 supported file candidates from the
+owner's Documents tree. Three AZW and ten KFX files returned the expected
+Kindle Library guidance; one PDF stopped at a possible password
+prompt. The aggregate run and its limits are recorded in
+[real-document verification](real-document-verification.md#reader-0124-candidate-on-the-oasis).
+The installed Reader, Launcher, user documents and reading data were not
+replaced or changed. Foreground UI acceptance and publication remain open.
+
+| ARMHF chapter | Characters / pages | Median first frame | Median layout | Median warm raster p95 | Peak RSS | Missing glyphs |
+|---|---:|---:|---:|---:|---:|---:|
+| Shore | 401 / 1 | 123.4 ms | 85.0 ms | 11.4 ms | 7,808 KiB | 43 |
+| Long Chapter | 36,277 / 41 | 419.7 ms | 378.4 ms | 17.5 ms | 11,336 KiB | 0 |
+| Vertical | 1,929 / 3 | 106.7 ms | 70.6 ms | 16.2 ms | 6,820 KiB | 0 |
+
+The Shore fixture includes Arabic and Japanese glyphs; this isolated profile
+used NotoSans-Regular without the device's complete fallback stack, so its 43
+missing glyphs are a font-configuration limitation of this probe, not a verified
+Kindle rendering result. At this checkpoint, the installed app remains
+unchanged. The source changes are awaiting commit and the release package and
+Store listing have not yet been published.
+
+The test-only `--check-document` path then exercised 183 entries from the
+owner's Kindle Documents tree in fresh scratch profiles. All 134 selectable
+supported entries opened and resumed after a fresh start: 31 EPUB, 16 AZW3,
+two MOBI, 20 PDF, four TXT, 37 JPEG, one PNG, and 23 XHTML documents. Three
+protected AZW files and ten KFX files showed the expected Kindle Library
+guidance. Thirty-six image paths inside sidecar or packaged-book directories
+were absent from the Reader picker and were recorded as not selectable, not as
+open failures. One PDF's first sweep attempt did not enter a document; two fresh
+scratch-profile reruns opened and resumed it. The source documents and the
+installed Reader data were left unchanged. These checks exercise the software
+picker/render/resume path on the ARM Kindle; they do not cover foreground touch,
+physical page keys, E Ink refresh timing, or the current installed app UI.
+
+The previous committed ARMHF candidate was built from Reader commit
 `8d5de2b62792531ccf29a5a83913ca2eca6ee1f1`, with the shared-input dependency
 pinned to `d3caf14241facf307699d3ecc37414671496bd1a`.
 `file` identifies it as a 32-bit ARM EABI5 statically linked, stripped ELF; its
@@ -84,15 +162,18 @@ The footer captures are
 fixed-page buttons and tap zones pan through zoomed documents using the saved
 overlap and traversal order; their functional tests and simulator captures are
 recorded. OPDS acquisition and remote progress-sync code and worker entry
-points have been removed from this source candidate. The Kindle is
-disconnected, so device installation and acceptance remain open. Older release
+points have been removed from this source candidate. The Kindle is online and
+its keep-awake setting remains enabled. Native ARM tests and the Documents
+corpus replay pass as recorded above; foreground UI acceptance, current-package
+installation, release packaging, and publication remain open. Older release
 and corpus results below describe their recorded revisions.
 
 The long-press update adds all nine text-hold choices and the stock single-word
 dictionary default/opt-out. Desktop unit and workflow tests cover each action,
 preference persistence and selection return. Select mode now uses a compact
-floating Cancel/Highlight sheet and extends reflowable text or same-page PDF
-selections; two workflow tests cover extending, cancel and save. The optional
+floating Cancel/Highlight sheet and extends reflowable text or multi-page PDF
+selections; desktop workflows cover forward/reverse extension, save, restart,
+and unreadable intermediate pages. The optional
 style/color chooser keeps the passage selected until a per-mark style or color
 is confirmed. Its current selection is visible, Cancel leaves the range intact,
 and Invert skips the color step. The simulator captures are
@@ -104,12 +185,12 @@ The candidate now paints a temporary held selection, extends it on paced drag,
 applies the configured action at release, supports a 0.9–20.0 second very-long
 threshold (3.0 second default), and scrolls at reading corners with leave and
 re-enter gating. The [hold-selection capture](screenshots/hold-selection.png)
-and EPUB/PDF interaction tests are current. Fixed PDF text selection remains
-page-local. Kindle timing, corner hit regions, and owner-document acceptance
-are open. The current desktop tests and ARMHF development candidate use the
-Git-pinned shared-input revision above. Reader source and the current evidence
-are committed on the parity feature branch; Kindle acceptance and publication
-remain open.
+and EPUB/PDF interaction tests are current. Kindle timing, corner hit regions,
+cross-page selection, Copy/Paste and owner-document acceptance still need
+device comparison. The current desktop tests and ARMHF development candidate
+use the Git-pinned shared-input revision above. The baseline through `f30fd78`
+is committed on the parity feature branch; all current changes are local and
+uncommitted. Kindle acceptance and publication remain open.
 
 Source `e79c7afe` passes 862 ordinary Mac tests, CI and eight original-document
 settings, backup and DPI workflows. It repairs original EPUB 053's three rejected

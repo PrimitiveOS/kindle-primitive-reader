@@ -214,6 +214,8 @@ pub(crate) fn validate_preferences(p: &BookPreferences) -> io::Result<()> {
         || p.render_dpi.is_some_and(|n| !crate::valid_render_dpi(n))
         || p.font_size.is_some_and(|n| !(12.0..=144.0).contains(&n))
         || p.line_height.is_some_and(|n| !(1.0..=3.0).contains(&n))
+        || p.line_spacing_percent
+            .is_some_and(|n| !crate::valid_line_spacing_percent(n))
         || !(-2.0..=12.0).contains(&p.word_spacing)
         || p.percent_word_spacing.is_some_and(|pair| !pair.valid())
         || !(-1.0..=4.0).contains(&p.letter_spacing)

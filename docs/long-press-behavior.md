@@ -23,14 +23,20 @@ KOReader three-second default and can be adjusted from 0.9 to 20.0 seconds in
 0.1-second steps. A release at or beyond that interval opens the Ask action
 panel, including for one word that would otherwise open the dictionary.
 
-While extending a selection, moving into a reading corner scrolls by 0.3 of a
-viewport in continuous mode or one page in paged mode. In left-to-right books,
+**Auto-scroll when selection reaches a corner** is an On/Off preference. It is
+On by default, matching KOReader. In continuous reflow mode, moving into a
+reading corner scrolls by 0.3 of a viewport. For saved PDF selections, the
+same preference controls page turns at the corners. In left-to-right books,
 top-left moves back and bottom-right moves forward; right-to-left books use
 top-right and bottom-left. Leave a corner and re-enter it to trigger the next
 scroll. Reflowable selections retain source anchors across chapter movement.
-PDF selection extension remains page-local and limited to 64 words by the
-current text-selection model; after a PDF page turns, Reader can keep the
-selection visible but cannot extend its endpoint onto that next page.
+In PDF Select mode, page turns keep the current range active. Tap or hold a word
+on another page to extend the range in document order; Reader stores per-page
+geometry and a text continuation for the saved highlight. The range can span up
+to 64 pages and 8,192 UTF-8 bytes. Every page in the range needs a readable text
+layer, including cached OCR where OCR is active. An unreadable or incomplete
+intervening page leaves the existing selection intact. [Cross-page selection
+simulator capture](screenshots/pdf-cross-page-selection.png)
 
 The **Highlight style and color prompt** setting offers Off, Style, Color, or
 Style and color. It defaults to Off, preserving one-tap highlighting. When
@@ -39,27 +45,38 @@ available; the current choice is marked. Selecting Invert skips the color step,
 and Cancel leaves the selection unsaved. The chosen appearance applies to that
 mark without changing the book's future highlight defaults. [Style chooser](screenshots/highlight-style-prompt.png) · [Color chooser](screenshots/highlight-color-prompt.png)
 
+The selection action grid also has **Copy**. It applies KOReader's selected-text
+whitespace cleanup, stores the text in Reader's in-process clipboard and closes
+the selection. **Paste** inserts it at the caret in note, book search, bookmark
+search, dictionary and vocabulary fields. PDF selections that span pages copy
+their document-order text with page breaks. PDF link Copy uses the same clipboard.
+[Selection Copy screenshot](screenshots/selection-copy.png)
+
 | Action | Reader behavior |
 | --- | --- |
 | Ask with popup dialog | Keep the selection and show the in-page action panel. |
 | Do nothing | Clear the temporary selection. |
 | Highlight | Save the selected words with the current appearance, or open the optional style/color prompt. |
-| Select and highlight | Enter a dedicated selection mode. Tap or hold words to extend the passage, then choose Highlight or Cancel. Reflowable text and same-page PDF selection are covered by desktop workflow tests. |
+| Select and highlight | Enter a dedicated selection mode. Tap or hold words to extend the passage, then choose Highlight, Copy or Cancel. Reflowable text and same-page or cross-page PDF selection are covered by desktop workflow tests. |
 | Add note | Open the note editor for the selected passage. |
 | Translate / Wikipedia | Open the existing contextual lookup panel with the passage prefilled. |
 | Dictionary | Open the local dictionary and preserve the selected passage for return. |
 | Full-text search | Search the current book for the selected text. |
 
-The desktop regression suite exercises settings persistence, every action on a
+The desktop regression suite exercises settings persistence, both states of
+corner auto-scroll, every action on a
 real fixture EPUB, the single-word dictionary default and its opt-out,
 selection-location preservation, the optional prompt on EPUB and PDF,
 cancellation without saving, per-mark style/color without changing book defaults,
-and Select mode in reflowable text and PDF. The hold lifecycle is exercised on
+EPUB selected-text cleanup and paste, cross-page PDF Copy, and Select mode in
+reflowable text plus same-page and cross-page PDF selection.
+PDF workflow tests cover forward and reverse extension, continuation persistence
+after restart, and rejection of unreadable intervening pages. The hold lifecycle is exercised on
 EPUB and PDF fixtures, including drag extension, release actions, the very-long
 Ask override, and corner direction. The temporary-selection simulator capture
 is [hold-selection.png](screenshots/hold-selection.png).
-Select mode keeps only Cancel and Highlight in a compact floating sheet away
-from the selected passage, so the range stays visible while it grows. Both
+Select mode keeps Cancel, Copy and Highlight in a compact floating sheet away
+from the selected passage, so the range stays visible while it grows. All three
 buttons use the shared black-and-white pressed feedback and meet the Kindle
 touch-target minimum. [Select mode on the simulator](screenshots/select-mode.png).
 The settings capture shows the available choices and interval setting:
@@ -73,12 +90,18 @@ Regenerate the temporary-selection capture with
 Regenerate both appearance prompt screenshots with
 `READER_HIGHLIGHT_STYLE_PROMPT_SCREENSHOT=docs/screenshots/highlight-style-prompt.png READER_HIGHLIGHT_COLOR_PROMPT_SCREENSHOT=docs/screenshots/highlight-color-prompt.png cargo test --locked --features kindle --lib highlight_prompt_applies_chosen_style_and_color`.
 
+Regenerate the cross-page PDF capture with
+`READER_PDF_CROSS_PAGE_SELECTION_SCREENSHOT=docs/screenshots/pdf-cross-page-selection.png cargo test --locked --features kindle --lib pdf_select_mode_spans_pages_in_both_directions_and_saves_continuations`.
+
 ![Long-press actions and the default single-word dictionary setting](screenshots/long-press-settings.png)
 
 The selected-text dialog position is configured separately in
 [Selection dialog positions](selection-dialog.md). Remaining parity work is
 on-device gesture timing and corner-region comparison, testing with the owner's
-real documents, and cross-page fixed-document selection. The shared input
+real documents, and on-device verification of cross-page fixed-document
+selection. KOReader disables its corner-scroll setting in paged reflow mode;
+Reader enables the preference only for continuous reflow, while retaining
+cross-page PDF selection when enabled. The shared input
 library now reports hold start, paced pan and release events; its release still
 maps to a normal long press for Launcher compatibility. The Kindle acceptance
 gate remains open while the device is unavailable.

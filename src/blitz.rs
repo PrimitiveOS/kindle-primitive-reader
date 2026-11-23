@@ -188,7 +188,7 @@ impl BlitzChapter {
             settings.right_margin(),
             settings.left_margin(),
             settings.font_size,
-            settings.line_height,
+            settings.effective_line_height(),
             settings.text_height(),
         );
         let html = source.with_styles(xhtml, &css);

@@ -40,6 +40,68 @@ const MAX_RUBY_PER_BLOCK: usize = 128;
 const MAX_RUBY_TEXT: usize = 4_096;
 const RUBY_SCALE: f32 = 0.50;
 const MIN_RUBY_REDUCTION: f32 = 0.60;
+fn kerning_features(mode: crate::FontKerningMode) -> Vec<Feature> {
+    const OFF: [(&[u8; 4], u32); 2] = [(b"kern", 0), (b"vkrn", 0)];
+    const FAST: [(&[u8; 4], u32); 23] = [
+        (b"kern", 1),
+        (b"vkrn", 0),
+        (b"mark", 0),
+        (b"mkmk", 0),
+        (b"curs", 0),
+        (b"locl", 0),
+        (b"liga", 0),
+        (b"rlig", 0),
+        (b"clig", 0),
+        (b"ccmp", 0),
+        (b"calt", 0),
+        (b"rclt", 0),
+        (b"rvrn", 0),
+        (b"ltra", 0),
+        (b"ltrm", 0),
+        (b"rtla", 0),
+        (b"rtlm", 0),
+        (b"frac", 0),
+        (b"numr", 0),
+        (b"dnom", 0),
+        (b"rand", 0),
+        (b"trak", 0),
+        (b"vert", 0),
+    ];
+    const GOOD: [(&[u8; 4], u32); 22] = [
+        (b"kern", 1),
+        (b"mark", 1),
+        (b"mkmk", 1),
+        (b"curs", 1),
+        (b"locl", 1),
+        (b"liga", 0),
+        (b"rlig", 0),
+        (b"clig", 0),
+        (b"ccmp", 0),
+        (b"calt", 0),
+        (b"rclt", 0),
+        (b"rvrn", 0),
+        (b"ltra", 0),
+        (b"ltrm", 0),
+        (b"rtla", 0),
+        (b"rtlm", 0),
+        (b"frac", 0),
+        (b"numr", 0),
+        (b"dnom", 0),
+        (b"rand", 0),
+        (b"trak", 0),
+        (b"vert", 0),
+    ];
+    let settings: &[(&[u8; 4], u32)] = match mode {
+        crate::FontKerningMode::Off => &OFF,
+        crate::FontKerningMode::Fast => &FAST,
+        crate::FontKerningMode::Good => &GOOD,
+        crate::FontKerningMode::Best => &[],
+    };
+    settings
+        .iter()
+        .map(|(tag, value)| Feature::new(Tag::new(*tag), *value, ..))
+        .collect()
+}
 
 pub(crate) struct PaintGlyph<'a> {
     pub font: &'a FontData,
@@ -234,7 +296,10 @@ impl VerticalChapter {
             } else {
                 0.
             };
-            ((largest * settings.line_height).max(12.) + gutter, gutter)
+            (
+                (largest * settings.effective_line_height()).max(12.) + gutter,
+                gutter,
+            )
         } else {
             let gutter = if source.blocks.iter().any(|block| {
                 !styles[block.element].flow.suppressed
@@ -248,7 +313,8 @@ impl VerticalChapter {
                 0.
             };
             (
-                (settings.font_size * settings.line_height * MAX_SCALE).max(12.) + gutter,
+                (settings.font_size * settings.effective_line_height() * MAX_SCALE).max(12.)
+                    + gutter,
                 gutter,
             )
         };
@@ -303,7 +369,7 @@ impl VerticalChapter {
                 &runs,
                 &reader.faces,
                 limit,
-                settings.font_kerning,
+                settings.effective_font_kerning_mode(),
             )?;
             let mut overlays =
                 reader.ruby_overlays(&block, &mut shaped, styles, &mut fonts, settings, limit)?;
@@ -471,7 +537,7 @@ impl VerticalChapter {
                 &runs,
                 &self.faces,
                 remaining,
-                settings.font_kerning,
+                settings.effective_font_kerning_mode(),
             )?;
             for glyph in &mut annotation.glyphs {
                 glyph.painted &= ruby.painted;
@@ -895,13 +961,10 @@ fn shape_block(
     runs: &[Run],
     faces: &[Face],
     limit: usize,
-    kerning: bool,
+    kerning: crate::FontKerningMode,
 ) -> Result<Shaped> {
     let mut shaped = Shaped::default();
-    let disable_kerning = [
-        Feature::new(Tag::new(b"kern"), 0, ..),
-        Feature::new(Tag::new(b"vkrn"), 0, ..),
-    ];
+    let features = kerning_features(kerning);
     for run in runs {
         let face = &faces[run.face];
         let font = FontRef::from_index(face.font.data.as_ref(), face.font.index)?;
@@ -923,10 +986,10 @@ fn shape_block(
         }
         buffer.guess_segment_properties();
         let options = ShapeOptions::new();
-        let options = if kerning {
+        let options = if features.is_empty() {
             options
         } else {
-            options.features(&disable_kerning)
+            options.features(&features)
         };
         let output = shaper.shape(buffer, options);
         if output.glyph_infos().len() > limit - shaped.glyphs.len() {

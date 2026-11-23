@@ -17,6 +17,7 @@ pub(super) enum HighlightPromptStage {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum SelectionAction {
     Highlight,
+    Copy,
     Note,
     Dictionary,
     Wikipedia,
@@ -31,8 +32,9 @@ pub(super) enum SelectionAction {
 }
 
 impl SelectionAction {
-    const ALL: [Self; 9] = [
+    const ALL: [Self; 10] = [
         Self::Highlight,
+        Self::Copy,
         Self::Note,
         Self::Dictionary,
         Self::Wikipedia,
@@ -46,6 +48,7 @@ impl SelectionAction {
     fn label(self) -> &'static str {
         match self {
             Self::Highlight => "Highlight",
+            Self::Copy => "Copy",
             Self::Note => "Note",
             Self::Dictionary => "Dictionary",
             Self::Wikipedia => "Wikipedia",
@@ -221,7 +224,11 @@ impl SelectionPopup {
                     .collect(),
             }
         } else if self.select_mode {
-            vec![SelectionAction::Cancel, SelectionAction::Highlight]
+            vec![
+                SelectionAction::Cancel,
+                SelectionAction::Copy,
+                SelectionAction::Highlight,
+            ]
         } else {
             SelectionAction::ALL
                 .into_iter()
@@ -323,7 +330,7 @@ impl SelectionPopup {
             canvas.popup(self.rect);
             canvas.text(
                 Rect::new(self.rect.x + 16, self.rect.y + 6, self.rect.w - 32, 32),
-                notice.unwrap_or("Tap a word to extend · Highlight to save"),
+                notice.unwrap_or("Tap a word to extend · Highlight to save · Copy text"),
                 CAPTION,
             );
             for (action, rect) in self.buttons() {
@@ -367,6 +374,7 @@ impl SelectionPopup {
                 use super::bar_icons;
                 let icon = match action {
                     SelectionAction::Highlight => bar_icons::HIGHLIGHT,
+                    SelectionAction::Copy => bar_icons::COPY,
                     SelectionAction::Note => bar_icons::PAGE,
                     SelectionAction::Dictionary | SelectionAction::Chapter => bar_icons::BOOK,
                     SelectionAction::Wikipedia => bar_icons::LINK,
@@ -398,6 +406,29 @@ impl SelectionPopup {
 }
 
 impl Reader {
+    fn copy_selection(&mut self) -> Result<()> {
+        let text = self
+            .selection
+            .as_ref()
+            .map(|selection| selection.text.as_str())
+            .or_else(|| {
+                self.pdf_selection
+                    .as_ref()
+                    .map(|selection| selection.text())
+            })
+            .ok_or_else(|| std::io::Error::other("There is no selected text to copy"))?;
+        let text = cleanup_selected_text(text);
+        if text.is_empty() {
+            return Err("There is no selected text to copy".into());
+        }
+        self.clipboard_text = Some(text);
+        self.selection = None;
+        self.pdf_selection = None;
+        self.selection_mode = false;
+        self.notice = Some("Selection copied to clipboard".into());
+        Ok(())
+    }
+
     pub(super) fn handle_text_long_press(&mut self) -> Change {
         self.handle_text_long_press_with_force_ask(false)
     }
@@ -627,6 +658,7 @@ impl Reader {
         }
         let result = match popup.action_at(x, y) {
             Some(SelectionAction::Highlight) => self.begin_highlight(),
+            Some(SelectionAction::Copy) => self.copy_selection(),
             Some(SelectionAction::PromptStyle(style)) => self.choose_prompt_style(style),
             Some(SelectionAction::PromptColor(color)) => {
                 self.pending_highlight_color = Some(color);
@@ -685,6 +717,53 @@ impl Reader {
     #[cfg(test)]
     pub(super) fn selection_popup_action_count(&self) -> usize {
         self.selection_popup().unwrap().buttons().count()
+    }
+}
+
+fn cleanup_selected_text(text: &str) -> String {
+    let mut cleaned = String::new();
+    let mut chars = text.trim_matches(char::is_whitespace).chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\n' {
+            while cleaned.chars().last().is_some_and(char::is_whitespace) {
+                cleaned.pop();
+            }
+            cleaned.push('\n');
+            while chars.peek().is_some_and(|next| next.is_whitespace()) {
+                chars.next();
+            }
+        } else {
+            cleaned.push(ch);
+        }
+    }
+
+    let mut collapsed = String::with_capacity(cleaned.len());
+    let mut chars = cleaned.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch.is_whitespace() {
+            let mut run = 1;
+            while chars.peek().is_some_and(|next| next.is_whitespace()) {
+                chars.next();
+                run += 1;
+            }
+            collapsed.push(if run > 1 { ' ' } else { ch });
+        } else {
+            collapsed.push(ch);
+        }
+    }
+    collapsed
+}
+
+#[cfg(test)]
+mod copy_tests {
+    use super::cleanup_selected_text;
+
+    #[test]
+    fn selected_text_cleanup_matches_koreader_whitespace_rules() {
+        assert_eq!(cleanup_selected_text("  alpha  beta  "), "alpha beta");
+        assert_eq!(cleanup_selected_text("  alpha \n  beta  "), "alpha\nbeta");
+        assert_eq!(cleanup_selected_text("alpha\n\nbeta"), "alpha\nbeta");
+        assert_eq!(cleanup_selected_text("\t  \n  "), "");
     }
 }
 
@@ -769,7 +848,7 @@ mod tests {
     }
 
     #[test]
-    fn select_mode_has_full_size_cancel_and_highlight_buttons() {
+    fn select_mode_has_full_size_cancel_copy_and_highlight_buttons() {
         let popup = SelectionPopup::new(
             Some(Rect::new(420, 650, 180, 80)),
             SelectionPopupPosition::Center,
@@ -782,13 +861,17 @@ mod tests {
             None,
         );
         assert_eq!(popup.rect.y, PAGE_HEIGHT as i32 - 196);
-        assert_eq!(popup.buttons().count(), 2);
+        assert_eq!(popup.buttons().count(), 3);
         assert_eq!(
             popup
                 .buttons()
                 .map(|(action, _)| action)
                 .collect::<Vec<_>>(),
-            [SelectionAction::Cancel, SelectionAction::Highlight]
+            [
+                SelectionAction::Cancel,
+                SelectionAction::Copy,
+                SelectionAction::Highlight
+            ]
         );
         for (action, rect) in popup.buttons() {
             assert_eq!(

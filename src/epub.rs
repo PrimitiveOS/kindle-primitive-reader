@@ -102,6 +102,7 @@ enum Content {
     },
     Loose {
         metadata: crate::publication_metadata::Metadata,
+        format: loose::Format,
         xhtml: BTreeMap<String, String>,
         prior_mobi: BTreeMap<String, Vec<String>>,
         resources: BTreeMap<String, Vec<u8>>,
@@ -153,7 +154,8 @@ impl Book {
             return match format {
                 loose::Format::Mobi => Self::open_mobi(path),
                 loose::Format::Chm => Self::open_chm(path),
-                _ => loose::Document::open(path, format).map(Self::from_loose),
+                _ => loose::Document::open(path, format)
+                    .map(|document| Self::from_loose(document, format)),
             };
         }
         let mut archive = Archive::open(path)?;
@@ -450,18 +452,21 @@ impl Book {
 
     #[cfg(feature = "kindle")]
     pub(crate) fn from_text(title: String, text: &str) -> Result<Self> {
-        Ok(Self::from_loose(loose::Document {
-            metadata: Default::default(),
-            title,
-            author: None,
-            chapter_path: loose::CHAPTER_PATH.to_owned(),
-            xhtml: loose::text_as_xhtml(text)?,
-            toc: Vec::new(),
-            resources: BTreeMap::new(),
-        }))
+        Ok(Self::from_loose(
+            loose::Document {
+                metadata: Default::default(),
+                title,
+                author: None,
+                chapter_path: loose::CHAPTER_PATH.to_owned(),
+                xhtml: loose::text_as_xhtml(text)?,
+                toc: Vec::new(),
+                resources: BTreeMap::new(),
+            },
+            loose::Format::Text,
+        ))
     }
 
-    fn from_loose(document: loose::Document) -> Self {
+    fn from_loose(document: loose::Document, format: loose::Format) -> Self {
         let chapter_path = document.chapter_path;
         Self {
             revision: crate::revision(&document.xhtml),
@@ -483,6 +488,7 @@ impl Book {
             printed_source: None,
             content: Content::Loose {
                 metadata: document.metadata,
+                format,
                 xhtml: BTreeMap::from([(chapter_path, document.xhtml)]),
                 prior_mobi: BTreeMap::new(),
                 resources: document.resources,
@@ -602,6 +608,7 @@ impl Book {
             cover: None,
             content: Content::Loose {
                 metadata: publication.metadata,
+                format: loose::Format::Mobi,
                 xhtml,
                 prior_mobi,
                 resources: publication.resources,
@@ -650,6 +657,18 @@ impl Book {
 
     pub(crate) fn is_reflowable_epub(&self) -> bool {
         matches!(self.content, Content::Archive { .. }) && !self.is_fixed_layout()
+    }
+
+    pub(crate) fn automatic_stylesheet(&self) -> crate::BaseStylesheet {
+        match &self.content {
+            Content::Loose {
+                format: loose::Format::Fb2 | loose::Format::Text,
+                ..
+            } => crate::BaseStylesheet::FictionBook,
+            Content::Archive { .. } | Content::Loose { .. } | Content::Chm(_) => {
+                crate::BaseStylesheet::Traditional
+            }
+        }
     }
 
     pub(crate) fn take_fixed_spine(&mut self) -> Option<FixedSpine> {
@@ -1775,15 +1794,18 @@ mod tests {
         assert!(archive.resource_limited(path, image.len() - 1).is_err());
         assert_eq!(archive.resource_limited(path, image.len()).unwrap(), image);
 
-        let mut loose = Book::from_loose(loose::Document {
-            metadata: Default::default(),
-            title: "Package".into(),
-            author: None,
-            chapter_path: "document.xhtml".into(),
-            xhtml: "<html><body><p>Read.</p></body></html>".into(),
-            toc: Vec::new(),
-            resources: BTreeMap::from([("shore.png".into(), image.clone())]),
-        });
+        let mut loose = Book::from_loose(
+            loose::Document {
+                metadata: Default::default(),
+                title: "Package".into(),
+                author: None,
+                chapter_path: "document.xhtml".into(),
+                xhtml: "<html><body><p>Read.</p></body></html>".into(),
+                toc: Vec::new(),
+                resources: BTreeMap::from([("shore.png".into(), image.clone())]),
+            },
+            loose::Format::Text,
+        );
         assert!(
             loose
                 .resource_limited("shore.png", image.len() - 1)

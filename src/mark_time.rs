@@ -29,6 +29,28 @@ pub(crate) fn local_date(seconds: i64) -> Option<String> {
     ))
 }
 
+#[cfg(feature = "kindle")]
+pub(crate) fn local_datetime(seconds: i64) -> Option<String> {
+    let seconds = libc::time_t::try_from(seconds).ok()?;
+    let mut result = std::mem::MaybeUninit::uninit();
+    // localtime_r writes into this caller-owned buffer and reports out-of-range dates.
+    let result = unsafe {
+        if libc::localtime_r(&seconds, result.as_mut_ptr()).is_null() {
+            return None;
+        }
+        result.assume_init()
+    };
+    Some(format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+        result.tm_year + 1900,
+        result.tm_mon + 1,
+        result.tm_mday,
+        result.tm_hour,
+        result.tm_min,
+        result.tm_sec
+    ))
+}
+
 /// KOReader's `datetime` (readerannotation.lua) uses YYYY-MM-DD HH:MM:SS.
 /// Its date parser supports date-only records. ISO strings with an explicit
 /// offset are absolute. Missing or malformed dates leave the mark undated.

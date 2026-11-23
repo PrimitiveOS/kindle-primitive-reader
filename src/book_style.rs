@@ -2,6 +2,9 @@
 //! compound and descendant selectors, author order, inline styles, importance,
 //! and inherited text properties. See https://www.w3.org/TR/css-cascade-5/.
 
+#[cfg(test)]
+mod base_stylesheet_tests;
+mod base_stylesheets;
 pub(crate) mod borders;
 pub(crate) mod flow;
 #[cfg(test)]
@@ -348,6 +351,7 @@ impl Default for Style {
 pub(crate) struct BookStyle {
     author_inline: bool,
     rules: Vec<Rule>,
+    base_rules: Vec<Rule>,
     user_rules: Vec<Rule>,
     families: HashMap<String, Arc<str>>,
     font_weights: Arc<HashMap<u64, f32>>,
@@ -373,6 +377,28 @@ impl BookStyle {
         styled
     }
 
+    pub(crate) fn load_with_base(
+        book: &mut Book,
+        chapter: &str,
+        source: &Source,
+        fonts: &mut FontContext,
+        publisher_styles: bool,
+        selection: crate::BaseStylesheet,
+    ) -> Self {
+        let mut styled = if publisher_styles {
+            Self::load(book, chapter, source, fonts)
+        } else {
+            Self::default()
+        };
+        let selection = if selection == crate::BaseStylesheet::Auto {
+            book.automatic_stylesheet()
+        } else {
+            selection
+        };
+        styled.read_base_stylesheet(source, selection);
+        styled
+    }
+
     /// The exact same stylesheet selection, caps, cascade and inline handling as
     /// native layout, without FontContext or font-face resource registration.
     pub(crate) fn load_for_flow(
@@ -388,6 +414,24 @@ impl BookStyle {
             Self::default()
         };
         styled.with_user_css(user)
+    }
+
+    pub(crate) fn load_for_flow_with_base(
+        book: &mut Book,
+        chapter: &str,
+        source: &Source,
+        publisher_styles: bool,
+        user: &crate::user_styles::Snapshot,
+        selection: crate::BaseStylesheet,
+    ) -> crate::Result<Self> {
+        let mut styled = Self::load_for_flow(book, chapter, source, publisher_styles, user)?;
+        let selection = if selection == crate::BaseStylesheet::Auto {
+            book.automatic_stylesheet()
+        } else {
+            selection
+        };
+        styled.read_base_stylesheet(source, selection);
+        Ok(styled)
     }
 
     fn load_sheets(book: &mut Book, chapter: &str, source: &Source) -> (Self, Vec<FontFace>) {
@@ -428,6 +472,29 @@ impl BookStyle {
             }
         }
         (styled, faces)
+    }
+
+    fn read_base_stylesheet(&mut self, source: &Source, selection: crate::BaseStylesheet) {
+        let text = base_stylesheets::css(selection);
+        if text.is_empty() {
+            return;
+        }
+        let names = ChapterNames::new(&source.elements);
+        let mut parser = Parser::new(text);
+        for rule in StyleSheetParser::new(&mut parser, &mut SheetParser)
+            .take(MAX_RULES)
+            .flatten()
+        {
+            if let SheetItem::Rule(mut rule) = rule
+                && self.base_rules.len() < MAX_RULES
+                && !rule.declarations.is_empty()
+            {
+                rule.selectors.retain(|selector| names.possible(selector));
+                if !rule.selectors.is_empty() {
+                    self.base_rules.push(rule);
+                }
+            }
+        }
     }
 
     pub fn compute_for_dpi(&self, elements: &[Element], dpi: u16) -> Vec<Style> {
@@ -549,7 +616,11 @@ impl BookStyle {
                 .filter(|text| self.author_inline && text.len() <= MAX_INLINE_BYTES)
                 .map_or_else(Vec::new, |text| declarations(&mut Parser::new(text)));
             let mut winners: Winners = [None; 42];
-            for (user, rules) in [(true, &self.user_rules), (false, &self.rules)] {
+            for (origin, rules) in [
+                (CascadeOrigin::User, &self.user_rules),
+                (CascadeOrigin::Author, &self.rules),
+                (CascadeOrigin::UserAgent, &self.base_rules),
+            ] {
                 for rule in rules {
                     if let Some(specificity) = rule
                         .selectors
@@ -558,11 +629,17 @@ impl BookStyle {
                         .map(|selector| selector.specificity)
                         .max()
                     {
-                        choose(&mut winners, &rule.declarations, false, specificity, user);
+                        choose(&mut winners, &rule.declarations, false, specificity, origin);
                     }
                 }
             }
-            choose(&mut winners, &inline, true, (0, 0, 0), false);
+            choose(
+                &mut winners,
+                &inline,
+                true,
+                (0, 0, 0),
+                CascadeOrigin::Author,
+            );
             for (_, property) in winners.into_iter().flatten() {
                 match property {
                     Property::Reset(16, reset) => {
@@ -1257,12 +1334,19 @@ fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
 type Priority = (u8, bool, Specificity);
 type Winners<'a> = [Option<(Priority, &'a Property)>; 42];
 
+#[derive(Clone, Copy)]
+enum CascadeOrigin {
+    UserAgent,
+    User,
+    Author,
+}
+
 fn choose<'a>(
     winners: &mut Winners<'a>,
     declarations: &'a [Declaration],
     inline: bool,
     specificity: Specificity,
-    user: bool,
+    origin: CascadeOrigin,
 ) {
     for declaration in declarations {
         let index = match declaration.property {
@@ -1305,11 +1389,13 @@ fn choose<'a>(
             }
             Property::PaddingBoth(_) | Property::FontSource(_) => continue,
         };
-        let tier = match (user, declaration.important) {
-            (true, false) => 0,
-            (false, false) => 1,
-            (false, true) => 2,
-            (true, true) => 3,
+        let tier = match (origin, declaration.important) {
+            (CascadeOrigin::UserAgent, false) => 0,
+            (CascadeOrigin::UserAgent, true) => 1,
+            (CascadeOrigin::User, false) => 2,
+            (CascadeOrigin::Author, false) => 3,
+            (CascadeOrigin::Author, true) => 4,
+            (CascadeOrigin::User, true) => 5,
         };
         let priority = (tier, inline, specificity);
         if winners[index].is_none_or(|(current, _)| priority >= current) {

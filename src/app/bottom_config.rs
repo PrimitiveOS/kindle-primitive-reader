@@ -2,7 +2,7 @@
 use super::{Action, BarPanel, Reader, Screen};
 use crate::app::NumberField;
 use crate::reading_controls::{ReadingOrientation, ScreenPalette};
-use crate::{FontHinting, Settings, TextAlignment};
+use crate::{BaseStylesheet, FontHinting, Settings, TextAlignment};
 
 pub(super) struct Choice {
     pub(super) title: String,
@@ -227,37 +227,101 @@ impl Reader {
                             ],
                         ));
                     }
-                    rows.extend([
-                        margin_row(
-                            "Side margins",
-                            (settings.left_margin() + settings.right_margin()).div_ceil(2),
-                            |value| Settings {
-                                margin_sides: Some(value),
-                                margin_left: None,
-                                margin_right: None,
-                                ..settings
-                            },
-                        ),
-                        ConfigRow::new(
-                            format!("Lines · {:.2}×", settings.line_height),
-                            [
-                                text(
-                                    "Tighter",
-                                    Settings {
-                                        line_height: (settings.line_height - 0.1).max(1.0),
+                    rows.push(margin_row(
+                        "Side margins",
+                        (settings.left_margin() + settings.right_margin()).div_ceil(2),
+                        |value| Settings {
+                            margin_sides: Some(value),
+                            margin_left: None,
+                            margin_right: None,
+                            ..settings
+                        },
+                    ));
+                    let spacing = settings.effective_line_spacing_percent();
+                    let choices = |values: &[u16]| {
+                        values
+                            .iter()
+                            .map(|&percent| {
+                                Choice::option(
+                                    format!("{percent}%"),
+                                    Action::Text(settings.with_line_spacing_percent(percent)),
+                                    spacing == percent,
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                    };
+                    rows.push(ConfigRow::new(
+                        "Line spacing",
+                        choices(&crate::LINE_SPACING_PRESETS[..7]),
+                    ));
+                    rows.push(ConfigRow::new(
+                        "",
+                        choices(&crate::LINE_SPACING_PRESETS[7..]),
+                    ));
+                    let mut fine = Vec::with_capacity(3);
+                    if spacing > 50 {
+                        fine.push(Choice::live(
+                            "-1%",
+                            Action::Text(settings.with_line_spacing_percent(spacing - 1)),
+                        ));
+                    }
+                    fine.push(Choice::link(
+                        "Set value",
+                        Action::Show(Screen::NumberingValue(NumberField::LineSpacing(active.id))),
+                    ));
+                    if spacing < 200 {
+                        fine.push(Choice::live(
+                            "+1%",
+                            Action::Text(settings.with_line_spacing_percent(spacing + 1)),
+                        ));
+                    }
+                    rows.push(ConfigRow::new(format!("Fine · {spacing}%"), fine));
+                    if active.reading.config.scroll {
+                        rows.push(ConfigRow::new(
+                            "Page overlap",
+                            [false, true].map(|enabled| {
+                                Choice::option(
+                                    if enabled { "On" } else { "Off" },
+                                    Action::Text(Settings {
+                                        page_overlap_enabled: enabled,
                                         ..settings
-                                    },
-                                ),
-                                text(
-                                    "Looser",
-                                    Settings {
-                                        line_height: (settings.line_height + 0.1).min(2.2),
+                                    }),
+                                    settings.page_overlap_enabled == enabled,
+                                )
+                            }),
+                        ));
+                        for (label, range) in [
+                            ("Repeated lines · 1–5", 1..=5),
+                            ("Repeated lines · 6–10", 6..=10),
+                        ] {
+                            rows.push(ConfigRow::new(
+                                label,
+                                range.map(|lines| {
+                                    Choice::option(
+                                        lines.to_string(),
+                                        Action::Text(Settings {
+                                            page_overlap_lines: lines,
+                                            ..settings
+                                        }),
+                                        settings.page_overlap_lines == lines,
+                                    )
+                                }),
+                            ));
+                        }
+                        rows.push(ConfigRow::new(
+                            "Overlap marker",
+                            crate::PageOverlapStyle::ALL.map(|style| {
+                                Choice::option(
+                                    style.label(),
+                                    Action::Text(Settings {
+                                        page_overlap_style: style,
                                         ..settings
-                                    },
-                                ),
-                            ],
-                        ),
-                    ]);
+                                    }),
+                                    settings.page_overlap_style == style,
+                                )
+                            }),
+                        ));
+                    }
                     return rows;
                 }
                 BarPanel::TextMargins => {
@@ -458,6 +522,29 @@ impl Reader {
                             [Choice::link("Open", Action::Show(Screen::StyleTweaks))],
                         ),
                         ConfigRow::new(
+                            "Base stylesheet",
+                            BaseStylesheet::ALL
+                                .into_iter()
+                                .filter(|style| {
+                                    *style != BaseStylesheet::FictionBook
+                                        || matches!(
+                                            active.entry.format,
+                                            crate::library::DocumentFormat::Fb2
+                                                | crate::library::DocumentFormat::Text
+                                        )
+                                })
+                                .map(|base_stylesheet| {
+                                    Choice::option(
+                                        base_stylesheet.label(),
+                                        Action::Text(Settings {
+                                            base_stylesheet,
+                                            ..settings
+                                        }),
+                                        settings.base_stylesheet == base_stylesheet,
+                                    )
+                                }),
+                        ),
+                        ConfigRow::new(
                             "Publisher CSS",
                             [("Off", false), ("On", true)].map(|(title, publisher_styles)| {
                                 Choice::option(
@@ -509,14 +596,22 @@ impl Reader {
                         ),
                         ConfigRow::new(
                             "Font kerning",
-                            [("Off", false), ("On", true)].map(|(title, font_kerning)| {
+                            [
+                                ("Off", crate::FontKerningMode::Off),
+                                ("Fast", crate::FontKerningMode::Fast),
+                                ("Good", crate::FontKerningMode::Good),
+                                ("Best", crate::FontKerningMode::Best),
+                            ]
+                            .map(|(title, font_kerning_mode)| {
                                 Choice::option(
                                     title,
                                     Action::Text(Settings {
-                                        font_kerning,
+                                        font_kerning: font_kerning_mode
+                                            != crate::FontKerningMode::Off,
+                                        font_kerning_mode: Some(font_kerning_mode),
                                         ..settings
                                     }),
-                                    settings.font_kerning == font_kerning,
+                                    settings.effective_font_kerning_mode() == font_kerning_mode,
                                 )
                             }),
                         ),

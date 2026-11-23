@@ -10,6 +10,7 @@ use crate::reading_controls::{
 use crate::session::{DONE, PAGE_HEIGHT, SHOW_STATUS};
 use primitive_app::{Change, HEIGHT, WIDTH};
 use primitive_ui::{Canvas, Rect};
+use std::time::{Duration, Instant};
 
 const FOOTER_TRACK_GAP: i32 = 20;
 const FOOTER_CAPTION_LEFT: i32 = 38;
@@ -241,6 +242,28 @@ fn draw_initial_marker(canvas: &mut Canvas, bar: Rect, fraction: f64) {
 }
 
 impl Reader {
+    fn footer_clock_active(&self) -> bool {
+        self.stats_awake
+            && self.controls.footer_auto_refresh
+            && self.controls.status_bar == StatusBar::Custom
+            && self.controls.footer_items & FooterItem::CurrentTime.bit() != 0
+            && matches!(
+                self.screen,
+                Screen::Book | Screen::BookTools | Screen::Fixed | Screen::FixedTools
+            )
+    }
+
+    pub(super) fn update_footer_clock(&mut self, now: Instant) {
+        self.footer_refresh_at = if self.footer_clock_active() {
+            current_unix_seconds().and_then(|seconds| {
+                let delay = 61 - seconds.rem_euclid(60) as u64;
+                now.checked_add(Duration::from_secs(delay))
+            })
+        } else {
+            None
+        };
+    }
+
     pub(super) fn reset_footer_initial_position(&mut self) {
         let initial = self.footer_progress().and_then(|progress| {
             let location = self.footer_location(&progress)?;
@@ -692,6 +715,7 @@ impl Reader {
         );
         let separator = self.controls.footer_separator.text();
         let percentage = progress.percentage_with_digits(self.controls.footer_percentage_digits);
+        let current_time = local_footer_time();
         let current_page = || {
             if let Some(book) = &self.fixed {
                 let pages: Vec<_> = book.reading.visible_pages().collect();
@@ -770,6 +794,7 @@ impl Reader {
                         .state(id)
                         .map_or(0, |state| state.bookmarks.len())
                 )),
+                FooterItem::CurrentTime => current_time.clone(),
             };
             if let Some(text) = text {
                 items.push(text);
@@ -1147,6 +1172,14 @@ impl Reader {
         ]);
         if c.status_bar == StatusBar::Custom {
             items.push(Item::new("Visible status items", Action::Heading));
+            items.push(setting(
+                "Auto refresh items",
+                on_off(c.footer_auto_refresh),
+                ReadingControls {
+                    footer_auto_refresh: !c.footer_auto_refresh,
+                    ..c
+                },
+            ));
             for item in FooterItem::ordered(c.footer_order) {
                 let enabled = c.footer_items & item.bit() != 0;
                 items.push(setting(
@@ -1212,6 +1245,27 @@ impl Reader {
         }
         items
     }
+}
+
+#[cfg(feature = "kindle")]
+fn current_unix_seconds() -> Option<i64> {
+    crate::mark_time::now()
+}
+
+#[cfg(not(feature = "kindle"))]
+fn current_unix_seconds() -> Option<i64> {
+    None
+}
+
+#[cfg(feature = "kindle")]
+fn local_footer_time() -> Option<String> {
+    let value = crate::mark_time::local_datetime(current_unix_seconds()?)?;
+    Some(format!("Time {}", value.get(11..16)?))
+}
+
+#[cfg(not(feature = "kindle"))]
+fn local_footer_time() -> Option<String> {
+    None
 }
 
 #[cfg(test)]

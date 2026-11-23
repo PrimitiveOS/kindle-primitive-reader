@@ -9,6 +9,7 @@ fn publisher_box_padding_shapes_wrapped_text_and_preserves_source_positions() {
         height: 1240,
         margin: 40,
         font_size: 30.,
+        base_stylesheet: crate::BaseStylesheet::None,
         ..Default::default()
     };
     let open = |enabled| {
@@ -228,6 +229,7 @@ fn negative_first_lines_spend_available_physical_padding_before_shifting_other_l
         height: 1000,
         margin: 24,
         font_size: 28.,
+        base_stylesheet: crate::BaseStylesheet::None,
         ..Default::default()
     };
     let p = Probe::from_book_content(

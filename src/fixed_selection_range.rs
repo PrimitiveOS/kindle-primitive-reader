@@ -21,7 +21,11 @@ fn endpoint(text: &PdfPageText, regions: &[PdfTextRect], last: bool) -> Option<u
     }
 }
 
-fn line_regions(document: &PdfPageText, first: usize, last: usize) -> Result<Vec<PdfTextRect>> {
+pub(super) fn line_regions(
+    document: &PdfPageText,
+    first: usize,
+    last: usize,
+) -> Result<Vec<PdfTextRect>> {
     let words = &document.words[first..=last];
     if words.len() <= MAX_PDF_HIGHLIGHT_BOUNDS {
         return Ok(words.iter().map(|word| word.bounds).collect());
@@ -65,9 +69,13 @@ impl FixedReading {
         saved: &PdfHighlight,
         word: &PdfSelection,
     ) -> Result<PdfHighlight> {
+        let (selected_first, selected_last) = word.endpoints();
         let read = |page| -> Result<PdfPageText> {
-            if page == word.page {
-                return Ok(word.document.clone());
+            if page == selected_first.page {
+                return Ok(selected_first.document.clone());
+            }
+            if page == selected_last.page {
+                return Ok(selected_last.document.clone());
             }
             if self.view.force_ocr {
                 return self
@@ -78,7 +86,12 @@ impl FixedReading {
         };
         let (last_page, last_bounds, _) =
             saved.parts().last().ok_or("The selection is unavailable")?;
-        if saved.page.min(word.page).abs_diff(last_page.max(word.page)) >= PdfHighlight::MAX_PAGES {
+        if saved
+            .page
+            .min(selected_first.page)
+            .abs_diff(last_page.max(selected_last.page))
+            >= PdfHighlight::MAX_PAGES
+        {
             return Err("This range exceeds the saved highlight page limit".into());
         }
         let first_source = read(saved.page)?;
@@ -93,8 +106,8 @@ impl FixedReading {
         };
         let last_word = endpoint(last_text, last_bounds, true)
             .ok_or("The end of the saved selection no longer matches this text layer")?;
-        let first = (saved.page, first_word).min((word.page, word.first));
-        let last = (last_page, last_word).max((word.page, word.last));
+        let first = (saved.page, first_word).min((selected_first.page, selected_first.word));
+        let last = (last_page, last_word).max((selected_last.page, selected_last.word));
         if first == (saved.page, first_word) && last == (last_page, last_word) {
             return Ok(saved.clone());
         }
@@ -114,8 +127,10 @@ impl FixedReading {
                 &first_source
             } else if page == last_page {
                 last_text
-            } else if page == word.page {
-                &word.document
+            } else if page == selected_first.page {
+                &selected_first.document
+            } else if page == selected_last.page {
+                &selected_last.document
             } else {
                 loaded = read(page)?;
                 &loaded

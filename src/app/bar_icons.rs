@@ -24,6 +24,11 @@ const GRID: Icon = line(&[
 pub(super) const SEARCH: Icon = line(&["M12 4 A6 6 0 1 0 12 16 A6 6 0 1 0 12 4 Z M16 16 L21 21"]);
 const FOLDER: Icon = line(&["M3 6 H10 L12 8 H21 V19 H3 Z"]);
 pub(super) const HIGHLIGHT: Icon = line(&["M4 15 L13 6 L18 11 L9 20 H4 Z M4 20 H20"]);
+pub(super) const EDIT: Icon = line(&[
+    "M4 16.5 L16.5 4 A2.1 2.1 0 0 1 19.5 7 L7 19.5 L3 21 Z",
+    "M14 6.5 L17.5 10",
+]);
+pub(super) const COPY: Icon = line(&["M8 7 H19 V21 H8 Z M5 17 H3 V3 H15 V5"]);
 const CLOCK: Icon = line(&["M12 3 A9 9 0 1 0 12 21 A9 9 0 1 0 12 3 Z M12 7 V12 L16 15"]);
 pub(super) const LINK: Icon =
     line(&["M10 8 L13 5 A4 4 0 0 1 19 11 L16 14 M14 16 L11 19 A4 4 0 0 1 5 13 L8 10 M9 15 L15 9"]);

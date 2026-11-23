@@ -782,31 +782,10 @@ fn caption(entry: &Entry) -> String {
     if !location.is_empty() {
         parts.push(location);
     }
-    if let Some(time) = entry.time.and_then(local_datetime) {
+    if let Some(time) = entry.time.and_then(crate::mark_time::local_datetime) {
         parts.push(time);
     }
     parts.join(" · ")
-}
-
-fn local_datetime(time: i64) -> Option<String> {
-    let time = libc::time_t::try_from(time).ok()?;
-    let mut local = std::mem::MaybeUninit::uninit();
-    // localtime_r writes the caller-owned buffer and returns null for an unrepresentable date.
-    let local = unsafe {
-        if libc::localtime_r(&time, local.as_mut_ptr()).is_null() {
-            return None;
-        }
-        local.assume_init()
-    };
-    Some(format!(
-        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
-        local.tm_year + 1900,
-        local.tm_mon + 1,
-        local.tm_mday,
-        local.tm_hour,
-        local.tm_min,
-        local.tm_sec
-    ))
 }
 
 #[cfg(test)]

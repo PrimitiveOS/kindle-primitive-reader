@@ -93,6 +93,7 @@ impl<T> PageTurns<T> {
 enum ReadingMotion {
     Page(isize),
     Pixels(f32),
+    AutoPixels(f32),
 }
 
 pub(crate) struct VisiblePart {
@@ -212,7 +213,7 @@ impl Reading {
             let viewport = (self.config.settings.text_height() as f32 - 90.0).max(1.0);
             self.turns
                 .pending
-                .push(ReadingMotion::Pixels(distance * viewport));
+                .push(ReadingMotion::AutoPixels(distance * viewport));
         } else {
             let direction = if distance > 0.0 { 1 } else { -1 };
             let pages = distance.abs().ceil().max(1.0) as usize;
@@ -448,17 +449,45 @@ impl Reading {
         for motion in pending {
             let forward = match motion {
                 ReadingMotion::Page(direction) => direction > 0,
-                ReadingMotion::Pixels(distance) => distance > 0.0,
+                ReadingMotion::Pixels(distance) | ReadingMotion::AutoPixels(distance) => {
+                    distance > 0.0
+                }
             };
+            let before = (self.chapter, self.page, self.scroll_top);
+            let mut overlap = 0;
+            let mut show_overlap_marker = false;
             let result = match (motion, self.scroll_top) {
                 (ReadingMotion::Page(direction), Some(top)) => {
                     let distance = (self.config.settings.text_height() as f32 - 90.0).max(1.0);
-                    self.scroll(top, direction as f32 * distance)
+                    let (distance, height) = self.scroll_page_distance(direction as f32 * distance);
+                    overlap = height;
+                    show_overlap_marker = true;
+                    self.scroll(top, distance)
                 }
                 (ReadingMotion::Page(direction), None) => self.turn(direction),
                 (ReadingMotion::Pixels(distance), Some(top)) => self.scroll(top, distance),
+                (ReadingMotion::AutoPixels(distance), Some(top)) => {
+                    let viewport = (self.config.settings.text_height() as f32 - 90.0).max(1.0);
+                    show_overlap_marker = distance.abs() >= viewport - 0.01;
+                    let (distance, height) = self.scroll_page_distance(distance);
+                    overlap = height;
+                    self.scroll(top, distance)
+                }
                 (ReadingMotion::Pixels(_), None) => continue,
+                (ReadingMotion::AutoPixels(_), None) => continue,
             };
+            let near_end = before.2.is_some_and(|top| {
+                top > (self.probe.scroll_end() - self.frame.height as f32 / 2.0).max(0.0)
+            });
+            if show_overlap_marker
+                && !near_end
+                && overlap > 0
+                && self.chapter == before.0
+                && self.scroll_top != before.2
+                && matches!(result, Ok(Change::Partial))
+            {
+                self.paint_page_overlap_indicator(forward, overlap);
+            }
             self.end_attempt = forward && matches!(result, Ok(Change::None));
             match result {
                 Ok(Change::Partial) => change = Change::Partial,
@@ -486,7 +515,44 @@ impl Reading {
         change
     }
 
+    fn scroll_page_distance(&self, distance: f32) -> (f32, u32) {
+        let settings = self.config.settings;
+        if !settings.page_overlap_enabled || !distance.is_finite() {
+            return (distance, 0);
+        }
+        let overlap = settings.page_overlap_height();
+        if overlap <= 0.0 || distance.abs() <= overlap {
+            return (distance, 0);
+        }
+        let adjusted = distance.signum() * (distance.abs() - overlap);
+        (adjusted, overlap.round() as u32)
+    }
+
+    fn paint_page_overlap_indicator(&mut self, forward: bool, height: u32) {
+        paint_page_overlap(
+            &mut self.frame,
+            forward,
+            height,
+            self.config.settings.page_overlap_style,
+        );
+    }
+
     pub(crate) fn reflow(&mut self, settings: Settings) -> Result<()> {
+        if (Settings {
+            page_overlap_enabled: settings.page_overlap_enabled,
+            page_overlap_lines: settings.page_overlap_lines,
+            page_overlap_style: settings.page_overlap_style,
+            ..self.config.settings
+        }) == settings
+            && settings != self.config.settings
+        {
+            self.config.settings = settings;
+            self.probe.settings = settings;
+            self.frame = capture(&mut self.probe, self.chapter, self.page, self.scroll_top)?;
+            self.adjacent.clear();
+            self.schedule_prefetch();
+            return Ok(());
+        }
         if (Settings {
             font_gamma_index: settings.font_gamma_index,
             text_contrast: settings.text_contrast,
@@ -1207,6 +1273,74 @@ impl Reading {
     }
 }
 
+fn paint_page_overlap(
+    frame: &mut GrayImage,
+    forward: bool,
+    requested_height: u32,
+    style: crate::PageOverlapStyle,
+) {
+    use crate::PageOverlapStyle;
+
+    if style == PageOverlapStyle::None || frame.width == 0 || frame.height == 0 {
+        return;
+    }
+    let height = requested_height.min(frame.height);
+    if height == 0 {
+        return;
+    }
+    let top = if forward { 0 } else { frame.height - height };
+    let bottom = top + height;
+    let width = frame.width as usize;
+    match style {
+        PageOverlapStyle::None => {}
+        PageOverlapStyle::Dim => {
+            for pixel in &mut frame.pixels[top as usize * width..bottom as usize * width] {
+                *pixel = ((u16::from(*pixel) + 255) / 2) as u8;
+            }
+        }
+        PageOverlapStyle::Arrow => {
+            let boundary = if forward { bottom } else { top };
+            paint_overlap_arrow(frame, boundary);
+        }
+        PageOverlapStyle::Line | PageOverlapStyle::DashedLine => {
+            let boundary = if forward { bottom } else { top };
+            let y = boundary.min(frame.height - 1) as usize;
+            let ink = 102;
+            for row in y..(y + 2).min(frame.height as usize) {
+                let line = &mut frame.pixels[row * width..(row + 1) * width];
+                if style == PageOverlapStyle::Line {
+                    line.fill(ink);
+                } else {
+                    for start in (0..width).step_by(20) {
+                        line[start..(start + 14).min(width)].fill(ink);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn paint_overlap_arrow(frame: &mut GrayImage, boundary: u32) {
+    // KOReader's 16×16 `control.expand.alpha` icon is a right-pointing
+    // triangle, centered on the boundary and kept at the left screen edge.
+    let half_height = 8_i32;
+    for offset in -half_height..=half_height {
+        let y = boundary as i32 + offset;
+        if !(0..frame.height as i32).contains(&y) {
+            continue;
+        }
+        let inward = half_height - offset.abs();
+        let extent = 3 + inward * 10 / half_height;
+        let left = 3.min(frame.width.saturating_sub(1) as i32) as u32;
+        let right = extent
+            .min(frame.width.saturating_sub(1) as i32)
+            .max(left as i32) as u32;
+        for x in left..=right {
+            frame.pixels[y as usize * frame.width as usize + x as usize] = 64;
+        }
+    }
+}
+
 fn draw_highlight_rect(
     page: &mut GrayImage,
     rect: HighlightRect,
@@ -1872,6 +2006,182 @@ mod tests {
         fractional_paged.turns.next_refresh = Instant::now();
         assert_eq!(fractional_paged.automatic_turn(-11), Change::Partial);
         assert_eq!(fractional_paged.page, 0);
+    }
+
+    #[test]
+    fn scroll_page_overlap_repeats_configured_lines_and_marks_the_repeated_area() {
+        let mut reading = example("long-chapter.epub", 42.0, false);
+        reading.set_scroll(true).unwrap();
+        let settings = Settings {
+            page_overlap_enabled: true,
+            page_overlap_lines: 2,
+            page_overlap_style: crate::PageOverlapStyle::Dim,
+            ..reading.config.settings
+        };
+        let overlap = settings.page_overlap_height();
+        reading.reflow(settings).unwrap();
+
+        let start = reading.scroll_top.unwrap();
+        let viewport = (settings.text_height() as f32 - 90.0).max(1.0);
+        reading.turns.next_refresh = Instant::now();
+        assert_eq!(reading.input(Input::PageForward), Change::Partial);
+        assert!((reading.scroll_top.unwrap() - (start + viewport - overlap)).abs() < 1.0);
+
+        let plain = capture(
+            &mut reading.probe,
+            reading.chapter,
+            reading.page,
+            reading.scroll_top,
+        )
+        .unwrap();
+        assert_ne!(reading.frame.pixels, plain.pixels);
+        if let Some(path) = std::env::var_os("READER_PAGE_OVERLAP_SCREENSHOT") {
+            image::GrayImage::from_raw(WIDTH, reading.frame.height, reading.frame.pixels.clone())
+                .expect("The captured reading frame has valid dimensions")
+                .save(path)
+                .unwrap();
+        }
+
+        // A direct pan remains a pan; overlap applies to page turns only.
+        let before_pan = reading.scroll_top.unwrap();
+        reading.turns.next_refresh = Instant::now();
+        assert_eq!(
+            reading.input(Input::Swipe {
+                dx: 0.0,
+                dy: -160.0,
+                start_y: PAGE_HEIGHT as f32 / 2.0,
+            }),
+            Change::Partial
+        );
+        assert!((reading.scroll_top.unwrap() - (before_pan + 160.0)).abs() < 1.0);
+    }
+
+    #[test]
+    fn automatic_scroll_overlap_applies_in_both_directions_and_can_be_hidden() {
+        let mut reading = example("long-chapter.epub", 42.0, false);
+        reading.set_scroll(true).unwrap();
+        let settings = Settings {
+            page_overlap_enabled: true,
+            page_overlap_lines: 3,
+            page_overlap_style: crate::PageOverlapStyle::Dim,
+            ..reading.config.settings
+        };
+        let overlap = settings.page_overlap_height();
+        reading.reflow(settings).unwrap();
+        let start = reading.scroll_top.unwrap();
+        let viewport = (settings.text_height() as f32 - 90.0).max(1.0);
+
+        reading.turns.next_refresh = Instant::now();
+        assert_eq!(reading.automatic_turn(5), Change::Partial);
+        let middle = reading.scroll_top.unwrap();
+        assert!((middle - (start + viewport * 0.5 - overlap)).abs() < 1.0);
+        let plain = capture(
+            &mut reading.probe,
+            reading.chapter,
+            reading.page,
+            reading.scroll_top,
+        )
+        .unwrap();
+        assert_eq!(reading.frame.pixels, plain.pixels);
+
+        reading.turns.next_refresh = Instant::now();
+        assert_eq!(reading.automatic_turn(-5), Change::Partial);
+        assert!((reading.scroll_top.unwrap() - start).abs() < 1.0);
+
+        reading.turns.next_refresh = Instant::now();
+        assert_eq!(reading.automatic_turn(10), Change::Partial);
+        assert!((reading.scroll_top.unwrap() - (start + viewport - overlap)).abs() < 1.0);
+        let plain = capture(
+            &mut reading.probe,
+            reading.chapter,
+            reading.page,
+            reading.scroll_top,
+        )
+        .unwrap();
+        assert_ne!(reading.frame.pixels, plain.pixels);
+    }
+
+    #[test]
+    fn scroll_overlap_indicator_is_suppressed_near_the_end_of_a_chapter() {
+        let mut reading = example("long-chapter.epub", 42.0, false);
+        reading.set_scroll(true).unwrap();
+        let settings = Settings {
+            page_overlap_enabled: true,
+            page_overlap_lines: 2,
+            page_overlap_style: crate::PageOverlapStyle::Dim,
+            ..reading.config.settings
+        };
+        reading.reflow(settings).unwrap();
+        let end = reading.probe.scroll_end();
+        let current = reading.scroll_top.unwrap();
+        reading.scroll(current, end - 100.0 - current).unwrap();
+        assert!((reading.scroll_top.unwrap() - (end - 100.0)).abs() < 1.0);
+
+        reading.turns.next_refresh = Instant::now();
+        assert_eq!(reading.input(Input::PageForward), Change::Partial);
+        assert_eq!(reading.scroll_top, Some(end));
+        let plain = capture(
+            &mut reading.probe,
+            reading.chapter,
+            reading.page,
+            reading.scroll_top,
+        )
+        .unwrap();
+        assert_eq!(reading.frame.pixels, plain.pixels);
+    }
+
+    #[test]
+    fn page_overlap_styles_render_their_stock_marker_shapes() {
+        let mut none = GrayImage {
+            width: 100,
+            height: 100,
+            pixels: vec![220; 10_000],
+        };
+        let source = none.pixels.clone();
+        paint_page_overlap(&mut none, true, 20, crate::PageOverlapStyle::None);
+        assert_eq!(none.pixels, source);
+
+        let mut dim = GrayImage {
+            width: 100,
+            height: 100,
+            pixels: source.clone(),
+        };
+        paint_page_overlap(&mut dim, true, 20, crate::PageOverlapStyle::Dim);
+        assert_eq!(dim.pixels[0], 237);
+        assert_eq!(dim.pixels[20 * 100], 220);
+
+        let mut arrow = GrayImage {
+            width: 100,
+            height: 100,
+            pixels: source.clone(),
+        };
+        paint_page_overlap(&mut arrow, true, 20, crate::PageOverlapStyle::Arrow);
+        assert_eq!(arrow.pixels[20 * 100 + 3], 64);
+        assert_eq!(arrow.pixels[20 * 100 + 13], 64);
+        assert_eq!(arrow.pixels[20 * 100 + 14], 220);
+        assert_eq!(arrow.pixels[12 * 100 + 3], 64);
+        assert_eq!(arrow.pixels[12 * 100 + 4], 220);
+
+        let mut line = GrayImage {
+            width: 100,
+            height: 100,
+            pixels: source.clone(),
+        };
+        paint_page_overlap(&mut line, true, 20, crate::PageOverlapStyle::Line);
+        assert!(
+            line.pixels[20 * 100..22 * 100]
+                .iter()
+                .all(|&pixel| pixel == 102)
+        );
+
+        let mut dashed = GrayImage {
+            width: 100,
+            height: 100,
+            pixels: source,
+        };
+        paint_page_overlap(&mut dashed, true, 20, crate::PageOverlapStyle::DashedLine);
+        assert_eq!(dashed.pixels[20 * 100], 102);
+        assert_eq!(dashed.pixels[20 * 100 + 15], 220);
     }
 
     #[test]

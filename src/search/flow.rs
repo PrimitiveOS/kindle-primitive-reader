@@ -4,6 +4,7 @@ use crate::{book_style::BookStyle, epub::Book, flow_view::ChapterFlow, source::S
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FlowConfig {
     pub publisher_styles: bool,
+    pub base_stylesheet: crate::BaseStylesheet,
     pub user_styles: crate::user_styles::Snapshot,
 }
 
@@ -11,6 +12,7 @@ impl Default for FlowConfig {
     fn default() -> Self {
         Self {
             publisher_styles: true,
+            base_stylesheet: crate::BaseStylesheet::Auto,
             user_styles: Default::default(),
         }
     }
@@ -23,8 +25,14 @@ impl FlowConfig {
         href: &str,
         source: &Source,
     ) -> crate::Result<ChapterFlow> {
-        let styles =
-            BookStyle::load_for_flow(book, href, source, self.publisher_styles, &self.user_styles)?;
+        let styles = BookStyle::load_for_flow_with_base(
+            book,
+            href,
+            source,
+            self.publisher_styles,
+            &self.user_styles,
+            self.base_stylesheet,
+        )?;
         ChapterFlow::new(
             source,
             styles

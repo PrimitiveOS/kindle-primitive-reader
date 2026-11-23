@@ -2,12 +2,17 @@
 mod annotation_search;
 mod bar_icons;
 pub(crate) const NOTE_MARK_ICON: primitive_ui::Icon = bar_icons::HIGHLIGHT;
+#[cfg(test)]
+mod base_stylesheet_tests;
 mod bookmark_browser;
 mod character_page_settings;
 mod content_dpi;
 mod contents_position;
 mod custom_contents;
+mod line_spacing;
 mod logical_font;
+#[cfg(test)]
+mod page_overlap_tests;
 pub(crate) mod publisher_pages;
 mod reading_history;
 mod word_spacing;
@@ -59,7 +64,7 @@ mod vocabulary;
 #[cfg(test)]
 mod workflow_integration_tests;
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -87,8 +92,8 @@ use crate::library::{
 use crate::ocr_job::{OcrAssets, OcrJob};
 use crate::pdf_annotations;
 use crate::reading_controls::{
-    HighlightPrompt, MenuActivation, ReadingControls, ReadingOrientation, SelectionLongPressAction,
-    SystemTheme,
+    AnnotationListText, HighlightPrompt, MenuActivation, ReadingControls, ReadingOrientation,
+    SelectionLongPressAction, SystemTheme,
 };
 use crate::reading_fonts;
 use crate::reading_profiles::{self, Profile};
@@ -156,6 +161,8 @@ enum Screen {
     CollectionName,
     RemoveCollection,
     ReadingControls,
+    BookmarkListSettings,
+    AnnotationListSettings,
     SelectionPosition,
     LongPressSettings,
     VeryLongPressSettings,
@@ -261,6 +268,8 @@ impl Screen {
             Self::CollectionName => "Collection name",
             Self::RemoveCollection => "Remove collection?",
             Self::ReadingControls => "Reading controls",
+            Self::BookmarkListSettings => "Bookmarks and notes",
+            Self::AnnotationListSettings => "Highlight list text",
             Self::SelectionPosition => "Selection dialog position",
             Self::LongPressSettings => "Long-press on text",
             Self::VeryLongPressSettings => "Very long press interval",
@@ -289,6 +298,7 @@ impl Screen {
             Self::PageNumbering => "Page numbering",
             Self::NumberingValue(NumberField::ContentDpi(_)) => "Content zoom",
             Self::NumberingValue(NumberField::LogicalFont(_)) => "Font size",
+            Self::NumberingValue(NumberField::LineSpacing(_)) => "Line spacing",
             Self::NumberingValue(NumberField::WordSpacing(_)) => "Word spacing",
             Self::NumberingValue(NumberField::AutoTurn) => "Automatic page turns",
             Self::NumberingValue(NumberField::AutoTurnOverlapHorizontal) => "Horizontal overlap",
@@ -337,7 +347,7 @@ impl Screen {
             Self::SearchHistory => "Recent searches",
             Self::BookmarkFind => "Find bookmarks",
             Self::BookmarkMatches => "Bookmark search results",
-            Self::Highlights => "Highlights and notes",
+            Self::Highlights => "Saved marks",
             Self::Annotation => "Highlight",
             Self::RemoveHighlight => "Remove highlight?",
             Self::Note => "Add note",
@@ -557,6 +567,14 @@ struct ActiveBook {
     numbering: Option<crate::synthetic_pages::CharacterPages>,
 }
 
+struct SavedMarkRow {
+    created_at: i64,
+    location: (usize, usize, usize, usize),
+    kind: u8,
+    storage_index: usize,
+    item: Item,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct HistoryLocation {
     position: ReadingPosition,
@@ -637,6 +655,7 @@ pub struct Reader {
     controls_path: PathBuf,
     controls: ReadingControls,
     footer_initial_position: Option<reading_footer::InitialPosition>,
+    footer_refresh_at: Option<Instant>,
     end_dialog: Option<end_of_book::Dialog>,
     pages_since_refresh: u8,
     touch_locked: bool,
@@ -722,7 +741,7 @@ pub struct Reader {
     highlight_index: usize,
     range_edit: Option<extend_highlight::RangeEdit>,
     link_popup: Option<external_link::LinkPopup>,
-    copied_address: Option<String>,
+    clipboard_text: Option<String>,
     saved_popup: Option<saved_highlight_popup::SavedPopup>,
     exports: PathBuf,
     library_export: library_export::Export,
@@ -808,6 +827,7 @@ impl Reader {
             controls_path,
             controls,
             footer_initial_position: None,
+            footer_refresh_at: None,
             end_dialog: None,
             pages_since_refresh: 0,
             touch_locked: false,
@@ -900,7 +920,7 @@ impl Reader {
             highlight_index: 0,
             range_edit: None,
             link_popup: None,
-            copied_address: None,
+            clipboard_text: None,
             saved_popup: None,
             exports: state.parent().unwrap_or(documents).join("exports"),
             library_export: library_export::Export::load(data.join("highlight-export.json")),
@@ -1407,6 +1427,7 @@ impl Reader {
         self.screen = screen;
         self.prepare_content_dpi_editor();
         self.prepare_logical_font_editor();
+        self.prepare_line_spacing_editor();
         self.prepare_word_spacing_editor();
         self.map_window = fixed_book_map::MapWindow::default();
         self.sync_auto_turn(Instant::now());
@@ -1425,6 +1446,7 @@ impl Reader {
             self.current_contents_row.unwrap_or_default() / ROWS_PER_PAGE
         };
         self.notice = None;
+        self.update_footer_clock(Instant::now());
     }
 
     fn cancel_search(&mut self) {
@@ -1638,6 +1660,73 @@ impl Reader {
         }
         match self.screen {
             Screen::FooterSettings => return self.footer_items(),
+            Screen::BookmarkListSettings => {
+                let mut items = vec![
+                    Item::new(
+                        "Sort by page",
+                        Action::SetReadingControls(ReadingControls {
+                            bookmark_sort_by_date: false,
+                            ..self.controls
+                        }),
+                    )
+                    .detail(if self.controls.bookmark_sort_by_date {
+                        "Document reading order"
+                    } else {
+                        "Selected"
+                    }),
+                    Item::new(
+                        "Sort by date",
+                        Action::SetReadingControls(ReadingControls {
+                            bookmark_sort_by_date: true,
+                            ..self.controls
+                        }),
+                    )
+                    .detail(if self.controls.bookmark_sort_by_date {
+                        "Selected"
+                    } else {
+                        "Newest and oldest by saved time"
+                    }),
+                    Item::new(
+                        "Reverse sorting",
+                        Action::SetReadingControls(ReadingControls {
+                            bookmark_reverse: !self.controls.bookmark_reverse,
+                            ..self.controls
+                        }),
+                    )
+                    .detail(if self.controls.bookmark_reverse {
+                        "On"
+                    } else {
+                        "Off"
+                    }),
+                ];
+                items.push(
+                    Item::new(
+                        "Show in highlight rows",
+                        Action::Show(Screen::AnnotationListSettings),
+                    )
+                    .detail(self.controls.annotation_list_text.label()),
+                );
+                return items;
+            }
+            Screen::AnnotationListSettings => {
+                return crate::reading_controls::AnnotationListText::ALL
+                    .into_iter()
+                    .map(|display| {
+                        let item = Item::new(
+                            display.label(),
+                            Action::SetReadingControls(ReadingControls {
+                                annotation_list_text: display,
+                                ..self.controls
+                            }),
+                        );
+                        if display == self.controls.annotation_list_text {
+                            item.detail("Selected")
+                        } else {
+                            item
+                        }
+                    })
+                    .collect();
+            }
             Screen::SelectionPosition => {
                 return crate::reading_controls::SelectionPopupPosition::ALL
                     .into_iter()
@@ -1659,6 +1748,7 @@ impl Reader {
             }
             Screen::LongPressSettings => {
                 let dictionary = self.controls.dictionary_on_single_word.unwrap_or(true);
+                let corner_scroll = self.controls.selection_corner_scroll_enabled();
                 let mut items = vec![
                     Item::new(
                         "Dictionary on a single word",
@@ -1672,6 +1762,14 @@ impl Reader {
                     } else {
                         "Off · uses the default action"
                     }),
+                    Item::new(
+                        "Auto-scroll when selection reaches a corner",
+                        Action::SetReadingControls(ReadingControls {
+                            selection_corner_scroll: Some(!corner_scroll),
+                            ..self.controls
+                        }),
+                    )
+                    .detail(if corner_scroll { "On" } else { "Off" }),
                     Item::new(
                         "Highlight style and color prompt",
                         Action::Show(Screen::HighlightPromptSettings),
@@ -2120,32 +2218,7 @@ impl Reader {
         if let Some(fixed) = &self.fixed {
             return match self.screen {
                 Screen::FixedBookmarks => self.bookmark_items(fixed.id),
-                Screen::Highlights => {
-                    let state = self.library.state(fixed.id);
-                    let mut items = state.map_or_else(Vec::new, |state| {
-                        annotation_items(
-                            state
-                                .pdf_highlights
-                                .iter()
-                                .map(|mark| (mark.text.as_str(), mark.note.as_deref())),
-                        )
-                    });
-                    if fixed.entry.format == DocumentFormat::Pdf
-                        && !fixed.reading.is_encrypted_pdf()
-                    {
-                        items.push(Item::new(
-                            "Read embedded annotations",
-                            Action::PreviewPdfAnnotations,
-                        ));
-                        if state.is_some_and(|state| !state.pdf_highlights.is_empty()) {
-                            items.push(
-                                Item::new("Export annotated PDF", Action::ExportAnnotatedPdf)
-                                    .detail("Saves a separate PDF in Reader exports"),
-                            );
-                        }
-                    }
-                    items
-                }
+                Screen::Highlights => self.bookmark_items(fixed.id),
                 Screen::FixedContents => std::iter::once(Item::new(
                     "Custom contents",
                     Action::Show(Screen::CustomContents),
@@ -2326,51 +2399,213 @@ impl Reader {
                         .detail("Remove this profile")
                 })
                 .collect(),
-            Screen::Highlights => {
-                let mut items = vec![
-                    Item::new("Import KOReader annotations", Action::PreviewKoReader)
-                        .detail("Copy a JSON export to reader/data/koreader-import.json"),
-                ];
-                if active.entry.format == DocumentFormat::Epub {
-                    items.insert(
-                        0,
-                        Item::new(
-                            "Import marks saved beside this book",
-                            Action::PreviewNearbyMarks,
-                        )
-                        .detail("Preview KOReader bookmarks, highlights and notes"),
-                    );
-                }
-                if let Some(state) = self.library.state(active.id) {
-                    items.extend(annotation_items(
-                        state
-                            .highlights
-                            .iter()
-                            .map(|mark| (mark.selection.text.as_str(), mark.note.as_deref())),
-                    ));
-                }
-                items
-            }
+            Screen::Highlights => self.bookmark_items(active.id),
             _ => Vec::new(),
         }
     }
 
     fn bookmark_items(&self, id: u64) -> Vec<Item> {
-        let Some(state) = self.library.state(id) else {
-            return Vec::new();
-        };
-        let mut items: Vec<_> = state
-            .bookmarks
-            .iter()
-            .enumerate()
-            .map(|(index, bookmark)| Item::new(&bookmark.label, Action::Bookmark(index)))
-            .collect();
-        if !items.is_empty() || !state.highlights.is_empty() || !state.pdf_highlights.is_empty() {
+        let state = self.library.state(id);
+        let active = self.active.as_ref().filter(|book| book.id == id);
+        let fixed = self.fixed.as_ref().filter(|book| book.id == id);
+        let mut chapter_layouts = HashMap::new();
+        let mut rows = Vec::new();
+        let has_text_annotations = state
+            .is_some_and(|state| !state.highlights.is_empty() || !state.pdf_highlights.is_empty());
+
+        if let Some(state) = state {
+            for (index, bookmark) in state.bookmarks.iter().enumerate() {
+                let location = if let Some(active) = active {
+                    reflow_mark_location(
+                        active,
+                        bookmark.position.chapter,
+                        bookmark.position.page,
+                        bookmark.position.anchor.as_ref(),
+                        &mut chapter_layouts,
+                    )
+                } else {
+                    (0, bookmark.position.page, 0, 0)
+                };
+                let caption = active.map_or_else(
+                    || format!("Page {}", location.1 + 1),
+                    |active| reflow_location_label(active, location),
+                );
+                let detail = saved_mark_detail(
+                    bookmark.created_at,
+                    format!("Page bookmark · {caption}"),
+                    self.controls.bookmark_sort_by_date,
+                );
+                rows.push(SavedMarkRow {
+                    created_at: bookmark.created_at.unwrap_or_default(),
+                    location,
+                    kind: 0,
+                    storage_index: index,
+                    item: Item::new(&bookmark.label, Action::Bookmark(index)).detail(detail),
+                });
+            }
+
+            if let Some(active) = active {
+                for (index, mark) in state.highlights.iter().enumerate() {
+                    let location = reflow_mark_location(
+                        active,
+                        0,
+                        0,
+                        Some(&mark.selection.start),
+                        &mut chapter_layouts,
+                    );
+                    let caption = reflow_location_label(active, location);
+                    let note = mark.note.as_deref().filter(|note| !note.trim().is_empty());
+                    let excerpt = bookmark_excerpt(&mark.selection.text);
+                    let title = match self.controls.annotation_list_text {
+                        AnnotationListText::HighlightedText
+                        | AnnotationListText::HighlightAndNote => excerpt,
+                        AnnotationListText::NoteIfSet => note.unwrap_or(&excerpt).to_owned(),
+                    };
+                    let detail = if self.controls.annotation_list_text
+                        == AnnotationListText::HighlightAndNote
+                        && let Some(note) = note
+                    {
+                        format!("Note: {note}")
+                    } else {
+                        if note.is_some() {
+                            "Note".into()
+                        } else {
+                            "Highlight".into()
+                        }
+                    };
+                    let detail = saved_mark_detail(
+                        mark.created_at,
+                        format!("{detail} · {caption}"),
+                        self.controls.bookmark_sort_by_date,
+                    );
+                    rows.push(SavedMarkRow {
+                        created_at: mark.created_at.unwrap_or_default(),
+                        location,
+                        kind: 1,
+                        storage_index: index,
+                        item: Item::new(title, Action::Highlight(index)).detail(detail),
+                    });
+                }
+            }
+
+            if fixed.is_some() {
+                for (index, mark) in state.pdf_highlights.iter().enumerate() {
+                    let location = (0, mark.page, 0, 0);
+                    let caption = format!("Page {}", mark.page + 1);
+                    let note = mark.note.as_deref().filter(|note| !note.trim().is_empty());
+                    let excerpt = bookmark_excerpt(&mark.text);
+                    let title = match self.controls.annotation_list_text {
+                        AnnotationListText::HighlightedText
+                        | AnnotationListText::HighlightAndNote => excerpt,
+                        AnnotationListText::NoteIfSet => note.unwrap_or(&excerpt).to_owned(),
+                    };
+                    let detail = if self.controls.annotation_list_text
+                        == AnnotationListText::HighlightAndNote
+                        && let Some(note) = note
+                    {
+                        format!("Note: {note}")
+                    } else {
+                        if note.is_some() {
+                            "Note".into()
+                        } else {
+                            "Highlight".into()
+                        }
+                    };
+                    let detail = saved_mark_detail(
+                        mark.created_at,
+                        format!("{detail} · {caption}"),
+                        self.controls.bookmark_sort_by_date,
+                    );
+                    rows.push(SavedMarkRow {
+                        created_at: mark.created_at.unwrap_or_default(),
+                        location,
+                        kind: 2,
+                        storage_index: index,
+                        item: Item::new(title, Action::PdfHighlight(index)).detail(detail),
+                    });
+                }
+            }
+        }
+
+        if self.controls.bookmark_sort_by_date {
+            rows.sort_by_key(|row| {
+                (
+                    row.created_at,
+                    row.location.0,
+                    row.location.1,
+                    row.location.2,
+                    row.location.3,
+                    row.kind,
+                    row.storage_index,
+                )
+            });
+        } else {
+            rows.sort_by_key(|row| {
+                (
+                    row.location.0,
+                    row.location.1,
+                    row.location.2,
+                    row.location.3,
+                    row.created_at,
+                    row.kind,
+                    row.storage_index,
+                )
+            });
+        }
+        if self.controls.bookmark_reverse {
+            rows.reverse();
+        }
+
+        let has_marks = !rows.is_empty();
+        let mut items = Vec::new();
+        if has_marks {
             items.insert(
                 0,
                 Item::new("Find bookmarks", Action::Show(Screen::BookmarkFind)),
             );
         }
+        if active.is_some_and(|book| book.entry.format == DocumentFormat::Epub) {
+            items.push(
+                Item::new(
+                    "Import marks saved beside this book",
+                    Action::PreviewNearbyMarks,
+                )
+                .detail("Preview KOReader bookmarks, highlights and notes"),
+            );
+        }
+        if active.is_some_and(|book| {
+            matches!(
+                book.entry.format,
+                DocumentFormat::Epub | DocumentFormat::Pdf
+            )
+        }) || fixed.is_some_and(|book| book.entry.format == DocumentFormat::Pdf)
+        {
+            items.push(
+                Item::new("Import KOReader annotations", Action::PreviewKoReader)
+                    .detail("Copy a JSON export to reader/data/koreader-import.json"),
+            );
+        }
+        if has_text_annotations {
+            items.push(Item::new(
+                "Export annotations",
+                Action::Show(Screen::ExportAnnotations),
+            ));
+        }
+        if fixed.is_some_and(|book| {
+            book.entry.format == DocumentFormat::Pdf && !book.reading.is_encrypted_pdf()
+        }) {
+            items.push(Item::new(
+                "Read embedded annotations",
+                Action::PreviewPdfAnnotations,
+            ));
+            if state.is_some_and(|state| !state.pdf_highlights.is_empty()) {
+                items.push(
+                    Item::new("Export annotated PDF", Action::ExportAnnotatedPdf)
+                        .detail("Saves a separate PDF in Reader exports"),
+                );
+            }
+        }
+        items.extend(rows.into_iter().map(|row| row.item));
         items
     }
 
@@ -2780,6 +3015,7 @@ impl Reader {
                     }
                 }
                 self.controls = controls;
+                self.update_footer_clock(Instant::now());
             }
             Action::BindGesture(gesture, binding) => {
                 self.gestures.set(gesture, binding)?;
@@ -3096,6 +3332,7 @@ impl Reader {
                 preferences.margin_top = settings.margin_top;
                 preferences.margin_bottom = settings.margin_bottom;
                 preferences.line_height = Some(settings.line_height);
+                preferences.line_spacing_percent = settings.line_spacing_percent;
                 preferences.word_spacing = settings.word_spacing;
                 preferences.percent_word_spacing = settings.percent_word_spacing;
                 preferences.word_expansion = Some(settings.word_expansion);
@@ -3109,13 +3346,18 @@ impl Reader {
                 preferences.font_gamma_index = Some(settings.font_gamma_index);
                 preferences.font_weight_delta = Some(settings.font_weight_delta);
                 preferences.publisher_styles = Some(settings.publisher_styles);
+                preferences.base_stylesheet = Some(settings.base_stylesheet);
                 preferences.font_kerning = Some(settings.font_kerning);
+                preferences.font_kerning_mode = Some(settings.effective_font_kerning_mode());
                 preferences.font_hinting = settings.font_hinting;
                 preferences.smooth_images = Some(settings.smooth_images);
                 preferences.invert_night_images = settings.invert_night_images;
                 preferences.override_fonts = settings.override_fonts;
                 preferences.disable_soft_hyphens = settings.disable_soft_hyphens;
                 preferences.automatic_hyphenation = Some(settings.automatic_hyphenation);
+                preferences.page_overlap_enabled = Some(settings.page_overlap_enabled);
+                preferences.page_overlap_lines = Some(settings.page_overlap_lines.clamp(1, 10));
+                preferences.page_overlap_style = Some(settings.page_overlap_style);
                 self.show(Screen::Book);
                 self.record_position();
             }
@@ -4120,6 +4362,9 @@ impl Reader {
         if let Some(change) = self.content_dpi_input(input) {
             return change;
         }
+        if let Some(change) = self.line_spacing_input(input) {
+            return change;
+        }
         if let Some(change) = self.word_spacing_input(input) {
             return change;
         }
@@ -4751,7 +4996,7 @@ impl Reader {
             && let (Some(fixed), Some(selection)) = (&self.fixed, &mut self.pdf_selection)
         {
             self.notice = (!fixed.reading.extend_selection(selection, x, y))
-                .then(|| "Hold a word on this page to extend the selection".into());
+                .then(|| "A readable text layer is needed on each selected page".into());
             return Change::Partial;
         }
         if let Input::LongTap(x, y) = input
@@ -4809,7 +5054,10 @@ impl Reader {
                     return change;
                 }
                 if let (Some(fixed), Some(selection)) = (&self.fixed, &mut self.pdf_selection) {
-                    fixed.reading.extend_selection(selection, x, y);
+                    if !fixed.reading.extend_selection(selection, x, y) {
+                        self.notice =
+                            Some("A readable text layer is needed on each selected page".into());
+                    }
                 }
                 return Change::Partial;
             }
@@ -4883,7 +5131,9 @@ impl Reader {
                 if changed || continuous {
                     self.nearby.clear();
                     self.search_result = None;
-                    self.pdf_selection = None;
+                    if !self.selection_mode {
+                        self.pdf_selection = None;
+                    }
                     self.pdf_result_regions.clear();
                 }
                 self.record_position();
@@ -5704,6 +5954,18 @@ impl Reader {
     }
 
     fn save_highlight(&mut self, note: Option<String>) -> Result<()> {
+        self.save_highlight_with_navigation(note, true)
+    }
+
+    fn save_highlight_in_place(&mut self, note: Option<String>) -> Result<()> {
+        self.save_highlight_with_navigation(note, false)
+    }
+
+    fn save_highlight_with_navigation(
+        &mut self,
+        note: Option<String>,
+        navigate_to_highlights: bool,
+    ) -> Result<()> {
         let active = self.active.as_ref().ok_or("No open book")?;
         let selection = self.selection.as_ref().ok_or("Select some text first")?;
         if selection.text.len() > 8192 {
@@ -5748,7 +6010,9 @@ impl Reader {
         self.selection = None;
         self.selection_mode = false;
         self.mark_book_changed();
-        self.show(Screen::Book);
+        if navigate_to_highlights {
+            self.show(Screen::Book);
+        }
         self.notice = Some("Highlight saved".into());
         Ok(())
     }
@@ -5897,6 +6161,18 @@ impl Reader {
     }
 
     fn save_pdf_highlight(&mut self, note: Option<String>) -> Result<()> {
+        self.save_pdf_highlight_with_navigation(note, true)
+    }
+
+    fn save_pdf_highlight_in_place(&mut self, note: Option<String>) -> Result<()> {
+        self.save_pdf_highlight_with_navigation(note, false)
+    }
+
+    fn save_pdf_highlight_with_navigation(
+        &mut self,
+        note: Option<String>,
+        navigate_to_highlights: bool,
+    ) -> Result<()> {
         let fixed = self.fixed.as_ref().ok_or("No open PDF")?;
         let selection = self
             .pdf_selection
@@ -5905,45 +6181,46 @@ impl Reader {
         if selection.text().len() > 8192 {
             return Err("Select a shorter passage".into());
         }
-        let bounds: Vec<_> = selection.bounds().collect();
         let note = note
             .map(|note| note.trim().to_owned())
             .filter(|note| !note.is_empty());
         let chosen_color = self.pending_highlight_color;
         let chosen_style = self.pending_highlight_style;
+        let mut candidate = selection.highlight().clone();
+        candidate.color = chosen_color.unwrap_or_else(|| {
+            self.library
+                .state(fixed.id)
+                .and_then(|state| state.highlight_color)
+                .unwrap_or(self.controls.highlight_color)
+        });
+        candidate.style = chosen_style.unwrap_or_else(|| {
+            self.library
+                .state(fixed.id)
+                .and_then(|state| state.highlight_style)
+                .unwrap_or(self.controls.highlight_style)
+        });
+        candidate.created_at = crate::mark_time::now();
+        candidate.note = note.clone();
         let state = self
             .library
             .remember(&fixed.entry, fixed.id, &fixed.entry.title);
         if let Some(mark) = state.pdf_highlights.iter_mut().find(|mark| {
-            mark.continuation.is_empty() && mark.page == selection.page() && mark.bounds == bounds
+            mark.page == candidate.page
+                && mark.bounds == candidate.bounds
+                && mark.continuation == candidate.continuation
         }) {
             if note.is_some() {
                 mark.note = note;
             }
         } else {
-            state.add_pdf_highlight(PdfHighlight {
-                color: chosen_color.unwrap_or_else(|| {
-                    state
-                        .highlight_color
-                        .unwrap_or(self.controls.highlight_color)
-                }),
-                created_at: crate::mark_time::now(),
-                style: chosen_style.unwrap_or_else(|| {
-                    state
-                        .highlight_style
-                        .unwrap_or(self.controls.highlight_style)
-                }),
-                continuation: Vec::new(),
-                page: selection.page(),
-                bounds,
-                text: selection.text().into(),
-                note,
-            })?;
+            state.add_pdf_highlight(candidate)?;
         }
         self.pdf_selection = None;
         self.selection_mode = false;
         self.mark_book_changed();
-        self.show(Screen::Fixed);
+        if navigate_to_highlights {
+            self.show(Screen::Fixed);
+        }
         self.notice = Some("Highlight saved".into());
         Ok(())
     }
@@ -5951,6 +6228,10 @@ impl Reader {
 
 impl Reader {
     fn draw_content(&self, canvas: &mut Canvas) {
+        if self.dictionary_editor_active() {
+            self.draw_definition_popup(canvas);
+            return;
+        }
         if self.draw_style_editor(canvas) {
             self.read_alarm.draw(canvas, false);
             return;
@@ -6110,7 +6391,7 @@ impl Reader {
                 .pdf_selection
                 .as_ref()
                 .into_iter()
-                .flat_map(|selection| selection.bounds().map(|bounds| (selection.page(), bounds)))
+                .flat_map(|selection| selection.page_bounds())
                 .collect();
             let search_caption = self.search_caption();
             let status_caption = self.status_caption();
@@ -6375,6 +6656,9 @@ impl Reader {
                 Screen::NumberingValue(NumberField::LogicalFont(_)) => {
                     ("Logical font size: 12 to 255", "Set")
                 }
+                Screen::NumberingValue(NumberField::LineSpacing(_)) => {
+                    ("Line spacing: 50 to 200%", "Set")
+                }
                 Screen::NumberingValue(NumberField::WordSpacing(draft)) => (
                     match draft.field {
                         word_spacing::Field::Scaling => "Scaling: 10 to 500%",
@@ -6424,8 +6708,9 @@ impl Reader {
             canvas.keyboard(self.editor.layer, action, None);
             self.draw_content_dpi(canvas);
             self.draw_logical_font(canvas);
+            self.draw_line_spacing(canvas);
             self.draw_word_spacing(canvas);
-            if self.can_paste_address() {
+            if self.can_paste_text() {
                 external_link::draw_paste(canvas);
             }
             if self.screen == Screen::BookmarkFind {
@@ -6523,8 +6808,9 @@ impl Reader {
         }
         if rows.is_empty() {
             let empty = match self.screen {
-                Screen::Bookmarks | Screen::FixedBookmarks => "No bookmarks in this book",
-                Screen::Highlights => "No highlights or notes in this book",
+                Screen::Bookmarks | Screen::FixedBookmarks | Screen::Highlights => {
+                    "No saved marks in this book"
+                }
                 Screen::BookmarkMatches => "No matching bookmarks, highlights, or notes",
                 Screen::BookmarkBrowser(bookmark_browser::Page::Results) => {
                     "No matching saved marks"
@@ -6733,6 +7019,21 @@ impl Reader {
     }
 
     fn touch_corner_direction(&self, x: f32, y: f32) -> Option<i16> {
+        if !self.controls.selection_corner_scroll_enabled() {
+            return None;
+        }
+        match self.screen {
+            Screen::Book
+                if !self
+                    .active
+                    .as_ref()
+                    .is_some_and(|active| active.reading.config.scroll) =>
+            {
+                return None;
+            }
+            Screen::Fixed => {}
+            _ => return None,
+        }
         let width = WIDTH as f32;
         let height = HEIGHT as f32;
         let left = x <= width * 0.12;
@@ -7020,6 +7321,7 @@ impl App for Reader {
             if input == Input::Wake {
                 self.reset_footer_initial_position();
             }
+            self.update_footer_clock(Instant::now());
             return if input == Input::Wake {
                 self.poll_read_alarm(Instant::now(), true)
             } else {
@@ -7046,10 +7348,10 @@ impl App for Reader {
         if self.link_popup.is_some() {
             return self.link_address_input(input);
         }
-        if self.can_paste_address()
+        if self.can_paste_text()
             && matches!(input, Input::Tap(x, y) if external_link::PASTE.contains(x,y))
         {
-            return self.paste_address();
+            return self.paste_text();
         }
         if self.touch_locked {
             match input {
@@ -7278,10 +7580,12 @@ impl App for Reader {
                     }
                     Screen::Dictionaries => self.show(self.dictionary_origin),
                     Screen::FooterSettings
+                    | Screen::BookmarkListSettings
                     | Screen::EndActionSettings
                     | Screen::MetadataSaveSettings
                     | Screen::SelectionPosition
                     | Screen::LongPressSettings => self.show(Screen::ReadingControls),
+                    Screen::AnnotationListSettings => self.show(Screen::BookmarkListSettings),
                     Screen::VeryLongPressSettings => self.show(Screen::LongPressSettings),
                     Screen::HighlightPromptSettings => self.show(Screen::LongPressSettings),
                     Screen::DocumentDefaults => self.show(Screen::ReadingControls),
@@ -7370,6 +7674,26 @@ impl App for Reader {
                     Err(error) => self.report(error),
                 };
             }
+            Input::LongTap(x, y)
+                if matches!(
+                    self.screen,
+                    Screen::Bookmarks | Screen::FixedBookmarks | Screen::Highlights
+                ) =>
+            {
+                let Some(index) = list_item_at(self.list_page, count, x, y) else {
+                    return Change::None;
+                };
+                let action = match items.swap_remove(index % ROWS_PER_PAGE).action {
+                    Action::Highlight(index) | Action::PdfHighlight(index) => {
+                        Action::ManageHighlight(index)
+                    }
+                    _ => return Change::None,
+                };
+                return match self.activate(action) {
+                    Ok(()) => Change::Partial,
+                    Err(error) => self.report(error),
+                };
+            }
             Input::LongTap(x, y) if self.screen == Screen::BookList => {
                 let Some(index) = list_item_at(self.list_page, count, x, y) else {
                     return Change::None;
@@ -7454,6 +7778,7 @@ impl App for Reader {
             .chain(self.text_flow.as_ref().and_then(TextFlow::deadline))
             .chain(self.stats.deadline())
             .chain(self.reading_history.deadline())
+            .chain(self.footer_refresh_at)
             .chain(
                 self.auto_turn
                     .deadline()
@@ -7468,6 +7793,13 @@ impl App for Reader {
     }
 
     fn tick(&mut self, now: Instant) -> Change {
+        if self
+            .footer_refresh_at
+            .is_some_and(|deadline| deadline <= now)
+        {
+            self.update_footer_clock(now);
+            return Change::Partial;
+        }
         if self.stats_awake {
             let alarm = self.poll_read_alarm(now, false);
             if alarm != Change::None {
@@ -7917,29 +8249,66 @@ fn draw_toolbar_button(canvas: &mut Canvas, rect: Rect, title: &str) {
     );
 }
 
-fn annotation_items<'a>(marks: impl Iterator<Item = (&'a str, Option<&'a str>)>) -> Vec<Item> {
-    let mut marks = marks.peekable();
-    if marks.peek().is_none() {
-        return Vec::new();
+fn reflow_mark_location(
+    active: &ActiveBook,
+    fallback_chapter: usize,
+    fallback_page: usize,
+    anchor: Option<&crate::Anchor>,
+    layouts: &mut HashMap<usize, Option<crate::Probe>>,
+) -> (usize, usize, usize, usize) {
+    let chapters = active.reading.probe.chapter_entries();
+    if chapters.is_empty() {
+        return (fallback_chapter, fallback_page, 0, 0);
     }
-    let mut items = vec![Item::new(
-        "Export annotations",
-        Action::Show(Screen::ExportAnnotations),
-    )];
-    items.extend(marks.enumerate().map(|(index, (text, note))| {
-        let snippet = text
-            .split_whitespace()
-            .take(22)
-            .collect::<Vec<_>>()
-            .join(" ");
-        let item = Item::new(snippet, Action::ManageHighlight(index));
-        if let Some(note) = note {
-            item.detail(note)
-        } else {
-            item
-        }
-    }));
-    items
+    let chapter = anchor
+        .and_then(|anchor| active.reading.probe.chapter_index(&anchor.chapter))
+        .unwrap_or(fallback_chapter)
+        .min(chapters.len() - 1);
+    let Some(probe) = layouts
+        .entry(chapter)
+        .or_insert_with(|| active.reading.config.chapter(chapter).ok())
+        .as_ref()
+    else {
+        return (chapter, fallback_page, 0, 0);
+    };
+    let resolved_anchor = anchor
+        .filter(|anchor| anchor.chapter == chapters[chapter].href)
+        .cloned()
+        .or_else(|| probe.page_anchor(fallback_page));
+    let page = resolved_anchor
+        .as_ref()
+        .and_then(|anchor| probe.page_for(anchor))
+        .unwrap_or(fallback_page.min(probe.page_count().saturating_sub(1)));
+    resolved_anchor.map_or((chapter, page, 0, 0), |anchor| {
+        (chapter, page, anchor.block, anchor.offset)
+    })
+}
+
+fn reflow_location_label(active: &ActiveBook, location: (usize, usize, usize, usize)) -> String {
+    let chapter = active
+        .reading
+        .probe
+        .chapter_entries()
+        .get(location.0)
+        .map_or("Book".to_owned(), |chapter| chapter.label.clone());
+    format!("{chapter} · Page {}", location.1 + 1)
+}
+
+fn bookmark_excerpt(text: &str) -> String {
+    let mut words = text.split_whitespace();
+    let excerpt = words.by_ref().take(22).collect::<Vec<_>>().join(" ");
+    if words.next().is_some() {
+        format!("{excerpt}…")
+    } else {
+        excerpt
+    }
+}
+
+fn saved_mark_detail(created_at: Option<i64>, detail: String, date_first: bool) -> String {
+    if date_first && let Some(date) = created_at.and_then(crate::mark_time::local_datetime) {
+        return format!("{date} · {detail}");
+    }
+    detail
 }
 
 fn device_settings() -> Settings {
@@ -7976,7 +8345,7 @@ fn text_size_items(settings: Settings, owner: u64) -> [Item; 3] {
 
 fn text_items(settings: Settings, scroll: bool, owner: u64) -> Vec<Item> {
     let margin = format!("Current margin {} px", settings.margin);
-    let spacing = format!("Current spacing {:.2}×", settings.line_height);
+    let spacing = settings.effective_line_spacing_percent();
     let (alignment, next_alignment) = match settings.alignment {
         TextAlignment::Publisher => ("Publisher", TextAlignment::Start),
         TextAlignment::Start => ("Start", TextAlignment::Center),
@@ -8023,18 +8392,12 @@ fn text_items(settings: Settings, scroll: bool, owner: u64) -> Vec<Item> {
         ),
         Item::new(
             "More line spacing",
-            Action::Text(Settings {
-                line_height: (settings.line_height + 0.1).min(2.2),
-                ..settings
-            }),
+            Action::Text(settings.with_line_spacing_percent((spacing + 5).min(200))),
         )
-        .detail(&spacing),
+        .detail(format!("Current spacing {spacing}%")),
         Item::new(
             "Less line spacing",
-            Action::Text(Settings {
-                line_height: (settings.line_height - 0.1).max(1.0),
-                ..settings
-            }),
+            Action::Text(settings.with_line_spacing_percent(spacing.saturating_sub(5).max(50))),
         ),
         Item::new(
             "Text alignment",
@@ -9494,6 +9857,447 @@ mod tests {
         assert_eq!(
             reopened.library.state(active.id).unwrap().bookmarks.len(),
             1
+        );
+    }
+
+    #[test]
+    fn bookmark_list_uses_reading_order_and_keeps_original_targets() {
+        let fixture = Fixture::new();
+        let mut app = fixture.app();
+        app.open_path(&fixture.book).unwrap();
+        let (entry, id, title) = {
+            let active = app.active.as_ref().unwrap();
+            (active.entry.clone(), active.id, active.entry.title.clone())
+        };
+        let state = app.library.remember(&entry, id, &title);
+        state.bookmarks = vec![
+            Bookmark {
+                created_at: Some(10),
+                label: "Later chapter".into(),
+                position: ReadingPosition {
+                    chapter: 1,
+                    page: 0,
+                    anchor: None,
+                },
+            },
+            Bookmark {
+                created_at: Some(20),
+                label: "Earlier chapter".into(),
+                position: ReadingPosition {
+                    chapter: 0,
+                    page: 4,
+                    anchor: None,
+                },
+            },
+        ];
+
+        app.show(Screen::Bookmarks);
+        let items = app.items();
+        let earlier = items
+            .iter()
+            .find(|item| item.title == "Earlier chapter")
+            .unwrap();
+        let later = items
+            .iter()
+            .find(|item| item.title == "Later chapter")
+            .unwrap();
+        assert!(matches!(earlier.action, Action::Bookmark(1)));
+        assert!(matches!(later.action, Action::Bookmark(0)));
+        let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+        capture_test_screen(
+            &app,
+            std::slice::from_ref(&font),
+            "READER_BOOKMARK_ORDER_SCREENSHOT",
+            false,
+        );
+    }
+
+    #[test]
+    fn bookmark_settings_select_date_and_reverse_order_and_persist() {
+        let fixture = Fixture::new();
+        let mut app = fixture.app();
+        app.open_path(&fixture.book).unwrap();
+        let (entry, id, title) = {
+            let active = app.active.as_ref().unwrap();
+            (active.entry.clone(), active.id, active.entry.title.clone())
+        };
+        let state = app.library.remember(&entry, id, &title);
+        state.bookmarks = vec![
+            Bookmark {
+                created_at: Some(10),
+                label: "Later chapter".into(),
+                position: ReadingPosition {
+                    chapter: 1,
+                    page: 0,
+                    anchor: None,
+                },
+            },
+            Bookmark {
+                created_at: Some(20),
+                label: "Earlier chapter".into(),
+                position: ReadingPosition {
+                    chapter: 0,
+                    page: 4,
+                    anchor: None,
+                },
+            },
+        ];
+
+        app.show(Screen::ReadingControls);
+        let bookmark_list = app
+            .items()
+            .into_iter()
+            .find(|item| item.title == "Bookmarks and notes")
+            .unwrap();
+        app.activate(bookmark_list.action).unwrap();
+        assert_eq!(app.screen, Screen::BookmarkListSettings);
+        let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+        capture_test_screen(
+            &app,
+            std::slice::from_ref(&font),
+            "READER_BOOKMARK_SETTINGS_SCREENSHOT",
+            false,
+        );
+        assert!(
+            app.items()
+                .iter()
+                .any(|item| item.title == "Sort by page"
+                    && item.detail.as_deref() == Some("Selected"))
+        );
+
+        let date = app
+            .items()
+            .into_iter()
+            .find(|item| item.title == "Sort by date")
+            .unwrap();
+        app.activate(date.action).unwrap();
+        assert!(app.controls.bookmark_sort_by_date);
+        assert!(
+            crate::reading_controls::ReadingControls::load(&app.controls_path, false)
+                .bookmark_sort_by_date
+        );
+        app.show(Screen::Bookmarks);
+        let items = app.items();
+        let titles: Vec<_> = items
+            .iter()
+            .filter(|item| matches!(item.action, Action::Bookmark(_)))
+            .map(|item| item.title.as_str())
+            .collect();
+        assert_eq!(titles, ["Later chapter", "Earlier chapter"]);
+
+        app.show(Screen::BookmarkListSettings);
+        let reverse = app
+            .items()
+            .into_iter()
+            .find(|item| item.title == "Reverse sorting")
+            .unwrap();
+        app.activate(reverse.action).unwrap();
+        assert!(app.controls.bookmark_reverse);
+        assert!(
+            crate::reading_controls::ReadingControls::load(&app.controls_path, false)
+                .bookmark_reverse
+        );
+        app.show(Screen::Bookmarks);
+        let items = app.items();
+        let titles: Vec<_> = items
+            .iter()
+            .filter(|item| matches!(item.action, Action::Bookmark(_)))
+            .map(|item| item.title.as_str())
+            .collect();
+        assert_eq!(titles, ["Earlier chapter", "Later chapter"]);
+    }
+
+    #[test]
+    fn saved_marks_mix_bookmarks_and_highlights_without_changing_targets() {
+        let fixture = Fixture::new();
+        let mut app = fixture.app();
+        app.open_path(&fixture.book).unwrap();
+
+        {
+            let reading = &mut app.active.as_mut().unwrap().reading;
+            reading.jump(0, Some("lantern")).unwrap();
+            let start = reading.probe.fragment("lantern").unwrap();
+            let mut end = start.clone();
+            end.offset += "The copper lantern".len();
+            app.selection = reading.probe.select_range(&start, &end);
+        }
+        app.save_highlight(Some("First chapter note".into()))
+            .unwrap();
+        {
+            let reading = &mut app.active.as_mut().unwrap().reading;
+            reading.jump(1, Some("door")).unwrap();
+            let start = reading.probe.fragment("door").unwrap();
+            let mut end = start.clone();
+            end.offset += "At dusk the door".len();
+            app.selection = reading.probe.select_range(&start, &end);
+        }
+        app.save_highlight(Some("Second chapter note".into()))
+            .unwrap();
+
+        let active = app.active.as_ref().unwrap();
+        let state = app.library.state_mut(active.id).unwrap();
+        state.bookmarks.push(Bookmark {
+            created_at: Some(1_750_000_001),
+            label: "Saved page".into(),
+            position: ReadingPosition {
+                chapter: 0,
+                page: 0,
+                anchor: None,
+            },
+        });
+        state.highlights[0].created_at = Some(1_750_000_002);
+        state.highlights[1].created_at = Some(1_750_000_003);
+        app.controls.bookmark_sort_by_date = true;
+
+        app.show(Screen::Highlights);
+        let fonts = simulation_fonts();
+        capture_test_screen(&app, &fonts, "READER_SAVED_MARKS_SCREENSHOT", false);
+        let marks: Vec<_> = app
+            .items()
+            .into_iter()
+            .filter(|item| matches!(item.action, Action::Bookmark(_) | Action::Highlight(_)))
+            .collect();
+        assert_eq!(
+            marks
+                .iter()
+                .map(|item| item.title.as_str())
+                .collect::<Vec<_>>(),
+            ["Saved page", "First chapter note", "Second chapter note"]
+        );
+        assert!(matches!(marks[0].action, Action::Bookmark(0)));
+        assert!(matches!(marks[1].action, Action::Highlight(0)));
+        assert!(matches!(marks[2].action, Action::Highlight(1)));
+        let saved = crate::mark_time::local_datetime(1_750_000_002).unwrap();
+        assert_eq!(
+            marks[1].detail.as_deref(),
+            Some(format!("{saved} · Note · Reading the Shore · Page 1").as_str())
+        );
+
+        app.controls.bookmark_sort_by_date = false;
+        let page_order: Vec<_> = app
+            .items()
+            .into_iter()
+            .filter(|item| matches!(item.action, Action::Bookmark(_) | Action::Highlight(_)))
+            .map(|item| item.title)
+            .collect();
+        assert_eq!(
+            page_order,
+            ["Saved page", "First chapter note", "Second chapter note"]
+        );
+        app.controls.bookmark_reverse = true;
+        let reverse_order: Vec<_> = app
+            .items()
+            .into_iter()
+            .filter(|item| matches!(item.action, Action::Bookmark(_) | Action::Highlight(_)))
+            .map(|item| item.title)
+            .collect();
+        assert_eq!(
+            reverse_order,
+            ["Second chapter note", "First chapter note", "Saved page"]
+        );
+        app.controls.bookmark_sort_by_date = true;
+        app.controls.bookmark_reverse = false;
+
+        let second_mark = app
+            .items()
+            .iter()
+            .position(|item| matches!(item.action, Action::Highlight(1)))
+            .unwrap();
+        let y = LIST_Y + (second_mark as i32 * ROW_HEIGHT) + ROW_HEIGHT / 2;
+        assert_eq!(
+            app.input(Input::Tap(LIST_X as f32 + 30.0, y as f32)),
+            Change::Partial
+        );
+        assert_eq!(app.screen, Screen::Book);
+        assert_eq!(app.active.as_ref().unwrap().reading.chapter, 1);
+
+        app.show(Screen::Highlights);
+        let second_mark = app
+            .items()
+            .iter()
+            .position(|item| matches!(item.action, Action::Highlight(1)))
+            .unwrap();
+        let y = LIST_Y + (second_mark as i32 * ROW_HEIGHT) + ROW_HEIGHT / 2;
+        assert_eq!(
+            app.input(Input::LongTap(LIST_X as f32 + 30.0, y as f32)),
+            Change::Partial
+        );
+        assert_eq!(app.screen, Screen::Annotation);
+        assert_eq!(app.highlight_index, 1);
+        app.activate(Action::Highlight(1)).unwrap();
+        assert_eq!(app.active.as_ref().unwrap().reading.chapter, 1);
+    }
+
+    #[test]
+    fn saved_pdf_marks_share_bookmarks_order_and_keep_pdf_actions() {
+        let fixture = Fixture::new();
+        let pdf = fixture.root.join("Saved marks.pdf");
+        fs::write(&pdf, crate::fixed::tests::document()).unwrap();
+        let mut app = fixture.app();
+        app.open_path(&pdf).unwrap();
+        let (id, entry, title) = {
+            let fixed = app.fixed.as_ref().unwrap();
+            (fixed.id, fixed.entry.clone(), fixed.entry.title.clone())
+        };
+        let state = app.library.remember(&entry, id, &title);
+        state.bookmarks.push(Bookmark {
+            created_at: Some(1_750_000_001),
+            label: "Page bookmark".into(),
+            position: ReadingPosition {
+                chapter: 0,
+                page: 0,
+                anchor: None,
+            },
+        });
+        state
+            .add_pdf_highlight(PdfHighlight {
+                color: Default::default(),
+                created_at: Some(1_750_000_002),
+                style: Default::default(),
+                continuation: Vec::new(),
+                page: 0,
+                bounds: vec![PdfTextRect {
+                    x0: 0.1,
+                    y0: 0.1,
+                    x1: 0.2,
+                    y1: 0.2,
+                }],
+                text: "A saved PDF passage".into(),
+                note: Some("PDF note".into()),
+            })
+            .unwrap();
+        app.controls.bookmark_sort_by_date = true;
+
+        app.show(Screen::FixedBookmarks);
+        let marks: Vec<_> = app
+            .items()
+            .into_iter()
+            .filter(|item| matches!(item.action, Action::Bookmark(_) | Action::PdfHighlight(_)))
+            .collect();
+        assert_eq!(
+            marks
+                .iter()
+                .map(|item| item.title.as_str())
+                .collect::<Vec<_>>(),
+            ["Page bookmark", "PDF note"]
+        );
+        assert!(matches!(marks[0].action, Action::Bookmark(0)));
+        assert!(matches!(marks[1].action, Action::PdfHighlight(0)));
+        app.activate(marks.into_iter().nth(1).unwrap().action)
+            .unwrap();
+        assert_eq!(app.screen, Screen::Fixed);
+        app.activate(Action::PdfHighlight(0)).unwrap();
+        assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 0);
+
+        app.show(Screen::FixedBookmarks);
+        let highlight_row = app
+            .items()
+            .iter()
+            .position(|item| matches!(item.action, Action::PdfHighlight(0)))
+            .unwrap();
+        let y = LIST_Y + (highlight_row as i32 * ROW_HEIGHT) + ROW_HEIGHT / 2;
+        assert_eq!(
+            app.input(Input::LongTap(LIST_X as f32 + 30.0, y as f32)),
+            Change::Partial
+        );
+        assert_eq!(app.screen, Screen::Annotation);
+        app.activate(Action::PdfHighlight(0)).unwrap();
+        assert_eq!(app.screen, Screen::Fixed);
+    }
+
+    #[test]
+    fn annotation_list_text_modes_choose_excerpt_or_note_and_persist() {
+        let fixture = Fixture::new();
+        let mut app = fixture.app();
+        app.open_path(&fixture.book).unwrap();
+        let reading = &mut app.active.as_mut().unwrap().reading;
+        reading.jump(0, Some("lantern")).unwrap();
+        let start = reading.probe.fragment("lantern").unwrap();
+        let mut end = start.clone();
+        end.offset += "The copper lantern".len();
+        app.selection = reading.probe.select_range(&start, &end);
+        app.save_highlight(Some("Compare the Amber chart".into()))
+            .unwrap();
+
+        app.show(Screen::Highlights);
+        let default_row = app.items().pop().unwrap();
+        assert_eq!(default_row.title, "Compare the Amber chart");
+        assert_eq!(
+            default_row.detail.as_deref(),
+            Some("Note · Reading the Shore · Page 1")
+        );
+        let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+        capture_test_screen(
+            &app,
+            std::slice::from_ref(&font),
+            "READER_ANNOTATION_LIST_SCREENSHOT",
+            false,
+        );
+
+        app.show(Screen::ReadingControls);
+        let bookmark_settings = app
+            .items()
+            .into_iter()
+            .find(|item| item.title == "Bookmarks and notes")
+            .unwrap();
+        app.activate(bookmark_settings.action).unwrap();
+        let display_settings = app
+            .items()
+            .into_iter()
+            .find(|item| item.title == "Show in highlight rows")
+            .unwrap();
+        app.activate(display_settings.action).unwrap();
+        assert_eq!(app.screen, Screen::AnnotationListSettings);
+        let both = app
+            .items()
+            .into_iter()
+            .find(|item| item.title == "Highlighted text and note")
+            .unwrap();
+        app.activate(both.action).unwrap();
+        assert_eq!(
+            crate::reading_controls::ReadingControls::load(&app.controls_path, false)
+                .annotation_list_text,
+            AnnotationListText::HighlightAndNote
+        );
+
+        let (x, y) = rectangle_center(primitive_ui::back_button(WIDTH as i32));
+        app.input(Input::Tap(x, y));
+        assert_eq!(app.screen, Screen::BookmarkListSettings);
+        app.input(Input::Tap(x, y));
+        assert_eq!(app.screen, Screen::ReadingControls);
+        app.show(Screen::Highlights);
+        let both_row = app.items().pop().unwrap();
+        assert_eq!(both_row.title, "The copper lantern");
+        assert_eq!(
+            both_row.detail.as_deref(),
+            Some("Note: Compare the Amber chart · Reading the Shore · Page 1")
+        );
+
+        app.show(Screen::ReadingControls);
+        let bookmark_settings = app
+            .items()
+            .into_iter()
+            .find(|item| item.title == "Bookmarks and notes")
+            .unwrap();
+        app.activate(bookmark_settings.action).unwrap();
+        let display_settings = app
+            .items()
+            .into_iter()
+            .find(|item| item.title == "Show in highlight rows")
+            .unwrap();
+        app.activate(display_settings.action).unwrap();
+        let text_only = app
+            .items()
+            .into_iter()
+            .find(|item| item.title == "Highlighted text")
+            .unwrap();
+        app.activate(text_only.action).unwrap();
+        app.show(Screen::Highlights);
+        let text_row = app.items().pop().unwrap();
+        assert_eq!(text_row.title, "The copper lantern");
+        assert_eq!(
+            text_row.detail.as_deref(),
+            Some("Note · Reading the Shore · Page 1")
         );
     }
 
@@ -10965,6 +11769,14 @@ mod tests {
         ))
     }
 
+    fn tap_reading_config_choice(app: &mut Reader, row: &str, label: &str) -> Change {
+        let rect = app.reading_button_in_row(row, label);
+        app.input(Input::Tap(
+            (rect.x + rect.w / 2) as f32,
+            (rect.y + rect.h / 2) as f32,
+        ))
+    }
+
     #[test]
     fn reopens_the_last_menu_of_each_document_after_restart() {
         let fixture = Fixture::new();
@@ -11200,7 +12012,10 @@ mod tests {
         app.open_path(&fixture.book).unwrap();
         app.open_reading_edge(false, 500.0);
         tap_reading_control(&mut app, "Rendering");
-        assert_eq!(tap_reading_control(&mut app, "Fast"), Change::Partial);
+        assert_eq!(
+            tap_reading_config_choice(&mut app, "Image scaling", "Fast"),
+            Change::Partial
+        );
         assert!(
             !app.active
                 .as_ref()
@@ -12628,6 +13443,67 @@ mod tests {
     }
 
     #[test]
+    fn custom_footer_clock_uses_local_time_and_reschedules_only_when_enabled() {
+        use crate::reading_controls::{FooterItem, StatusBar};
+        use std::time::Duration;
+
+        let fixture = Fixture::new();
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/Silkscreen-Regular.ttf"),
+        ];
+        let mut app = fixture.app();
+        app.fonts = fonts.clone();
+        app.open_path(Path::new("Field Notes.epub")).unwrap();
+        app.activate(Action::SetReadingControls(ReadingControls {
+            status_bar: StatusBar::Custom,
+            footer_items: ReadingControls::default().footer_items | FooterItem::CurrentTime.bit(),
+            ..app.controls
+        }))
+        .unwrap();
+        let caption = app.status_caption().unwrap();
+        let time = caption
+            .split("Time ")
+            .nth(1)
+            .expect("the selected current-time item is shown");
+        assert!(time.as_bytes()[0].is_ascii_digit());
+        assert!(time.as_bytes()[1].is_ascii_digit());
+        assert_eq!(time.as_bytes()[2], b':');
+        assert!(time.as_bytes()[3].is_ascii_digit());
+        assert!(time.as_bytes()[4].is_ascii_digit());
+        capture_test_screen(&app, &fonts, "READER_CLOCK_FOOTER_SCREENSHOT", false);
+
+        let no_refresh = app.footer_items().into_iter().find(|item| {
+            item.title == "Auto refresh items" && item.detail.as_deref() == Some("Off")
+        });
+        assert!(no_refresh.is_some());
+        assert!(app.footer_refresh_at.is_none());
+        app.activate(Action::SetReadingControls(ReadingControls {
+            footer_auto_refresh: true,
+            ..app.controls
+        }))
+        .unwrap();
+        assert!(app.footer_refresh_at.is_some());
+        let first = app.footer_refresh_at.unwrap();
+        assert!(first.saturating_duration_since(Instant::now()) <= Duration::from_secs(61));
+        assert!(first > Instant::now());
+        assert_eq!(app.tick(first + Duration::from_millis(1)), Change::Partial);
+        assert!(app.footer_refresh_at.unwrap() > first);
+
+        app.input(Input::Sleep);
+        assert!(app.footer_refresh_at.is_none());
+        app.input(Input::Wake);
+        assert!(app.footer_refresh_at.is_some());
+
+        app.activate(Action::SetReadingControls(ReadingControls {
+            footer_items: app.controls.footer_items & !FooterItem::CurrentTime.bit(),
+            ..app.controls
+        }))
+        .unwrap();
+        assert!(app.footer_refresh_at.is_none());
+    }
+
+    #[test]
     fn pdf_footer_uses_outline_pages_and_leaves_zoom_and_done_available() {
         use crate::reading_controls::StatusBar;
 
@@ -12664,7 +13540,10 @@ mod tests {
         };
 
         let fixture = Fixture::new();
-        let fonts = simulation_fonts();
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/Silkscreen-Regular.ttf"),
+        ];
         let font_paths = fonts
             .iter()
             .map(|font| font.display().to_string())
@@ -13744,6 +14623,7 @@ mod tests {
         use selection_popup::SelectionAction;
 
         let fixture = Fixture::new();
+        let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
         let mut app = fixture.app();
         app.open_path(&fixture.book).unwrap();
         let reading = &app.active.as_ref().unwrap().reading;
@@ -13794,6 +14674,38 @@ mod tests {
         );
         assert_eq!(position(&app.active.as_ref().unwrap().reading), saved);
 
+        app.input(Input::LongTap(first.0, first.1));
+        app.input(Input::Tap(next.0, next.1));
+        assert_eq!(app.selection.as_ref().unwrap().text, "The first");
+        capture_test_screen(&app, &fonts, "READER_SELECTION_COPY_SCREENSHOT", false);
+        assert_eq!(
+            tap_selection_action(&mut app, SelectionAction::Copy),
+            Change::Partial
+        );
+        assert_eq!(app.clipboard_text.as_deref(), Some("The first"));
+        assert!(app.selection.is_none());
+        assert_eq!(app.notice.as_deref(), Some("Selection copied to clipboard"));
+        for screen in [
+            Screen::Note,
+            Screen::EditNote,
+            Screen::Find,
+            Screen::LibraryFind,
+            Screen::BookmarkFind,
+            Screen::DictionaryEntry,
+            Screen::VocabularySearch,
+        ] {
+            app.show(screen);
+            app.editor = Editor::new(128);
+            assert!(
+                app.can_paste_text(),
+                "Paste should be available on {screen:?}"
+            );
+            let (x, y) = rectangle_center(external_link::PASTE);
+            assert_eq!(app.input(Input::Tap(x, y)), Change::Partial);
+            assert_eq!(app.editor.string(), "The first", "Paste into {screen:?}");
+        }
+
+        app.show(Screen::Book);
         app.input(Input::LongTap(first.0, first.1));
         let (x, y) = rectangle_center(DONE);
         assert_eq!(app.input(Input::Tap(x, y)), Change::Exit);
@@ -14122,12 +15034,17 @@ mod tests {
         app.activate(Action::Show(Screen::LongPressSettings))
             .unwrap();
         let items = app.items();
-        assert_eq!(items.len(), ActionChoice::ALL.len() + 3);
+        assert_eq!(items.len(), ActionChoice::ALL.len() + 4);
         assert_eq!(items[0].title, "Dictionary on a single word");
         assert_eq!(
             items[0].detail.as_deref(),
             Some("On · opens the local dictionary")
         );
+        let corner_scroll = items
+            .iter()
+            .find(|item| item.title == "Auto-scroll when selection reaches a corner")
+            .unwrap();
+        assert_eq!(corner_scroll.detail.as_deref(), Some("On"));
         assert!(items.iter().any(|item| {
             item.title == "Ask with popup dialog" && item.detail.as_deref() == Some("Selected")
         }));
@@ -14137,6 +15054,29 @@ mod tests {
             let frame = primitive_app::frame(&app, &mut canvas, false);
             primitive_app::write_png(std::path::Path::new(&path), WIDTH, HEIGHT, &frame).unwrap();
         }
+        let corner_scroll_action = app
+            .items()
+            .into_iter()
+            .find(|item| item.title == "Auto-scroll when selection reaches a corner")
+            .unwrap()
+            .action;
+        app.activate(corner_scroll_action).unwrap();
+        assert!(!app.controls.selection_corner_scroll_enabled());
+        assert_eq!(
+            ReadingControls::load(&app.controls_path, false).selection_corner_scroll,
+            Some(false)
+        );
+        let corner_scroll = app
+            .items()
+            .into_iter()
+            .find(|item| item.title == "Auto-scroll when selection reaches a corner")
+            .unwrap();
+        app.activate(corner_scroll.action).unwrap();
+        assert!(app.controls.selection_corner_scroll_enabled());
+        assert_eq!(
+            ReadingControls::load(&app.controls_path, false).selection_corner_scroll,
+            Some(true)
+        );
         let prompt = items
             .iter()
             .find(|item| item.title == "Highlight style and color prompt")
@@ -14254,7 +15194,7 @@ mod tests {
                     assert_eq!(app.screen, Screen::Book);
                     assert_eq!(app.selection.as_ref().unwrap().text, "first");
                     assert!(app.selection_mode);
-                    assert_eq!(app.selection_popup_action_count(), 2);
+                    assert_eq!(app.selection_popup_action_count(), 3);
                 }
                 ActionChoice::Nothing => {
                     assert_eq!(app.screen, Screen::Book);
@@ -14325,7 +15265,7 @@ mod tests {
         );
         assert!(app.selection_mode);
         assert_eq!(app.selection.as_ref().unwrap().text, "first");
-        assert_eq!(app.selection_popup_action_count(), 2);
+        assert_eq!(app.selection_popup_action_count(), 3);
         assert_eq!(
             app.input(Input::Tap(earlier_point.0, earlier_point.1)),
             Change::Partial
@@ -14434,7 +15374,7 @@ mod tests {
         );
         assert!(app.selection_mode);
         assert_eq!(app.pdf_selection.as_ref().unwrap().text(), "PDF");
-        assert_eq!(app.selection_popup_action_count(), 2);
+        assert_eq!(app.selection_popup_action_count(), 3);
         assert_eq!(
             app.input(Input::Tap(last.x as f32, last.y as f32)),
             Change::Partial
@@ -14452,6 +15392,240 @@ mod tests {
         let state = app.library.state(app.open_book_id().unwrap()).unwrap();
         assert_eq!(state.pdf_highlights.len(), 1);
         assert_eq!(state.pdf_highlights[0].text, "PDF sample words");
+    }
+
+    #[test]
+    fn pdf_select_mode_spans_pages_in_both_directions_and_saves_continuations() {
+        use crate::reading_controls::SelectionLongPressAction;
+        use selection_popup::SelectionAction;
+
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Two-page selection.pdf");
+        let page_one = "BT /F1 14 Tf 30 80 Td (first page ends here) Tj ET";
+        let page_two = "BT /F1 14 Tf 30 80 Td (second page starts here) Tj ET";
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+            "<< /Type /Pages /Count 2 /Kids [3 0 R 6 0 R] /Resources << /Font << /F1 5 0 R >> >> >>"
+                .to_owned(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 240 120] /Contents 4 0 R >>"
+                .to_owned(),
+            format!(
+                "<< /Length {} >>\nstream\n{page_one}\nendstream",
+                page_one.len()
+            ),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 240 120] /Contents 7 0 R >>"
+                .to_owned(),
+            format!(
+                "<< /Length {} >>\nstream\n{page_two}\nendstream",
+                page_two.len()
+            ),
+        ];
+        fs::write(&path, crate::fixed::tests::pdf_objects(&objects)).unwrap();
+        let mut app = fixture.app();
+        app.open_path(&path).unwrap();
+        app.controls.dictionary_on_single_word = Some(false);
+        app.controls.selection_long_press_action = SelectionLongPressAction::Select;
+        let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let turn = |app: &mut Reader, input| {
+            let change = app.input(input);
+            if change != Change::None {
+                return change;
+            }
+            let deadline = app.deadline().expect("queued fixed page turn deadline");
+            app.tick(deadline)
+        };
+
+        let page_one_text = app.fixed.as_ref().unwrap().reading.page_text(0).unwrap();
+        let page_one_bounds = page_one_text.words[0].bounds;
+        let first = app
+            .fixed
+            .as_ref()
+            .unwrap()
+            .reading
+            .visible_rectangle(0, page_one_bounds)
+            .unwrap()
+            .center();
+        assert_eq!(
+            app.input(Input::LongTap(first.x as f32, first.y as f32)),
+            Change::Partial
+        );
+        assert!(app.selection_mode);
+        assert_eq!(turn(&mut app, Input::PageForward), Change::Partial);
+        assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 1);
+        assert!(
+            app.pdf_selection.is_some(),
+            "selection must survive a page turn"
+        );
+
+        let page_two_text = app.fixed.as_ref().unwrap().reading.page_text(1).unwrap();
+        let expected_forward = format!(
+            "{}\n{}",
+            &page_one_text.text
+                [page_one_text.words[0].bytes.start..page_one_text.words.last().unwrap().bytes.end],
+            &page_two_text.text
+                [page_two_text.words[0].bytes.start..page_two_text.words[1].bytes.end]
+        );
+        let end = app
+            .fixed
+            .as_ref()
+            .unwrap()
+            .reading
+            .visible_rectangle(1, page_two_text.words[1].bounds)
+            .unwrap()
+            .center();
+        assert_eq!(
+            app.input(Input::LongTap(end.x as f32, end.y as f32)),
+            Change::Partial
+        );
+        let selection = app.pdf_selection.as_ref().unwrap();
+        assert_eq!(selection.text(), expected_forward);
+        assert_eq!(
+            selection
+                .page_bounds()
+                .map(|(page, _)| page)
+                .collect::<std::collections::BTreeSet<_>>(),
+            [0, 1].into_iter().collect()
+        );
+        capture_test_screen(
+            &app,
+            &fonts,
+            "READER_PDF_CROSS_PAGE_SELECTION_SCREENSHOT",
+            false,
+        );
+        assert_eq!(
+            tap_selection_action(&mut app, SelectionAction::Highlight),
+            Change::Partial
+        );
+        let state = app.library.state(app.open_book_id().unwrap()).unwrap();
+        assert_eq!(state.pdf_highlights.len(), 1);
+        assert_eq!(state.pdf_highlights[0].text, expected_forward);
+        assert_eq!(state.pdf_highlights[0].continuation.len(), 1);
+        assert_eq!(state.pdf_highlights[0].continuation[0].page, 1);
+        let book_id = app.open_book_id().unwrap();
+
+        app.save().unwrap();
+        let mut reopened = fixture.app();
+        reopened.open_path(&path).unwrap();
+        let reopened_marks = &reopened.library.state(book_id).unwrap().pdf_highlights;
+        assert_eq!(reopened_marks.len(), 1);
+        assert_eq!(reopened_marks[0].text, expected_forward);
+        assert_eq!(reopened_marks[0].continuation.len(), 1);
+        assert_eq!(reopened_marks[0].continuation[0].page, 1);
+        assert_eq!(reopened.fixed.as_ref().unwrap().reading.page(), 1);
+        reopened.controls.selection_long_press_action = SelectionLongPressAction::Select;
+        let reverse_start = reopened
+            .fixed
+            .as_ref()
+            .unwrap()
+            .reading
+            .visible_rectangle(1, page_two_text.words[0].bounds)
+            .unwrap()
+            .center();
+        assert_eq!(
+            reopened.input(Input::LongTap(
+                reverse_start.x as f32,
+                reverse_start.y as f32
+            )),
+            Change::Partial
+        );
+        assert_eq!(turn(&mut reopened, Input::PageBack), Change::Partial);
+        let page_zero_last = reopened
+            .fixed
+            .as_ref()
+            .unwrap()
+            .reading
+            .visible_rectangle(0, page_one_text.words.last().unwrap().bounds)
+            .unwrap()
+            .center();
+        assert_eq!(
+            reopened.input(Input::LongTap(
+                page_zero_last.x as f32,
+                page_zero_last.y as f32
+            )),
+            Change::Partial
+        );
+        assert_eq!(
+            reopened.pdf_selection.as_ref().unwrap().text(),
+            "here\nsecond"
+        );
+        assert_eq!(
+            tap_selection_action(&mut reopened, selection_popup::SelectionAction::Copy),
+            Change::Partial
+        );
+        assert_eq!(reopened.clipboard_text.as_deref(), Some("here\nsecond"));
+        assert!(reopened.pdf_selection.is_none());
+    }
+
+    #[test]
+    fn pdf_select_mode_rejects_unreadable_intervening_pages_without_losing_selection() {
+        use crate::reading_controls::SelectionLongPressAction;
+
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Unreadable middle page.pdf");
+        let first = "BT /F1 14 Tf 30 80 Td (first selectable page) Tj ET";
+        let blank = "q Q";
+        let last = "BT /F1 14 Tf 30 80 Td (last selectable page) Tj ET";
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+            "<< /Type /Pages /Count 3 /Kids [3 0 R 6 0 R 8 0 R] /Resources << /Font << /F1 5 0 R >> >> >>".to_owned(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 240 120] /Contents 4 0 R >>".to_owned(),
+            format!("<< /Length {} >>\nstream\n{first}\nendstream", first.len()),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 240 120] /Contents 7 0 R >>".to_owned(),
+            format!("<< /Length {} >>\nstream\n{blank}\nendstream", blank.len()),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 240 120] /Contents 9 0 R >>".to_owned(),
+            format!("<< /Length {} >>\nstream\n{last}\nendstream", last.len()),
+        ];
+        fs::write(&path, crate::fixed::tests::pdf_objects(&objects)).unwrap();
+        let mut app = fixture.app();
+        app.open_path(&path).unwrap();
+        app.controls.selection_long_press_action = SelectionLongPressAction::Select;
+        let turn = |app: &mut Reader| {
+            let change = app.input(Input::PageForward);
+            if change != Change::None {
+                return change;
+            }
+            let deadline = app.deadline().expect("queued fixed page turn deadline");
+            app.tick(deadline)
+        };
+
+        let first_text = app.fixed.as_ref().unwrap().reading.page_text(0).unwrap();
+        let start = app
+            .fixed
+            .as_ref()
+            .unwrap()
+            .reading
+            .visible_rectangle(0, first_text.words[0].bounds)
+            .unwrap()
+            .center();
+        assert_eq!(
+            app.input(Input::LongTap(start.x as f32, start.y as f32)),
+            Change::Partial
+        );
+        assert_eq!(app.pdf_selection.as_ref().unwrap().text(), "first");
+        assert_eq!(turn(&mut app), Change::Partial);
+        assert_eq!(turn(&mut app), Change::Partial);
+        assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 2);
+
+        let last_text = app.fixed.as_ref().unwrap().reading.page_text(2).unwrap();
+        let end = app
+            .fixed
+            .as_ref()
+            .unwrap()
+            .reading
+            .visible_rectangle(2, last_text.words[1].bounds)
+            .unwrap()
+            .center();
+        assert_eq!(
+            app.input(Input::LongTap(end.x as f32, end.y as f32)),
+            Change::Partial
+        );
+        assert_eq!(app.pdf_selection.as_ref().unwrap().text(), "first");
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("A readable text layer is needed on each selected page")
+        );
     }
 
     #[test]
@@ -14592,6 +15766,9 @@ mod tests {
             app.touch_corner_direction(2.0, PAGE_HEIGHT as f32 - 2.0),
             None
         );
+        app.controls.selection_corner_scroll = Some(false);
+        assert_eq!(app.touch_corner_direction(2.0, 2.0), None);
+        app.controls.selection_corner_scroll = Some(true);
 
         let fixed = &app.fixed.as_ref().unwrap().reading;
         let text = fixed.page_text(0).unwrap();

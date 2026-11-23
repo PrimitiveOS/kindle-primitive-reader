@@ -17,8 +17,8 @@ use crate::fixed_epub::{FixedEpub, FixedSpread, SpreadPlan};
 use crate::fixed_text::{PdfPageText, PdfTextRect};
 use crate::library::hidden_flows::{HiddenFlows, PageFlows, ResolvedPoint};
 use crate::library::{
-    DocumentFormat, FixedPreferences as View, MAX_CONTINUOUS_GAP, MAX_SCAN_WHITE_LEVEL,
-    MIN_SCAN_WHITE_LEVEL,
+    DocumentFormat, FixedPreferences as View, HighlightPage, MAX_CONTINUOUS_GAP,
+    MAX_HIGHLIGHT_TEXT_BYTES, MAX_SCAN_WHITE_LEVEL, MIN_SCAN_WHITE_LEVEL, PdfHighlight,
 };
 use crate::session::{
     DONE, PAGE_HEIGHT, PAGE_REFRESH_GAP, PagePaint, PageTurns, draw_document_and_footer,
@@ -109,11 +109,17 @@ pub(crate) enum WordAtTouch {
 }
 
 #[derive(Clone)]
-pub(crate) struct PdfSelection {
+struct PdfSelectionEndpoint {
     page: usize,
     document: PdfPageText,
-    first: usize,
-    last: usize,
+    word: usize,
+}
+
+#[derive(Clone)]
+pub(crate) struct PdfSelection {
+    mark: PdfHighlight,
+    first: PdfSelectionEndpoint,
+    last: PdfSelectionEndpoint,
 }
 
 impl PdfSelection {
@@ -122,32 +128,49 @@ impl PdfSelection {
             .words
             .iter()
             .position(|word| source_rect((1.0, 1.0), word.bounds).contains(point))?;
-        Some(Self {
+        let bounds = document.words[index].bounds;
+        let text = document.text[document.words[index].bytes.clone()].to_owned();
+        let endpoint = PdfSelectionEndpoint {
             page,
             document,
-            first: index,
-            last: index,
+            word: index,
+        };
+        Some(Self {
+            mark: PdfHighlight {
+                created_at: None,
+                style: crate::highlight_style::HighlightStyle::default(),
+                color: crate::highlight_style::HighlightColor::default(),
+                page,
+                bounds: vec![bounds],
+                text,
+                note: None,
+                continuation: Vec::new(),
+            },
+            first: endpoint.clone(),
+            last: endpoint,
         })
     }
 
     pub(crate) fn text(&self) -> &str {
-        let words = &self.document.words;
-        &self.document.text[words[self.first].bytes.start..words[self.last].bytes.end]
+        &self.mark.text
     }
 
     pub(crate) fn word_context(&self, count: usize) -> (String, String) {
-        let words = &self.document.words;
-        let before = if self.first == 0 {
+        let before = if self.first.word == 0 {
             ""
         } else {
-            &self.document.text
-                [words[self.first.saturating_sub(count)].bytes.start..words[self.first].bytes.start]
+            let words = &self.first.document.words;
+            &self.first.document.text[words[self.first.word.saturating_sub(count)].bytes.start
+                ..words[self.first.word].bytes.start]
         };
-        let after = if self.last + 1 == words.len() {
+        let after = if self.last.word + 1 == self.last.document.words.len() {
             ""
         } else {
-            &self.document.text[words[self.last].bytes.end
-                ..words[(self.last + count).min(words.len() - 1)].bytes.end]
+            let words = &self.last.document.words;
+            &self.last.document.text[words[self.last.word].bytes.end
+                ..words[(self.last.word + count).min(words.len() - 1)]
+                    .bytes
+                    .end]
         };
         (
             crate::selection::bounded_context(before, count, true),
@@ -155,14 +178,110 @@ impl PdfSelection {
         )
     }
 
+    pub(crate) fn page_bounds(&self) -> impl Iterator<Item = (usize, PdfTextRect)> + '_ {
+        self.mark
+            .parts()
+            .flat_map(|(page, bounds, _)| bounds.iter().copied().map(move |bounds| (page, bounds)))
+    }
+
+    #[cfg(test)]
     pub(crate) fn bounds(&self) -> impl Iterator<Item = PdfTextRect> + '_ {
-        self.document.words[self.first..=self.last]
-            .iter()
-            .map(|word| word.bounds)
+        self.page_bounds().map(|(_, bounds)| bounds)
     }
 
     pub(crate) fn page(&self) -> usize {
-        self.page
+        self.mark.page
+    }
+
+    pub(crate) fn highlight(&self) -> &PdfHighlight {
+        &self.mark
+    }
+
+    fn endpoints(&self) -> (&PdfSelectionEndpoint, &PdfSelectionEndpoint) {
+        (&self.first, &self.last)
+    }
+}
+
+impl FixedReading {
+    fn selection_document(&self, page: usize) -> Result<PdfPageText> {
+        if self.view.force_ocr {
+            return self
+                .cached_ocr_for(page, self.ocr_language.as_deref())
+                .ok_or_else(|| format!("Run OCR on page {} first", page + 1).into());
+        }
+        self.page_text(page)
+    }
+
+    fn selection_mark(
+        &self,
+        first: &PdfSelectionEndpoint,
+        last: &PdfSelectionEndpoint,
+    ) -> Result<PdfHighlight> {
+        if first.page > last.page || last.page - first.page >= PdfHighlight::MAX_PAGES {
+            return Err("This selection exceeds the 64-page limit".into());
+        }
+        let mut mark = PdfHighlight {
+            created_at: None,
+            style: crate::highlight_style::HighlightStyle::default(),
+            color: crate::highlight_style::HighlightColor::default(),
+            page: first.page,
+            bounds: Vec::new(),
+            text: String::new(),
+            note: None,
+            continuation: Vec::new(),
+        };
+        for page in first.page..=last.page {
+            let loaded;
+            let document = if page == first.page {
+                &first.document
+            } else if page == last.page {
+                &last.document
+            } else {
+                loaded = self.selection_document(page)?;
+                &loaded
+            };
+            if document.words.is_empty() {
+                return Err(format!("Page {} has no selectable text", page + 1).into());
+            }
+            if document.truncated && page != last.page {
+                return Err("The text on an intervening page is incomplete".into());
+            }
+            let from = if page == first.page { first.word } else { 0 };
+            let to = if page == last.page {
+                last.word
+            } else {
+                document.words.len() - 1
+            };
+            if from > to || to >= document.words.len() {
+                return Err("The selected text range is unavailable".into());
+            }
+            let quote = document
+                .text
+                .get(document.words[from].bytes.start..document.words[to].bytes.end)
+                .ok_or("The selected text range is unavailable")?;
+            let bounds = selection_range::line_regions(document, from, to)?;
+            if page == first.page {
+                mark.bounds = bounds;
+            } else {
+                if mark.text.len() + quote.len() + 1 > MAX_HIGHLIGHT_TEXT_BYTES {
+                    return Err("This selection exceeds the 8,192-byte limit".into());
+                }
+                mark.text.push('\n');
+                mark.continuation.push(HighlightPage {
+                    page,
+                    bounds,
+                    text_offset: mark.text.len(),
+                });
+            }
+            if mark.text.len() + quote.len() > MAX_HIGHLIGHT_TEXT_BYTES {
+                return Err("This selection exceeds the 8,192-byte limit".into());
+            }
+            mark.text.push_str(quote);
+        }
+        if !mark.is_valid() {
+            return Err("The selected text range is unavailable".into());
+        }
+        Ok(mark)
     }
 }
 
@@ -1039,8 +1158,8 @@ impl FixedReading {
         let viewport =
             hayro::kurbo::Rect::new(0.0, 0.0, f64::from(WIDTH), f64::from(self.frame.height));
         let bounds = selection
-            .bounds()
-            .filter_map(|bounds| self.visible_rectangle(selection.page(), bounds))
+            .page_bounds()
+            .filter_map(|(page, bounds)| self.visible_rectangle(page, bounds))
             .map(|bounds| bounds.intersect(viewport))
             .filter(|bounds| bounds.width() > 0.0 && bounds.height() > 0.0)
             .reduce(|left, right| left.union(right))?;
@@ -1055,19 +1174,52 @@ impl FixedReading {
     }
 
     pub(crate) fn extend_selection(&self, selection: &mut PdfSelection, x: f32, y: f32) -> bool {
-        if self.page_at(y) != Some(selection.page) {
+        let Some(page) = self.page_at(y) else {
             return false;
+        };
+        let document = if page == selection.first.page {
+            selection.first.document.clone()
+        } else if page == selection.last.page {
+            selection.last.document.clone()
+        } else if page > selection.first.page && page < selection.last.page {
+            return true;
+        } else if let Ok(document) = self.selection_document(page) {
+            document
+        } else {
+            return false;
+        };
+        let Some(word) = self.word_at(page, &document, x, y) else {
+            return false;
+        };
+        let mut first = selection.first.clone();
+        let mut last = selection.last.clone();
+        if page < first.page {
+            first = PdfSelectionEndpoint {
+                page,
+                document,
+                word,
+            };
+        } else if page > last.page {
+            last = PdfSelectionEndpoint {
+                page,
+                document,
+                word,
+            };
+        } else if first.page == last.page {
+            first.word = first.word.min(word);
+            last.word = last.word.max(word);
+        } else if page == first.page {
+            first.word = first.word.min(word);
+        } else if page == last.page {
+            last.word = last.word.max(word);
         }
-        if let Some(word) = self.word_at(selection.page, &selection.document, x, y) {
-            let first = selection.first.min(word);
-            let last = selection.last.max(word);
-            if last - first < 64 {
-                selection.first = first;
-                selection.last = last;
-                return true;
-            }
-        }
-        false
+        let Ok(mark) = self.selection_mark(&first, &last) else {
+            return false;
+        };
+        selection.mark = mark;
+        selection.first = first;
+        selection.last = last;
+        true
     }
 
     pub(crate) fn link_at(&self, x: f32, y: f32) -> Option<PdfLink> {

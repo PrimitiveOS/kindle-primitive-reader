@@ -300,6 +300,7 @@ mod layout_tests {
                     margin: 15,
                     font_size: 26.,
                     automatic_hyphenation: automatic,
+                    base_stylesheet: crate::BaseStylesheet::None,
                     ..Default::default()
                 },
                 0,

@@ -166,6 +166,24 @@ pub enum FontHinting {
     Auto,
 }
 
+/// Text shaping mode used for glyph kerning and related OpenType features.
+///
+/// `Best` keeps the full shaping behavior. `Good` enables the lightweight
+/// kerning, mark positioning, cursive positioning, and localized-form feature
+/// set used by KOReader's HarfBuzz-light mode. `Fast` limits shaping to basic
+/// pair kerning and disables substitutions. The Rust shaper cannot use
+/// FreeType's separate fast kerning path, so this mode keeps the same reading
+/// contract with a reduced Rust shaping feature set.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FontKerningMode {
+    Off,
+    Fast,
+    Good,
+    #[default]
+    Best,
+}
+
 /// Pinned KOReader content-scale presets. Zero disables physical CSS units.
 pub const RENDER_DPI_PRESETS: [u16; 6] = [0, 48, 96, 167, 212, 300];
 
@@ -173,6 +191,86 @@ pub const RENDER_DPI_PRESETS: [u16; 6] = [0, 48, 96, 167, 212, 300];
 pub const fn valid_render_dpi(value: u16) -> bool {
     value <= 300
 }
+
+/// KOReader's visible line-spacing presets in the Text/Layout controls.
+pub const LINE_SPACING_PRESETS: [u16; 13] =
+    [70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120, 125, 130];
+pub const DEFAULT_LINE_SPACING_PERCENT: u16 = 100;
+
+/// KOReader's custom interline percentage range.
+pub const fn valid_line_spacing_percent(value: u16) -> bool {
+    value >= 50 && value <= 200
+}
+
+/// Reader's User-Agent stylesheet policy for reflowable documents.
+///
+/// `Auto` follows KOReader's format default; the remaining choices mirror its
+/// base stylesheet selector while staying within the CSS subset this renderer
+/// can faithfully apply.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BaseStylesheet {
+    #[default]
+    Auto,
+    None,
+    Traditional,
+    HtmlStandard,
+    FictionBook,
+}
+
+impl BaseStylesheet {
+    pub const ALL: [Self; 5] = [
+        Self::Auto,
+        Self::None,
+        Self::Traditional,
+        Self::HtmlStandard,
+        Self::FictionBook,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "Auto",
+            Self::None => "None",
+            Self::Traditional => "Traditional",
+            Self::HtmlStandard => "HTML",
+            Self::FictionBook => "FB2",
+        }
+    }
+}
+
+/// KOReader's visual cue for the portion repeated between scroll-page turns.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PageOverlapStyle {
+    None,
+    #[default]
+    Dim,
+    Arrow,
+    Line,
+    DashedLine,
+}
+
+impl PageOverlapStyle {
+    pub const ALL: [Self; 5] = [
+        Self::None,
+        Self::Dim,
+        Self::Arrow,
+        Self::Line,
+        Self::DashedLine,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::None => "No indicator",
+            Self::Dim => "Gray out",
+            Self::Arrow => "Arrow",
+            Self::Line => "Solid line",
+            Self::DashedLine => "Dashed line",
+        }
+    }
+}
+
+const LEGACY_DEFAULT_LINE_HEIGHT: f32 = 1.35;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Settings {
@@ -192,6 +290,8 @@ pub struct Settings {
     pub margin_top: Option<u32>,
     pub margin_bottom: Option<u32>,
     pub line_height: f32,
+    /// None preserves legacy multiplier-based line spacing for existing profiles.
+    pub line_spacing_percent: Option<u16>,
     pub word_spacing: f32,
     /// None preserves the existing additive-pixel layout exactly.
     pub percent_word_spacing: Option<WordSpacePercent>,
@@ -212,11 +312,22 @@ pub struct Settings {
     pub automatic_hyphenation: bool,
     /// Load author stylesheets and apply inline CSS during native reflow.
     pub publisher_styles: bool,
+    /// Select the low-priority base stylesheet used beneath publisher CSS.
+    pub base_stylesheet: BaseStylesheet,
     /// Use each font's normal OpenType kerning when shaping text.
+    /// Kept for old book settings. New settings use `font_kerning_mode`.
     pub font_kerning: bool,
+    /// None interprets the legacy boolean as Off or Best.
+    pub font_kerning_mode: Option<FontKerningMode>,
     pub font_hinting: FontHinting,
     pub smooth_images: bool,
     pub invert_night_images: bool,
+    /// Reuse the last lines on the next full-screen scroll turn.
+    pub page_overlap_enabled: bool,
+    /// Number of text lines retained between scroll turns, from 1 to 10.
+    pub page_overlap_lines: u8,
+    /// Visual marker drawn over the repeated area after a scroll-page turn.
+    pub page_overlap_style: PageOverlapStyle,
 }
 
 impl Default for Settings {
@@ -236,6 +347,7 @@ impl Default for Settings {
             margin_top: None,
             margin_bottom: None,
             line_height: 1.35,
+            line_spacing_percent: None,
             word_spacing: 0.0,
             percent_word_spacing: None,
             word_expansion: 0,
@@ -250,11 +362,67 @@ impl Default for Settings {
             disable_soft_hyphens: false,
             automatic_hyphenation: true,
             publisher_styles: true,
+            base_stylesheet: BaseStylesheet::Auto,
             font_kerning: true,
+            font_kerning_mode: None,
             font_hinting: FontHinting::Off,
             smooth_images: true,
             invert_night_images: false,
+            page_overlap_enabled: false,
+            page_overlap_lines: 1,
+            page_overlap_style: PageOverlapStyle::Dim,
         }
+    }
+}
+
+impl Settings {
+    /// Resolve the four-mode setting while preserving old boolean profiles.
+    pub const fn effective_font_kerning_mode(&self) -> FontKerningMode {
+        match self.font_kerning_mode {
+            Some(mode) => mode,
+            None if self.font_kerning => FontKerningMode::Best,
+            None => FontKerningMode::Off,
+        }
+    }
+
+    /// Resolve the user line-spacing control as a multiplier for authored line height.
+    pub fn line_height_scale(&self) -> f32 {
+        self.line_spacing_percent.map_or_else(
+            || self.line_height / LEGACY_DEFAULT_LINE_HEIGHT,
+            |percent| f32::from(percent) / 100.0,
+        )
+    }
+
+    /// Resolve the line-height multiplier used by the legacy fixed-layout renderer.
+    pub fn effective_line_height(&self) -> f32 {
+        self.line_spacing_percent
+            .map_or(self.line_height, |percent| {
+                LEGACY_DEFAULT_LINE_HEIGHT * f32::from(percent) / 100.0
+            })
+    }
+
+    pub fn effective_line_spacing_percent(&self) -> u16 {
+        self.line_spacing_percent.unwrap_or_else(|| {
+            (self.line_height / LEGACY_DEFAULT_LINE_HEIGHT * 100.0)
+                .round()
+                .clamp(50.0, 200.0) as u16
+        })
+    }
+
+    pub fn with_line_spacing_percent(self, percent: u16) -> Self {
+        Self {
+            line_spacing_percent: Some(percent),
+            ..self
+        }
+    }
+
+    pub fn page_overlap_height(&self) -> f32 {
+        if !self.page_overlap_enabled {
+            return 0.0;
+        }
+        let line_height =
+            self.font_size * 1.1 * f32::from(self.effective_line_spacing_percent()) / 100.0;
+        (line_height * f32::from(self.page_overlap_lines.clamp(1, 10))).max(0.0)
     }
 }
 
@@ -685,7 +853,7 @@ impl Probe {
         if engine == Engine::Blitz
             && (!user_styles.is_empty()
                 || !settings.publisher_styles
-                || !settings.font_kerning
+                || settings.effective_font_kerning_mode() != FontKerningMode::Best
                 || settings.font_hinting != FontHinting::Off
                 || settings.font_gamma_index != font_render::NORMAL_GAMMA
                 || settings.font_weight_delta != 0.0
@@ -740,11 +908,15 @@ impl Probe {
                 (Renderer::Blitz(Box::new(layout)), lines, extent)
             }
             Engine::Parley => {
-                let author = settings
-                    .publisher_styles
-                    .then(|| book_style::BookStyle::load(&mut book, &href, &source, &mut fonts))
-                    .unwrap_or_default()
-                    .with_user_css(user_styles)?;
+                let author = book_style::BookStyle::load_with_base(
+                    &mut book,
+                    &href,
+                    &source,
+                    &mut fonts,
+                    settings.publisher_styles,
+                    settings.base_stylesheet,
+                )
+                .with_user_css(user_styles)?;
                 let styles = author.compute_for_settings(&source.elements, settings);
                 reading_flow = flow_view::ChapterFlow::from_styles(&source, &styles)?;
                 #[cfg(feature = "kindle")]
@@ -1699,8 +1871,10 @@ mod firmware_font_tests {
     #[test]
     fn bundled_koreader_symbol_subset_covers_seven_observed_private_use_symbols() {
         let primary = test_fixture("fonts/NotoSans-Regular.ttf");
-        let symbols =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/fonts/PrimitiveSymbols.ttf");
+        let symbols = std::env::var_os("READER_TEST_FIXTURES").map_or_else(
+            || Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/fonts/PrimitiveSymbols.ttf"),
+            |root| PathBuf::from(root).join("fonts/PrimitiveSymbols.ttf"),
+        );
         let paths = [primary, symbols];
         let mut fonts = font_context_with_firmware(&paths, Path::new("/missing-firmware")).unwrap();
         // Eight private-use scalars were observed in original AZW3 002. The

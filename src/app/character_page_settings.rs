@@ -13,6 +13,7 @@ pub(super) enum NumberField {
     MarginSize,
     ContentDpi(u64),
     LogicalFont(u64),
+    LineSpacing(u64),
     WordSpacing(super::word_spacing::Draft),
     AutoTurn,
     AutoTurnOverlapHorizontal,
@@ -26,7 +27,10 @@ impl NumberField {
         match self {
             Self::BookStride => Screen::PageNumbering,
             Self::DefaultStride | Self::MarginSize => Screen::NumberingDefaults,
-            Self::ContentDpi(_) | Self::LogicalFont(_) | Self::WordSpacing(_) => Screen::Book,
+            Self::ContentDpi(_)
+            | Self::LogicalFont(_)
+            | Self::LineSpacing(_)
+            | Self::WordSpacing(_) => Screen::Book,
             Self::AutoTurn => Screen::AutoTurn,
             Self::AutoTurnOverlapHorizontal | Self::AutoTurnOverlapVertical => Screen::AutoTurnPan,
             Self::FooterTrackMinimumWidth | Self::FooterTrackMarginWidth => Screen::FooterSettings,
@@ -243,6 +247,7 @@ impl Reader {
         match field {
             NumberField::ContentDpi(owner) => return self.apply_content_dpi(owner),
             NumberField::LogicalFont(owner) => return self.apply_logical_font_input(owner),
+            NumberField::LineSpacing(owner) => return self.apply_line_spacing_input(owner),
             NumberField::WordSpacing(draft) => return self.apply_word_spacing_input(draft),
             NumberField::AutoTurn => unreachable!("handled above"),
             NumberField::AutoTurnOverlapHorizontal | NumberField::AutoTurnOverlapVertical => {

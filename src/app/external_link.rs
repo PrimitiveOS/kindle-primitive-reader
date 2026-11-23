@@ -86,7 +86,7 @@ impl LinkPopup {
 }
 
 pub(super) fn draw_paste(canvas: &mut Canvas) {
-    canvas.button(PASTE, "Paste link", false, false);
+    canvas.button(PASTE, "Paste", false, false);
 }
 
 impl Reader {
@@ -102,21 +102,30 @@ impl Reader {
         Change::Partial
     }
 
-    pub(super) fn can_paste_address(&self) -> bool {
-        self.copied_address.is_some()
-            && matches!(self.screen, Screen::Note | Screen::EditNote | Screen::Find)
+    pub(super) fn can_paste_text(&self) -> bool {
+        self.clipboard_text.is_some()
+            && matches!(
+                self.screen,
+                Screen::Note
+                    | Screen::EditNote
+                    | Screen::Find
+                    | Screen::LibraryFind
+                    | Screen::BookmarkFind
+                    | Screen::DictionaryEntry
+                    | Screen::VocabularySearch
+            )
     }
 
-    pub(super) fn paste_address(&mut self) -> Change {
-        let Some(address) = self.copied_address.as_deref() else {
+    pub(super) fn paste_text(&mut self) -> Change {
+        let Some(text) = self.clipboard_text.as_deref() else {
             return Change::None;
         };
-        if address.chars().count() > self.editor.max.saturating_sub(self.editor.text.len()) {
-            return self.report("The address is too long for this field");
+        if text.chars().count() > self.editor.max.saturating_sub(self.editor.text.len()) {
+            return self.report("The copied text is too long for this field");
         }
         let caret = self.editor.caret.min(self.editor.text.len());
-        self.editor.text.splice(caret..caret, address.chars());
-        self.editor.caret = caret + address.chars().count();
+        self.editor.text.splice(caret..caret, text.chars());
+        self.editor.caret = caret + text.chars().count();
         Change::Partial
     }
 
@@ -138,7 +147,7 @@ impl Reader {
             } else if CLOSE.contains(x, y) || !PANEL.contains(x, y) {
                 self.link_popup = None;
             } else if COPY.contains(x, y) {
-                self.copied_address = Some(popup.address.clone());
+                self.clipboard_text = Some(popup.address.clone());
                 self.link_popup = None;
                 self.notice = Some("Link copied".into());
             } else if CODE.contains(x, y) {
@@ -285,7 +294,7 @@ mod tests {
             assert!(app.link_popup.as_ref().unwrap().qr.is_none());
             tap(&mut app, COPY);
             assert!(app.link_popup.is_none());
-            assert!(app.copied_address.as_deref() == Some(address.as_str()));
+            assert!(app.clipboard_text.as_deref() == Some(address.as_str()));
             assert_eq!(app.current_history_location(), Some(held));
             assert_eq!(app.back.len(), history);
             if external.is_none() {
@@ -324,8 +333,8 @@ mod tests {
         app.input(Input::Tap((COPY.x + 12) as f32, (COPY.y + 12) as f32));
         app.show(Screen::Find);
         app.editor.text = vec!['x'];
-        app.paste_address();
+        app.paste_text();
         assert_eq!(app.editor.string(), "x");
-        assert_eq!(app.copied_address.as_deref(), Some(address.as_str()));
+        assert_eq!(app.clipboard_text.as_deref(), Some(address.as_str()));
     }
 }

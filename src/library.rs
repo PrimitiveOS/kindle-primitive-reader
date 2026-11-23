@@ -274,6 +274,8 @@ pub struct BookPreferences {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub margin_bottom: Option<u32>,
     pub line_height: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line_spacing_percent: Option<u16>,
     pub word_spacing: f32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub percent_word_spacing: Option<crate::WordSpacePercent>,
@@ -294,7 +296,11 @@ pub struct BookPreferences {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub publisher_styles: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_stylesheet: Option<crate::BaseStylesheet>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub font_kerning: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_kerning_mode: Option<crate::FontKerningMode>,
     pub font_hinting: crate::FontHinting,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub smooth_images: Option<bool>,
@@ -303,6 +309,15 @@ pub struct BookPreferences {
     pub disable_soft_hyphens: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub automatic_hyphenation: Option<bool>,
+    /// Per-book scroll-page overlap switch; `None` follows new-book defaults.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_overlap_enabled: Option<bool>,
+    /// Per-book repeated-line count, valid from 1 through 10.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_overlap_lines: Option<u8>,
+    /// Per-book repeated-area marker.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_overlap_style: Option<crate::PageOverlapStyle>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub font_file: Option<String>,
 }
@@ -312,6 +327,7 @@ impl BookPreferences {
     pub(crate) fn for_new_reflow() -> Self {
         Self {
             logical_font_size: Some(crate::logical_font::DEFAULT),
+            line_spacing_percent: Some(crate::DEFAULT_LINE_SPACING_PERCENT),
             percent_word_spacing: Some(crate::WordSpacePercent::MEDIUM),
             ..Self::default()
         }
@@ -330,6 +346,22 @@ impl BookPreferences {
                 }
             })
         };
+        let kerning_mode = self
+            .font_kerning_mode
+            .or_else(|| {
+                self.font_kerning.map(|enabled| {
+                    if enabled {
+                        crate::FontKerningMode::Best
+                    } else {
+                        crate::FontKerningMode::Off
+                    }
+                })
+            })
+            .or(settings.font_kerning_mode);
+        let font_kerning = kerning_mode.map_or_else(
+            || self.font_kerning.unwrap_or(settings.font_kerning),
+            |mode| mode != crate::FontKerningMode::Off,
+        );
         let adjusted = Settings {
             font_size: self
                 .logical_font_size
@@ -357,6 +389,10 @@ impl BookPreferences {
                 .filter(|&v| v <= settings.height / 4)
                 .or(settings.margin_bottom),
             line_height: self.line_height.unwrap_or(settings.line_height),
+            line_spacing_percent: self
+                .line_spacing_percent
+                .filter(|&percent| crate::valid_line_spacing_percent(percent))
+                .or(settings.line_spacing_percent),
             word_spacing: if (-2.0..=12.0).contains(&self.word_spacing) {
                 self.word_spacing
             } else {
@@ -389,7 +425,9 @@ impl BookPreferences {
                 .filter(|delta| (-3.0..=5.5).contains(delta))
                 .unwrap_or(settings.font_weight_delta),
             publisher_styles: self.publisher_styles.unwrap_or(settings.publisher_styles),
-            font_kerning: self.font_kerning.unwrap_or(settings.font_kerning),
+            base_stylesheet: self.base_stylesheet.unwrap_or(settings.base_stylesheet),
+            font_kerning,
+            font_kerning_mode: kerning_mode,
             font_hinting: self.font_hinting,
             smooth_images: self.smooth_images.unwrap_or(settings.smooth_images),
             invert_night_images: self.invert_night_images,
@@ -398,6 +436,16 @@ impl BookPreferences {
             automatic_hyphenation: self
                 .automatic_hyphenation
                 .unwrap_or(settings.automatic_hyphenation),
+            page_overlap_enabled: self
+                .page_overlap_enabled
+                .unwrap_or(settings.page_overlap_enabled),
+            page_overlap_lines: self
+                .page_overlap_lines
+                .filter(|value| (1..=10).contains(value))
+                .unwrap_or(settings.page_overlap_lines.clamp(1, 10)),
+            page_overlap_style: self
+                .page_overlap_style
+                .unwrap_or(settings.page_overlap_style),
             ..settings
         };
         // Never silently replace an explicit logical choice with another size.
@@ -3573,5 +3621,60 @@ mod tests {
             assert!(library.resolve(Path::new(bad_path)).is_err());
         }
         assert!(library.resolve(&outside.join("story.epub")).is_err());
+    }
+}
+
+#[cfg(test)]
+mod kerning_mode_compatibility_tests {
+    use super::BookPreferences;
+    use crate::{FontKerningMode, PageOverlapStyle, Settings};
+
+    #[test]
+    fn legacy_boolean_profiles_map_to_off_or_best() {
+        for (encoded, expected) in [
+            (r#"{"font_kerning":false}"#, FontKerningMode::Off),
+            (r#"{"font_kerning":true}"#, FontKerningMode::Best),
+        ] {
+            let preferences: BookPreferences = serde_json::from_str(encoded).unwrap();
+            let settings = preferences.apply_to(Settings::default());
+            assert_eq!(settings.effective_font_kerning_mode(), expected);
+        }
+    }
+
+    #[test]
+    fn explicit_mode_overrides_legacy_boolean_and_round_trips() {
+        let preferences: BookPreferences =
+            serde_json::from_str(r#"{"font_kerning":false,"font_kerning_mode":"good"}"#).unwrap();
+        let settings = preferences.apply_to(Settings::default());
+        assert_eq!(
+            settings.effective_font_kerning_mode(),
+            FontKerningMode::Good
+        );
+        assert!(settings.font_kerning);
+
+        let value = serde_json::to_value(preferences).unwrap();
+        assert_eq!(value["font_kerning_mode"], "good");
+    }
+
+    #[test]
+    fn page_overlap_preferences_default_for_legacy_books_and_round_trip() {
+        let legacy: BookPreferences = serde_json::from_str(r#"{"font_size":42.0}"#).unwrap();
+        let defaults = legacy.apply_to(Settings::default());
+        assert!(!defaults.page_overlap_enabled);
+        assert_eq!(defaults.page_overlap_lines, 1);
+        assert_eq!(defaults.page_overlap_style, PageOverlapStyle::Dim);
+
+        let preferences = BookPreferences {
+            page_overlap_enabled: Some(true),
+            page_overlap_lines: Some(7),
+            page_overlap_style: Some(PageOverlapStyle::DashedLine),
+            ..BookPreferences::default()
+        };
+        let restored: BookPreferences =
+            serde_json::from_slice(&serde_json::to_vec(&preferences).unwrap()).unwrap();
+        let settings = restored.apply_to(Settings::default());
+        assert!(settings.page_overlap_enabled);
+        assert_eq!(settings.page_overlap_lines, 7);
+        assert_eq!(settings.page_overlap_style, PageOverlapStyle::DashedLine);
     }
 }

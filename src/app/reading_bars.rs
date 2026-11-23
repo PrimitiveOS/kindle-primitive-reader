@@ -481,6 +481,25 @@ impl Reader {
         bars
     }
 
+    #[cfg(test)]
+    pub(super) fn reading_button_in_row(&self, row_label: &str, button_label: &str) -> Rect {
+        let bars = self.reading_bars();
+        let row = bars
+            .row_labels
+            .iter()
+            .find(|(_, label)| label == row_label)
+            .unwrap_or_else(|| panic!("No reading settings row {row_label}"))
+            .0;
+        bars.buttons
+            .iter()
+            .find(|button| {
+                button.label == button_label
+                    && (row.y..row.y + row.h).contains(&(button.rect.y + button.rect.h / 2))
+            })
+            .unwrap_or_else(|| panic!("No {button_label} choice in {row_label}"))
+            .rect
+    }
+
     fn page_actions(&self) -> Vec<Item> {
         let mut items = vec![
             Item::new("Thumbnails", Action::Overview),
@@ -976,3 +995,7 @@ mod margin_tests;
 #[cfg(test)]
 #[path = "render_dpi_tests.rs"]
 mod render_dpi_tests;
+
+#[cfg(test)]
+#[path = "kerning_modes_tests.rs"]
+mod kerning_modes_tests;

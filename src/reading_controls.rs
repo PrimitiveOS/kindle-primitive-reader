@@ -40,6 +40,9 @@ pub(crate) struct ReadingControls {
     /// `None` follows KOReader's default: open a dictionary for a held single word.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dictionary_on_single_word: Option<bool>,
+    /// `None` follows KOReader's default: auto-scroll selections at reading corners.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection_corner_scroll: Option<bool>,
     /// Seconds in tenths. `None` retains KOReader's three-second default in legacy settings.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub very_long_press_tenths: Option<u16>,
@@ -60,6 +63,12 @@ pub(crate) struct ReadingControls {
     pub orientation: ReadingOrientation,
     pub palette: ScreenPalette,
     pub status_bar: StatusBar,
+    /// Sort in-book bookmark rows by creation time instead of document location.
+    pub bookmark_sort_by_date: bool,
+    /// Reverse the selected in-book bookmark ordering.
+    pub bookmark_reverse: bool,
+    /// Text shown for each saved highlight in the in-book annotations list.
+    pub annotation_list_text: AnnotationListText,
     /// Bitset of reading metrics shown when `status_bar` is `Custom`.
     #[serde(default, skip_serializing_if = "is_zero_u16")]
     pub footer_items: u16,
@@ -87,6 +96,8 @@ pub(crate) struct ReadingControls {
     /// Show the reading session's starting location on the progress track.
     #[serde(skip_serializing_if = "is_false")]
     pub footer_initial_marker: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    pub footer_auto_refresh: bool,
     #[serde(skip_serializing_if = "ChapterMarkerWidth::is_default")]
     pub chapter_marker_width: ChapterMarkerWidth,
     pub overlap_footer: bool,
@@ -113,6 +124,32 @@ pub(crate) enum SelectionPopupPosition {
     Center,
     Bottom,
     Highlight,
+}
+
+/// The excerpt and note presentation used for saved highlights.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AnnotationListText {
+    HighlightedText,
+    HighlightAndNote,
+    #[default]
+    NoteIfSet,
+}
+
+impl AnnotationListText {
+    pub(crate) const ALL: [Self; 3] = [
+        Self::HighlightedText,
+        Self::HighlightAndNote,
+        Self::NoteIfSet,
+    ];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::HighlightedText => "Highlighted text",
+            Self::HighlightAndNote => "Highlighted text and note",
+            Self::NoteIfSet => "Note if set, otherwise highlighted text",
+        }
+    }
 }
 
 impl SelectionPopupPosition {
@@ -407,10 +444,11 @@ pub(crate) enum FooterItem {
     BookTitle,
     Author,
     BookmarkCount,
+    CurrentTime,
 }
 
 impl FooterItem {
-    pub(crate) const ALL: [Self; 10] = [
+    pub(crate) const ALL: [Self; 11] = [
         Self::CurrentPage,
         Self::ChapterTitle,
         Self::BookProgress,
@@ -421,6 +459,7 @@ impl FooterItem {
         Self::BookTitle,
         Self::Author,
         Self::BookmarkCount,
+        Self::CurrentTime,
     ];
 
     pub(crate) const DEFAULT_MASK: u16 =
@@ -484,6 +523,7 @@ impl FooterItem {
             Self::BookTitle => "Book title",
             Self::Author => "Author",
             Self::BookmarkCount => "Bookmark count",
+            Self::CurrentTime => "Current time",
         }
     }
 }
@@ -848,6 +888,10 @@ impl PageRefresh {
 }
 
 impl ReadingControls {
+    pub(crate) fn selection_corner_scroll_enabled(self) -> bool {
+        self.selection_corner_scroll.unwrap_or(true)
+    }
+
     pub(crate) fn very_long_press_tenths(self) -> u16 {
         self.very_long_press_tenths
             .unwrap_or(DEFAULT_VERY_LONG_PRESS_TENTHS)
@@ -1056,16 +1100,21 @@ mod tests {
             SelectionLongPressAction::Ask
         );
         assert_eq!(defaults.dictionary_on_single_word, None);
+        assert_eq!(defaults.selection_corner_scroll, None);
+        assert!(defaults.selection_corner_scroll_enabled());
         for action in SelectionLongPressAction::ALL {
             let controls = ReadingControls {
                 selection_long_press_action: action,
                 dictionary_on_single_word: Some(false),
+                selection_corner_scroll: Some(false),
                 ..defaults
             };
             let bytes = serde_json::to_vec(&controls).unwrap();
             let reopened: ReadingControls = serde_json::from_slice(&bytes).unwrap();
             assert_eq!(reopened.selection_long_press_action, action);
             assert_eq!(reopened.dictionary_on_single_word, Some(false));
+            assert_eq!(reopened.selection_corner_scroll, Some(false));
+            assert!(!reopened.selection_corner_scroll_enabled());
         }
         let legacy: ReadingControls = serde_json::from_str(r#"{"night_pages":true}"#).unwrap();
         assert_eq!(
@@ -1073,6 +1122,8 @@ mod tests {
             SelectionLongPressAction::Ask
         );
         assert_eq!(legacy.dictionary_on_single_word, None);
+        assert_eq!(legacy.selection_corner_scroll, None);
+        assert!(legacy.selection_corner_scroll_enabled());
     }
 
     #[test]
@@ -1120,6 +1171,7 @@ mod tests {
             footer_separator: FooterSeparator::Bullet,
             footer_pages_left_include_current: true,
             footer_percentage_digits: 2,
+            footer_auto_refresh: true,
             ..ReadingControls::default()
         };
         let reopened: ReadingControls =
@@ -1127,11 +1179,13 @@ mod tests {
         assert_eq!(reopened.footer_separator, FooterSeparator::Bullet);
         assert!(reopened.footer_pages_left_include_current);
         assert_eq!(reopened.footer_percentage_digits, 2);
+        assert!(reopened.footer_auto_refresh);
 
         let legacy: ReadingControls = serde_json::from_str("{}").unwrap();
         assert_eq!(legacy.footer_separator, FooterSeparator::Bar);
         assert!(!legacy.footer_pages_left_include_current);
         assert_eq!(legacy.footer_percentage_digits, 0);
+        assert!(!legacy.footer_auto_refresh);
 
         assert_eq!(FooterSeparator::Bar.label(), "Vertical bar (|)");
         assert_eq!(FooterSeparator::Bar.text(), " | ");
