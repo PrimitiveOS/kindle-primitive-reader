@@ -10,8 +10,10 @@ The [EPUB feasibility results](epub-probe-results.md) record the completed
 desktop and Oasis 3 experiments and the remaining acceptance checks.
 The [reading parity plan](reading-parity-plan.md) breaks out each in-scope
 reading workflow and format, with prerequisites and side-by-side acceptance
-checks. This plan tracks reading behavior only; matching KOReader does not mean
-recreating its extension system or every item in its utility menus.
+checks. Every implementation task must support a reading workflow. Generic
+extension/plugin systems, Terminal/shell, device administration, and unrelated
+utilities stay outside the Reader implementation, parity checklist, tests, and
+release gates.
 
 | Stage | Work | Exit evidence |
 |---|---|---|

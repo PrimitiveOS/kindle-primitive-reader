@@ -27,10 +27,11 @@ Kindle. Parity work covers local reading workflows, including explicit,
 contextual Wikipedia and translation actions that preserve the book location.
 Online book acquisition, remote sync or annotation services, Wikipedia
 article-to-EPUB export, a general plug-in runtime or catalogue, and unrelated
-utilities such as Terminal are outside the goal. Local annotation export and
-reading-data migration remain in scope. Reading-specific capabilities that
-KOReader packages as plug-ins can be implemented natively; Reader will not add
-a general plug-in loader or catalogue. The [scope checklist](docs/reading-parity-plan.md#scope-and-completion-checklist)
+utilities such as Terminal or shell access are outside the goal. Local
+annotation export and reading-data migration remain in scope. Reading-specific
+capabilities that KOReader packages as plug-ins can be implemented natively;
+Reader will not add a general plug-in loader or catalogue. The
+[scope checklist](docs/reading-parity-plan.md#scope-and-completion-checklist)
 defines what counts toward completion.
 [EPUB feasibility results](docs/epub-probe-results.md)
 

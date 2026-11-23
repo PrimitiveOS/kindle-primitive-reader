@@ -1,6 +1,6 @@
 # Kindle reading parity implementation plan
 
-**Goal:** build PrimitiveOS Reader as a focused Kindle reading app and match KOReader feature by feature for supported reading workflows. The goal covers opening and rendering documents, reading navigation and layout, text search and lookup, bookmarks and annotations, accessibility, offline scan reading, and local reading data. Implement these capabilities in the Rust Reader and compare them against the same KOReader version, documents, and Kindle. The [requirements](requirements.md) define the in-scope acceptance checks; the [execution plan](execution-plan.md) tracks milestones and the [architecture](architecture.md) defines component boundaries.
+**Goal:** complete the PrimitiveOS Rust Reader as a focused Kindle reading app, matching KOReader for supported reading workflows. Scope is limited to opening and rendering documents, reading navigation and layout, search and lookup, bookmarks and annotations, accessibility, offline scan reading, and local reading data. Compare these capabilities against the same KOReader version, documents, and Kindle. A proposed feature must directly support one of those reading tasks to enter implementation or the parity checklist. The [requirements](requirements.md) define acceptance checks; the [execution plan](execution-plan.md) tracks milestones; the [architecture](architecture.md) defines component boundaries.
 
 Compare against the installed KOReader release for hardware measurements. Record the actual edition, format provider, options, and interaction being compared in each run. Keep only capabilities that directly support local reading in the parity backlog. [KOReader user guide](https://koreader.rocks/user_guide/) · [KOReader main features](https://github.com/koreader/koreader#main-features)
 
@@ -17,9 +17,11 @@ inventory counts do not measure completed parity.
 
 Use the upstream inventory to identify reading behavior. It is not a request to
 recreate KOReader's extension architecture or every utility in its menus.
-Features that support a reading task can be implemented as native Reader
-modules; the Lua plugin ABI and a general extension host are not part of the
-goal. File extensions remain in scope only as document-format identifiers.
+Before implementation, map each feature to opening, reading, navigating,
+searching, understanding, annotating, or resuming a local document. Features
+that support one of those tasks can be implemented as native Reader modules;
+the Lua plugin ABI and a general extension host are not part of the goal. File
+extensions remain in scope only as document-format identifiers.
 
 | Scope decision | Status |
 | --- | --- |
@@ -63,8 +65,7 @@ remaining reading requirements and all Kindle acceptance gates are still open.
 - [ ] Complete automated Kindle acceptance for document open/read/resume, physical controls, touch and exit, sleep/wake, USB handoff, and state preservation. Capture comparable device screenshots for the reading surface, top and bottom controls, selection/lookup, and reading settings.
 - [ ] Publish and list the candidate after the desktop and Kindle gates pass, then record the release checksum, Store listing, screenshots, and device evidence.
 
-The checklist applies to PrimitiveOS Reader only; it does not remove the separate
-Primitive Terminal application from PrimitiveOS. Device-wide settings remain in
+The checklist applies to PrimitiveOS Reader. Device-wide settings remain in
 Launcher. Current desktop evidence is not a substitute for the still-pending
 Kindle checks while the device is disconnected.
 
