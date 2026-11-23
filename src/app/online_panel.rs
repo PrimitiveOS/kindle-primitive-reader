@@ -33,6 +33,8 @@ pub(super) struct Languages {
     pub target: String,
     pub translator: Service,
     pub forget_queries: bool,
+    #[serde(default)]
+    pub show_romanizations: bool,
 }
 
 impl Default for Languages {
@@ -43,6 +45,7 @@ impl Default for Languages {
             target: "en".into(),
             translator: Service::Google,
             forget_queries: false,
+            show_romanizations: false,
         }
     }
 }
@@ -198,6 +201,7 @@ impl Reader {
             },
             text: text.trim().to_owned(),
             full_article: false,
+            with_romanization: !wiki && prefs.show_romanizations,
         };
         let edit_topic = wiki && request.text.is_empty();
         let back = self.screen;
@@ -211,13 +215,8 @@ impl Reader {
 
     pub(super) fn online_history_items(&self) -> Vec<Item> {
         let mut items = vec![
-            Item::new("Remember lookups", Action::ToggleOnlineHistory).detail(
-                if self.lookup_history.online_languages.forget_queries {
-                    "Off"
-                } else {
-                    "On"
-                },
-            ),
+            Item::new("Remember lookups", Action::ToggleOnlineHistory)
+                .detail("Keep completed searches and translations on this Kindle"),
         ];
         if !self.lookup_history.online.is_empty() {
             items.push(Item::new(
@@ -239,6 +238,13 @@ impl Reader {
             ))
         }));
         items
+    }
+
+    pub(super) fn translation_settings_items(&self) -> Vec<Item> {
+        vec![
+            Item::new("Show romanizations", Action::ToggleRomanizations)
+                .detail("Show Latin text with Google Translate results"),
+        ]
     }
 
     pub(super) fn draw_clear_online_history(&self, canvas: &mut Canvas) {
@@ -442,11 +448,12 @@ impl Reader {
         if let Some(article) = p.articles.get(p.article) {
             canvas.text(TOPIC, &article.title, BODY.bold().lines(2));
             let style = BODY.lines(10);
+            let display_text = article.display_text();
             let pages = p
                 .pages
-                .get_or_init(|| canvas.text_pages(BODY_RECT, &article.text, style));
+                .get_or_init(|| canvas.text_pages(BODY_RECT, &display_text, style));
             if let Some(range) = pages.get(p.page) {
-                canvas.text(BODY_RECT, &article.text[range.clone()], style);
+                canvas.text(BODY_RECT, &display_text[range.clone()], style);
             }
             let attribution = if r.service == Service::Wikipedia {
                 format!("{}.wikipedia.org · Wikipedia contributors · CC BY-SA", r.to)
@@ -636,6 +643,95 @@ mod tests {
     use std::fs;
     use std::process::Command;
     use std::time::Duration;
+
+    #[test]
+    fn romanization_setting_defaults_off_persists_and_is_used_by_google_requests() {
+        let older_preferences: Languages = serde_json::from_value(json!({
+            "wikipedia":"en",
+            "source":"auto",
+            "target":"en",
+            "translator":"Google",
+            "forget_queries":false
+        }))
+        .unwrap();
+        assert!(!older_preferences.show_romanizations);
+
+        let root = std::env::temp_dir().join(format!(
+            "reader-romanization-settings-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let font = test_fixture("fonts/NotoSans-Regular.ttf");
+        let state = root.join("library.json");
+        let mut app = Reader::open(&root, &state, vec![font.clone()]).unwrap();
+        assert!(!app.lookup_history.online_languages.show_romanizations);
+        app.show(Screen::TranslationSettings);
+        assert!(
+            app.top_config_items(super::super::TopGroup::Search)
+                .iter()
+                .any(|item| item.title == "Translation settings")
+        );
+        let items = app.items();
+        assert_eq!(items[0].title, "Show romanizations");
+        assert_eq!(
+            items[0].detail.as_deref(),
+            Some("Show Latin text with Google Translate results")
+        );
+
+        let mut canvas =
+            Canvas::new(WIDTH, HEIGHT, &[font.to_string_lossy().into_owned()]).unwrap();
+        if let Some(dir) = std::env::var_os("PRIMITIVE_READER_LOOKUP_SCREENSHOTS") {
+            fs::create_dir_all(&dir).unwrap();
+            primitive_app::write_png(
+                &std::path::Path::new(&dir).join("translation-settings-romanization-off.png"),
+                WIDTH,
+                HEIGHT,
+                &frame(&app, &mut canvas, false),
+            )
+            .unwrap();
+        }
+
+        app.activate(Action::ToggleRomanizations).unwrap();
+        assert!(app.lookup_history.online_languages.show_romanizations);
+        let items = app.items();
+        assert_eq!(
+            items[0].detail.as_deref(),
+            Some("Show Latin text with Google Translate results")
+        );
+        app.prepare_online_text(false, "你好").unwrap();
+        assert!(app.online.as_ref().unwrap().request.with_romanization);
+        app.online.as_mut().unwrap().articles = vec![crate::online_lookup::Article {
+            title: "Translation".into(),
+            text: "Good morning".into(),
+            source: Some("Καλημέρα".into()),
+            romanization: Some("kaliméra".into()),
+        }];
+        if let Some(dir) = std::env::var_os("PRIMITIVE_READER_LOOKUP_SCREENSHOTS") {
+            fs::create_dir_all(&dir).unwrap();
+            primitive_app::write_png(
+                &std::path::Path::new(&dir).join("online-romanization-result.png"),
+                WIDTH,
+                HEIGHT,
+                &frame(&app, &mut canvas, false),
+            )
+            .unwrap();
+        }
+
+        let mut reopened = Reader::open(&root, &state, vec![font]).unwrap();
+        assert!(reopened.lookup_history.online_languages.show_romanizations);
+        reopened.show(Screen::TranslationSettings);
+        if let Some(dir) = std::env::var_os("PRIMITIVE_READER_LOOKUP_SCREENSHOTS") {
+            fs::create_dir_all(&dir).unwrap();
+            primitive_app::write_png(
+                &std::path::Path::new(&dir).join("translation-settings-romanization-on.png"),
+                WIDTH,
+                HEIGHT,
+                &frame(&reopened, &mut canvas, false),
+            )
+            .unwrap();
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn real_input_renders_selection_lookup_pagination_and_restores_offline_history() {

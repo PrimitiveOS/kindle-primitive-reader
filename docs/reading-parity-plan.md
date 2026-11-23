@@ -44,18 +44,19 @@ only to find and compare relevant controls.
 
 ### Execution checklist
 
-**Milestone status:** 26 of 31 checklist items (84%) have desktop, scope, or
+**Milestone status:** 28 of 33 checklist items (85%) have desktop, scope, or
 device-system evidence. This count tracks plan milestones, not overall feature
 parity; many reading requirements and the foreground Kindle acceptance gates
 remain open.
 
-**Control evidence snapshot:** 189 of 541 in-scope reading-control rows are
-marked as complete workflows; 216 are partial, 86 are gaps, and 50 need
-audit. Adjustable footer text size (8–36, default 14) and optional bold text
-(default Off), half-logical font steps for legacy pixel settings, and the
-custom footer's Icons/Letters/Compact symbol styles and left/center/right
-alignment each move one control from gap to partial. Font face and foreground
-Kindle appearance remain open.
+**Control evidence snapshot:** 190 of 541 in-scope reading-control rows are
+marked as complete workflows; 215 are partial, 86 are gaps, and 50 need
+audit. The saved, opt-in Google romanization setting and response display close
+the matching KOReader control. Adjustable footer text size (8–36, default 14)
+and optional bold text (default Off), half-logical font steps for legacy pixel
+settings, and the custom footer's Icons/Letters/Compact symbol styles and
+left/center/right alignment each move one control from gap to partial. Font
+face and foreground Kindle appearance remain open.
 Six Kindle display/runtime controls were reclassified as Launcher-owned
 or outside reading scope. This unweighted inventory is a status breakdown, not
 a feature-weighted completion score. Current Kindle acceptance and publication
@@ -72,9 +73,10 @@ remain separate gates.
 - [x] Implement temporary highlight, hold-release/hold-pan selection, configurable very-long-press timing and the stock On/Off corner auto-scroll preference (On by default; active for continuous reflow). Desktop EPUB/PDF tests cover both preference states and the temporary-selection screenshot passes. PDF Select mode extends in both directions across pages when enabled, persists page continuations and rejects unreadable intermediate pages; see the [cross-page selection capture](screenshots/pdf-cross-page-selection.png).
 - [x] Add KOReader's dictionary-popup Highlight/Unhighlight toggle. Save the selected EPUB or PDF passage as a persistent annotation when the lookup closes; toggling back cancels the save. Automated EPUB/PDF interaction tests pass and the desktop popup screenshot has been inspected. Kindle acceptance remains open. [Dictionary evidence](reading-control-evidence.md#dictionary-navigation-checks)
 - [x] Add KOReader's dictionary pencil: tap edits the original query and long press edits the active result headword. Submitting creates a nested lookup; Back restores the prior result and source passage. EPUB interaction tests pass and the editor screenshot has been inspected. Kindle acceptance remains open. [Dictionary evidence](reading-control-evidence.md#dictionary-navigation-checks)
+- [x] Add KOReader's saved, opt-in “Show romanizations” translation setting. Google requests include the romanization response field only when enabled, and results show source text, Latin romanization when returned, and translation. Keep MyMemory unchanged and older settings Off by default. The persistence and provider-response tests pass; inspect the [Off](screenshots/translation-settings-romanization-off.png) and [On](screenshots/translation-settings-romanization-on.png) settings captures. Device acceptance remains open. [Romanization behavior](translation-romanization.md)
 - [ ] Compare selection placement, hold timing, corner zones and cross-page PDF selection behavior against KOReader on Kindle.
 - [ ] Compare selection-dialog placement, long-press behavior, highlight appearance and dismissal against KOReader on the Kindle.
-- [x] Run the current desktop library, binary, package and layout test suites against the pinned shared-input revision. The latest full Mac and test-only ARMHF runs each pass 960 Reader tests with 62 ignored, one Kindle binary test on Mac, 14 EPUB package tests, and four layout probes. The isolated shared-input worktree passes 140 `kl-core`, eight `primitive-app` and four `primitive-input` tests. [Build hashes and device test limits](execution-plan.md#current-host-and-device-integration-gate)
+- [x] Run the current desktop library, binary, package and layout test suites against the pinned shared-input revision. The latest Mac run passes 963 Reader tests with 62 ignored, one Kindle binary test, 14 EPUB package tests, and four layout probes. The latest on-device ARMHF evidence is the prior v0.1.25 candidate (960 Reader tests, 62 ignored, 14 package tests, four layout probes); the new romanization feature still needs its own device suite. The isolated shared-input worktree passes 140 `kl-core`, eight `primitive-app` and four `primitive-input` tests. [Build hashes and device test limits](execution-plan.md#current-host-and-device-integration-gate)
 - [x] Build the static ARMHF footer candidate, run its native suites on the Oasis, and install the verified binary in place. Foreground UI acceptance and release remain open. [Build hashes and device test limits](execution-plan.md#current-host-and-device-integration-gate)
 - [x] Add user-reorderable status metrics, KOReader-style footer separator and Icons/Letters/Compact symbol choices, “pages left includes current page,” and 0–2 decimal-place progress percentages. Verify settings persistence, item movement, and actual combined/custom captions; capture and inspect the [footer](screenshots/footer-item-symbols.png) and [settings](screenshots/footer-item-symbols-settings.png) simulator frames. Kindle acceptance remains open.
 - [x] Add KOReader's Left, Center, and Right footer alignment choices. Preserve Left as the default, persist the selection, keep the progress track and Exit target fixed, and inspect the [Left](screenshots/footer-alignment-left.png), [Center](screenshots/footer-alignment-center.png), and [Right](screenshots/footer-alignment-right.png) simulator captures. The ARMHF suite passes; foreground visual acceptance remains open.

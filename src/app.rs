@@ -242,6 +242,7 @@ enum Screen {
     OnlineLookup,
     OnlineEdit,
     OnlineHistory,
+    TranslationSettings,
     ClearOnlineHistory,
     DictionaryHistory,
     Vocabulary,
@@ -358,6 +359,7 @@ impl Screen {
             Self::OnlineLookup => "Online lookup",
             Self::OnlineEdit => "Online lookup",
             Self::OnlineHistory => "Online lookup history",
+            Self::TranslationSettings => "Translation settings",
             Self::ClearOnlineHistory => "Online lookup history",
             Self::DictionaryHistory => "Dictionary history",
             Self::Vocabulary => "Vocabulary",
@@ -449,6 +451,7 @@ enum Action {
     TranslatePage,
     RepeatOnline(usize),
     ToggleOnlineHistory,
+    ToggleRomanizations,
     ClearOnlineHistory,
     RepeatSearch(SearchQuery),
     StepNearby(crate::search::SearchDirection),
@@ -2025,6 +2028,9 @@ impl Reader {
             Screen::OnlineHistory | Screen::ClearOnlineHistory => {
                 return self.online_history_items();
             }
+            Screen::TranslationSettings => {
+                return self.translation_settings_items();
+            }
             Screen::SearchHistory => {
                 return self
                     .lookup_history
@@ -3174,6 +3180,9 @@ impl Reader {
             Action::RepeatOnline(index) => self.repeat_online(index)?,
             Action::ToggleOnlineHistory => self.update_lookup_history(|h| {
                 h.online_languages.forget_queries = !h.online_languages.forget_queries
+            })?,
+            Action::ToggleRomanizations => self.update_lookup_history(|h| {
+                h.online_languages.show_romanizations = !h.online_languages.show_romanizations
             })?,
             Action::ClearOnlineHistory => {
                 self.update_lookup_history(|h| h.online.clear())?;
@@ -6901,11 +6910,19 @@ impl Reader {
                 },
                 detail: item.detail.as_deref(),
                 accessory: if self.screen == Screen::MetadataSaveSettings
-                    || matches!(item.action, Action::Heading)
+                    || matches!(&item.action, Action::Heading)
                 {
                     RowAccessory::None
                 } else {
-                    RowAccessory::Disclosure
+                    match &item.action {
+                        Action::ToggleOnlineHistory => RowAccessory::Toggle(
+                            !self.lookup_history.online_languages.forget_queries,
+                        ),
+                        Action::ToggleRomanizations => RowAccessory::Toggle(
+                            self.lookup_history.online_languages.show_romanizations,
+                        ),
+                        _ => RowAccessory::Disclosure,
+                    }
                 },
             })
             .collect();

@@ -283,6 +283,7 @@ fn complete_backup_keeps_existing_components_until_selected_and_preserves_local_
         from: "auto".into(),
         to: "fr".into(),
         full_article: false,
+        with_romanization: false,
     }];
     prior.lookup_history.vocabulary.push("local-only".into());
     prior

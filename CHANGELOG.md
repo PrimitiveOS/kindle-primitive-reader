@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.1.26
+
+- Add the optional Google Translate romanization setting and show returned Latin text with the source and translation.
 
 ## 0.1.25
 

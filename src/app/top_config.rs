@@ -548,6 +548,10 @@ impl Reader {
             Item::new("Wikipedia", Action::Wikipedia).detail("Look up a topic"),
             Item::new("Online history", Action::Show(Screen::OnlineHistory)),
             Item::new(
+                "Translation settings",
+                Action::Show(Screen::TranslationSettings),
+            ),
+            Item::new(
                 "Dictionary history",
                 Action::Show(Screen::DictionaryHistory),
             ),

@@ -57,17 +57,23 @@ vertical chapter ticks below it and Exit at the right. [Default footer](screensh
 [Large EPUB footer](screenshots/footer-font-large-epub.png) ·
 [Large PDF footer](screenshots/footer-font-large-fixed.png)
 
-The latest Mac `cargo test --lib --bins --tests --locked --features kindle` run
-passed 960 Reader library tests with 62 ignored for private or device-provided
-inputs, one Kindle binary test, 14 EPUB package tests, and four layout probes.
-The run includes the page-overlap movement, style, settings-panel, alternate
-top status header, battery footer, adjustable footer text size, scaled legacy
-font steps, fixed chapter-caption hyphen, saved bold text and matching width
-measurement, custom footer Icons/Letters/Compact modes, and left/center/right
-footer alignment and persistence regressions.
+On 24 November 2026, the Mac command
+`cargo test --workspace --lib --bins --tests --locked --offline` passed 963
+Reader library tests, with 62 ignored for private or device-provided inputs,
+one Kindle binary test, 14 EPUB package tests, and four layout probes. The run
+includes the page-overlap movement, style, settings-panel, alternate top status
+header, battery footer, adjustable footer text size, scaled legacy font steps,
+fixed chapter-caption hyphen, saved bold text and matching width measurement,
+custom footer Icons/Letters/Compact modes, left/center/right footer alignment,
+and Google romanization setting, persistence, source-segment parsing and
+display regressions. The desktop example target was omitted because the Mac
+volume was nearly full; its link step failed with `ENOSPC` before the target
+filter was added. Reader's `target/` cache was removed after the passing run to
+recover 8.0 GiB.
 
-The latest test-only ARMHF bundle passed 960 Reader tests (62 ignored), 14 EPUB
-package tests, and four layout probes on the Oasis. Its log is
+The latest test-only ARMHF bundle built from the prior v0.1.25 Reader source
+passed 960 Reader tests (62 ignored), 14 EPUB package tests, and four layout
+probes on the Oasis. Its log is
 [`footer-bold-kindleoasis-20261124.log`](device-tests/footer-bold-kindleoasis-20261124.log)
 (SHA-256
 `cc7995bc84968042081b4233f8be659eb04bc97e4abe6e0e5c4032cfd50f29b3`). The
