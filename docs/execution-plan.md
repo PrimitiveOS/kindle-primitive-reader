@@ -71,12 +71,20 @@ package tests, and four layout probes on the Oasis. Its log is
 [`footer-bold-kindleoasis-20261124.log`](device-tests/footer-bold-kindleoasis-20261124.log)
 (SHA-256
 `cc7995bc84968042081b4233f8be659eb04bc97e4abe6e0e5c4032cfd50f29b3`). The
-static ARM EABI5 Reader 0.1.25 (SHA-256
-`dfc5fbd28dbf42ad727e183564ff6b15cdeee56633c8e11c65a8cf9d49265a5b`) is
-installed at `/mnt/us/reader/bin/reader-kindle`; the prior executable is kept
-as `/mnt/us/reader/bin/reader-kindle.pre-footer-bold-20261124`. The test bundle
-and log were removed from the Kindle after the run; 3.9 GiB remains free and
-the keep-awake flag is on. The battery reported 16% and was not charging.
+static ARM EABI5 binary from the verified v0.1.25 GitHub release ZIP (ZIP
+SHA-256
+`678f42f3e44b1f32a08526c819fda4c7e3cf8efc9a714f4613383a59f274e4db`, 21,252,010
+bytes). Its executable SHA-256 is
+`04ac6a55c96982737bfff8e41652d7a4a3761cdd5ce7f5ccfe324c89ef4a6c06`. This
+release binary is installed at `/mnt/us/reader/bin/reader-kindle`; the previous
+local candidate is kept as
+`/mnt/us/reader/bin/reader-kindle.pre-release-0.1.25-20261124`. Its
+`--check-document` diagnostic opened a real EPUB from Documents, rendered its
+first frame in 2,174 ms, advanced to a changed page and resumed from scratch
+state, with a reported 51,908 KiB peak. The diagnostic scratch was removed.
+The test bundle and log were also removed from the Kindle after the suite; 3.9
+GiB remains free and the keep-awake flag is on. The battery reported 16% and
+was not charging.
 Launcher, user documents, and reading data were left unchanged. No foreground
 E Ink screenshot was captured, so visual acceptance remains open. Simulator
 captures show the [footer symbol modes](screenshots/footer-item-symbols.png),
