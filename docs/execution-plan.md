@@ -63,18 +63,20 @@ highlight and confirmed the input bytes were unchanged. This is not the owner's
 Kindle Documents corpus, which remains pending. Both chooser screenshots are
 in [`docs/screenshots`](screenshots).
 The current static ARMHF candidate was built from Reader commit
-`0caaeb6a3f20d5a22dcee949a329cf2a798b1b22`, with the shared-input dependency
+`4ac9a58`, with the shared-input dependency
 pinned to `d3caf14241facf307699d3ecc37414671496bd1a`.
 `file` identifies it as a 32-bit ARM EABI5 statically linked, stripped ELF; its
-size is 33,407,700 bytes and SHA-256 is
-`5adb135b6d9cb42320a94f5b7b65a758a38c55e4b656f00f8ae1c431c58b3bb3`.
+size is 33,392,244 bytes and SHA-256 is
+`b535c787fac008accb98451f07d660c62324b399ef2339f8817f55bc53a321da`.
 It is a development candidate, not a release.
 `rust-objcopy` warned that this Rust
 installation cannot load `libLLVM.dylib`; `file` confirms the resulting ELF is
 stripped. The progress footer matches KOReader's default placement, thickness,
 minimum width, margin and chapter-tick width. Placement, thickness, 5–90%
-minimum width, 0–140 px margins and 1/2/3 px chapter ticks are saved for EPUB/PDF
-and covered by desktop geometry tests and light/dark simulator captures. Manual
+minimum width, 0–140 px margins, lock-at-minimum width and 1/2/3 px chapter ticks
+are saved for EPUB/PDF and covered by desktop geometry tests and light/dark
+simulator captures. The locked track screenshot is
+[`reading-footer-locked.png`](screenshots/reading-footer-locked.png). Manual
 fixed-page buttons and tap zones pan through zoomed documents using the saved
 overlap and traversal order; their functional tests and simulator captures are
 recorded. OPDS acquisition and remote progress-sync code and worker entry
