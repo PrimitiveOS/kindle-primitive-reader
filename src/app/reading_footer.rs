@@ -295,9 +295,13 @@ fn draw_battery_icon(
     }
 }
 
-fn battery_footer_text(level: u32, charging: bool) -> String {
+fn battery_footer_text(level: u32, charging: bool, hide_above: u8) -> Option<String> {
+    let level = level.min(100);
+    if level > u32::from(hide_above.min(100)) {
+        return None;
+    }
     let label = if charging { "Charging" } else { "Battery" };
-    format!("{label} {}%", level.min(100))
+    Some(format!("{label} {level}%"))
 }
 
 impl Reader {
@@ -1078,8 +1082,12 @@ impl Reader {
                         .map_or(0, |state| state.bookmarks.len())
                 )),
                 FooterItem::CurrentTime => current_time.clone(),
-                FooterItem::BatteryPercentage => primitive_device::battery().map(|percent| {
-                    battery_footer_text(percent.min(100), primitive_device::charging())
+                FooterItem::BatteryPercentage => primitive_device::battery().and_then(|percent| {
+                    battery_footer_text(
+                        percent,
+                        primitive_device::charging(),
+                        self.controls.footer_battery_hide_threshold.unwrap_or(100),
+                    )
                 }),
             };
             if let Some(text) = text {
@@ -1599,6 +1607,20 @@ impl Reader {
                     },
                 ));
             }
+            if c.footer_items & FooterItem::BatteryPercentage.bit() != 0 {
+                items.push(
+                    Item::new(
+                        "Hide battery when above",
+                        Action::Show(Screen::NumberingValue(
+                            NumberField::FooterBatteryHideThreshold,
+                        )),
+                    )
+                    .detail(format!(
+                        "{}% · 0–100%",
+                        c.footer_battery_hide_threshold.unwrap_or(100)
+                    )),
+                );
+            }
             items.push(Item::new("Status item order", Action::Heading));
             let ordered = FooterItem::ordered(c.footer_order);
             for (index, item) in ordered.iter().copied().enumerate() {
@@ -1682,9 +1704,27 @@ mod tests {
 
     #[test]
     fn battery_footer_text_reports_level_and_charging_state() {
-        assert_eq!(battery_footer_text(47, false), "Battery 47%");
-        assert_eq!(battery_footer_text(88, true), "Charging 88%");
-        assert_eq!(battery_footer_text(140, false), "Battery 100%");
+        assert_eq!(
+            battery_footer_text(47, false, 100),
+            Some("Battery 47%".to_owned())
+        );
+        assert_eq!(
+            battery_footer_text(88, true, 100),
+            Some("Charging 88%".to_owned())
+        );
+        assert_eq!(
+            battery_footer_text(140, false, 100),
+            Some("Battery 100%".to_owned())
+        );
+        assert_eq!(
+            battery_footer_text(80, false, 80),
+            Some("Battery 80%".to_owned())
+        );
+        assert_eq!(battery_footer_text(81, false, 80), None);
+        assert_eq!(
+            battery_footer_text(0, false, 0),
+            Some("Battery 0%".to_owned())
+        );
     }
 
     #[test]

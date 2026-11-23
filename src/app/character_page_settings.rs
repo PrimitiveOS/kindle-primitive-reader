@@ -20,6 +20,7 @@ pub(super) enum NumberField {
     AutoTurnOverlapVertical,
     FooterTrackMinimumWidth,
     FooterTrackMarginWidth,
+    FooterBatteryHideThreshold,
 }
 
 impl NumberField {
@@ -33,7 +34,9 @@ impl NumberField {
             | Self::WordSpacing(_) => Screen::Book,
             Self::AutoTurn => Screen::AutoTurn,
             Self::AutoTurnOverlapHorizontal | Self::AutoTurnOverlapVertical => Screen::AutoTurnPan,
-            Self::FooterTrackMinimumWidth | Self::FooterTrackMarginWidth => Screen::FooterSettings,
+            Self::FooterTrackMinimumWidth
+            | Self::FooterTrackMarginWidth
+            | Self::FooterBatteryHideThreshold => Screen::FooterSettings,
         }
     }
 }
@@ -202,6 +205,20 @@ impl Reader {
             self.show(field.parent());
             return Ok(());
         }
+        if field == NumberField::FooterBatteryHideThreshold {
+            let threshold = value
+                .trim()
+                .parse::<u8>()
+                .ok()
+                .filter(|percent| *percent <= 100)
+                .ok_or("Enter a battery threshold from 0% to 100%")?;
+            let mut controls = self.controls;
+            controls.footer_battery_hide_threshold = Some(threshold);
+            controls.save(&self.controls_path)?;
+            self.controls = controls;
+            self.show(field.parent());
+            return Ok(());
+        }
         if matches!(
             field,
             NumberField::FooterTrackMinimumWidth | NumberField::FooterTrackMarginWidth
@@ -255,6 +272,7 @@ impl Reader {
             }
             NumberField::FooterTrackMinimumWidth => unreachable!("handled above"),
             NumberField::FooterTrackMarginWidth => unreachable!("handled above"),
+            NumberField::FooterBatteryHideThreshold => unreachable!("handled above"),
             NumberField::MarginSize => {
                 controls.numbering.label_size = number
                     .filter(|n| (8..=20).contains(n))

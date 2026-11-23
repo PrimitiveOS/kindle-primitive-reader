@@ -98,6 +98,9 @@ pub(crate) struct ReadingControls {
     pub footer_initial_marker: bool,
     #[serde(skip_serializing_if = "is_false")]
     pub footer_auto_refresh: bool,
+    /// Hide the custom footer battery item when the charge is above this level; absent keeps 100%.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub footer_battery_hide_threshold: Option<u8>,
     #[serde(skip_serializing_if = "TopHeader::is_default")]
     pub top_header: TopHeader,
     #[serde(skip_serializing_if = "ChapterMarkerWidth::is_default")]
@@ -1240,12 +1243,14 @@ mod tests {
             footer_items: FooterItem::DEFAULT_MASK
                 | FooterItem::BookmarkCount.bit()
                 | FooterItem::BatteryPercentage.bit(),
+            footer_battery_hide_threshold: Some(80),
             ..ReadingControls::default()
         };
         let bytes = serde_json::to_vec(&controls).unwrap();
         let reopened: ReadingControls = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(reopened.status_bar, StatusBar::Custom);
         assert_eq!(reopened.footer_items, controls.footer_items);
+        assert_eq!(reopened.footer_battery_hide_threshold, Some(80));
         assert_eq!(FooterItem::BatteryPercentage.label(), "Battery percentage");
         assert!(FooterItem::ordered(0).contains(&FooterItem::BatteryPercentage));
 

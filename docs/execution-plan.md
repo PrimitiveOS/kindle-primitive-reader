@@ -48,7 +48,7 @@ counts do not measure completed parity.
 ## Current host and device integration gate
 
 The latest full Mac `cargo test --locked --features kindle` run, against the
-current worktree, passed 952 Reader library tests with 62 ignored for private
+current worktree, passed 953 Reader library tests with 62 ignored for private
 or device-provided inputs, one Kindle binary test, 14 EPUB package tests, and
 four layout probes. The page-overlap movement, style, settings-panel,
 alternate top status header, battery footer and persistence regressions are
@@ -132,6 +132,24 @@ the test bundle used a temporary profile and did not replace Reader or Launcher,
 or alter user documents or saved reading data. The temporary bundle has since
 been removed. This native run validates ARM behavior, not foreground rendering,
 physical buttons or E Ink refresh for the new status controls.
+
+On 23 November 2026, the battery-footer threshold update was tested on the Mac
+and on the Oasis 3 from a test-only ARMHF bundle built from the worktree based
+on `37799e3`. The Mac suite passed 953 Reader tests (62 ignored), one Kindle
+binary test, 14 EPUB package tests, and four layout probes. On-device ARMHF
+results were 953 Reader tests (62 ignored), 14 package tests, and four layout
+probes, with no failures. The Reader, EPUB package, layout probe, and
+reader-probe binary SHA-256 values are respectively
+`d210d744b65a57a2bfc9edae4936309ab6372a8a04c2292429e8afb2c6dfcccd`,
+`9ba3f7e77e273302bd669a082cc7511edf09086f7f8f9324fea45716116259a6`,
+`e590a66fa40acc58870ff3eec152ceb5a10d3b954c5d1e123b48caa59db77f7c`, and
+`7e65db3e04852e6ff41ebb10f8a31aa9d3b31ae351b2e9d9af8222d7f89becfc`.
+The test archive's SHA-256 matched on the Mac and Kindle before extraction.
+The Kindle remained awake; its available storage returned to 4.0 GiB after the
+temporary bundle and profile were removed. These suites validate ARM execution
+of app logic and document engines only. The installed Reader and Launcher,
+reading data, and owner documents were not changed, and foreground visual or
+physical E Ink acceptance for the battery value remains open.
 
 | ARMHF chapter | Characters / pages | Median first frame | Median layout | Median warm raster p95 | Peak RSS | Missing glyphs |
 |---|---:|---:|---:|---:|---:|---:|

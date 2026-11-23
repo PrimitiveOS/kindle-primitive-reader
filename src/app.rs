@@ -305,6 +305,7 @@ impl Screen {
             Self::NumberingValue(NumberField::AutoTurnOverlapVertical) => "Vertical overlap",
             Self::NumberingValue(NumberField::FooterTrackMinimumWidth) => "Progress bar width",
             Self::NumberingValue(NumberField::FooterTrackMarginWidth) => "Progress bar margins",
+            Self::NumberingValue(NumberField::FooterBatteryHideThreshold) => "Battery threshold",
             Self::NumberingValue(NumberField::MarginSize) => "Margin label size",
             Self::NumberingValue(_) => "Characters per page",
             Self::NumberingDefaults => "Page numbering defaults",
@@ -1371,7 +1372,9 @@ impl Reader {
                 } else if matches!(
                     screen,
                     Screen::NumberingValue(
-                        NumberField::FooterTrackMinimumWidth | NumberField::FooterTrackMarginWidth
+                        NumberField::FooterTrackMinimumWidth
+                            | NumberField::FooterTrackMarginWidth
+                            | NumberField::FooterBatteryHideThreshold
                     )
                 ) {
                     3
@@ -1397,6 +1400,11 @@ impl Reader {
                 Screen::NumberingValue(NumberField::FooterTrackMarginWidth) => {
                     let width = self.controls.footer_track_margin_width.unwrap_or(10);
                     self.editor.text = width.to_string().chars().collect();
+                    self.editor.caret = self.editor.text.len();
+                }
+                Screen::NumberingValue(NumberField::FooterBatteryHideThreshold) => {
+                    let threshold = self.controls.footer_battery_hide_threshold.unwrap_or(100);
+                    self.editor.text = threshold.to_string().chars().collect();
                     self.editor.caret = self.editor.text.len();
                 }
                 _ => {}
@@ -6718,6 +6726,9 @@ impl Reader {
                 }
                 Screen::NumberingValue(NumberField::FooterTrackMarginWidth) => {
                     ("Progress bar margin: 0 to 140 pixels", "Set")
+                }
+                Screen::NumberingValue(NumberField::FooterBatteryHideThreshold) => {
+                    ("Hide battery when charge is above: 0 to 100%", "Set")
                 }
                 Screen::NumberingValue(NumberField::MarginSize) => {
                     ("Margin text size from 8 to 20", "Set")
@@ -13649,6 +13660,67 @@ mod tests {
         }))
         .unwrap();
         assert!(app.footer_refresh_at.is_none());
+    }
+
+    #[test]
+    fn battery_footer_threshold_settings_persist_and_bound_hidden_level() {
+        use crate::reading_controls::{FooterItem, StatusBar};
+
+        let fixture = Fixture::new();
+        let mut app = fixture.app();
+        app.open_path(&fixture.book).unwrap();
+        app.activate(Action::SetReadingControls(ReadingControls {
+            status_bar: StatusBar::Custom,
+            footer_items: ReadingControls::default().footer_items
+                | FooterItem::BatteryPercentage.bit(),
+            ..app.controls
+        }))
+        .unwrap();
+
+        app.show(Screen::FooterSettings);
+        let threshold = app
+            .items()
+            .into_iter()
+            .find(|item| item.title == "Hide battery when above")
+            .expect("the battery item exposes its threshold");
+        assert_eq!(threshold.detail.as_deref(), Some("100% · 0–100%"));
+
+        let field = NumberField::FooterBatteryHideThreshold;
+        app.show(Screen::NumberingValue(field));
+        assert_eq!(app.editor.string(), "100");
+        app.editor.text = "80".chars().collect();
+        app.editor.caret = app.editor.text.len();
+        app.apply_numbering_input(field).unwrap();
+        assert_eq!(app.controls.footer_battery_hide_threshold, Some(80));
+        assert_eq!(
+            ReadingControls::load(&app.controls_path, true).footer_battery_hide_threshold,
+            Some(80)
+        );
+
+        app.show(Screen::NumberingValue(field));
+        app.editor.text = "101".chars().collect();
+        app.editor.caret = app.editor.text.len();
+        assert!(app.apply_numbering_input(field).is_err());
+        assert_eq!(app.controls.footer_battery_hide_threshold, Some(80));
+
+        app.show(Screen::FooterSettings);
+        assert_eq!(
+            app.items()
+                .into_iter()
+                .find(|item| item.title == "Hide battery when above")
+                .and_then(|item| item.detail),
+            Some("80% · 0–100%".to_owned())
+        );
+        app.activate(Action::SetReadingControls(ReadingControls {
+            footer_items: app.controls.footer_items & !FooterItem::BatteryPercentage.bit(),
+            ..app.controls
+        }))
+        .unwrap();
+        assert!(
+            app.items()
+                .iter()
+                .all(|item| item.title != "Hide battery when above")
+        );
     }
 
     #[test]
