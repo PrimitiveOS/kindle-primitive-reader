@@ -46,6 +46,7 @@ mod font_render_tests;
 mod footer_custom_text;
 mod footer_font_face;
 mod footer_presets;
+mod footnote_font;
 mod footnote_popup;
 mod gestures;
 mod hidden_flows;
@@ -247,6 +248,7 @@ enum Screen {
     CustomBookmarks,
     Links,
     LinkSettings,
+    FootnoteFontSize(footnote_font::Mode),
     Bookmarks,
     Typography,
     ReadingFonts,
@@ -392,6 +394,7 @@ impl Screen {
             Self::GeneratedContents => "Generated outline",
             Self::Links => "Links on this page",
             Self::LinkSettings => "Links",
+            Self::FootnoteFontSize(_) => "Footnote popup font size",
             Self::Bookmarks | Self::FixedBookmarks => "Bookmarks",
             Self::Typography => "Text settings",
             Self::ReadingFonts => "Reading font",
@@ -1687,6 +1690,7 @@ impl Reader {
         self.prepare_logical_font_editor();
         self.prepare_line_spacing_editor();
         self.prepare_word_spacing_editor();
+        self.prepare_footnote_font_editor();
         self.map_window = fixed_book_map::MapWindow::default();
         self.sync_auto_turn(Instant::now());
         self.update_stats_activity(Instant::now());
@@ -4948,6 +4952,9 @@ impl Reader {
     }
 
     fn handle_page_number(&mut self, input: Input) -> Change {
+        if let Some(change) = self.footnote_font_input(input) {
+            return change;
+        }
         if let Some(change) = self.logical_font_input(input) {
             return change;
         }
@@ -4965,6 +4972,7 @@ impl Reader {
         {
             self.show(match self.screen {
                 Screen::NumberingValue(field) => field.parent(),
+                Screen::FootnoteFontSize(_) => Screen::LinkSettings,
                 Screen::FooterCustomText | Screen::FooterCustomTextGuide => Screen::FooterSettings,
                 _ if self.fixed.is_some() => Screen::FixedTools,
                 _ => Screen::BookTools,
@@ -4975,7 +4983,10 @@ impl Reader {
             return Change::None;
         };
         let layout = Layout::new(WIDTH, HEIGHT, 4, 5);
-        let action = if matches!(self.screen, Screen::NumberingValue(_)) {
+        let action = if matches!(
+            self.screen,
+            Screen::NumberingValue(_) | Screen::FootnoteFontSize(_)
+        ) {
             "Set"
         } else if self.screen == Screen::FooterCustomText {
             "Save"
@@ -4989,6 +5000,12 @@ impl Reader {
             match self.screen {
                 Screen::NumberingValue(field) => {
                     return match self.apply_numbering_input(field) {
+                        Ok(()) => Change::Partial,
+                        Err(error) => self.report(error),
+                    };
+                }
+                Screen::FootnoteFontSize(mode) => {
+                    return match self.apply_footnote_font_input(mode) {
                         Ok(()) => Change::Partial,
                         Err(error) => self.report(error),
                     };
@@ -7410,6 +7427,7 @@ impl Reader {
                 | Screen::EditNote
                 | Screen::GoToPage
                 | Screen::NumberingValue(_)
+                | Screen::FootnoteFontSize(_)
                 | Screen::PdfPassword
         ) {
             let (hint, action) = match self.screen {
@@ -7427,6 +7445,7 @@ impl Reader {
                     "Save",
                 ),
                 Screen::PdfPassword => ("PDF password", "Open"),
+                Screen::FootnoteFontSize(mode) => (mode.hint(), "Set"),
                 Screen::NumberingValue(NumberField::ContentDpi(_)) => {
                     ("Content zoom: 0 to 300 dpi", "Set")
                 }
@@ -7505,6 +7524,9 @@ impl Reader {
             self.draw_logical_font(canvas);
             self.draw_line_spacing(canvas);
             self.draw_word_spacing(canvas);
+            if let Screen::FootnoteFontSize(mode) = self.screen {
+                self.draw_footnote_font_editor(canvas, mode);
+            }
             if self.can_paste_text() {
                 external_link::draw_paste(canvas);
             }
@@ -8370,7 +8392,10 @@ impl App for Reader {
         }
         if matches!(
             self.screen,
-            Screen::GoToPage | Screen::NumberingValue(_) | Screen::FooterCustomText
+            Screen::GoToPage
+                | Screen::NumberingValue(_)
+                | Screen::FooterCustomText
+                | Screen::FootnoteFontSize(_)
         ) {
             return self.handle_page_number(input);
         }
@@ -12540,7 +12565,11 @@ mod tests {
         let panel = note.panel();
         assert!(panel.y >= HEIGHT as i32 * 2 / 3);
         assert!(panel.bottom() <= HEIGHT as i32);
-        let (wx, wy) = note.test_word("shore");
+        let shore_page = note.test_word_page("shore");
+        for _ in 0..shore_page {
+            assert_eq!(app.input(Input::PageForward), Change::Partial);
+        }
+        let (wx, wy) = app.footnote.as_ref().unwrap().test_word("shore");
         capture_test_screen(&app, &fonts, "READER_FOOTNOTE_SCREENSHOT", false);
         let font_paths: Vec<_> = fonts.iter().map(|p| p.display().to_string()).collect();
         let mut canvas = Canvas::new(WIDTH, HEIGHT, &font_paths).unwrap();
@@ -12619,6 +12648,10 @@ mod tests {
         app.activate(Action::ReturnToLocation).unwrap();
         assert_eq!(position(&app.active.as_ref().unwrap().reading), original);
         app.input(Input::Tap(x, y));
+        let return_page = app.footnote.as_ref().unwrap().test_word_page("Return");
+        for _ in 0..return_page {
+            assert_eq!(app.input(Input::PageForward), Change::Partial);
+        }
         let (bx, by) = app.footnote.as_ref().unwrap().test_word("Return");
         app.input(Input::Tap(bx, by));
         assert_eq!(app.screen, Screen::Book);

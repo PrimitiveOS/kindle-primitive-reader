@@ -259,6 +259,135 @@ fn footnote_book_font_toggle_keeps_the_same_document_location_and_other_settings
 }
 
 #[test]
+fn footnote_font_sizes_follow_book_and_fixed_settings_without_clipping_the_popup() {
+    use crate::footnotes::font_size::FontSize;
+    use std::io::{Read, Write};
+
+    let fixture = Fixture::new();
+    let original = std::fs::File::open(crate::test_fixture("footnote-export-roots.epub")).unwrap();
+    let mut original = zip::ZipArchive::new(original).unwrap();
+    let mut authored = zip::ZipWriter::new(std::fs::File::create(&fixture.book).unwrap());
+    for index in 0..original.len() {
+        let mut entry = original.by_index(index).unwrap();
+        let mut content = Vec::new();
+        entry.read_to_end(&mut content).unwrap();
+        if entry.name() == "OPS/chapter.xhtml" {
+            content = String::from_utf8(content)
+                .unwrap()
+                .replace(
+                    "<p id=\"noteC\">LINKED INNER NOTE C",
+                    "<p id=\"noteC\" style=\"line-height:3\">LINKED INNER NOTE C",
+                )
+                .into_bytes();
+        }
+        authored
+            .start_file(entry.name(), zip::write::SimpleFileOptions::default())
+            .unwrap();
+        authored.write_all(&content).unwrap();
+    }
+    authored.finish().unwrap();
+    let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+    app.open_path(&fixture.book).unwrap();
+    let id = app.active.as_ref().unwrap().id;
+    app.activate(Action::ApplyLogicalFont(id, 32.0)).unwrap();
+    app.activate(Action::Show(Screen::Book)).unwrap();
+    let document = app.active.as_ref().unwrap().reading.config.settings;
+
+    for (label, value, effective, screenshot_name) in [
+        ("1", FontSize::default(), document.font_size - 2.0, None),
+        (
+            "1",
+            FontSize::Relative(-10),
+            document.font_size - 10.0,
+            None,
+        ),
+        ("1", FontSize::Relative(5), document.font_size + 5.0, None),
+        (
+            "1",
+            FontSize::Fixed(12),
+            document.font_scale.scaled_pixels(12.0) as f32,
+            Some("size-small"),
+        ),
+        (
+            "1",
+            FontSize::Fixed(255),
+            MAX_FONT_PIXELS,
+            Some("size-large"),
+        ),
+        ("3", FontSize::Fixed(255), MAX_FONT_PIXELS, None),
+    ] {
+        app.activate(Action::SetReadingControls(
+            crate::reading_controls::ReadingControls {
+                footnote_font_size: value,
+                ..app.controls
+            },
+        ))
+        .unwrap();
+        let (x, y) = source_point(&mut app, label);
+        let location = app.current_history_location();
+        let history = (app.back.len(), app.forward.len());
+        assert_eq!(app.input(Input::Tap(x, y)), Change::Partial);
+        assert_eq!(app.screen, Screen::Footnote, "{label} {value:?}");
+        let preview = app.footnote.as_ref().unwrap();
+        assert_eq!(
+            preview.preview.settings.font_size, effective,
+            "{label} {value:?}"
+        );
+        assert!(preview.frame.pixels.iter().any(|pixel| *pixel < 160));
+        assert!(preview.panel().h <= HEIGHT as i32 / 3);
+        assert!(preview.panel().bottom() <= HEIGHT as i32);
+        if value == FontSize::Fixed(12) {
+            assert_eq!(preview.preview.page_count(), 1);
+            assert!(preview.content_height() < CONTENT_HEIGHT / 2);
+        }
+        if let Some(name) = screenshot_name {
+            screenshot(&app, name, &fonts, &[false]);
+        }
+        if value == FontSize::Fixed(255) {
+            assert!(preview.preview.page_count() > 1);
+            assert_eq!(app.input(Input::PageForward), Change::Partial);
+            let following = app.footnote.as_ref().unwrap();
+            assert_eq!(following.page, 1);
+            assert!(following.frame.pixels.iter().any(|pixel| *pixel < 160));
+        }
+        let close = app.footnote.as_ref().unwrap().close_button();
+        assert_eq!(
+            app.input(Input::Tap(
+                (close.x + close.w / 2) as f32,
+                (close.y + close.h / 2) as f32
+            )),
+            Change::Partial
+        );
+        assert_eq!(app.screen, Screen::Book);
+        assert_eq!(app.current_history_location(), location);
+        assert_eq!((app.back.len(), app.forward.len()), history);
+        assert_eq!(
+            app.active.as_ref().unwrap().reading.config.settings,
+            document
+        );
+    }
+    app.activate(Action::Text(Settings {
+        font_size: 12.0,
+        logical_font_size: None,
+        ..document
+    }))
+    .unwrap();
+    app.activate(Action::SetReadingControls(
+        crate::reading_controls::ReadingControls {
+            footnote_font_size: FontSize::Relative(-10),
+            ..app.controls
+        },
+    ))
+    .unwrap();
+    let (x, y) = source_point(&mut app, "1");
+    assert_eq!(app.input(Input::Tap(x, y)), Change::Partial);
+    let preview = app.footnote.as_ref().unwrap();
+    assert_eq!(preview.preview.settings.font_size, MIN_FONT_PIXELS);
+    assert!(preview.frame.pixels.iter().any(|pixel| *pixel < 160));
+}
+
+#[test]
 #[ignore = "Requires an authorized unchanged EPUB via READER_FOOTNOTE_ORIGINAL"]
 fn original_document_note_links_open_by_default_and_preserve_source_frame_and_progress() {
     use std::collections::BTreeSet;

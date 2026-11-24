@@ -84,3 +84,24 @@ the pinned `readerlink.lua` and `footnotewidget.lua` files.
 python3 scripts/compare-footnote-book-font.py /path/to/pinned/lua/files
 cargo test --locked --lib footnote_book_font_toggle
 ```
+
+## Preview font size
+
+Open reading **Settings › Links › Footnote popup font size**. **Relative**
+adds an offset from −10 to +5 pixels to the book's current rendered size. The
+default is −2 pixels. **Fixed** accepts 12 to 255 and scales that value with
+the screen, independently of the book font size. Both settings apply across
+books and take effect when you open a preview. **Set** saves the selected mode.
+[KOReader size controls](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerlink.lua#L361-L424) · [KOReader size conversion](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/footnotewidget.lua#L224-L232)
+
+Reader saves the full preference range. The preview lays out a base size of 12
+to 192 screen pixels and tries 140 pixels for an over-tall line. Short notes
+use a compact panel and longer notes paginate within the same height limit.
+If an authored box still cannot paginate, the link opens the note in the book.
+[Size controls](screenshots/footnote-size-settings.png) · [Small preview](screenshots/footnote-size-small-light.png) · [Largest preview](screenshots/footnote-size-large-light.png)
+
+The stock Lua comparison checks both selector bounds, how actual saved modes
+replace each other, and the requested pixel values. The authored Reader test
+covers both ends of both ranges, the minimum size when the book text is already
+small, an enlarged paginated note, and a note with an authored tall line. It
+also checks the original reading location and navigation history after close.

@@ -152,6 +152,7 @@ fn reflow_link_tap_settings_match_defaults_preserve_explicit_links_and_enlarge_i
             "Ignore external links on tap",
             "Ignore external links on swipe",
             "Use book font in popups",
+            "Footnote popup font size",
         ]
     );
     app.show(Screen::Book);
