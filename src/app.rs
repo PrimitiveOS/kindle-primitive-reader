@@ -649,6 +649,10 @@ enum Action {
         Option<typography_settings::CatalogLanguage>,
     ),
     RespectEmbeddedLanguages(bool),
+    SetHangingPunctuation {
+        enabled: bool,
+        for_new_books: bool,
+    },
     Hyphenation(typography_settings::hyphenation_controls::Command),
     SetBookPublisherRenderMode(crate::PublisherRenderMode),
     SetPublisherRenderDefault(crate::PublisherRenderMode),
@@ -4409,6 +4413,12 @@ impl Reader {
             Action::TypographyLanguage(scope, choice) => {
                 self.choose_typography_language(scope, choice)?
             }
+            Action::SetHangingPunctuation {
+                enabled,
+                for_new_books,
+            } => {
+                self.set_hanging_punctuation(enabled, for_new_books)?;
+            }
             Action::RespectEmbeddedLanguages(respect) => {
                 self.set_embedded_language_respect(respect)?
             }
@@ -4755,6 +4765,9 @@ impl Reader {
         }
         if preferences.publisher_render_mode.is_none() {
             preferences.publisher_render_mode = current.publisher_render_mode;
+        }
+        if preferences.hanging_punctuation.is_none() {
+            preferences.hanging_punctuation = current.hanging_punctuation;
         }
         let fonts = if current.font_file == preferences.font_file {
             active.reading.config.fonts.clone()
@@ -8327,6 +8340,9 @@ impl Reader {
                             RowAccessory::Toggle(self.chapter_level_checked(setting))
                         }
                         Action::Hyphenation(command) => self.hyphenation_accessory(*command),
+                        Action::SetHangingPunctuation { enabled, .. } => {
+                            RowAccessory::Toggle(!enabled)
+                        }
                         Action::RespectEmbeddedLanguages(_) => {
                             RowAccessory::Toggle(self.active.as_ref().is_some_and(|book| {
                                 book.reading.config.settings.typography.respect_embedded

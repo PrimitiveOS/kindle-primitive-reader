@@ -238,6 +238,9 @@ pub(crate) struct LayoutData<B: Brush> {
     // Output of line breaking
     /// The lines in the
     pub(crate) lines: Vec<LineData>,
+    /// Candidate optical shifts for the physical edges of each broken line.
+    pub(crate) punctuation_shifts: Vec<[f32; 2]>,
+    pub(crate) punctuation_overflow: [f32; 2],
     /// Items within each line
     pub(crate) line_items: Vec<LineItemData>,
     /// Position of each aligned subtree rooted at a `vertical-align: top | bottom` style on each line.
@@ -284,6 +287,8 @@ impl<B: Brush> Default for LayoutData<B> {
             runs: Vec::new(),
             items: Vec::new(),
             lines: Vec::new(),
+            punctuation_shifts: Vec::new(),
+            punctuation_overflow: [0.0; 2],
             line_items: Vec::new(),
             aligned_subtree_offsets: Vec::new(),
             expanded_gaps: Vec::new(),
@@ -317,6 +322,8 @@ impl<B: Brush> LayoutData<B> {
         self.runs.clear();
         self.items.clear();
         self.lines.clear();
+        self.punctuation_shifts.clear();
+        self.punctuation_overflow = [0.0; 2];
         self.line_items.clear();
         self.aligned_subtree_offsets.clear();
         self.expanded_gaps.clear();

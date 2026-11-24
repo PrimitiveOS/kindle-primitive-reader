@@ -65,3 +65,9 @@ this change does not clamp invalid text or invent source characters. Reader's
 regression covers one, two and three wrapped pictures, projected captions,
 original picture ordinals and serialized page restoration:
 `cargo test --lib parley_layout::media_line_tests`.
+
+Reader can supply an optical margin rule after line breaking. The layout
+measures the first and last visual glyphs, adjusts alignment and
+justification at the applicable edges, and reports the applied bleed for
+clipping and hit testing. Shaped runs, line boundaries and canonical source
+positions are preserved.

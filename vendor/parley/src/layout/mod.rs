@@ -7,6 +7,7 @@ mod alignment;
 mod cluster;
 mod line;
 mod line_break;
+mod optical_margins;
 mod run;
 mod spacing;
 pub(crate) mod style_metrics;
@@ -29,6 +30,7 @@ pub use cluster::{Affinity, Cluster, ClusterPath, ClusterSide};
 pub use data::BreakReason;
 pub use layout::Layout;
 pub use line::{GlyphRun, Line, LineMetrics, PositionedInlineBox, PositionedLayoutItem};
+pub use optical_margins::MarginEdge;
 pub use line_break::{
     BoxBreakData, BreakLines, BreakerState, LineBreakData, MaxHeightBreakData, YieldData,
 };

@@ -29,6 +29,8 @@ pub(crate) struct ReadingControls {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub respect_embedded_languages_default: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub hanging_punctuation_default: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub hyphenation_default: Option<crate::HyphenationMode>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trust_soft_hyphens_default: Option<bool>,

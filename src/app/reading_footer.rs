@@ -736,6 +736,7 @@ impl Reader {
             width: viewport.dimensions().0,
             height: viewport.document_height(self.controls.overlap_footer),
             typography: self.default_typography_languages(),
+            hanging_punctuation: self.controls.hanging_punctuation_default.unwrap_or(false),
             hyphenation_limits: self.controls.hyphenation_limits,
             trust_soft_hyphens: self.controls.trust_soft_hyphens_default.unwrap_or(false),
             ..super::device_settings()

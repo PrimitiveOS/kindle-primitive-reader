@@ -513,6 +513,8 @@ pub struct BookPreferences {
     pub typography_language: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub respect_embedded_languages: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hanging_punctuation: Option<bool>,
     /// Per-book scroll-page overlap switch; `None` follows new-book defaults.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub page_overlap_enabled: Option<bool>,
@@ -543,6 +545,7 @@ impl BookPreferences {
             .main_language
             .map(|language| language.as_str().to_owned());
         self.respect_embedded_languages = Some(probe.settings.typography.respect_embedded);
+        self.hanging_punctuation = Some(probe.settings.hanging_punctuation);
     }
 
     #[cfg(feature = "kindle")]
@@ -677,6 +680,9 @@ impl BookPreferences {
             trust_soft_hyphens: self
                 .trust_soft_hyphens
                 .unwrap_or(settings.trust_soft_hyphens),
+            hanging_punctuation: self
+                .hanging_punctuation
+                .unwrap_or(settings.hanging_punctuation),
             typography: crate::TypographyLanguages {
                 main: typography_language,
                 fallback: settings

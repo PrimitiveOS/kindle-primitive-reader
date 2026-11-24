@@ -224,3 +224,69 @@ fn typography_language_default_and_fallback_are_independent_of_saved_books() {
     reopened.open_path(&book("After clearing", "")).unwrap();
     assert_eq!(main_language(&reopened), "en-US");
 }
+
+#[test]
+fn hanging_punctuation_preserves_reading_position_and_has_a_new_book_default() {
+    let fixture = Fixture::new();
+    let first = fixture.root.join("Optical margins.epub");
+    let second = fixture.root.join("Next edition.epub");
+    fs::copy(crate::test_fixture("hanging-punctuation.epub"), &first).unwrap();
+    write_book(&second, "Next edition", "en-US");
+    let bytes = fs::read(&first).unwrap();
+
+    let mut app = reader(&fixture);
+    app.open_path(&first).unwrap();
+    let anchor = app.current_history_location();
+    let id = app.active.as_ref().unwrap().id;
+    let before = app
+        .active
+        .as_mut()
+        .unwrap()
+        .reading
+        .probe
+        .capture(0)
+        .unwrap();
+    app.show(Screen::TypographyRules);
+    assert!(!probe(&app).settings.hanging_punctuation);
+    tap_contents_item(&mut app, "Hanging punctuation");
+    assert!(probe(&app).settings.hanging_punctuation);
+    assert!(
+        app.library
+            .state(id)
+            .unwrap()
+            .preferences
+            .hanging_punctuation
+            .unwrap()
+    );
+    assert_eq!(app.current_history_location(), anchor);
+    assert_ne!(
+        app.active
+            .as_mut()
+            .unwrap()
+            .reading
+            .probe
+            .capture(0)
+            .unwrap(),
+        before
+    );
+    let mut canvas = adopt(&mut app, ReadingViewport::LANDSCAPE, 1);
+    capture(
+        &app,
+        &mut canvas,
+        "hanging-punctuation-controls-landscape.png",
+        false,
+    );
+    tap_contents_item(&mut app, "Hanging punctuation");
+    assert_eq!(app.current_history_location(), anchor);
+    assert!(!probe(&app).settings.hanging_punctuation);
+    tap_contents_item(&mut app, "Hanging punctuation by default");
+    assert!(!probe(&app).settings.hanging_punctuation);
+    app.open_path(&second).unwrap();
+    assert!(probe(&app).settings.hanging_punctuation);
+    app.save().unwrap();
+    let mut reopened = reader(&fixture);
+    reopened.open_path(&first).unwrap();
+    assert!(!probe(&reopened).settings.hanging_punctuation);
+    assert_eq!(reopened.current_history_location(), anchor);
+    assert_eq!(fs::read(first).unwrap(), bytes);
+}

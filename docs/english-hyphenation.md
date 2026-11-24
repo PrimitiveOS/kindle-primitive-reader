@@ -272,3 +272,32 @@ classes, and spelling-changing hyphenation remain open.
 [Reader options](screenshots/hyphenation-options-settings.png) ·
 [Reader limits in landscape](screenshots/hyphenation-limits-landscape.png) ·
 [KOReader Trust soft hyphens specimen](screenshots/stock-hyphenation-trust.png)
+
+## Hanging punctuation
+
+Open **Appearance › Typography rules › Hanging punctuation** for the
+current book. **Hanging punctuation by default** applies to newly opened
+books. The initial default is off. The setting reflows at the saved source
+position and remains available through the normal reading settings.
+
+Reader measures the shaped glyph at each visual line edge, applies the
+punctuation-specific fraction, and limits it to the usable margin. Left and
+right alignment use their respective edges. Justified lines use both edges
+where enabled. Centered and preformatted text keep their original placement,
+and fixed-pitch fonts skip the adjustment. Line breaks and source offsets
+stay intact. The visible part of a quote that crosses the margin still
+responds to selection and links.
+
+The pinned stock replay checks the actual tap and default actions and
+compares source pointers for left, right, centered, justified, preformatted,
+and Arabic paragraphs. The Mac tests compare the edge displacement, paint
+on both margins, source anchors, a link on the opening quote, and per-book
+persistence. Across four chapters of an original EPUB, 22 paragraphs used
+the setting, and all page anchors and original bytes matched. The current
+scope is horizontal text at the main column edges.
+Narrower publisher columns, boxes with inline media and float contours
+retain the ordinary layout. [Pinned typography control](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readertypography.lua#L561-L635) · [Native replay](../scripts/koreader-hanging-punctuation-check.lua) · [Mac geometry tests](../src/parley_layout/hanging_punctuation_tests.rs)
+
+[Mac setting](screenshots/hanging-punctuation-controls-landscape.png) ·
+[Reader margin specimen](screenshots/reader-hanging-punctuation.png) ·
+[KOReader margin specimen](screenshots/stock-hanging-punctuation.png)

@@ -1,5 +1,7 @@
 mod cjk_width;
 #[cfg(test)]
+mod hanging_punctuation_tests;
+#[cfg(test)]
 mod hyphenation_options_tests;
 mod inline_blocks;
 #[cfg(test)]
@@ -216,20 +218,28 @@ impl Paragraph {
     }
 
     pub(crate) fn paint_columns(&self, settings: Settings) -> Range<usize> {
-        if self.fitted.is_some() {
+        if self.fitted.is_some() || self.signed_margin {
             Self::clip_columns(settings, self.hit_columns())
-        } else if self.signed_margin {
-            self.background_columns(settings)
         } else {
-            settings.text_columns()
+            let columns = settings.text_columns();
+            let [left, right] = self.layout.hanging_punctuation_overflow();
+            columns.start.saturating_sub(left.ceil() as usize)
+                ..(columns.end + right.ceil() as usize).min(settings.width as usize)
         }
     }
 
     pub(crate) fn hit_columns(&self) -> Range<f32> {
         self.fitted.map_or_else(
-            || self.column.clone(),
+            || {
+                let [left, right] = self.layout.hanging_punctuation_overflow();
+                (self.column.start - left)..(self.column.end + right)
+            },
             |fitted| fitted.text_left as f32..fitted.text_left as f32 + fitted.text_width as f32,
         )
+    }
+
+    pub(crate) fn allows_margin_hits(&self) -> bool {
+        self.signed_margin || self.layout.hanging_punctuation_overflow() != [0.0; 2]
     }
 
     fn painted_top(&self) -> f32 {
@@ -1511,7 +1521,7 @@ impl ParleyChapter {
             .filter(|p| {
                 p.text_bottom > y
                     && p.hit_columns().contains(&x)
-                    && (inside_columns || p.signed_margin)
+                    && (inside_columns || p.allows_margin_hits())
             });
         let hit = |paragraph: &Paragraph| {
             use crate::flow_projection::Affinity::After;
@@ -2568,6 +2578,37 @@ fn make_paragraph(
         breaker.finish();
     } else {
         layout.break_all_lines(Some(width as f32));
+    }
+    if settings.hanging_punctuation
+        && contour.is_none()
+        && images.is_empty()
+        && !style.preformatted_spaces
+        && style.flow.painted
+        && width.saturating_add(indent.common) == settings.text_width()
+    {
+        let rtl = layout.is_rtl();
+        let cap = |px| (px as f32 * 0.8).floor();
+        layout.set_hanging_punctuation(
+            &block.text,
+            [cap(settings.left_margin()), cap(settings.right_margin())],
+            &|range, edge, discretionary| {
+                let index = block
+                    .styled_text
+                    .partition_point(|run| run.bytes.end <= range.start);
+                let unavailable = block.styled_text.get(index).is_some_and(|run| {
+                    let style = &styles[run.element];
+                    run.bytes.contains(&range.start)
+                        && (style.preformatted_spaces || !style.flow.painted)
+                });
+                if unavailable {
+                    return (0, false);
+                }
+                let Some(char) = block.text[range].chars().next() else {
+                    return (0, false);
+                };
+                crate::hanging_punctuation::edge_rule(char, edge, rtl, discretionary)
+            },
+        );
     }
     let alignment = match settings.alignment {
         crate::TextAlignment::Publisher => style.alignment.unwrap_or(Alignment::Start),

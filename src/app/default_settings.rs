@@ -74,6 +74,7 @@ impl Reader {
                 .main_language
                 .map(|language| language.as_str().to_owned()),
             respect_embedded_languages: Some(settings.typography.respect_embedded),
+            hanging_punctuation: Some(settings.hanging_punctuation),
             page_overlap_enabled: Some(settings.page_overlap_enabled),
             page_overlap_lines: Some(settings.page_overlap_lines.clamp(1, 10)),
             page_overlap_style: Some(settings.page_overlap_style),
@@ -104,6 +105,7 @@ impl Reader {
                 let mut prefs = self.current_text_preferences()?;
                 prefs.typography_language = None;
                 prefs.respect_embedded_languages = None;
+                prefs.hanging_punctuation = None;
                 prefs.publisher_render_mode = None;
                 document_defaults::validate_preferences(&prefs)?;
                 templates.reflow = Some(prefs);

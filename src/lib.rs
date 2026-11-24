@@ -47,6 +47,7 @@ pub use flow_probe::SourcePresentation;
 #[cfg(feature = "kindle")]
 mod footnotes;
 mod gif_image;
+mod hanging_punctuation;
 pub mod highlight_style;
 mod hyphenation;
 pub use hyphenation::HyphenationLimits;
@@ -453,6 +454,7 @@ pub struct Settings {
     pub algorithmic_hyphenation: bool,
     pub trust_soft_hyphens: bool,
     pub hyphenation_limits: Option<HyphenationLimits>,
+    pub hanging_punctuation: bool,
     pub typography: TypographyLanguages,
     /// Load author stylesheets and apply inline CSS during native reflow.
     pub publisher_styles: bool,
@@ -526,6 +528,7 @@ impl Default for Settings {
             algorithmic_hyphenation: false,
             trust_soft_hyphens: false,
             hyphenation_limits: None,
+            hanging_punctuation: false,
             typography: TypographyLanguages::default(),
             publisher_styles: true,
             base_stylesheet: BaseStylesheet::Auto,
@@ -717,8 +720,9 @@ impl Settings {
     fn text_hit_column(self, x: f32) -> Option<bool> {
         let inside =
             (self.left_margin() as f32..(self.width - self.right_margin()) as f32).contains(&x);
-        let allows_bleed =
-            self.publisher_signed_horizontal_margins || self.fit_content == FitContentMode::Web;
+        let allows_bleed = self.publisher_signed_horizontal_margins
+            || self.fit_content == FitContentMode::Web
+            || self.hanging_punctuation;
         (inside || allows_bleed && (0.0..self.width as f32).contains(&x)).then_some(inside)
     }
 
@@ -1226,10 +1230,12 @@ impl Probe {
                 || settings.font_hinting != FontHinting::Off
                 || settings.font_gamma_index != font_render::NORMAL_GAMMA
                 || settings.font_weight_delta != 0.0
-                || settings.word_expansion != 0)
+                || settings.word_expansion != 0
+                || settings.hanging_punctuation)
         {
             return Err(
-                "Publisher style, font rendering and word expansion controls require Parley".into(),
+                "Publisher style, optical margins and font rendering controls require Parley"
+                    .into(),
             );
         }
         let entry = book

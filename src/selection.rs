@@ -161,7 +161,7 @@ impl Probe {
             let (layout, x, y) = child.map_or((&paragraph.layout, x, y), |child| {
                 (&child.layout, x - child.x, y - child.y)
             });
-            if (point.inside_columns || paragraph.signed_margin)
+            if (point.inside_columns || paragraph.allows_margin_hits())
                 && paragraph.hit_columns().contains(&point.x)
                 && (0.0..layout.height()).contains(&y)
                 && (!renderer.uses_float_geometry()
@@ -170,7 +170,11 @@ impl Probe {
                         (metrics.block_min_coord..metrics.block_max_coord).contains(&y)
                             && (metrics.inline_min_coord..metrics.inline_max_coord).contains(&x)
                     }))
-                && Cluster::from_point(layout, x, y).is_some()
+                && if point.inside_columns || paragraph.signed_margin {
+                    Cluster::from_point(layout, x, y).is_some()
+                } else {
+                    Cluster::from_point_exact(layout, x, y).is_some()
+                }
             {
                 let cursor = Cursor::from_point(layout, x, y);
                 let affinity = match cursor.affinity() {

@@ -83,37 +83,16 @@ pub(crate) fn align<B: Brush>(
 ) {
     layout.alignment = Some(alignment);
     layout.expanded_gaps.clear();
+    layout.punctuation_overflow = [0.0; 2];
 
     let is_rtl = layout.base_level.is_rtl();
 
     // Apply alignment to line items
-    for line in &mut layout.lines {
+    for (index, line) in layout.lines.iter_mut().enumerate() {
         line.justification.amount_per_opportunity = 0.;
         line.expanded_gaps = 0..0;
 
         let indent = line.metrics.indent;
-
-        if is_rtl {
-            // In RTL text, trailing whitespace is on the left. As we hang that whitespace, offset
-            // the line to the left. Note: indent is not subtracted here because `free_space` below
-            // already accounts for it.
-            line.metrics.offset = -line.metrics.hanging_advance;
-        } else {
-            line.metrics.offset = indent;
-        }
-
-        // Compute free space.
-        let line_width = line.metrics.inline_max_coord - line.metrics.inline_min_coord;
-        let free_space = line_width - indent - line.metrics.advance + line.metrics.hanging_advance;
-
-        if !options.align_when_overflowing && free_space <= 0.0 {
-            if is_rtl {
-                // In RTL text, right-align on overflow.
-                line.metrics.offset += free_space;
-            }
-            continue;
-        }
-
         let is_last_line = matches!(line.break_reason, BreakReason::None | BreakReason::Explicit);
         let line_alignment = if !is_last_line {
             alignment
@@ -124,6 +103,36 @@ pub(crate) fn align<B: Brush>(
         } else {
             alignment
         };
+        let [left, right] = layout
+            .punctuation_shifts
+            .get(index)
+            .copied()
+            .unwrap_or_default();
+        let [left, right] = match (line_alignment, is_rtl) {
+            (Alignment::Left, _) | (Alignment::Start, false) | (Alignment::End, true) => [left, 0.0],
+            (Alignment::Right, _) | (Alignment::Start, true) | (Alignment::End, false) => [0.0, right],
+            (Alignment::Justify, _) => [left, right],
+            (Alignment::Center, _) => [0.0; 2],
+        };
+        layout.punctuation_overflow[0] = layout.punctuation_overflow[0].max(left);
+        layout.punctuation_overflow[1] = layout.punctuation_overflow[1].max(right);
+        line.metrics.offset = if is_rtl {
+            -line.metrics.hanging_advance - left
+        } else {
+            indent - left
+        };
+
+        // Optical shifts change alignment and justification, not line breaking.
+        let line_width = line.metrics.inline_max_coord - line.metrics.inline_min_coord;
+        let free_space = line_width - indent - line.metrics.advance
+            + line.metrics.hanging_advance + left + right;
+
+        if !options.align_when_overflowing && free_space <= 0.0 {
+            if is_rtl {
+                line.metrics.offset += free_space;
+            }
+            continue;
+        }
 
         match (line_alignment, is_rtl) {
             (Alignment::Left, _) | (Alignment::Start, false) | (Alignment::End, true) => {

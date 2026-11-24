@@ -203,6 +203,8 @@ impl<B: Brush> Layout<B> {
 
     /// Returns line breaker to compute lines for the layout.
     pub fn break_lines(&mut self) -> BreakLines<'_, B> {
+        self.data.punctuation_shifts.clear();
+        self.data.punctuation_overflow = [0.0; 2];
         BreakLines::new(self)
     }
 
@@ -244,6 +246,24 @@ impl<B: Brush> Layout<B> {
             eligible,
         });
         align(&mut self.data, alignment, options, expansion);
+    }
+
+    /// Set optical edge shifts after line breaking and before alignment.
+    /// The rule returns a percentage and whether an existing glyph overhang
+    /// should suppress it. A discretionary candidate is an already chosen
+    /// line-end hyphen, not an additional break opportunity.
+    pub fn set_hanging_punctuation(
+        &mut self,
+        text: &str,
+        caps: [f32; 2],
+        rule: &impl Fn(core::ops::Range<usize>, super::MarginEdge, bool) -> (u8, bool),
+    ) {
+        self.data.punctuation_shifts = super::optical_margins::measure(self, text, caps, rule);
+    }
+
+    /// Largest applied left and right optical shifts after alignment.
+    pub fn hanging_punctuation_overflow(&self) -> [f32; 2] {
+        self.data.punctuation_overflow
     }
 
     /// Returns the index and `Line` object for the line containing the

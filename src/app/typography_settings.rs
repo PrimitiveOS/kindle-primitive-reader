@@ -124,6 +124,26 @@ impl Reader {
                 Item::new("Hyphenation", Action::Show(Screen::HyphenationOptions))
                     .detail(probe.settings.hyphenation_mode().label()),
             );
+            items.push(
+                Item::new(
+                    "Hanging punctuation",
+                    Action::SetHangingPunctuation {
+                        enabled: !probe.settings.hanging_punctuation,
+                        for_new_books: false,
+                    },
+                )
+                .detail("Let punctuation extend into the margin"),
+            );
+            items.push(
+                Item::new(
+                    "Hanging punctuation by default",
+                    Action::SetHangingPunctuation {
+                        enabled: !self.controls.hanging_punctuation_default.unwrap_or(false),
+                        for_new_books: true,
+                    },
+                )
+                .detail("Apply when opening a new book"),
+            );
         }
         items
     }
@@ -221,6 +241,26 @@ impl Reader {
                 ))?;
             }
         }
+        self.show(Screen::TypographyRules);
+        Ok(())
+    }
+
+    pub(super) fn set_hanging_punctuation(
+        &mut self,
+        enabled: bool,
+        for_new_books: bool,
+    ) -> Result<()> {
+        if for_new_books {
+            return self.activate(Action::SetReadingControls(
+                crate::reading_controls::ReadingControls {
+                    hanging_punctuation_default: Some(enabled),
+                    ..self.controls
+                },
+            ));
+        }
+        let mut preferences = self.current_text_preferences()?;
+        preferences.hanging_punctuation = Some(enabled);
+        self.apply_text_profile(preferences)?;
         self.show(Screen::TypographyRules);
         Ok(())
     }
