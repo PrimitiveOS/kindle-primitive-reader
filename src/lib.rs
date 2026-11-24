@@ -354,6 +354,9 @@ pub struct Settings {
     pub block_margins: BlockMarginMode,
     #[doc(hidden)]
     pub block_width: BlockWidthMode,
+    /// Honor definite publisher heights on supported horizontal text boxes.
+    #[doc(hidden)]
+    pub publisher_block_height: bool,
     #[doc(hidden)]
     pub float_mode: FloatMode,
     #[doc(hidden)]
@@ -421,6 +424,7 @@ impl Default for Settings {
             margin_bottom: None,
             block_margins: BlockMarginMode::Ignore,
             block_width: BlockWidthMode::Ignore,
+            publisher_block_height: false,
             float_mode: FloatMode::Ignore,
             empty_break_mode: EmptyBreakMode::Current,
             empty_break_geometry: false,
@@ -736,8 +740,19 @@ impl Pagination {
     fn with_breaks_capped(
         lines: &[Line],
         height: f32,
+        content_height: f32,
+        breaks: &[publisher_breaks::BoxRules],
+        limit: f32,
+    ) -> Result<Self> {
+        Self::with_split_spaces(lines, height, content_height, breaks, &[], limit)
+    }
+
+    fn with_split_spaces(
+        lines: &[Line],
+        height: f32,
         mut content_height: f32,
         breaks: &[publisher_breaks::BoxRules],
+        split_spaces: &[Range<f32>],
         limit: f32,
     ) -> Result<Self> {
         let mut intervals: Vec<Range<f32>> = Vec::new();
@@ -782,6 +797,21 @@ impl Pagination {
                 continue;
             }
             let overflows = interval.end > origin + height && interval.start > origin;
+            if overflows && edge == Edge::Auto && index > 0 {
+                let cut = origin + height;
+                let spaces = split_spaces.partition_point(|space| space.start <= cut);
+                // A rendered CSS height can have splittable trailing space.
+                // Only use it when the cut lies between real text/image lines.
+                if intervals[index - 1].end <= cut
+                    && cut < interval.start
+                    && interval.end <= cut + height
+                    && spaces > 0
+                    && cut < split_spaces[spaces - 1].end
+                {
+                    bounds.push(cut);
+                    continue;
+                }
+            }
             if forced || overflows {
                 let next = if allowed_start > origin && interval.end <= allowed_start + height {
                     allowed_start
@@ -1169,11 +1199,16 @@ impl Probe {
                 settings.chapter_height_limit(),
             )?
         } else {
-            Pagination::with_breaks_capped(
+            let split_spaces = match &renderer {
+                Renderer::Parley(chapter) => chapter.publisher_height_spaces(),
+                _ => &[],
+            };
+            Pagination::with_split_spaces(
                 &lines,
                 height,
                 content_height,
                 &publisher_edges,
+                split_spaces,
                 settings.chapter_height_limit(),
             )?
         };

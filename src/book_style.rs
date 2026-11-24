@@ -588,6 +588,7 @@ impl BookStyle {
                 || config.empty_break_geometry
                     && config.empty_break_mode != crate::EmptyBreakMode::Current
         });
+        let publisher_block_height = settings.is_some_and(|config| config.publisher_block_height);
         let logical = settings.filter(|settings| settings.logical_font_size.is_some());
         let relative_font = |scale: f32| {
             logical.map_or_else(
@@ -783,7 +784,8 @@ impl BookStyle {
                             element.tag.as_str(),
                             "td" | "th" | "tr" | "thead" | "tbody" | "tfoot" | "table"
                         ) || (structural_borders
-                            && crate::source::is_block_tag(&element.tag)) =>
+                            && crate::source::is_block_tag(&element.tag))
+                            || (publisher_block_height && element.tag == "p") =>
                     {
                         let target = style
                             .borders

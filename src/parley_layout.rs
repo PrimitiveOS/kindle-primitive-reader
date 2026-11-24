@@ -6,12 +6,13 @@ use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::sync::Arc;
 
-use crate::book_style::{Style, TextDecoration};
+use crate::book_style::{CssLength, ImageLength, Style, TextDecoration};
 use crate::comic::ImagePage;
 use crate::epub::Book;
 use crate::flow_projection::OwnedProjection;
 use crate::flow_view::{ChapterFlow, LayoutBlock};
 use crate::gray_glyph::GlyphCache;
+use crate::publisher_padding::{TextBoxCandidate, text_box_candidates};
 use crate::source::{Block, EmbeddedImage, Source};
 use crate::svg_image;
 use crate::{Line, Result, Settings, image_reader};
@@ -29,6 +30,27 @@ const MAX_IMAGE_BOXES: usize = 2_048;
 const MAX_DISTINCT_IMAGE_READS: usize = 512;
 const MAX_IMAGE_PIXELS: usize = 8 * 1024 * 1024;
 const MAX_RUBY_BASE_BYTES: usize = 192;
+
+fn declared_box_height(style: &Style, width: u32, font: f32) -> Option<f32> {
+    let length = match style.image_height? {
+        ImageLength::Pixels(px) => CssLength::Pixels(px),
+        ImageLength::Physical(px) => CssLength::Physical(px),
+        _ => return None,
+    };
+    let pixels = length.box_pixels(width, font);
+    (pixels.is_finite()
+        && pixels > 0.0
+        && style.borders.is_none()
+        && matches!(style.image_max_height, None | Some(ImageLength::Auto))
+        && style.page_breaks == Default::default()
+        && style
+            .padding
+            .iter()
+            .chain(&style.vertical_padding)
+            .all(|edge| edge.box_pixels(width, font) == 0.0))
+    .then_some(pixels)
+}
+
 const KERNING_OFF: [FontFeature; 2] = [
     FontFeature::new(Tag::new(b"kern"), 0),
     FontFeature::new(Tag::new(b"vkrn"), 0),
@@ -113,6 +135,7 @@ struct Paragraph {
     key: usize,
     x: f32,
     y: f32,
+    text_bottom: f32,
     bottom: f32,
     background: Option<u8>,
     layout: Layout<PaintBrush>,
@@ -174,6 +197,7 @@ pub(crate) struct ParleyChapter {
     table_frames: Vec<crate::table_borders::Frame>,
     padded_backgrounds: Vec<crate::vertical_padding::Fill>,
     empty_break_runs: Vec<crate::publisher_breaks::PositionedRun>,
+    publisher_height_spaces: Vec<Range<f32>>,
     float_geometry: bool,
     limitations: Vec<String>,
     glyphs: GlyphCache,
@@ -307,6 +331,7 @@ impl ParleyChapter {
             table_frames: Vec::new(),
             padded_backgrounds: Vec::new(),
             empty_break_runs: Vec::new(),
+            publisher_height_spaces: Vec::new(),
             float_geometry: false,
             limitations: Vec::new(),
             glyphs: GlyphCache::with_hinting(
@@ -417,6 +442,16 @@ impl ParleyChapter {
             publisher_boxes.as_deref(),
             settings,
         );
+        let height_candidates = if settings.publisher_block_height {
+            text_box_candidates(source, styles, |style| {
+                matches!(
+                    style.image_height,
+                    Some(ImageLength::Pixels(_) | ImageLength::Physical(_))
+                )
+            })
+        } else {
+            Vec::new()
+        };
         let empty_geometry = crate::publisher_breaks::plan_empty_geometry(source, styles, settings);
         let mut empty_fills = Vec::new();
         chapter.float_geometry = float_plan.is_some();
@@ -803,7 +838,23 @@ impl ParleyChapter {
                     source_line.project(&projection, line.text_range())?;
                     lines.push(source_line);
                 }
-                y = bottom + gap;
+                let text_bottom = bottom;
+                y = text_bottom + gap;
+                if float.is_none()
+                    && contour.is_none()
+                    && height_candidates.get(block.element) == Some(&TextBoxCandidate::Simple)
+                    && let Some(height) = declared_box_height(style, outer_width, settings.font_size)
+                {
+                    // Follow the solid background's pixel origin, retain all of the
+                    // natural lines, and limit trailing fill to a reading page.
+                    let minimum = (origin.floor() + height)
+                        .min((bottom + settings.text_height() as f32).floor());
+                    if minimum > bottom {
+                        chapter.publisher_height_spaces.push(bottom..minimum);
+                        bottom = minimum;
+                        y = y.max(bottom);
+                    }
+                }
                 chapter.paragraphs.push(Paragraph {
                     key: block.key,
                     column: publication_box
@@ -813,6 +864,7 @@ impl ParleyChapter {
                     max_bottom: bottom,
                     x,
                     y: origin,
+                    text_bottom,
                     bottom,
                     background: style.flow.painted.then_some(style.background).flatten(),
                     layout,
@@ -970,6 +1022,9 @@ impl ParleyChapter {
         }
         chapter.padded_backgrounds.extend(float_fills);
         chapter.padded_backgrounds.extend(empty_fills);
+        chapter
+            .publisher_height_spaces
+            .sort_by(|a, b| a.start.total_cmp(&b.start));
         let painted = chapter
             .table_frames
             .iter()
@@ -990,6 +1045,10 @@ impl ParleyChapter {
 
     pub(crate) fn empty_break_runs(&self) -> &[crate::publisher_breaks::PositionedRun] {
         &self.empty_break_runs
+    }
+
+    pub(crate) fn publisher_height_spaces(&self) -> &[Range<f32>] {
+        &self.publisher_height_spaces
     }
 
     /// Last conservative paint bound. Parley's paragraph height also includes leading
@@ -1042,7 +1101,7 @@ impl ParleyChapter {
         let mut candidates = self.paragraphs[start..]
             .iter()
             .take_while(|p| p.y <= y)
-            .filter(|p| p.bottom > y && p.column.contains(&x));
+            .filter(|p| p.text_bottom > y && p.column.contains(&x));
         let hit = |paragraph: &Paragraph| {
             let (cluster, _) = parley::Cluster::from_point_exact(
                 &paragraph.layout,

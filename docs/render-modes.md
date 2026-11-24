@@ -107,12 +107,64 @@ The native oracle asserts the stock word origin and the width and origin of
 each solid paint band. Reader tests additionally check line wrapping,
 restored source quotes and touch hit testing. Reader wraps the 260-pixel
 sample in two lines under its own text metrics. Remaining box sizing work
-includes colored ancestor boxes, explicit height, nonzero horizontal
-margins, overflow, and boxes with images, tables, or floats.
+includes colored ancestor boxes, nonzero horizontal margins, overflow,
+and boxes with images, tables, or floats.
 [CREngine width resolution](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L7909-L7982) · [CREngine auto margins](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L8178-L8202) · [Native oracle](../scripts/koreader-render-modes-check.lua) · [Reader capture](screenshots/render-modes-reader-web-width.png)
 
 Run `cargo test --locked --lib publisher_width` for the Reader comparison.
 Set `READER_WEB_WIDTH_CAPTURE` to a PNG path to save a capture.
+
+## Definite heights on ordinary paragraphs
+
+KOReader Web honors a definite publisher height as a minimum for the used
+text box. A shorter declaration retains every text line, and a larger one
+adds blank space after the text. The new space participates in page breaks,
+with extra space limited to one reading page. Legacy, Flat and Book use
+the natural text height on the authored paragraphs. A percentage height
+with an indefinite parent also uses the natural height in Web.
+
+Reader’s opt-in Parley policy handles pixel and absolute physical lengths
+on eligible direct body paragraphs. It retains Parley’s text metrics and
+uses the existing geometry for background color and optional publisher
+width. When a page ends inside added space, the background continues on
+the next page and saved positions still resolve to source text. The
+ordinary Reader setting keeps its previous layout.
+
+| Authored fixture at 1264 × 1606, 96 DPI | Pinned KOReader Web | Reader height policy |
+| --- | ---: | ---: |
+| 164-pixel height band and following text pitch | 164 px / 164 px | 164 px / 168 px |
+| 420-pixel width with 153-pixel height | 420 × 153 px | 420 × 153 px |
+| 24-pixel declaration across two source lines | Both lines visible | Both lines visible |
+| 45% height under an indefinite parent | Natural height | Natural height |
+| Total pages and the page of the final text | 2 / 2 | 2 / 2 |
+
+At 1264 × 690, the 600-pixel box reaches the bottom margin of page 2
+and continues on page 3 in both engines. The stock split is 237 and
+363 pixels. Reader splits it into 219 and 381 pixels because its
+ordinary text starts at different vertical positions. The Reader test
+measures both clipped bands and verifies that a tap in the blank space
+selects no text.
+
+Relative heights, nested boxes, padding, borders, maximum height, authored
+keeps and text alongside active floats still use the existing Reader
+behavior. The setting remains internal while other Render Mode mechanisms
+are pending.
+[CREngine height calculation](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L7665-L7683) ·
+[CREngine bounded fill](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L9024-L9035) ·
+[Native oracle](../scripts/koreader-render-text-heights-check.lua) ·
+[Reader tests](../src/publisher_padding/height_tests.rs) ·
+[Stock page 2](screenshots/render-text-height-stock-compact-page-2.png) ·
+[Stock page 3](screenshots/render-text-height-stock-compact-page-3.png) ·
+[Reader page 2](screenshots/render-text-height-reader-compact-page-2.png) ·
+[Reader page 3](screenshots/render-text-height-reader-compact-page-3.png)
+
+Generate the authored fixture with
+`python3 scripts/generate-render-text-heights-fixture.py`. Run the pinned
+oracle with the same arguments as the render modes probe below and an
+optional final viewport height of `690` or `1606`.
+Run `cargo test --locked --lib publisher_text_height` for the Reader
+comparison. Set `READER_WEB_HEIGHT_CAPTURES` to an existing directory to
+capture the comparison frames.
 
 ## Horizontal block spacing
 

@@ -1,4 +1,4 @@
-//! Horizontal publisher block boxes, measured against their parent content area.
+//! Publisher block boxes, measured against their parent content area.
 use crate::{
     BlockWidthMode,
     book_style::{BoxMargin, CssLength, ImageLength, Style, WritingMode},
@@ -45,28 +45,25 @@ fn publisher_width(area: BoxArea, style: &Style, font: f32) -> Option<BoxArea> {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum WidthCandidate {
+pub(crate) enum TextBoxCandidate {
     Unseen,
     Simple,
     Unsupported,
 }
 
-fn width_candidates(
+pub(crate) fn text_box_candidates(
     source: &Source,
     styles: &[Style],
-    mode: BlockWidthMode,
-) -> Vec<WidthCandidate> {
-    if mode == BlockWidthMode::Ignore {
-        return Vec::new();
-    }
+    accepts: impl Fn(&Style) -> bool,
+) -> Vec<TextBoxCandidate> {
     // Only ordinary paragraphs represented by a single text block get this
     // policy. More elaborate boxes still use the existing provider.
-    let mut candidates = vec![WidthCandidate::Unseen; styles.len()];
+    let mut candidates = vec![TextBoxCandidate::Unseen; styles.len()];
     for block in &source.blocks {
         let index = block.element;
         let element = &source.elements[index];
         let style = &styles[index];
-        let eligible = candidates[index] == WidthCandidate::Unseen
+        let eligible = candidates[index] == TextBoxCandidate::Unseen
             && element.tag == "p"
             && element
                 .parent
@@ -75,19 +72,16 @@ fn width_candidates(
             && style.writing_mode == WritingMode::Horizontal
             && !style.flow.suppressed
             && style.float_side.is_none()
-            && matches!(
-                style.image_width,
-                Some(ImageLength::Pixels(_) | ImageLength::Fraction(_))
-            )
+            && accepts(style)
             && block.list_item.is_none()
             && block.table_cell.is_none()
             && !block.text.is_empty()
             && block.images.is_empty()
             && block.ruby.is_empty();
         candidates[index] = if eligible {
-            WidthCandidate::Simple
+            TextBoxCandidate::Simple
         } else {
-            WidthCandidate::Unsupported
+            TextBoxCandidate::Unsupported
         };
     }
     candidates
@@ -222,10 +216,19 @@ pub(crate) fn layout_with_flow(
     block_width: BlockWidthMode,
     measure: impl FnMut(&crate::source::Block) -> (u32, u32),
 ) -> Option<Vec<BoxArea>> {
-    let width_candidates = width_candidates(source, styles, block_width);
+    let width_candidates = if block_width == BlockWidthMode::Publisher {
+        text_box_candidates(source, styles, |style| {
+            matches!(
+                style.image_width,
+                Some(ImageLength::Pixels(_) | ImageLength::Fraction(_))
+            )
+        })
+    } else {
+        Vec::new()
+    };
     if flow.is_identity()
         && borders.is_none()
-        && !width_candidates.contains(&WidthCandidate::Simple)
+        && !width_candidates.contains(&TextBoxCandidate::Simple)
         && !styles.iter().zip(&source.elements).any(|(style, element)| {
             !style.flow.suppressed
                 && ((element.tag == "table" && style.border_collapse)
@@ -277,7 +280,7 @@ pub(crate) fn layout_with_flow(
             continue;
         }
         let mut area = BoxArea::new(parent.x, parent.width, parent.cell);
-        if width_candidates.get(idx) == Some(&WidthCandidate::Simple)
+        if width_candidates.get(idx) == Some(&TextBoxCandidate::Simple)
             && let Some(published) =
                 publisher_width(area, &styles[idx], font * styles[idx].size_scale)
         {
@@ -457,3 +460,6 @@ mod tests {
 #[cfg(test)]
 #[path = "publisher_padding/width_tests.rs"]
 mod width_tests;
+
+#[cfg(test)]
+mod height_tests;
