@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.49
+
+- Skim by chapter or saved mark, bookmark a page and open Go to from the preview.
+- Choose which settings a reading profile applies, with support for DjVu and comics.
+- Honor supported spacing and border geometry around empty publisher page breaks in the optional Parley layout.
+
 ## 0.1.48
 
 - Save and manage named reading profiles for reflowable books and PDFs.

@@ -45,6 +45,19 @@ separate from Oasis acceptance. Schedule only relevant reading controls from
 this inventory; excluded controls are not implementation tasks, and inventory
 counts do not measure completed parity.
 
+## Reader 0.1.49 verification plan
+
+Verify chapter, saved-mark, bookmark and numeric shortcuts from Skim in each
+placement. Check held boundaries, one return location, Cancel, and that only
+the pressed control changes. Compare partial profile inclusion with pinned
+KOReader action selection. Confirm that applying profiles preserves excluded
+settings and the reading position in reflow, PDF, DjVu and comics. Compare
+the publisher-box position and raster bands against the pinned native
+rendering. Verify source anchors, gap retention and the returned portrait
+pixels for continuous PDF, comics and fixed-layout EPUB staging. Device
+landscape remains gated on the runtime and Launcher handoff.
+[Skim controls](navigation-preferences.md#skim-position) · [Reading profiles](reading-profiles.md) · [Publisher geometry](render-modes.md#physical-space-and-paint) · [Fixed-page viewports](reading-edition-orientation.md#fixed-page-viewport-preparation)
+
 ## Reader 0.1.48 verification plan
 
 Exercise named text and PDF profiles, including updates, duplicate names,
