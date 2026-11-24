@@ -8,6 +8,9 @@ use crate::fixed::{Pdf, RenderRequest};
 use crate::fixed_text::PdfTextRect;
 use crate::scan_deskew::FULL_PAGE;
 
+#[cfg(test)]
+pub(crate) mod source_margin_tests;
+
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct Seed {
     x0: f32,
@@ -107,7 +110,7 @@ pub(crate) fn detect(
     let scale = 1536.0 / area_width.max(area_height);
     let width = (area_width * scale).ceil() as u32;
     let height = (area_height * scale).ceil() as u32;
-    let pixels = pdf.render(
+    let mut pixels = pdf.render(
         page,
         RenderRequest {
             width,
@@ -118,9 +121,75 @@ pub(crate) fn detect(
             turns: 0,
         },
     )?;
+    discard_isolated_specks(&mut pixels, width as usize, scale);
     let crop = bounds(&pixels, width as usize, area)
         .and_then(|ink| padded_native_bounds(ink, size, screen_width));
     Ok(crop.unwrap_or(area))
+}
+
+const INK_THRESHOLD: u8 = 192;
+
+fn discard_isolated_specks(pixels: &mut [u8], width: usize, scale: f32) {
+    // Native PDF points keep the speck cutoff consistent across raster sizes.
+    const MIN_SOURCE_EXTENT: f32 = 2.0;
+    let minimum = ((MIN_SOURCE_EXTENT * scale).ceil() as usize).clamp(1, 64);
+    if minimum == 1 {
+        return;
+    }
+    let height = pixels.len() / width;
+    const INK: u8 = 1;
+    const IN_QUEUE: u8 = 2;
+    const PRESERVE: u8 = 3;
+    for pixel in pixels.iter_mut() {
+        *pixel = u8::from(*pixel < INK_THRESHOLD);
+    }
+    let mut queue = Vec::new();
+    for start in 0..pixels.len() {
+        if pixels[start] != INK {
+            continue;
+        }
+        queue.clear();
+        queue.push(start);
+        pixels[start] = IN_QUEUE;
+        let (mut left, mut top) = (start % width, start / width);
+        let (mut right, mut bottom) = (left, top);
+        let mut next = 0;
+        let mut preserve = false;
+        'component: while let Some(&index) = queue.get(next) {
+            next += 1;
+            let (x, y) = (index % width, index / width);
+            for ny in y.saturating_sub(1)..=(y + 1).min(height - 1) {
+                for nx in x.saturating_sub(1)..=(x + 1).min(width - 1) {
+                    let neighbor = ny * width + nx;
+                    if pixels[neighbor] == PRESERVE {
+                        preserve = true;
+                        break 'component;
+                    }
+                    if pixels[neighbor] != INK {
+                        continue;
+                    }
+                    pixels[neighbor] = IN_QUEUE;
+                    queue.push(neighbor);
+                    left = left.min(nx);
+                    right = right.max(nx);
+                    top = top.min(ny);
+                    bottom = bottom.max(ny);
+                    // An established component needs no full-page flood fill.
+                    // Any remaining pixels will find a confirmed neighbor.
+                    if right - left + 1 >= minimum || bottom - top + 1 >= minimum {
+                        preserve = true;
+                        break 'component;
+                    }
+                }
+            }
+        }
+        for &index in &queue {
+            pixels[index] = if preserve { PRESERVE } else { 0 };
+        }
+    }
+    for pixel in pixels {
+        *pixel = if *pixel == PRESERVE { 0 } else { 255 };
+    }
 }
 
 fn bounds(pixels: &[u8], width: usize, area: PdfTextRect) -> Option<PdfTextRect> {
@@ -129,7 +198,7 @@ fn bounds(pixels: &[u8], width: usize, area: PdfTextRect) -> Option<PdfTextRect>
     let mut columns = vec![0; width];
     for (y, line) in pixels.chunks_exact(width).enumerate() {
         for (x, ink) in line.iter().enumerate() {
-            if *ink < 192 {
+            if *ink < INK_THRESHOLD {
                 rows[y] += 1;
                 columns[x] += 1;
             }

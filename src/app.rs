@@ -1206,6 +1206,9 @@ impl Reader {
         if let Some(mut reading) = fixed {
             if let Some(state) = self.library.state(id) {
                 reading.load_crop_seeds(state.pdf_crop_seeds.clone())?;
+                if fixed_preferences.semi_auto_crop {
+                    fixed_preferences = reading.preferences();
+                }
             }
             let flows = self
                 .library

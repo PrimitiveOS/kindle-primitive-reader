@@ -200,6 +200,68 @@ mod tests {
     }
 
     #[test]
+    fn scan_margin_specks_disappear_after_apply_without_moving_source_content() {
+        let paths = Fixture::new();
+        let path = paths.root.join("Scan with margin specks.pdf");
+        let source = crate::pdf_crop::source_margin_tests::fixture("edge-specks");
+        fs::write(&path, &source).unwrap();
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        let mut app = Reader::open(&paths.root, &paths.state, fonts.clone()).unwrap();
+        app.open_path(&path).unwrap();
+        app.activate(Action::SemiAutoCrop).unwrap();
+        let draft = app.semi_auto_crop.as_mut().unwrap();
+        draft.seed = crate::pdf_crop::source_margin_tests::seed(draft.size);
+        let distant_speck = normalized_box(0.15, 0.19, 0.156, 0.204);
+        let line = normalized_box(0.26, 0.32, 0.62, 0.33);
+        assert!(fixed(&app).visible_rectangle(0, distant_speck).is_some());
+        capture_test_screen(&app, &fonts, "READER_SCAN_MARGIN_BEFORE_FRAME", false);
+        assert_eq!(app.input(tap_center(APPLY)), Change::Partial);
+        assert!(fixed(&app).visible_rectangle(0, distant_speck).is_none());
+        assert!(fixed(&app).visible_rectangle(0, line).is_some());
+        assert_eq!(fs::read(&path).unwrap(), source);
+        capture_test_screen(&app, &fonts, "READER_SCAN_MARGIN_AFTER_FRAME", false);
+    }
+
+    #[test]
+    fn scan_margin_specks_recalculation_retains_the_saved_native_viewport() {
+        let paths = Fixture::new();
+        let path = paths.root.join("Saved scan with margin specks.pdf");
+        fs::write(
+            &path,
+            crate::pdf_crop::source_margin_tests::fixture("edge-specks"),
+        )
+        .unwrap();
+        let previous = FixedPreferences {
+            zoom: 4,
+            crop: Some(normalized_box(0.144, 0.165, 0.855, 0.84)),
+            semi_auto_crop: true,
+            ..FixedPreferences::default()
+        };
+        let mut reading = FixedReading::open(
+            PAGE_HEIGHT,
+            DocumentFormat::Pdf,
+            &path,
+            0,
+            &[],
+            previous,
+            None,
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        let origin = reading.history_point().unwrap();
+        let mut sources = crate::pdf_crop::Seeds::default();
+        sources.record(0, crate::pdf_crop::source_margin_tests::seed(SIZE));
+        reading.load_crop_seeds(sources).unwrap();
+        assert_ne!(reading.preferences().crop, previous.crop);
+        assert!((reading.history_point().unwrap() - origin).hypot() < 0.01);
+        assert_eq!(reading.preferences().zoom, previous.zoom);
+    }
+
+    #[test]
     fn failed_semi_auto_crop_save_keeps_the_draft_and_existing_page_seed() {
         let paths = Fixture::new();
         let path = paths.root.join("Crop transaction.pdf");
