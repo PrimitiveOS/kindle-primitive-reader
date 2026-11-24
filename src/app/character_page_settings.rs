@@ -55,10 +55,10 @@ impl NumberField {
         match self {
             Self::BookStride => Screen::PageNumbering,
             Self::DefaultStride | Self::MarginSize => Screen::NumberingDefaults,
-            Self::ContentDpi(_)
-            | Self::LogicalFont(_)
-            | Self::LineSpacing(_)
-            | Self::WordSpacing(_) => Screen::Book,
+            Self::ContentDpi(_) | Self::LogicalFont(_) | Self::LineSpacing(_) => Screen::Book,
+            Self::WordSpacing(draft) => draft
+                .profile_index()
+                .map_or(Screen::Book, Screen::ReadingProfileValues),
             Self::ProfileValue(index, crate::reading_profiles::ValueField::Margin(_)) => {
                 Screen::ReadingProfileMargins(index)
             }

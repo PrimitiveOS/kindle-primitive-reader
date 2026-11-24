@@ -8,6 +8,7 @@ pub(crate) enum ValueField {
     FontSize,
     ContentZoom,
     LineSpacing,
+    WordExpansion,
     Margin(MarginEdge),
     HorizontalOverlap,
     VerticalOverlap,
@@ -75,6 +76,7 @@ impl ValueField {
             Self::FontSize => "Font size",
             Self::ContentZoom => "Content zoom",
             Self::LineSpacing => "Line spacing",
+            Self::WordExpansion => "Word expansion",
             Self::Margin(edge) => edge.label(),
             Self::HorizontalOverlap => "Horizontal overlap",
             Self::VerticalOverlap => "Vertical overlap",
@@ -86,6 +88,7 @@ impl ValueField {
             Self::FontSize => 12.0..=255.0,
             Self::ContentZoom => 0.0..=300.0,
             Self::LineSpacing => 50.0..=200.0,
+            Self::WordExpansion => 0.0..=20.0,
             Self::Margin(_) => 0.0..=f64::from(crate::document_defaults::MAX_SAVED_MARGIN),
             Self::HorizontalOverlap | Self::VerticalOverlap => 0.0..=90.0,
         }
@@ -96,6 +99,7 @@ impl ValueField {
             Self::FontSize => crate::logical_font::DEFAULT,
             Self::ContentZoom => f64::from(crate::Settings::default().render_dpi),
             Self::LineSpacing => f64::from(crate::DEFAULT_LINE_SPACING_PERCENT),
+            Self::WordExpansion => f64::from(crate::Settings::default().word_expansion),
             Self::Margin(_) => f64::from(crate::Settings::default().margin),
             Self::HorizontalOverlap | Self::VerticalOverlap => 36.0,
         }
@@ -109,6 +113,7 @@ impl ValueField {
         match self {
             Self::FontSize => 10,
             Self::ContentZoom => 20,
+            Self::WordExpansion => 4,
             _ => 5,
         }
     }
@@ -150,6 +155,7 @@ impl ValueField {
             Self::FontSize => Field::FontSize,
             Self::ContentZoom => Field::ContentZoom,
             Self::LineSpacing => Field::LineSpacing,
+            Self::WordExpansion => Field::WordExpansion,
             Self::Margin(_) => Field::Margins,
             Self::HorizontalOverlap | Self::VerticalOverlap => Field::PanOverlap,
         };
@@ -164,9 +170,26 @@ impl Profile {
                 ValueField::FontSize,
                 ValueField::ContentZoom,
                 ValueField::LineSpacing,
+                ValueField::WordExpansion,
             ],
             Self::Fixed { .. } => &[ValueField::HorizontalOverlap, ValueField::VerticalOverlap],
         }
+    }
+
+    pub(crate) fn set_word_spacing(&mut self, value: crate::WordSpacePercent) -> io::Result<()> {
+        if !value.valid() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "The spacing percentages are out of range",
+            ));
+        }
+        let Self::Text { preferences, .. } = self else {
+            return Err(io::Error::other(
+                "Word spacing requires a reflowable profile",
+            ));
+        };
+        preferences.percent_word_spacing = Some(value);
+        Ok(())
     }
 
     pub(crate) fn margins_linked(&self) -> Option<bool> {
@@ -217,6 +240,11 @@ impl Profile {
                     .apply_to(crate::Settings::default())
                     .effective_line_spacing_percent(),
             )),
+            (Self::Text { preferences, .. }, ValueField::WordExpansion) => Some(
+                preferences
+                    .word_expansion
+                    .map_or_else(|| field.default(), f64::from),
+            ),
             (Self::Text { preferences, .. }, ValueField::Margin(edge)) => {
                 Some(f64::from(edge.value(preferences)))
             }
@@ -246,6 +274,9 @@ impl Profile {
             }
             (Self::Text { preferences, .. }, ValueField::LineSpacing) => {
                 preferences.line_spacing_percent = Some(value as u16);
+            }
+            (Self::Text { preferences, .. }, ValueField::WordExpansion) => {
+                preferences.word_expansion = Some(value as u8);
             }
             (Self::Text { preferences, .. }, ValueField::Margin(edge)) => {
                 edge.set(preferences, value as u32);

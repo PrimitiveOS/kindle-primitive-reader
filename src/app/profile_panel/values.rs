@@ -1,7 +1,7 @@
 //! Route the reading-profile editor through the shared exact-value keyboard.
 use super::{field_buttons, *};
 use crate::app::step_buttons::StepButtons;
-use crate::reading_profiles::ValueField;
+use crate::reading_profiles::{Field, ValueField};
 
 const STEPS: [Rect; 3] = [
     Rect::new(48, LIST_Y + 286, 352, 112),
@@ -47,6 +47,25 @@ impl Reader {
                 )
             })
             .collect();
+        if !margins && let Profile::Text { preferences, .. } = profile {
+            let pair = preferences.percent_word_spacing;
+            let mut detail = pair.map_or_else(
+                || format!("{:+} px (legacy)", preferences.word_spacing),
+                |spacing| format!("{}% / {}%", spacing.scaling, spacing.minimum),
+            );
+            if !selection.contains(&Field::WordSpacing) {
+                detail.push_str(" · Excluded");
+            }
+            items.push(
+                Item::new(
+                    "Word spacing",
+                    Action::Show(Screen::NumberingValue(NumberField::WordSpacing(
+                        word_spacing::Draft::profile(index, pair),
+                    ))),
+                )
+                .detail(detail),
+            );
+        }
         if let Some(linked) = profile.margins_linked() {
             if margins {
                 items.push(
@@ -62,17 +81,30 @@ impl Reader {
                         "Page margins",
                         Action::Show(Screen::ReadingProfileMargins(index)),
                     )
-                    .detail(
-                        if selection.contains(&crate::reading_profiles::Field::Margins) {
-                            "Left, right, top and bottom"
-                        } else {
-                            "Excluded"
-                        },
-                    ),
+                    .detail(if selection.contains(&Field::Margins) {
+                        "Left, right, top and bottom"
+                    } else {
+                        "Excluded"
+                    }),
                 );
             }
         }
         items
+    }
+
+    pub(in crate::app) fn save_profile_word_spacing(
+        &mut self,
+        index: usize,
+        value: crate::WordSpacePercent,
+    ) -> Result<()> {
+        let mut profiles = self.profiles.clone();
+        profiles
+            .get_mut(index)
+            .ok_or("That profile is unavailable")?
+            .set_word_spacing(value)?;
+        self.commit_profiles(profiles)?;
+        self.show(Screen::ReadingProfileValues(index));
+        Ok(())
     }
 
     pub(in crate::app) fn toggle_profile_margin_link(&mut self, index: usize) -> Result<()> {

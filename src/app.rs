@@ -396,7 +396,13 @@ impl Screen {
             Self::NumberingValue(NumberField::LogicalFont(_)) => "Font size",
             Self::NumberingValue(NumberField::LineSpacing(_)) => "Line spacing",
             Self::NumberingValue(NumberField::ProfileValue(_, field)) => field.label(),
-            Self::NumberingValue(NumberField::WordSpacing(_)) => "Word spacing",
+            Self::NumberingValue(NumberField::WordSpacing(draft)) => {
+                if draft.profile_index().is_some() {
+                    "Saved word spacing"
+                } else {
+                    "Word spacing"
+                }
+            }
             Self::NumberingValue(NumberField::AutoTurn) => "Automatic page turns",
             Self::NumberingValue(NumberField::AutoTurnOverlapHorizontal) => "Horizontal overlap",
             Self::NumberingValue(NumberField::FixedTileZoom(axis)) => axis.label(),

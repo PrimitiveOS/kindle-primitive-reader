@@ -494,3 +494,161 @@ fn saved_margins_preserve_fallbacks_link_and_mask_until_landscape_apply() {
     assert_eq!(app.viewport_request(), Some(ViewportRequest::Fixed(turn)));
     assert_eq!(open(&fixture, &fixture.book).profiles[0], app.profiles[0]);
 }
+
+#[test]
+fn saves_word_spacing_as_a_pair_and_honors_expansion_and_spacing_masks_on_apply() {
+    use crate::WordSpacePercent;
+    use crate::app::word_spacing::Field as SpacingField;
+
+    let fixture = Fixture::new();
+    let mut app = open(&fixture, &fixture.book);
+    let active_before_profile = app.active.as_ref().unwrap().reading.config.settings;
+    app.activate(Action::Text(Settings {
+        word_spacing: 1.25,
+        percent_word_spacing: None,
+        word_expansion: 5,
+        ..active_before_profile
+    }))
+    .unwrap();
+    app.save_reading_profile("Harbor paragraphs").unwrap();
+    app.edit_profile_fields(0).unwrap();
+    app.set_profile_fields(false).unwrap();
+    app.toggle_profile_field(Field::LineSpacing).unwrap();
+    app.save_profile_fields(0).unwrap();
+    let old_profile = app.profiles[0].clone();
+    app.activate(Action::Text(active_before_profile)).unwrap();
+    app.active
+        .as_mut()
+        .unwrap()
+        .reading
+        .go_to_page(1, 0)
+        .unwrap();
+    let upright = draw_test_candidate(&mut app, 1, LogicalTurn::Upright, "", false);
+    app.finish_viewport(upright, ViewportDecision::Commit);
+    app.set_reading_orientation(ReadingOrientation::LandscapeRight)
+        .unwrap();
+    let turn = LogicalTurn::Clockwise;
+    let landscape = draw_test_candidate(&mut app, 2, turn, "", false);
+    app.finish_viewport(landscape, ViewportDecision::Commit);
+    let reading = &app.active.as_ref().unwrap().reading;
+    let before = reading.config.settings;
+    let location = app.current_position().unwrap();
+    let profiles_before = fs::read(&app.profiles_path).unwrap();
+
+    app.show(Screen::ReadingProfile(0));
+    let edit_values = field_buttons(app.navigation_layout()).1;
+    tap(&mut app, edit_values);
+    let legacy_detail = app
+        .items()
+        .into_iter()
+        .find(|item| item.title == "Word spacing")
+        .unwrap()
+        .detail;
+    assert_eq!(
+        legacy_detail.as_deref(),
+        Some("+1.25 px (legacy) · Excluded")
+    );
+    tap_contents_item(&mut app, "Word spacing");
+    let [scaling, reduction] = app.numeric_layout().choices([Rect::default(); 2]);
+    assert_eq!(app.editor.string(), "95");
+    type_value(&mut app, "123");
+    tap(&mut app, reduction);
+    assert_eq!(app.editor.string(), "75");
+    type_value(&mut app, "24");
+    press_key(&mut app, Key::Go);
+    assert!(app.notice.as_deref().unwrap().contains("25 to 100"));
+    assert_eq!(app.input(Input::PageBack), Change::Partial);
+    assert_eq!(app.screen, Screen::ReadingProfileValues(0));
+    assert_eq!(app.profiles[0], old_profile);
+    assert_eq!(fs::read(&app.profiles_path).unwrap(), profiles_before);
+
+    tap_contents_item(&mut app, "Word spacing");
+    type_value(&mut app, "123");
+    tap(&mut app, reduction);
+    type_value(&mut app, "67");
+    let refused = draw_test_candidate(&mut app, 3, LogicalTurn::Upright, "", false);
+    app.finish_viewport(refused, ViewportDecision::Abort);
+    assert_eq!(app.editor.string(), "67");
+    assert!(
+        matches!(app.screen, Screen::NumberingValue(NumberField::WordSpacing(draft))
+        if draft.field == SpacingField::Minimum && draft.value.scaling == 123)
+    );
+    assert_eq!(app.profiles[0], old_profile);
+    tap(&mut app, scaling);
+    assert_eq!(app.editor.string(), "123");
+    tap(&mut app, reduction);
+    assert_eq!(app.editor.string(), "67");
+    let shown = draw_test_candidate(&mut app, 4, turn, "landscape-profile-word-spacing", false);
+    app.finish_viewport(shown, ViewportDecision::Commit);
+    press_key(&mut app, Key::Go);
+    assert_eq!(app.screen, Screen::ReadingProfileValues(0));
+    let pair = WordSpacePercent {
+        scaling: 123,
+        minimum: 67,
+    };
+    let pair_detail = app
+        .items()
+        .into_iter()
+        .find(|item| item.title == "Word spacing")
+        .unwrap()
+        .detail;
+    assert_eq!(pair_detail.as_deref(), Some("123% / 67% · Excluded"));
+
+    tap_contents_item(&mut app, "Word expansion");
+    assert_eq!(app.editor.string(), "5");
+    let [_, default, increase] = app.numeric_layout().steps(STEPS, false);
+    tap(&mut app, default);
+    assert_eq!(app.editor.string(), "0");
+    assert_eq!(
+        app.input(Input::LongTap(
+            (increase.x + 12) as f32,
+            (increase.y + 12) as f32
+        )),
+        Change::Partial
+    );
+    assert_eq!(app.editor.string(), "4");
+    type_value(&mut app, "21");
+    press_key(&mut app, Key::Go);
+    assert!(app.notice.as_deref().unwrap().contains("0% to 20%"));
+    type_value(&mut app, "7");
+    press_key(&mut app, Key::Go);
+    assert_eq!(app.profiles[0].selection(), [Field::LineSpacing]);
+    let mut expected = old_profile;
+    let Profile::Text { preferences, .. } = &mut expected else {
+        panic!("Expected a reflow profile")
+    };
+    preferences.percent_word_spacing = Some(pair);
+    preferences.word_expansion = Some(7);
+    assert_eq!(app.profiles[0], expected);
+    assert_eq!(app.active.as_ref().unwrap().reading.config.settings, before);
+    assert_eq!(app.current_position(), Some(location.clone()));
+
+    app.show(Screen::ReadingProfile(0));
+    tap_contents_item(&mut app, "Apply to this book");
+    let settings = app.active.as_ref().unwrap().reading.config.settings;
+    assert_eq!(settings.percent_word_spacing, before.percent_word_spacing);
+    assert_eq!(settings.word_expansion, before.word_expansion);
+    app.edit_profile_fields(0).unwrap();
+    app.toggle_profile_field(Field::WordSpacing).unwrap();
+    app.toggle_profile_field(Field::WordExpansion).unwrap();
+    app.save_profile_fields(0).unwrap();
+    app.show(Screen::ReadingProfile(0));
+    tap_contents_item(&mut app, "Apply to this book");
+    let reading = &app.active.as_ref().unwrap().reading;
+    let applied = reading.config.settings;
+    assert_eq!(applied.percent_word_spacing, Some(pair));
+    assert_eq!(applied.word_expansion, 7);
+    assert_eq!(applied.word_spacing, 1.25);
+    assert_eq!(
+        (applied.width, applied.height),
+        (before.width, before.height)
+    );
+    assert_eq!(
+        (reading.probe.settings.width, reading.probe.settings.height),
+        (before.width, before.height)
+    );
+    assert_eq!(app.current_position().unwrap().anchor, location.anchor);
+    assert_eq!(app.viewport_request(), Some(ViewportRequest::Fixed(turn)));
+    assert!(!app.viewport_needs_stage(shown));
+    assert_eq!(open(&fixture, &fixture.book).profiles[0], app.profiles[0]);
+}

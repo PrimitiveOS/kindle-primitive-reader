@@ -15,10 +15,33 @@ pub(super) enum Field {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Owner {
+    Book(u64),
+    Profile(usize),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct Draft {
-    pub(super) owner: u64,
+    owner: Owner,
     pub(super) value: WordSpacePercent,
     pub(super) field: Field,
+}
+
+impl Draft {
+    pub(super) fn profile(index: usize, value: Option<WordSpacePercent>) -> Self {
+        Self {
+            owner: Owner::Profile(index),
+            value: value.unwrap_or(WordSpacePercent::MEDIUM),
+            field: Field::Scaling,
+        }
+    }
+
+    pub(super) fn profile_index(self) -> Option<usize> {
+        match self.owner {
+            Owner::Profile(index) => Some(index),
+            Owner::Book(_) => None,
+        }
+    }
 }
 
 impl Reader {
@@ -30,13 +53,16 @@ impl Reader {
             .and_then(|active| active.reading.config.settings.percent_word_spacing)
             .unwrap_or(WordSpacePercent::MEDIUM);
         Draft {
-            owner,
+            owner: Owner::Book(owner),
             value,
             field: Field::Scaling,
         }
     }
 
-    fn word_spacing_default(&self) -> WordSpacePercent {
+    fn word_spacing_default(&self, owner: Owner) -> WordSpacePercent {
+        if matches!(owner, Owner::Profile(_)) {
+            return WordSpacePercent::MEDIUM;
+        }
         self.document_defaults
             .templates
             .reflow
@@ -92,7 +118,11 @@ impl Reader {
         if matches!(input, Input::PageBack)
             || matches!(input,Input::Tap(x,y) if self.navigation_layout().back().contains(x,y))
         {
-            self.close_word_spacing();
+            if let Some(index) = draft.profile_index() {
+                self.show(Screen::ReadingProfileValues(index));
+            } else {
+                self.close_word_spacing();
+            }
             return Some(Change::Partial);
         }
         let layout = self.numeric_layout();
@@ -105,7 +135,7 @@ impl Reader {
         };
         let result = if default.contains(x, y) {
             Ok(Draft {
-                value: self.word_spacing_default(),
+                value: self.word_spacing_default(draft.owner),
                 ..draft
             })
         } else if scaling.contains(x, y) || minimum.contains(x, y) {
@@ -150,7 +180,10 @@ impl Reader {
 
     pub(super) fn apply_word_spacing_input(&mut self, draft: Draft) -> Result<()> {
         let value = self.parsed_word_spacing_draft(draft)?.value;
-        self.apply_word_spacing(draft.owner, value)
+        match draft.owner {
+            Owner::Book(id) => self.apply_word_spacing(id, value),
+            Owner::Profile(index) => self.save_profile_word_spacing(index, value),
+        }
     }
 
     pub(super) fn apply_word_spacing(&mut self, owner: u64, value: WordSpacePercent) -> Result<()> {
@@ -227,7 +260,7 @@ impl Reader {
             false,
         );
         canvas.button(decrease, "-", false, false);
-        let saved_default = self.word_spacing_default();
+        let saved_default = self.word_spacing_default(draft.owner);
         canvas.button(
             default,
             &format!(
