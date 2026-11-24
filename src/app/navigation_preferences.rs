@@ -14,11 +14,6 @@ impl Reader {
             )
             .detail("Uses your saved place when reopening a book"),
         ];
-        items.extend(self.back_preference_entries());
-        items.push(
-            Item::new("Assign a Back gesture", Action::Show(Screen::Gestures))
-                .detail("Choose a gesture, then Back (navigation settings)"),
-        );
         items.push(Item::new("Skim dialog position", Action::Heading));
         items.extend(SkimPosition::ALL.map(|placement| {
             let mut next = controls;
@@ -30,6 +25,11 @@ impl Reader {
                 item
             }
         }));
+        items.extend(self.back_preference_entries());
+        items.push(
+            Item::new("Assign a Back gesture", Action::Show(Screen::Gestures))
+                .detail("Choose a gesture, then Back (navigation settings)"),
+        );
         items
     }
 

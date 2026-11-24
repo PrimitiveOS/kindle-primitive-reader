@@ -2,6 +2,8 @@
 
 This is a fresh comparison against genuine pinned KOReader UI running on this Mac. It does not recover the missing original Oasis screenshots or establish Kindle hardware acceptance. The Rust comparison is frozen at `ff03a14609bad09cdb390776ec93190d07ffbbea`; it predates the current scope trim. Its source hashes remain historical evidence. OPDS acquisition and remote progress sync from that baseline have been removed from the current source candidate and remain excluded from the completion denominator.
 
+Current evidence for `T3-6.1` through `T3-6.3` covers Back in Reader and the file browser, exit policies, and independent jump and recent-view history. `T3-6.4` remains a keyboard-input gap. [Back navigation](back-navigation.md)
+
 ## Scope and reproducibility
 
 The accepted run `20261122T090105Z` contains **128 unmodified full-screen PNGs at 1264 × 1680 framebuffer pixels, 300 DPI**: one reading page, 117 top-menu pages, six bottom panels, one selection popup and three dictionary states. A fresh English profile opens an authored shared EPUB and two authored StarDict dictionaries through ordinary `reader.lua`. Selection uses native source-word geometry; dictionary results come from the built native sdcv. The real Tools menu has two root pages, and both are captured. Top submenu enumeration follows enabled literal tables to depth two. Dynamic factories and leaf setting/network/power actions are inventoried without invocation. The file-browser root icon is an action that closes Reader, so it is visible and inventoried but not invoked.

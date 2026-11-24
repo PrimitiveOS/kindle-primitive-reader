@@ -4,7 +4,8 @@ Open **Reading controls → Navigation settings** to choose what Back does in a 
 and in the file browser. Use **Assign a Back gesture** and select
 **Back (navigation settings)** for a tap, hold or swipe. The physical page buttons
 still turn pages while reading. The footer Exit and the file browser Exit remain
-explicit ways to leave. [Simulator confirmation](screenshots/back-exit-confirmation.png)
+explicit ways to leave. [Simulator settings](screenshots/back-navigation-settings.png) ·
+[Simulator confirmation](screenshots/back-exit-confirmation.png)
 
 | Setting | Choices and behavior |
 | --- | --- |

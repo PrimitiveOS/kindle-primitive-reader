@@ -386,7 +386,18 @@ mod tests {
     const BACK: Input = Input::Tap(24.0, 24.0);
 
     fn configure(app: &mut Reader, options: Options, choice: usize) {
-        app.show(Screen::BackOptions(options));
+        app.show(Screen::NavigationSettings);
+        let entry = app
+            .items()
+            .iter()
+            .position(|item| matches!(item.action, Action::Show(Screen::BackOptions(target)) if target == options))
+            .unwrap();
+        let row = app.list_geometry().row(entry);
+        assert_eq!(
+            app.input(Input::Tap((row.x + 20) as f32, (row.y + row.h / 2) as f32)),
+            Change::Partial
+        );
+        assert_eq!(app.screen, Screen::BackOptions(options));
         let row = app.list_geometry().row(choice);
         assert_eq!(
             app.input(Input::Tap((row.x + 20) as f32, (row.y + row.h / 2) as f32)),

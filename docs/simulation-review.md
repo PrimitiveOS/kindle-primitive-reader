@@ -2,6 +2,23 @@
 
 ## Current Mac simulator checkpoint
 
+The current pass adds the Reader Back gesture, independent fuzzy dictionary
+search, saved profile margin editing, and nested publisher margin collapse. In
+the simulator, Back restores exact within-page EPUB scroll positions and PDF pan
+offsets. The real-file picker opened one cached original EPUB, PDF, and AZW3,
+turned a page, and restored the page pixels through Continue reading. Each
+original's SHA-256 was identical before and after. [Back navigation](back-navigation.md) ·
+[Dictionary preferences](dictionary-word-forms.md) · [Saved profiles](reading-profiles.md#editing-saved-values) ·
+[Nested EPUB margins](render-modes.md)
+
+The combined Mac run passed 1,309 library tests, one Kindle entry test,
+14 EPUB package tests, and four layout checks. Sixty-six opt-in cases were
+skipped. The Skim placement workflow retained its existing options and order,
+and the exit confirmation matched the reviewed frame byte for byte. Physical
+Kindle acceptance for this candidate remains open. [Back settings capture](screenshots/back-navigation-settings.png)
+
+## Previous Mac simulator checkpoint
+
 The desktop example opened an authored EPUB and PDF in separate simulator
 profiles. It rendered the ordinary Reader surfaces, top and bottom toolbars,
 Contents and footer at the Kindle's 1264 × 1680 resolution. The EPUB preview
