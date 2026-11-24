@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the pinned KOReader Page Browser row and column callbacks."""
+"""Run pinned KOReader Page Browser grid controls and edge swipe callbacks."""
 import argparse
 import hashlib
 from pathlib import Path
@@ -7,7 +7,11 @@ from pathlib import Path
 from lupa.lua51 import LuaRuntime
 
 PIN = "9192014d8bd82a91dc1012473be0f238dedfdb54"
-SHA256 = "346e5d56fee159920405e57999a47185fe111e759b9cdff23e6eb59855f0d9cd"
+PINNED_FILES = {
+    "ui/widget/pagebrowserwidget.lua": "346e5d56fee159920405e57999a47185fe111e759b9cdff23e6eb59855f0d9cd",
+    "device/gesturedetector.lua": "3a2d733a66f94e5cb1cc003c7ba736a03006e7c9242211adc243d74bc2c67db8",
+    "ui/bidi.lua": "05ca900fd03f930c39ff6cd4667ffa7f397dcd4a13e09eb8a3884111725853b2",
+}
 
 
 def segment(source, begin, end):
@@ -19,10 +23,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("browser", type=Path, help="pinned frontend/ui/widget/pagebrowserwidget.lua")
     args = parser.parse_args()
-    data = args.browser.read_bytes()
-    if hashlib.sha256(data).hexdigest() != SHA256:
-        parser.error(f"Use the unmodified Page Browser widget from KOReader {PIN}")
-    source = data.decode()
+    def pinned(name):
+        path = args.browser if name == "ui/widget/pagebrowserwidget.lua" else args.browser.parents[2] / name
+        data = path.read_bytes()
+        if hashlib.sha256(data).hexdigest() != PINNED_FILES[name]:
+            parser.error(f"Use the unmodified {name} from KOReader {PIN}")
+        return data.decode()
+
+    source = pinned("ui/widget/pagebrowserwidget.lua")
+    detector = pinned("device/gesturedetector.lua")
+    bidi = pinned("ui/bidi.lua")
     menu = segment(
         source,
         '        {\n            {\n                text = _("Thumbnail columns"),',
@@ -32,6 +42,17 @@ def main():
     lua = LuaRuntime()
     lua.execute("""
         PageBrowserWidget = {}
+        Contact = {}
+        Bidi = {_mirrored_ui_layout = false}
+        BD = Bidi
+        Geom = {new = function(_, geometry) return geometry end}
+        logger = {dbg = function() end}
+        Screen = {
+            w = 1264, h = 1680,
+            getWidth = function(self) return self.w end,
+            getHeight = function(self) return self.h end,
+        }
+        UIManager = {setDirty = function(self, _, mode) self.dirty = mode end}
         _ = function(text) return text end
         G_reader_settings = {
             saveSetting = function(self, key, value) self[key] = value end,
@@ -42,6 +63,10 @@ def main():
     lua.execute("function PageBrowserWidget:loadGrid()\n" + defaults + "\nend")
     lua.execute(segment(source, "function PageBrowserWidget:saveSettings(", "function PageBrowserWidget:updateNbTocSpans("))
     lua.execute(segment(source, "function PageBrowserWidget:updateNbCols(", "function PageBrowserWidget:updateThumbnailPageNumsDisplayType("))
+    lua.execute(segment(source, "function PageBrowserWidget:onSwipe(", "function PageBrowserWidget:onPan("))
+    lua.execute(segment(detector, "function Contact:getPath(", "function Contact:isSwipe("))
+    lua.execute(segment(detector, "function Contact:handleSwipe(", "--[[--\nEmits the pan gestures"))
+    lua.execute(segment(bidi, "local mirrored_directions =", "function Bidi.flipIfMirroredUILayout("))
     lua.execute("""
         local function browser()
             return setmetatable({
@@ -53,8 +78,14 @@ def main():
                         readSetting = G_reader_settings.readSetting,
                     },
                 },
-                relayouts = 0,
+                relayouts = 0, row_height = 190, pages_per_row = 60,
                 updateLayout = function(self) self.relayouts = self.relayouts + 1 end,
+                updateFocusPage = function(self, delta, relative)
+                    assert(relative)
+                    self.delta = delta
+                    return true
+                end,
+                update = function() end,
             }, {__index = PageBrowserWidget})
         end
         local first = browser()
@@ -85,8 +116,44 @@ def main():
         local third = browser()
         third:loadGrid()
         assert(third.nb_cols == 4 and third.nb_rows == 1)
+
+        local function swipe(widget, x, y, dx, dy)
+            local contact = setmetatable({
+                initial_tev = {x = x, y = y},
+                current_tev = {x = x + dx, y = y + dy},
+                multiswipe_directions = {},
+                ges_dec = {dropContact = function() end},
+            }, {__index = Contact})
+            local gesture = contact:handleSwipe()
+            assert(gesture.pos.x == x and gesture.pos.y == y)
+            assert(gesture.end_pos.x == x + dx and gesture.end_pos.y == y + dy)
+            widget.delta = nil
+            widget.nb_grid_items = widget.nb_cols * widget.nb_rows
+            return widget:onSwipe(nil, gesture)
+        end
+
+        third.nb_cols, third.nb_rows = 2, 2
+        assert(swipe(third, 950, 209, -230, 28) and third.nb_cols == 3)
+        assert(swipe(third, 920, 210, -230, 28) and third.delta == 6)
+        assert(swipe(third, 157, 660, 65, -240) and third.nb_rows == 3)
+        assert(swipe(third, 158, 660, -40, -240) and third.delta == 3)
+        assert(swipe(third, 900, 1600, -230, 0) and third.delta == 60)
+        assert(not swipe(third, 900, 80, -220, 180) and UIManager.dirty == "full")
+
+        Screen.w, Screen.h = 1680, 1264
+        assert(swipe(third, 660, 157, 230, 26) and third.nb_cols == 2)
+        assert(swipe(third, 660, 158, 230, 26) and third.delta == -6)
+        assert(swipe(third, 209, 660, 65, -240) and third.nb_rows == 4)
+        assert(swipe(third, 210, 660, -40, -240) and third.delta == 2)
+        Bidi._mirrored_ui_layout = true
+        assert(swipe(third, 660, 100, 230, 26) and third.nb_cols == 3)
+        assert(swipe(third, 209, 660, 65, -240) and third.nb_rows == 5)
+        third.nb_rows = 1
+        local relayouts = third.relayouts
+        assert(swipe(third, 209, 660, 0, 240) and third.nb_rows == 1)
+        assert(third.relayouts == relayouts)
     """)
-    print(f"KOReader {PIN} Lua 5.1: independent grid steps, bounds, per-book saves and defaults passed")
+    print(f"KOReader {PIN} Lua 5.1: grid bounds, saves, contact-origin edge swipes, and ordinary routing passed")
 
 
 if __name__ == "__main__":

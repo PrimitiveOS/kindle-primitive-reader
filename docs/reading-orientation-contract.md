@@ -70,15 +70,33 @@ KOReader starts from three columns by two rows.
 [PDF with six thumbnails](screenshots/page-browser-grid-landscape.png) ·
 [EPUB focus after a turn](screenshots/page-browser-grid-reflow-landscape.png)
 
+You can also swipe along two edges. A leftward swipe that starts in the top
+eighth adds a column, and a rightward swipe removes one. An upward swipe
+that starts in the physical left eighth adds a row, and a downward swipe
+removes one. The starting point determines the shortcut in both viewports.
+Launcher keeps its downward Quick Settings gesture.
+[Portrait after adding a column](screenshots/page-browser-edge-swipes-portrait.png) ·
+[Landscape after adding a row](screenshots/page-browser-edge-swipes-landscape.png)
+
 Changing the grid keeps the focused page visible and preserves its EPUB
-source anchor through a turn. Page buttons and horizontal swipes step one
-grid at a time. Vertical swipes step by one row. Canceling a browser opened
-from Book Map returns to its map window, and changing the grid leaves the
-reading position intact. The per-edition choice and the last-used grid are
-saved together in the existing library file and included in its backup.
+source anchor through a turn. Page buttons and horizontal swipes in the
+body step one grid at a time. Vertical swipes in the body step by one row.
+Canceling a browser opened from Book Map returns to its map window, and
+changing the grid leaves the reading position intact. The per-edition choice
+and the last-used grid are saved together in the existing library file and
+included in its backup.
 [Pinned widget bounds and settings](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/pagebrowserwidget.lua#L1005-L1077) ·
 [Stock persistence](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/pagebrowserwidget.lua#L1249-L1268) ·
 [Executable comparison](../scripts/koreader-page-browser-grid-check.py)
+
+The executable comparison runs the pinned gesture detector and Page Browser
+callback at both viewport sizes. Stock reverses horizontal gesture signs
+when its interface is mirrored. Reader's English interface keeps the same
+signs for left-to-right and right-to-left books. Reader keeps its existing
+diagonal swipe and progress track behavior. Stock requests a full refresh
+on diagonal swipes and moves its sectioned ribbon by one ribbon row.
+[Stock edge routing](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/pagebrowserwidget.lua#L1471-L1521) ·
+[Stock contact origin](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/device/gesturedetector.lua#L891-L940)
 
 The host `visual_navigation` tests render authored EPUB and PDF fixtures through the viewport transaction at 1264 × 1680 and 1680 × 1264. They cover both landscape turns, portrait return, aborted presentation, far-right taps, track swipes, physical page events and bookmark actions. Set `READER_VISUAL_NAVIGATION_CAPTURE_DIR` when running `cargo test --locked --lib visual_navigation` to write the portrait and landscape captures.
 
