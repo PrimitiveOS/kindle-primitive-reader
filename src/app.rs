@@ -15763,9 +15763,25 @@ mod tests {
         let after = primitive_app::frame(&app, &mut canvas, false);
         let header_end = crate::reading_controls::TopHeader::HEIGHT as usize * WIDTH as usize;
         assert!(before[header_end..] == after[header_end..]);
-        let counts: Vec<_> = (0..chapters)
-            .map(|chapter| reading.config.chapter(chapter).unwrap().page_count())
-            .collect();
+        let mut counts = Vec::with_capacity(chapters);
+        let mut expected_marks = Vec::new();
+        let mut offset = 0;
+        for chapter in 0..chapters {
+            let probe = reading.config.chapter(chapter).unwrap();
+            expected_marks.extend(
+                probe
+                    .local_contents_pages()
+                    .iter()
+                    .map(|&(_, page)| offset + page),
+            );
+            counts.push(probe.page_count());
+            offset += probe.page_count();
+        }
+        expected_marks.sort_unstable();
+        expected_marks.dedup();
+        let (marks, marker_count) = reading.whole_book_publisher_markers(|_| true).unwrap();
+        assert_eq!(marker_count, total);
+        assert_eq!(marks, expected_marks);
         assert_eq!(
             ordinal,
             counts[..reading.chapter].iter().sum::<usize>() + reading.page + 1
@@ -15777,7 +15793,7 @@ mod tests {
             serde_json::json!({
                 "chapters": chapters, "screen_page": ordinal, "screen_pages": total,
                 "first_frame_ms": first_frame_ms, "whole_book_ready_ms": settled_ms,
-                "peak_rss_kib": peak_rss_kib,
+                "peak_rss_kib": peak_rss_kib, "publisher_marks": marks.len(),
             })
         );
     }
