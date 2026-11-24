@@ -1,6 +1,6 @@
 //! Hold a prepared reading view until the runtime verifies its presentation.
 
-use super::{Reader, ReadingPosition};
+use super::{Reader, ReadingPosition, Screen, footnote_popup::Footnote, selection_html::Inspector};
 use crate::Result;
 use crate::fixed_session::PreparedFixedViewport;
 use crate::session::{Reading, ReadingViewport};
@@ -21,6 +21,9 @@ pub(super) struct Stage {
     from: ReadingViewport,
     target: ReadingViewport,
     candidate: Candidate,
+    screen: Screen,
+    footnote: Option<Footnote>,
+    selection_html: Option<Inspector>,
     marks: Option<(super::saved_marks_view::FlexibleMarks, usize)>,
     visual_navigation: super::visual_navigation::VisualNavigation,
 }
@@ -44,6 +47,12 @@ impl Reader {
             from,
             target,
             candidate,
+            screen: self.screen,
+            footnote: self.resize_footnote(target)?,
+            selection_html: self
+                .selection_html
+                .as_ref()
+                .and_then(|inspector| inspector.resized(target)),
             marks: None,
             visual_navigation: super::visual_navigation::VisualNavigation::capture(self),
         })
@@ -60,7 +69,9 @@ impl Reader {
             return Err("The staged canvas has different reading dimensions".into());
         }
         self.exchange_staged_reading(&mut staged.candidate)?;
+        staged.exchange_reading_tools(self);
         let drawn = self.draw_staged_content(staged, canvas);
+        staged.exchange_reading_tools(self);
         let restored = self.exchange_staged_reading(&mut staged.candidate);
         drawn.and(restored)
     }
@@ -103,6 +114,12 @@ impl Reader {
                     .commit_viewport(*prepared)?;
             }
         }
+        if let Some(footnote) = staged.footnote {
+            self.footnote = Some(footnote);
+        }
+        if let Some(selection_html) = staged.selection_html {
+            self.selection_html = Some(selection_html);
+        }
         if let Some((marks, page)) = staged.marks {
             self.flexible_marks = Some(marks);
             self.list_page = page;
@@ -137,6 +154,17 @@ impl Reader {
 }
 
 impl Stage {
+    fn exchange_reading_tools(&mut self, reader: &mut Reader) {
+        if let (Some(current), Some(prepared)) = (&mut reader.footnote, &mut self.footnote) {
+            std::mem::swap(current, prepared);
+        }
+        if let (Some(current), Some(prepared)) =
+            (&mut reader.selection_html, &mut self.selection_html)
+        {
+            std::mem::swap(current, prepared);
+        }
+    }
+
     fn check_origin(&self, reader: &Reader) -> Result<()> {
         if reader.open_book_id() != self.book
             || reader.screen != self.screen
@@ -148,6 +176,55 @@ impl Stage {
         }
         Ok(())
     }
+}
+
+#[cfg(test)]
+pub(super) fn draw_test_candidate(
+    reader: &mut Reader,
+    generation: u64,
+    turn: primitive_app::viewport::LogicalTurn,
+    screenshot: &str,
+    dark: bool,
+) -> primitive_app::viewport::Viewport {
+    use primitive_app::viewport::{LogicalTurn, Viewport};
+    let dimensions = match turn {
+        LogicalTurn::Upright | LogicalTurn::UpsideDown => ReadingViewport::PORTRAIT.dimensions(),
+        LogicalTurn::Clockwise | LogicalTurn::Counterclockwise => {
+            ReadingViewport::LANDSCAPE.dimensions()
+        }
+    };
+    let candidate = Viewport {
+        generation,
+        turn,
+        logical_size: dimensions,
+    };
+    let paths: Vec<_> = reader
+        .fonts
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect();
+    let mut canvas = Canvas::new_viewport(dimensions.0, dimensions.1, 1264, &paths).unwrap();
+    reader.stage_viewport(candidate).unwrap();
+    canvas.begin();
+    reader.draw_staged_viewport(&mut canvas).unwrap();
+    let pixels = canvas.finish(dark);
+    assert_eq!(pixels.len(), (dimensions.0 * dimensions.1) as usize);
+    assert!(pixels.iter().any(|&ink| ink < 64));
+    assert!(pixels.iter().any(|&ink| ink > 230));
+    if let Some(folder) = std::env::var_os("READER_LANDSCAPE_TOOLS_CAPTURES")
+        && !screenshot.is_empty()
+    {
+        let folder = std::path::PathBuf::from(folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        primitive_app::write_png(
+            &folder.join(format!("{screenshot}.png")),
+            dimensions.0,
+            dimensions.1,
+            &pixels,
+        )
+        .unwrap();
+    }
+    candidate
 }
 
 #[cfg(test)]

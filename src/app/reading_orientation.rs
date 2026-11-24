@@ -156,6 +156,8 @@ impl Reader {
                 | Screen::Definition
                 | Screen::OnlineLookup
                 | Screen::OnlineEdit
+                | Screen::Footnote
+                | Screen::SelectionHtml
         ) || self.screen.uses_navigation_viewport())
             && self.open_book_id().is_some()
     }

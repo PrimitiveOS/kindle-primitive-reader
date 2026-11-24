@@ -7153,7 +7153,9 @@ impl Reader {
             let footer_font_px = self.footer_caption_font_px();
             let footer_style = self.footer_caption_style();
             let footer_font_file = self.footer_font_render_file();
-            let draw_footer_icons = self.custom_footer_icons_enabled()
+            let note_covers_footer = self.footnote.is_some();
+            let draw_footer_icons = !note_covers_footer
+                && self.custom_footer_icons_enabled()
                 && self.notice.is_none()
                 && search_caption.is_none()
                 && self.selection.is_none()
@@ -7186,7 +7188,7 @@ impl Reader {
             );
             reading.draw_page_with_footer_cover(
                 canvas,
-                self.selection.is_none().then_some("Exit"),
+                (self.selection.is_none() && !note_covers_footer).then_some("Exit"),
                 self.hidden_overlap_footer(),
                 if draw_footer_icons {
                     Some("")
@@ -7198,7 +7200,7 @@ impl Reader {
                 &highlights,
                 &selection,
                 self.page_paint(),
-                self.controls.footer_horizontal_separator,
+                self.controls.footer_horizontal_separator && !note_covers_footer,
                 footer_font_file.as_deref(),
                 self.footer_cover_top(status_rect, status_text_width),
             );
@@ -7207,7 +7209,9 @@ impl Reader {
             }
             self.draw_publisher_margins(canvas);
             self.draw_top_header(canvas);
-            self.draw_footer_track(canvas, status_text_width);
+            if !note_covers_footer {
+                self.draw_footer_track(canvas, status_text_width);
+            }
             if self.saved_popup_over_book() {
                 self.draw_saved_popup(canvas);
                 return;
@@ -7221,7 +7225,7 @@ impl Reader {
             }
             if self.screen == Screen::BookTools {
                 self.draw_reading_tools(canvas);
-            } else if self.touch_locked {
+            } else if self.touch_locked && !note_covers_footer {
                 draw_locked_footer(canvas, self.reading_viewport(), self.notice.as_deref());
             } else if self.screen == Screen::Book && selection.is_empty() {
                 self.draw_search_steps(canvas);
@@ -7280,6 +7284,11 @@ impl Reader {
         } else {
             title
         };
+        if self.screen == Screen::SelectionHtml {
+            self.navigation_layout().header(canvas, title);
+            self.draw_selection_html(canvas);
+            return;
+        }
         let navigation = if self.screen.uses_navigation_viewport() {
             let layout = self.navigation_layout();
             layout.header(canvas, title);
@@ -7288,10 +7297,6 @@ impl Reader {
             header(canvas, title, "Back");
             navigation_layout::NavigationLayout::PORTRAIT
         };
-        if self.screen == Screen::SelectionHtml {
-            self.draw_selection_html(canvas);
-            return;
-        }
         if let Screen::ExportSettings(_, export_settings::Page::Template(scope)) = self.screen {
             self.draw_export_template(canvas, scope);
             return;

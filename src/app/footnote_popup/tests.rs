@@ -61,6 +61,101 @@ fn screenshot(app: &Reader, case: &str, fonts: &[std::path::PathBuf], palettes: 
 }
 
 #[test]
+fn landscape_footnote_stages_repaginated_note_and_returns_to_the_exact_reading_anchor() {
+    use crate::app::{ReadingOrientation, reading_viewport_stage::draw_test_candidate};
+    use primitive_app::viewport::{LogicalTurn, ViewportDecision, ViewportRequest};
+
+    let fixture = Fixture::new();
+    std::fs::copy(crate::test_fixture("night-landing.epub"), &fixture.book).unwrap();
+    let fonts = vec![
+        crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+        crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+    ];
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+    app.open_path(&fixture.book).unwrap();
+    let portrait = draw_test_candidate(&mut app, 1, LogicalTurn::Upright, "", false);
+    app.finish_viewport(portrait, ViewportDecision::Commit);
+    let (x, y) = source_point(&mut app, "[2]");
+    let origin = app.active.as_ref().unwrap().reading.anchor().unwrap();
+    assert_eq!(app.input(Input::Tap(x, y)), Change::Partial);
+    assert_eq!(app.screen, Screen::Footnote);
+    assert_eq!(app.input(Input::PageForward), Change::Partial);
+    let popup = app.footnote.as_ref().unwrap();
+    let cursor = popup.cursor.clone().unwrap();
+    let portrait_panel = popup.panel();
+    assert_eq!(popup.page, 1);
+
+    app.set_reading_orientation(ReadingOrientation::LandscapeRight)
+        .unwrap();
+    let attempted = draw_test_candidate(&mut app, 3, LogicalTurn::Clockwise, "", false);
+    assert_eq!(app.footnote.as_ref().unwrap().panel(), portrait_panel);
+    app.finish_viewport(attempted, ViewportDecision::Abort);
+    assert_eq!(app.reading_viewport(), ReadingViewport::PORTRAIT);
+    assert_eq!(
+        app.footnote.as_ref().unwrap().cursor.as_ref(),
+        Some(&cursor)
+    );
+
+    app.set_reading_orientation(ReadingOrientation::LandscapeLeft)
+        .unwrap();
+    let landscape = draw_test_candidate(
+        &mut app,
+        5,
+        LogicalTurn::Counterclockwise,
+        "landscape-footnote",
+        false,
+    );
+    app.finish_viewport(landscape, ViewportDecision::Commit);
+    assert_eq!(app.screen, Screen::Footnote);
+    let popup = app.footnote.as_ref().unwrap();
+    let panel = popup.panel();
+    assert_eq!(popup.viewport, ReadingViewport::LANDSCAPE);
+    assert_eq!(popup.cursor.as_ref(), Some(&cursor));
+    assert_eq!(popup.preview.page_for(&cursor), Some(popup.page));
+    assert!(
+        panel.y >= 1264 * 2 / 3 && panel.right() == 1680 - INSET && panel.bottom() == 1264 - INSET
+    );
+    assert_eq!(popup.frame.width, 1680 - 4 * INSET as u32);
+
+    let paths: Vec<_> = app.fonts.iter().map(|p| p.display().to_string()).collect();
+    let mut canvas = Canvas::new_viewport(1680, 1264, 1264, &paths).unwrap();
+    let frame = primitive_app::frame(&app, &mut canvas, false);
+    assert!((1230..1264).all(|y| {
+        frame[y * 1680 + 1673..(y + 1) * 1680]
+            .iter()
+            .all(|&ink| ink > 230)
+    }));
+
+    let close = popup.close_button();
+    assert_eq!(
+        app.input(Input::Tap(
+            (close.right() - 20) as f32,
+            (close.y + 15) as f32
+        )),
+        Change::Partial
+    );
+    assert_eq!(app.screen, Screen::Book);
+    assert_eq!(
+        app.viewport_request(),
+        Some(ViewportRequest::Fixed(LogicalTurn::Counterclockwise))
+    );
+    assert_eq!(
+        app.active.as_ref().unwrap().reading.anchor().as_ref(),
+        Some(&origin)
+    );
+
+    let (x, y) = source_point(&mut app, "[2]");
+    assert_eq!(app.input(Input::Tap(x, y)), Change::Partial);
+    assert_eq!(
+        app.footnote.as_ref().unwrap().viewport,
+        ReadingViewport::LANDSCAPE
+    );
+    assert_eq!(app.input(Input::PageBack), Change::Partial);
+    assert_eq!(app.screen, Screen::Book);
+    assert!(app.back.is_empty());
+}
+
+#[test]
 fn native_oracle_popup_roots_render_inline_styles_and_preserve_source_page_and_exit() {
     let fixture = Fixture::new();
     std::fs::copy(
@@ -339,7 +434,7 @@ fn footnote_font_sizes_follow_book_and_fixed_settings_without_clipping_the_popup
         assert!(preview.panel().bottom() <= HEIGHT as i32);
         if value == FontSize::Fixed(12) {
             assert_eq!(preview.preview.page_count(), 1);
-            assert!(preview.content_height() < CONTENT_HEIGHT / 2);
+            assert!(preview.content_height() < preview.frame.height / 2);
         }
         if let Some(name) = screenshot_name {
             screenshot(&app, name, &fonts, &[false]);

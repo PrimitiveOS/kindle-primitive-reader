@@ -2,19 +2,20 @@ use super::{Change, Destination, Input, Reader, Screen};
 use crate::epub::Book;
 use crate::footnotes::{self, Reference, ReferenceContext};
 use crate::selection::TextSelection;
-use crate::{Engine, Probe, Settings};
-use primitive_app::{HEIGHT, WIDTH, with_storage};
+use crate::session::{Reading, ReadingViewport};
+use crate::{Anchor, Engine, Probe, Settings};
+use primitive_app::with_storage;
+#[cfg(test)]
+use primitive_app::{HEIGHT, WIDTH};
 use primitive_ui::{Canvas, GrayImage, Rect, TextStyle};
 use std::io;
 
-const PANEL_WIDTH: i32 = WIDTH as i32 - 32;
-const CONTENT_WIDTH: u32 = PANEL_WIDTH as u32 - 32;
-const CONTENT_HEIGHT: u32 = HEIGHT / 3 - 112;
+const INSET: i32 = 16;
 const HEADER: i32 = 76;
 const MIN_FONT_PIXELS: f32 = 12.0;
 // Match the renderer's physical-font ceiling across base and inline runs.
 const MAX_FONT_PIXELS: f32 = 192.0;
-// A second size for lines with large authored spacing in the 448 px viewport.
+// A second size for lines with large authored spacing in the short popup.
 const TALL_LINE_FONT_PIXELS: f32 = 140.0;
 
 #[cfg(test)]
@@ -24,6 +25,9 @@ pub(super) struct Footnote {
     target: Destination,
     pub(super) reference: Option<TextSelection>,
     preview: Probe,
+    viewport: ReadingViewport,
+    source: String,
+    cursor: Option<Anchor>,
     page: usize,
     frame: GrayImage,
     selection: Option<TextSelection>,
@@ -32,8 +36,8 @@ pub(super) struct Footnote {
 impl Footnote {
     fn frame(preview: &mut Probe, page: usize) -> crate::Result<GrayImage> {
         Ok(GrayImage {
-            width: CONTENT_WIDTH,
-            height: CONTENT_HEIGHT,
+            width: preview.settings.width,
+            height: preview.settings.height,
             pixels: preview.capture(page)?,
         })
     }
@@ -43,23 +47,29 @@ impl Footnote {
             (self.preview.page_range(self.page).end.ceil() as u32
                 + self.preview.settings.top_margin()
                 + self.preview.settings.bottom_margin())
-            .clamp(40, CONTENT_HEIGHT)
+            .clamp(40, self.frame.height)
         } else {
-            CONTENT_HEIGHT
+            self.frame.height
         }
     }
 
     pub(super) fn panel(&self) -> Rect {
         let h = HEADER + self.content_height() as i32 + 20;
-        Rect::new(16, HEIGHT as i32 - h - 16, PANEL_WIDTH, h)
+        let (width, height) = self.viewport.dimensions();
+        Rect::new(
+            INSET,
+            height as i32 - h - INSET,
+            width as i32 - 2 * INSET,
+            h,
+        )
     }
 
     fn content(&self) -> Rect {
         let panel = self.panel();
         Rect::new(
-            panel.x + 16,
+            panel.x + INSET,
             panel.y + HEADER,
-            CONTENT_WIDTH as i32,
+            self.frame.width as i32,
             self.content_height() as i32,
         )
     }
@@ -176,6 +186,7 @@ impl Footnote {
         };
         self.frame = Self::frame(&mut self.preview, page)?;
         self.page = page;
+        self.cursor = self.preview.page_anchor(page);
         self.selection = None;
         Ok(true)
     }
@@ -242,25 +253,7 @@ impl Reader {
         if context.kind == Reference::Ordinary {
             return false;
         }
-        let preview_font = self
-            .controls
-            .footnote_font_size
-            .requested_pixels(reading.config.settings);
-        let settings = Settings {
-            width: CONTENT_WIDTH,
-            height: CONTENT_HEIGHT,
-            status_header_height: 0,
-            margin: 16,
-            margin_sides: Some(22),
-            margin_left: None,
-            margin_right: None,
-            margin_top: Some(8),
-            margin_bottom: Some(8),
-            font_size: preview_font.clamp(MIN_FONT_PIXELS, MAX_FONT_PIXELS),
-            // The popup size has already been converted to physical pixels.
-            logical_font_size: None,
-            ..reading.config.settings
-        };
+        let viewport = self.reading_viewport();
         let toc_target = reading
             .probe
             .toc
@@ -299,63 +292,154 @@ impl Reader {
             ) else {
                 return Ok(None);
             };
-            let render = |book, settings| {
-                Probe::from_book_with_font_loader(
-                    book,
-                    Engine::Parley,
-                    settings,
-                    index,
-                    Some(excerpt.clone()),
-                    &reading.config.user_hyphenation,
-                    // Keep the independent stylesheet context of the popup.
-                    &crate::user_styles::Snapshot::default(),
-                    || {
-                        if self.controls.footnote_book_font
-                            && reading.config.fonts != self.fonts
-                            && let Ok(fonts) = crate::font_context(&reading.config.fonts)
-                        {
-                            return Ok(fonts);
-                        }
-                        crate::font_context(&self.fonts)
-                    },
-                )
-            };
-            let mut preview = match render(book, settings) {
-                Err(error)
-                    if error.downcast_ref::<crate::PageContentTooTall>().is_some()
-                        && settings.font_size > TALL_LINE_FONT_PIXELS =>
-                {
-                    let book = Book::open(&reading.config.book).map_err(io::Error::other)?;
-                    if book.revision() != reading.probe.book {
-                        return Ok(None);
-                    }
-                    render(
-                        book,
-                        Settings {
-                            font_size: TALL_LINE_FONT_PIXELS,
-                            ..settings
-                        },
-                    )
-                    .map_err(io::Error::other)?
-                }
-                result => result.map_err(io::Error::other)?,
-            };
+            let mut preview = self.render_footnote(book, reading, index, &excerpt, viewport)?;
             let frame = Footnote::frame(&mut preview, 0).map_err(io::Error::other)?;
-            Ok(Some((preview, frame)))
+            Ok(Some((excerpt, preview, frame)))
         });
-        let Ok(Some((preview, frame))) = result else {
+        let Ok(Some((source, preview, frame))) = result else {
             return false;
         };
+        let cursor = preview.page_anchor(0);
         self.show(Screen::Footnote);
         self.footnote = Some(Footnote {
             target,
             reference,
             preview,
+            viewport,
+            source,
+            cursor,
             page: 0,
             frame,
             selection: None,
         });
         true
+    }
+
+    fn render_footnote(
+        &self,
+        book: Book,
+        reading: &Reading,
+        index: usize,
+        excerpt: &str,
+        viewport: ReadingViewport,
+    ) -> io::Result<Probe> {
+        let (width, height) = viewport.dimensions();
+        let font = self
+            .controls
+            .footnote_font_size
+            .requested_pixels(reading.config.settings);
+        let settings = Settings {
+            width: width - 4 * INSET as u32,
+            height: height / 3 - 112,
+            status_header_height: 0,
+            margin: 16,
+            margin_sides: Some(22),
+            margin_left: None,
+            margin_right: None,
+            margin_top: Some(8),
+            margin_bottom: Some(8),
+            font_size: font.clamp(MIN_FONT_PIXELS, MAX_FONT_PIXELS),
+            logical_font_size: None,
+            ..reading.config.settings
+        };
+        let render = |book, settings| {
+            Probe::from_book_with_font_loader(
+                book,
+                Engine::Parley,
+                settings,
+                index,
+                Some(excerpt.to_owned()),
+                &reading.config.user_hyphenation,
+                // The popup has an independent stylesheet context.
+                &crate::user_styles::Snapshot::default(),
+                || {
+                    if self.controls.footnote_book_font
+                        && reading.config.fonts != self.fonts
+                        && let Ok(fonts) = crate::font_context(&reading.config.fonts)
+                    {
+                        return Ok(fonts);
+                    }
+                    crate::font_context(&self.fonts)
+                },
+            )
+        };
+        match render(book, settings) {
+            Err(error)
+                if error.downcast_ref::<crate::PageContentTooTall>().is_some()
+                    && settings.font_size > TALL_LINE_FONT_PIXELS =>
+            {
+                let book = Book::open(&reading.config.book).map_err(io::Error::other)?;
+                if book.revision() != reading.probe.book {
+                    return Err(io::Error::other(
+                        "The book changed while opening the footnote",
+                    ));
+                }
+                render(
+                    book,
+                    Settings {
+                        font_size: TALL_LINE_FONT_PIXELS,
+                        ..settings
+                    },
+                )
+                .map_err(io::Error::other)
+            }
+            result => result.map_err(io::Error::other),
+        }
+    }
+
+    pub(super) fn resize_footnote(
+        &self,
+        viewport: ReadingViewport,
+    ) -> crate::Result<Option<Footnote>> {
+        let Some(note) = self
+            .footnote
+            .as_ref()
+            .filter(|note| note.viewport != viewport)
+        else {
+            return Ok(None);
+        };
+        let reading = &self
+            .active
+            .as_ref()
+            .ok_or("The footnote's book closed")?
+            .reading;
+        let chapter = reading
+            .probe
+            .chapter_index(&note.target.path)
+            .ok_or("The footnote is unavailable")?;
+        let (preview, frame, page, selection) = with_storage(|| {
+            let book = Book::open(&reading.config.book).map_err(io::Error::other)?;
+            if book.revision() != reading.probe.book {
+                return Err(io::Error::other(
+                    "The book changed while resizing the footnote",
+                ));
+            }
+            let mut preview =
+                self.render_footnote(book, reading, chapter, &note.source, viewport)?;
+            let page = note
+                .cursor
+                .as_ref()
+                .and_then(|cursor| preview.page_for(cursor))
+                .unwrap_or_else(|| note.page.min(preview.page_count().saturating_sub(1)));
+            let selection = note.selection.as_ref().and_then(|selected| {
+                preview
+                    .select_range(&selected.start, &selected.end)
+                    .filter(|range| range.text == selected.text)
+            });
+            let frame = Footnote::frame(&mut preview, page).map_err(io::Error::other)?;
+            Ok((preview, frame, page, selection))
+        })?;
+        Ok(Some(Footnote {
+            target: note.target.clone(),
+            reference: note.reference.clone(),
+            preview,
+            viewport,
+            source: note.source.clone(),
+            cursor: note.cursor.clone(),
+            page,
+            frame,
+            selection,
+        }))
     }
 
     pub(super) fn footnote_input(&mut self, input: Input) -> Change {
@@ -423,6 +507,10 @@ impl Reader {
                 self.turn_footnote(step)
             }
             Input::PageForward => self.turn_footnote(1),
+            Input::PageBack if note.page == 0 => {
+                self.show(Screen::Book);
+                Change::Partial
+            }
             Input::PageBack => self.turn_footnote(-1),
             Input::Swipe { dy, dx, start_y }
                 if dy > 60.0

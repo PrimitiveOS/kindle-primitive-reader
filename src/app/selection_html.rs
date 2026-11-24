@@ -1,45 +1,103 @@
 //! Read a bounded markup fragment from the exact EPUB revision on screen.
 use super::*;
+use crate::session::ReadingViewport;
 use primitive_ui::{PageTurn, Pager, TextStyle};
 
 const CODE_SIZE: i32 = 28;
 const CODE: TextStyle = TextStyle::new(CODE_SIZE);
 const LINE_HEIGHT: i32 = 43;
 const MAX_LINE_CHARS: usize = 110;
-const LINES: usize = 30;
+const PAGER_BOTTOM: i32 = 138;
+const BODY_GAP: i32 = 98;
+
+struct Line {
+    offset: usize,
+    text: String,
+}
 
 pub(super) struct Inspector {
     source: String,
-    lines: std::cell::OnceCell<Vec<String>>,
-    page: usize,
+    viewport: ReadingViewport,
+    lines: std::cell::OnceCell<Vec<Line>>,
+    // Byte position in the formatted display string, independent of line wrapping.
+    cursor: usize,
 }
 
 impl Inspector {
-    fn new(source: String) -> Self {
+    fn new(source: String, viewport: ReadingViewport) -> Self {
         Self {
             source,
+            viewport,
             lines: std::cell::OnceCell::new(),
-            page: 0,
+            cursor: 0,
         }
     }
 
+    pub(super) fn resized(&self, viewport: ReadingViewport) -> Option<Self> {
+        (self.viewport != viewport).then(|| Self {
+            cursor: self.cursor,
+            ..Self::new(self.source.clone(), viewport)
+        })
+    }
+
+    fn lines_per_page(&self) -> usize {
+        let (_, height) = self.viewport.dimensions();
+        ((height as i32 - LIST_Y - PAGER_BOTTOM - BODY_GAP) / LINE_HEIGHT).max(1) as usize
+    }
+
+    fn page(&self) -> usize {
+        self.lines.get().map_or(0, |lines| {
+            lines
+                .partition_point(|line| line.offset <= self.cursor)
+                .saturating_sub(1)
+                / self.lines_per_page()
+        })
+    }
+
     fn pager(&self) -> Pager {
+        let (width, height) = self.viewport.dimensions();
         Pager {
-            bounds: Rect::new(LIST_X, HEIGHT as i32 - 138, WIDTH as i32 - 2 * LIST_X, 100),
-            page: self.page,
-            pages: self
-                .lines
-                .get()
-                .map_or(1, |lines| lines.len().div_ceil(LINES)),
+            bounds: Rect::new(
+                LIST_X,
+                height as i32 - PAGER_BOTTOM,
+                width as i32 - 2 * LIST_X,
+                100,
+            ),
+            page: self.page(),
+            pages: self.lines.get().map_or(1, |lines| {
+                lines.len().div_ceil(self.lines_per_page()).max(1)
+            }),
+        }
+    }
+
+    fn turn(&mut self, direction: PageTurn) -> Change {
+        let pager = self.pager();
+        let target = match direction {
+            PageTurn::Previous => pager.page.checked_sub(1),
+            PageTurn::Next => (pager.page + 1 < pager.pages).then_some(pager.page + 1),
+        };
+        if let Some(line) =
+            target.and_then(|page| self.lines.get()?.get(page * self.lines_per_page()))
+        {
+            self.cursor = line.offset;
+            Change::Partial
+        } else {
+            Change::None
         }
     }
 
     fn draw(&self, canvas: &mut Canvas) {
-        let width = WIDTH as i32 - 2 * LIST_X;
+        let width = self.viewport.dimensions().0 as i32 - 2 * LIST_X;
         let lines = self
             .lines
             .get_or_init(|| layout_lines(canvas, &self.source, width));
-        for (index, line) in lines.iter().skip(self.page * LINES).take(LINES).enumerate() {
+        let capacity = self.lines_per_page();
+        for (index, line) in lines
+            .iter()
+            .skip(self.page() * capacity)
+            .take(capacity)
+            .enumerate()
+        {
             canvas.text(
                 Rect::new(
                     LIST_X,
@@ -47,7 +105,7 @@ impl Inspector {
                     width,
                     LINE_HEIGHT,
                 ),
-                line,
+                &line.text,
                 CODE,
             );
         }
@@ -55,9 +113,10 @@ impl Inspector {
     }
 }
 
-fn layout_lines(canvas: &mut Canvas, source: &str, width: i32) -> Vec<String> {
+fn layout_lines(canvas: &mut Canvas, source: &str, width: i32) -> Vec<Line> {
     let mut lines = Vec::new();
     let mut depth: usize = 0;
+    let mut offset = 0;
     // Formatting is visible only. The verified source stays unchanged in the inspector.
     for line in source.replace("><", ">\n<").lines() {
         let closing = line.starts_with("</");
@@ -82,10 +141,29 @@ fn layout_lines(canvas: &mut Canvas, source: &str, width: i32) -> Vec<String> {
                     offsets.partition_point(|&i| canvas.measure(&rest[..i], CODE_SIZE) <= width);
                 offsets[first.saturating_sub(1).max(1).min(offsets.len() - 1)]
             };
-            let fit = if fit == 0 { end } else { fit };
-            lines.push(rest[..fit].to_owned());
+            let hard_fit = if fit == 0 { end } else { fit };
+            let fit = if hard_fit < rest.len() {
+                // Keep ordinary prose and markup tokens readable when a nearby
+                // separator fits. Very long tokens still need a bounded cut.
+                rest[..hard_fit]
+                    .char_indices()
+                    .rev()
+                    .find_map(|(index, character)| {
+                        (index > hard_fit / 2 && character.is_whitespace())
+                            .then_some(index + character.len_utf8())
+                    })
+                    .unwrap_or(hard_fit)
+            } else {
+                hard_fit
+            };
+            lines.push(Line {
+                offset,
+                text: rest[..fit].to_owned(),
+            });
             rest = &rest[fit..];
+            offset += fit;
         }
+        offset += 1;
         let tag = line.trim_start();
         if !closing
             && tag.starts_with('<')
@@ -140,7 +218,7 @@ impl Reader {
             .inspect_publisher_html(&xhtml, selection)
             .ok_or(unavailable)?;
         self.show(Screen::SelectionHtml);
-        self.selection_html = Some(Inspector::new(html));
+        self.selection_html = Some(Inspector::new(html, self.reading_viewport()));
         Ok(())
     }
 
@@ -151,8 +229,7 @@ impl Reader {
     }
 
     pub(super) fn selection_html_input(&mut self, input: Input) -> Change {
-        if matches!(input, Input::Tap(x,y) if primitive_ui::back_button(WIDTH as i32).contains(x,y))
-        {
+        if matches!(input, Input::Tap(x,y) if self.navigation_layout().back().contains(x,y)) {
             self.show(Screen::Book);
             return Change::Full;
         }
@@ -171,17 +248,7 @@ impl Reader {
             Input::Tap(x, y) => pager.hit(x, y),
             _ => None,
         };
-        let previous = state.page;
-        match direction {
-            Some(PageTurn::Previous) => state.page = state.page.saturating_sub(1),
-            Some(PageTurn::Next) if state.page + 1 < pager.pages => state.page += 1,
-            _ => {}
-        }
-        if state.page == previous {
-            Change::None
-        } else {
-            Change::Partial
-        }
+        direction.map_or(Change::None, |direction| state.turn(direction))
     }
 }
 
@@ -295,6 +362,114 @@ mod tests {
     }
 
     #[test]
+    fn landscape_html_stages_rewrapped_markup_and_back_restores_the_source_selection() {
+        use crate::app::{ReadingOrientation, reading_viewport_stage::draw_test_candidate};
+        use primitive_app::viewport::{LogicalTurn, ViewportDecision, ViewportRequest};
+
+        let fixture = Fixture::new();
+        let text = "An eastern landmark remained visible across the bay. ".repeat(65);
+        write_epub(
+            &fixture.book,
+            &format!(r#"<html><body><p id="range">{text}</p></body></html>"#),
+        );
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+        app.open_path(&fixture.book).unwrap();
+        let portrait = draw_test_candidate(&mut app, 1, LogicalTurn::Upright, "", false);
+        app.finish_viewport(portrait, ViewportDecision::Commit);
+        let reading = &app.active.as_ref().unwrap().reading;
+        let origin = reading.anchor();
+        let start = reading.probe.fragment("range").unwrap();
+        let mut end = start.clone();
+        end.offset += text.trim_end().len();
+        let selection = reading.probe.select_range(&start, &end).unwrap();
+        app.selection = Some(selection.clone());
+        app.view_selection_html().unwrap();
+        let portrait = draw_test_candidate(&mut app, 3, LogicalTurn::Upright, "", false);
+        app.finish_viewport(portrait, ViewportDecision::Commit);
+        assert_eq!(app.input(Input::PageForward), Change::Partial);
+        let inspector = app.selection_html.as_ref().unwrap();
+        let cursor = inspector.cursor;
+        let source = inspector.source.clone();
+        assert_eq!(inspector.lines_per_page(), 30);
+
+        app.set_reading_orientation(ReadingOrientation::LandscapeRight)
+            .unwrap();
+        let attempted = draw_test_candidate(&mut app, 5, LogicalTurn::Clockwise, "", false);
+        assert_eq!(
+            app.selection_html.as_ref().unwrap().viewport,
+            ReadingViewport::PORTRAIT
+        );
+        app.finish_viewport(attempted, ViewportDecision::Abort);
+        assert_eq!(app.selection_html.as_ref().unwrap().cursor, cursor);
+        app.set_reading_orientation(ReadingOrientation::LandscapeRight)
+            .unwrap();
+        let landscape = draw_test_candidate(
+            &mut app,
+            7,
+            LogicalTurn::Clockwise,
+            "landscape-view-html",
+            false,
+        );
+        app.finish_viewport(landscape, ViewportDecision::Commit);
+        assert_eq!(app.screen, Screen::SelectionHtml);
+        let inspector = app.selection_html.as_ref().unwrap();
+        assert_eq!(inspector.source, source);
+        assert_eq!(inspector.cursor, cursor);
+        assert_eq!(inspector.lines_per_page(), 20);
+        assert_eq!(inspector.viewport, ReadingViewport::LANDSCAPE);
+        let lines = inspector.lines.get().unwrap();
+        let first = inspector.page() * inspector.lines_per_page();
+        assert!(lines[first].offset <= cursor);
+        assert!(
+            lines
+                .get(first + inspector.lines_per_page())
+                .is_none_or(|line| line.offset > cursor)
+        );
+        assert!(inspector.pager().bounds.bottom() <= 1264);
+        assert_ne!(
+            app.navigation_layout().back(),
+            primitive_ui::back_button(WIDTH as i32)
+        );
+
+        let back = app.navigation_layout().back();
+        assert_eq!(tap(&mut app, back), Change::Full);
+        assert_eq!(app.screen, Screen::Book);
+        assert_eq!(
+            app.viewport_request(),
+            Some(ViewportRequest::Fixed(LogicalTurn::Clockwise))
+        );
+        assert_eq!(app.selection.as_ref(), Some(&selection));
+        assert_eq!(app.active.as_ref().unwrap().reading.anchor(), origin);
+        assert!(app.back.is_empty());
+        assert!(app.selection_html.is_none());
+
+        app.view_selection_html().unwrap();
+        assert_eq!(
+            app.selection_html.as_ref().unwrap().viewport,
+            ReadingViewport::LANDSCAPE
+        );
+        let same_size = draw_test_candidate(
+            &mut app,
+            9,
+            LogicalTurn::Clockwise,
+            "landscape-view-html-dark",
+            true,
+        );
+        app.finish_viewport(same_size, ViewportDecision::Commit);
+        let pager = app.selection_html.as_ref().unwrap().pager();
+        assert_eq!(
+            tap(&mut app, pager.button(PageTurn::Next).unwrap()),
+            Change::Partial
+        );
+        assert_eq!(app.input(Input::PageBack), Change::Partial);
+        assert_eq!(tap(&mut app, back), Change::Full);
+    }
+
+    #[test]
     fn selection_html_pager_keeps_the_reading_page_and_rejects_non_epub_formats() {
         let fixture = Fixture::new();
         let text = "A readable plain text file.";
@@ -328,9 +503,9 @@ mod tests {
             tap(&mut app, pager.button(PageTurn::Next).unwrap()),
             Change::Partial
         );
-        assert_eq!(app.selection_html.as_ref().unwrap().page, 1);
+        assert_eq!(app.selection_html.as_ref().unwrap().page(), 1);
         assert_eq!(app.input(Input::PageBack), Change::Partial);
-        assert_eq!(app.selection_html.as_ref().unwrap().page, 0);
+        assert_eq!(app.selection_html.as_ref().unwrap().page(), 0);
         assert_eq!(
             tap(&mut app, primitive_ui::back_button(WIDTH as i32)),
             Change::Full
