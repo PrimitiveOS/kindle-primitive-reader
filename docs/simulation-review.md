@@ -2,6 +2,26 @@
 
 ## Current Mac simulator checkpoint
 
+Corner holds now run their assigned action before text selection. The Mac
+simulator verifies the opt-out, a timed pause, and a release after the
+deadline. Taps, swipes, and the reading footer still respond while a mapped
+hold is paused.
+[Corner gestures and captures](corner-hold-gestures.md)
+
+Alternative Contents supplies chapter ticks to the reading header, footer,
+and Skim. For indexed paged EPUBs, it resolves headings on other spine items.
+The Mac run checks the three surfaces without moving the reading location or
+adding history.
+[Alternative progress markers and captures](contents-list-settings.md#progress-markers-in-alternative-mode)
+
+Web layout uses publisher height constraints on fitted EPUB paragraphs,
+including a decoration-only continuation followed by a forced page break.
+Book mode uses the natural height. The pinned comparison covers both modes
+at 96 DPI and measures physical-unit sizing at 144 DPI.
+[Fitted height comparison and captures](render-modes.md#height-constraints-on-fitted-paragraphs)
+
+## Dictionary layouts, alternative contents, partial typography and EPUB padding checkpoint
+
 Dictionary popup actions can be reordered, hidden and arranged one to four
 per row. The pinned KOReader callbacks cover sorting, toggling, paired
 arrows, preview and reset. The Mac simulator checks a saved layout after
