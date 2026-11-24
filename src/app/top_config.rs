@@ -628,6 +628,15 @@ impl Reader {
                     ],
                 );
             }
+            if self
+                .current_document()
+                .is_some_and(|(book, _)| book.can_delete_file())
+            {
+                items.push(Item::new(
+                    "Move to archive",
+                    Action::BookArchive(super::book_archive::Command::Open),
+                ));
+            }
             items.push(Item::new("Book details", Action::OrganizeCurrent));
         }
         items

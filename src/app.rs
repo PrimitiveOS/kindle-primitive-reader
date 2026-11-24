@@ -4,6 +4,7 @@ mod bar_icons;
 pub(crate) const NOTE_MARK_ICON: primitive_ui::Icon = bar_icons::HIGHLIGHT;
 #[cfg(test)]
 mod base_stylesheet_tests;
+mod book_archive;
 mod bookmark_browser;
 mod chapter_navigation;
 mod character_page_settings;
@@ -178,6 +179,8 @@ enum Screen {
     LibraryFind,
     FolderOrder,
     OrganizeLibrary,
+    BookArchive,
+    ArchiveFolder,
     BookmarkBrowser(bookmark_browser::Page),
     ReadingHistory(reading_history::Page),
     BookList,
@@ -306,6 +309,8 @@ impl Screen {
             Self::LibraryFind => "Find a document",
             Self::FolderOrder => "Folder order",
             Self::OrganizeLibrary => "Library organization",
+            Self::BookArchive => "Move to archive",
+            Self::ArchiveFolder => "Archive folder",
             Self::BookmarkBrowser(page) => page.title(),
             Self::ReadingHistory(page) => page.title(),
             Self::BookList => "Books",
@@ -451,6 +456,7 @@ enum Action {
     SetFolderOrder(FolderOrder),
     ListBooks(BookList),
     OrganizeCurrent,
+    BookArchive(book_archive::Command),
     BookmarkBrowser(bookmark_browser::Command),
     ReadingHistory(reading_history::Command),
     ToggleNonlinear,
@@ -738,6 +744,7 @@ pub struct Reader {
     user_hyphenation_path: PathBuf,
     hyphenation_edit: Option<user_hyphenation::Draft>,
     browser: FileBrowser,
+    archive: book_archive::Archive,
     bookmark_browser: bookmark_browser::Browser,
     library_query: String,
     book_list: Option<BookList>,
@@ -944,6 +951,7 @@ impl Reader {
             hyphenation_edit: None,
             library,
             browser,
+            archive: book_archive::Archive::load(data.join("archive-folder.json")),
             bookmark_browser: bookmark_browser::Browser::load(data.join("bookmark-browser.json")),
             library_query: String::new(),
             book_list: None,
@@ -1415,6 +1423,7 @@ impl Reader {
     }
 
     fn show(&mut self, screen: Screen) {
+        self.archive.close_surfaces(screen);
         if screen != Screen::PdfPassword {
             self.folder_password_return = None;
         }
@@ -2434,6 +2443,9 @@ impl Reader {
         if self.screen == Screen::FolderOrder {
             return self.folder_order_items();
         }
+        if matches!(self.screen, Screen::BookArchive | Screen::ArchiveFolder) {
+            return self.archive_items();
+        }
         if let Some(items) = self.organization_items() {
             return items;
         }
@@ -3282,6 +3294,7 @@ impl Reader {
             Action::LibraryExport(command) => self.activate_library_export(command)?,
             Action::Open(entry) => self.open_book(entry)?,
             Action::Browse(directory) => self.browse_to(directory)?,
+            Action::BookArchive(command) => self.archive_command(command)?,
             Action::CurrentBookFolder => self.current_book_folder()?,
             Action::OpenTracked(id) => {
                 let entry = self.locate_tracked(id)?;
@@ -3522,15 +3535,7 @@ impl Reader {
             Action::ExportAnnotatedPdf => self.export_annotated_pdf()?,
             Action::Show(Screen::Library) => {
                 self.save()?;
-                self.active = None;
-                self.numbering_scan = None;
-                self.fixed = None;
-                self.touch_locked = false;
-                self.ocr = None;
-                self.selection = None;
-                self.clear_location_history();
-                self.auto_turn.configure(None, Instant::now());
-                self.show(Screen::Library);
+                self.close_book_to_library();
             }
             Action::Show(screen) => self.show(screen),
             Action::Jump(target) => self.follow(target)?,
@@ -4573,6 +4578,18 @@ impl Reader {
         self.back.clear();
         self.forward.clear();
         self.swipe_back_notice_pending = false;
+    }
+
+    fn close_book_to_library(&mut self) {
+        self.active = None;
+        self.numbering_scan = None;
+        self.fixed = None;
+        self.touch_locked = false;
+        self.ocr = None;
+        self.selection = None;
+        self.clear_location_history();
+        self.auto_turn.configure(None, Instant::now());
+        self.show(Screen::Library);
     }
 
     fn remember_location(history: &mut Vec<HistoryLocation>, entry: HistoryLocation) {
@@ -8059,6 +8076,7 @@ impl App for Reader {
             self.draw_skim(canvas);
         }
         self.draw_flow_popup(canvas);
+        self.draw_archive_confirmation(canvas);
         self.draw_list_density_picker(canvas);
         self.draw_search_results_navigation(canvas);
         self.draw_top_header_default_prompt(canvas);
@@ -8098,6 +8116,9 @@ impl App for Reader {
         }
         if self.flow_popup.is_some() {
             return self.flow_popup_input(input);
+        }
+        if let Some(change) = self.archive_confirmation_input(input) {
+            return change;
         }
         if self.read_alarm.modal() {
             return self.read_alarm_input(input);
@@ -8273,6 +8294,9 @@ impl App for Reader {
             return change;
         }
         self.sync_auto_turn(Instant::now());
+        if let Some(change) = self.archive_confirmation_input(input) {
+            return change;
+        }
         if self.flow_popup.is_some() {
             return self.flow_popup_input(input);
         }
@@ -8524,6 +8548,8 @@ impl App for Reader {
                 match self.screen {
                     Screen::LibraryExport(page) => self.back_from_library_export(page),
                     Screen::OrganizeLibrary | Screen::FolderOrder => self.show(Screen::Library),
+                    Screen::BookArchive => self.show(self.surface_screen()),
+                    Screen::ArchiveFolder => self.show(Screen::BookArchive),
                     Screen::BookList if matches!(self.book_list, Some(BookList::Author(_))) => {
                         self.book_list = Some(BookList::Authors);
                         self.show(Screen::BookList);

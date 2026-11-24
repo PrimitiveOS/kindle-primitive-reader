@@ -1,5 +1,7 @@
 //! Local document discovery and reading state. Paths stored in state are relative to the library.
 
+#[cfg(feature = "kindle")]
+pub(crate) mod archive;
 pub(crate) mod contents_depths;
 pub(crate) mod custom_contents;
 pub(crate) mod hidden_flows;

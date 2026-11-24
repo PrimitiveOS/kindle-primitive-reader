@@ -87,6 +87,14 @@ traversal and end prompt under both saved reading orders. Use a mixed library
 of unopened, active, on-hold and finished titles, including older records
 with no saved percentage. [Folder order controls](document-end.md#choose-folder-order)
 
+## Book archive verification
+
+Check folder selection and confirmation using authored EPUB and PDF files.
+Verify resumed source locations, bookmarks, progress, status and collections
+after reopening. Exercise an existing target, a changed source, a replaced
+folder and a failed state write. Check **Continue reading** when source
+removal fails and both complete copies remain. [Archive workflow](document-end.md#move-a-book-to-archive)
+
 ## Reader 0.1.38 verification plan
 
 Compare the optional top header’s published chapter marks across an entire
