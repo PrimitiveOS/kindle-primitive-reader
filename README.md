@@ -80,7 +80,7 @@ The reading footer shows `Chapter x of y - Page m of n`, with the horizontal pro
 
 Reading clocks, alarms, saved dates and the reading calendar follow the Kindle time zone. [Device clock and Oasis verification](docs/device-local-time.md)
 
-Open **Contents** to expand chapter branches or search heading titles. Branches leading to the current page open automatically. [Contents and screenshots](docs/searchable-contents.md)
+Open **Contents** to expand chapter branches or search heading titles. Reader opens the branches leading to the current page. Use **Contents settings** to set the list density, entry size, dot leaders, and chapter lengths. **Previous chapter** and **Next chapter** use the active outline. [Contents](docs/searchable-contents.md) · [List settings](docs/contents-list-settings.md) · [Page labels and lengths](docs/contents-row-metadata.md) · [Chapter navigation](docs/chapter-navigation.md)
 
 Publisher styling can keep a paragraph’s first or last lines together at a page break. [Paragraph settings and two-page comparison](docs/paragraph-ends.md)
 
