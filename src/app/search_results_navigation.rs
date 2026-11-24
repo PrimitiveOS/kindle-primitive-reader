@@ -1,30 +1,78 @@
 //! Navigate retained document search results without changing the query or match ranges.
+use std::cell::{Ref, RefCell};
 use std::cmp::Ordering;
 
 use primitive_app::{Change, HEIGHT, WIDTH};
 use primitive_ui::{CAPTION, Canvas, Input, Rect, TextStyle, icons};
 
+use super::search_chapter_scope::SearchChapterScope;
 use super::{HistoryLocation, Reader, Result, Screen, fixed_page_label};
 use crate::library::FixedPreferences;
 
 const OPTIONS: Rect = Rect::new(WIDTH as i32 - 384, 40, 100, 100);
 const SHEET: Rect = Rect::new(
     (WIDTH as i32 - 864) / 2,
-    (HEIGHT as i32 - 624) / 2,
+    (HEIGHT as i32 - 864) / 2,
     864,
-    624,
+    864,
 );
 const TITLE: Rect = Rect::new(SHEET.x + 48, SHEET.y + 38, SHEET.w - 96, 72);
-const CURRENT: Rect = Rect::new(SHEET.x + 48, SHEET.y + 130, SHEET.w - 96, 104);
+const ALL: Rect = Rect::new(SHEET.x + 48, SHEET.y + 130, SHEET.w - 96, 104);
+const CHAPTER: Rect = Rect::new(SHEET.x + 48, SHEET.y + 250, SHEET.w - 96, 104);
+const CURRENT: Rect = Rect::new(SHEET.x + 48, SHEET.y + 370, SHEET.w - 96, 104);
 const CURRENT_LABEL: Rect = Rect::new(CURRENT.x, CURRENT.y + CURRENT.h + 6, CURRENT.w, 46);
-const ORIGINAL: Rect = Rect::new(SHEET.x + 48, SHEET.y + 302, SHEET.w - 96, 104);
+const ORIGINAL: Rect = Rect::new(SHEET.x + 48, SHEET.y + 542, SHEET.w - 96, 104);
 const ORIGINAL_LABEL: Rect = Rect::new(ORIGINAL.x, ORIGINAL.y + ORIGINAL.h + 6, ORIGINAL.w, 46);
-const CLOSE: Rect = Rect::new(SHEET.x + SHEET.w - 278, SHEET.y + 476, 230, 100);
+const CLOSE: Rect = Rect::new(SHEET.x + SHEET.w - 278, SHEET.y + 716, 230, 100);
 
 #[derive(Default)]
 pub(super) struct Navigation {
     origin: Option<Origin>,
+    chapter: Option<ChapterResults>,
     pub(super) menu_open: bool,
+}
+
+struct ChapterResults {
+    scope: SearchChapterScope,
+    projection: RefCell<Projection>,
+}
+
+#[derive(Default)]
+struct Projection {
+    seen: usize,
+    hits: Vec<usize>,
+}
+
+pub(super) enum ResultOrder<'a> {
+    All(usize),
+    Chapter(Ref<'a, Vec<usize>>),
+}
+
+impl ResultOrder<'_> {
+    pub(super) fn len(&self) -> usize {
+        match self {
+            Self::All(count) => *count,
+            Self::Chapter(indices) => indices.len(),
+        }
+    }
+
+    pub(super) fn provider_index(&self, ordinal: usize) -> Option<usize> {
+        match self {
+            Self::All(count) => (ordinal < *count).then_some(ordinal),
+            Self::Chapter(indices) => indices.get(ordinal).copied(),
+        }
+    }
+
+    pub(super) fn ordinal(&self, index: usize) -> Option<usize> {
+        match self {
+            Self::All(count) => (index < *count).then_some(index),
+            Self::Chapter(indices) => indices.binary_search(&index).ok(),
+        }
+    }
+
+    pub(super) fn step(&self, index: usize, direction: isize) -> Option<usize> {
+        self.provider_index(self.ordinal(index)?.checked_add_signed(direction)?)
+    }
 }
 
 struct Origin {
@@ -59,8 +107,65 @@ impl Reader {
             });
         self.search_results_navigation = Navigation {
             origin,
-            menu_open: false,
+            ..Navigation::default()
         };
+    }
+
+    pub(super) fn search_result_order(&self) -> ResultOrder<'_> {
+        let count = if self.fixed.is_some() {
+            self.pdf_hits.len()
+        } else {
+            self.hits.len()
+        };
+        let Some(chapter) = &self.search_results_navigation.chapter else {
+            return ResultOrder::All(count);
+        };
+        if chapter.projection.borrow().seen != count {
+            let mut projection = chapter.projection.borrow_mut();
+            // Query replacement resets the scope. An existing query only
+            // appends complete batches, leaving earlier provider indices intact.
+            if projection.seen > count {
+                *projection = Projection::default();
+            }
+            let new_matches = (projection.seen..count)
+                .filter(|&index| chapter.scope.includes_result(self, index));
+            projection.hits.extend(new_matches);
+            projection.seen = count;
+        }
+        ResultOrder::Chapter(Ref::map(chapter.projection.borrow(), |state| &state.hits))
+    }
+
+    pub(super) fn search_chapter_active(&self) -> bool {
+        self.search_results_navigation.chapter.is_some()
+    }
+
+    pub(super) fn reset_search_chapter(&mut self) {
+        if self.search_chapter_active() {
+            self.set_search_chapter(None);
+        }
+    }
+
+    fn set_search_chapter(&mut self, scope: Option<SearchChapterScope>) {
+        self.search_results_navigation.chapter = scope.map(|scope| ChapterResults {
+            scope,
+            projection: RefCell::new(Projection::default()),
+        });
+        self.clear_flexible_results();
+        if self.screen == Screen::Matches {
+            self.list_page = 0;
+        }
+        self.matches_page = 0;
+        self.focused_result = None;
+        self.result_context = None;
+    }
+
+    fn focus_on_current_chapter(&mut self) -> Result<()> {
+        if self.active.is_some() {
+            self.ensure_reflow_search_current()?;
+        }
+        let scope = self.current_search_chapter()?;
+        self.set_search_chapter(Some(scope));
+        Ok(())
     }
 
     fn results_origin(&self) -> Option<&Origin> {
@@ -69,9 +174,7 @@ impl Reader {
     }
 
     fn has_search_result_navigation(&self) -> bool {
-        self.screen == Screen::Matches
-            && self.results_origin().is_some()
-            && (!self.hits.is_empty() || !self.pdf_hits.is_empty())
+        self.screen == Screen::Matches && self.results_origin().is_some()
     }
 
     pub(super) fn draw_search_results_options(&self, canvas: &mut Canvas) {
@@ -100,6 +203,9 @@ impl Reader {
         };
         canvas.popup(SHEET);
         canvas.text(TITLE, "Search result options", TextStyle::new(50).bold());
+        let scoped = self.search_chapter_active();
+        canvas.button(ALL, "All results", !scoped, false);
+        canvas.button(CHAPTER, "Results in current chapter", scoped, false);
         canvas.button(CURRENT, "Focus results near current page", false, false);
         canvas.text(
             CURRENT_LABEL,
@@ -144,6 +250,11 @@ impl Reader {
             return None;
         }
         let outcome = match input {
+            Input::Tap(x, y) if ALL.contains(x, y) => {
+                self.reset_search_chapter();
+                Ok(())
+            }
+            Input::Tap(x, y) if CHAPTER.contains(x, y) => self.focus_on_current_chapter(),
             Input::Tap(x, y) if CURRENT.contains(x, y) => self.focus_results_at_current_page(),
             Input::Tap(x, y) if ORIGINAL.contains(x, y) => self.go_to_search_origin(),
             Input::Tap(x, y) if CLOSE.contains(x, y) || !SHEET.contains(x, y) => Ok(()),
@@ -177,18 +288,18 @@ impl Reader {
     }
 
     fn focus_results_at_current_page(&mut self) -> Result<()> {
+        if self.active.is_some() {
+            self.ensure_reflow_search_current()?;
+        }
+        let order = self.search_result_order();
+        let indices = (0..order.len()).filter_map(|ordinal| order.provider_index(ordinal));
         let index = if let Some(fixed) = &self.fixed {
             let page = fixed.reading.page();
-            at_page(
-                self.pdf_hits
-                    .iter()
-                    .enumerate()
-                    .map(|(index, hit)| (index, hit.page.cmp(&page))),
-            )
+            at_page(indices.map(|index| (index, self.pdf_hits[index].page.cmp(&page))))
         } else {
-            self.ensure_reflow_search_current()?;
             let reading = &self.active.as_ref().ok_or("Open a book first")?.reading;
-            at_page(self.hits.iter().enumerate().filter_map(|(index, hit)| {
+            at_page(indices.filter_map(|index| {
+                let hit = &self.hits[index];
                 let relation = match hit.chapter.cmp(&reading.chapter) {
                     Ordering::Equal => reading.probe.page_for(&hit.anchor)?.cmp(&reading.page),
                     order => order,
@@ -197,6 +308,7 @@ impl Reader {
             }))
         }
         .ok_or("No results near this page")?;
+        drop(order);
         self.go_to_match_list_index(index);
         Ok(())
     }

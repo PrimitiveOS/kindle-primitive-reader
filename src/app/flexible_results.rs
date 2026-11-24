@@ -203,7 +203,8 @@ impl FlexibleResults {
     }
 
     fn append(&mut self, app: &Reader) -> bool {
-        let count = app.fulltext_result_count();
+        let order = app.search_result_order();
+        let count = order.len();
         let first = if self.spill.is_some() {
             self.measured_count()
         } else {
@@ -226,7 +227,7 @@ impl FlexibleResults {
             |index| {
                 ResultRow::measure(
                     &mut self.canvas,
-                    app.result_text(index),
+                    app.result_text(order.provider_index(index).expect("measured result index")),
                     self.max_lines,
                     self.font,
                 )
@@ -245,11 +246,7 @@ impl Reader {
     }
 
     fn fulltext_result_count(&self) -> usize {
-        if self.fixed.is_some() {
-            self.pdf_hits.len()
-        } else {
-            self.hits.len()
-        }
+        self.search_result_order().len()
     }
 
     fn result_text(&self, index: usize) -> ResultText<'_> {
@@ -299,8 +296,11 @@ impl Reader {
     }
 
     pub(super) fn match_page_for_index(&self, index: usize) -> usize {
+        let Some(ordinal) = self.search_result_order().ordinal(index) else {
+            return 0;
+        };
         self.with_flexible_results(|view| {
-            while view.measured_count() <= index
+            while view.measured_count() <= ordinal
                 && view.measured_count() < self.fulltext_result_count()
             {
                 if !view.append(self) {
@@ -308,10 +308,10 @@ impl Reader {
                 }
             }
             view.pages
-                .partition_point(|page| page.end() <= index)
+                .partition_point(|page| page.end() <= ordinal)
                 .min(view.pages.len().saturating_sub(1))
         })
-        .unwrap_or_else(|| index / self.match_geometry().rows)
+        .unwrap_or_else(|| ordinal / self.match_geometry().rows)
     }
 
     pub(super) fn flexible_result_range(&self) -> Option<Range<usize>> {
@@ -324,7 +324,8 @@ impl Reader {
 
     pub(super) fn draw_flexible_results(&self, canvas: &mut Canvas) -> bool {
         self.with_flexible_results(|view| {
-            let count = self.fulltext_result_count();
+            let order = self.search_result_order();
+            let count = order.len();
             let Some(page) = view.pages.get(self.list_page) else {
                 canvas.text(
                     Rect::new(LIST_X, LIST_Y, CARD_WIDTH, 110),
@@ -343,7 +344,9 @@ impl Reader {
                 ));
             }
             for (offset, row) in page.rows.iter().enumerate() {
-                let index = page.first + offset;
+                let Some(index) = order.provider_index(page.first + offset) else {
+                    continue;
+                };
                 row.draw(
                     canvas,
                     self.result_text(index),
@@ -467,9 +470,13 @@ impl Reader {
                 return (target < view.pages.len() && target != page)
                     .then_some(Target::Page(target));
             }
+            let provider = |x, y| {
+                let ordinal = view.pages.get(page)?.hit(x, y)?;
+                self.search_result_order().provider_index(ordinal)
+            };
             match input {
-                Input::Tap(x, y) => view.pages.get(page)?.hit(x, y).map(Target::Open),
-                Input::LongTap(x, y) => view.pages.get(page)?.hit(x, y).map(Target::Preview),
+                Input::Tap(x, y) => provider(x, y).map(Target::Open),
+                Input::LongTap(x, y) => provider(x, y).map(Target::Preview),
                 _ => None,
             }
         })?;

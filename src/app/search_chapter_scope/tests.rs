@@ -100,7 +100,7 @@ fn search_scope_fixed_keeps_tied_headings_and_equal_titles_separate() {
     assert_eq!(members(&reader), [3, 4, 5]);
 }
 
-fn authored_epub(path: &Path, include_toc: bool) {
+pub(in crate::app) fn authored_epub(path: &Path, include_toc: bool) {
     let filler = "<p>Through the afternoon we followed the shore, turning inland only at the old stone wall.</p>".repeat(100);
     let first = format!(
         "<h1>Preface marker</h1><h2 id=\"first\">Alpha marker</h2><p>Before the turn <span id=\"second\">Beta marker</span>.</p>{filler}"
@@ -116,7 +116,7 @@ fn authored_epub(path: &Path, include_toc: bool) {
             ""
         }
     );
-    let nav = r#"<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><nav epub:type="toc"><ol><li><a href="west.xhtml#first">Survey</a><ol><li><a href="west.xhtml#second">Survey</a></li></ol></li><li><a href="east.xhtml#omitted">Omitted</a></li><li><a href="east.xhtml#third">Survey</a></li><li><a href="last.xhtml">Survey</a></li></ol></nav></body></html>"#;
+    let nav = r#"<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><nav epub:type="toc"><ol><li><a href="west.xhtml#first">Survey</a><ol><li><a href="west.xhtml#second">Survey</a></li></ol></li><li><a href="east.xhtml#omitted">Survey</a></li><li><a href="east.xhtml#third">Survey</a></li><li><a href="last.xhtml">Survey</a></li></ol></nav></body></html>"#;
     let mut zip = zip::ZipWriter::new(fs::File::create(path).unwrap());
     let options = zip::write::SimpleFileOptions::default();
     let xhtml = |body: &str| {

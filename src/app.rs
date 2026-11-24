@@ -66,8 +66,8 @@ mod reading_backup;
 mod reading_bars;
 mod reading_footer;
 mod result_context;
-mod search_chapter_scope;
 mod saved_highlight_popup;
+mod search_chapter_scope;
 mod selection_popup;
 mod sidecar_marks;
 mod skim;
@@ -1813,31 +1813,25 @@ impl Reader {
             let range = self
                 .flexible_result_range()
                 .unwrap_or(first..first.saturating_add(rows));
+            let order = self.search_result_order();
+            let indices = range.filter_map(|ordinal| order.provider_index(ordinal));
             if let Some(fixed) = &self.fixed {
-                let items = self
-                    .pdf_hits
-                    .iter()
-                    .enumerate()
-                    .skip(range.start)
-                    .take(range.len())
-                    .map(|(index, hit)| {
+                let items = indices
+                    .map(|index| {
+                        let hit = &self.pdf_hits[index];
                         Item::new(&hit.snippet, Action::PdfSearchHit(index))
                             .detail(fixed_page_label(&fixed.reading, hit.page))
                     })
                     .collect();
-                return (self.pdf_hits.len(), items);
+                return (order.len(), items);
             }
-            let items = self
-                .hits
-                .iter()
-                .enumerate()
-                .skip(range.start)
-                .take(range.len())
-                .map(|(index, hit)| {
+            let items = indices
+                .map(|index| {
+                    let hit = &self.hits[index];
                     Item::new(&hit.snippet, Action::SearchHit(index)).detail(&hit.chapter_title)
                 })
                 .collect();
-            return (self.hits.len(), items);
+            return (order.len(), items);
         }
         let all = self.items();
         (all.len(), all.into_iter().skip(first).take(rows).collect())
@@ -3842,6 +3836,9 @@ impl Reader {
             Action::StepNearby(direction) => self.begin_nearby(direction, true)?,
             Action::SearchHit(index) => {
                 self.ensure_reflow_search_current()?;
+                if self.search_result_order().ordinal(index).is_none() {
+                    return Err("That result is unavailable".into());
+                }
                 let hit = self.hits.get(index).ok_or("That result is unavailable")?;
                 let end = hit.end.clone();
                 let previous = position(&self.active.as_ref().ok_or("No open book")?.reading);
@@ -5661,12 +5658,12 @@ impl Reader {
                 .can_step(direction)
                 .then_some(Action::StepNearby(direction));
         }
-        let index = current.checked_add_signed(step)?;
-        if self.fixed.is_some() {
-            (index < self.pdf_hits.len()).then_some(Action::PdfSearchHit(index))
+        let index = self.search_result_order().step(current, step)?;
+        Some(if self.fixed.is_some() {
+            Action::PdfSearchHit(index)
         } else {
-            (index < self.hits.len()).then_some(Action::SearchHit(index))
-        }
+            Action::SearchHit(index)
+        })
     }
 
     fn search_result_input(&mut self, x: f32, y: f32) -> Option<Change> {
@@ -5727,17 +5724,15 @@ impl Reader {
             }
             return Some("Search match".into());
         }
-        let count = if self.fixed.is_some() {
-            self.pdf_hits.len()
-        } else {
-            self.hits.len()
-        };
+        let order = self.search_result_order();
+        let ordinal = order.ordinal(index)?;
+        let count = order.len();
         let found = if self.search_at.is_some() || self.nearby.searching_all() {
             " found"
         } else {
             ""
         };
-        Some(format!("Match {} of {count}{found}", index + 1))
+        Some(format!("Match {} of {count}{found}", ordinal + 1))
     }
 
     fn read_fixed_text(&mut self, scan: bool) -> Result<()> {
@@ -7199,6 +7194,13 @@ impl Reader {
             (Screen::BookList, Some(BookList::Collection(name))) => name,
             _ => self.screen.title(),
         };
+        let scoped_title;
+        let title = if self.screen == Screen::Matches && self.search_chapter_active() {
+            scoped_title = format!("Chapter results ({})", self.search_result_order().len());
+            &scoped_title
+        } else {
+            title
+        };
         header(canvas, title, "Back");
         self.draw_search_results_options(canvas);
         if self.screen == Screen::Matches && self.draw_flexible_results(canvas) {
@@ -8408,7 +8410,10 @@ impl App for Reader {
             Input::Tap(x, y) if prev.contains(x, y) => -1,
             Input::Tap(x, y) if next.contains(x, y) => 1,
             Input::LongTap(x, y) if self.screen == Screen::Matches => {
-                let Some(index) = geometry.item_at(self.list_page, count, x, y) else {
+                let index = geometry
+                    .item_at(self.list_page, count, x, y)
+                    .and_then(|ordinal| self.search_result_order().provider_index(ordinal));
+                let Some(index) = index else {
                     return Change::None;
                 };
                 return match self.preview_result(index) {

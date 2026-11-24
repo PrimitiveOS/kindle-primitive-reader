@@ -324,6 +324,9 @@ impl Reader {
     }
 
     pub(super) fn open_fixed_list_result(&mut self, index: usize) -> Result<()> {
+        if self.search_result_order().ordinal(index).is_none() {
+            return Err("That result is unavailable".into());
+        }
         let hit = self
             .pdf_hits
             .get(index)
@@ -368,19 +371,23 @@ impl Reader {
         } else {
             return None;
         };
-        let index = if hold {
-            if direction < 0 {
-                Some(0)
-            } else {
-                self.pdf_hits.len().checked_sub(1)
-            }
-        } else {
-            self.search_result
-                .and_then(|index| index.checked_add_signed(direction))
+        let Some(current) = self.search_result else {
+            return Some(Change::None);
         };
-        let Some(index) =
-            index.filter(|&index| Some(index) != self.search_result && index < self.pdf_hits.len())
-        else {
+        let index = {
+            let order = self.search_result_order();
+            if hold {
+                let edge = if direction < 0 {
+                    Some(0)
+                } else {
+                    order.len().checked_sub(1)
+                };
+                edge.and_then(|ordinal| order.provider_index(ordinal))
+            } else {
+                order.step(current, direction)
+            }
+        };
+        let Some(index) = index.filter(|&index| index != current) else {
             return Some(Change::None);
         };
         Some(match self.open_fixed_list_result(index) {
@@ -394,9 +401,14 @@ impl Reader {
             return false;
         }
         if let Some(index) = self.search_result {
-            FixedNavigation::Previous.draw(canvas, LIST_RESULT_PREVIOUS, index > 0);
+            let order = self.search_result_order();
+            FixedNavigation::Previous.draw(
+                canvas,
+                LIST_RESULT_PREVIOUS,
+                order.step(index, -1).is_some(),
+            );
             canvas.button(LIST_RESULT_LIST, "Results", false, false);
-            FixedNavigation::Next.draw(canvas, LIST_RESULT_NEXT, index + 1 < self.pdf_hits.len());
+            FixedNavigation::Next.draw(canvas, LIST_RESULT_NEXT, order.step(index, 1).is_some());
         }
         true
     }
@@ -527,6 +539,7 @@ impl Reader {
             self.nearby.results_context = None;
             self.hits.clear();
             self.clear_flexible_results();
+            self.reset_search_chapter();
             self.result_selection = None;
             self.search_result = None;
             return Err("Reading styles or the book changed; search again".into());
@@ -675,6 +688,7 @@ impl Reader {
                     h.search(&query.text, query.match_case, query.ignore_accents, false)
                 })?;
                 self.cancel_search();
+                self.reset_search_chapter();
                 self.search_result = None;
             }
             if self.controls.fixed_search_full_page {
@@ -742,6 +756,7 @@ impl Reader {
                 )
             })?;
             self.cancel_search();
+            self.reset_search_chapter();
             self.search_result = None;
         }
         if self.nearby.worker.is_none() {
