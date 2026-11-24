@@ -335,3 +335,71 @@ fn frequent_notifications_keep_the_original_start_day_and_a_fixed_save_deadline(
     assert_eq!(months[&jan].0, h.day_seconds(jan, None, Zone::Fixed(0)));
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn reset_statistics_respects_strict_thresholds_and_rolls_back_a_failed_write() {
+    use super::reset::Scope;
+
+    let (mut history, start, wall, directory) = fixture("reset-statistics");
+    let at = |seconds| start + Duration::from_secs(seconds);
+    let mut time = 0;
+    for (book, seconds) in [(1, 12), (2, 59), (3, 60), (4, 61)] {
+        history.remember_title(book, "Authored book");
+        history.set_page_at(Some((book, 1)), at(time), Some(wall + time as i64));
+        time += seconds;
+        history.set_page_at(None, at(time), Some(wall + time as i64));
+    }
+    let total = history.summary(None, None);
+    history
+        .save(at(time), Some(wall + time as i64), true)
+        .unwrap();
+    let path = directory.join("history.json");
+    let original = fs::read(&path).unwrap();
+    let blocker = directory.join("original.json");
+    fs::rename(&path, &blocker).unwrap();
+    fs::create_dir(&path).unwrap();
+
+    let scope = Scope::ShortBooks {
+        minutes: 1,
+        keep: Some(1),
+    };
+    let baselines = BTreeMap::from([(1, 23), (2, 72)]);
+    assert_eq!(history.reset_selection(scope), BTreeSet::from([2]));
+    assert!(
+        history
+            .reset(scope, &baselines, at(time), Some(wall + time as i64))
+            .is_err()
+    );
+    assert_eq!(history.summary(None, None), total);
+    assert_eq!(history.pace_generation(2), 0);
+    assert_eq!(history.title(2), Some("Authored book"));
+    assert_eq!(fs::read(&blocker).unwrap(), original);
+    fs::remove_dir(&path).unwrap();
+    fs::rename(&blocker, &path).unwrap();
+
+    assert_eq!(
+        history
+            .reset(scope, &baselines, at(time), Some(wall + time as i64))
+            .unwrap(),
+        BTreeSet::from([2])
+    );
+    assert_eq!(history.summary(Some(1), None).seconds, 12);
+    assert_eq!(history.summary(Some(2), None).seconds, 0);
+    assert_eq!(history.summary(Some(3), None).seconds, 60);
+    assert_eq!(history.summary(Some(4), None).seconds, 61);
+    assert_eq!(history.title(2), None);
+    assert_eq!(history.pace_generation(2), 1);
+    assert_eq!(history.elapsed_since_reset(2, 78), 6);
+
+    let legacy = Scope::Book(99);
+    assert_eq!(history.prior(Some(99)), 1234);
+    history
+        .reset(legacy, &baselines, at(time), Some(wall + time as i64))
+        .unwrap();
+    let reopened = History::load(path, BTreeMap::from([(99, 9999)]));
+    assert_eq!(reopened.prior(Some(99)), 0);
+    assert_eq!(reopened.elapsed_since_reset(2, 78), 6);
+    assert_eq!(reopened.pace_generation(2), 1);
+    assert_eq!(reopened.books(), BTreeSet::from([1, 3, 4]));
+    fs::remove_dir_all(directory).unwrap();
+}

@@ -1823,7 +1823,8 @@ impl Reader {
                 .min(2);
             Some((id, page_key, visible_pages as u8))
         });
-        self.pace.set_page(page, now);
+        let pace_generation = book.map_or(0, |id| self.reading_history.pace_generation(id));
+        self.pace.set_page(page, now, pace_generation);
         if let Some(id) = book {
             let title = self
                 .active
@@ -3198,7 +3199,9 @@ impl Reader {
                         )
                     }));
                 }
-                let seconds = self.stats.seconds_read(book.id, Instant::now());
+                let seconds = self
+                    .reading_history
+                    .elapsed_since_reset(book.id, self.stats.seconds_read(book.id, Instant::now()));
                 items.push(
                     Item::new(
                         "Reading time",

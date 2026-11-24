@@ -1,6 +1,7 @@
 //! Dated, filtered page visits. Earlier aggregate screen time stays explicitly undated.
 pub(crate) mod date;
 pub(crate) mod report;
+pub(crate) mod reset;
 use date::{Date, Zone};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -69,6 +70,8 @@ struct Data {
     prior: BTreeMap<u64, u64>,
     titles: BTreeMap<u64, String>,
     visits: Vec<Visit>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    resets: BTreeMap<u64, reset::Baseline>,
 }
 
 pub(crate) fn backup_value(bytes: &[u8]) -> io::Result<serde_json::Value> {
@@ -80,6 +83,7 @@ pub(crate) fn backup_value(bytes: &[u8]) -> io::Result<serde_json::Value> {
         || !data.options.valid()
         || data.prior.len() > MAX_BOOKS
         || data.titles.len() > MAX_BOOKS
+        || data.resets.len() > MAX_BOOKS
         || data.visits.len() > MAX_VISITS
         || data.titles.values().any(|s| s.len() > 1024)
         || data
@@ -186,6 +190,7 @@ impl History {
                 || !data.options.valid()
                 || data.prior.len() > MAX_BOOKS
                 || data.titles.len() > MAX_BOOKS
+                || data.resets.len() > MAX_BOOKS
                 || data.visits.len() > MAX_VISITS
                 || data.titles.values().any(|s| s.len() > 1024)
                 || data.visits.iter().any(|v| {
@@ -391,11 +396,7 @@ impl History {
             if !self.dirty {
                 return Ok(false);
             }
-            let bytes = serde_json::to_vec(&self.data).map_err(io::Error::other)?;
-            if bytes.len() as u64 > MAX_BYTES {
-                return Err(invalid());
-            }
-            primitive_app::save(&self.path, &bytes)?;
+            self.persist()?;
             Ok(true)
         })();
         if result.is_ok() {
@@ -409,6 +410,13 @@ impl History {
             active.next_checkpoint = now + CHECKPOINT;
         }
         result
+    }
+    fn persist(&self) -> io::Result<()> {
+        let bytes = serde_json::to_vec(&self.data).map_err(io::Error::other)?;
+        if bytes.len() as u64 > MAX_BYTES {
+            return Err(invalid());
+        }
+        primitive_app::save(&self.path, &bytes)
     }
     pub(crate) fn visits(&self) -> &[Visit] {
         &self.data.visits

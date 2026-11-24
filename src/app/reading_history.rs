@@ -1,11 +1,13 @@
 //! Reading statistics, reports, a month calendar and clipped day timelines.
 mod calendar;
 mod report;
+mod reset;
 use super::{Action, Canvas, Change, HEIGHT, Input, Item, Reader, Rect, Result, Screen, WIDTH};
 use crate::reading_stats::history::{
     History, Options,
     date::{Date, Zone},
     report::Period,
+    reset::Scope,
 };
 use primitive_ui::{BLACK, BODY, CAPTION, HAIRLINE, TextStyle, back_button, header};
 use std::time::Instant;
@@ -32,6 +34,9 @@ pub(super) enum Page {
     Books,
     BookDay(Date, u64),
     Options,
+    Resets,
+    ResetBooks,
+    ConfirmReset(Scope),
 }
 impl Page {
     pub(super) fn title(self) -> &'static str {
@@ -48,6 +53,9 @@ impl Page {
             Self::Books => "Statistics by book",
             Self::BookDay(_, _) => "Book reading sessions",
             Self::Options => "Statistics settings",
+            Self::Resets => "Reset reading statistics",
+            Self::ResetBooks => "Choose a book",
+            Self::ConfirmReset(_) => "Confirm statistics reset",
         }
     }
 }
@@ -61,6 +69,8 @@ pub(super) enum Command {
     Today,
     RunPage(i32),
     Configure(Options),
+    ConfirmReset,
+    CancelReset,
 }
 pub(super) struct View {
     back: Screen,
@@ -69,6 +79,7 @@ pub(super) struct View {
     day_back: Page,
     run_page: usize,
     report: report::ReportView,
+    reset_list_page: usize,
 }
 impl Default for View {
     fn default() -> Self {
@@ -79,6 +90,7 @@ impl Default for View {
             day_back: Page::Calendar,
             run_page: 0,
             report: Default::default(),
+            reset_list_page: 0,
         }
     }
 }
@@ -178,6 +190,9 @@ impl Reader {
                     };
                     self.history_view.run_page = 0;
                 }
+                if matches!(page, Page::ConfirmReset(_)) {
+                    self.history_view.reset_list_page = self.list_page;
+                }
                 self.show_history_page(page);
             }
             Filter(book) => {
@@ -221,6 +236,8 @@ impl Reader {
                     .configure(options, Instant::now(), crate::mark_time::now())?;
                 self.show(Screen::ReadingHistory(Page::Options));
             }
+            ConfirmReset => self.confirm_history_reset()?,
+            CancelReset => self.history_back(),
         }
         Ok(())
     }
@@ -246,6 +263,12 @@ impl Reader {
             Page::Day(_) => (Screen::ReadingHistory(self.history_view.day_back), None),
             Page::BookDay(day, _) => (Screen::ReadingHistory(Page::Day(day)), None),
             Page::Periods(_) => (Screen::ReadingHistory(Page::TimeRange), None),
+            Page::Resets => (Screen::ReadingHistory(Page::Options), None),
+            Page::ResetBooks => (Screen::ReadingHistory(Page::Resets), None),
+            Page::ConfirmReset(scope) => (
+                Screen::ReadingHistory(self.history_reset_return(scope)),
+                Some(self.history_view.reset_list_page),
+            ),
             Page::PeriodBooks(period, _) => (
                 Screen::ReadingHistory(Page::Periods(period)),
                 Some(self.history_view.report.period_list_page),
@@ -382,6 +405,9 @@ impl Reader {
                     );
                 }
             }
+            Page::Resets | Page::ResetBooks | Page::ConfirmReset(_) => {
+                return self.history_reset_items(page);
+            }
             Page::Options => {
                 let opt = |title: &str, value: String, next: Options| {
                     Item::new(title, Action::ReadingHistory(Command::Configure(next))).detail(value)
@@ -486,6 +512,7 @@ impl Reader {
                         ..options
                     },
                 ));
+                rows.push(show("Reset statistics", Page::Resets));
                 rows.push(
                     Item::new("Visit filters apply to new reading", Action::Heading)
                         .detail("Quick skims are ignored. Rereads retain their own sessions."),
