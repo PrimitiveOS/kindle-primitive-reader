@@ -19,6 +19,7 @@ const JOURNAL: &str = "journal.json";
 pub(crate) enum Key {
     Library,
     Controls,
+    FooterCustomText,
     Profiles,
     Gestures,
     Dictionaries,
@@ -34,8 +35,9 @@ pub(crate) enum Key {
     Pace(u64),
 }
 impl Key {
-    pub(crate) const SETTINGS: [Self; 14] = [
+    pub(crate) const SETTINGS: [Self; 15] = [
         Self::Controls,
+        Self::FooterCustomText,
         Self::Profiles,
         Self::Gestures,
         Self::Dictionaries,
@@ -54,6 +56,7 @@ impl Key {
         match self {
             Self::Library => state.file_name().unwrap().into(),
             Self::Controls => "reading-controls.json".into(),
+            Self::FooterCustomText => "status-bar-custom-text.json".into(),
             Self::Profiles => "reading-profiles.json".into(),
             Self::Gestures => "reading-gestures.json".into(),
             Self::Dictionaries => "dictionary-preference.json".into(),
@@ -73,6 +76,7 @@ impl Key {
         match self {
             Self::Library => "Book progress, marks and collections".into(),
             Self::Controls => "Reading controls".into(),
+            Self::FooterCustomText => "Custom status bar text".into(),
             Self::Profiles => "Typography profiles".into(),
             Self::Gestures => "Reading gestures".into(),
             Self::Dictionaries => "Dictionary preferences".into(),
@@ -92,6 +96,7 @@ impl Key {
         match self {
             Self::Library => crate::library::MAX_BACKUP_BYTES,
             Self::Controls => 4096,
+            Self::FooterCustomText => 1024,
             Self::Profiles => 32 * 1024,
             Self::Gestures | Self::Timer => 8192,
             Self::Dictionaries | Self::DocumentDefaults => 64 * 1024,

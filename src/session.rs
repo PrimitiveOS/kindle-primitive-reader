@@ -1176,16 +1176,57 @@ impl Reading {
         highlights: &[(HighlightRect, crate::highlight_style::Paint)],
         selection: &[HighlightRect],
         paint: PagePaint,
+        show_footer_separator: bool,
+    ) {
+        self.draw_page_with_footer_cover(
+            canvas,
+            action,
+            hidden_status,
+            notice,
+            status_rect,
+            status_style,
+            highlights,
+            selection,
+            paint,
+            show_footer_separator,
+            None,
+            PAGE_HEIGHT as i32,
+        );
+    }
+
+    pub(crate) fn draw_page_with_footer_cover(
+        &self,
+        canvas: &mut Canvas,
+        action: Option<&str>,
+        hidden_status: bool,
+        notice: Option<&str>,
+        status_rect: Rect,
+        status_style: TextStyle,
+        highlights: &[(HighlightRect, crate::highlight_style::Paint)],
+        selection: &[HighlightRect],
+        paint: PagePaint,
+        show_footer_separator: bool,
+        footer_font_file: Option<&str>,
+        footer_cover_top: i32,
     ) {
         let page = self.marked_frame(highlights, selection, &paint);
-        let Some(full) =
-            draw_document_and_footer(canvas, page, paint, hidden_status && action.is_some())
-        else {
+        let Some(full) = draw_document_and_footer(
+            canvas,
+            page,
+            paint,
+            hidden_status && action.is_some(),
+            show_footer_separator,
+            footer_cover_top,
+        ) else {
             return;
         };
         let Some(action) = action else { return };
         let caption = self.footer_caption(notice);
-        canvas.text(status_rect, &caption, status_style);
+        if let Some(font_file) = footer_font_file {
+            canvas.text_with_font_file(status_rect, &caption, status_style, font_file);
+        } else {
+            canvas.text(status_rect, &caption, status_style);
+        }
         if full {
             canvas.button(DONE, action, false, false);
         }
@@ -1406,6 +1447,8 @@ pub(crate) fn draw_document_and_footer(
     page: GrayImage,
     mut paint: PagePaint,
     hidden_status: bool,
+    show_footer_separator: bool,
+    footer_cover_top: i32,
 ) -> Option<bool> {
     let height = page.height;
     let full = paint.visible == (0..height);
@@ -1425,16 +1468,35 @@ pub(crate) fn draw_document_and_footer(
         }
         return None;
     }
+    let footer_cover_top = footer_cover_top.clamp(0, PAGE_HEIGHT as i32);
     if height == HEIGHT {
-        paint.visible.start = paint.visible.start.min(PAGE_HEIGHT);
-        paint.visible.end = PAGE_HEIGHT;
+        paint.visible.start = paint.visible.start.min(footer_cover_top as u32);
+        paint.visible.end = footer_cover_top as u32;
         canvas.fill(
-            Rect::new(0, PAGE_HEIGHT as i32, WIDTH as i32, FOOTER_HEIGHT as i32),
+            Rect::new(
+                0,
+                footer_cover_top,
+                WIDTH as i32,
+                HEIGHT as i32 - footer_cover_top,
+            ),
+            255,
+        );
+    } else if footer_cover_top < PAGE_HEIGHT as i32 {
+        paint.visible.end = footer_cover_top as u32;
+        canvas.fill(
+            Rect::new(
+                0,
+                footer_cover_top,
+                WIDTH as i32,
+                PAGE_HEIGHT as i32 - footer_cover_top,
+            ),
             255,
         );
     }
     draw_page_picture(canvas, page, paint);
-    canvas.fill(Rect::new(0, PAGE_HEIGHT as i32, WIDTH as i32, 1), HAIRLINE);
+    if show_footer_separator {
+        canvas.fill(Rect::new(0, PAGE_HEIGHT as i32, WIDTH as i32, 1), HAIRLINE);
+    }
     Some(full)
 }
 
@@ -1499,6 +1561,7 @@ impl App for Reading {
                 visible: 0..self.frame.height,
                 inverted: false,
             },
+            false,
         );
     }
 

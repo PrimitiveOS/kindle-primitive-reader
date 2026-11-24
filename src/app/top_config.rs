@@ -332,6 +332,18 @@ impl Reader {
             Item::new("Reading gestures", Action::Show(Screen::Gestures))
                 .detail("Assign taps, holds and swipes"),
             Item::new(
+                "Invert page-turn buttons",
+                Action::SetReadingControls(ReadingControls {
+                    invert_page_turn_buttons: !current.invert_page_turn_buttons,
+                    ..current
+                }),
+            )
+            .detail(if current.invert_page_turn_buttons {
+                "Previous and next buttons are swapped"
+            } else {
+                "Standard physical button directions"
+            }),
+            Item::new(
                 "At the end of a book",
                 Action::Show(Screen::EndActionSettings),
             )

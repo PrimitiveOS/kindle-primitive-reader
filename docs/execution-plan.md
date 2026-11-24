@@ -57,19 +57,21 @@ vertical chapter ticks below it and Exit at the right. [Default footer](screensh
 [Large EPUB footer](screenshots/footer-font-large-epub.png) ·
 [Large PDF footer](screenshots/footer-font-large-fixed.png)
 
-On 24 November 2026, the Mac command
-`cargo test --workspace --lib --bins --tests --locked --offline` passed 963
-Reader library tests, with 62 ignored for private or device-provided inputs,
-one Kindle binary test, 14 EPUB package tests, and four layout probes. The run
-includes the page-overlap movement, style, settings-panel, alternate top status
-header, battery footer, adjustable footer text size, scaled legacy font steps,
-fixed chapter-caption hyphen, saved bold text and matching width measurement,
-custom footer Icons/Letters/Compact modes, left/center/right footer alignment,
-and Google romanization setting, persistence, source-segment parsing and
-display regressions. The desktop example target was omitted because the Mac
-volume was nearly full; its link step failed with `ENOSPC` before the target
-filter was added. Reader's `target/` cache was removed after the passing run to
-recover 8.0 GiB.
+On 24 November 2026, `cargo test --locked --offline --features kindle`
+passed 979 Reader library tests (62 ignored), one Kindle binary test, 14 EPUB
+package tests, and four layout probes on macOS. The run used the published
+[shared tools revision](https://github.com/PrimitiveOS/kindle-primtitive-tools/commit/f580c81e5389e880abde76e9f1f86981a0667105)
+pinned by Cargo. It covers physical button inversion, footer text and separator,
+named status bar presets, footer spacing and progress geometry, fixed and
+reflowable captions, and custom TTF/OTF faces. The renderer and device changes
+also passed the tools workspace tests and Clippy. The earlier local tools
+integration run is archived [here](device-tests/reader-host-suite-20261124.log).
+
+The pinned source inventory matched all 324 identifiers against KOReader
+commit `9192014d8bd82a91dc1012473be0f238dedfdb54`. Simulator captures accompany
+the [footer spacing](footer-container-layout.md), [custom text](footer-custom-text.md),
+and [page-button mapping](page-turn-inversion.md) checks. The pinned ARMHF
+build and current-release verification on the Oasis are tracked separately.
 
 The latest test-only ARMHF bundle built from the prior v0.1.25 Reader source
 passed 960 Reader tests (62 ignored), 14 EPUB package tests, and four layout

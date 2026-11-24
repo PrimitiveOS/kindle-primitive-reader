@@ -22,6 +22,9 @@ pub(super) enum NumberField {
     FooterTrackMarginWidth,
     FooterBatteryHideThreshold,
     FooterItemFontSize,
+    FooterContainerHeight,
+    FooterContainerBottomMargin,
+    FooterCustomTextRepetitions,
 }
 
 impl NumberField {
@@ -38,7 +41,10 @@ impl NumberField {
             Self::FooterTrackMinimumWidth
             | Self::FooterTrackMarginWidth
             | Self::FooterBatteryHideThreshold
-            | Self::FooterItemFontSize => Screen::FooterSettings,
+            | Self::FooterItemFontSize
+            | Self::FooterContainerHeight
+            | Self::FooterContainerBottomMargin
+            | Self::FooterCustomTextRepetitions => Screen::FooterSettings,
         }
     }
 }
@@ -235,6 +241,46 @@ impl Reader {
             self.show(field.parent());
             return Ok(());
         }
+        if field == NumberField::FooterCustomTextRepetitions {
+            let repetitions = value
+                .trim()
+                .parse::<u8>()
+                .ok()
+                .filter(|number| {
+                    (1..=crate::app::footer_custom_text::MAX_REPETITIONS).contains(number)
+                })
+                .ok_or("Enter a repetition count from 1 to 99")?;
+            let mut preference = self.footer_custom_text.clone();
+            preference.set_repetitions(repetitions)?;
+            crate::app::footer_custom_text::save(&self.footer_custom_text_path, &preference)?;
+            self.footer_custom_text = preference;
+            self.show(Screen::FooterSettings);
+            return Ok(());
+        }
+        if matches!(
+            field,
+            NumberField::FooterContainerHeight | NumberField::FooterContainerBottomMargin
+        ) {
+            let number = value.trim().parse::<u8>().ok();
+            let mut controls = self.controls;
+            if field == NumberField::FooterContainerHeight {
+                controls.footer_container_height = Some(
+                    number
+                        .filter(|height| (7..=98).contains(height))
+                        .ok_or("Enter a footer item height from 7 to 98")?,
+                );
+            } else {
+                controls.footer_container_bottom_margin = Some(
+                    number
+                        .filter(|margin| *margin <= 49)
+                        .ok_or("Enter a footer bottom margin from 0 to 49")?,
+                );
+            }
+            controls.save(&self.controls_path)?;
+            self.controls = controls;
+            self.show(field.parent());
+            return Ok(());
+        }
         if matches!(
             field,
             NumberField::FooterTrackMinimumWidth | NumberField::FooterTrackMarginWidth
@@ -290,6 +336,9 @@ impl Reader {
             NumberField::FooterTrackMarginWidth => unreachable!("handled above"),
             NumberField::FooterBatteryHideThreshold => unreachable!("handled above"),
             NumberField::FooterItemFontSize => unreachable!("handled above"),
+            NumberField::FooterContainerHeight => unreachable!("handled above"),
+            NumberField::FooterContainerBottomMargin => unreachable!("handled above"),
+            NumberField::FooterCustomTextRepetitions => unreachable!("handled above"),
             NumberField::MarginSize => {
                 controls.numbering.label_size = number
                     .filter(|n| (8..=20).contains(n))

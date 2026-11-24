@@ -1980,6 +1980,7 @@ impl FixedReading {
             false,
             crate::session::footer_caption_rect(SMALLER.x.saturating_sub(60), 28),
             CAPTION,
+            false,
         );
     }
 
@@ -2019,6 +2020,36 @@ impl FixedReading {
         hidden_status: bool,
         status_rect: Rect,
         status_style: TextStyle,
+        show_footer_separator: bool,
+    ) {
+        self.draw_with_footer_cover(
+            canvas,
+            notice,
+            marks,
+            selection,
+            paint,
+            hidden_status,
+            status_rect,
+            status_style,
+            show_footer_separator,
+            None,
+            PAGE_HEIGHT as i32,
+        );
+    }
+
+    pub(crate) fn draw_with_footer_cover(
+        &self,
+        canvas: &mut Canvas,
+        notice: Option<&str>,
+        marks: &[((usize, PdfTextRect), crate::highlight_style::Paint)],
+        selection: &[(usize, PdfTextRect)],
+        paint: PagePaint,
+        hidden_status: bool,
+        status_rect: Rect,
+        status_style: TextStyle,
+        show_footer_separator: bool,
+        footer_font_file: Option<&str>,
+        footer_cover_top: i32,
     ) {
         let mut frame = self.display_frame(paint.visible.clone());
         let mut appearance = paint.highlight_appearance;
@@ -2108,16 +2139,25 @@ impl FixedReading {
                 );
             }
         }
-        let Some(full) =
-            draw_document_and_footer(canvas, frame, paint, hidden_status && selection.is_empty())
-        else {
+        let Some(full) = draw_document_and_footer(
+            canvas,
+            frame,
+            paint,
+            hidden_status && selection.is_empty(),
+            show_footer_separator,
+            footer_cover_top,
+        ) else {
             return;
         };
         if !selection.is_empty() {
             return;
         }
         let label = self.footer_caption(notice);
-        canvas.text(status_rect, &label, status_style);
+        if let Some(font_file) = footer_font_file {
+            canvas.text_with_font_file(status_rect, &label, status_style, font_file);
+        } else {
+            canvas.text(status_rect, &label, status_style);
+        }
         if !full {
             return;
         }

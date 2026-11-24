@@ -34,6 +34,9 @@ mod fixed_book_map;
 mod fixed_results_tests;
 #[cfg(test)]
 mod font_render_tests;
+mod footer_custom_text;
+mod footer_font_face;
+mod footer_presets;
 mod footnote_popup;
 mod gestures;
 mod hidden_flows;
@@ -108,6 +111,7 @@ use crate::text_flow::TextFlow;
 use crate::{Engine, Probe, Result, Settings, TextAlignment};
 
 use self::custom_contents::CustomAction;
+use self::footer_presets::Preset as FooterPreset;
 use self::gestures::{Binding, Gesture, GestureBindings};
 use self::library_view::{FileBrowser, file_type};
 use self::lookup_history::{LookupHistory, SearchQuery};
@@ -168,6 +172,13 @@ enum Screen {
     VeryLongPressSettings,
     HighlightPromptSettings,
     FooterSettings,
+    FooterFontFaces,
+    FooterCustomText,
+    FooterCustomTextGuide,
+    FooterPresets,
+    FooterPreset(usize),
+    FooterPresetDelete(usize),
+    FooterPresetName(FooterPresetName),
     EndActionSettings,
     MetadataSaveSettings,
     HiddenFlows,
@@ -255,6 +266,12 @@ enum Screen {
     DictionaryOptions(usize),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FooterPresetName {
+    Create,
+    Rename(usize),
+}
+
 impl Screen {
     fn title(self) -> &'static str {
         match self {
@@ -276,6 +293,13 @@ impl Screen {
             Self::VeryLongPressSettings => "Very long press interval",
             Self::HighlightPromptSettings => "Highlight prompt",
             Self::FooterSettings => "Reading status bar",
+            Self::FooterFontFaces => "Status bar font",
+            Self::FooterCustomText => "Custom footer text",
+            Self::FooterCustomTextGuide => "Custom text tokens",
+            Self::FooterPresets => "Status bar presets",
+            Self::FooterPreset(_) => "Status bar preset",
+            Self::FooterPresetDelete(_) => "Delete status bar preset?",
+            Self::FooterPresetName(_) => "Name status bar preset",
             Self::EndActionSettings => "At the end of a book",
             Self::MetadataSaveSettings => "Save reading data",
             Self::HiddenFlows => "Custom hidden flows",
@@ -308,6 +332,13 @@ impl Screen {
             Self::NumberingValue(NumberField::FooterTrackMarginWidth) => "Progress bar margins",
             Self::NumberingValue(NumberField::FooterBatteryHideThreshold) => "Battery threshold",
             Self::NumberingValue(NumberField::FooterItemFontSize) => "Footer text size",
+            Self::NumberingValue(NumberField::FooterContainerHeight) => "Footer item height",
+            Self::NumberingValue(NumberField::FooterContainerBottomMargin) => {
+                "Footer bottom margin"
+            }
+            Self::NumberingValue(NumberField::FooterCustomTextRepetitions) => {
+                "Custom text repetitions"
+            }
             Self::NumberingValue(NumberField::MarginSize) => "Margin label size",
             Self::NumberingValue(_) => "Characters per page",
             Self::NumberingDefaults => "Page numbering defaults",
@@ -441,6 +472,8 @@ enum Action {
     ApplyWordSpacing(u64, crate::WordSpacePercent),
     ApplyLogicalFont(u64, f64),
     ShowFonts,
+    ShowFooterFonts,
+    SetFooterFontFace(Option<String>),
     ShowDictionaries,
     DictionarySource(SourceAction),
     DocumentDefaults(default_settings::Command),
@@ -458,6 +491,10 @@ enum Action {
     SetFont(Option<String>),
     ApplyProfile(usize),
     RemoveProfile(usize),
+    UpdateFooterPreset(usize),
+    ApplyFooterPreset(usize),
+    RenameFooterPreset(usize),
+    DeleteFooterPreset(usize),
     ResetText,
     ReadingMode(bool),
     FacingPages(bool),
@@ -659,6 +696,11 @@ pub struct Reader {
     gestures: GestureBindings,
     controls_path: PathBuf,
     controls: ReadingControls,
+    footer_font_path: PathBuf,
+    footer_font_file: Option<String>,
+    footer_font_render_path: Option<PathBuf>,
+    footer_custom_text_path: PathBuf,
+    footer_custom_text: footer_custom_text::Preference,
     footer_initial_position: Option<reading_footer::InitialPosition>,
     footer_refresh_at: Option<Instant>,
     status_battery_last: Option<(u32, bool)>,
@@ -682,6 +724,8 @@ pub struct Reader {
     available_fonts: Vec<String>,
     profiles: Vec<Profile>,
     profiles_path: PathBuf,
+    footer_presets: Vec<FooterPreset>,
+    footer_presets_path: PathBuf,
     document_defaults: crate::document_defaults::Store,
     style_store: crate::user_styles::storage::Store,
     style_view: style_tweaks::View,
@@ -794,6 +838,14 @@ impl Reader {
         let data = state.parent().unwrap_or(documents);
         let controls_path = data.join("reading-controls.json");
         let controls = ReadingControls::load(&controls_path, !library.recents().is_empty());
+        let fonts_directory = data.join("fonts");
+        let footer_font_path = data.join("status-bar-font.json");
+        let footer_font_file = footer_font_face::load(&footer_font_path, &fonts_directory);
+        let footer_font_render_path = footer_font_file
+            .as_deref()
+            .and_then(|file| reading_fonts::resolve(&fonts_directory, file).ok());
+        let footer_custom_text_path = data.join("status-bar-custom-text.json");
+        let footer_custom_text = footer_custom_text::load(&footer_custom_text_path);
         let stats_path = data.join("reading-stats.json");
         let stats = ReadingStats::load(&stats_path);
         let reading_history = crate::reading_stats::history::History::load(
@@ -802,6 +854,8 @@ impl Reader {
         );
         let profiles_path = data.join("reading-profiles.json");
         let profiles = reading_profiles::load(&profiles_path);
+        let footer_presets_path = data.join("status-bar-presets.json");
+        let footer_presets = footer_presets::load(&footer_presets_path);
         let dictionary_preference = data.join("dictionary-preference.json");
         let lookup_history_path = data.join("lookup-history.json");
         let lookup_history = LookupHistory::load(&lookup_history_path);
@@ -832,6 +886,11 @@ impl Reader {
             rename_collection: None,
             controls_path,
             controls,
+            footer_font_path,
+            footer_font_file,
+            footer_font_render_path,
+            footer_custom_text_path,
+            footer_custom_text,
             footer_initial_position: None,
             footer_refresh_at: None,
             status_battery_last: None,
@@ -854,10 +913,12 @@ impl Reader {
                 .unwrap_or(documents)
                 .join("reader-import.json"),
             fonts,
-            fonts_directory: data.join("fonts"),
+            fonts_directory,
             available_fonts: Vec::new(),
             profiles,
             profiles_path,
+            footer_presets,
+            footer_presets_path,
             document_defaults: crate::document_defaults::Store::load(
                 data.join(crate::document_defaults::FILE),
             ),
@@ -1380,11 +1441,19 @@ impl Reader {
                             | NumberField::FooterTrackMarginWidth
                             | NumberField::FooterBatteryHideThreshold
                             | NumberField::FooterItemFontSize
+                            | NumberField::FooterContainerHeight
+                            | NumberField::FooterContainerBottomMargin
+                            | NumberField::FooterCustomTextRepetitions
                     )
                 ) {
                     if matches!(
                         screen,
-                        Screen::NumberingValue(NumberField::FooterItemFontSize)
+                        Screen::NumberingValue(
+                            NumberField::FooterItemFontSize
+                                | NumberField::FooterContainerHeight
+                                | NumberField::FooterContainerBottomMargin
+                                | NumberField::FooterCustomTextRepetitions
+                        )
                     ) {
                         2
                     } else {
@@ -1424,6 +1493,25 @@ impl Reader {
                     self.editor.text = size.to_string().chars().collect();
                     self.editor.caret = self.editor.text.len();
                 }
+                Screen::NumberingValue(NumberField::FooterContainerHeight) => {
+                    let height = self.controls.footer_container_height.unwrap_or(14);
+                    self.editor.text = height.to_string().chars().collect();
+                    self.editor.caret = self.editor.text.len();
+                }
+                Screen::NumberingValue(NumberField::FooterContainerBottomMargin) => {
+                    let margin = self.controls.footer_container_bottom_margin.unwrap_or(1);
+                    self.editor.text = margin.to_string().chars().collect();
+                    self.editor.caret = self.editor.text.len();
+                }
+                Screen::NumberingValue(NumberField::FooterCustomTextRepetitions) => {
+                    self.editor.text = self
+                        .footer_custom_text
+                        .repetitions
+                        .to_string()
+                        .chars()
+                        .collect();
+                    self.editor.caret = self.editor.text.len();
+                }
                 _ => {}
             }
             if let Screen::NumberingValue(
@@ -1447,6 +1535,20 @@ impl Reader {
         }
         if screen == Screen::ProfileName {
             self.editor = Editor::new(reading_profiles::MAX_NAME);
+        }
+        if let Screen::FooterPresetName(mode) = screen {
+            self.editor = Editor::new(footer_presets::MAX_NAME);
+            if let FooterPresetName::Rename(index) = mode
+                && let Some(preset) = self.footer_presets.get(index)
+            {
+                self.editor.text = preset.name.chars().collect();
+                self.editor.caret = self.editor.text.len();
+            }
+        }
+        if screen == Screen::FooterCustomText {
+            self.editor = Editor::new(footer_custom_text::MAX_CHARS);
+            self.editor.text = self.footer_custom_text.text.chars().collect();
+            self.editor.caret = self.editor.text.len();
         }
         if self.screen == Screen::Fixed
             && screen != Screen::Fixed
@@ -1703,6 +1805,78 @@ impl Reader {
         }
         match self.screen {
             Screen::FooterSettings => return self.footer_items(),
+            Screen::FooterPresets => {
+                let mut items = vec![
+                    Item::new(
+                        "Save current status bar",
+                        Action::Show(Screen::FooterPresetName(FooterPresetName::Create)),
+                    )
+                    .detail("Save the current layout and progress bar options"),
+                ];
+                items.extend(
+                    self.footer_presets
+                        .iter()
+                        .enumerate()
+                        .map(|(index, preset)| {
+                            Item::new(&preset.name, Action::Show(Screen::FooterPreset(index)))
+                                .detail("Open preset actions")
+                        }),
+                );
+                return items;
+            }
+            Screen::FooterCustomTextGuide => {
+                return [
+                    ("%T", "Book title"),
+                    ("%A", "Author"),
+                    ("%S", "Series name and position"),
+                    ("%t", "Total pages"),
+                    ("%c", "Current page"),
+                    ("%l", "Pages left in the current chapter"),
+                    ("%p", "Book progress as a whole percentage"),
+                    ("%H", "Estimated time left in the book"),
+                    ("%C", "Current chapter title"),
+                    ("%P", "Chapter progress as a whole percentage"),
+                    ("%h", "Estimated time left in the chapter"),
+                    ("%F", "Full file path"),
+                    ("%f", "File name"),
+                    ("%b", "Battery percentage"),
+                    ("%B", "KOReader battery or charging symbol"),
+                    ("%r", "Selected status-item separator"),
+                    ("%D", "Date in year-month-day format"),
+                    ("%d", "Date in month-day format"),
+                    ("%m", "Current time in hour:minute format"),
+                    ("%M", "Current time with seconds"),
+                    ("%%", "Two percent signs stay literal"),
+                ]
+                .into_iter()
+                .map(|(token, description)| Item::new(token, Action::Heading).detail(description))
+                .collect();
+            }
+            Screen::FooterPreset(index) => {
+                let Some(preset) = self.footer_presets.get(index) else {
+                    return Vec::new();
+                };
+                return vec![
+                    Item::new("Apply to this Reader", Action::ApplyFooterPreset(index)),
+                    Item::new(
+                        "Update from current status bar",
+                        Action::UpdateFooterPreset(index),
+                    ),
+                    Item::new("Rename", Action::RenameFooterPreset(index)),
+                    Item::new("Delete", Action::Show(Screen::FooterPresetDelete(index))),
+                    Item::new(&preset.name, Action::Heading).detail("Saved status bar preset"),
+                ];
+            }
+            Screen::FooterPresetDelete(index) => {
+                let name = self
+                    .footer_presets
+                    .get(index)
+                    .map_or("this preset", |preset| preset.name.as_str());
+                return vec![
+                    Item::new(format!("Delete {name}"), Action::DeleteFooterPreset(index)),
+                    Item::new("Keep preset", Action::Show(Screen::FooterPreset(index))),
+                ];
+            }
             Screen::BookmarkListSettings => {
                 let mut items = vec![
                     Item::new(
@@ -2406,6 +2580,31 @@ impl Reader {
                         Item::new(filename, Action::SetFont(Some(filename.clone())))
                     }),
                 );
+                items.push(
+                    Item::new("Add more fonts", Action::Heading)
+                        .detail("Copy TTF or OTF files to reader/data/fonts"),
+                );
+                items
+            }
+            Screen::FooterFontFaces => {
+                let mut items = vec![
+                    Item::new("Device default", Action::SetFooterFontFace(None)).detail(
+                        if self.footer_font_file.is_none() {
+                            "Selected · Noto Sans"
+                        } else {
+                            "Noto Sans"
+                        },
+                    ),
+                ];
+                items.extend(self.available_fonts.iter().map(|filename| {
+                    Item::new(filename, Action::SetFooterFontFace(Some(filename.clone()))).detail(
+                        if self.footer_font_file.as_deref() == Some(filename) {
+                            "Selected"
+                        } else {
+                            ""
+                        },
+                    )
+                }));
                 items.push(
                     Item::new("Add more fonts", Action::Heading)
                         .detail("Copy TTF or OTF files to reader/data/fonts"),
@@ -3423,6 +3622,15 @@ impl Reader {
                 self.available_fonts = reading_fonts::available(&self.fonts_directory)?;
                 self.show(Screen::ReadingFonts);
             }
+            Action::ShowFooterFonts => {
+                with_storage(|| fs::create_dir_all(&self.fonts_directory))?;
+                self.available_fonts = reading_fonts::available(&self.fonts_directory)?;
+                self.show(Screen::FooterFontFaces);
+            }
+            Action::SetFooterFontFace(font) => {
+                self.set_footer_font_file(font)?;
+                self.show(Screen::FooterSettings);
+            }
             Action::ShowDictionaries => self.open_sources()?,
             Action::DictionarySource(action) => self.change_source(action)?,
             Action::SetFont(font) => {
@@ -3452,6 +3660,59 @@ impl Reader {
                 reading_profiles::save(&self.profiles_path, &profiles)?;
                 self.profiles = profiles;
                 self.show(Screen::ReadingProfiles);
+            }
+            Action::UpdateFooterPreset(index) => {
+                let mut presets = self.footer_presets.clone();
+                footer_presets::update(
+                    &mut presets,
+                    index,
+                    self.controls,
+                    self.footer_font_file.clone(),
+                    self.footer_custom_text.clone(),
+                )?;
+                footer_presets::save(&self.footer_presets_path, &presets)?;
+                self.footer_presets = presets;
+                self.show(Screen::FooterPreset(index));
+                self.notice = Some("Status bar preset updated".into());
+            }
+            Action::ApplyFooterPreset(index) => {
+                let preset = self
+                    .footer_presets
+                    .get(index)
+                    .ok_or("That status bar preset is unavailable")?;
+                let (controls, mut font_file, custom_text) = preset.apply(self.controls);
+                if font_file
+                    .as_deref()
+                    .is_some_and(|file| self.fonts_for(Some(file)).is_err())
+                {
+                    font_file = None;
+                }
+                self.set_footer_font_file(font_file)?;
+                footer_custom_text::save(&self.footer_custom_text_path, &custom_text)?;
+                self.footer_custom_text = custom_text;
+                self.activate(Action::SetReadingControls(controls))?;
+                self.show(Screen::FooterSettings);
+                self.notice = Some("Status bar preset applied".into());
+            }
+            Action::RenameFooterPreset(index) => {
+                if index >= self.footer_presets.len() {
+                    return Err("That status bar preset is unavailable".into());
+                }
+                self.show(Screen::FooterPresetName(FooterPresetName::Rename(index)));
+                let name = &self.footer_presets[index].name;
+                self.editor.text = name.chars().collect();
+                self.editor.caret = self.editor.text.len();
+            }
+            Action::DeleteFooterPreset(index) => {
+                if index >= self.footer_presets.len() {
+                    return Err("That status bar preset is unavailable".into());
+                }
+                let mut presets = self.footer_presets.clone();
+                presets.remove(index);
+                footer_presets::save(&self.footer_presets_path, &presets)?;
+                self.footer_presets = presets;
+                self.show(Screen::FooterPresets);
+                self.notice = Some("Status bar preset deleted".into());
             }
             Action::ResetText => self.apply_text_profile(BookPreferences::for_new_reflow())?,
             Action::DocumentDefaults(command) => self.activate_document_defaults(command)?,
@@ -3673,6 +3934,41 @@ impl Reader {
         Ok(())
     }
 
+    fn save_footer_preset_name(&mut self, mode: FooterPresetName, name: &str) -> Result<()> {
+        let mut presets = self.footer_presets.clone();
+        match mode {
+            FooterPresetName::Create => footer_presets::insert(
+                &mut presets,
+                name,
+                self.controls,
+                self.footer_font_file.clone(),
+                self.footer_custom_text.clone(),
+            )?,
+            FooterPresetName::Rename(index) => footer_presets::rename(&mut presets, index, name)?,
+        }
+        footer_presets::save(&self.footer_presets_path, &presets)?;
+        self.footer_presets = presets;
+        self.show(match mode {
+            FooterPresetName::Create => Screen::FooterPresets,
+            FooterPresetName::Rename(index) => Screen::FooterPreset(index),
+        });
+        self.notice = Some(match mode {
+            FooterPresetName::Create => "Status bar preset saved".into(),
+            FooterPresetName::Rename(_) => "Status bar preset renamed".into(),
+        });
+        Ok(())
+    }
+
+    fn save_footer_custom_text(&mut self) -> Result<()> {
+        let mut preference = self.footer_custom_text.clone();
+        preference.set_text(&self.editor.string())?;
+        footer_custom_text::save(&self.footer_custom_text_path, &preference)?;
+        self.footer_custom_text = preference;
+        self.show(Screen::FooterSettings);
+        self.notice = Some("Custom footer text saved".into());
+        Ok(())
+    }
+
     fn organize_book(&mut self, mut entry: LibraryBook, back: Screen) -> Result<()> {
         let (id, metadata) = with_storage(|| {
             Ok((
@@ -3729,11 +4025,20 @@ impl Reader {
 
     fn name_editor_input(&mut self, input: Input) -> Change {
         let profile = self.screen == Screen::ProfileName;
+        let footer_preset = match self.screen {
+            Screen::FooterPresetName(mode) => Some(mode),
+            _ => None,
+        };
         if matches!(input, Input::PageBack)
             || matches!(input, Input::Tap(x, y) if primitive_ui::back_button(WIDTH as i32).contains(x, y))
         {
             let back = if profile {
                 Screen::ReadingProfiles
+            } else if let Some(mode) = footer_preset {
+                match mode {
+                    FooterPresetName::Create => Screen::FooterPresets,
+                    FooterPresetName::Rename(index) => Screen::FooterPreset(index),
+                }
             } else if self.rename_collection.take().is_some() {
                 Screen::BookList
             } else {
@@ -3753,6 +4058,8 @@ impl Reader {
             let name = self.editor.string();
             let result = if profile {
                 self.save_reading_profile(name.trim())
+            } else if let Some(mode) = footer_preset {
+                self.save_footer_preset_name(mode, name.trim())
             } else {
                 self.save_collection_name(name.trim())
             };
@@ -4442,12 +4749,11 @@ impl Reader {
         if matches!(input, Input::PageBack)
             || matches!(input, Input::Tap(x, y) if primitive_ui::back_button(WIDTH as i32).contains(x, y))
         {
-            self.show(if let Screen::NumberingValue(field) = self.screen {
-                field.parent()
-            } else if self.fixed.is_some() {
-                Screen::FixedTools
-            } else {
-                Screen::BookTools
+            self.show(match self.screen {
+                Screen::NumberingValue(field) => field.parent(),
+                Screen::FooterCustomText | Screen::FooterCustomTextGuide => Screen::FooterSettings,
+                _ if self.fixed.is_some() => Screen::FixedTools,
+                _ => Screen::BookTools,
             });
             return Change::Partial;
         }
@@ -4457,6 +4763,8 @@ impl Reader {
         let layout = Layout::new(WIDTH, HEIGHT, 4, 5);
         let action = if matches!(self.screen, Screen::NumberingValue(_)) {
             "Set"
+        } else if self.screen == Screen::FooterCustomText {
+            "Save"
         } else {
             "Go"
         };
@@ -4464,11 +4772,20 @@ impl Reader {
             return Change::None;
         };
         if matches!(self.editor.press(key), Press::Go) {
-            if let Screen::NumberingValue(field) = self.screen {
-                return match self.apply_numbering_input(field) {
-                    Ok(()) => Change::Partial,
-                    Err(error) => self.report(error),
-                };
+            match self.screen {
+                Screen::NumberingValue(field) => {
+                    return match self.apply_numbering_input(field) {
+                        Ok(()) => Change::Partial,
+                        Err(error) => self.report(error),
+                    };
+                }
+                Screen::FooterCustomText => {
+                    return match self.save_footer_custom_text() {
+                        Ok(()) => Change::Partial,
+                        Err(error) => self.report(error),
+                    };
+                }
+                _ => {}
             }
             if self.fixed.is_none() {
                 return match self.jump_reflow_number() {
@@ -6474,16 +6791,26 @@ impl Reader {
             let footer_caption = fixed.reading.footer_caption(display_notice);
             let footer_font_px = self.footer_caption_font_px();
             let footer_style = self.footer_caption_style();
+            let footer_font_file = self.footer_font_render_file();
             let draw_footer_icons = self.custom_footer_icons_enabled()
                 && self.notice.is_none()
                 && search_caption.is_none()
                 && self.pdf_selection.is_none()
                 && self.selection.is_none();
-            let status_text_width = canvas.measure_with_weight(
-                &footer_caption,
-                footer_font_px,
-                self.controls.footer_item_bold,
-            ) + if draw_footer_icons {
+            let status_text_width = (if let Some(font_file) = footer_font_file.as_deref() {
+                canvas.measure_with_font_file(
+                    &footer_caption,
+                    footer_font_px,
+                    self.controls.footer_item_bold,
+                    font_file,
+                )
+            } else {
+                canvas.measure_with_weight(
+                    &footer_caption,
+                    footer_font_px,
+                    self.controls.footer_item_bold,
+                )
+            }) + if draw_footer_icons {
                 self.custom_footer_icon_width()
             } else {
                 0
@@ -6493,7 +6820,7 @@ impl Reader {
                 status_text_width,
                 footer_font_px,
             );
-            fixed.reading.draw_with_footer(
+            fixed.reading.draw_with_footer_cover(
                 canvas,
                 if draw_footer_icons {
                     Some("")
@@ -6506,6 +6833,9 @@ impl Reader {
                 self.hidden_overlap_footer(),
                 status_rect,
                 footer_style,
+                self.controls.footer_horizontal_separator,
+                footer_font_file.as_deref(),
+                self.footer_cover_top(status_rect, status_text_width),
             );
             if draw_footer_icons {
                 self.draw_custom_footer_icons(canvas, status_rect, footer_style, footer_font_px);
@@ -6627,16 +6957,26 @@ impl Reader {
             let footer_caption = reading.footer_caption(display_notice);
             let footer_font_px = self.footer_caption_font_px();
             let footer_style = self.footer_caption_style();
+            let footer_font_file = self.footer_font_render_file();
             let draw_footer_icons = self.custom_footer_icons_enabled()
                 && self.notice.is_none()
                 && search_caption.is_none()
                 && self.selection.is_none()
                 && self.pdf_selection.is_none();
-            let status_text_width = canvas.measure_with_weight(
-                &footer_caption,
-                footer_font_px,
-                self.controls.footer_item_bold,
-            ) + if draw_footer_icons {
+            let status_text_width = (if let Some(font_file) = footer_font_file.as_deref() {
+                canvas.measure_with_font_file(
+                    &footer_caption,
+                    footer_font_px,
+                    self.controls.footer_item_bold,
+                    font_file,
+                )
+            } else {
+                canvas.measure_with_weight(
+                    &footer_caption,
+                    footer_font_px,
+                    self.controls.footer_item_bold,
+                )
+            }) + if draw_footer_icons {
                 self.custom_footer_icon_width()
             } else {
                 0
@@ -6646,7 +6986,7 @@ impl Reader {
                 status_text_width,
                 footer_font_px,
             );
-            reading.draw_page(
+            reading.draw_page_with_footer_cover(
                 canvas,
                 self.selection.is_none().then_some("Exit"),
                 self.hidden_overlap_footer(),
@@ -6660,6 +7000,9 @@ impl Reader {
                 &highlights,
                 &selection,
                 self.page_paint(),
+                self.controls.footer_horizontal_separator,
+                footer_font_file.as_deref(),
+                self.footer_cover_top(status_rect, status_text_width),
             );
             if draw_footer_icons {
                 self.draw_custom_footer_icons(canvas, status_rect, footer_style, footer_font_px);
@@ -6763,6 +7106,8 @@ impl Reader {
                 | Screen::BookmarkFind
                 | Screen::CollectionName
                 | Screen::ProfileName
+                | Screen::FooterPresetName(_)
+                | Screen::FooterCustomText
                 | Screen::Note
                 | Screen::EditNote
                 | Screen::GoToPage
@@ -6777,6 +7122,11 @@ impl Reader {
                 Screen::BookmarkFind => ("Bookmark, highlighted text, or note", "Find"),
                 Screen::CollectionName => ("Collection name", "Save"),
                 Screen::ProfileName => ("Profile name", "Save"),
+                Screen::FooterPresetName(_) => ("Status bar preset name", "Save"),
+                Screen::FooterCustomText => (
+                    "Use %T title, %A author, %c page, and %t total pages",
+                    "Save",
+                ),
                 Screen::PdfPassword => ("PDF password", "Open"),
                 Screen::NumberingValue(NumberField::ContentDpi(_)) => {
                     ("Content zoom: 0 to 300 dpi", "Set")
@@ -6811,6 +7161,15 @@ impl Reader {
                 }
                 Screen::NumberingValue(NumberField::FooterItemFontSize) => {
                     ("Footer text size: 8 to 36; default 14", "Set")
+                }
+                Screen::NumberingValue(NumberField::FooterContainerHeight) => {
+                    ("Footer item height: 7 to 98; default 14", "Set")
+                }
+                Screen::NumberingValue(NumberField::FooterContainerBottomMargin) => {
+                    ("Footer bottom margin: 0 to 49; default 1", "Set")
+                }
+                Screen::NumberingValue(NumberField::FooterCustomTextRepetitions) => {
+                    ("Custom text repetitions: 1 to 99", "Set")
                 }
                 Screen::NumberingValue(NumberField::MarginSize) => {
                     ("Margin text size from 8 to 20", "Set")
@@ -7612,7 +7971,10 @@ impl App for Reader {
         if self.screen == Screen::VocabularyContext {
             return self.vocabulary_context_input(input);
         }
-        if matches!(self.screen, Screen::GoToPage | Screen::NumberingValue(_)) {
+        if matches!(
+            self.screen,
+            Screen::GoToPage | Screen::NumberingValue(_) | Screen::FooterCustomText
+        ) {
             return self.handle_page_number(input);
         }
         if self.screen == Screen::BookMap && self.fixed.is_some() {
@@ -7624,7 +7986,10 @@ impl App for Reader {
         if self.screen == Screen::Skim {
             return self.skim_input(input);
         }
-        if matches!(self.screen, Screen::CollectionName | Screen::ProfileName) {
+        if matches!(
+            self.screen,
+            Screen::CollectionName | Screen::ProfileName | Screen::FooterPresetName(_)
+        ) {
             return self.name_editor_input(input);
         }
         if self.screen == Screen::PdfPassword {
@@ -7727,6 +8092,10 @@ impl App for Reader {
                     | Screen::MetadataSaveSettings
                     | Screen::SelectionPosition
                     | Screen::LongPressSettings => self.show(Screen::ReadingControls),
+                    Screen::FooterFontFaces => self.show(Screen::FooterSettings),
+                    Screen::FooterPresets => self.show(Screen::FooterSettings),
+                    Screen::FooterPreset(_) => self.show(Screen::FooterPresets),
+                    Screen::FooterPresetDelete(index) => self.show(Screen::FooterPreset(index)),
                     Screen::AnnotationListSettings => self.show(Screen::BookmarkListSettings),
                     Screen::VeryLongPressSettings => self.show(Screen::LongPressSettings),
                     Screen::HighlightPromptSettings => self.show(Screen::LongPressSettings),
@@ -8602,7 +8971,42 @@ pub fn run_reader(
     {
         app.report(error);
     }
-    primitive_app::run(app, home).map_err(Into::into)
+    primitive_app::run(ReaderRuntime(app), home).map_err(Into::into)
+}
+
+/// The device runtime receives physical page keys as `PageForward`/`PageBack`.
+/// Keep their user-configured inversion at this boundary so touch gestures and
+/// Reader's own synthetic page turns retain their intended reading direction.
+struct ReaderRuntime(Reader);
+
+impl App for ReaderRuntime {
+    fn draw(&self, canvas: &mut Canvas) {
+        self.0.draw(canvas);
+    }
+
+    fn input(&mut self, input: Input) -> Change {
+        self.0.input(self.0.controls.invert_page_turn_input(input))
+    }
+
+    fn press_point(&self, input: Input) -> Option<(f32, f32)> {
+        self.0.press_point(input)
+    }
+
+    fn deadline(&self) -> Option<Instant> {
+        self.0.deadline()
+    }
+
+    fn tick(&mut self, now: Instant) -> Change {
+        self.0.tick(now)
+    }
+
+    fn save(&mut self) -> io::Result<()> {
+        self.0.save()
+    }
+
+    fn storage_returned(&mut self) -> io::Result<()> {
+        self.0.storage_returned()
+    }
 }
 
 pub fn run_probe(engine: Engine, book: PathBuf, fonts: Vec<PathBuf>, home: &Path) -> Result<()> {
@@ -9056,6 +9460,116 @@ mod tests {
         let reading = &recovered.active.as_ref().unwrap().reading;
         assert_eq!(reading.config.fonts, recovered.fonts);
         assert_eq!(reading.config.settings.font_size, 58.0);
+    }
+
+    #[test]
+    fn status_bar_presets_support_create_apply_update_rename_delete_and_reopen() {
+        use crate::reading_controls::{FooterItem, StatusBar};
+
+        let fixture = Fixture::new();
+        let mut app = fixture.app();
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+            crate::test_fixture("fonts/Silkscreen-Regular.ttf"),
+        ];
+        app.show(Screen::FooterSettings);
+        capture_test_screen(
+            &app,
+            &fonts,
+            "READER_FOOTER_PRESETS_SETTINGS_SCREENSHOT",
+            false,
+        );
+        app.show(Screen::FooterPresets);
+        capture_test_screen(&app, &fonts, "READER_FOOTER_PRESETS_LIST_SCREENSHOT", false);
+        app.controls = ReadingControls {
+            status_bar: StatusBar::Custom,
+            footer_items: FooterItem::CustomText.bit(),
+            footer_horizontal_separator: true,
+            invert_page_turn_buttons: true,
+            night_pages: true,
+            ..ReadingControls::default()
+        };
+        let mut custom_text = footer_custom_text::Preference::default();
+        custom_text.set_text("%T · %c/%t").unwrap();
+        custom_text.set_repetitions(3).unwrap();
+        app.footer_custom_text = custom_text.clone();
+        app.save_footer_preset_name(FooterPresetName::Create, "Evening")
+            .unwrap();
+        assert_eq!(app.screen, Screen::FooterPresets);
+        assert_eq!(app.footer_presets.len(), 1);
+        capture_test_screen(
+            &app,
+            &fonts,
+            "READER_FOOTER_PRESETS_LIST_SAVED_SCREENSHOT",
+            false,
+        );
+        app.show(Screen::FooterPreset(0));
+        capture_test_screen(
+            &app,
+            &fonts,
+            "READER_FOOTER_PRESET_DETAIL_SCREENSHOT",
+            false,
+        );
+        app.show(Screen::FooterPresetDelete(0));
+        capture_test_screen(
+            &app,
+            &fonts,
+            "READER_FOOTER_PRESET_DELETE_SCREENSHOT",
+            false,
+        );
+
+        app.controls = ReadingControls {
+            footer_horizontal_separator: false,
+            invert_page_turn_buttons: false,
+            night_pages: false,
+            ..ReadingControls::default()
+        };
+        app.footer_custom_text = footer_custom_text::Preference::default();
+        app.activate(Action::ApplyFooterPreset(0)).unwrap();
+        assert!(app.controls.footer_horizontal_separator);
+        assert!(!app.controls.invert_page_turn_buttons);
+        assert!(!app.controls.night_pages);
+        assert_eq!(app.footer_custom_text, custom_text);
+        assert_eq!(
+            footer_custom_text::load(&app.footer_custom_text_path),
+            custom_text
+        );
+
+        app.controls.footer_item_bold = true;
+        app.activate(Action::UpdateFooterPreset(0)).unwrap();
+        app.activate(Action::RenameFooterPreset(0)).unwrap();
+        assert_eq!(
+            app.screen,
+            Screen::FooterPresetName(FooterPresetName::Rename(0))
+        );
+        app.save_footer_preset_name(FooterPresetName::Rename(0), "Evening Reading")
+            .unwrap();
+        assert_eq!(app.footer_presets[0].name, "Evening Reading");
+        assert!(
+            app.footer_presets[0]
+                .apply(ReadingControls::default())
+                .0
+                .footer_item_bold
+        );
+        assert_eq!(
+            app.footer_presets[0].apply(ReadingControls::default()).2,
+            custom_text
+        );
+
+        let mut reopened = fixture.app();
+        assert_eq!(reopened.footer_presets[0].name, "Evening Reading");
+        assert_eq!(reopened.footer_custom_text, custom_text);
+        reopened.show(Screen::FooterPresets);
+        assert!(
+            reopened
+                .items()
+                .iter()
+                .any(|item| item.title == "Evening Reading")
+        );
+        reopened.activate(Action::DeleteFooterPreset(0)).unwrap();
+        assert!(reopened.footer_presets.is_empty());
+        assert!(fixture.app().footer_presets.is_empty());
     }
 
     #[test]
@@ -12165,7 +12679,10 @@ mod tests {
     #[test]
     fn image_controls_follow_night_mode_and_resume_with_the_book() {
         let fixture = Fixture::new();
-        let fonts = simulation_fonts();
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
         let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
         app.system_theme = None;
         app.open_path(&fixture.book).unwrap();
@@ -13403,6 +13920,152 @@ mod tests {
     }
 
     #[test]
+    fn runtime_inverts_hardware_page_buttons_without_touching_reader_generated_turns() {
+        let fixture = Fixture::new();
+        let long = fixture.root.join("Long Chapter.epub");
+        fs::write(&long, include_bytes!("../tests/fixtures/long-chapter.epub")).unwrap();
+        let mut reader = fixture.app();
+        reader.open_path(&long).unwrap();
+        reader.controls.invert_page_turn_buttons = true;
+        let mut runtime = ReaderRuntime(reader);
+
+        // Swap the runtime's physical PageBack input to reading-forward, then
+        // confirm the matching key returns to the previous page.
+        runtime.input(Input::PageBack);
+        let due = runtime
+            .0
+            .active
+            .as_ref()
+            .unwrap()
+            .reading
+            .deadline()
+            .unwrap();
+        runtime.tick(due + Duration::from_secs(1));
+        assert_eq!(runtime.0.active.as_ref().unwrap().reading.page, 1);
+
+        runtime.input(Input::PageForward);
+        let due = runtime
+            .0
+            .active
+            .as_ref()
+            .unwrap()
+            .reading
+            .deadline()
+            .unwrap();
+        runtime.tick(due + Duration::from_secs(1));
+        assert_eq!(runtime.0.active.as_ref().unwrap().reading.page, 0);
+
+        runtime
+            .0
+            .gestures
+            .set(Gesture::TapTopRight, Binding::Next)
+            .unwrap();
+        runtime.input(Input::Tap(WIDTH as f32 - 20.0, 20.0));
+        let due = runtime
+            .0
+            .active
+            .as_ref()
+            .unwrap()
+            .reading
+            .deadline()
+            .unwrap();
+        runtime.tick(due + Duration::from_secs(1));
+        assert_eq!(runtime.0.active.as_ref().unwrap().reading.page, 1);
+    }
+
+    #[test]
+    fn page_turn_inversion_setting_and_footer_item_match_stock_and_persist() {
+        use crate::reading_controls::{FooterItem, FooterSymbolStyle, StatusBar};
+
+        let fixture = Fixture::new();
+        let screenshot_fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        let mut app =
+            Reader::open(&fixture.root, &fixture.state, screenshot_fonts.clone()).unwrap();
+        app.controls.dictionary_on_single_word = Some(false);
+        app.open_path(&fixture.book).unwrap();
+        let setting = app
+            .reading_settings_items()
+            .into_iter()
+            .find(|item| item.title == "Invert page-turn buttons")
+            .expect("KOReader physical-button preference is available");
+        assert_eq!(
+            setting.detail.as_deref(),
+            Some("Standard physical button directions")
+        );
+        app.show(Screen::ReadingControls);
+        capture_test_screen(
+            &app,
+            &screenshot_fonts,
+            "READER_PAGE_TURN_INVERSION_SETTINGS_SCREENSHOT",
+            false,
+        );
+        capture_test_screen(
+            &app,
+            &screenshot_fonts,
+            "READER_PAGE_TURN_INVERSION_SETTINGS_DARK_SCREENSHOT",
+            true,
+        );
+
+        app.activate(setting.action).unwrap();
+        assert!(app.controls.invert_page_turn_buttons);
+        assert!(ReadingControls::load(&app.controls_path, true).invert_page_turn_buttons);
+        assert_eq!(
+            app.reading_settings_items()
+                .into_iter()
+                .find(|item| item.title == "Invert page-turn buttons")
+                .and_then(|item| item.detail),
+            Some("Previous and next buttons are swapped".to_owned())
+        );
+
+        app.activate(Action::SetReadingControls(ReadingControls {
+            status_bar: StatusBar::Custom,
+            footer_items: FooterItem::PageTurningInverted.bit(),
+            footer_symbol_style: FooterSymbolStyle::Icons,
+            ..app.controls
+        }))
+        .unwrap();
+        app.show(Screen::Book);
+        assert!(app.custom_footer_icons_enabled());
+        capture_test_screen(
+            &app,
+            &screenshot_fonts,
+            "READER_PAGE_TURN_INVERSION_FOOTER_SCREENSHOT",
+            false,
+        );
+        app.controls.night_pages = true;
+        capture_test_screen(
+            &app,
+            &screenshot_fonts,
+            "READER_PAGE_TURN_INVERSION_FOOTER_DARK_SCREENSHOT",
+            true,
+        );
+        app.controls.night_pages = false;
+
+        app.activate(Action::SetReadingControls(ReadingControls {
+            footer_symbol_style: FooterSymbolStyle::Letters,
+            ..app.controls
+        }))
+        .unwrap();
+        assert_eq!(app.status_caption().as_deref(), Some("Pg: On"));
+        app.activate(Action::SetReadingControls(ReadingControls {
+            invert_page_turn_buttons: false,
+            ..app.controls
+        }))
+        .unwrap();
+        assert_eq!(app.status_caption().as_deref(), Some("Pg: Off"));
+
+        app.activate(Action::SetReadingControls(ReadingControls {
+            footer_symbol_style: FooterSymbolStyle::Compact,
+            ..app.controls
+        }))
+        .unwrap();
+        assert!(app.status_caption().unwrap().contains("⇉"));
+    }
+
+    #[test]
     fn epub_footer_cycles_persists_and_keeps_the_anchor_when_skimming() {
         use crate::reading_controls::{
             FooterItem, FooterSeparator, FooterSymbolStyle, FooterTrackPosition, StatusBar,
@@ -13819,6 +14482,122 @@ mod tests {
     }
 
     #[test]
+    fn custom_footer_text_edits_repeats_renders_and_persists() {
+        use crate::reading_controls::{FooterItem, StatusBar};
+
+        let fixture = Fixture::new();
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/fonts/PrimitiveSymbols.ttf"),
+        ];
+        let mut app = fixture.app();
+        app.fonts = fonts.clone();
+        app.open_path(&fixture.book).unwrap();
+        app.activate(Action::SetReadingControls(ReadingControls {
+            status_bar: StatusBar::Custom,
+            footer_items: FooterItem::CustomText.bit(),
+            ..app.controls
+        }))
+        .unwrap();
+
+        app.show(Screen::FooterSettings);
+        let settings = app.items();
+        assert!(settings.iter().any(|item| item.title == "Edit custom text"));
+        assert!(
+            settings
+                .iter()
+                .any(|item| item.title == "Number of repetitions")
+        );
+        assert!(
+            settings
+                .iter()
+                .any(|item| item.title == "Custom text tokens")
+        );
+        assert!(settings.iter().any(|item| {
+            item.title == "Edit custom text"
+                && matches!(&item.action, Action::Show(Screen::FooterCustomText))
+        }));
+        app.activate(Action::Show(Screen::FooterCustomText))
+            .unwrap();
+        assert_eq!(app.screen, Screen::FooterCustomText);
+        assert_eq!(app.editor.string(), "KOReader");
+        capture_test_screen(
+            &app,
+            &fonts,
+            "READER_CUSTOM_FOOTER_EDITOR_SCREENSHOT",
+            false,
+        );
+        app.editor.text = "%f %c/%t".chars().collect();
+        app.editor.caret = app.editor.text.len();
+        app.save_footer_custom_text().unwrap();
+        assert_eq!(
+            footer_custom_text::load(&app.footer_custom_text_path).text,
+            "%f %c/%t"
+        );
+
+        let repetitions = NumberField::FooterCustomTextRepetitions;
+        assert!(app.items().iter().any(|item| {
+            item.title == "Number of repetitions"
+                && matches!(
+                    &item.action,
+                    Action::Show(Screen::NumberingValue(
+                        NumberField::FooterCustomTextRepetitions
+                    ))
+                )
+        }));
+        app.activate(Action::Show(Screen::NumberingValue(repetitions)))
+            .unwrap();
+        assert_eq!(app.screen, Screen::NumberingValue(repetitions));
+        app.editor.text = "2".chars().collect();
+        app.editor.caret = app.editor.text.len();
+        app.apply_numbering_input(repetitions).unwrap();
+        assert_eq!(app.footer_custom_text.repetitions, 2);
+        assert_eq!(
+            app.items()
+                .into_iter()
+                .find(|item| item.title == "Number of repetitions")
+                .and_then(|item| item.detail),
+            Some("2 · 1–99".to_owned())
+        );
+        let settings = app.items();
+        app.list_page = settings
+            .iter()
+            .position(|item| item.title == "Edit custom text")
+            .unwrap()
+            / ROWS_PER_PAGE;
+        capture_test_screen(
+            &app,
+            &fonts,
+            "READER_CUSTOM_FOOTER_SETTINGS_SCREENSHOT",
+            false,
+        );
+        app.list_page = settings
+            .iter()
+            .position(|item| item.title == "Number of repetitions")
+            .unwrap()
+            / ROWS_PER_PAGE;
+        capture_test_screen(
+            &app,
+            &fonts,
+            "READER_CUSTOM_FOOTER_SETTINGS_MORE_SCREENSHOT",
+            false,
+        );
+
+        app.show(Screen::Book);
+        let expected = "Field Notes.epub 1/1Field Notes.epub 1/1";
+        assert_eq!(app.status_caption().as_deref(), Some(expected));
+        capture_test_screen(&app, &fonts, "READER_CUSTOM_FOOTER_SCREENSHOT", false);
+
+        let mut reopened = fixture.app();
+        reopened.fonts = fonts;
+        reopened.open_path(&fixture.book).unwrap();
+        assert_eq!(reopened.footer_custom_text.text, "%f %c/%t");
+        assert_eq!(reopened.footer_custom_text.repetitions, 2);
+        assert_eq!(reopened.status_caption().as_deref(), Some(expected));
+    }
+
+    #[test]
     fn battery_footer_threshold_settings_persist_and_bound_hidden_level() {
         use crate::reading_controls::{FooterItem, StatusBar};
 
@@ -13947,6 +14726,168 @@ mod tests {
         app.open_path(&pdf).unwrap();
         capture_test_screen(&app, &fonts, "READER_FOOTER_FONT_FIXED_SCREENSHOT", false);
         assert!(app.fixed.is_some());
+    }
+
+    #[test]
+    fn footer_container_height_and_bottom_margin_match_stock_ranges_and_geometry() {
+        let fixture = Fixture::new();
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/Silkscreen-Regular.ttf"),
+        ];
+        let mut app = fixture.app();
+        app.fonts = fonts.clone();
+        app.open_path(&fixture.book).unwrap();
+
+        capture_test_screen(
+            &app,
+            &fonts,
+            "READER_FOOTER_CONTAINER_DEFAULT_SCREENSHOT",
+            false,
+        );
+
+        let original = app.footer_caption_rect(700, 120, 28);
+        assert_eq!(original.h, 28);
+        assert_eq!(original.y + original.h / 2, PAGE_HEIGHT as i32 + 30);
+        let original_track = app.footer_track_rect(120).unwrap();
+        assert_eq!(original_track.y, HEIGHT as i32 - 12);
+
+        app.show(Screen::FooterSettings);
+        let height_setting = app
+            .items()
+            .into_iter()
+            .find(|item| item.title == "Container height")
+            .expect("the footer settings expose the KOReader container height");
+        assert_eq!(height_setting.detail.as_deref(), Some("14 · 7–98"));
+        app.activate(height_setting.action).unwrap();
+        let height_field = NumberField::FooterContainerHeight;
+        assert_eq!(app.editor.string(), "14");
+        for invalid in ["6", "99"] {
+            app.editor.text = invalid.chars().collect();
+            app.editor.caret = app.editor.text.len();
+            assert!(app.apply_numbering_input(height_field).is_err());
+            assert_eq!(app.controls.footer_container_height, None);
+        }
+        app.editor.text = "7".chars().collect();
+        app.editor.caret = app.editor.text.len();
+        app.apply_numbering_input(height_field).unwrap();
+        app.show(Screen::Book);
+        let minimum = app.footer_caption_rect(700, 120, 28);
+        assert_eq!(minimum.h, 14);
+        assert_eq!(minimum.y + minimum.h / 2, original.y + original.h / 2);
+
+        app.show(Screen::NumberingValue(height_field));
+        app.editor.text = "98".chars().collect();
+        app.editor.caret = app.editor.text.len();
+        app.apply_numbering_input(height_field).unwrap();
+        app.show(Screen::Book);
+        let expanded = app.footer_caption_rect(700, 120, 28);
+        assert_eq!(expanded.h, 196);
+        assert!(expanded.y < PAGE_HEIGHT as i32);
+        assert!(app.footer_cover_top(expanded, 120) < PAGE_HEIGHT as i32);
+        assert_eq!(
+            ReadingControls::load(&app.controls_path, true).footer_container_height,
+            Some(98)
+        );
+
+        let margin_field = NumberField::FooterContainerBottomMargin;
+        app.show(Screen::FooterSettings);
+        let margin_setting = app
+            .items()
+            .into_iter()
+            .find(|item| item.title == "Container bottom margin")
+            .expect("the footer settings expose the KOReader bottom padding");
+        assert_eq!(margin_setting.detail.as_deref(), Some("1 · 0–49"));
+        app.activate(margin_setting.action).unwrap();
+        assert_eq!(app.editor.string(), "1");
+        app.editor.text = "50".chars().collect();
+        app.editor.caret = app.editor.text.len();
+        assert!(app.apply_numbering_input(margin_field).is_err());
+        app.editor.text = "0".chars().collect();
+        app.editor.caret = app.editor.text.len();
+        app.apply_numbering_input(margin_field).unwrap();
+        app.show(Screen::Book);
+        assert_eq!(app.footer_track_rect(120).unwrap().y, HEIGHT as i32 - 10);
+        let zero_margin = app.footer_caption_rect(700, 120, 28);
+        assert_eq!(zero_margin.y, expanded.y + 2);
+
+        app.show(Screen::NumberingValue(margin_field));
+        app.editor.text = "49".chars().collect();
+        app.editor.caret = app.editor.text.len();
+        app.apply_numbering_input(margin_field).unwrap();
+        app.show(Screen::Book);
+        assert_eq!(app.footer_track_rect(120).unwrap().y, HEIGHT as i32 - 108);
+        let maximum_margin = app.footer_caption_rect(700, 120, 28);
+        assert_eq!(maximum_margin.y, expanded.y - 96);
+        assert_eq!(
+            ReadingControls::load(&app.controls_path, true).footer_container_bottom_margin,
+            Some(49)
+        );
+
+        app.activate(Action::SetReadingControls(ReadingControls {
+            footer_track_position: crate::reading_controls::FooterTrackPosition::Above,
+            ..app.controls
+        }))
+        .unwrap();
+        assert_eq!(
+            app.footer_track_rect(120).unwrap().y,
+            PAGE_HEIGHT as i32 + 2 - 96
+        );
+        app.activate(Action::SetReadingControls(ReadingControls {
+            footer_track_position: crate::reading_controls::FooterTrackPosition::Alongside,
+            ..app.controls
+        }))
+        .unwrap();
+        assert_eq!(
+            app.footer_track_rect(120).unwrap().y,
+            PAGE_HEIGHT as i32 + 32 - 96
+        );
+        app.activate(Action::SetReadingControls(ReadingControls {
+            footer_track_position: crate::reading_controls::FooterTrackPosition::Below,
+            ..app.controls
+        }))
+        .unwrap();
+
+        app.show(Screen::Book);
+        capture_test_screen(
+            &app,
+            &fonts,
+            "READER_FOOTER_CONTAINER_EXPANDED_SCREENSHOT",
+            false,
+        );
+        app.controls.night_pages = true;
+        capture_test_screen(
+            &app,
+            &fonts,
+            "READER_FOOTER_CONTAINER_DARK_SCREENSHOT",
+            true,
+        );
+        app.controls.night_pages = false;
+        app.show(Screen::FooterSettings);
+        let height_row = app
+            .items()
+            .iter()
+            .position(|item| item.title == "Container height")
+            .unwrap();
+        app.list_page = height_row / ROWS_PER_PAGE;
+        capture_test_screen(
+            &app,
+            &fonts,
+            "READER_FOOTER_CONTAINER_SETTINGS_SCREENSHOT",
+            false,
+        );
+
+        let pdf = fixture.root.join("Footer container.pdf");
+        fs::write(&pdf, crate::fixed::tests::document()).unwrap();
+        app.open_path(&pdf).unwrap();
+        assert!(app.fixed.is_some());
+        assert!(app.footer_cover_top(maximum_margin, 120) < PAGE_HEIGHT as i32);
+        capture_test_screen(
+            &app,
+            &fonts,
+            "READER_FOOTER_CONTAINER_PDF_SCREENSHOT",
+            false,
+        );
     }
 
     #[test]
@@ -14247,6 +15188,193 @@ mod tests {
         if let Some(track) = app.footer_track_rect(bold_width) {
             assert!(track.x + track.w <= DONE.x);
         }
+    }
+
+    #[test]
+    fn footer_font_face_uses_and_persists_a_reader_font_and_status_bar_presets_keep_it() {
+        let fixture = Fixture::new();
+        let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let font_paths = fonts
+            .iter()
+            .map(|font| font.display().to_string())
+            .collect::<Vec<_>>();
+        let mut canvas = Canvas::new(WIDTH, HEIGHT, &font_paths).unwrap();
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        app.open_path(&fixture.book).unwrap();
+        fs::create_dir_all(&app.fonts_directory).unwrap();
+        let font_file = "Silkscreen-Regular.ttf";
+        fs::copy(
+            crate::test_fixture("fonts/Silkscreen-Regular.ttf"),
+            app.fonts_directory.join(font_file),
+        )
+        .unwrap();
+
+        let default = primitive_app::frame(&app, &mut canvas, false);
+        let font_row = app
+            .footer_items()
+            .into_iter()
+            .find(|item| item.title == "Item font")
+            .expect("KOReader's status font face control is available");
+        assert_eq!(font_row.detail.as_deref(), Some("Device default"));
+        app.activate(font_row.action).unwrap();
+        assert_eq!(app.screen, Screen::FooterFontFaces);
+        capture_test_screen(&app, &fonts, "READER_FOOTER_FONT_FACES_SCREENSHOT", false);
+        let face = app
+            .items()
+            .into_iter()
+            .find(|item| item.title == font_file)
+            .expect("Reader lists installed TTF faces");
+        app.activate(face.action).unwrap();
+        assert_eq!(app.footer_font_file.as_deref(), Some(font_file));
+        assert_eq!(
+            footer_font_face::load(&app.footer_font_path, &app.fonts_directory).as_deref(),
+            Some(font_file)
+        );
+        capture_test_screen(
+            &app,
+            &fonts,
+            "READER_FOOTER_FONT_FACE_SETTINGS_SCREENSHOT",
+            false,
+        );
+
+        app.save_footer_preset_name(FooterPresetName::Create, "Silkscreen footer")
+            .unwrap();
+        app.set_footer_font_file(None).unwrap();
+        app.activate(Action::ApplyFooterPreset(0)).unwrap();
+        assert_eq!(app.footer_font_file.as_deref(), Some(font_file));
+
+        app.show(Screen::Book);
+        let selected = primitive_app::frame(&app, &mut canvas, false);
+        assert_ne!(
+            default, selected,
+            "the selected face changes the footer pixels"
+        );
+        capture_test_screen(&app, &fonts, "READER_FOOTER_FONT_FACE_SCREENSHOT", false);
+
+        let reopened = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        assert_eq!(reopened.footer_font_file.as_deref(), Some(font_file));
+        assert_eq!(reopened.footer_presets.len(), 1);
+        assert_eq!(
+            reopened.footer_presets[0]
+                .apply(ReadingControls::default())
+                .1
+                .as_deref(),
+            Some(font_file)
+        );
+
+        let pdf = fixture.root.join("Footer font face.pdf");
+        fs::write(&pdf, crate::fixed::tests::document()).unwrap();
+        app.set_footer_font_file(None).unwrap();
+        app.open_path(&pdf).unwrap();
+        let default_pdf = primitive_app::frame(&app, &mut canvas, false);
+        app.set_footer_font_file(Some(font_file.to_owned()))
+            .unwrap();
+        let selected_pdf = primitive_app::frame(&app, &mut canvas, false);
+        assert_ne!(
+            default_pdf, selected_pdf,
+            "the selected face changes fixed-page footer pixels too"
+        );
+        capture_test_screen(
+            &app,
+            &fonts,
+            "READER_FOOTER_FONT_FACE_PDF_SCREENSHOT",
+            false,
+        );
+    }
+
+    #[test]
+    fn footer_separator_is_optional_persistent_and_matches_its_rendered_line() {
+        let fixture = Fixture::new();
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        let font_paths = fonts
+            .iter()
+            .map(|font| font.display().to_string())
+            .collect::<Vec<_>>();
+        let mut canvas = Canvas::new(WIDTH, HEIGHT, &font_paths).unwrap();
+        let mut app = fixture.app();
+        app.open_path(&fixture.book).unwrap();
+
+        assert!(!app.controls.footer_horizontal_separator);
+        let line_pixel = (PAGE_HEIGHT as usize) * WIDTH as usize + WIDTH as usize / 2;
+        let without_separator = primitive_app::frame(&app, &mut canvas, false);
+        assert_eq!(without_separator[line_pixel], 255);
+        capture_test_screen(
+            &app,
+            &fonts,
+            "READER_FOOTER_SEPARATOR_OFF_SCREENSHOT",
+            false,
+        );
+
+        let row = app
+            .footer_items()
+            .into_iter()
+            .find(|item| item.title == "Show footer separator")
+            .expect("KOReader's optional footer separator control is available");
+        assert_eq!(row.detail.as_deref(), Some("Off"));
+        app.activate(row.action).unwrap();
+        assert!(app.controls.footer_horizontal_separator);
+        assert!(ReadingControls::load(&app.controls_path, true).footer_horizontal_separator);
+        let row = app
+            .footer_items()
+            .into_iter()
+            .find(|item| item.title == "Show footer separator")
+            .expect("footer separator control remains available after changing it");
+        assert_eq!(row.detail.as_deref(), Some("On"));
+
+        let with_separator = primitive_app::frame(&app, &mut canvas, false);
+        assert_eq!(
+            with_separator[line_pixel],
+            primitive_ui::HAIRLINE,
+            "enabled footer separator is painted at the content/footer boundary"
+        );
+        capture_test_screen(&app, &fonts, "READER_FOOTER_SEPARATOR_ON_SCREENSHOT", false);
+        capture_test_screen(
+            &app,
+            &fonts,
+            "READER_FOOTER_SEPARATOR_DARK_SCREENSHOT",
+            true,
+        );
+
+        app.show(Screen::FooterSettings);
+        let item_index = app
+            .footer_items()
+            .iter()
+            .position(|item| item.title == "Show footer separator")
+            .unwrap();
+        app.list_page = item_index / ROWS_PER_PAGE;
+        capture_test_screen(
+            &app,
+            &fonts,
+            "READER_FOOTER_SEPARATOR_SETTINGS_SCREENSHOT",
+            false,
+        );
+
+        let pdf_path = fixture.root.join("Footer separator.pdf");
+        fs::copy(crate::test_fixture("cmyk-print-chart.pdf"), &pdf_path).unwrap();
+        app.open_path(&pdf_path).unwrap();
+        app.activate(Action::SetReadingControls(ReadingControls {
+            footer_horizontal_separator: false,
+            ..app.controls
+        }))
+        .unwrap();
+        let fixed_without_separator = primitive_app::frame(&app, &mut canvas, false);
+        assert_eq!(fixed_without_separator[line_pixel], 255);
+        app.activate(Action::SetReadingControls(ReadingControls {
+            footer_horizontal_separator: true,
+            ..app.controls
+        }))
+        .unwrap();
+        let fixed_with_separator = primitive_app::frame(&app, &mut canvas, false);
+        assert_eq!(fixed_with_separator[line_pixel], primitive_ui::HAIRLINE);
+        capture_test_screen(
+            &app,
+            &fonts,
+            "READER_FOOTER_SEPARATOR_PDF_SCREENSHOT",
+            false,
+        );
     }
 
     #[test]

@@ -899,6 +899,13 @@ fn hidden_flow_numbers_distinguish_separate_notes_and_renumber_after_removal() {
             .unwrap()
             .starts_with("Hidden 1 - Chapter")
     );
+    app.controls.status_bar = crate::reading_controls::StatusBar::PageNumbers;
+    app.controls.footer_all_at_once = false;
+    let page_numbers_caption = app.status_caption().unwrap();
+    assert!(
+        page_numbers_caption.starts_with("Hidden 1 - Chapter 3 of 6 - Page "),
+        "{page_numbers_caption:?}"
+    );
     let mut data = app.hidden_flow_data().unwrap().clone();
     data.remove(0).unwrap();
     app.apply_hidden_flow_data(data).unwrap();

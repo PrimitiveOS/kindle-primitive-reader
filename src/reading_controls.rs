@@ -52,6 +52,9 @@ pub(crate) struct ReadingControls {
     pub left_touch: bool,
     pub large_toolbar: bool,
     pub disable_page_taps: bool,
+    /// Swap the physical previous/next page inputs, matching KOReader's device option.
+    #[serde(skip_serializing_if = "is_false")]
+    pub invert_page_turn_buttons: bool,
     pub page_refresh: PageRefresh,
     /// Persistent KOReader-style page-turn timeout, retained when turns are disabled.
     pub auto_turn_seconds: u32,
@@ -76,6 +79,9 @@ pub(crate) struct ReadingControls {
     pub footer_order: u64,
     #[serde(skip_serializing_if = "FooterSeparator::is_default")]
     pub footer_separator: FooterSeparator,
+    /// Show KOReader's optional hairline above the status footer.
+    #[serde(skip_serializing_if = "is_false")]
+    pub footer_horizontal_separator: bool,
     #[serde(skip_serializing_if = "FooterSymbolStyle::is_default")]
     pub footer_symbol_style: FooterSymbolStyle,
     #[serde(skip_serializing_if = "FooterAlignment::is_default")]
@@ -111,6 +117,14 @@ pub(crate) struct ReadingControls {
     /// KOReader's optional bold weight for status footer text.
     #[serde(skip_serializing_if = "is_false")]
     pub footer_item_bold: bool,
+    /// KOReader's status item container height in logical screen units (7–98).
+    /// `None` keeps the stock default of 14.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub footer_container_height: Option<u8>,
+    /// KOReader's bottom padding for the footer container in logical units (0–49).
+    /// `None` keeps the stock default of 1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub footer_container_bottom_margin: Option<u8>,
     #[serde(skip_serializing_if = "TopHeader::is_default")]
     pub top_header: TopHeader,
     #[serde(skip_serializing_if = "ChapterMarkerWidth::is_default")]
@@ -543,10 +557,12 @@ pub(crate) enum FooterItem {
     BookmarkCount,
     CurrentTime,
     BatteryPercentage,
+    PageTurningInverted,
+    CustomText,
 }
 
 impl FooterItem {
-    pub(crate) const ALL: [Self; 12] = [
+    pub(crate) const ALL: [Self; 14] = [
         Self::CurrentPage,
         Self::ChapterTitle,
         Self::BookProgress,
@@ -559,6 +575,8 @@ impl FooterItem {
         Self::BookmarkCount,
         Self::CurrentTime,
         Self::BatteryPercentage,
+        Self::PageTurningInverted,
+        Self::CustomText,
     ];
 
     pub(crate) const DEFAULT_MASK: u16 =
@@ -624,6 +642,8 @@ impl FooterItem {
             Self::BookmarkCount => "Bookmark count",
             Self::CurrentTime => "Current time",
             Self::BatteryPercentage => "Battery percentage",
+            Self::PageTurningInverted => "Page turning inverted",
+            Self::CustomText => "Custom text",
         }
     }
 }
@@ -698,7 +718,9 @@ impl FooterSymbolStyle {
                 | FooterItem::Author
                 | FooterItem::BookmarkCount
                 | FooterItem::CurrentTime
-                | FooterItem::BatteryPercentage => "",
+                | FooterItem::BatteryPercentage
+                | FooterItem::PageTurningInverted
+                | FooterItem::CustomText => "",
             },
             Self::Letters => match item {
                 FooterItem::CurrentPage => "P: ",
@@ -713,6 +735,8 @@ impl FooterSymbolStyle {
                 FooterItem::BookmarkCount => "BM: ",
                 FooterItem::CurrentTime => "",
                 FooterItem::BatteryPercentage => "B: ",
+                FooterItem::PageTurningInverted => "Pg: ",
+                FooterItem::CustomText => "CT: ",
             },
             Self::Compact => match item {
                 FooterItem::CurrentPage => "P ",
@@ -725,7 +749,17 @@ impl FooterSymbolStyle {
                 FooterItem::BookTitle | FooterItem::Author | FooterItem::CurrentTime => "",
                 FooterItem::BookmarkCount => "BM ",
                 FooterItem::BatteryPercentage => "B ",
+                FooterItem::PageTurningInverted => "⇄ ",
+                FooterItem::CustomText => "",
             },
+        }
+    }
+
+    pub(crate) fn prefix_for(self, item: FooterItem, inverted: bool) -> &'static str {
+        if item == FooterItem::PageTurningInverted && self == Self::Compact {
+            if inverted { "⇄ " } else { "⇉ " }
+        } else {
+            self.prefix(item)
         }
     }
 
@@ -1188,6 +1222,17 @@ impl ReadingControls {
             _ => Some(input),
         }
     }
+
+    pub fn invert_page_turn_input(self, input: Input) -> Input {
+        if !self.invert_page_turn_buttons {
+            return input;
+        }
+        match input {
+            Input::PageForward => Input::PageBack,
+            Input::PageBack => Input::PageForward,
+            other => other,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1427,10 +1472,75 @@ mod tests {
             FooterSymbolStyle::Compact.prefix(FooterItem::ChapterPagesLeft),
             "> "
         );
-        for item in FooterItem::ALL {
+        for item in FooterItem::ALL
+            .into_iter()
+            .filter(|item| *item != FooterItem::PageTurningInverted)
+        {
             assert!(FooterSymbolStyle::Letters.prefix(item).is_ascii());
             assert!(FooterSymbolStyle::Compact.prefix(item).is_ascii());
         }
+        assert_eq!(
+            FooterSymbolStyle::Compact.prefix_for(FooterItem::PageTurningInverted, false),
+            "⇉ "
+        );
+        assert_eq!(
+            FooterSymbolStyle::Compact.prefix_for(FooterItem::PageTurningInverted, true),
+            "⇄ "
+        );
+    }
+
+    #[test]
+    fn page_turn_button_inversion_is_off_by_default_and_swaps_only_page_keys() {
+        let defaults = ReadingControls::default();
+        assert!(!defaults.invert_page_turn_buttons);
+        assert_eq!(
+            defaults.invert_page_turn_input(Input::PageForward),
+            Input::PageForward
+        );
+        assert_eq!(
+            defaults.invert_page_turn_input(Input::PageBack),
+            Input::PageBack
+        );
+        assert!(
+            !serde_json::to_string(&defaults)
+                .unwrap()
+                .contains("invert_page_turn_buttons")
+        );
+
+        let inverted = ReadingControls {
+            invert_page_turn_buttons: true,
+            ..defaults
+        };
+        assert_eq!(
+            inverted.invert_page_turn_input(Input::PageForward),
+            Input::PageBack
+        );
+        assert_eq!(
+            inverted.invert_page_turn_input(Input::PageBack),
+            Input::PageForward
+        );
+        assert_eq!(
+            inverted.invert_page_turn_input(Input::Tap(42.0, 84.0)),
+            Input::Tap(42.0, 84.0)
+        );
+        assert_eq!(
+            inverted.invert_page_turn_input(Input::Swipe {
+                dx: 12.0,
+                dy: -30.0,
+                start_y: 800.0,
+            }),
+            Input::Swipe {
+                dx: 12.0,
+                dy: -30.0,
+                start_y: 800.0,
+            }
+        );
+        assert_eq!(inverted.invert_page_turn_input(Input::Sleep), Input::Sleep);
+        let reopened: ReadingControls =
+            serde_json::from_slice(&serde_json::to_vec(&inverted).unwrap()).unwrap();
+        assert!(reopened.invert_page_turn_buttons);
+        let legacy: ReadingControls = serde_json::from_str("{}").unwrap();
+        assert!(!legacy.invert_page_turn_buttons);
     }
 
     #[test]

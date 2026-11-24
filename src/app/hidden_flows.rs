@@ -30,7 +30,7 @@ impl Reader {
             let map = reading.custom_flow_map()?;
             let flow = map.flow(reading.page);
             return Some(format!(
-                "Chapter {} of {} · Page {} of {}",
+                "Chapter {} of {} - Page {} of {}",
                 reading.chapter + 1,
                 reading.probe.chapter_count(),
                 map.count_in(flow, 0..reading.last_visible_page() + 1),

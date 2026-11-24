@@ -13,6 +13,10 @@ fn put(root: &Path, name: &str, value: Value) {
 }
 fn source(fixture: &Fixture) -> (Reader, u64) {
     let mut app = open(fixture);
+    app.footer_custom_text.set_text("%T · %c/%t").unwrap();
+    app.footer_custom_text.set_repetitions(2).unwrap();
+    super::super::footer_custom_text::save(&app.footer_custom_text_path, &app.footer_custom_text)
+        .unwrap();
     app.open_path(&fixture.book).unwrap();
     app.activate(Action::ToggleBookmark).unwrap();
     let reading = &app.active.as_ref().unwrap().reading;
@@ -165,6 +169,12 @@ fn complete_backup_round_trip_fresh_profile_repeated_replace_and_legacy_merge_pr
     assert!(!text.contains("Source remote history") && !text.contains("online_languages"));
     let saved = Envelope::parse(&bytes).unwrap();
     assert!(saved.components.len() >= 13);
+    assert!(
+        saved
+            .components
+            .iter()
+            .any(|component| component.key == Key::FooterCustomText)
+    );
     let target = Fixture::new();
     let mut restored = open(&target);
     preview(&mut restored, &bytes);
@@ -181,6 +191,8 @@ fn complete_backup_round_trip_fresh_profile_repeated_replace_and_legacy_merge_pr
     restored.activate(Action::MergeBackup).unwrap();
     assert_eq!(restored.screen, Screen::ReadingData);
     assert_eq!(restored.controls, source.controls);
+    assert_eq!(restored.footer_custom_text.text, "%T · %c/%t");
+    assert_eq!(restored.footer_custom_text.repetitions, 2);
     assert_eq!(restored.lookup_history.review.words["harbor"].streak, 3);
     assert_eq!(
         restored.lookup_history.review.words["harbor"].due_at,
@@ -340,6 +352,10 @@ fn complete_backup_rejects_malformed_typed_components_without_writing_profile_or
     let before = fs::read(&target.book).unwrap();
     for (key, data) in [
         (Key::Controls, json!({"numbering":{"stride":123}})),
+        (
+            Key::FooterCustomText,
+            json!({"text":"bad\ntext","repetitions":1}),
+        ),
         (
             Key::Controls,
             json!({"highlight_appearance":{"line_height":101}}),

@@ -11,6 +11,7 @@ use crate::reading_controls::{
 use crate::session::{DONE, PAGE_HEIGHT, SHOW_STATUS};
 use primitive_app::{Change, HEIGHT, WIDTH};
 use primitive_ui::{Canvas, HAIRLINE, Icon, Rect, SECONDARY, TextStyle};
+use std::io;
 use std::time::{Duration, Instant};
 
 const FOOTER_TRACK_GAP: i32 = 20;
@@ -32,9 +33,20 @@ const FOOTER_BATTERY_ICON: Icon = Icon {
     stroke: &["M4 7 H20 V18 H4 Z", "M20 10 H22 V15 H20"],
     fill: &["M6 9 H18 V16 H6 Z"],
 };
+const PAGE_TURN_REGULAR_ICON: Icon = Icon {
+    stroke: &[
+        "M3 7 H20 M16 3 L20 7 L16 11",
+        "M3 16 H20 M16 12 L20 16 L16 20",
+    ],
+    fill: &[],
+};
+const PAGE_TURN_INVERTED_ICON: Icon = Icon {
+    stroke: &["M3 7 H20 M16 3 L20 7 L16 11", "M20 16 H3 M7 12 L3 16 L7 20"],
+    fill: &[],
+};
 
-fn footer_item_icon(item: FooterItem) -> Icon {
-    match item {
+fn footer_item_icon(item: FooterItem, inverted: bool) -> Option<Icon> {
+    Some(match item {
         FooterItem::CurrentPage => super::bar_icons::PAGE,
         FooterItem::ChapterTitle | FooterItem::BookPagesLeft | FooterItem::BookTitle => {
             super::bar_icons::BOOK
@@ -47,7 +59,15 @@ fn footer_item_icon(item: FooterItem) -> Icon {
         FooterItem::Author => FOOTER_AUTHOR_ICON,
         FooterItem::BookmarkCount => super::bar_icons::BOOKMARK,
         FooterItem::BatteryPercentage => FOOTER_BATTERY_ICON,
-    }
+        FooterItem::PageTurningInverted => {
+            if inverted {
+                PAGE_TURN_INVERTED_ICON
+            } else {
+                PAGE_TURN_REGULAR_ICON
+            }
+        }
+        FooterItem::CustomText => return None,
+    })
 }
 
 pub(super) fn fixed_chapters(reading: &FixedReading) -> Vec<(usize, String)> {
@@ -282,6 +302,25 @@ fn pages_left_display(pages_left: usize, include_current: bool) -> usize {
     pages_left + usize::from(include_current)
 }
 
+fn time_left_for(seconds_per_page: f64, pages: usize) -> String {
+    let seconds = (seconds_per_page * pages as f64).round() as u64;
+    match seconds {
+        0 => "0 min".into(),
+        1..60 => "Under 1 min".into(),
+        _ => super::reading_time(seconds),
+    }
+}
+
+fn custom_text_preview(text: &str, max_chars: usize) -> String {
+    let mut characters = text.chars();
+    let preview = characters.by_ref().take(max_chars).collect::<String>();
+    if characters.next().is_some() {
+        format!("{preview}…")
+    } else {
+        preview
+    }
+}
+
 fn draw_initial_marker(canvas: &mut Canvas, bar: Rect, fraction: f64) {
     if bar.w <= 0 || bar.h <= 0 {
         return;
@@ -364,7 +403,55 @@ fn battery_footer_text(level: u32, charging: bool, hide_above: u8) -> Option<Str
     Some(format!("{label} {level}%"))
 }
 
+fn battery_symbol(level: u32, charging: bool, fully_charged: bool) -> String {
+    let codepoint = if fully_charged {
+        0xEDA3 // KOReader's fully-charged battery glyph.
+    } else if charging {
+        0xE783 // KOReader's charging battery glyph in its bundled symbol font.
+    } else {
+        match level {
+            100.. => 0xE778,
+            90..=99 => 0xE781,
+            80..=89 => 0xE780,
+            70..=79 => 0xE77F,
+            60..=69 => 0xE77E,
+            50..=59 => 0xE77D,
+            40..=49 => 0xE77C,
+            30..=39 => 0xE77B,
+            20..=29 => 0xE77A,
+            10..=19 => 0xE779,
+            _ => 0xE782,
+        }
+    };
+    char::from_u32(codepoint)
+        .expect("battery symbol is a valid Unicode scalar")
+        .to_string()
+}
+
 impl Reader {
+    pub(super) fn set_footer_font_file(&mut self, file: Option<String>) -> io::Result<()> {
+        if let Some(file) = file.as_deref() {
+            self.fonts_for(Some(file))?;
+        }
+        super::footer_font_face::save(
+            &self.footer_font_path,
+            &self.fonts_directory,
+            file.as_deref(),
+        )?;
+        self.footer_font_render_path = file
+            .as_deref()
+            .map(|name| crate::reading_fonts::resolve(&self.fonts_directory, name))
+            .transpose()?;
+        self.footer_font_file = file;
+        Ok(())
+    }
+
+    pub(super) fn footer_font_render_file(&self) -> Option<String> {
+        self.footer_font_render_path
+            .as_deref()
+            .map(|path| path.to_string_lossy().into_owned())
+    }
+
     pub(super) fn footer_caption_font_px(&self) -> i32 {
         let size = i32::from(
             self.controls
@@ -422,7 +509,11 @@ impl Reader {
         self.reading_status_visible()
             && self.controls.footer_auto_refresh
             && self.controls.status_bar == StatusBar::Custom
-            && self.controls.footer_items & FooterItem::CurrentTime.bit() != 0
+            && (self.controls.footer_items & FooterItem::CurrentTime.bit() != 0
+                || (self.custom_footer_text_enabled()
+                    && ['D', 'd', 'm', 'M']
+                        .into_iter()
+                        .any(|token| self.footer_custom_text.contains_token(token))))
     }
 
     fn top_header_time_visible(&self) -> bool {
@@ -443,7 +534,16 @@ impl Reader {
         self.reading_status_visible()
             && self.controls.footer_auto_refresh
             && self.controls.status_bar == StatusBar::Custom
-            && self.controls.footer_items & FooterItem::BatteryPercentage.bit() != 0
+            && (self.controls.footer_items & FooterItem::BatteryPercentage.bit() != 0
+                || (self.custom_footer_text_enabled()
+                    && ['b', 'B']
+                        .into_iter()
+                        .any(|token| self.footer_custom_text.contains_token(token))))
+    }
+
+    fn custom_footer_text_enabled(&self) -> bool {
+        self.controls.status_bar == StatusBar::Custom
+            && self.controls.footer_items & FooterItem::CustomText.bit() != 0
     }
 
     fn footer_clock_active(&self) -> bool {
@@ -1058,7 +1158,7 @@ impl Reader {
         }
     }
 
-    fn custom_footer_parts(&self, progress: &Progress<'_>) -> Vec<(FooterItem, String)> {
+    fn custom_footer_parts(&self, progress: &Progress<'_>) -> Vec<(FooterItem, String, bool)> {
         let (entry, id) = if let Some(book) = &self.fixed {
             (&book.entry, book.id)
         } else if let Some(book) = &self.active {
@@ -1085,6 +1185,94 @@ impl Reader {
         );
         let percentage = progress.percentage_with_digits(self.controls.footer_percentage_digits);
         let current_time = local_footer_time();
+        let page_count = self
+            .fixed
+            .as_ref()
+            .map(|book| book.reading.count())
+            .or_else(|| {
+                self.active
+                    .as_ref()
+                    .map(|book| book.reading.probe.page_count())
+            })
+            .unwrap_or(0);
+        let page_count_label = self
+            .fixed
+            .as_ref()
+            .and_then(|book| book.reading.page_label(page_count.saturating_sub(1)))
+            .or_else(|| {
+                self.active.as_ref().and_then(|book| {
+                    book.page_label(book.page_labels().saturating_sub(1))
+                        .map(|label| label.into_owned())
+                })
+            })
+            .unwrap_or_else(|| page_count.to_string());
+        let current_page_label = self
+            .fixed
+            .as_ref()
+            .and_then(|book| book.reading.page_label(book.reading.page()))
+            .or_else(|| {
+                self.active.as_ref().and_then(|book| {
+                    book.page_label(book.reading.page)
+                        .map(|label| label.into_owned())
+                })
+            })
+            .unwrap_or_else(|| {
+                self.fixed
+                    .as_ref()
+                    .map(|book| book.reading.page() + 1)
+                    .or_else(|| self.active.as_ref().map(|book| book.reading.page + 1))
+                    .unwrap_or(0)
+                    .to_string()
+            });
+        let book_time_left = time_left_for(self.pace.rate(id), progress.book_pages_left);
+        let chapter_time_left = time_left_for(self.pace.rate(id), progress.pages_left());
+        let battery = primitive_device::battery_status();
+        let percent = battery.percent.map(|percent| percent.min(100));
+        let clock = super::footer_custom_text::local_clock();
+        let custom_text = self.footer_custom_text.expand(|token| match token {
+            'T' => Some(entry.title.clone()),
+            'A' => entry.author.clone(),
+            'S' => self.active.as_ref().and_then(|book| {
+                book.reading.probe.first_series.as_ref().map(|series| {
+                    series.position.as_ref().map_or_else(
+                        || series.name.clone(),
+                        |position| format!("{} #{position}", series.name),
+                    )
+                })
+            }),
+            't' => Some(page_count_label.clone()),
+            'c' => Some(current_page_label.clone()),
+            'l' => Some(
+                pages_left_display(
+                    progress.pages_left(),
+                    self.controls.footer_pages_left_include_current,
+                )
+                .to_string(),
+            ),
+            'p' => Some((progress.book_fraction * 100.0).round().to_string()),
+            'H' => Some(book_time_left.clone()),
+            'C' => Some(progress.section_name.to_owned()),
+            'P' => Some(
+                (progress.section_page as f64 * 100.0 / progress.section_len.max(1) as f64)
+                    .round()
+                    .to_string(),
+            ),
+            'h' => Some(chapter_time_left.clone()),
+            'F' => Some(entry.path.to_string_lossy().into_owned()),
+            'f' => entry
+                .path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned()),
+            'b' => percent.map(|percent| percent.to_string()),
+            'B' => percent
+                .map(|percent| battery_symbol(percent, battery.charging, battery.fully_charged)),
+            'r' => Some(self.controls.footer_separator.text().to_owned()),
+            'D' => clock.as_ref().map(|clock| clock.date.clone()),
+            'd' => clock.as_ref().map(|clock| clock.short_date.clone()),
+            'm' => clock.as_ref().map(|clock| clock.time.clone()),
+            'M' => clock.as_ref().map(|clock| clock.time_with_seconds.clone()),
+            _ => None,
+        });
         let current_page = || {
             if let Some(book) = &self.fixed {
                 let pages: Vec<_> = book.reading.visible_pages().collect();
@@ -1171,12 +1359,37 @@ impl Reader {
                         self.controls.footer_battery_hide_threshold.unwrap_or(100),
                     )
                 }),
+                FooterItem::PageTurningInverted => match self.controls.footer_symbol_style {
+                    FooterSymbolStyle::Icons | FooterSymbolStyle::Compact => Some(String::new()),
+                    FooterSymbolStyle::Letters => Some(if self.page_turning_inverted() {
+                        "On".to_owned()
+                    } else {
+                        "Off".to_owned()
+                    }),
+                },
+                FooterItem::CustomText => Some(custom_text.clone()),
             };
             if let Some(text) = text {
-                items.push((item, text));
+                items.push((
+                    item,
+                    text,
+                    item == FooterItem::CustomText && self.footer_custom_text.is_merge_separator(),
+                ));
             }
         }
         items
+    }
+
+    fn page_turning_inverted(&self) -> bool {
+        self.controls.invert_page_turn_buttons
+            || self
+                .active
+                .as_ref()
+                .is_some_and(|active| active.reading.probe.pages_right_to_left())
+            || self
+                .fixed
+                .as_ref()
+                .is_some_and(|fixed| fixed.reading.pages_right_to_left())
     }
 
     fn custom_footer_caption(&self, progress: &Progress<'_>) -> String {
@@ -1185,34 +1398,46 @@ impl Reader {
             "No items selected".to_owned()
         } else {
             let separator = self.controls.footer_separator.text();
-            items
-                .iter()
-                .map(|(item, text)| {
-                    format!(
-                        "{}{}",
-                        self.controls.footer_symbol_style.prefix(*item),
-                        text
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(separator)
+            items.iter().enumerate().fold(
+                String::new(),
+                |mut caption, (index, (item, text, merge))| {
+                    let prior_merge = index > 0 && items[index - 1].2;
+                    if index > 0 && !prior_merge && !merge {
+                        caption.push_str(separator);
+                    }
+                    caption.push_str(
+                        self.controls
+                            .footer_symbol_style
+                            .prefix_for(*item, self.page_turning_inverted()),
+                    );
+                    caption.push_str(text);
+                    caption
+                },
+            )
         }
     }
 
     pub(super) fn custom_footer_icons_enabled(&self) -> bool {
         self.controls.status_bar == StatusBar::Custom
             && self.controls.footer_symbol_style == FooterSymbolStyle::Icons
-            && self
-                .footer_progress()
-                .is_some_and(|progress| !self.custom_footer_parts(&progress).is_empty())
+            && self.footer_progress().is_some_and(|progress| {
+                self.custom_footer_parts(&progress)
+                    .iter()
+                    .any(|(item, _, _)| {
+                        footer_item_icon(*item, self.page_turning_inverted()).is_some()
+                    })
+            })
     }
 
     pub(super) fn custom_footer_icon_width(&self) -> i32 {
         let Some(progress) = self.footer_progress() else {
             return 0;
         };
-        let count = self.custom_footer_parts(&progress).len();
-        count as i32 * (FOOTER_ICON_SIZE + FOOTER_ICON_GAP)
+        self.custom_footer_parts(&progress)
+            .iter()
+            .filter(|(item, _, _)| footer_item_icon(*item, self.page_turning_inverted()).is_some())
+            .count() as i32
+            * (FOOTER_ICON_SIZE + FOOTER_ICON_GAP)
     }
 
     pub(super) fn draw_custom_footer_icons(
@@ -1228,8 +1453,9 @@ impl Reader {
         let items = self.custom_footer_parts(&progress);
         let separator = self.controls.footer_separator.text();
         let mut x = status_rect.x;
-        for (index, (item, text)) in items.iter().enumerate() {
-            if index != 0 {
+        for (index, (item, text, merge)) in items.iter().enumerate() {
+            let prior_merge = index > 0 && items[index - 1].2;
+            if index != 0 && !prior_merge && !merge {
                 let width = canvas.measure(separator, font_size);
                 canvas.text(
                     Rect::new(x, status_rect.y, width, status_rect.h),
@@ -1238,13 +1464,15 @@ impl Reader {
                 );
                 x += width;
             }
-            let top = status_rect.y + (status_rect.h - FOOTER_ICON_SIZE) / 2;
-            canvas.icon(
-                Rect::new(x, top, FOOTER_ICON_SIZE, FOOTER_ICON_SIZE),
-                footer_item_icon(*item),
-                0,
-            );
-            x += FOOTER_ICON_SIZE + FOOTER_ICON_GAP;
+            if let Some(icon) = footer_item_icon(*item, self.page_turning_inverted()) {
+                let top = status_rect.y + (status_rect.h - FOOTER_ICON_SIZE) / 2;
+                canvas.icon(
+                    Rect::new(x, top, FOOTER_ICON_SIZE, FOOTER_ICON_SIZE),
+                    icon,
+                    0,
+                );
+                x += FOOTER_ICON_SIZE + FOOTER_ICON_GAP;
+            }
             let width = canvas.measure(text, font_size);
             canvas.text(
                 Rect::new(x, status_rect.y, width.max(1), status_rect.h),
@@ -1300,6 +1528,22 @@ impl Reader {
         }
     }
 
+    fn footer_bottom_margin_shift(&self) -> i32 {
+        (i32::from(
+            self.controls
+                .footer_container_bottom_margin
+                .unwrap_or(1)
+                .min(49),
+        ) - 1)
+            * 2
+    }
+
+    pub(super) fn footer_cover_top(&self, status_rect: Rect, status_text_width: i32) -> i32 {
+        self.footer_track_rect(status_text_width)
+            .map_or(status_rect.y, |track| status_rect.y.min(track.y))
+            .max(0)
+    }
+
     pub(super) fn footer_track_rect(&self, status_text_width: i32) -> Option<Rect> {
         let open_above = matches!(self.screen, Screen::BookTools | Screen::FixedTools)
             && self.reading_top
@@ -1330,17 +1574,29 @@ impl Reader {
         );
         let track_width = (right - margin - margin).max(0);
         let thickness = self.controls.footer_track_thickness.height();
+        let bottom_shift = self.footer_bottom_margin_shift();
         Some(match self.controls.footer_track_position {
-            FooterTrackPosition::Above => {
-                Rect::new(margin, PAGE_HEIGHT as i32 + 2, track_width, thickness)
-            }
+            FooterTrackPosition::Above => Rect::new(
+                margin,
+                PAGE_HEIGHT as i32 + 2 - bottom_shift,
+                track_width,
+                thickness,
+            ),
             FooterTrackPosition::Alongside => {
                 let (_, track_left, bar_width) = self.footer_track_layout(right, status_text_width);
-                Rect::new(track_left, PAGE_HEIGHT as i32 + 32, bar_width, thickness)
+                Rect::new(
+                    track_left,
+                    PAGE_HEIGHT as i32 + 32 - bottom_shift,
+                    bar_width,
+                    thickness,
+                )
             }
-            FooterTrackPosition::Below => {
-                Rect::new(margin, HEIGHT as i32 - 12, track_width, thickness)
-            }
+            FooterTrackPosition::Below => Rect::new(
+                margin,
+                HEIGHT as i32 - 12 - bottom_shift,
+                track_width,
+                thickness,
+            ),
         })
     }
 
@@ -1363,6 +1619,14 @@ impl Reader {
         font_size: i32,
     ) -> Rect {
         let mut rect = crate::session::footer_caption_rect(slot_width as i32, font_size);
+        let center_y = rect.y + rect.h / 2;
+        rect.h = i32::from(
+            self.controls
+                .footer_container_height
+                .unwrap_or(14)
+                .clamp(7, 98),
+        ) * 2;
+        rect.y = center_y - rect.h / 2 - self.footer_bottom_margin_shift();
         let width = content_width.clamp(0, rect.w);
         let remaining = rect.w - width;
         rect.x += match self.controls.footer_alignment {
@@ -1486,6 +1750,10 @@ impl Reader {
             c.status_bar.next()
         };
         let mut items = vec![
+            Item::new("Status bar presets", Action::Show(Screen::FooterPresets))
+                .detail(format!("{} saved", self.footer_presets.len())),
+            Item::new("Item font", Action::ShowFooterFonts)
+                .detail(self.footer_font_file.as_deref().unwrap_or("Device default")),
             setting(
                 "Status text",
                 if c.footer_all_at_once && c.status_bar != StatusBar::Minimal {
@@ -1505,6 +1773,24 @@ impl Reader {
             .detail(format!(
                 "{} · 8–36",
                 c.footer_item_font_size.unwrap_or(14).clamp(8, 36)
+            )),
+            Item::new(
+                "Container height",
+                Action::Show(Screen::NumberingValue(NumberField::FooterContainerHeight)),
+            )
+            .detail(format!(
+                "{} · 7–98",
+                c.footer_container_height.unwrap_or(14).clamp(7, 98)
+            )),
+            Item::new(
+                "Container bottom margin",
+                Action::Show(Screen::NumberingValue(
+                    NumberField::FooterContainerBottomMargin,
+                )),
+            )
+            .detail(format!(
+                "{} · 0–49",
+                c.footer_container_bottom_margin.unwrap_or(1).min(49)
             )),
             setting(
                 "Bold text",
@@ -1569,6 +1855,14 @@ impl Reader {
                 c.footer_separator.label(),
                 ReadingControls {
                     footer_separator: c.footer_separator.next(),
+                    ..c
+                },
+            ),
+            setting(
+                "Show footer separator",
+                on_off(c.footer_horizontal_separator),
+                ReadingControls {
+                    footer_horizontal_separator: !c.footer_horizontal_separator,
                     ..c
                 },
             ),
@@ -1830,6 +2124,27 @@ impl Reader {
                     )),
                 );
             }
+            items.push(Item::new("Custom text", Action::Heading));
+            items.push(
+                Item::new("Edit custom text", Action::Show(Screen::FooterCustomText))
+                    .detail(custom_text_preview(&self.footer_custom_text.text, 42)),
+            );
+            items.push(
+                Item::new(
+                    "Number of repetitions",
+                    Action::Show(Screen::NumberingValue(
+                        NumberField::FooterCustomTextRepetitions,
+                    )),
+                )
+                .detail(format!("{} · 1–99", self.footer_custom_text.repetitions)),
+            );
+            items.push(
+                Item::new(
+                    "Custom text tokens",
+                    Action::Show(Screen::FooterCustomTextGuide),
+                )
+                .detail("Show supported book, page, time and battery values"),
+            );
             items.push(Item::new("Status item order", Action::Heading));
             let ordered = FooterItem::ordered(c.footer_order);
             for (index, item) in ordered.iter().copied().enumerate() {
@@ -1843,7 +2158,7 @@ impl Reader {
                             }),
                         )
                         .detail(format!(
-                            "Position {} → {}",
+                            "Position {} to {}",
                             index + 1,
                             index
                         )),
@@ -1859,7 +2174,7 @@ impl Reader {
                             }),
                         )
                         .detail(format!(
-                            "Position {} → {}",
+                            "Position {} to {}",
                             index + 1,
                             index + 2
                         )),
@@ -1934,6 +2249,23 @@ mod tests {
             battery_footer_text(0, false, 0),
             Some("Battery 0%".to_owned())
         );
+    }
+
+    #[test]
+    fn custom_footer_battery_symbol_uses_koreader_glyph_steps() {
+        assert_eq!(battery_symbol(100, false, false), "");
+        assert_eq!(battery_symbol(100, false, true), "");
+        assert_eq!(battery_symbol(90, false, false), "");
+        assert_eq!(battery_symbol(80, false, false), "");
+        assert_eq!(battery_symbol(70, false, false), "");
+        assert_eq!(battery_symbol(60, false, false), "");
+        assert_eq!(battery_symbol(50, false, false), "");
+        assert_eq!(battery_symbol(40, false, false), "");
+        assert_eq!(battery_symbol(30, false, false), "");
+        assert_eq!(battery_symbol(20, false, false), "");
+        assert_eq!(battery_symbol(10, false, false), "");
+        assert_eq!(battery_symbol(9, false, false), "");
+        assert_eq!(battery_symbol(47, true, false), "");
     }
 
     #[test]
