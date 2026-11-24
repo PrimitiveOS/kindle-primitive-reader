@@ -812,6 +812,7 @@ pub struct Reader {
     metadata_checkpoint: metadata_save::Checkpoint,
     editor: Editor,
     nearby: nearby_search::Nearby,
+    screen_page_worker: crate::session::screen_pages::background::Worker,
     find_match_case: bool,
     find_ignore_accents: bool,
     find_regex: bool,
@@ -1018,6 +1019,7 @@ impl Reader {
             metadata_checkpoint: metadata_save::Checkpoint::new(Instant::now()),
             editor: Editor::new(64),
             nearby: nearby_search::Nearby::default(),
+            screen_page_worker: Default::default(),
             find_match_case: false,
             find_ignore_accents: false,
             find_regex: false,
@@ -1086,6 +1088,7 @@ impl Reader {
     }
 
     fn open_with_password(&mut self, mut entry: LibraryBook, password: Option<&str>) -> Result<()> {
+        self.screen_page_worker.cancel();
         self.close_fixed_search_fit()?;
         self.logical_recovery = None;
         self.footer_initial_position = None;
@@ -1377,6 +1380,9 @@ impl Reader {
     }
 
     fn show(&mut self, screen: Screen) {
+        if screen != Screen::Book {
+            self.screen_page_worker.cancel();
+        }
         self.search_results_navigation.menu_open = false;
         self.top_header_about = false;
         self.top_header_font_picker = None;
@@ -4548,6 +4554,14 @@ impl Reader {
             && self.selection.is_none()
             && self.pdf_selection.is_none()
             && matches!(self.screen, Screen::Book | Screen::Fixed)
+    }
+
+    fn needs_screen_page_count(&self) -> bool {
+        self.stats_awake
+            && self.screen == Screen::Book
+            && (self.controls.top_header.page_number || self.controls.top_header.page_count)
+            && self.top_header_visible()
+            && self.top_header_page_labels().is_none()
     }
 
     fn sync_auto_turn(&mut self, now: Instant) {
@@ -7943,6 +7957,9 @@ impl App for Reader {
     }
 
     fn input(&mut self, input: Input) -> Change {
+        if input == Input::Sleep {
+            self.screen_page_worker.cancel();
+        }
         if matches!(
             input,
             Input::HoldStart(..) | Input::HoldPan(..) | Input::HoldRelease { .. }
@@ -8479,8 +8496,14 @@ impl App for Reader {
             .as_ref()
             .filter(|_| matches!(self.screen, Screen::Fixed | Screen::Skim))
             .and_then(|fixed| fixed.reading.deadline());
+        let screen_pages = self
+            .active
+            .as_ref()
+            .filter(|_| self.needs_screen_page_count())
+            .map(|active| &active.reading);
         page.into_iter()
             .chain(fixed_page)
+            .chain(self.screen_page_worker.deadline(screen_pages))
             .chain(self.export_deadline())
             .chain(self.bookmark_metadata_deadline())
             .chain(
@@ -8530,6 +8553,15 @@ impl App for Reader {
     }
 
     fn tick(&mut self, now: Instant) -> Change {
+        let needs_screen_page_count = self.needs_screen_page_count();
+        let screen_pages = self
+            .active
+            .as_ref()
+            .filter(|_| needs_screen_page_count)
+            .map(|active| &active.reading);
+        if self.screen_page_worker.tick(now, screen_pages) {
+            return Change::Partial;
+        }
         if self
             .footer_refresh_at
             .is_some_and(|deadline| deadline <= now)
@@ -8728,6 +8760,7 @@ impl App for Reader {
     }
 
     fn save(&mut self) -> io::Result<()> {
+        self.screen_page_worker.cancel();
         self.save_library()?;
         let now = Instant::now();
         self.stats.checkpoint(&self.stats_path, now, true)?;
@@ -8741,6 +8774,7 @@ impl App for Reader {
     }
 
     fn storage_returned(&mut self) -> io::Result<()> {
+        self.screen_page_worker.cancel();
         self.document_defaults.reload();
 
         self.cjk_selection_lookup = None;
@@ -15314,6 +15348,61 @@ mod tests {
             "READER_WHOLE_BOOK_SCREEN_PAGE_SCREENSHOT",
             false,
         );
+    }
+
+    #[test]
+    fn screen_pages_background_finishes_the_latin_book_without_a_page_turn() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Many Chapters.epub");
+        fs::copy(crate::test_fixture("many-chapters.epub"), &path).unwrap();
+        let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let mut app = fixture.app();
+        app.fonts = fonts.clone();
+        app.open_path(&path).unwrap();
+        assert!(!app.needs_screen_page_count());
+        assert!(app.screen_page_worker.deadline(None).is_none());
+
+        app.activate(Action::TopStatusHeader(true)).unwrap();
+        assert!(app.needs_screen_page_count());
+        let shown = |reader: &Reader| {
+            reader
+                .active
+                .as_ref()
+                .unwrap()
+                .reading
+                .whole_book_screen_pages()
+        };
+        assert_eq!(shown(&app), None);
+        let initial_caption = app.status_caption().unwrap();
+        let initial_position = position(&app.active.as_ref().unwrap().reading);
+        let mut canvas = Canvas::new(
+            WIDTH,
+            HEIGHT,
+            &fonts
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        let before = primitive_app::frame(&app, &mut canvas, false);
+        capture_test_screen(&app, &fonts, "READER_BACKGROUND_SCREEN_PAGE_BEFORE", false);
+        let timeout = Instant::now() + Duration::from_secs(12);
+        while shown(&app).is_none() && Instant::now() < timeout {
+            app.tick(Instant::now());
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(shown(&app), Some((1, 48)));
+        assert!(app.top_header_caption().unwrap().contains("1/48"));
+        assert_eq!(
+            position(&app.active.as_ref().unwrap().reading),
+            initial_position
+        );
+        assert_eq!(app.status_caption().unwrap(), initial_caption);
+        let after = primitive_app::frame(&app, &mut canvas, false);
+        let header_end = crate::reading_controls::TopHeader::HEIGHT as usize * WIDTH as usize;
+        assert!(before[..header_end] != after[..header_end]);
+        assert!(before[header_end..] == after[header_end..]);
+        capture_test_screen(&app, &fonts, "READER_BACKGROUND_SCREEN_PAGE_AFTER", false);
     }
 
     #[test]

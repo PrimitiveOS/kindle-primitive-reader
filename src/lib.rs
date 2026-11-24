@@ -855,7 +855,7 @@ impl Probe {
     }
 
     fn from_book_with_rules(
-        mut book: Book,
+        book: Book,
         engine: Engine,
         fonts: &[PathBuf],
         settings: Settings,
@@ -863,6 +863,28 @@ impl Probe {
         excerpt: Option<String>,
         user_rules: &user_hyphenation::Rules,
         user_styles: &user_styles::Snapshot,
+    ) -> Result<Self> {
+        Self::from_book_with_font_loader(
+            book,
+            engine,
+            settings,
+            chapter,
+            excerpt,
+            user_rules,
+            user_styles,
+            || font_context(fonts),
+        )
+    }
+
+    fn from_book_with_font_loader(
+        mut book: Book,
+        engine: Engine,
+        settings: Settings,
+        chapter: usize,
+        excerpt: Option<String>,
+        user_rules: &user_hyphenation::Rules,
+        user_styles: &user_styles::Snapshot,
+        load_fonts: impl FnOnce() -> Result<FontContext>,
     ) -> Result<Self> {
         if book.is_fixed_layout() {
             return Err("Open this fixed-layout EPUB in Reader".into());
@@ -912,7 +934,7 @@ impl Probe {
                 source.accept_previous_mobi(previous)?;
             }
         }
-        let mut fonts = font_context(fonts)?;
+        let mut fonts = load_fonts()?;
         #[cfg(feature = "kindle")]
         let mut custom_hyphenation_allowed = Vec::new();
         let mut publisher_edges = Vec::new();
@@ -1794,17 +1816,32 @@ fn font_context(paths: &[PathBuf]) -> Result<FontContext> {
 }
 
 fn font_context_with_firmware(paths: &[PathBuf], firmware: &Path) -> Result<FontContext> {
+    font_context_with_font_data(paths, firmware, |path| {
+        let metadata = fs::metadata(path)?;
+        if metadata.len() > 64 * 1024 * 1024 {
+            return Err("A reading font exceeds the size limit".into());
+        }
+        Ok(parley::fontique::Blob::new(std::sync::Arc::new(fs::read(
+            path,
+        )?)))
+    })
+}
+
+fn font_context_with_font_data(
+    paths: &[PathBuf],
+    firmware: &Path,
+    mut read: impl FnMut(&Path) -> Result<parley::fontique::Blob<u8>>,
+) -> Result<FontContext> {
     if paths.is_empty() {
         return Err("Provide at least one reading font".into());
     }
     let mut fonts = FontContext::default();
     let mut families = Vec::new();
     for path in paths {
-        let metadata = fs::metadata(path)?;
-        if metadata.len() > 64 * 1024 * 1024 {
-            return Err("A reading font exceeds the size limit".into());
-        }
-        if path.parent() == Some(firmware) && metadata.is_file() {
+        if path.parent() == Some(firmware) && path.is_file() {
+            if fs::metadata(path)?.len() > 64 * 1024 * 1024 {
+                return Err("A reading font exceeds the size limit".into());
+            }
             // The firmware volume stays mounted when books and user fonts are removed
             // over USB. Fontique can safely map these fonts on demand without a heap
             // copy of the whole fallback stack on every chapter open.
@@ -1818,7 +1855,7 @@ fn font_context_with_firmware(paths: &[PathBuf], firmware: &Path) -> Result<Font
             );
             continue;
         }
-        let data = parley::fontique::Blob::new(std::sync::Arc::new(fs::read(path)?));
+        let data = read(path)?;
         families.extend(
             fonts
                 .collection
