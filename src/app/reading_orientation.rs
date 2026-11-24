@@ -411,6 +411,49 @@ mod tests {
     }
 
     #[test]
+    fn negotiated_rotation_accepts_a_vertical_epub() {
+        let fixture = Fixture::new();
+        let book = document(&fixture, "harbor-vertical-viewport.epub", "Harbor.epub");
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+        app.open_path(&book).unwrap();
+        assert!(app.active.as_ref().unwrap().reading.probe.is_vertical());
+        let position = app.current_position().unwrap();
+        present(&mut app, 1, LogicalTurn::Upright, ViewportDecision::Commit);
+        assert!(app.landscape_choices_available());
+        choose(&mut app, ReadingOrientation::LandscapeRight);
+        assert_eq!(
+            app.viewport_request(),
+            Some(ViewportRequest::Fixed(LogicalTurn::Clockwise))
+        );
+        present(
+            &mut app,
+            2,
+            LogicalTurn::Clockwise,
+            ViewportDecision::Commit,
+        );
+        assert!(app.active.as_ref().unwrap().reading.probe.is_vertical());
+        assert_eq!(app.reading_viewport().dimensions(), (1680, 1264));
+        if let Some(path) = std::env::var_os("READER_NEGOTIATED_VERTICAL_LANDSCAPE") {
+            let fonts: Vec<_> = app
+                .fonts
+                .iter()
+                .map(|font| font.display().to_string())
+                .collect();
+            let mut canvas = Canvas::new_viewport(1680, 1264, 1264, &fonts).unwrap();
+            let frame = primitive_app::frame(&app, &mut canvas, false);
+            primitive_app::write_png(std::path::Path::new(&path), 1680, 1264, &frame).unwrap();
+        }
+        choose(&mut app, ReadingOrientation::Upright);
+        present(&mut app, 3, LogicalTurn::Upright, ViewportDecision::Commit);
+        assert!(app.active.as_ref().unwrap().reading.probe.is_vertical());
+        assert_eq!(app.current_position().unwrap(), position);
+    }
+
+    #[test]
     fn a_sticky_turn_stages_a_new_book_at_the_same_accepted_angle() {
         use ReadingOrientation::{LandscapeLeft, LandscapeRight};
 

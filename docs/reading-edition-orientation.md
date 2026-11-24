@@ -53,11 +53,10 @@ Notes* and the right-to-left *Harbor notebook*. Both kept two leaves on
 resize, one while scrolling and the same source pointer on return to portrait.
 [KOReader visible-page wrapper](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/credocument.lua#L1382-L1389) · [CREngine pane-count policy](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvdocview.cpp#L3760-L3789) · [KOReader resize callback](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerrolling.lua#L1098-L1118) · [Mac comparison script](../scripts/koreader-facing-viewport-check.lua)
 
-The app runtime still has to prepare its chrome and canvas, publish an
-accepted frame through the shared handoff, and change the input generation
-together with the reading session. Its lists, overlays and hardware resume
-need to use those committed dimensions. The landscape control stays disabled
-until those paths are integrated. [KOReader dimension-change path](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerview.lua#L892-L919)
+The negotiated runtime stages the reading chrome and canvas, presents the
+candidate through the shared handoff, and advances the input generation with
+the accepted reading session. A Launcher with the foreground protocol exposes
+the new orientation choices. [KOReader dimension-change path](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerview.lua#L892-L919)
 
 Run the authored EPUB transition tests with
 `cargo test --locked --lib session::viewport_tests`. Set
@@ -87,7 +86,7 @@ reprojects the actual glyph and word hit at the wider margin, and reproduces
 the original portrait frame. The tall-ruby case checks that a rejected
 resize leaves the visible page and queued turns available. The fixture uses
 a 37 KB subset of Noto Sans CJK JP with its SIL Open Font License inside
-the EPUB. [Authored EPUB](../tests/fixtures/harbor-vertical-viewport.epub) · [Fixture generator](../scripts/generate-vertical-viewport.py) · [Original font](https://github.com/notofonts/noto-cjk/blob/523d033d6cb47f4a80c58a35753646f5c3608a78/Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf) · [Font license](https://github.com/notofonts/noto-cjk/blob/523d033d6cb47f4a80c58a35753646f5c3608a78/LICENSE)
+the EPUB. [Authored EPUB](../tests/fixtures/harbor-vertical-viewport.epub) · [Reader screenshot with chapter and page footer](screenshots/negotiated-vertical-landscape.png) · [Fixture generator](../scripts/generate-vertical-viewport.py) · [Original font](https://github.com/notofonts/noto-cjk/blob/523d033d6cb47f4a80c58a35753646f5c3608a78/Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf) · [Font license](https://github.com/notofonts/noto-cjk/blob/523d033d6cb47f4a80c58a35753646f5c3608a78/LICENSE)
 
 ## Fixed-page viewport preparation
 
@@ -116,8 +115,8 @@ new dimensions and keeps the selected spine page.
 Rendering, hit testing, annotation clipping and footer bounds use the prepared
 viewport. The stage carries its frame and scratch rendering caches.
 `commit_viewport` checks the reading session and the presentation generation
-before replacing the active view. The landscape control remains disabled
-while the Reader canvas, input and Launcher overlay handoff are integrated.
+before replacing the active view. The negotiated control selects fixed-page
+or reflow geometry according to the open edition.
 
 Run `cargo test --locked --lib fixed_session::` for the fixed-page transition
 tests. Set `READER_FIXED_VIEWPORT_CAPTURE_DIR` to capture the authored PDF in
@@ -156,7 +155,7 @@ as its scale reference. The new captures show the full chapter and page
 caption above the progress track, with Exit at the right edge. The
 Reader stages a document and draws the candidate before adoption.
 Aborting the handoff leaves the accepted source and viewport intact.
-The integrated Mac library passed 1,234 tests, with 66 opt-in tests
+The integrated Mac library passed 1,243 tests, with 66 opt-in tests
 skipped. The Reader hook tests exercise reflow and PDF, a wrong-size
 canvas, abort, retry, and switching documents while the display is
 already in the requested direction. The supported controls include
@@ -168,17 +167,22 @@ Landscape Right in the lower Screen panel and Quick Display. Selecting
 a direction saves the edition preference after the runtime confirms the
 prepared frame and the applied direction. Behind older Launchers the
 existing portrait controls remain available. Documents and its Find screen use the active orientation when
-Keep orientation is enabled. Vertical chapters and other scenes awaiting
-their viewport updates follow Launcher and retain the edition preference
-for later reading.
+Keep orientation is enabled. Japanese and Traditional Chinese vertical
+chapters stay in their native writing mode on the new viewport. Selection,
+saved notes, offline dictionary and confirmed online lookups also use the
+committed dimensions. Scenes awaiting their viewport updates follow Launcher
+and retain the edition preference for later reading.
+[Selection and lookups in landscape](landscape-selection.md)
 
 [Negotiated portrait options](screenshots/negotiated-orientation-portrait.png) ·
 [Negotiated landscape options](screenshots/negotiated-orientation-landscape.png) ·
 [Navigation in landscape](landscape-navigation.md)
 
 The Mac simulation exercises the foreground contract with a test runtime.
-The device gate includes native display readback, touch coordinates,
-physical page buttons, sleep and USB resume, and return to Launcher.
+The Oasis evdev driver accepted the per-descriptor monotonic clock on the
+two physical page keys. Full device validation covers native display
+readback, touch coordinates, queued and accepted page events, sleep and
+USB resume, and return to Launcher.
 [Shared viewport runtime](https://github.com/PrimitiveOS/kindle-primtitive-tools/tree/feature/app-viewport-runtime) ·
 [Portrait](screenshots/reading-viewport-portrait.png) ·
 [Landscape](screenshots/reading-viewport-landscape.png) ·

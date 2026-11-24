@@ -46,9 +46,9 @@ md5 = "=0.8.0"
 parley = { version = "=0.12.0", default-features = false, features = ["std", "complex-scripts"] }
 percent-encoding = "=2.3.2"
 png = "=0.17.16"
-primitive-device = { git = "https://github.com/PrimitiveOS/kindle-primtitive-tools.git", rev = "95a7f58ef1ca11931f8480c699dbaaa458eb47bf", optional = true }
-primitive-app = { git = "https://github.com/PrimitiveOS/kindle-primtitive-tools.git", rev = "95a7f58ef1ca11931f8480c699dbaaa458eb47bf", optional = true }
-primitive-ui = { git = "https://github.com/PrimitiveOS/kindle-primtitive-tools.git", rev = "95a7f58ef1ca11931f8480c699dbaaa458eb47bf", optional = true }
+primitive-device = { git = "https://github.com/PrimitiveOS/kindle-primtitive-tools.git", rev = "c8ee49b764c96c013d0fa8e9d79dfdeddbdaaecc", optional = true }
+primitive-app = { git = "https://github.com/PrimitiveOS/kindle-primtitive-tools.git", rev = "c8ee49b764c96c013d0fa8e9d79dfdeddbdaaecc", optional = true }
+primitive-ui = { git = "https://github.com/PrimitiveOS/kindle-primtitive-tools.git", rev = "c8ee49b764c96c013d0fa8e9d79dfdeddbdaaecc", optional = true }
 pulldown-cmark = { version = "=0.13.0", default-features = false, features = ["html"] }
 rars = { version = "=0.12.3", default-features = false }
 resvg = { version = "=0.50.0", default-features = false, features = ["raster-images"] }

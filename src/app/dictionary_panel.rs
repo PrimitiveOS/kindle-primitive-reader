@@ -1227,7 +1227,7 @@ impl Reader {
         let bounds = canvas.bounds();
         if view.query_editing {
             canvas.fill(bounds, 255);
-            self.draw_reading_editor_header(canvas, "Edit lookup word");
+            self.navigation_layout().header(canvas, "Edit lookup word");
             canvas.single_line_field(
                 Rect::new(40, 160, bounds.w - 80, 124),
                 &self.editor,
@@ -1242,7 +1242,8 @@ impl Reader {
         }
         if view.editing {
             canvas.fill(bounds, 255);
-            self.draw_reading_editor_header(canvas, "Find in definition");
+            self.navigation_layout()
+                .header(canvas, "Find in definition");
             canvas.single_line_field(
                 Rect::new(40, 160, bounds.w - 80, 124),
                 &self.editor,

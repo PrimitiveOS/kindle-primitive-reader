@@ -934,27 +934,6 @@ impl Reading {
         frame_span(&self.config, &self.probe) == 2
     }
 
-    pub(crate) fn note_marker_margin(
-        &self,
-        rect: HighlightRect,
-        marker: crate::highlight_style::NoteMarker,
-    ) -> i32 {
-        let width = self.probe.settings.width;
-        let screen_width = self.config.viewport.dimensions().0;
-        let leaf_x = if self.uses_facing_pages() && rect.x >= (screen_width / 2) as i32 {
-            screen_width - width
-        } else {
-            0
-        };
-        crate::note_marker::margin(
-            width,
-            self.probe.settings.right_margin(),
-            leaf_x,
-            marker,
-            false,
-        )
-    }
-
     pub(crate) fn go_to_page(&mut self, chapter: usize, page: usize) -> Result<()> {
         let next = Self::restore(self.config.clone(), chapter, page, None)?;
         if page >= next.probe.page_count() {
@@ -1491,7 +1470,7 @@ impl Reading {
             format!("Pages {first}–{last} of {count}")
         };
         format!(
-            "Chapter {} of {}  ·  {pages}",
+            "Chapter {} of {} - {pages}",
             self.chapter + 1,
             self.probe.chapter_count()
         )

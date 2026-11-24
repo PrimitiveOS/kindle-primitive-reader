@@ -596,7 +596,7 @@ impl Reader {
 
     pub(super) fn draw_online_editor(&self, canvas: &mut Canvas) {
         let Some(p) = &self.online else { return };
-        self.draw_reading_editor_header(canvas, p.field.title());
+        self.navigation_layout().header(canvas, p.field.title());
         let width = canvas.bounds().w;
         canvas.single_line_field(
             Rect::new(40, 160, width - 80, 124),

@@ -14,7 +14,7 @@ Run `cargo test --locked --lib navigation_viewport` on the host. Set the corresp
 - `READER_NAV_LANDSCAPE_GOTO` captures the PDF destination editor and its keyboard. [Go to page screenshot](screenshots/landscape-go-to-page.png)
 - `READER_NAV_LANDSCAPE_MARKS_DARK` captures flexible PDF bookmarks in dark mode. [Bookmarks screenshot](screenshots/landscape-saved-marks-dark.png)
 
-The simulation prepares the document’s landscape viewport directly. The saved-marks measurement and rendered canvas share the active viewport dimensions and the native short-edge scale. The transition repaginates the list around the first saved item on screen. The cross-book Bookmark Browser, whole-document search and match views, Contents custom-outline/settings screens, annotation action and note editors, Book Map and Page Overview still have portrait geometry. Physical display rotation and touch transformation are pending Kindle verification.
+The simulation prepares the document’s landscape viewport directly. The saved-marks measurement and rendered canvas share the active viewport dimensions and the native short-edge scale. The transition repaginates the list around the first saved item on screen. The cross-book Bookmark Browser, whole-document search and match views, Contents custom-outline/settings screens, Book Map and Page Overview still have portrait geometry. Physical display rotation and touch transformation are pending Kindle verification.
 
 ## Documents and document search
 

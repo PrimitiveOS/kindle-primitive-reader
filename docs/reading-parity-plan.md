@@ -64,6 +64,16 @@ Reader 0.1.33 adds [flexible search-result rows](flexible-search-results.md),
 Exact whole-book rendered reflow counts and foreground Kindle checks remain
 separate gates.
 
+The negotiated orientation candidate has Mac coverage for EPUB and PDF
+handoff and rollback, two-page reflow in both spine directions, vertical
+CJK, the Documents browser, Contents, Go to page, and selection and saved
+marks. The Oasis accepted the monotonic event clock on its physical page
+keys. Keep the foreground landscape milestone open through physical
+refresh, touch, routed page keys, sleep, USB and exit tests.
+[Orientation comparison and screenshots](reading-edition-orientation.md) ·
+[Document and navigation screens](landscape-navigation.md) ·
+[Selection and lookup screens](landscape-selection.md)
+
 
 - [x] Set the active Reader goal to KOReader's core Kindle reading workflows: document open/render, navigation/layout, search/lookup, bookmarks/annotations, reading progress, accessibility, offline scans, and local reading data.
 - [x] Audit all four native CREngine Render Mode masks against authored CSS and compare Reader’s existing Parley and Blitz paths. The mode control remains open for the measured layout and source-position work. [Reference and captures](render-modes.md)
