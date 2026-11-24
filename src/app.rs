@@ -1870,7 +1870,10 @@ impl Reader {
     }
 
     fn record_position_at(&mut self, now: Instant) {
-        if self.fixed_search_fit_active() || self.semi_auto_crop.is_some() {
+        if self.fixed_search_fit_active()
+            || self.crop_dialog.is_some()
+            || self.semi_auto_crop.is_some()
+        {
             return;
         }
         self.update_stats_activity(now);
@@ -6015,10 +6018,12 @@ impl Reader {
         let Some(fixed) = &self.fixed else {
             return Change::None;
         };
+        let viewport = self.reading_viewport();
+        let auto = viewport.bottom_right(AUTO_CROP);
         let (next, save) = match input {
             Input::PageBack => (original, false),
-            Input::Tap(x, y) if CANCEL_CROP.contains(x, y) => (original, false),
-            Input::Tap(x, y) if RESET_CROP.contains(x, y) => (
+            Input::Tap(x, y) if viewport.bottom_right(CANCEL_CROP).contains(x, y) => (original, false),
+            Input::Tap(x, y) if viewport.bottom_right(RESET_CROP).contains(x, y) => (
                 FixedPreferences {
                     crop: None,
                     semi_auto_crop: false,
@@ -6030,9 +6035,12 @@ impl Reader {
                 true,
             ),
             Input::Tap(x, y) => {
-                let region = if AUTO_CROP.contains(x, y) {
+                let region = if auto.contains(x, y) {
                     fixed.reading.auto_crop()
                 } else {
+                    if y >= viewport.page_height() as f32 {
+                        return Change::None;
+                    }
                     let Some(second) = fixed.reading.crop_point(x, y) else {
                         return self.report("Tap within the page");
                     };
@@ -6901,28 +6909,24 @@ impl Reader {
             fixed
                 .reading
                 .draw(canvas, None, &[], selection.as_slice(), self.page_paint());
-            canvas.fill(
-                Rect::new(
-                    0,
-                    PAGE_HEIGHT as i32,
-                    WIDTH as i32,
-                    (HEIGHT - PAGE_HEIGHT) as i32,
-                ),
-                255,
-            );
+            let viewport = fixed.reading.viewport();
+            let (width, height) = viewport.dimensions();
+            let top = viewport.page_height() as i32;
+            let auto = viewport.bottom_right(AUTO_CROP);
+            canvas.fill(Rect::new(0, top, width as i32, height as i32 - top), 255);
             let hint = if first.is_some() {
                 "Tap the opposite corner"
             } else {
                 "Tap one corner of the area to keep"
             };
             canvas.text(
-                Rect::new(28, PAGE_HEIGHT as i32 + 12, 630, 52),
+                Rect::new(28, top + 12, auto.x - 44, 52),
                 self.notice.as_deref().unwrap_or(hint),
                 CAPTION,
             );
-            draw_toolbar_button(canvas, AUTO_CROP, "Auto crop");
-            draw_toolbar_button(canvas, RESET_CROP, "Reset");
-            draw_toolbar_button(canvas, CANCEL_CROP, "Cancel");
+            draw_toolbar_button(canvas, auto, "Auto crop");
+            draw_toolbar_button(canvas, viewport.bottom_right(RESET_CROP), "Reset");
+            draw_toolbar_button(canvas, viewport.bottom_right(CANCEL_CROP), "Cancel");
             return;
         }
         if (matches!(
@@ -8174,8 +8178,8 @@ impl App for Reader {
     fn viewport_request(&self) -> Option<primitive_app::viewport::ViewportRequest> {
         use primitive_app::viewport::ViewportRequest;
 
-        // Keep the displayed turn while the next document is still locked.
-        if self.screen == Screen::PdfPassword
+        // Password entry and crop drafts belong to the currently displayed viewport.
+        if matches!(self.screen, Screen::PdfPassword | Screen::FixedCrop)
             && let Some(viewport) = self.accepted_viewport
         {
             return Some(ViewportRequest::Fixed(viewport.turn));

@@ -158,6 +158,7 @@ impl Reader {
                 | Screen::BookTools
                 | Screen::Fixed
                 | Screen::FixedTools
+                | Screen::FixedCrop
                 | Screen::Skim
                 | Screen::Definition
                 | Screen::OnlineLookup

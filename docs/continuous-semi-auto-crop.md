@@ -74,3 +74,14 @@ clips the box to the physical page. KOReader can include the outside
 area in that fit. [Stock comparison](../scripts/verify-stock-continuous-crop.lua) ·
 [Scan margin controls](screenshots/detected-crop-margin.png) ·
 [Split-page capture](screenshots/detected-crop-margin-strips.png)
+
+## Landscape crop preview
+
+Reader opens the crop preview in the accepted reading viewport. The page
+and its handles use the PDF source transform. The toolbar and its touch
+targets follow the visible bottom edge. Cancel restores the original view
+and source position. Apply stores the modified native crop seed and keeps
+the PDF’s content rotation. A live draft keeps its existing screen size
+until you apply or cancel it. KOReader also uses the active screen’s
+dimensions for the crop widget and restores the original view dimensions
+when the widget closes. [Stock crop geometry and exit](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readercropping.lua#L55-L143)

@@ -45,16 +45,19 @@ impl Reader {
 
     pub(super) fn semi_auto_crop_input(&mut self, input: Input) -> Option<Change> {
         let draft = self.semi_auto_crop?;
+        let viewport = self.reading_viewport();
         let action = match input {
             Input::PageBack => self.cancel_semi_auto_crop(draft),
-            Input::Tap(x, y) if CANCEL_CROP.contains(x, y) => self.cancel_semi_auto_crop(draft),
-            Input::Tap(x, y) if draft.manual && AUTO.contains(x, y) => {
+            Input::Tap(x, y) if viewport.bottom_right(CANCEL_CROP).contains(x, y) => {
+                self.cancel_semi_auto_crop(draft)
+            }
+            Input::Tap(x, y) if draft.manual && viewport.bottom_right(AUTO).contains(x, y) => {
                 self.apply_native_pdf_crop(draft, CropEdit::Auto)
             }
-            Input::Tap(x, y) if draft.manual && RESET.contains(x, y) => {
+            Input::Tap(x, y) if draft.manual && viewport.bottom_right(RESET).contains(x, y) => {
                 self.apply_native_pdf_crop(draft, CropEdit::Reset)
             }
-            Input::Tap(x, y) if APPLY.contains(x, y) => {
+            Input::Tap(x, y) if viewport.bottom_right(APPLY).contains(x, y) => {
                 let edit = if draft.manual {
                     CropEdit::Manual(draft.seed)
                 } else {
@@ -62,7 +65,9 @@ impl Reader {
                 };
                 self.apply_native_pdf_crop(draft, edit)
             }
-            Input::Tap(x, y) => self.adjust_semi_auto_crop(draft, x, y),
+            Input::Tap(x, y) if y < viewport.page_height() as f32 => {
+                self.adjust_semi_auto_crop(draft, x, y)
+            }
             _ => return Some(Change::None),
         };
         Some(match action {
@@ -138,6 +143,9 @@ impl Reader {
             return false;
         };
         let reading = &fixed.reading;
+        let viewport = reading.viewport();
+        let (width, height) = viewport.dimensions();
+        let top = viewport.page_height() as i32;
         reading.draw(canvas, None, &[], &[], self.page_paint());
         if let Some(bounds) = draft
             .seed
@@ -154,8 +162,8 @@ impl Reader {
                 let rect = Rect::new(
                     x,
                     y,
-                    rect.right().min(WIDTH as i32) - x,
-                    rect.bottom().min(PAGE_HEIGHT as i32) - y,
+                    rect.right().min(width as i32) - x,
+                    rect.bottom().min(top) - y,
                 );
                 if rect.w > 0 && rect.h > 0 {
                     canvas.picture(
@@ -184,29 +192,23 @@ impl Reader {
                 }
             }
         }
-        canvas.fill(
-            Rect::new(
-                0,
-                PAGE_HEIGHT as i32,
-                WIDTH as i32,
-                (HEIGHT - PAGE_HEIGHT) as i32,
-            ),
-            255,
-        );
-        let (label_width, help) = if draft.manual {
-            draw_toolbar_button(canvas, AUTO, "Auto crop");
-            draw_toolbar_button(canvas, RESET, "Reset");
-            (445, "Adjust the crop handles")
+        canvas.fill(Rect::new(0, top, width as i32, height as i32 - top), 255);
+        let auto = viewport.bottom_right(AUTO);
+        let apply = viewport.bottom_right(APPLY);
+        let (first_button, help) = if draft.manual {
+            draw_toolbar_button(canvas, auto, "Auto crop");
+            draw_toolbar_button(canvas, viewport.bottom_right(RESET), "Reset");
+            (auto, "Adjust the crop handles")
         } else {
-            (798, "Tap near an edge or corner to adjust the crop")
+            (apply, "Tap near an edge or corner to adjust the crop")
         };
         canvas.text(
-            Rect::new(28, PAGE_HEIGHT as i32 + 12, label_width, 52),
+            Rect::new(28, top + 12, first_button.x - 56, 52),
             self.notice.as_deref().unwrap_or(help),
             CAPTION,
         );
-        draw_toolbar_button(canvas, APPLY, "Apply");
-        draw_toolbar_button(canvas, CANCEL_CROP, "Cancel");
+        draw_toolbar_button(canvas, apply, "Apply");
+        draw_toolbar_button(canvas, viewport.bottom_right(CANCEL_CROP), "Cancel");
         true
     }
 }
@@ -227,6 +229,117 @@ mod tests {
 
     fn fixed(app: &Reader) -> &FixedReading {
         &app.fixed.as_ref().unwrap().reading
+    }
+
+    #[test]
+    fn crop_viewport_keeps_the_rotated_pdf_source_on_cancel_and_apply() {
+        use primitive_app::viewport::{LogicalTurn, Viewport, ViewportDecision, ViewportRequest};
+
+        let paths = Fixture::new();
+        let path = paths.root.join("Landscape crop sample.pdf");
+        let bytes = fixture();
+        fs::write(&path, &bytes).unwrap();
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        let font_paths = fonts
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>();
+        let mut app = Reader::open(&paths.root, &paths.state, fonts).unwrap();
+        app.open_path(&path).unwrap();
+        app.activate(Action::SetReadingControls(ReadingControls {
+            overlap_footer: true,
+            ..app.controls
+        }))
+        .unwrap();
+        app.activate(Action::SetFixedRotation(1)).unwrap();
+        let target = Viewport {
+            generation: 1,
+            turn: LogicalTurn::Clockwise,
+            logical_size: (1680, 1264),
+        };
+        let mut canvas = Canvas::new_viewport(1680, 1264, WIDTH, &font_paths).unwrap();
+        app.stage_viewport(target).unwrap();
+        canvas.begin();
+        app.draw_staged_viewport(&mut canvas).unwrap();
+        canvas.finish(false);
+        app.finish_viewport(target, ViewportDecision::Commit);
+        let viewport = app.reading_viewport();
+        let original = fixed(&app).preferences();
+        let location = app.current_history_location();
+        let id = app.open_book_id().unwrap();
+        let apply = viewport.bottom_right(APPLY);
+        let cancel = viewport.bottom_right(CANCEL_CROP);
+        assert!(cancel.x > WIDTH as i32 && cancel.bottom() < 1264);
+        assert_eq!(fixed(&app).page_viewport().unwrap().1.height, 1264);
+        app.activate(Action::SemiAutoCrop).unwrap();
+        assert_eq!(app.screen, Screen::FixedCrop);
+        assert_eq!(
+            app.viewport_request(),
+            Some(ViewportRequest::Fixed(target.turn))
+        );
+        assert!(!app.viewport_needs_stage(target));
+        assert_eq!(
+            fixed(&app).page_viewport().unwrap().1.height,
+            viewport.page_height()
+        );
+        assert!(
+            app.stage_viewport(Viewport {
+                generation: 2,
+                turn: LogicalTurn::Upright,
+                logical_size: (1264, 1680),
+            })
+            .is_err()
+        );
+        assert_eq!(app.input(tap_center(CANCEL_CROP)), Change::None);
+        assert_eq!(app.input(tap_center(cancel)), Change::Partial);
+        assert_eq!(app.screen, Screen::Fixed);
+        assert_eq!(app.current_history_location(), location);
+        assert_eq!(fixed(&app).preferences(), original);
+        assert_eq!(fixed(&app).page_viewport().unwrap().1.height, 1264);
+
+        app.activate(Action::SemiAutoCrop).unwrap();
+        let draft = app.semi_auto_crop.unwrap();
+        let before = draft.seed.normalized(draft.size).unwrap();
+        let source_x = before.x0 + (before.x1 - before.x0) * 0.12;
+        let source_y = (before.y0 + before.y1) * 0.5;
+        let source = normalized_box(
+            source_x - 0.001,
+            source_y - 0.001,
+            source_x + 0.001,
+            source_y + 0.001,
+        );
+        let tap = fixed(&app).visible_rectangle(0, source).unwrap().center();
+        assert_eq!(
+            app.input(Input::Tap(tap.x as f32, tap.y as f32)),
+            Change::Partial
+        );
+        let changed = app.semi_auto_crop.unwrap().seed;
+        let bounds = changed.normalized(draft.size).unwrap();
+        assert!((bounds.x0 - source_x).abs() < 0.001);
+        assert_eq!(bounds.y0, before.y0);
+        assert_eq!(bounds.x1, before.x1);
+        assert_eq!(bounds.y1, before.y1);
+        assert!(app.library.state(id).unwrap().pdf_crop_seeds.is_empty());
+        let frame = primitive_app::frame(&app, &mut canvas, false);
+        let (width, height) = viewport.dimensions();
+        let footer = &frame[viewport.page_height() as usize * width as usize..];
+        assert!(footer.iter().any(|&ink| ink < 50));
+        if let Some(path) = std::env::var_os("READER_LANDSCAPE_CROP_CAPTURE") {
+            primitive_app::write_png(Path::new(&path), width, height, &frame).unwrap();
+        }
+        assert_eq!(app.input(tap_center(apply)), Change::Partial);
+        assert_eq!(app.screen, Screen::Fixed);
+        assert_eq!(app.reading_viewport(), viewport);
+        assert_eq!(fixed(&app).preferences().turns, original.turns);
+        assert_eq!(app.current_position().unwrap().page, 0);
+        assert_eq!(
+            app.library.state(id).unwrap().pdf_crop_seeds.get(0),
+            Some(changed)
+        );
+        assert_eq!(fs::read(path).unwrap(), bytes);
     }
 
     #[test]

@@ -37,6 +37,9 @@ pub(super) struct Stage {
 impl Reader {
     pub(super) fn prepare_reading_viewport(&self, target: ReadingViewport) -> Result<Stage> {
         let from = self.reading_viewport();
+        if target != from && self.screen == Screen::FixedCrop {
+            return Err("Finish the crop preview before changing the screen size".into());
+        }
         let candidate = if target == from {
             Candidate::Current
         } else if let Some(book) = &self.active {
