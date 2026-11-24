@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.45
+
+- Show optional reading guides with configurable thickness, margin, intensity, and movement.
+- Inspect the original publisher markup for a verified selection within one EPUB chapter.
+
 ## 0.1.44
 
 - Set per-book line spacing for PDF text and scan reflow.

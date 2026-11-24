@@ -50,7 +50,7 @@ parity; many reading requirements and the foreground Kindle acceptance gates
 remain open.
 
 **Control evidence snapshot:** 224 of 536 in-scope reading-control rows have
-an implemented workflow, 238 are partial, 50 are gaps, and 24 need audit. The
+an implemented workflow, 239 are partial, 49 are gaps, and 24 need audit. The
 [statistics reset comparison](reading-statistics.md#reset-statistics) updates
 seven rows with an executable stock check and Mac verification.
 Reader 0.1.32 adds [search from selection](selection-search.md),
