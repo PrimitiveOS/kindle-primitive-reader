@@ -174,13 +174,17 @@ committed dimensions. Scenes awaiting their viewport updates follow Launcher
 and retain the edition preference for later reading.
 [Selection and lookups in landscape](landscape-selection.md)
 
-The combined workflow passed 1,252 Mac tests with 66 opt-in cases skipped.
-It included cross-book Bookmark Browser, full-document search and live
-results rotation, Book Map, Page Overview, Footnote, View HTML, and the
-personal hyphenation editor.
+The combined workflow passed 1,258 Mac tests with 66 opt-in cases skipped.
+It covered cross-book Bookmark Browser, full-document search and live
+results rotation, Book Map, Page Overview, Footnote, View HTML, the personal
+hyphenation editor, encrypted PDF entry, and custom Contents. A delayed
+callback from a superseded viewport leaves the current proposal and the
+edition’s orientation preference intact.
 [Search screenshots](landscape-document-search.md) ·
 [Reading tools](landscape-reading-tools.md) ·
-[Visual navigation](reading-orientation-contract.md#book-map-and-page-overview)
+[Visual navigation](reading-orientation-contract.md#book-map-and-page-overview) ·
+[Custom Contents](landscape-custom-contents.md) ·
+[PDF unlock](reading-orientation-contract.md#unlocking-a-pdf)
 
 [Negotiated portrait options](screenshots/negotiated-orientation-portrait.png) ·
 [Negotiated landscape options](screenshots/negotiated-orientation-landscape.png) ·

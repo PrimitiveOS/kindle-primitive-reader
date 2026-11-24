@@ -41,3 +41,12 @@ PrimitiveOS Page Overview adapts its four thumbnail slots from two rows in portr
 The host `visual_navigation` tests render authored EPUB and PDF fixtures through the viewport transaction at 1264 × 1680 and 1680 × 1264. They cover both landscape turns, portrait return, aborted presentation, far-right taps, track swipes, physical page events and bookmark actions. Set `READER_VISUAL_NAVIGATION_CAPTURE_DIR` when running `cargo test --locked --lib visual_navigation` to write the portrait and landscape captures.
 
 [Page Overview](screenshots/landscape-page-overview.png) · [Fixed-page Book Map](screenshots/landscape-fixed-book-map.png) · [Reflow chapter map](screenshots/landscape-chapter-map.png)
+
+
+## Unlocking a PDF
+
+The secure password prompt keeps the accepted turn and masks typed characters.
+A failed password leaves the same prompt open. Cancel restores the previous
+book or browser, and authentication prepares the saved PDF page at the
+accepted size before applying the edition’s orientation preference.
+[Masked landscape prompt](screenshots/landscape-unlock-pdf.png)
