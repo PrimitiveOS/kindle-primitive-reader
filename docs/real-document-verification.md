@@ -241,6 +241,202 @@ folder action, the dictionary close control, both clippings screens and
 column or row zoom. The folder listing differed by two grayscale pixels.
 [Current book folder](screenshots/current-book-folder.png) · [Dictionary lookup](screenshots/dictionary-close-stack.png) · [Clippings options](screenshots/export-kindle-clippings-options.png) · [Scan zoom](screenshots/fixed-tile-zoom.png)
 
+## Reader 0.1.47 release on the Oasis
+
+Store installed the published ARMHF package with both Reader licenses. The
+installed executable matched the release. The public catalog returned the ZIP
+digest and size below.
+[GitHub release](https://github.com/PrimitiveOS/kindle-primitive-reader/releases/tag/v0.1.47) · [Package workflow](https://github.com/PrimitiveOS/kindle-primitive-reader/actions/runs/45378885083) · [Store entry](https://primitiveos.github.io/kindle-primitive-catalog/v1/apps/primitive-reader.json)
+
+| Verified file | SHA-256 | Bytes |
+| --- | --- | ---: |
+| ARMHF ZIP | `146bdef5cc578269ee3c6459cd7f5be7e45816e18b17a98ab542bb518f9c2378` | 21,826,809 |
+| Kindle executable | `caad181f44fdc4b3712072d9ddadcb8a8ea445b1b19a00fe1e9749c75269a5ce` | 34,879,752 |
+
+The release opened each original in an isolated Reader profile, advanced to a
+changed frame, verified its source digest and resumed the saved position after
+restart. Times end when Reader has the first grayscale frame in memory.
+
+| File type | Bytes | First frame | Advance and resume |
+| --- | ---: | ---: | --- |
+| EPUB | 436,947 | 1,913 ms | Passed |
+| PDF | 2,005,917 | 812 ms | Passed |
+| AZW3 | 590,896 | 1,067 ms | Passed |
+| MOBI | 625,173 | 2,152 ms | Passed |
+
+The 1,222 automated Oasis checks cover contextual Wikipedia illustrations and the optional publisher layout changes.
+All 7 captured native frames matched the Mac simulator PNGs
+byte for byte. Physical touch and panel refresh have separate checks.
+[Verification plan](execution-plan.md#reader-0147-verification-plan)
+
+## Reader 0.1.46 release on the Oasis
+
+Store installed the published ARMHF package with both Reader licenses. The
+installed executable matched the release. The public catalog returned the ZIP
+digest and size below.
+[GitHub release](https://github.com/PrimitiveOS/kindle-primitive-reader/releases/tag/v0.1.46) · [Package workflow](https://github.com/PrimitiveOS/kindle-primitive-reader/actions/runs/45374850684) · [Store entry](https://primitiveos.github.io/kindle-primitive-catalog/v1/apps/primitive-reader.json)
+
+| Verified file | SHA-256 | Bytes |
+| --- | --- | ---: |
+| ARMHF ZIP | `7c9b5adc8cf47b73d1c1ac285ad71fb001b3e641138e9a27129c8feef7cb3ad1` | 21,723,814 |
+| Kindle executable | `b8c5bbf795b497c4c3345046eb4a3dad80a4c754382bffa44363833a57cf1f49` | 34,636,968 |
+
+The release opened each original in an isolated Reader profile, advanced to a
+changed frame, verified its source digest and resumed the saved position after
+restart. Times end when Reader has the first grayscale frame in memory.
+
+| File type | Bytes | First frame | Advance and resume |
+| --- | ---: | ---: | --- |
+| EPUB | 436,947 | 1,575 ms | Passed |
+| PDF | 2,005,917 | 770 ms | Passed |
+| AZW3 | 590,896 | 890 ms | Passed |
+| MOBI | 625,173 | 1,952 ms | Passed |
+
+The 1,202 automated Oasis checks cover saved Skim placement, ten-page jumps, and restored opening location history.
+All 4 captured native frames matched the Mac simulator PNGs
+byte for byte. Physical touch and panel refresh have separate checks.
+[Verification plan](execution-plan.md#reader-0146-verification-plan)
+
+## Reader 0.1.45 release on the Oasis
+
+Store installed the published ARMHF package with both Reader licenses. The
+installed executable matched the release. The public catalog returned the ZIP
+digest and size below.
+[GitHub release](https://github.com/PrimitiveOS/kindle-primitive-reader/releases/tag/v0.1.45) · [Package workflow](https://github.com/PrimitiveOS/kindle-primitive-reader/actions/runs/45372065770) · [Store entry](https://primitiveos.github.io/kindle-primitive-catalog/v1/apps/primitive-reader.json)
+
+| Verified file | SHA-256 | Bytes |
+| --- | --- | ---: |
+| ARMHF ZIP | `571095e3ce68beb36496ec2317ed59acdfa40e5ab856149401692bae9f3c813e` | 21,732,421 |
+| Kindle executable | `afd9ebbb078718753edadc7c0c26a64bbd08e74a0240eab82e5b7cac295b1a21` | 34,678,952 |
+
+The release opened each original in an isolated Reader profile, advanced to a
+changed frame, verified its source digest and resumed the saved position after
+restart. Times end when Reader has the first grayscale frame in memory.
+
+| File type | Bytes | First frame | Advance and resume |
+| --- | ---: | ---: | --- |
+| EPUB | 436,947 | 1,618 ms | Passed |
+| PDF | 2,005,917 | 812 ms | Passed |
+| AZW3 | 590,896 | 931 ms | Passed |
+| MOBI | 625,173 | 2,083 ms | Passed |
+
+The 1,198 automated Oasis checks cover reading guides and selection markup.
+All 6 captured native frames matched the Mac simulator PNGs
+byte for byte. Physical touch and panel refresh have separate checks.
+[Verification plan](execution-plan.md#reader-0145-verification-plan)
+
+## Reader 0.1.44 release on the Oasis
+
+Store installed the published ARMHF package with both Reader licenses. The
+installed executable matched the release. The public catalog returned the ZIP
+digest and size below.
+[GitHub release](https://github.com/PrimitiveOS/kindle-primitive-reader/releases/tag/v0.1.44) · [Package workflow](https://github.com/PrimitiveOS/kindle-primitive-reader/actions/runs/45370501220) · [Store entry](https://primitiveos.github.io/kindle-primitive-catalog/v1/apps/primitive-reader.json)
+
+| Verified file | SHA-256 | Bytes |
+| --- | --- | ---: |
+| ARMHF ZIP | `f11145bbf5e2552e4c572e16a07fb7c655b0a4819376ff78041ef00792b61994` | 21,723,051 |
+| Kindle executable | `677237fe302048314dbbf45e481bde54c60939a89e223138a7d59afbe96948eb` | 34,652,728 |
+
+The release opened each original in an isolated Reader profile, advanced to a
+changed frame, verified its source digest and resumed the saved position after
+restart. Times end when Reader has the first grayscale frame in memory.
+
+| File type | Bytes | First frame | Advance and resume |
+| --- | ---: | ---: | --- |
+| EPUB | 436,947 | 1,793 ms | Passed |
+| PDF | 2,005,917 | 1,112 ms | Passed |
+| AZW3 | 590,896 | 904 ms | Passed |
+| MOBI | 625,173 | 2,542 ms | Passed |
+
+The 1,190 automated Oasis checks cover scan reflow spacing, named annotation exports, period statistics reset and per-book portrait settings.
+All 11 captured native frames matched the Mac simulator PNGs
+byte for byte. Physical touch and panel refresh have separate checks.
+[Verification plan](execution-plan.md#reader-0144-verification-plan)
+
+## Reader 0.1.43 release on the Oasis
+
+Store installed the published ARMHF package with both Reader licenses. The
+installed executable matched the release, and the public catalog returned the
+same ZIP digest and size.
+[GitHub release](https://github.com/PrimitiveOS/kindle-primitive-reader/releases/tag/v0.1.43) · [Package workflow](https://github.com/PrimitiveOS/kindle-primitive-reader/actions/runs/45366408798) · [Store entry](https://primitiveos.github.io/kindle-primitive-catalog/v1/apps/primitive-reader.json)
+
+| Verified file | SHA-256 | Bytes |
+| --- | --- | ---: |
+| ARMHF ZIP | `89edbe003b1f054e936841ad47e310089e1e7ce3df9658c29bab4da4ba5fa0f8` | 21,698,084 |
+| Kindle executable | `8e2584e9deb47f4a9021103b4412034946b0a7ee91fccaa0b8203d1ef802790f` | 34,596,072 |
+
+The release opened each original in an isolated Reader profile, advanced to
+a changed frame, verified its source digest and resumed after restart. Times
+end when Reader has the first grayscale frame in memory.
+
+| File type | Bytes | First frame | Advance and resume |
+| --- | ---: | ---: | --- |
+| EPUB | 436,947 | 1,552 ms | Passed |
+| PDF | 2,005,917 | 800 ms | Passed |
+| AZW3 | 590,896 | 868 ms | Passed |
+| MOBI | 625,173 | 1,956 ms | Passed |
+
+The 1,175 automated Oasis checks cover detected PDF crop margins and all eight
+reading time-range reports. All four native screenshots matched the Mac
+simulator PNGs byte for byte. Physical touch and panel refresh
+have separate checks. [Verification plan](execution-plan.md#reader-0143-verification-plan)
+
+## Reader 0.1.42 release on the Oasis
+
+Store installed the published ARMHF package with both Reader licenses. The
+installed executable matched the release, and the public catalog returned the
+same ZIP digest and size.
+[GitHub release](https://github.com/PrimitiveOS/kindle-primitive-reader/releases/tag/v0.1.42) · [Package workflow](https://github.com/PrimitiveOS/kindle-primitive-reader/actions/runs/45362367701) · [Store entry](https://primitiveos.github.io/kindle-primitive-catalog/v1/apps/primitive-reader.json)
+
+| Verified file | SHA-256 | Bytes |
+| --- | --- | ---: |
+| ARMHF ZIP | `bf41edc8d034f6b2dfb8bdef9648e44a973b7ed348dd72882072e1f0b61376b1` | 21,686,023 |
+| Kindle executable | `be67ede45f80642de254b19005ce70fd9879afee419d3224c8c77e3ec1e0ab1b` | 34,540,552 |
+
+The release opened each original in an isolated Reader profile, advanced to
+a changed frame, verified its source digest and resumed after restart. Times
+end when Reader has the first grayscale frame in memory.
+
+| File type | Bytes | First frame | Advance and resume |
+| --- | ---: | ---: | --- |
+| EPUB | 436,947 | 1,603 ms | Passed |
+| PDF | 2,005,917 | 984 ms | Passed |
+| AZW3 | 590,896 | 944 ms | Passed |
+| MOBI | 625,173 | 2,229 ms | Passed |
+
+The 1,171 automated Oasis checks cover scan contrast, local book archiving
+and a swipe to the last bookmark. Five of six frames matched the simulator,
+with a two-pixel label difference on the post-archive Library screen. Physical touch and panel refresh
+have separate checks. [Verification plan](execution-plan.md#reader-0142-verification-plan)
+
+## Reader 0.1.41 release on the Oasis
+
+Store installed the published ARMHF package with both Reader licenses. The
+installed executable matched the release, and the public catalog returned the
+same ZIP digest and size.
+[GitHub release](https://github.com/PrimitiveOS/kindle-primitive-reader/releases/tag/v0.1.41) · [Package workflow](https://github.com/PrimitiveOS/kindle-primitive-reader/actions/runs/45359703971) · [Store entry](https://primitiveos.github.io/kindle-primitive-catalog/v1/apps/primitive-reader.json)
+
+| Verified file | SHA-256 | Bytes |
+| --- | --- | ---: |
+| ARMHF ZIP | `f1e6d0e398b7ba31a6425abeef2e20416c9cf6c0bbf8c2a31b03ea73b715a540` | 21,631,505 |
+| Kindle executable | `941984e4e8282e8d24d215fd752562606e9b883450f7862f17b60f351da9828b` | 34,431,496 |
+
+The release opened each original in an isolated Reader profile, advanced to
+a changed frame, verified its source digest and resumed after restart. Times
+end when Reader has the first grayscale frame in memory.
+
+| File type | Bytes | First frame | Advance and resume |
+| --- | ---: | ---: | --- |
+| EPUB | 436,947 | 1,558 ms | Passed |
+| PDF | 2,005,917 | 808 ms | Passed |
+| AZW3 | 590,896 | 850 ms | Passed |
+| MOBI | 625,173 | 2,031 ms | Passed |
+
+The 1,155 automated Oasis checks cover per-page scrolling PDF crops,
+reading-based folder orders and statistics reset. Five of six frames matched
+the simulator, with a two-pixel label difference on the folder picker. Physical touch and panel refresh
+have separate checks. [Verification plan](execution-plan.md#reader-0141-verification-plan)
+
 ## Reader 0.1.40 release on the Oasis
 
 Store installed the published ARMHF package with both Reader licenses. The
