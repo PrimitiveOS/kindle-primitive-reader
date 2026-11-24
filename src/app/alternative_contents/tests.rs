@@ -208,6 +208,7 @@ fn alternative_markers_resolve_cross_spine_heading_pages_for_header_footer_and_s
     long_marker_fixture(&path);
     let mut reader = open(&fixture, &path);
     reader.activate(Action::TopStatusHeader(true)).unwrap();
+    reader.controls.top_header.clock = false;
     prompt(&mut reader);
     apply(&mut reader);
     complete(&mut reader);
