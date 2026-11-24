@@ -75,6 +75,9 @@ pub(crate) struct ReadingControls {
     /// Reader-wide appearance of the in-book saved marks list.
     #[serde(skip_serializing_if = "ListDensity::is_default")]
     pub bookmark_density: ListDensity,
+    /// Fit more bookmark or note text inside the same fixed-height row.
+    #[serde(skip_serializing_if = "is_false")]
+    pub bookmark_shrink_to_fit: bool,
     /// Reader-wide appearance of the Contents list.
     #[serde(skip_serializing_if = "ListDensity::is_default")]
     pub contents_density: ListDensity,

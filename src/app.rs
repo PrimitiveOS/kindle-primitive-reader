@@ -1963,6 +1963,20 @@ impl Reader {
                     .detail(self.controls.annotation_list_text.label()),
                 );
                 items.extend(self.list_density_items(list_density::Scope::Bookmarks));
+                items.push(
+                    Item::new(
+                        "Shrink bookmark font size to fit more text",
+                        Action::SetReadingControls(ReadingControls {
+                            bookmark_shrink_to_fit: !self.controls.bookmark_shrink_to_fit,
+                            ..self.controls
+                        }),
+                    )
+                    .detail(if self.controls.bookmark_shrink_to_fit {
+                        "On"
+                    } else {
+                        "Off"
+                    }),
+                );
                 return items;
             }
             Screen::AnnotationListSettings => {
@@ -2694,7 +2708,10 @@ impl Reader {
                     );
                     let caption = reflow_location_label(active, location);
                     let note = mark.note.as_deref().filter(|note| !note.trim().is_empty());
-                    let excerpt = bookmark_excerpt(&mark.selection.text);
+                    let excerpt = bookmark_excerpt(
+                        &mark.selection.text,
+                        self.controls.bookmark_shrink_to_fit,
+                    );
                     let title = match self.controls.annotation_list_text {
                         AnnotationListText::HighlightedText
                         | AnnotationListText::HighlightAndNote => excerpt,
@@ -2732,7 +2749,8 @@ impl Reader {
                     let location = (0, mark.page, 0, 0);
                     let caption = format!("Page {}", mark.page + 1);
                     let note = mark.note.as_deref().filter(|note| !note.trim().is_empty());
-                    let excerpt = bookmark_excerpt(&mark.text);
+                    let excerpt =
+                        bookmark_excerpt(&mark.text, self.controls.bookmark_shrink_to_fit);
                     let title = match self.controls.annotation_list_text {
                         AnnotationListText::HighlightedText
                         | AnnotationListText::HighlightAndNote => excerpt,
@@ -8833,8 +8851,11 @@ fn reflow_location_label(active: &ActiveBook, location: (usize, usize, usize, us
     format!("{chapter} · Page {}", location.1 + 1)
 }
 
-fn bookmark_excerpt(text: &str) -> String {
+fn bookmark_excerpt(text: &str, fit_more: bool) -> String {
     let mut words = text.split_whitespace();
+    if fit_more {
+        return words.collect::<Vec<_>>().join(" ");
+    }
     let excerpt = words.by_ref().take(22).collect::<Vec<_>>().join(" ");
     if words.next().is_some() {
         format!("{excerpt}…")

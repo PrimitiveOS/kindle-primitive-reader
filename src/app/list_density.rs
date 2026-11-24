@@ -261,6 +261,14 @@ pub(super) fn reference_scale() -> ScaleContext {
 }
 
 pub(super) fn list_text_pixels(logical: u8, row_height: i32) -> i32 {
+    font_pixels(fit_logical_font(logical, row_height))
+}
+
+pub(super) fn font_pixels(logical: u8) -> i32 {
+    (reference_scale().scaled_pixels(f64::from(logical)) as i32).max(1)
+}
+
+pub(super) fn fit_logical_font(logical: u8, row_height: i32) -> u8 {
     let scale = reference_scale();
     let rule = scale.scaled_pixels(1.) as i32;
     // Like KOReader's MenuItem, reserve two rules and 30% of an em for
@@ -268,7 +276,6 @@ pub(super) fn list_text_pixels(logical: u8, row_height: i32) -> i32 {
     let available = (row_height - 2 * rule) * 10 / 13;
     (1..=logical)
         .rev()
-        .map(|size| scale.scaled_pixels(f64::from(size)) as i32)
-        .find(|&size| size <= available)
-        .unwrap_or(1)
+        .find(|&size| (scale.scaled_pixels(f64::from(size)) as i32) <= available)
+        .unwrap_or(0)
 }
