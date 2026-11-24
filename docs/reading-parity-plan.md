@@ -48,8 +48,8 @@ only to find and compare relevant controls.
 device evidence. The control inventory and foreground Kindle acceptance
 checks below track the remaining feature and device work.
 
-**Pinned control inventory:** 242 of 536 in-scope reading-control rows have
-an implemented workflow, 231 are partial, 45 are gaps, and 18 need audit. The
+**Pinned control inventory:** 249 of 537 in-scope reading-control rows have
+an implemented workflow, 226 are partial, 44 are gaps, and 18 need audit. The
 [statistics reset comparison](reading-statistics.md#reset-statistics) updates
 seven rows with an executable stock check and Mac verification. The
 [corner hold comparison](corner-hold-gestures.md) covers the ignore toggle,
@@ -169,7 +169,7 @@ The combined constraint and signed-margin policies preserve unclipped text
 positions when a wide publisher box extends beyond the physical screen.
 The measured Book and Web policies also size `fit-content` paragraphs
 to their text, including supported horizontal padding and solid borders.
-Full Render Mode behavior and its user-facing choices remain open.
+The Layout panel now switches the four combined policies in eligible single-page EPUBs. Broader publisher geometry and Kindle acceptance remain open.
 On supported EPUBs, typography edits now preserve the active passage and
 rebuild the whole-book screen-page index when reading resumes, even with
 the header off. Bounded horizontal text EPUBs offer a saved whole-book
@@ -181,10 +181,13 @@ other typography controls and broader publication types remains open.
 
 - [x] Set the active Reader goal to KOReader's core Kindle reading workflows: document open/render, navigation/layout, search/lookup, bookmarks/annotations, reading progress, accessibility, offline scans, and local reading data.
 - [x] Save per-book typography language and the embedded-tag switch. Compare the stock 53 choices and default/fallback precedence, real English line breaks, and source-anchor preservation. Broader language rules remain open. [Typography language](english-hyphenation.md#typography-language)
+- [x] Expose per-book hyphenation enable, dictionary, algorithmic and soft-only modes, fitting publisher-mark precedence, and global minimum letters. Verify defaults, anchored reflow and failed-save rollback. [Hyphenation options](english-hyphenation.md#hyphenation-options)
+- [x] Verify the existing bounded custom content DPI picker and initial preset behavior against the control inventory. [Content scaling](render-dpi.md)
+- [x] Compose current page in chapter and flexible spacing in the custom footer while retaining the default caption, progress ticks and Exit. [Footer composition](footer-composition.md)
 - [x] Group local dictionary results by source, with nested lookup and a return to the exact chooser page and original passage. Compare the stock Results tap and hold on EPUB and PDF. [Grouped dictionaries](shared-dictionaries.md#choosing-among-matching-sources)
 - [x] Compose explicit trailing EPUB notes in an in-page band. Match saved book choice, live default, the master style switch, canonical link and selection positions, and long-note continuation. Wider note layouts remain open. [In-page footnotes](in-page-footnotes.md)
-- [x] Implement horizontal, text-only inline-block geometry for the supported Flat, Book and Web policies. Check native width, atomic page carry, links and selections. The four-mode selector and broader content remain open. [Inline-block comparison](render-modes.md#text-only-inline-blocks)
-- [x] Audit all four native CREngine Render Mode masks against authored CSS and compare Reader’s existing Parley and Blitz paths. The mode control remains open for the measured layout and source-position work. [Reference and captures](render-modes.md)
+- [x] Implement horizontal, text-only inline-block geometry for the supported Flat, Book and Web policies. Check native width, atomic page carry, links and selections. Complex inline content remains open. [Inline-block comparison](render-modes.md#text-only-inline-blocks)
+- [x] Audit all four native CREngine Render Mode masks against authored CSS and compare Reader’s existing Parley and Blitz paths. The merged policies now have per-edition and new-book settings with device verification pending. [Reference and captures](render-modes.md#composed-policies-in-reader)
 - [x] Recount exact screen pages after committed typography edits for supported EPUBs. Check canonical position, ordinary opens, paint-only edits, rollback, sleep, USB and immediate Go to page after completion. [Native comparison and Mac captures](whole-book-screen-pages.md#partial-typography-rendering-comparison)
 - [x] Prepare and commit complete layouts for live font-size edits in bounded text EPUBs. Verify per-book and default preferences, current source focus, old-frame navigation and cached chapter reuse. [Font size rendering](whole-book-screen-pages.md#choose-how-to-render-font-size-changes)
 - [x] Match the normal Book Map's browser-on-tap and direct jump options in the Mac simulator. Check focused EPUB and PDF previews, cancel back to the same map, and one return entry on commit. [Book Map evidence](reading-orientation-contract.md#book-map-and-page-overview)

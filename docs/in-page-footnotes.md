@@ -44,6 +44,13 @@ saved edition override before checking the native rendered note bands.
 [Reader continuation](screenshots/in-page-reader-note-only.png) ·
 [KOReader continuation](screenshots/in-page-stock-note-only.png)
 
+The normal style-control path also ran on two original EPUBs through 14
+chapters with marked references. Every toggle kept the reading position and
+both original byte sequences matched. These chapters used the ordinary
+layout. The structural audit found media in six chapters of one original
+and interleaved targets in six chapters of the other. Note-band rendering
+and repeated same-source resume were verified with the authored EPUB.
+
 ## Replay on macOS
 
 Run the Reader tests on the [deterministic authored EPUB](../tests/fixtures/in-page-footnotes.epub).

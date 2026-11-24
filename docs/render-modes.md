@@ -381,7 +381,7 @@ word taps in the left user margin in Web. A separate 50% indent test adds
 the stock intrinsic measurement. Coverage is limited to ordinary
 paragraphs in the body or width-neutral wrappers. Negative and hanging
 indents and extremely narrow width constraints use the ordinary layout
-path. The complete Render Mode control remains open.
+path. The [combined policies](#composed-policies-in-reader) cover supported EPUB layouts.
 
 Generate the sample with `python3 scripts/generate-render-width-margins-fixture.py --fit-content`.
 Pass `fit-content` after the capture directory to the Lua oracle. Run
