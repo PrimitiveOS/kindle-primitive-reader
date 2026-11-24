@@ -83,6 +83,13 @@ pub(crate) struct ReadingControls {
     /// Flexible in-book mark rows are disabled when absent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bookmark_max_lines: Option<u8>,
+    /// A saved profile from before this switch keeps its existing separators.
+    #[serde(default = "legacy_bookmark_separators")]
+    pub bookmark_list_separators: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    pub bookmark_show_highlight_colors: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    pub bookmark_show_default_color: bool,
     /// Reader-wide appearance of the Contents list.
     #[serde(skip_serializing_if = "ListDensity::is_default")]
     pub contents_density: ListDensity,
@@ -1301,6 +1308,10 @@ impl ReadingControls {
             other => other,
         }
     }
+}
+
+fn legacy_bookmark_separators() -> bool {
+    true
 }
 
 #[cfg(test)]

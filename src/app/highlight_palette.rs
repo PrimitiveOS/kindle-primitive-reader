@@ -34,7 +34,7 @@ pub(super) fn draw(
         let chosen = selected(color) != canvas.control_pressed(rect, false);
         canvas.panel(rect, 16, 4, if chosen { 0 } else { 255 });
         let sample = Rect::new(rect.x + 20, rect.y + 38, 48, 48);
-        canvas.panel(sample, 4, 2, color.gray().unwrap_or(204));
+        draw_swatch(canvas, sample, color);
         canvas.text(
             Rect::new(sample.right() + 20, rect.y + 40, rect.w - 104, 64),
             color.label(),
@@ -44,4 +44,8 @@ pub(super) fn draw(
     canvas.text(Rect::new(40,776,WIDTH as i32-80,130),if multiple {
         "Choose one or more colors to export. Color and style filters are combined."
     } else {"Show saved highlights and notes with this color. Page bookmarks have no highlight color."},CAPTION.lines(3));
+}
+
+pub(super) fn draw_swatch(canvas: &mut Canvas, sample: Rect, color: HighlightColor) {
+    canvas.panel(sample, 4, 2, color.gray().unwrap_or(204));
 }

@@ -1980,6 +1980,7 @@ impl Reader {
                         },
                     ),
                 );
+                items.extend(self.bookmark_appearance_settings_items());
                 return items;
             }
             Screen::AnnotationListSettings => {
