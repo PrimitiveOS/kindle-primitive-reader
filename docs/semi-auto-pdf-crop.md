@@ -35,4 +35,12 @@ directory using its `luajit`, an empty `KO_HOME`, and emulator dimensions
 staging directory for the macOS build. The Rust test records and checks
 the native provider result. [Oracle harness](../scripts/verify-stock-pdf-crop.lua)
 
+For the original-file check, set `READER_SEMI_AUTO_ORIGINAL_PDF` to the
+selected PDF path and run
+`cargo test --lib original_pdf_first_page_semi_auto_crop -- --ignored --nocapture`.
+It opens the PDF in place, compares its SHA-256 before and after
+cropping, and prints only normalized width, height, area and the
+fallback outcome for page 1. Set `READER_SEMI_AUTO_ORIGINAL_SEED` to four
+comma-separated normalized coordinates to choose a different seed.
+
 [Simulator capture](screenshots/semi-auto-pdf-crop.png) · [KOReader crop mode and controls](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/koptoptions.lua#L98-L120) · [KOReader source-area resolution](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/document.lua#L272-L293) · [KOReader detection and fallback](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/koptinterface.lua#L244-L273)

@@ -280,4 +280,87 @@ pub(crate) mod tests {
             }
         }
     }
+
+    #[test]
+    #[ignore = "Set READER_SEMI_AUTO_ORIGINAL_PDF to an authorized unchanged PDF"]
+    fn original_pdf_first_page_semi_auto_crop_verifies_source_without_content_output() {
+        use ring::digest::{Context, SHA256, digest};
+        use std::fs::File;
+        use std::io::Read;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from(
+            std::env::var_os("READER_SEMI_AUTO_ORIGINAL_PDF")
+                .expect("Set READER_SEMI_AUTO_ORIGINAL_PDF"),
+        );
+        assert!(
+            std::fs::metadata(&path).is_ok_and(|entry| entry.is_file()),
+            "Select a regular PDF"
+        );
+        let open =
+            || File::open(&path).unwrap_or_else(|_| panic!("Could not read the selected PDF"));
+        let mut bytes = Vec::new();
+        open()
+            .take(crate::fixed::MAX_PDF_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)
+            .unwrap_or_else(|_| panic!("Could not read the selected PDF"));
+        assert!(
+            bytes.len() <= crate::fixed::MAX_PDF_BYTES,
+            "The selected PDF exceeds Reader's size limit"
+        );
+        let original = digest(&SHA256, &bytes);
+        let pdf = Pdf::open(bytes).unwrap_or_else(|_| panic!("Could not open the selected PDF"));
+        let size = pdf
+            .page_size(0)
+            .unwrap_or_else(|_| panic!("The selected PDF has no usable first page"));
+
+        let coords = std::env::var("READER_SEMI_AUTO_ORIGINAL_SEED").ok().map_or(
+            [0.05, 0.05, 0.95, 0.95],
+            |setting| {
+                setting
+                    .split(',')
+                    .map(|value| value.trim().parse::<f32>())
+                    .collect::<Result<Vec<_>, _>>()
+                    .ok()
+                    .and_then(|values| values.try_into().ok())
+                    .unwrap_or_else(|| {
+                        panic!("Provide four comma-separated normalized seed coordinates")
+                    })
+            },
+        );
+        let [x0, y0, x1, y1] = coords;
+        assert!(coords.into_iter().all(|value| (0.0..=1.0).contains(&value)));
+        let seed = Seed::from_normalized(PdfTextRect { x0, y0, x1, y1 }, size);
+        let area = seed
+            .normalized(size)
+            .expect("The seed needs a usable width and height");
+        let crop = detect(&pdf, 0, Some(seed), 1264)
+            .unwrap_or_else(|_| panic!("Could not crop the selected PDF's first page"));
+        let width = crop.x1 - crop.x0;
+        let height = crop.y1 - crop.y0;
+        assert!((0.025..=1.0).contains(&width) && (0.025..=1.0).contains(&height));
+        assert!(crop.x0 >= 0.0 && crop.y0 >= 0.0 && crop.x1 <= 1.0 && crop.y1 <= 1.0);
+
+        let mut verifier = Context::new(&SHA256);
+        let mut source = open().take(crate::fixed::MAX_PDF_BYTES as u64 + 1);
+        let mut buffer = [0; 64 * 1024];
+        loop {
+            let count = source
+                .read(&mut buffer)
+                .unwrap_or_else(|_| panic!("Could not re-read the selected PDF"));
+            if count == 0 {
+                break;
+            }
+            verifier.update(&buffer[..count]);
+        }
+        assert!(
+            verifier.finish().as_ref() == original.as_ref(),
+            "The source PDF bytes changed"
+        );
+        println!(
+            "source_unchanged=true page=1 width={width:.4} height={height:.4} area={:.4} seed_fallback={}",
+            width * height,
+            crop == area
+        );
+    }
 }
