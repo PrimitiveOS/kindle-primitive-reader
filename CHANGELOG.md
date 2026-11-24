@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.38
+
+- Put publisher chapter marks at their whole-book positions in the optional top header.
+- Choose whether footnote previews use the book’s reading font.
+- Open the previous or next unfinished file in the current folder and resume its saved position.
+- Set semi-automatic crop regions for PDFs and reuse them on later pages.
+
 ## 0.1.37
 
 - Open the current book’s folder from the reading controls and save your place.

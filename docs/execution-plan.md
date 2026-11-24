@@ -45,6 +45,16 @@ separate from Oasis acceptance. Schedule only relevant reading controls from
 this inventory; excluded controls are not implementation tasks, and inventory
 counts do not measure completed parity.
 
+## Reader 0.1.38 verification plan
+
+Compare the optional top header’s published chapter marks across an entire
+EPUB, and check both footnote font choices on the same passage. Switch
+between publications in a folder and check that saved positions, bookmarks,
+and encrypted-PDF cancellation work in both directions. Exercise PDF crop
+regions across exact, odd and even pages, verify the source coordinates of
+annotations and links, and compare an authored scan with pinned KOReader.
+[Chapter marks](whole-book-screen-pages.md) · [Footnote previews](footnote-export-roots.md) · [Folder navigation](document-end.md) · [Semi-automatic crop](semi-auto-pdf-crop.md)
+
 ## Reader 0.1.37 verification plan
 
 Verify folder return for nested EPUBs and scans with saved reading data, and
