@@ -1,4 +1,5 @@
 //! Supported style controls, book-specific CSS review and multiline editing.
+use super::navigation_layout::NavigationLayout;
 use super::*;
 use crate::user_styles::{self, Data, PRESETS, Snapshot};
 use primitive_ui::{TextStyle, editor::Multiline};
@@ -29,6 +30,43 @@ pub(super) struct View {
 const CANCEL: Rect = Rect::new(40, 126, 550, 104);
 const REVIEW: Rect = Rect::new(674, 126, 550, 104);
 const TEXT: Rect = Rect::new(40, 260, 1184, 480);
+const LINE_HEIGHT: i32 = 48;
+// Use the same wrap in both orientations so that an open draft keeps its line.
+const COLUMNS: usize = 40;
+
+struct EditorLayout {
+    title: Rect,
+    cancel: Rect,
+    review: Rect,
+    text: Rect,
+    hint: Rect,
+    keyboard: Layout,
+    rows: usize,
+}
+
+impl EditorLayout {
+    fn new(layout: NavigationLayout) -> Self {
+        let keyboard = layout.keyboard();
+        let hint_y = 756.min(keyboard.keyboard_area().y - 60);
+        let rows = ((hint_y - 16 - TEXT.y) / LINE_HEIGHT).max(1) as usize;
+        let extra_half_width = (layout.width - NavigationLayout::PORTRAIT.width) / 2;
+        Self {
+            title: layout.body(35, 72),
+            cancel: Rect::new(CANCEL.x, CANCEL.y, CANCEL.w + extra_half_width, CANCEL.h),
+            review: Rect::new(
+                REVIEW.x + extra_half_width,
+                REVIEW.y,
+                REVIEW.w + extra_half_width,
+                REVIEW.h,
+            ),
+            text: layout.body(TEXT.y, rows as i32 * LINE_HEIGHT),
+            hint: layout.body(hint_y, 60),
+            keyboard,
+            rows,
+        }
+    }
+}
+
 impl Reader {
     fn style_book(&self) -> Result<u64> {
         self.active
@@ -389,19 +427,16 @@ impl Reader {
         if self.screen != Screen::StyleEditor {
             return false;
         }
-        canvas.text(
-            Rect::new(40, 35, 1184, 72),
-            "Book CSS",
-            TextStyle::new(48).bold(),
-        );
-        canvas.button(CANCEL, "Cancel", false, false);
-        canvas.button(REVIEW, "Review", true, false);
+        let layout = EditorLayout::new(self.navigation_layout());
+        canvas.text(layout.title, "Book CSS", TextStyle::new(48).bold());
+        canvas.button(layout.cancel, "Cancel", false, false);
+        canvas.button(layout.review, "Review", true, false);
         if let Some(editor) = &self.style_view.editor {
-            editor.draw(canvas, TEXT, 40, 48, 28);
+            editor.draw(canvas, layout.text, COLUMNS, LINE_HEIGHT, 28);
             canvas.keyboard(editor.editor.layer, "New line", None);
         }
         canvas.text(
-            Rect::new(40, 756, 1184, 60),
+            layout.hint,
             "8 KiB limit. Unsupported CSS is rejected before saving.",
             CAPTION,
         );
@@ -411,14 +446,15 @@ impl Reader {
         if self.screen != Screen::StyleEditor || matches!(input, Input::Sleep | Input::Wake) {
             return None;
         }
+        let layout = EditorLayout::new(self.navigation_layout());
         let result = (|| -> Result<Change> {
             if let Input::Tap(x, y) = input {
-                if CANCEL.contains(x, y) {
+                if layout.cancel.contains(x, y) {
                     self.style_view.editor = None;
                     self.show(Screen::StyleTweaks);
                     return Ok(Change::Partial);
                 }
-                if REVIEW.contains(x, y) {
+                if layout.review.contains(x, y) {
                     self.activate_style(Command::Review)?;
                     return Ok(Change::Partial);
                 }
@@ -427,21 +463,17 @@ impl Reader {
                     .editor
                     .as_mut()
                     .ok_or("Open the editor again")?;
-                if TEXT.contains(x, y) {
+                if layout.text.contains(x, y) {
                     editor.place(
-                        ((y - TEXT.y as f32) / 48.) as usize,
-                        ((x - TEXT.x as f32) / 18.) as usize,
-                        40,
+                        ((y - layout.text.y as f32) / LINE_HEIGHT as f32) as usize,
+                        ((x - layout.text.x as f32) / 18.) as usize,
+                        COLUMNS,
                     );
-                } else if let Some(key) = keyboard_key(
-                    &Layout::new(WIDTH, HEIGHT, 4, 5),
-                    &editor.editor,
-                    "New line",
-                    x,
-                    y,
-                ) {
+                } else if let Some(key) =
+                    keyboard_key(&layout.keyboard, &editor.editor, "New line", x, y)
+                {
                     editor.press(key);
-                    editor.show_caret(40, 10);
+                    editor.show_caret(COLUMNS, layout.rows);
                 } else {
                     return Ok(Change::None);
                 }
@@ -459,7 +491,7 @@ impl Reader {
                     _ => return Ok(Change::None),
                 };
                 if let Some(editor) = &mut self.style_view.editor {
-                    editor.page(delta, 40, 10);
+                    editor.page(delta, COLUMNS, layout.rows);
                 }
             }
             Ok(Change::Partial)

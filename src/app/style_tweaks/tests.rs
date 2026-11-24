@@ -1,5 +1,7 @@
 use super::*;
+use crate::app::selection_viewport_tests::{adopt, capture as capture_viewport, press, tap};
 use crate::app::tests::{Fixture, capture_test_screen, tap_contents_item};
+use crate::session::ReadingViewport;
 fn fonts() -> Vec<PathBuf> {
     vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")]
 }
@@ -206,7 +208,7 @@ fn styles_failed_relayout_or_save_retains_the_frame_model_position_and_recoverab
 }
 fn key(app: &mut Reader, wanted: primitive_ui::Key) {
     let editor = &app.style_view.editor.as_ref().unwrap().editor;
-    let layout = Layout::new(WIDTH, HEIGHT, 4, 5);
+    let layout = app.navigation_layout().keyboard();
     let (_, r) = layout
         .keyboard_keys_with(editor.layer, "New line")
         .into_iter()
@@ -229,7 +231,7 @@ fn type_css(app: &mut Reader, text: &str) {
         }
         let wanted = primitive_ui::Key::Char(c);
         let layer = app.style_view.editor.as_ref().unwrap().editor.layer;
-        let layout = Layout::new(WIDTH, HEIGHT, 4, 5);
+        let layout = app.navigation_layout().keyboard();
         if !layout
             .keyboard_keys_with(layer, "New line")
             .iter()
@@ -246,6 +248,146 @@ fn type_css(app: &mut Reader, text: &str) {
         }
         key(app, wanted);
     }
+}
+
+#[test]
+fn styles_viewport_fits_publisher_and_base_choices_with_large_night_toolbars() {
+    let fixture = Fixture::new();
+    let path = source_book(&fixture);
+    let mut app = open(&fixture);
+    app.open_path(&path).unwrap();
+    let origin = app.current_history_location();
+    let landscape = ReadingViewport::LANDSCAPE;
+    let mut wide = adopt(&mut app, landscape, 2);
+    app.system_theme = None;
+    app.controls.night_pages = true;
+    app.controls.large_toolbar = true;
+    app.open_reading_edge(false, 840.0);
+    let rendering = app.reading_button("Rendering");
+    tap(&mut app, rendering);
+    let rendering = app.reading_button("Rendering");
+    assert!(rendering.y >= 0 && rendering.h >= 100);
+    let stylesheet = app.reading_button_in_row("Base stylesheet", "Traditional");
+    let embedded = app.reading_button_in_row("Publisher CSS", "Off");
+    assert!(embedded.y >= 0 && embedded.bottom() <= landscape.dimensions().1 as i32);
+    press(&app, &mut wide, embedded, true);
+    tap(&mut app, embedded);
+    press(&app, &mut wide, stylesheet, true);
+    tap(&mut app, stylesheet);
+    let settings = app.active.as_ref().unwrap().reading.config.settings;
+    assert_eq!(settings.base_stylesheet, crate::BaseStylesheet::Traditional);
+    assert!(!settings.publisher_styles);
+    assert_eq!(app.current_history_location(), origin);
+    capture_viewport(&app, &mut wide, "landscape-publisher-styles.png", true);
+    let open_styles = app.reading_button_in_row("Style tweaks", "Open");
+    tap(&mut app, open_styles);
+    assert_eq!(app.screen, Screen::StyleTweaks);
+    assert_eq!(app.list_geometry().rows, 7);
+    assert_eq!(app.input(Input::PageForward), Change::Partial);
+    let first = app.list_window().1[0].title.clone();
+    adopt(&mut app, ReadingViewport::PORTRAIT, 3);
+    assert_eq!(app.reading_list_ordinal(), 7);
+    adopt(&mut app, landscape, 4);
+    assert_eq!(app.list_window().1[0].title, first);
+    tap_contents_item(&mut app, &first);
+    assert_eq!(app.screen, Screen::StylePreset);
+    tap_contents_item(&mut app, "On for this book");
+    assert_eq!(app.current_history_location(), origin);
+    app.save().unwrap();
+    let mut reopened = open(&fixture);
+    reopened.open_path(&path).unwrap();
+    let settings = reopened.active.as_ref().unwrap().reading.config.settings;
+    assert_eq!(settings.base_stylesheet, crate::BaseStylesheet::Traditional);
+    assert!(!settings.publisher_styles);
+}
+
+#[test]
+fn styles_viewport_preserves_css_editor_paging_and_review_apply_cancel() {
+    use primitive_app::viewport::{LogicalTurn, ViewportDecision};
+
+    let fixture = Fixture::new();
+    let path = source_book(&fixture);
+    let original = fs::read(&path).unwrap();
+    let mut app = open(&fixture);
+    app.open_path(&path).unwrap();
+    let id = app.open_book_id().unwrap();
+    let origin = app.current_history_location();
+    let mut wide = adopt(&mut app, ReadingViewport::LANDSCAPE, 2);
+    app.activate_style(Command::Edit).unwrap();
+    let layout = EditorLayout::new(app.navigation_layout());
+    assert_eq!(layout.rows, 4);
+    assert_eq!(layout.hint.bottom(), layout.keyboard.keyboard_area().y);
+    assert!(layout.text.bottom() < layout.hint.y);
+    let css = "p{font-weight:900!important;}\n".repeat(8);
+    type_css(&mut app, &css);
+    let editor = app.style_view.editor.as_ref().unwrap();
+    assert_eq!(editor.editor.string(), css);
+    let first_line = editor.first_line;
+    assert!(first_line > 0);
+    let caret = editor.editor.caret;
+    let before_rotation = primitive_app::frame(&app, &mut wide, false);
+    let candidate =
+        reading_viewport_stage::draw_test_candidate(&mut app, 3, LogicalTurn::Upright, "", false);
+    app.finish_viewport(candidate, ViewportDecision::Abort);
+    assert_eq!(
+        primitive_app::frame(&app, &mut wide, false),
+        before_rotation
+    );
+    let editor = app.style_view.editor.as_ref().unwrap();
+    assert_eq!(
+        (editor.first_line, editor.editor.caret),
+        (first_line, caret)
+    );
+    let mut portrait = adopt(&mut app, ReadingViewport::PORTRAIT, 4);
+    let editor = app.style_view.editor.as_ref().unwrap();
+    assert_eq!(
+        (editor.first_line, editor.editor.caret),
+        (first_line, caret)
+    );
+    assert_eq!(EditorLayout::new(app.navigation_layout()).text, TEXT);
+    press(&app, &mut portrait, REVIEW, false);
+    assert_eq!(app.input(Input::PageBack), Change::Partial);
+    assert_eq!(app.style_view.editor.as_ref().unwrap().first_line, 0);
+    wide = adopt(&mut app, ReadingViewport::LANDSCAPE, 5);
+    capture_viewport(&app, &mut wide, "landscape-book-css-editor.png", false);
+    let review_edge = Rect::new(layout.review.right() - 100, layout.review.y + 4, 80, 80);
+    press(&app, &mut wide, review_edge, false);
+    tap(&mut app, review_edge);
+    assert_eq!(app.screen, Screen::StyleReview);
+    assert!(app.style_view.error.is_none());
+    assert!(app.style_store.data.book(id).custom.is_none());
+    let back = app.navigation_layout().back();
+    tap(&mut app, back);
+    assert_eq!(app.screen, Screen::StyleEditor);
+    assert_eq!(app.style_view.editor.as_ref().unwrap().editor.string(), css);
+    tap(&mut app, review_edge);
+    let before = capture(&mut app);
+    tap_contents_item(&mut app, "Apply to this book");
+    assert_eq!(app.screen, Screen::Book);
+    assert_eq!(
+        app.style_store.data.book(id).custom.as_deref(),
+        Some(css.as_str())
+    );
+    assert_ne!(capture(&mut app), before);
+    assert_eq!(app.current_history_location(), origin);
+
+    app.activate_style(Command::Edit).unwrap();
+    type_css(&mut app, "p{font-weight:100}");
+    tap(&mut app, layout.cancel);
+    assert_eq!(app.screen, Screen::StyleTweaks);
+    assert_eq!(
+        app.style_store.data.book(id).custom.as_deref(),
+        Some(css.as_str())
+    );
+    app.save().unwrap();
+    let mut reopened = open(&fixture);
+    reopened.open_path(&path).unwrap();
+    assert_eq!(
+        reopened.style_store.data.book(id).custom.as_deref(),
+        Some(css.as_str())
+    );
+    assert_eq!(reopened.current_history_location(), origin);
+    assert_eq!(fs::read(&path).unwrap(), original);
 }
 #[test]
 fn styles_multiline_keyboard_review_apply_cancel_and_sleep_are_real_input_paths() {

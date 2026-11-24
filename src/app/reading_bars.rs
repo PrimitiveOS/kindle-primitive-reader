@@ -249,14 +249,12 @@ impl Bars {
         if rows.is_empty() {
             return;
         }
+        // The extra night-image row can push the Rendering section tabs above
+        // a landscape screen. Keep the standard 100 px controls in that case.
+        let slots = (rows.len() + usize::from(!sections.is_empty())) as i32;
+        let large = large && (current != BarPanel::TextRendering || slots * 116 + 8 <= above);
         let row_height = if large { 116 } else { 104 };
-        let section_height = if sections.is_empty() {
-            0
-        } else if large {
-            116
-        } else {
-            104
-        };
+        let section_height = if sections.is_empty() { 0 } else { row_height };
         let height = rows.len() as i32 * row_height + section_height + 8;
         let width = self.width;
         let panel = Rect::new(0, above - height, width, height);

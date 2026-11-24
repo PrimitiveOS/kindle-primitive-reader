@@ -65,6 +65,26 @@ layout or write.
 
 [Review CSS in dark mode](screenshots/style-css-review-dark.png)
 
+### Landscape layout
+
+**Text → Rendering** keeps the base stylesheet and Publisher CSS controls
+within the screen with large controls and Night pages enabled. The style
+list, preset, review, and clear screens follow the reading viewport.
+Rotating a list keeps the span containing its first visible item.
+
+The CSS editor keeps its draft, caret, and first visible line when the
+viewport changes. It fits ten lines in portrait and four in landscape above
+the shared keyboard. Review and Cancel use the same bounds for drawing and
+touch. Applying a change reopens the same source passage with the new layout.
+Pinned KOReader similarly sizes its multiline input above the keyboard and
+updates the reading position after applying base, embedded, or user CSS.
+[Stock input sizing](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/inputdialog.lua#L305-L328) · [Stock CSS apply](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readertypeset.lua#L352-L365) · [Stock book CSS editor](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerstyletweak.lua#L1165-L1215)
+
+Run `cargo test --locked --lib styles_viewport` for the Mac simulation.
+The tests use authored material to check a staged rollback, real keyboard
+entry, review return, the visible result of Apply, Cancel, and reopening.
+[Rendering controls](screenshots/landscape-publisher-styles.png) · [Book CSS editor](screenshots/landscape-book-css-editor.png)
+
 ## Cascade and limits
 
 User normal rules precede author normal rules. User `!important` declarations

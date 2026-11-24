@@ -122,6 +122,11 @@ impl Screen {
                 | Self::ConfirmProfile(_, _)
                 | Self::ReadingFonts
                 | Self::Typography
+                | Self::StyleTweaks
+                | Self::StylePreset
+                | Self::StyleFiles
+                | Self::StyleReview
+                | Self::StyleClear
         )
     }
 
@@ -147,6 +152,7 @@ impl Screen {
                     | Self::BookmarkMatches
                     | Self::BookMap
                     | Self::PageOverview
+                    | Self::StyleEditor
                     | Self::BookmarkBrowser(_)
             )
     }
