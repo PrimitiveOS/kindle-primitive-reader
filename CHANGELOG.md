@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.41
+
+- Apply per-page manual, automatic and semi-automatic crops while scrolling width-fit PDFs.
+- Sort folder views by last read or reading progress.
+- Reset reading statistics for the current book, another book or short visits.
+
 ## 0.1.40
 
 - Hold a page thumbnail to add or remove its bookmark.

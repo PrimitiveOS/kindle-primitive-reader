@@ -45,6 +45,17 @@ separate from Oasis acceptance. Schedule only relevant reading controls from
 this inventory; excluded controls are not implementation tasks, and inventory
 counts do not measure completed parity.
 
+## Reader 0.1.41 verification plan
+
+Scroll width-fit PDFs across pages with different crops in both directions.
+Compare Manual, Auto and Semi-auto against the pinned KOReader PDF runtime.
+Check original coordinates on links and annotations before and after Apply,
+Cancel, rotation, zoom and reopening. Sort folders by last read and progress,
+then verify persistent order, search, next-book behavior and legacy records.
+Reset authored statistics by current book, another book and strict duration
+cutoffs. Check confirmation, Cancel, failed writes, resume and pace.
+[Continuous crop](continuous-semi-auto-crop.md) · [Folder order](document-end.md) · [Statistics reset](reading-statistics.md#reset-statistics)
+
 ## Reader 0.1.40 verification plan
 
 Add and remove bookmarks from PDF and EPUB thumbnails. Keep the reading
