@@ -29,9 +29,9 @@ The executable fixture runs stock snapshot creation, the font size, content zoom
 
 Open **Apply on book opening** in a profile. **Always apply** uses its
 included settings for every matching book format. With Always off, add
-one or more opening orientations, a file-path phrase, or collections.
-A book matches if any configured condition matches. Separate path phrases
-with commas. Matching is case-insensitive. **Only for new books** also
+one or more opening orientations, metadata or path phrases, or collections.
+A book matches if any configured condition matches. Separate alternative
+phrases with commas. Matching is case-insensitive. **Only for new books** also
 requires a book with no saved reading position. Choosing Always clears
 the conditions, as in KOReader.
 
@@ -42,6 +42,23 @@ verified turn, so that path continues to use the book's preferred orientation.
 A saved reference to an unavailable collection can be removed from the collections list.
 Choose **Current book** in the path editor to insert its path under Documents,
 including characters the Kindle keyboard cannot type.
+
+**Book metadata contains** offers Title, Authors, Series, Series index,
+Language, Keywords, and Description. Any phrase in any configured field
+can match. Reader searches for literal substrings with Unicode lowercase
+matching. Accents and punctuation remain significant. Save a blank field
+to remove its rule. **Current book** fills the editor with the first
+searchable phrase for the selected field. The button is available when the
+open book provides a usable value. Saving conditions changes the profile
+for future opens and keeps the current reading position and settings.
+
+Reflow books use the title, authors and available publisher metadata.
+EPUB also exposes structured series positions and OPF subjects. PDFs
+can supply a title, author, description from Subject, keywords and catalog
+language. DjVu uses recognized document metadata. Comic archives use the
+filename stem as their title. A missing title falls back to the filename
+where the provider supplies no title, and other missing fields do not match.
+
 Reader combines matching profiles in the
 alphabetical order shown in the profile list. If two profiles include the
 same setting, the later profile supplies that value. Renaming a profile
@@ -61,16 +78,33 @@ shows a notice. The EPUB tests check a saved
 passage after restart. The PDF test checks the exact physical page,
 tiled zoom and overlap after combining two profiles.
 
-The pinned comparison exercises Always, orientation, path and collection
-routing, and the separate new-book gate. Using the final accepted display
-turn for orientation matching remains open, along with stock metadata
-filters, folder shortcut expansion, confirmation and scheduling.
+The pinned comparison exercises Always, orientation, path, collection
+and all seven metadata fields, and the separate new-book gate. Stock
+reader-ready metadata may include KOReader custom sidecar overrides.
+Reader uses publisher data and its filename fallback. On the same authored
+PDF the pinned MuPDF interface leaves catalog language unavailable.
+On a numeric series index its matching utility raises a Lua error. Reader
+matches a published index as text and rejects empty comma alternatives.
+The native provider comparison uses authored EPUB, PDF, DjVu and CBZ
+documents. Matching the accepted display turn, folder shortcut expansion,
+confirmation and scheduling remain open.
 [Landscape simulator capture](screenshots/landscape-profile-apply-on-opening.png) ·
 [Opening conditions in landscape](screenshots/landscape-profile-opening-conditions.png) ·
 [Current book path shortcut](screenshots/landscape-profile-current-book-path.png) ·
+[Opening metadata fields](screenshots/landscape-profile-opening-metadata.png) ·
+[Current book metadata shortcut](screenshots/landscape-profile-current-book-metadata.png) ·
 [Pinned opening menu](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/profiles.koplugin/main.lua#L879-L928) ·
 [Pinned ReaderReady callback](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/profiles.koplugin/main.lua#L1217-L1287) ·
-[Executable stock comparison](../scripts/koreader-reading-profiles-check.lua)
+[Executable stock comparison](../scripts/koreader-reading-profiles-check.lua) ·
+[Native provider comparison](../scripts/koreader-profile-metadata-providers.lua)
+
+Run the stock profile harness from the pinned native runtime with
+`./luajit <checkout>/scripts/koreader-reading-profiles-check.lua <stock-source> native`
+to use stock Unicode matching. Run the Reader `opening_metadata` tests with
+`READER_METADATA_STOCK_FIXTURES` set to a scratch directory to produce the
+five authored documents. Pass that scratch directory, the path to the
+fixture Noto Sans Regular font, and an empty cache directory to
+`koreader-profile-metadata-providers.lua` from the same pinned runtime.
 
 ## Editing saved values
 

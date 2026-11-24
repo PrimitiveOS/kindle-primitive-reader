@@ -26,10 +26,11 @@ end
 local epub = reflow("Publisher metadata.epub")
 assert(epub.title == "ĐẶNG [A+B]" and epub.authors == "Ada Scout" and epub.language == "vi")
 assert(epub.series == "Sounding Log #2.5" and epub.description:find("Lower river delta", 1, true))
--- Inspect which OPF subject values CREngine exposes without assuming a list encoding.
-print("CREngine EPUB: title, author, language, series, description; keywords=" .. tostring(epub.keywords))
+assert(epub.keywords == "Estuary\nCirculation")
+print("CREngine EPUB: title, author, language, series, description and two ordered subjects")
 local untitled = reflow("Seabird Survey.epub")
-print("CREngine untitled EPUB provider title=" .. tostring(untitled.title))
+assert(untitled.title == "" and untitled.authors == "")
+print("CREngine untitled EPUB: no provider title or author")
 
 local mupdf = require("ffi/mupdf")
 local pdf = fixed(mupdf, "Survey print.pdf")
@@ -42,6 +43,10 @@ assert(comic.title == "" and comic.author == "" and comic.keywords == "")
 print("MuPDF CBZ: no provider title, author or keywords")
 
 local djvu = fixed(require("libs/libkoreader-djvu"), "Scanned sequence.djvu")
-for _, name in ipairs({"Title", "Author", "Series", "Language", "Keywords", "Description", "Subject"}) do
-    print("DjVuLibre " .. name .. "=" .. tostring(djvu[name] or djvu[name:lower()]))
+for name, expected in pairs({
+    Title = "Beacon Atlas", Author = "Ada Scout", Series = "North archive #2.5",
+    Language = "en", Keywords = "Beacon, Ice", Subject = "A weathered scan",
+}) do
+    assert((djvu[name] or djvu[name:lower()]) == expected, name)
 end
+print("DjVuLibre: title, author, series with decimal index, language, keywords and subject")
