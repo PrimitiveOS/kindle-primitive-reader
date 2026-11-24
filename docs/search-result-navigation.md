@@ -1,6 +1,22 @@
 # Search result navigation
 
 Open the options icon at the top of the full-text search result list.
+Choose **Results in current chapter** to see only the section at your current
+reading page. Matches that arrive later join the same section. Use **All results**
+to return to the full list. Both fixed and flexible rows use the filtered order
+for paging and hit selection. Previous, Next, and the fixed-page preview's
+first and last shortcuts follow that order as well.
+
+The section comes from the book's active Contents. Fixed-page outlines use the
+first heading on the current page or the last heading on an earlier page.
+Reflowable documents use source anchors for each match, including sections
+whose boundaries cross a spine item. Repeated titles at different locations
+stay distinct. Reader resolves unopened boundary chapters from the source
+without repaginating the book. A document without an outline shows the full
+result list. Starting a new query or opening a book clears the chapter filter.
+
+[Chapter results options](screenshots/search-results-chapter-options.png) · [Flexible EPUB results](screenshots/search-results-chapter-epub.png) · [Fixed PDF results in dark mode](screenshots/search-results-chapter-pdf.png)
+
 **Focus results near current page** highlights the first match visible on the
 current reading page in the list. If that page has no match, Reader uses the
 nearest earlier hit, or the first later one if there are no earlier matches.
@@ -21,7 +37,10 @@ document, Reader compares physical page indexes.
 Desktop tests cover EPUB and PDF result focus, sparse matches, a query from
 selected PDF text, restoring the original painted viewport and reopening the
 document at the restored position. Returning to the original page clears
-temporary match emphasis and preserves list pagination.
+temporary match emphasis and preserves list pagination. Additional EPUB and
+PDF tests apply the chapter filter before the scan completes and verify that
+later matches use the same section. They exercise fixed and flexible rows,
+long-press previews, the fitted PDF preview and return to the original view.
 
 The reference harness also ran the installed KOReader's dynamic result menu on
 the Oasis with authored input. It confirmed that chapter filtering retained
@@ -31,4 +50,4 @@ original-position action returned to the saved page. The test exercises
 stock Lua callbacks without writing a book or a KOReader profile.
 [Reference harness](../scripts/koreader-search-controls-check.lua)
 
-[EPUB options](screenshots/search-results-options.png) · [Focused result](screenshots/search-results-current.png) · [PDF options in dark mode](screenshots/search-results-options-pdf.png)
+[Focused result](screenshots/search-results-current.png)

@@ -319,11 +319,14 @@ impl Reader {
         }
         canvas.card(group.bounds);
         let first = self.list_page * self.match_geometry().rows;
+        let order = self.search_result_order();
         for (offset, detail) in group.rows.iter().enumerate() {
             let Some(row) = group.row_rect(offset) else {
                 continue;
             };
-            let index = first + offset;
+            let Some(index) = order.provider_index(first + offset) else {
+                continue;
+            };
             let hit = if self.fixed.is_some() {
                 self.pdf_hits
                     .get(index)
