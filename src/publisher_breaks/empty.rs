@@ -338,6 +338,7 @@ mod tests {
     #[test]
     fn paged_resume_uses_a_blank_slot_then_recovers_an_exact_text_anchor() {
         let config = crate::session::BookConfig {
+            viewport: crate::session::ReadingViewport::PORTRAIT,
             user_styles: Default::default(),
             user_hyphenation: Default::default(),
             engine: Engine::Parley,
