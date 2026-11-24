@@ -1,5 +1,7 @@
 //! Local document discovery and reading state. Paths stored in state are relative to the library.
 
+#[cfg(feature = "kindle")]
+pub(crate) mod archive;
 pub(crate) mod contents_depths;
 pub(crate) mod custom_contents;
 pub(crate) mod hidden_flows;
@@ -42,6 +44,9 @@ pub const MAX_CONTINUOUS_GAP: u16 = 128;
 pub const MIN_SCAN_WHITE_LEVEL: u8 = 192;
 pub const MAX_STRAIGHTEN_DEGREES: u8 = 25;
 pub const MAX_SCAN_WHITE_LEVEL: u8 = 254;
+pub(crate) const SCAN_GAMMA_DEFAULT: u16 = 10;
+pub(crate) const SCAN_GAMMA_MIN: u16 = 8;
+pub(crate) const SCAN_GAMMA_MAX: u16 = 500;
 const MIN_CROP_SIZE: f32 = 0.025;
 const BACKUP_VERSION: u32 = 1;
 const MAX_BACKUP_BOOKS: usize = 16_384;
@@ -682,6 +687,8 @@ pub struct FixedPreferences {
     pub continuous: bool,
     pub spread: bool,
     pub scan_contrast: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scan_gamma_tenths: Option<u16>,
     pub straighten_limit: u8,
     pub force_ocr: bool,
     pub dither: bool,
@@ -745,6 +752,7 @@ impl FixedPreferences {
     pub fn normalized(self) -> Self {
         let tile_zoom = self.tile_zoom.filter(FixedTileZoom::is_valid);
         let width_fit = self.width_fit && tile_zoom.is_none();
+        let scan_gamma = self.scan_gamma_tenths.filter(valid_scan_gamma);
         Self {
             zoom: if tile_zoom.is_some() {
                 0
@@ -760,6 +768,8 @@ impl FixedPreferences {
             continuous_gap: self.continuous_gap.min(MAX_CONTINUOUS_GAP),
             straighten_limit: self.straighten_limit.min(MAX_STRAIGHTEN_DEGREES),
             scan_white_level: self.scan_white_level.filter(valid_white_level),
+            scan_contrast: self.scan_contrast && scan_gamma.is_none(),
+            scan_gamma_tenths: scan_gamma.filter(|&value| value != SCAN_GAMMA_DEFAULT),
             zoom_overlap_h: self.zoom_overlap_h.filter(|value| *value <= 90),
             zoom_overlap_v: self.zoom_overlap_v.filter(|value| *value <= 90),
             offset_x: normalized_offset(f64::from(self.offset_x)),
@@ -817,6 +827,7 @@ impl<'de> Deserialize<'de> for FixedPreferences {
             continuous: switch("continuous"),
             spread: switch("spread"),
             scan_contrast: switch("scan_contrast"),
+            scan_gamma_tenths: u16::try_from(integer("scan_gamma_tenths")).ok(),
             force_ocr: switch("force_ocr"),
             straighten_limit: integer("straighten_limit").min(u64::from(MAX_STRAIGHTEN_DEGREES))
                 as u8,
@@ -845,6 +856,10 @@ impl<'de> Deserialize<'de> for FixedPreferences {
         }
         .normalized())
     }
+}
+
+pub(crate) fn valid_scan_gamma(value: &u16) -> bool {
+    (SCAN_GAMMA_MIN..=SCAN_GAMMA_MAX).contains(value)
 }
 
 fn valid_white_level(level: &u8) -> bool {
@@ -3532,6 +3547,37 @@ mod tests {
     }
 
     #[test]
+    fn scan_gamma_keeps_legacy_adaptive_contrast_and_serializes_only_an_active_value() {
+        let legacy: FixedPreferences = serde_json::from_str(r#"{"scan_contrast":true}"#).unwrap();
+        assert!(legacy.scan_contrast);
+        assert_eq!(legacy.scan_gamma_tenths, None);
+        for raw in ["7", "501", "65536", r#""dark""#] {
+            let malformed = format!(r#"{{"scan_contrast":true,"scan_gamma_tenths":{raw}}}"#);
+            assert_eq!(
+                serde_json::from_str::<FixedPreferences>(&malformed).unwrap(),
+                legacy
+            );
+        }
+        let explicit: FixedPreferences =
+            serde_json::from_str(r#"{"scan_contrast":true,"scan_gamma_tenths":23}"#).unwrap();
+        assert!(!explicit.scan_contrast);
+        assert_eq!(explicit.scan_gamma_tenths, Some(23));
+        let stored = serde_json::to_vec(&explicit).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<FixedPreferences>(&stored).unwrap(),
+            explicit
+        );
+        let neutral: FixedPreferences =
+            serde_json::from_str(r#"{"scan_contrast":true,"scan_gamma_tenths":10}"#).unwrap();
+        assert_eq!(neutral, FixedPreferences::default());
+        assert!(
+            !serde_json::to_string(&neutral)
+                .unwrap()
+                .contains("scan_gamma_tenths")
+        );
+    }
+
+    #[test]
     fn fixed_view_recovers_unusable_fields_and_preserves_progress() {
         let state: BookState = serde_json::from_str(
             r#"{
@@ -3554,6 +3600,7 @@ mod tests {
                 continuous: false,
                 spread: false,
                 scan_contrast: false,
+                scan_gamma_tenths: None,
                 dither: false,
                 continuous_gap: 0,
                 scan_white_level: None,

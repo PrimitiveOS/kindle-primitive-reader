@@ -4,6 +4,7 @@ mod bar_icons;
 pub(crate) const NOTE_MARK_ICON: primitive_ui::Icon = bar_icons::HIGHLIGHT;
 #[cfg(test)]
 mod base_stylesheet_tests;
+mod book_archive;
 mod bookmark_browser;
 mod chapter_navigation;
 mod character_page_settings;
@@ -178,6 +179,8 @@ enum Screen {
     LibraryFind,
     FolderOrder,
     OrganizeLibrary,
+    BookArchive,
+    ArchiveFolder,
     BookmarkBrowser(bookmark_browser::Page),
     ReadingHistory(reading_history::Page),
     BookList,
@@ -306,6 +309,8 @@ impl Screen {
             Self::LibraryFind => "Find a document",
             Self::FolderOrder => "Folder order",
             Self::OrganizeLibrary => "Library organization",
+            Self::BookArchive => "Move to archive",
+            Self::ArchiveFolder => "Archive folder",
             Self::BookmarkBrowser(page) => page.title(),
             Self::ReadingHistory(page) => page.title(),
             Self::BookList => "Books",
@@ -451,6 +456,7 @@ enum Action {
     SetFolderOrder(FolderOrder),
     ListBooks(BookList),
     OrganizeCurrent,
+    BookArchive(book_archive::Command),
     BookmarkBrowser(bookmark_browser::Command),
     ReadingHistory(reading_history::Command),
     ToggleNonlinear,
@@ -565,6 +571,7 @@ enum Action {
     FixedScroll(bool),
     ComicSpread(bool),
     ScanContrast(bool),
+    ScanGamma(u16),
     FixedDither(bool),
     FixedGap(u16),
     ScanWhiteLevel(Option<u8>),
@@ -737,6 +744,7 @@ pub struct Reader {
     user_hyphenation_path: PathBuf,
     hyphenation_edit: Option<user_hyphenation::Draft>,
     browser: FileBrowser,
+    archive: book_archive::Archive,
     bookmark_browser: bookmark_browser::Browser,
     library_query: String,
     book_list: Option<BookList>,
@@ -943,6 +951,7 @@ impl Reader {
             hyphenation_edit: None,
             library,
             browser,
+            archive: book_archive::Archive::load(data.join("archive-folder.json")),
             bookmark_browser: bookmark_browser::Browser::load(data.join("bookmark-browser.json")),
             library_query: String::new(),
             book_list: None,
@@ -1414,6 +1423,7 @@ impl Reader {
     }
 
     fn show(&mut self, screen: Screen) {
+        self.archive.close_surfaces(screen);
         if screen != Screen::PdfPassword {
             self.folder_password_return = None;
         }
@@ -2433,6 +2443,9 @@ impl Reader {
         if self.screen == Screen::FolderOrder {
             return self.folder_order_items();
         }
+        if matches!(self.screen, Screen::BookArchive | Screen::ArchiveFolder) {
+            return self.archive_items();
+        }
         if let Some(items) = self.organization_items() {
             return items;
         }
@@ -3281,6 +3294,7 @@ impl Reader {
             Action::LibraryExport(command) => self.activate_library_export(command)?,
             Action::Open(entry) => self.open_book(entry)?,
             Action::Browse(directory) => self.browse_to(directory)?,
+            Action::BookArchive(command) => self.archive_command(command)?,
             Action::CurrentBookFolder => self.current_book_folder()?,
             Action::OpenTracked(id) => {
                 let entry = self.locate_tracked(id)?;
@@ -3521,15 +3535,7 @@ impl Reader {
             Action::ExportAnnotatedPdf => self.export_annotated_pdf()?,
             Action::Show(Screen::Library) => {
                 self.save()?;
-                self.active = None;
-                self.numbering_scan = None;
-                self.fixed = None;
-                self.touch_locked = false;
-                self.ocr = None;
-                self.selection = None;
-                self.clear_location_history();
-                self.auto_turn.configure(None, Instant::now());
-                self.show(Screen::Library);
+                self.close_book_to_library();
             }
             Action::Show(screen) => self.show(screen),
             Action::Jump(target) => self.follow(target)?,
@@ -3654,6 +3660,15 @@ impl Reader {
                     }
                     .into(),
                 );
+            }
+            Action::ScanGamma(tenths) => {
+                let fixed = self
+                    .fixed
+                    .as_mut()
+                    .ok_or("Open a fixed-page document first")?;
+                fixed.reading.set_scan_gamma(tenths)?;
+                self.show(Screen::Fixed);
+                self.record_position();
             }
             Action::FixedDither(enabled) => {
                 let fixed = self
@@ -4563,6 +4578,18 @@ impl Reader {
         self.back.clear();
         self.forward.clear();
         self.swipe_back_notice_pending = false;
+    }
+
+    fn close_book_to_library(&mut self) {
+        self.active = None;
+        self.numbering_scan = None;
+        self.fixed = None;
+        self.touch_locked = false;
+        self.ocr = None;
+        self.selection = None;
+        self.clear_location_history();
+        self.auto_turn.configure(None, Instant::now());
+        self.show(Screen::Library);
     }
 
     fn remember_location(history: &mut Vec<HistoryLocation>, entry: HistoryLocation) {
@@ -8049,6 +8076,7 @@ impl App for Reader {
             self.draw_skim(canvas);
         }
         self.draw_flow_popup(canvas);
+        self.draw_archive_confirmation(canvas);
         self.draw_list_density_picker(canvas);
         self.draw_search_results_navigation(canvas);
         self.draw_top_header_default_prompt(canvas);
@@ -8088,6 +8116,9 @@ impl App for Reader {
         }
         if self.flow_popup.is_some() {
             return self.flow_popup_input(input);
+        }
+        if let Some(change) = self.archive_confirmation_input(input) {
+            return change;
         }
         if self.read_alarm.modal() {
             return self.read_alarm_input(input);
@@ -8142,6 +8173,7 @@ impl App for Reader {
         self.assigned_gesture(input, Some(start_x))
             .or_else(|| self.reading_edge_swipe(input, start_x))
             .or_else(|| self.swipe_nearest_link(input, start_x))
+            .or_else(|| self.swipe_latest_bookmark(input, start_x))
             .unwrap_or_else(|| self.input(input))
     }
 
@@ -8263,6 +8295,9 @@ impl App for Reader {
             return change;
         }
         self.sync_auto_turn(Instant::now());
+        if let Some(change) = self.archive_confirmation_input(input) {
+            return change;
+        }
         if self.flow_popup.is_some() {
             return self.flow_popup_input(input);
         }
@@ -8514,6 +8549,8 @@ impl App for Reader {
                 match self.screen {
                     Screen::LibraryExport(page) => self.back_from_library_export(page),
                     Screen::OrganizeLibrary | Screen::FolderOrder => self.show(Screen::Library),
+                    Screen::BookArchive => self.show(self.surface_screen()),
+                    Screen::ArchiveFolder => self.show(Screen::BookArchive),
                     Screen::BookList if matches!(self.book_list, Some(BookList::Author(_))) => {
                         self.book_list = Some(BookList::Authors);
                         self.show(Screen::BookList);
@@ -9125,6 +9162,7 @@ fn column_view(original: FixedPreferences, bounds: PdfTextRect) -> FixedPreferen
         width_fit: true,
         crop: Some(bounds),
         scan_contrast: original.scan_contrast,
+        scan_gamma_tenths: original.scan_gamma_tenths,
         dither: original.dither,
         straighten_limit: original.straighten_limit,
         force_ocr: original.force_ocr,
@@ -17145,6 +17183,110 @@ mod tests {
     }
 
     #[test]
+    fn scan_gamma_controls_apply_presets_and_fine_steps_then_reopen() {
+        let fixture = Fixture::new();
+        let pdf = fixture.root.join("Gray scan calibration.pdf");
+        let stream = concat!(
+            "0.94 g 52 480 496 230 re f\n",
+            "0.20 g BT /F1 22 Tf 75 665 Td (Gray scan calibration) Tj ET\n",
+            "0.45 g BT /F1 15 Tf 75 626 Td (Harbor survey notes) Tj ET\n",
+            "0.60 g 75 566 76 30 re f 0.72 g 165 566 76 30 re f ",
+            "0.82 g 255 566 76 30 re f 0.90 g 345 566 76 30 re f ",
+            "0.98 g 435 566 76 30 re f\n",
+            "0.63 g BT /F1 14 Tf 75 530 Td (Keep the outer marker visible at low tide.) Tj ET\n",
+        );
+        fs::write(
+            &pdf,
+            crate::fixed::tests::pdf_objects(&[
+                "<< /Type /Catalog /Pages 2 0 R >>".into(),
+                "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".into(),
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".into(),
+                format!("<< /Length {} >>\nstream\n{stream}endstream", stream.len()),
+                "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".into(),
+            ]),
+        )
+        .unwrap();
+        let mut app = fixture.app();
+        app.open_path(&pdf).unwrap();
+        let original = app.current_history_location();
+        app.open_reading_edge(false, 500.0);
+        assert_eq!(tap_reading_control(&mut app, "Scan"), Change::Partial);
+        assert_eq!(
+            tap_reading_config_choice(&mut app, "Contrast", "2.0"),
+            Change::Partial
+        );
+        assert_eq!(
+            tap_reading_config_choice(&mut app, "Fine · 2.0", "+0.1"),
+            Change::Partial
+        );
+        let prefs = app.fixed.as_ref().unwrap().reading.preferences();
+        assert_eq!(prefs.scan_gamma_tenths, Some(21));
+        assert_eq!(app.current_history_location(), original);
+        let fonts = [
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        capture_test_screen(&app, &fonts, "READER_SCAN_GAMMA_FRAME", false);
+        app.save().unwrap();
+
+        let mut reopened = fixture.app();
+        reopened.open_path(&pdf).unwrap();
+        assert_eq!(
+            reopened.fixed.as_ref().unwrap().reading.preferences(),
+            prefs
+        );
+        reopened.open_reading_edge(false, 500.0);
+        if reopened.reading_panel != Some(BarPanel::Scan) {
+            tap_reading_control(&mut reopened, "Scan");
+        }
+        tap_reading_config_choice(&mut reopened, "Fine · 2.1", "Adaptive");
+        assert!(reopened.fixed.as_ref().unwrap().reading.scan_contrast());
+        tap_reading_config_choice(&mut reopened, "Contrast", "1.0");
+        let restored = reopened.fixed.as_ref().unwrap().reading.preferences();
+        assert!(!restored.scan_contrast);
+        assert_eq!(restored.scan_gamma_tenths, None);
+        assert_eq!(reopened.current_history_location(), original);
+    }
+
+    #[test]
+    fn scan_gamma_djvu_panel_uses_adaptive_contrast_and_reopens_it() {
+        let fixture = Fixture::new();
+        let document = fixture.root.join("Beacon atlas.djvu");
+        fs::write(&document, crate::djvu::tests::grayscale_document()).unwrap();
+        let mut app = fixture.app();
+        app.open_path(&document).unwrap();
+        let location = app.current_history_location();
+        app.open_reading_edge(false, 500.0);
+        assert_eq!(tap_reading_control(&mut app, "Scan"), Change::Partial);
+        assert_eq!(
+            tap_reading_config_choice(&mut app, "Contrast", "Normal contrast"),
+            Change::None
+        );
+        assert!(!app.fixed.as_ref().unwrap().reading.scan_contrast());
+        assert_eq!(
+            tap_reading_config_choice(&mut app, "Contrast", "Higher contrast"),
+            Change::Partial
+        );
+        assert!(app.fixed.as_ref().unwrap().reading.scan_contrast());
+        assert!(app.activate(Action::ScanGamma(10)).is_err());
+        assert!(app.fixed.as_ref().unwrap().reading.scan_contrast());
+        assert_eq!(app.current_history_location(), location);
+        let fonts = [
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        capture_test_screen(&app, &fonts, "READER_DJVU_SCAN_CONTRAST_FRAME", false);
+        app.save().unwrap();
+
+        let mut reopened = fixture.app();
+        reopened.open_path(&document).unwrap();
+        let reading = &reopened.fixed.as_ref().unwrap().reading;
+        assert!(reading.scan_contrast());
+        assert_eq!(reading.preferences().scan_gamma_tenths, None);
+        assert_eq!(reopened.current_history_location(), location);
+    }
+
+    #[test]
     fn pdf_reading_bars_route_view_scan_and_navigation() {
         let fixture = Fixture::new();
         let pdf = fixture.root.join("Reading sample.pdf");
@@ -17164,10 +17306,7 @@ mod tests {
 
         assert_eq!(tap_reading_control(&mut app, "Scan"), Change::Partial);
         assert_eq!(app.reading_panel, Some(BarPanel::Scan));
-        assert_eq!(
-            tap_reading_control(&mut app, "Higher contrast"),
-            Change::Partial
-        );
+        assert_eq!(tap_reading_control(&mut app, "Adaptive"), Change::Partial);
         assert!(app.fixed.as_ref().unwrap().reading.scan_contrast());
 
         app.input(Input::PageForward);

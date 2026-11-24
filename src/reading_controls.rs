@@ -70,6 +70,8 @@ pub(crate) struct ReadingControls {
     pub swipe_to_follow_nearest_link: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub swipe_ignore_external_links: Option<bool>,
+    #[serde(skip_serializing_if = "is_false")]
+    pub swipe_to_latest_bookmark: bool,
     pub footnote_popups: bool,
     pub prefer_footnotes: bool,
     #[serde(skip_serializing_if = "is_false")]

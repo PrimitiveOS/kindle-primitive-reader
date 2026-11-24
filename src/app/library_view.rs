@@ -114,7 +114,7 @@ impl Reader {
         Ok(())
     }
 
-    fn reveal_book_row(&mut self, path: &Path) {
+    pub(super) fn reveal_book_row(&mut self, path: &Path) {
         self.library_query.clear();
         if let Some(index) = self
             .browser

@@ -579,6 +579,14 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn document(rotation: u8, compressed_text: bool) -> Vec<u8> {
+        document_with_background(rotation, compressed_text, false)
+    }
+
+    pub(crate) fn grayscale_document() -> Vec<u8> {
+        document_with_background(1, true, true)
+    }
+
+    fn document_with_background(rotation: u8, compressed_text: bool, grayscale: bool) -> Vec<u8> {
         // Original synthetic page with a dark region under a two-word text layer.
         let (width, height) = (64, 40);
         let mut bitmap = Bitmap::new(width, height);
@@ -632,6 +640,19 @@ pub(crate) mod tests {
             &[0, width as u8, 0, height as u8, 24, 0, 44, 1, 22, rotation],
         );
         chunk(&mut form, b"Sjbz", &mask);
+        if grayscale {
+            use djvu_rs::{GrayPixmap, iw44_encode};
+            let gradient = GrayPixmap {
+                width,
+                height,
+                data: (0..height)
+                    .flat_map(|y| (0..width).map(move |x| (80 + 2 * x + y) as u8))
+                    .collect(),
+            };
+            for patch in iw44_encode::encode_iw44_gray(&gradient, &Default::default()) {
+                chunk(&mut form, b"BG44", &patch);
+            }
+        }
         if compressed_text {
             chunk(&mut form, b"TXTz", &djvu_rs::bzz_encode::bzz_encode(&text));
         } else {

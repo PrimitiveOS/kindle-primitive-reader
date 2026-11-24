@@ -56,6 +56,8 @@ The development candidate offers **Text › Type** presets and a decimal **More*
 
 At the end of a book, Reader can show actions, mark the book as finished, open the next readable file or return to Library. [End-of-book actions](docs/document-end.md)
 
+Use **Library › Move to archive** while reading to move the open book to a folder in Documents and retain its resume position and marks. [Archive workflow](docs/document-end.md#move-a-book-to-archive)
+
 Choose **Sort** in Library to browse by name, file type, last read, or reading progress. [Folder ordering](docs/document-end.md#choose-folder-order)
 
 Choose when Reader saves your position, bookmarks and notes, or save them immediately from the reading tools. [Save reading data](docs/metadata-save.md)

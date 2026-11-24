@@ -640,3 +640,119 @@ fn pdf_nearest_link_swipe_stays_on_the_touched_scan_and_yields_to_paging() {
     assert!(runtime.0.link_popup.is_some());
     assert_eq!(runtime.0.current_history_location(), zoom_origin);
 }
+
+#[test]
+fn latest_bookmark_swipe_yields_to_links_and_uses_the_newest_reflow_annotation() {
+    let fixture = Fixture::new();
+    write_book(&fixture.book);
+    let original = fs::read(&fixture.book).unwrap();
+    let fonts = test_fonts();
+    let mut app =
+        ReaderRuntime(Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap());
+    app.0.open_path(&fixture.book).unwrap();
+    assert!(!app.0.controls.swipe_to_latest_bookmark);
+    let start = app.0.current_position().unwrap().anchor.unwrap();
+    let end = crate::Anchor {
+        offset: start.offset + 1,
+        ..start.clone()
+    };
+    let id = app.0.open_book_id().unwrap();
+    let active = app.0.active.as_ref().unwrap();
+    app.0
+        .library
+        .remember(&active.entry, id, &active.reading.probe.title)
+        .highlights
+        .push(crate::library::Highlight {
+            created_at: Some(1_769_990_000),
+            style: Default::default(),
+            color: Default::default(),
+            selection: crate::selection::TextSelection {
+                start,
+                end,
+                text: "H".into(),
+            },
+            note: Some("Authored note".into()),
+        });
+    open_preferences(&mut app.0);
+    tap_contents_item(&mut app.0, "Swipe to jump to latest bookmark");
+    tap_contents_item(&mut app.0, "Swipe to follow nearest link");
+    tap_contents_item(&mut app.0, "Swipe to go back");
+    capture_test_screen(
+        &app.0,
+        &fonts,
+        "READER_LATEST_BOOKMARK_SWIPE_SETTINGS",
+        false,
+    );
+    app.0.show(Screen::Book);
+
+    let swipe = Input::Swipe {
+        dx: -320.0,
+        dy: 0.0,
+        start_y: 510.0,
+    };
+    let swipe_right = Input::Swipe {
+        dx: 320.0,
+        dy: 0.0,
+        start_y: 510.0,
+    };
+    app.swipe(swipe, 620.0);
+    assert_eq!(app.0.active.as_ref().unwrap().reading.chapter, 1);
+    let linked = app.0.current_history_location();
+    app.0.activate(Action::AddBookmark).unwrap();
+    let active = app.0.active.as_ref().unwrap();
+    app.0
+        .library
+        .remember(&active.entry, id, &active.reading.probe.title)
+        .bookmarks[0]
+        .created_at = Some(1_769_989_000);
+    app.0.touch_locked = true;
+    app.swipe(swipe, 620.0);
+    assert_eq!(app.0.current_history_location(), linked);
+    app.0.touch_locked = false;
+    app.swipe(swipe, 620.0);
+    assert_eq!(app.0.active.as_ref().unwrap().reading.chapter, 0);
+    app.swipe(swipe_right, 420.0);
+    assert_eq!(app.0.current_history_location(), linked);
+    app.save().unwrap();
+    let mut reopened = ReaderRuntime(Reader::open(&fixture.root, &fixture.state, fonts).unwrap());
+    reopened.0.open_path(&fixture.book).unwrap();
+    assert!(reopened.0.controls.swipe_to_latest_bookmark);
+    reopened.swipe(swipe, 620.0);
+    assert_eq!(reopened.0.active.as_ref().unwrap().reading.chapter, 0);
+    assert_eq!(fs::read(&fixture.book).unwrap(), original);
+}
+
+#[test]
+fn latest_bookmark_swipe_opens_the_saved_pdf_page_and_preserves_return_history() {
+    let fixture = Fixture::new();
+    let path = fixture.root.join("Harbor.pdf");
+    write_pdf(&path);
+    let mut app = ReaderRuntime(Reader::open(&fixture.root, &fixture.state, test_fonts()).unwrap());
+    app.0.open_path(&path).unwrap();
+    app.0.activate(Action::FixedPage(1)).unwrap();
+    app.0.activate(Action::AddBookmark).unwrap();
+    app.0.activate(Action::FixedPage(0)).unwrap();
+    let origin = app.0.current_history_location();
+    open_preferences(&mut app.0);
+    tap_contents_item(&mut app.0, "Swipe to jump to latest bookmark");
+    tap_contents_item(&mut app.0, "Swipe to go back");
+    app.0.show(Screen::Fixed);
+    app.swipe(
+        Input::Swipe {
+            dx: -320.0,
+            dy: 0.0,
+            start_y: 510.0,
+        },
+        620.0,
+    );
+    assert_eq!(app.0.current_position().unwrap().page, 1);
+    app.swipe(
+        Input::Swipe {
+            dx: 320.0,
+            dy: 0.0,
+            start_y: 510.0,
+        },
+        440.0,
+    );
+    assert_eq!(app.0.current_history_location(), origin);
+}

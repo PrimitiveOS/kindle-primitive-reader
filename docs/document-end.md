@@ -25,6 +25,35 @@ Desktop tests cover a resumed EPUB beyond the first folder page, saved
 bookmarks and position after restart, fixed PDF, extracted EPUB, and
 failed folder lookup or save. [Reading menu](screenshots/current-book-folder-menu.png) · [Containing folder](screenshots/current-book-folder.png)
 
+## Move a book to archive
+
+While reading, open **Library › Move to archive**. **Archive folder** lets you
+save an existing destination within Documents. Reader uses **Documents /
+Archive** by default and can create it when you first confirm a move.
+
+Choose **Move current book** and check the displayed book, source folder and
+destination. Confirm with **Move book**. The archive folder opens with the
+moved file ready to reopen. Reader keeps the book's position, marks, status,
+favorites and collections under the same edition. The action moves a single
+publication file and its Reader data.
+
+Reader creates the archive copy exclusively, so an existing same-name file
+blocks the move. The original stays in place until Reader verifies the
+archive copy and saves its new path. This requires room for the copy during
+the move. If the source cannot be removed, Reader keeps both complete files
+and **Continue reading** uses the archive. An interruption before the save
+can leave a partial archive copy alongside the original.
+[Choose a folder](screenshots/archive-folder-picker.png) · [Confirm the move](screenshots/archive-move-confirmation.png) · [Reopen the archived book](screenshots/archive-moved-library.png)
+
+The pinned KOReader plugin saves an archive folder, calls its file manager
+move, relocates the reading metadata, and offers to reopen the result.
+The reference run executed those callbacks and their same-folder and missing
+folder checks with in-memory filesystem and settings stubs. Reader's Mac
+tests used real scratch EPUB and PDF files and checked cancellation,
+destination collisions, source replacement, metadata failure, cleanup
+ownership, byte equality and resume after a move or failed removal.
+[Pinned archive settings and move](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/movetoarchive.koplugin/main.lua#L60-L174) · [Pinned file manager move](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/filemanager/filemanager.lua#L1332-L1336)
+
 ## Switch between files in a folder
 
 From the reading **Library** menu, choose **Previous file in folder** or

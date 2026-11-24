@@ -16,6 +16,7 @@ pub(super) enum LinkPreference {
     SwipeBack,
     SwipeFollow,
     SwipeIgnoreExternal,
+    SwipeLatestBookmark,
     FootnoteBookFont,
 }
 
@@ -28,6 +29,7 @@ impl LinkPreference {
             Self::SwipeBack => controls.swipe_to_go_back,
             Self::SwipeFollow => controls.swipe_to_follow_nearest_link,
             Self::SwipeIgnoreExternal => controls.swipe_ignore_external_links.unwrap_or(true),
+            Self::SwipeLatestBookmark => controls.swipe_to_latest_bookmark,
             Self::FootnoteBookFont => controls.footnote_book_font,
         }
     }
@@ -40,6 +42,7 @@ impl LinkPreference {
             Self::SwipeBack => "Swipe to go back",
             Self::SwipeFollow => "Swipe to follow nearest link",
             Self::SwipeIgnoreExternal => "Ignore external links on swipe",
+            Self::SwipeLatestBookmark => "Swipe to jump to latest bookmark",
             Self::FootnoteBookFont => "Use book font in popups",
         }
     }
@@ -94,6 +97,7 @@ impl Reader {
             LinkPreference::SwipeBack,
             LinkPreference::SwipeFollow,
             LinkPreference::SwipeIgnoreExternal,
+            LinkPreference::SwipeLatestBookmark,
             LinkPreference::FootnoteBookFont,
         ]
         .into_iter()
@@ -114,6 +118,9 @@ impl Reader {
                 }
                 LinkPreference::SwipeFollow => {
                     item.detail("Swipe left from near a link to follow it")
+                }
+                LinkPreference::SwipeLatestBookmark => {
+                    item.detail("Swipe left when there is no link to follow")
                 }
                 _ => item,
             }
@@ -152,17 +159,17 @@ impl Reader {
             LinkPreference::SwipeIgnoreExternal => {
                 controls.swipe_ignore_external_links = Some(!checked)
             }
+            LinkPreference::SwipeLatestBookmark => controls.swipe_to_latest_bookmark = !checked,
             LinkPreference::FootnoteBookFont => controls.footnote_book_font = !checked,
         }
         self.activate(Action::SetReadingControls(controls))
     }
 
-    pub(super) fn swipe_nearest_link(&mut self, input: Input, start_x: f32) -> Option<Change> {
+    fn leftward_link_swipe(&self, input: Input, start_x: f32) -> Option<f32> {
         let Input::Swipe { dx, dy, start_y } = input else {
             return None;
         };
-        if !self.controls.swipe_to_follow_nearest_link
-            || self.touch_locked
+        if self.touch_locked
             || self.selection.is_some()
             || self.pdf_selection.is_some()
             || self.selection_mode
@@ -175,6 +182,14 @@ impl Reader {
         {
             return None;
         }
+        Some(start_y)
+    }
+
+    pub(super) fn swipe_nearest_link(&mut self, input: Input, start_x: f32) -> Option<Change> {
+        if !self.controls.swipe_to_follow_nearest_link {
+            return None;
+        }
+        let start_y = self.leftward_link_swipe(input, start_x)?;
         let internal_only = LinkPreference::SwipeIgnoreExternal.checked(self.controls);
         match self.screen {
             Screen::Book => {
@@ -195,6 +210,43 @@ impl Reader {
             }
             _ => None,
         }
+    }
+
+    pub(super) fn swipe_latest_bookmark(&mut self, input: Input, start_x: f32) -> Option<Change> {
+        if !self.controls.swipe_to_latest_bookmark
+            || !matches!(self.screen, Screen::Book | Screen::Fixed)
+        {
+            return None;
+        }
+        self.leftward_link_swipe(input, start_x)?;
+        let state = self.library.state(self.open_book_id()?)?;
+        let fixed = self.screen == Screen::Fixed;
+        let (_, action) = state
+            .bookmarks
+            .iter()
+            .enumerate()
+            .map(|(index, mark)| (mark.created_at, Action::Bookmark(index)))
+            .chain(
+                state
+                    .highlights
+                    .iter()
+                    .enumerate()
+                    .filter(|_| !fixed)
+                    .map(|(index, mark)| (mark.created_at, Action::Highlight(index))),
+            )
+            .chain(
+                state
+                    .pdf_highlights
+                    .iter()
+                    .filter(|_| fixed)
+                    .map(|mark| (mark.created_at, Action::FixedPage(mark.page))),
+            )
+            .max_by_key(|(created, _)| *created)?;
+        self.auto_turn.activity(Instant::now());
+        Some(match self.activate(action) {
+            Ok(()) => self.applied_change(),
+            Err(error) => self.report(error),
+        })
     }
 
     pub(super) fn open_reflow_link(&mut self, link: ReflowLink, x: f32, y: f32) -> Change {
