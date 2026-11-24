@@ -123,12 +123,28 @@ pub(crate) struct Fill {
 }
 impl Fill {
     pub fn cell(element: usize, area: BoxArea, top: f32, bottom: f32, gray: u8) -> Self {
+        Self::rectangle(
+            element,
+            area.outer_x..area.outer_x + area.outer_width,
+            top,
+            bottom,
+            gray,
+        )
+    }
+
+    pub(crate) fn rectangle(
+        element: usize,
+        columns: std::ops::Range<u32>,
+        top: f32,
+        bottom: f32,
+        gray: u8,
+    ) -> Self {
         Self {
             element,
             top,
             bottom,
-            left: area.outer_x,
-            right: area.outer_x + area.outer_width,
+            left: columns.start,
+            right: columns.end,
             gray,
         }
     }

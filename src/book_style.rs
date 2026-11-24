@@ -10,6 +10,7 @@ pub(crate) mod flow;
 #[cfg(test)]
 mod flow_tests;
 mod semantic_type;
+use crate::float_layout::{Clear, Side};
 use flow::{Display, Visibility};
 mod user_css;
 #[cfg(test)]
@@ -293,6 +294,8 @@ pub(crate) struct Style {
     pub padding: [CssLength; 2],
     pub vertical_padding: [CssLength; 2],
     pub vertical_margin: [CssLength; 2],
+    pub float_side: Option<Side>,
+    pub clear: Clear,
     pub border_collapse: bool,
     pub borders: Option<Arc<[borders::Border; 4]>>,
     pub border_spacing: [CssLength; 2],
@@ -333,6 +336,8 @@ impl Default for Style {
             padding: Default::default(),
             vertical_padding: Default::default(),
             vertical_margin: Default::default(),
+            float_side: None,
+            clear: Clear::default(),
             border_collapse: false,
             borders: None,
             border_spacing: [CssLength::Pixels(1.); 2],
@@ -589,6 +594,8 @@ impl BookStyle {
             style.padding = Default::default();
             style.vertical_padding = Default::default();
             style.vertical_margin = Default::default();
+            style.float_side = None;
+            style.clear = Clear::default();
             if let Some(kind) = element.list_kind {
                 style.marker = kind;
             }
@@ -627,7 +634,7 @@ impl BookStyle {
                 .as_deref()
                 .filter(|text| self.author_inline && text.len() <= MAX_INLINE_BYTES)
                 .map_or_else(Vec::new, |text| declarations(&mut Parser::new(text)));
-            let mut winners: Winners = [None; 46];
+            let mut winners: Winners = [None; 48];
             for (origin, rules) in [
                 (CascadeOrigin::User, &self.user_rules),
                 (CascadeOrigin::Author, &self.rules),
@@ -665,6 +672,8 @@ impl BookStyle {
                     }
                     Property::Display(display) => style.display = *display,
                     Property::Visibility(visibility) => style.visibility = *visibility,
+                    Property::Float(side) => style.float_side = *side,
+                    Property::Clear(clear) => style.clear = *clear,
                     Property::Family(families) => {
                         style.font_family = families
                             .iter()
@@ -1369,7 +1378,7 @@ fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
 }
 
 type Priority = (u8, bool, Specificity);
-type Winners<'a> = [Option<(Priority, &'a Property)>; 46];
+type Winners<'a> = [Option<(Priority, &'a Property)>; 48];
 
 #[derive(Clone, Copy)]
 enum CascadeOrigin {
@@ -1394,6 +1403,8 @@ fn choose<'a>(
             Property::MaxWidth(_) => 42,
             Property::MaxHeight(_) => 43,
             Property::VerticalMargin(side, _) => 44 + side,
+            Property::Float(_) => 46,
+            Property::Clear(_) => 47,
             Property::Family(_) => 0,
             Property::Size(_) => 1,
             Property::LineHeight(_) => 2,
@@ -1489,6 +1500,8 @@ enum Property {
     PaddingBoth([Option<CssLength>; 4]),
     VerticalMargin(usize, Option<CssLength>),
     VerticalMargins([Option<CssLength>; 2]),
+    Float(Option<Side>),
+    Clear(Clear),
     Orphans(Option<u8>),
     Widows(Option<u8>),
     BreakBefore(Option<crate::publisher_breaks::Edge>),
@@ -1542,6 +1555,18 @@ impl<'i> DeclarationParser<'i> for Properties {
                 ),
                 "visibility" => Property::Visibility(
                     Visibility::parse(&input.expect_ident()?.to_ascii_lowercase())
+                        .ok_or_else(ParseError::unexpected_token)?,
+                ),
+                "float" => {
+                    Property::Float(match input.expect_ident()?.to_ascii_lowercase().as_str() {
+                        "left" => Some(Side::Left),
+                        "right" => Some(Side::Right),
+                        "none" | "initial" | "unset" => None,
+                        _ => return Err(ParseError::unexpected_token()),
+                    })
+                }
+                "clear" => Property::Clear(
+                    Clear::parse(&input.expect_ident()?.to_ascii_lowercase())
                         .ok_or_else(ParseError::unexpected_token)?,
                 ),
                 "padding-top" => Property::Padding(2, parse_box_edges(input, false, false)?[0]),

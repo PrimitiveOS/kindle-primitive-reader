@@ -81,8 +81,8 @@ source-selection rectangles use the Parley or vertical engines.
 | --- | --- |
 | Legacy | Match the legacy inline model and the old handling of incomplete CSS tables. Separate publisher margins are measured below. |
 | Flat | Extend source-owned margin collapse to parent and empty boxes, and add prepared inline float boxes, anonymous box repair, and page-break coalescing through empty boxes. |
-| Book | Add anchored float exclusion geometry and clearing to the Flat model, with applicable style-width and auto-margin behavior |
-| Web | Add signed final margins, full publisher box sizing and automatic placement, overflow-aware painting and hit-testing, and consecutive forced breaks through empty content |
+| Book | Extend the horizontal float model below to complex boxes and inline floats, and implement the remaining style-width and auto-margin behavior |
+| Web | Extend signed margins and float geometry, implement full publisher box sizing and automatic placement, and handle overflow and consecutive forced breaks through empty content |
 
 The four options depend on independent box geometry, pagination and
 source mappings. A Reader renderer choice would currently change several
@@ -119,7 +119,7 @@ empty element or a table ends a sibling pair. Table cell tracks retain
 their existing layout, and a positive boundary gap can push the entire
 following grid down. The provider bounds a gap to half a viewport, prevents
 extreme negative values from reversing text origins, and drops terminal
-spine margins. Collapsing through empty or nested boxes, float and overflow
+spine margins. Collapsing through empty or nested boxes, complex float and overflow
 layout, and vertical writing remain pending. Reader has no saved Render
 Mode preference or control yet.
 
@@ -128,6 +128,59 @@ same word at its new geometry, compare the default frames, and resolve a
 saved source range after it moves to a later screen page. The margin
 projection preserves source revisions and text offsets.
 [Provider and tests](../src/block_margins.rs)
+
+## Horizontal floats and clearance
+
+Reader has internal `ContentHeight` and `PublisherHeight` float policies
+for horizontal Parley flow. The default is `Ignore`. A supported float uses
+the physical left or right edge of the reading column and reserves its
+space in the text around it. Parley shapes each paragraph once and breaks
+each line against the current footprint. A long paragraph returns to full
+width within the same paragraph when the float ends. `clear:left`,
+`clear:right`, and `clear:both` move the next block below the relevant
+footprints, while the opposite side can continue excluding text.
+
+The pinned Book and Web modes both place the 36%-wide card at the same
+edge. Book gives it the height of its content. Web honors the explicit
+CSS height in the fixture. For two opposing Web floats, clearing left
+leaves the right exclusion in place. The coordinate and painted-height
+assertions run through the actual pinned macOS SDL renderer.
+[CREngine float and clearance code](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L6777-L6830) ·
+[Stock probe](../scripts/koreader-render-floats-check.lua)
+
+| Measurement at 1264 × 1606 | Stock Book | Reader `ContentHeight` | Stock Web | Reader `PublisherHeight` |
+| --- | ---: | ---: | ---: | ---: |
+| Left card and adjacent prose, screen x | 54 / 470 | 54 / 470 | 54 / 470 | 54 / 470 |
+| Right card and adjacent prose, screen x | 794 / 54 | 794 / 54 | 794 / 54 | 794 / 54 |
+| Card and adjacent prose, first screen y | 54 / 54 | 54 / 54 | 54 / 54 | 54 / 54 |
+| Single card painted height | 64 px | 48 px | 80 px | 80 px |
+| Matching clearance after the single card, screen y | 118 | 121 | 134 | 134 |
+| Lines using the left exclusion in the long paragraph | 1 | 1 | 2 | 2 |
+
+For the opposing 160- and 200-pixel floats, each Web-style provider
+places `clear:left` at screen y=214 and limits that line to the remaining
+right edge. With both sides cleared, KOReader puts the next line at y=278
+and Parley puts it at y=281. Parley retains its own line metrics and
+hyphenation through the exclusion. The Web specimen wraps the long
+paragraph into six lines in KOReader and seven in Reader.
+[KOReader opposing floats](screenshots/render-floats-stock-opposed.png) ·
+[Reader opposing floats](screenshots/render-floats-reader-opposed.png) ·
+[Reader right float](screenshots/render-floats-reader-right.png) ·
+[Reader width recovery](screenshots/render-floats-reader-wrap.png)
+
+The current provider supports simple text cards with explicit widths and
+at most one simultaneous float on each side. It uses horizontal physical
+sides. It keeps publisher-defined percentages for width and uses a
+definite height in `PublisherHeight`. Nested and multiblock floats, inline
+floats, percentage heights, independent formatting contexts and interactions
+with collapsed outer margins require further work. Tables, illustrated,
+indented, decorated and ruby blocks start below active floats. A chapter
+with an unsupported float shape uses normal flow for that float. If an
+otherwise supported placement is too tall to paginate safely, Reader
+retries the chapter in ordinary flow and retains the original anchors.
+The fixture checks link destinations, caret and quote positions, restored
+coordinates, and an authored overflow that forces this rollback.
+[Provider and tests](../src/float_layout.rs)
 
 ## Reproduce
 
@@ -154,3 +207,10 @@ as grayscale PGM. [Fixture](../tests/fixtures/render-modes.epub) ·
 Run `cargo test --locked --lib block_margins -- --nocapture` for the block
 spacing and resume assertions. Set `READER_BLOCK_MARGINS_CAPTURE_DIR` to an
 existing directory to write all four Parley viewport captures as PNG.
+
+Generate the float specimen with `python3 scripts/generate-render-floats-fixture.py`.
+Pass `tests/fixtures/render-floats.epub` to the float stock probe with the
+same cache, font and capture arguments. Run
+`cargo test --locked --lib float_layout -- --nocapture` for the Reader
+comparison. Set `READER_FLOAT_CAPTURE_DIR` to an existing directory to
+write the simulated reading pages.

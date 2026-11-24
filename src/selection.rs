@@ -155,11 +155,18 @@ impl Probe {
         };
         for (key, left, origin, column, layout) in renderer.selection_layouts(point.page) {
             let y = point.y - origin;
+            let x = point.x - left;
             if column.contains(&point.x)
                 && (0.0..layout.height()).contains(&y)
-                && Cluster::from_point(layout, point.x - left, y).is_some()
+                && (!renderer.uses_float_geometry()
+                    || layout.lines().any(|line| {
+                        let metrics = line.metrics();
+                        (metrics.block_min_coord..metrics.block_max_coord).contains(&y)
+                            && (metrics.inline_min_coord..metrics.inline_max_coord).contains(&x)
+                    }))
+                && Cluster::from_point(layout, x, y).is_some()
             {
-                let cursor = Cursor::from_point(layout, point.x - left, y);
+                let cursor = Cursor::from_point(layout, x, y);
                 let offset = match renderer.mapping(key) {
                     Some(mapping) => mapping.source_offset(
                         cursor.index(),

@@ -135,7 +135,13 @@ impl<'i> DeclarationParser<'i> for StrictProperties {
         input.reset(&before);
         if matches!(
             name.to_ascii_lowercase().as_str(),
-            "display" | "visibility" | "margin" | "margin-top" | "margin-bottom"
+            "display"
+                | "visibility"
+                | "margin"
+                | "margin-top"
+                | "margin-bottom"
+                | "float"
+                | "clear"
         ) {
             return Err(error(
                 input,

@@ -426,6 +426,7 @@ fn compares_original_table_coordinates_and_source_hits() {
                     false,
                     indent,
                     &Default::default(),
+                    None,
                 );
                 let demand = layout.calculate_content_widths();
                 rows.push(serde_json::json!({"r":cell.row,"c":cell.column,"chars":block.text.chars().count(),"longest":block.text.split_whitespace().map(|s|s.chars().count()).max(),"size":cfg.font_size*styles[block.element].size_scale,"min":demand.min,"max":demand.max}));
