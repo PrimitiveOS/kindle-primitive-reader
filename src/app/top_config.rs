@@ -578,6 +578,10 @@ impl Reader {
             Item::new("Find a document", Action::Show(Screen::LibraryFind)),
             Item::new("Dictionary lookup", Action::Show(Screen::DictionaryEntry)),
             Item::new("Wikipedia", Action::Wikipedia).detail("Look up a topic"),
+            Item::new(
+                "Wikipedia settings",
+                Action::Show(Screen::WikipediaSettings),
+            ),
             Item::new("Online history", Action::Show(Screen::OnlineHistory)),
             Item::new(
                 "Translation settings",

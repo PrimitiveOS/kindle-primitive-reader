@@ -1,17 +1,22 @@
 //! A lookup starts with a preview of the text and chosen provider over the current page.
 use std::cell::OnceCell;
+use std::collections::BTreeMap;
 use std::ops::Range;
 use std::time::Instant;
 
 use primitive_app::{Change, HEIGHT, WIDTH};
 use primitive_ui::{
-    BODY, CAPTION, Canvas, Editor, Input, Layout, Press, Rect, header, keyboard_key,
+    BODY, CAPTION, Canvas, Editor, GrayImage, Input, Layout, PageTurn, Pager, Press, Rect, header,
+    keyboard_key,
 };
 use serde::{Deserialize, Serialize};
 
 use super::{Action, Item, Reader, Screen};
 use crate::Result;
-use crate::online_lookup::{Article, Job, MAX_TEXT_BYTES, Request, Service, language};
+use crate::online_lookup::{
+    Article, ImageJob, ImageRequest, Job, MAX_PICTURES, MAX_TEXT_BYTES, Picture, Request, Service,
+    language,
+};
 
 const SHEET: Rect = Rect::new(58, 284, WIDTH as i32 - 116, 1122);
 pub(super) const CLOSE: Rect = Rect::new(986, 318, 180, 102);
@@ -24,6 +29,10 @@ const PREV: Rect = Rect::new(100, 1238, 212, 110);
 const NEXT: Rect = Rect::new(330, 1238, 212, 110);
 const ALTERNATE: Rect = Rect::new(563, 1238, 275, 110);
 const SUBMIT: Rect = Rect::new(856, 1238, 310, 110);
+const THUMB: Rect = Rect::new(946, 449, 220, 109);
+const GALLERY: Rect = Rect::new(106, 567, 1048, 479);
+const CAPTION_AREA: Rect = Rect::new(106, 1065, 1048, 138);
+const IMAGE_PAGER: Rect = Rect::new(100, 1238, 1066, 110);
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(default)]
@@ -35,6 +44,8 @@ pub(super) struct Languages {
     pub forget_queries: bool,
     #[serde(default)]
     pub show_romanizations: bool,
+    pub show_wiki_image: bool,
+    pub show_wiki_more: bool,
 }
 
 impl Default for Languages {
@@ -46,6 +57,8 @@ impl Default for Languages {
             translator: Service::Google,
             forget_queries: false,
             show_romanizations: false,
+            show_wiki_image: true,
+            show_wiki_more: true,
         }
     }
 }
@@ -84,11 +97,19 @@ impl Field {
     }
 }
 
+#[derive(Default)]
+struct Media {
+    job: Option<ImageJob>,
+    results: BTreeMap<usize, Vec<Picture>>,
+    current: Option<usize>,
+}
+
 struct Introductions {
     request: Request,
     articles: Vec<Article>,
     article: usize,
     page: usize,
+    media: Media,
 }
 
 pub(super) struct Panel {
@@ -102,6 +123,7 @@ pub(super) struct Panel {
     article: usize,
     page: usize,
     pages: OnceCell<Vec<Range<usize>>>,
+    media: Media,
 }
 
 impl Panel {
@@ -117,6 +139,7 @@ impl Panel {
             article: 0,
             page: 0,
             pages: OnceCell::new(),
+            media: Media::default(),
         }
     }
 
@@ -138,6 +161,88 @@ impl Panel {
 
     fn page_count(&self) -> usize {
         self.pages.get().map_or(1, Vec::len).max(1)
+    }
+
+    pub(super) fn deadline(&self) -> Option<Instant> {
+        self.job
+            .as_ref()
+            .map(|job| job.poll_at)
+            .into_iter()
+            .chain(self.media.job.as_ref().map(|job| job.poll_at))
+            .min()
+    }
+
+    pub(super) fn cancel_for_sleep(&mut self) {
+        if self.job.take().is_some() {
+            self.message = Some("Lookup cancelled when Reader went to sleep.".into());
+        }
+        self.media.job.take();
+    }
+
+    fn start_media(&mut self, prefs: &Languages) {
+        self.media.job.take();
+        self.media.current = None;
+        if self.request.service != Service::Wikipedia
+            || !prefs.show_wiki_image
+            || self.media.results.contains_key(&self.article)
+        {
+            return;
+        }
+        let Some(article) = self.articles.get(self.article) else {
+            return;
+        };
+        let more = self.request.full_article && prefs.show_wiki_more;
+        if more || article.thumbnail.is_some() {
+            self.media.job = ImageJob::start_images(&ImageRequest {
+                title: article.title.clone(),
+                language: self.request.to.clone(),
+                lead: article.thumbnail.clone(),
+                more,
+            })
+            .ok();
+        }
+    }
+
+    fn poll_media(&mut self, now: Instant) -> Option<Change> {
+        let job = self.media.job.as_mut()?;
+        if now < job.poll_at {
+            return None;
+        }
+        let result = job.poll(now)?;
+        self.media.job.take();
+        let images: Vec<_> = result
+            .unwrap_or_default()
+            .into_iter()
+            .take(MAX_PICTURES)
+            .filter(Picture::valid)
+            .collect();
+        let changed = !images.is_empty();
+        self.media.results.insert(self.article, images);
+        Some(if changed {
+            Change::Partial
+        } else {
+            Change::None
+        })
+    }
+
+    fn images(&self) -> &[Picture] {
+        self.media
+            .results
+            .get(&self.article)
+            .map_or(&[], Vec::as_slice)
+    }
+
+    fn step_image(&mut self, step: isize) -> Change {
+        if let Some(next) = self
+            .media
+            .current
+            .and_then(|index| index.checked_add_signed(step))
+            .filter(|&index| index < self.images().len())
+        {
+            self.media.current = Some(next);
+            return Change::Partial;
+        }
+        Change::None
     }
 
     fn step_page(&mut self, step: isize) -> Change {
@@ -244,6 +349,24 @@ impl Reader {
         vec![
             Item::new("Show romanizations", Action::ToggleRomanizations)
                 .detail("Show Latin text with Google Translate results"),
+        ]
+    }
+
+    pub(super) fn wikipedia_settings_items(&self) -> Vec<Item> {
+        let enabled = self.lookup_history.online_languages.show_wiki_image;
+        vec![
+            Item::new("Show image in search results", Action::ToggleWikipediaImage)
+                .detail("Include the lead image in Wikipedia lookups"),
+            if enabled {
+                Item::new(
+                    "Show more images in full article",
+                    Action::ToggleWikipediaMoreImages,
+                )
+                .detail("Include figures and gallery images")
+            } else {
+                Item::new("Show more images in full article", Action::Heading)
+                    .detail("Turn on search result images first")
+            },
         ]
     }
 
@@ -409,15 +532,22 @@ impl Reader {
 
     fn close_online(&mut self) {
         if let Some(p) = &mut self.online
+            && p.media.current.take().is_some()
+        {
+            return;
+        }
+        if let Some(p) = &mut self.online
             && let Some(previous) = p.introductions.take()
         {
             p.job.take();
+            p.media = previous.media;
             p.request = previous.request;
             p.articles = previous.articles;
             p.article = previous.article;
             p.page = previous.page;
             p.message = None;
             p.pages.take();
+            p.start_media(&self.lookup_history.online_languages);
             self.show(Screen::OnlineLookup);
             return;
         }
@@ -437,7 +567,7 @@ impl Reader {
             CLOSE,
             if p.job.is_some() {
                 "Cancel"
-            } else if p.introductions.is_some() {
+            } else if p.introductions.is_some() || p.media.current.is_some() {
                 "Back"
             } else {
                 "Done"
@@ -446,7 +576,28 @@ impl Reader {
             false,
         );
         if let Some(article) = p.articles.get(p.article) {
-            canvas.text(TOPIC, &article.title, BODY.bold().lines(2));
+            if let Some(index) = p.media.current
+                && let Some(picture) = p.images().get(index)
+            {
+                self.draw_wikipedia_picture(canvas, article, picture, index, p.images().len());
+                return;
+            }
+            let mut title_rect = TOPIC;
+            if let Some(picture) = p.images().first() {
+                title_rect.w = THUMB.x - title_rect.x - 20;
+                let pressed = canvas.control_pressed(THUMB, false);
+                canvas.panel(THUMB, 16, 4, if pressed { 0 } else { 255 });
+                let mut photo = THUMB.inset(8);
+                photo.w -= 54;
+                draw_picture(canvas, photo, picture);
+                let glyph = Rect::new(THUMB.right() - 53, THUMB.y + 35, 36, 36);
+                canvas.icon(
+                    glyph,
+                    super::bar_icons::SEARCH,
+                    if pressed { 255 } else { 0 },
+                );
+            }
+            canvas.text(title_rect, &article.title, BODY.bold().lines(2));
             let style = BODY.lines(10);
             let display_text = article.display_text();
             let pages = p
@@ -519,11 +670,34 @@ impl Reader {
         );
     }
 
+    fn draw_wikipedia_picture(
+        &self,
+        canvas: &mut Canvas,
+        article: &Article,
+        picture: &Picture,
+        index: usize,
+        total: usize,
+    ) {
+        canvas.text(TOPIC, &article.title, BODY.bold().lines(2));
+        draw_picture(canvas, GALLERY, picture);
+        let filename = picture.name.replace('_', " ");
+        let details = if picture.caption.is_empty() {
+            format!("Wikimedia · {filename}")
+        } else {
+            format!("{}\nWikimedia · {filename}", picture.caption)
+        };
+        canvas.text(CAPTION_AREA, &details, CAPTION.lines(4));
+        picture_pager(index, total).draw(canvas, None);
+    }
+
     fn start_online(&mut self) -> Change {
         let Some(p) = &mut self.online else {
             return Change::None;
         };
-        match Job::start(&p.request) {
+        match Job::start(
+            &p.request,
+            self.lookup_history.online_languages.show_wiki_image,
+        ) {
             Ok(job) => {
                 p.job = Some(job);
                 p.message = None;
@@ -544,16 +718,34 @@ impl Reader {
         if p.job.is_some() {
             return Change::None;
         }
+        if let Some(index) = p.media.current {
+            let direction = match input {
+                Input::PageForward => Some(PageTurn::Next),
+                Input::PageBack => Some(PageTurn::Previous),
+                Input::Tap(x, y) => picture_pager(index, p.images().len()).hit(x, y),
+                _ => None,
+            };
+            return match direction {
+                Some(PageTurn::Next) => p.step_image(1),
+                Some(PageTurn::Previous) => p.step_image(-1),
+                None => Change::None,
+            };
+        }
         if !p.articles.is_empty() {
             return match input {
                 Input::PageForward => p.step_page(1),
                 Input::PageBack => p.step_page(-1),
                 Input::Tap(x, y) if NEXT.contains(x, y) => p.step_page(1),
                 Input::Tap(x, y) if PREV.contains(x, y) => p.step_page(-1),
+                Input::Tap(x, y) if THUMB.contains(x, y) && !p.images().is_empty() => {
+                    p.media.current = Some(0);
+                    Change::Partial
+                }
                 Input::Tap(x, y) if ALTERNATE.contains(x, y) && p.articles.len() > 1 => {
                     p.article = (p.article + 1) % p.articles.len();
                     p.pages.take();
                     p.page = 0;
+                    p.start_media(&self.lookup_history.online_languages);
                     Change::Partial
                 }
                 Input::Tap(x, y)
@@ -562,11 +754,13 @@ impl Reader {
                         && !p.request.full_article =>
                 {
                     let title = p.articles[p.article].title.clone();
+                    p.media.job.take();
                     p.introductions = Some(Introductions {
                         request: p.request.clone(),
                         articles: std::mem::take(&mut p.articles),
                         article: p.article,
                         page: p.page,
+                        media: std::mem::take(&mut p.media),
                     });
                     p.request.text = title;
                     p.request.full_article = true;
@@ -609,7 +803,9 @@ impl Reader {
 
     pub(super) fn poll_online(&mut self, now: Instant) -> Option<Change> {
         let p = self.online.as_mut()?;
-        let job = p.job.as_mut()?;
+        let Some(job) = p.job.as_mut() else {
+            return p.poll_media(now);
+        };
         if now < job.poll_at {
             return None;
         }
@@ -621,6 +817,7 @@ impl Reader {
                 p.article = 0;
                 p.page = 0;
                 p.pages.take();
+                p.start_media(&self.lookup_history.online_languages);
                 let request = p.request.clone();
                 if !self.lookup_history.online_languages.forget_queries
                     && let Err(e) = self.update_lookup_history(|h| h.online(request))
@@ -632,6 +829,53 @@ impl Reader {
         }
         Some(Change::Partial)
     }
+}
+
+fn picture_pager(index: usize, count: usize) -> Pager {
+    Pager {
+        bounds: IMAGE_PAGER,
+        page: index,
+        pages: count,
+    }
+}
+
+fn draw_picture(canvas: &mut Canvas, slot: Rect, picture: &Picture) {
+    let ratio = (slot.w as f32 / picture.width as f32)
+        .min(slot.h as f32 / picture.height as f32)
+        .min(1.5);
+    let width = (picture.width as f32 * ratio).round().max(1.0) as u32;
+    let height = (picture.height as f32 * ratio).round().max(1.0) as u32;
+    let Some(source) =
+        image::GrayImage::from_raw(picture.width, picture.height, picture.pixels.clone())
+    else {
+        return;
+    };
+    // The shared canvas transfers pixels one-for-one. Give it the fitted
+    // raster so thumbnails show the entire subject and center in their slot.
+    let fitted = if (width, height) == source.dimensions() {
+        source
+    } else {
+        image::imageops::resize(
+            &source,
+            width,
+            height,
+            image::imageops::FilterType::Triangle,
+        )
+    };
+    let frame = Rect::new(
+        slot.x + (slot.w - width as i32) / 2,
+        slot.y + (slot.h - height as i32) / 2,
+        width as i32,
+        height as i32,
+    );
+    canvas.picture(
+        frame,
+        GrayImage {
+            width,
+            height,
+            pixels: fitted.into_raw(),
+        },
+    );
 }
 
 #[cfg(test)]
@@ -705,6 +949,7 @@ mod tests {
             text: "Good morning".into(),
             source: Some("Καλημέρα".into()),
             romanization: Some("kaliméra".into()),
+            thumbnail: None,
         }];
         if let Some(dir) = std::env::var_os("PRIMITIVE_READER_LOOKUP_SCREENSHOTS") {
             fs::create_dir_all(&dir).unwrap();
@@ -820,5 +1065,231 @@ mod tests {
         assert!(reopened.lookup_history.online.is_empty());
         assert!(reopened.lookup_history.online_languages.forget_queries);
         fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod wikipedia_image_tests {
+    use super::*;
+    use crate::app::tests::{Fixture, capture_test_screen};
+    use primitive_app::{App, frame};
+    use std::process::Command;
+    use std::time::Duration;
+
+    fn tap(reader: &mut Reader, rect: Rect) -> Change {
+        reader.input(Input::Tap(
+            (rect.x + rect.w / 2) as f32,
+            (rect.y + rect.h / 2) as f32,
+        ))
+    }
+
+    fn drawing(second: bool) -> Picture {
+        let (width, height) = (416_i32, 260_i32);
+        let pixels = (0..height)
+            .flat_map(|y| {
+                (0..width).map(move |x| {
+                    let horizon = 143;
+                    if second && (50..360).contains(&x) && (118..145).contains(&y) {
+                        return 40;
+                    }
+                    if (113..305).contains(&x)
+                        && (174..191).contains(&y)
+                        && x > 113 + (y - 174) * 3
+                        && x < 305 - (y - 174) * 2
+                    {
+                        return 26;
+                    }
+                    if (192..197).contains(&x) && (54..174).contains(&y) {
+                        return 48;
+                    }
+                    if (59..160).contains(&y) && (199..235).contains(&x) && x - 199 < (y - 59) / 3 {
+                        return 247;
+                    }
+                    if y > horizon {
+                        if (y / 9 + x / 65) % 5 == 0 {
+                            205
+                        } else {
+                            146 + (y - horizon) as u8 / 3
+                        }
+                    } else if ((x - 310).pow(2) as u32 + (y - 69).pow(2) as u32) < 650 {
+                        234
+                    } else {
+                        188 + y as u8 / 4
+                    }
+                })
+            })
+            .collect();
+        Picture {
+            width: width as u32,
+            height: height as u32,
+            pixels,
+            caption: if second {
+                "The jetty at the edge of the channel."
+            } else {
+                "A sailing boat entering the harbor at dusk."
+            }
+            .into(),
+            name: if second { "Jetty.png" } else { "Harbor.png" }.into(),
+        }
+    }
+
+    fn canvases() -> (Vec<std::path::PathBuf>, Canvas) {
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        let paths: Vec<_> = fonts.iter().map(|p| p.display().to_string()).collect();
+        let canvas = Canvas::new(WIDTH, HEIGHT, &paths).unwrap();
+        (fonts, canvas)
+    }
+
+    fn ready(app: &mut Reader) {
+        app.prepare_online_text(true, "Harbor navigation").unwrap();
+        let panel = app.online.as_mut().unwrap();
+        panel.articles.push(Article {
+            title: "Harbor navigation".into(),
+            text: "A nautical chart identifies navigable water, obstructions, and the channels used to enter a harbor. Captains use marks on shore with tide tables to estimate their position. ".repeat(20),
+            source: None,
+            romanization: None,
+            thumbnail: None,
+        });
+    }
+
+    #[test]
+    fn wikipedia_media_settings_default_on_gate_the_second_switch_and_survive_reopen() {
+        let fixture = Fixture::new();
+        let (fonts, mut canvas) = canvases();
+        let previous: Languages = serde_json::from_str(r#"{"wikipedia":"en"}"#).unwrap();
+        assert!(previous.show_wiki_image && previous.show_wiki_more);
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        app.show(Screen::WikipediaSettings);
+        capture_test_screen(&app, &fonts, "READER_WIKI_IMAGE_SETTINGS", false);
+        let row0 = Rect::new(40, 154, WIDTH as i32 - 80, 116);
+        let row1 = Rect {
+            y: row0.y + 116,
+            ..row0
+        };
+        for row in [row0, row1] {
+            let screen = frame(&app, &mut canvas, false);
+            assert!(canvas.press_at(200.0, (row.y + 45) as f32));
+            let pressed = frame(&app, &mut canvas, false);
+            assert!(screen.iter().zip(&pressed).enumerate().any(|(i, (a, b))| {
+                a != b && row.contains((i as u32 % WIDTH) as f32, (i as u32 / WIDTH) as f32)
+            }));
+            canvas.begin();
+        }
+        assert_eq!(tap(&mut app, row1), Change::Partial);
+        assert!(!app.lookup_history.online_languages.show_wiki_more);
+        assert_eq!(tap(&mut app, row0), Change::Partial);
+        assert!(matches!(app.items()[1].action, Action::Heading));
+        app.activate(Action::ToggleWikipediaMoreImages).unwrap();
+        assert!(!app.lookup_history.online_languages.show_wiki_more);
+        drop(app);
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+        let prefs = &app.lookup_history.online_languages;
+        assert!(!prefs.show_wiki_image && !prefs.show_wiki_more);
+        app.activate(Action::ToggleWikipediaImage).unwrap();
+        assert!(app.lookup_history.online_languages.show_wiki_image);
+        assert!(!app.lookup_history.online_languages.show_wiki_more);
+    }
+
+    #[test]
+    fn wikipedia_media_keeps_text_pages_clicks_through_images_and_restores_the_reading_location() {
+        let fixture = Fixture::new();
+        let (fonts, mut canvas) = canvases();
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        app.open_path(&fixture.book).unwrap();
+        let before = app.current_history_location();
+        ready(&mut app);
+        frame(&app, &mut canvas, false);
+        assert_eq!(tap(&mut app, NEXT), Change::Partial);
+        let pages = app.online.as_ref().unwrap().page_count();
+        let reply = fixture.root.join("authored-picture-reply.json");
+        std::fs::write(
+            &reply,
+            serde_json::to_vec(&Ok::<_, String>(vec![drawing(false)])).unwrap(),
+        )
+        .unwrap();
+        let mut command = Command::new("/bin/sh");
+        command
+            .args(["-c", "read -r line; exec cat \"$1\"", "fixture"])
+            .arg(&reply);
+        app.online.as_mut().unwrap().media.job =
+            Some(ImageJob::fixture(command, Duration::from_secs(3)).unwrap());
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while app.online.as_ref().unwrap().media.job.is_some() {
+            assert!(
+                Instant::now() < deadline,
+                "Authored image worker did not reply"
+            );
+            let _ = app.poll_online(Instant::now());
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(app.online.as_ref().unwrap().images().len(), 1);
+        let pixels = frame(&app, &mut canvas, false);
+        let subject = Rect::new(THUMB.x + 12, THUMB.y + 12, 130, THUMB.h - 24);
+        let ink = (subject.y..subject.bottom())
+            .flat_map(|y| {
+                (subject.x..subject.right()).map(move |x| y as usize * WIDTH as usize + x as usize)
+            })
+            .filter(|&offset| pixels[offset] < 65)
+            .count();
+        assert!(
+            ink > 20,
+            "The thumbnail did not include its dark sailboat hull"
+        );
+        capture_test_screen(&app, &fonts, "READER_WIKI_RESULT_IMAGE", false);
+        assert_eq!(app.online.as_ref().unwrap().page_count(), pages);
+        assert_eq!(app.online.as_ref().unwrap().page, 1);
+
+        assert_eq!(tap(&mut app, THUMB), Change::Partial);
+        assert_eq!(app.online.as_ref().unwrap().media.current, Some(0));
+        assert_eq!(tap(&mut app, CLOSE), Change::Partial);
+        assert_eq!(app.online.as_ref().unwrap().page, 1);
+
+        let panel = app.online.as_mut().unwrap();
+        panel.request.full_article = true;
+        panel
+            .media
+            .results
+            .insert(0, vec![drawing(false), drawing(true)]);
+        assert_eq!(tap(&mut app, THUMB), Change::Partial);
+        capture_test_screen(&app, &fonts, "READER_WIKI_FULL_IMAGE", false);
+        let next = picture_pager(0, 2).button(PageTurn::Next).unwrap();
+        assert_eq!(tap(&mut app, next), Change::Partial);
+        assert_eq!(app.online.as_ref().unwrap().media.current, Some(1));
+        capture_test_screen(&app, &fonts, "READER_WIKI_FULL_IMAGE_DARK", true);
+        assert_eq!(app.input(Input::PageBack), Change::Partial);
+        assert_eq!(tap(&mut app, CLOSE), Change::Partial);
+        assert_eq!(tap(&mut app, CLOSE), Change::Partial);
+        assert_eq!(app.screen, Screen::Book);
+        assert_eq!(app.current_history_location(), before);
+    }
+
+    #[test]
+    fn wikipedia_media_timeout_and_sleep_leave_already_received_text_available() {
+        let fixture = Fixture::new();
+        let (fonts, _) = canvases();
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+        ready(&mut app);
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "read -r line; exec sleep 30"]);
+        app.online.as_mut().unwrap().media.job =
+            Some(ImageJob::fixture(command, Duration::from_millis(20)).unwrap());
+        let now = Instant::now() + Duration::from_secs(1);
+        assert_eq!(app.poll_online(now), Some(Change::None));
+        let panel = app.online.as_ref().unwrap();
+        assert!(panel.media.job.is_none());
+        assert!(panel.images().is_empty());
+        assert!(panel.articles[0].text.starts_with("A nautical chart"));
+
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "read -r line; exec sleep 30"]);
+        app.online.as_mut().unwrap().media.job =
+            Some(ImageJob::fixture(command, Duration::from_secs(3)).unwrap());
+        app.input(Input::Sleep);
+        let panel = app.online.as_ref().unwrap();
+        assert!(panel.media.job.is_none());
+        assert!(panel.articles[0].text.starts_with("A nautical chart"));
     }
 }

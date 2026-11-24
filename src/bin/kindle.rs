@@ -19,6 +19,9 @@ fn main() -> Result<()> {
     if first.as_deref() == Some(std::ffi::OsStr::new("--lookup-worker")) && args.len() == 0 {
         return reader::online_lookup::worker();
     }
+    if first.as_deref() == Some(std::ffi::OsStr::new("--wiki-images-worker")) && args.len() == 0 {
+        return reader::online_lookup::image_worker();
+    }
     let home = env::var_os("PRIMITIVE_READER_HOME")
         .map_or_else(|| PathBuf::from("/mnt/us/reader"), PathBuf::from);
     let documents = env::var_os("PRIMITIVE_READER_DOCUMENTS")

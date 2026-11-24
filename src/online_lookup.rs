@@ -5,9 +5,12 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use url::Url;
+
+mod media;
+pub(crate) use media::{ImageJob, MAX_PICTURES, Picture, Request as ImageRequest};
 
 pub(crate) const MAX_TEXT_BYTES: usize = 6000;
 const MAX_RESPONSE: u64 = 384 * 1024;
@@ -57,6 +60,8 @@ pub(crate) struct Article {
     pub source: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub romanization: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thumbnail: Option<media::Link>,
 }
 
 impl Article {
@@ -132,16 +137,22 @@ fn translation_chunks(text: &str, limit: usize) -> Vec<Range<usize>> {
     chunks
 }
 
+fn wiki_api(lang: &str) -> Url {
+    Url::parse(&format!(
+        "https://{}.wikipedia.org/w/api.php",
+        lang.to_ascii_lowercase()
+    ))
+    .expect("validated Wikipedia language")
+}
+
 fn endpoint(request: &Request, text: &str) -> Url {
-    let base = match request.service {
-        Service::Wikipedia => format!(
-            "https://{}.wikipedia.org/w/api.php",
-            request.to.to_ascii_lowercase()
-        ),
-        Service::Google => "https://translate.googleapis.com/translate_a/single".into(),
-        Service::MyMemory => "https://api.mymemory.translated.net/get".into(),
+    let mut url = match request.service {
+        Service::Wikipedia => wiki_api(&request.to),
+        Service::Google => {
+            Url::parse("https://translate.googleapis.com/translate_a/single").unwrap()
+        }
+        Service::MyMemory => Url::parse("https://api.mymemory.translated.net/get").unwrap(),
     };
-    let mut url = Url::parse(&base).expect("validated provider host");
     let mut params = url.query_pairs_mut();
     match request.service {
         Service::Wikipedia => {
@@ -188,6 +199,29 @@ fn endpoint(request: &Request, text: &str) -> Url {
     url
 }
 
+fn wiki_images_endpoint(mut url: Url, full_article: bool) -> Url {
+    let params: Vec<_> = url
+        .query_pairs()
+        .map(|(key, value)| {
+            let value = if key == "prop" {
+                "extracts|pageimages".into()
+            } else {
+                value.into_owned()
+            };
+            (key.into_owned(), value)
+        })
+        .collect();
+    url.query_pairs_mut()
+        .clear()
+        .extend_pairs(params)
+        .extend_pairs([
+            ("piprop", "thumbnail|name"),
+            ("pithumbsize", if full_article { "500" } else { "250" }),
+            ("pilimit", "3"),
+        ]);
+    url
+}
+
 fn wikipedia(json: &Value) -> Result<Vec<Article>, String> {
     if let Some(code) = json.pointer("/error/code").and_then(Value::as_str) {
         return Err(match code {
@@ -213,6 +247,7 @@ fn wikipedia(json: &Value) -> Result<Vec<Article>, String> {
                 text: text.to_owned(),
                 source: None,
                 romanization: None,
+                thumbnail: media::thumbnail(page),
             });
         }
     }
@@ -289,13 +324,35 @@ fn translation(
     })
 }
 
+#[cfg(test)]
 fn resolve(
     request: &Request,
     mut fetch: impl FnMut(Url) -> Result<Value, String>,
 ) -> Result<Vec<Article>, String> {
+    resolve_with_images(request, false, &mut fetch)
+}
+
+fn resolve_with_images(
+    request: &Request,
+    thumbnails: bool,
+    mut fetch: impl FnMut(Url) -> Result<Value, String>,
+) -> Result<Vec<Article>, String> {
     request.validate()?;
     let articles = match request.service {
-        Service::Wikipedia => wikipedia(&fetch(endpoint(request, &request.text))?)?,
+        Service::Wikipedia => {
+            let text = endpoint(request, &request.text);
+            if thumbnails {
+                fetch(wiki_images_endpoint(text.clone(), request.full_article))
+                    .and_then(|json| wikipedia(&json))
+                    .or_else(|_| wikipedia(&fetch(text)?))?
+            } else {
+                let mut articles = wikipedia(&fetch(text)?)?;
+                for article in &mut articles {
+                    article.thumbnail = None;
+                }
+                articles
+            }
+        }
         service => {
             let limit = if service == Service::MyMemory {
                 500
@@ -343,6 +400,7 @@ fn resolve(
                     }
                 }),
                 romanization: (!romanized.is_empty()).then(|| romanized.join(" ")),
+                thumbnail: None,
             }]
         }
     };
@@ -378,41 +436,78 @@ fn live_fetch(url: Url, agent: &ureq::Agent) -> Result<Value, String> {
         .map_err(|_| "The provider returned an unreadable response.".into())
 }
 
-/// Worker protocol on stdin/stdout keeps user text out of process arguments and diagnostic logs.
-pub fn worker() -> crate::Result<()> {
-    let request: Request =
-        serde_json::from_reader(io::stdin().lock().take(MAX_TEXT_BYTES as u64 * 6 + 512))?;
-    let agent = ureq::Agent::new_with_config(
+fn agent(timeout: Duration) -> ureq::Agent {
+    ureq::Agent::new_with_config(
         ureq::Agent::config_builder()
             .https_only(true)
             .max_redirects(0)
             .http_status_as_error(false)
             .user_agent(USER_AGENT)
-            .timeout_global(Some(Duration::from_secs(15)))
+            .timeout_global(Some(timeout))
             .build(),
-    );
-    let reply = resolve(&request, |url| live_fetch(url, &agent));
+    )
+}
+
+#[derive(Serialize, Deserialize)]
+struct WorkerRequest {
+    #[serde(flatten)]
+    lookup: Request,
+    #[serde(default)]
+    thumbnails: bool,
+}
+
+/// Worker protocol on stdin/stdout keeps user text out of process arguments and diagnostic logs.
+pub fn worker() -> crate::Result<()> {
+    let request: WorkerRequest =
+        serde_json::from_reader(io::stdin().lock().take(MAX_TEXT_BYTES as u64 * 6 + 512))?;
+    let agent = agent(Duration::from_secs(15));
+    let reply = resolve_with_images(&request.lookup, request.thumbnails, |url| {
+        live_fetch(url, &agent)
+    });
     serde_json::to_writer(io::stdout().lock(), &reply)?;
     Ok(())
 }
 
-pub(crate) struct Job {
+pub fn image_worker() -> crate::Result<()> {
+    media::worker()
+}
+
+pub(crate) struct Job<T = Vec<Article>> {
     child: Child,
-    receiver: Receiver<Result<Vec<Article>, String>>,
+    receiver: Receiver<Result<T, String>>,
     pub poll_at: Instant,
     end: Instant,
 }
 
 impl Job {
-    pub fn start(request: &Request) -> crate::Result<Self> {
+    pub fn start(request: &Request, thumbnails: bool) -> crate::Result<Self> {
         let mut command = Command::new(std::env::current_exe()?);
         command.arg("--lookup-worker");
-        Self::spawn(command, request)
+        Self::spawn_text(command, request, thumbnails)
     }
 
-    pub(crate) fn spawn(mut command: Command, request: &Request) -> crate::Result<Self> {
+    #[cfg(test)]
+    pub(crate) fn spawn(command: Command, request: &Request) -> crate::Result<Self> {
+        Self::spawn_text(command, request, false)
+    }
+
+    fn spawn_text(command: Command, request: &Request, thumbnails: bool) -> crate::Result<Self> {
         request.validate()?;
-        let payload = serde_json::to_vec(request)?;
+        let payload = serde_json::to_vec(&WorkerRequest {
+            lookup: request.clone(),
+            thumbnails,
+        })?;
+        Self::spawn_payload(command, payload, MAX_RESULT as u64 * 6 + 12_288, JOB_LIMIT)
+    }
+}
+
+impl<T: DeserializeOwned + Send + 'static> Job<T> {
+    fn spawn_payload(
+        mut command: Command,
+        payload: Vec<u8>,
+        response_limit: u64,
+        time_limit: Duration,
+    ) -> crate::Result<Self> {
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -427,8 +522,7 @@ impl Job {
                 let reply = (|| {
                     input.write_all(&payload)?;
                     drop(input);
-                    serde_json::from_reader(output.take(MAX_RESULT as u64 * 6 + 4096))
-                        .map_err(io::Error::other)
+                    serde_json::from_reader(output.take(response_limit)).map_err(io::Error::other)
                 })()
                 .unwrap_or_else(|_| Err("The online lookup ended before a result arrived.".into()));
                 let _ = sender.send(reply);
@@ -443,11 +537,11 @@ impl Job {
             child,
             receiver,
             poll_at: now + Duration::from_millis(120),
-            end: now + JOB_LIMIT,
+            end: now + time_limit,
         })
     }
 
-    pub fn poll(&mut self, now: Instant) -> Option<Result<Vec<Article>, String>> {
+    pub fn poll(&mut self, now: Instant) -> Option<Result<T, String>> {
         self.poll_at = now + Duration::from_millis(120);
         match self.receiver.try_recv() {
             Ok(value) => Some(value),
@@ -460,7 +554,7 @@ impl Job {
     }
 }
 
-impl Drop for Job {
+impl<T> Drop for Job<T> {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
@@ -471,6 +565,39 @@ impl Drop for Job {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn wikipedia_media_query_keeps_text_first_and_recovers_from_a_pageimage_error() {
+        let request = request(Service::Wikipedia, "Port & shore");
+        let mut visited = Vec::new();
+        let pages = resolve_with_images(&request, true, |url| {
+            let params: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
+            let prop = &params["prop"];
+            visited.push(prop.clone());
+            assert_eq!(params["gsrsearch"], "Port & shore");
+            if prop == "extracts|pageimages" {
+                assert_eq!(params["pithumbsize"], "250");
+                Ok(json!({"error":{"code":"unknown_prop"}}))
+            } else {
+                assert!(!params.contains_key("pithumbsize"));
+                Ok(json!({"query":{"pages":[{"title":"Port","extract":"Readable text."}]}}))
+            }
+        })
+        .unwrap();
+        assert_eq!(visited, ["extracts|pageimages", "extracts"]);
+        assert_eq!(pages[0].text, "Readable text.");
+        assert!(pages[0].thumbnail.is_none());
+
+        let pages = resolve_with_images(&request, false, |url| {
+            assert_eq!(url.query_pairs().find(|(key,_)| key == "prop").unwrap().1, "extracts");
+            Ok(json!({"query":{"pages":[{
+                "title":"Port","extract":"Readable text.",
+                "pageimage":"Harbor.png",
+                "thumbnail":{"source":"https://upload.wikimedia.org/wikipedia/commons/a/ab/Harbor.png"}
+            }]}}))
+        }).unwrap();
+        assert!(pages[0].thumbnail.is_none());
+    }
 
     fn request(service: Service, text: &str) -> Request {
         Request {
