@@ -36,6 +36,12 @@ use pdf_text_session::ReadingPdf;
 
 pub(crate) const SMALLER: Rect = Rect::new(840, PAGE_HEIGHT as i32 + 5, 120, 60);
 const LARGER: Rect = Rect::new(974, PAGE_HEIGHT as i32 + 5, 120, 60);
+pub(crate) const SEARCH_FIT_CLOSE: Rect = Rect::new(
+    SMALLER.x,
+    SMALLER.y,
+    LARGER.x + LARGER.w - SMALLER.x,
+    SMALLER.h,
+);
 const ZOOM: [f32; 5] = [1.0, 1.25, 1.5, 2.0, 3.0];
 const MAX_OCR_RASTER_SIDE: f32 = 1800.0;
 const MAX_OCR_CACHE_BYTES: u64 = 512 * 1024;
@@ -962,6 +968,24 @@ impl FixedReading {
 
     pub(crate) fn restore_view(&mut self, preferences: View) -> Result<()> {
         self.present(self.page, preferences.normalized())
+    }
+
+    pub(crate) fn show_search_fit_page(&mut self, page: usize) -> Result<()> {
+        let view = View {
+            zoom: 0,
+            width_fit: false,
+            height_fit: false,
+            continuous: false,
+            offset_x: 0.0,
+            offset_y: 0.0,
+            crop: None,
+            ..self.view
+        };
+        if page != self.page || view != self.view {
+            self.present(page, view)?;
+        }
+        self.pause();
+        Ok(())
     }
 
     pub(crate) fn crop_point(&self, x: f32, y: f32) -> Option<(f32, f32)> {
