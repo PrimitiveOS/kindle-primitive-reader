@@ -5,14 +5,18 @@ mod bottom_config;
 
 use std::time::Instant;
 
-use primitive_app::{App, Change, HEIGHT, WIDTH};
+use primitive_app::{App, Change};
+#[cfg(test)]
+use primitive_app::{HEIGHT, WIDTH};
 use primitive_ui::{CAPTION, Canvas, HAIRLINE, Icon, Input, Rect, TextStyle};
 
 use self::bottom_config::{ConfigRow, SINGLE_VIEW_SECTIONS, TEXT_SECTIONS, VIEW_SECTIONS};
 use super::bar_icons::{EXIT, action_icon, group_icon, panel_icon};
 use super::top_config::TopGroup;
 use super::{Action, Item, Reader, Screen};
-use crate::session::{PAGE_HEIGHT, PagePaint};
+#[cfg(test)]
+use crate::session::PAGE_HEIGHT;
+use crate::session::PagePaint;
 
 pub(super) use crate::book_menus::BarPanel;
 
@@ -709,16 +713,16 @@ impl Reader {
         if self.controls.menu_activation == crate::reading_controls::MenuActivation::Swipe {
             return false;
         }
-        let middle = WIDTH as f32 / 2.0;
-        if (x - middle).abs() <= 150.0
-            && (HEIGHT as f32 * 0.8..HEIGHT as f32 * 12.0 / 13.0).contains(&y)
-        {
+        let viewport = self.reading_viewport();
+        let (width, height) = viewport.dimensions();
+        let (width, height) = (width as f32, height as f32);
+        if (x - width / 2.0).abs() <= 150.0 && (height * 0.8..height * 12.0 / 13.0).contains(&y) {
             // The lower menu strip stops where the status footer takes over.
             self.show(screen);
             self.reading_panel = Some(self.last_bottom_panel());
             true
-        } else if (WIDTH as f32 / 3.0..=WIDTH as f32 * 2.0 / 3.0).contains(&x)
-            && (0.0..PAGE_HEIGHT as f32 * 0.55).contains(&y)
+        } else if (width / 3.0..=width * 2.0 / 3.0).contains(&x)
+            && (0.0..viewport.page_height() as f32 * 0.55).contains(&y)
         {
             self.show(screen);
             true
@@ -864,6 +868,116 @@ mod tests {
             (rect.x + rect.w / 2) as f32,
             (rect.y + rect.h / 2) as f32,
         ))
+    }
+
+    #[test]
+    fn reading_edge_viewport_uses_the_presented_tap_and_swipe_regions() {
+        use crate::app::gestures::{Binding, Gesture};
+        use crate::app::reading_viewport_stage::draw_test_candidate;
+        use crate::app::selection_viewport_tests::{canvas, press};
+        use crate::session::ReadingViewport;
+        use primitive_app::viewport::{LogicalTurn, ViewportDecision};
+
+        let fixture = crate::app::tests::Fixture::new();
+        let pdf = fixture.root.join("Harbor chart.pdf");
+        fs::write(&pdf, crate::fixed::tests::document()).unwrap();
+        let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+        let cases = [
+            (&fixture.book, Screen::Book, Screen::BookTools, "Text"),
+            (&pdf, Screen::Fixed, Screen::FixedTools, "View"),
+        ];
+        for (index, (path, surface, toolbar, lower_button)) in cases.into_iter().enumerate() {
+            app.open_path(path).unwrap();
+            app.controls.footer_tap_locked = true;
+            let portrait = draw_test_candidate(
+                &mut app,
+                index as u64 * 3 + 1,
+                LogicalTurn::Upright,
+                "",
+                false,
+            );
+            app.finish_viewport(portrait, ViewportDecision::Commit);
+            // Keep the existing physical half-width and exact portrait y cutoffs.
+            for (x, y, opened) in [
+                (632.0, 1343.0, false),
+                (632.0, 1344.0, true),
+                (482.0, 1400.0, true),
+                (481.0, 1400.0, false),
+                (632.0, 1551.0, false),
+                (632.0, 882.0, true),
+                (632.0, 884.0, false),
+            ] {
+                app.input(Input::Tap(x, y));
+                assert_eq!(
+                    app.screen,
+                    if opened { toolbar } else { surface },
+                    "{x}, {y}"
+                );
+                app.show(surface);
+            }
+
+            app.gestures.set(Gesture::RightUp, Binding::Ignore).unwrap();
+            app.gestures
+                .set(Gesture::RightDown, Binding::Ignore)
+                .unwrap();
+            app.gestures
+                .set(Gesture::TapTopRight, Binding::Controls)
+                .unwrap();
+            for (offset, turn) in [LogicalTurn::Clockwise, LogicalTurn::Counterclockwise]
+                .into_iter()
+                .enumerate()
+            {
+                let candidate = draw_test_candidate(
+                    &mut app,
+                    index as u64 * 3 + 2 + offset as u64,
+                    turn,
+                    "",
+                    false,
+                );
+                app.finish_viewport(candidate, ViewportDecision::Commit);
+                assert_eq!(app.accepted_viewport, Some(candidate));
+                let origin = app.current_history_location();
+                let mut wide = canvas(&app, ReadingViewport::LANDSCAPE);
+
+                app.input(Input::Tap(840.0, 700.0));
+                assert_eq!(app.screen, surface);
+                assert_eq!(app.input(Input::Tap(840.0, 1024.0)), Change::Partial);
+                assert_eq!(app.screen, toolbar);
+                assert!(app.reading_panel.is_some());
+                press(&app, &mut wide, app.reading_button(lower_button), false);
+                app.show(surface);
+                assert_eq!(app.input(Input::Tap(1040.0, 145.0)), Change::Partial);
+                assert_eq!(app.screen, toolbar);
+                press(&app, &mut wide, app.reading_button("Controls"), false);
+                app.show(surface);
+
+                for (y, dy, from_top) in [(1125.0, -120.0, false), (220.0, 120.0, true)] {
+                    let swipe = Input::Swipe {
+                        dx: 0.0,
+                        dy,
+                        start_y: y,
+                    };
+                    // At x=1200 the old portrait binding consumed these swipes.
+                    assert_eq!(app.swipe(swipe, 1200.0), Change::Partial);
+                    assert_eq!(app.screen, toolbar);
+                    assert_eq!(app.reading_top, from_top);
+                    app.show(surface);
+                }
+                let actual_right = Input::Swipe {
+                    dx: 0.0,
+                    dy: -120.0,
+                    start_y: 650.0,
+                };
+                assert_eq!(app.swipe(actual_right, 1634.0), Change::None);
+                assert_eq!(app.screen, surface);
+                assert_eq!(app.input(Input::Tap(1634.0, 75.0)), Change::Partial);
+                assert_eq!(app.screen, toolbar);
+                assert!(app.reading_top);
+                app.show(surface);
+                assert_eq!(app.current_history_location(), origin);
+            }
+        }
     }
 
     #[test]

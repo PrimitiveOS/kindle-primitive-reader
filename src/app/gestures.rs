@@ -1,7 +1,7 @@
 //! Assign single-contact gestures to existing Reader actions. The SDK owns system gestures.
 use super::{Action, DisplayLevel, Item, Reader, Screen, read_import_file};
-use crate::{Result, session::PAGE_HEIGHT};
-use primitive_app::{App, Change, HEIGHT, WIDTH};
+use crate::{Result, session::ReadingViewport};
+use primitive_app::{App, Change};
 use primitive_ui::Input;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -56,18 +56,20 @@ impl Gesture {
         Self::ALL.iter().find(|entry| entry.0 == self).unwrap().1
     }
 
-    fn touch(input: Input) -> Option<Self> {
+    fn touch(input: Input, viewport: ReadingViewport) -> Option<Self> {
         let (x, y, hold) = match input {
             Input::Tap(x, y) => (x, y, false),
             Input::LongTap(x, y) => (x, y, true),
             _ => return None,
         };
+        let width = viewport.dimensions().0 as f32;
+        let page_height = viewport.page_height() as f32;
         // Leave the visible footer, including Exit, available even if a corner is reassigned.
-        if !(0.0..PAGE_HEIGHT as f32).contains(&y) || !(0.0..WIDTH as f32).contains(&x) {
+        if !(0.0..page_height).contains(&y) || !(0.0..width).contains(&x) {
             return None;
         }
-        let right = x >= WIDTH as f32 - 100.0;
-        let bottom = y >= PAGE_HEIGHT as f32 - 100.0;
+        let right = x >= width - 100.0;
+        let bottom = y >= page_height - 100.0;
         if (!right && x >= 100.0) || (!bottom && y >= 100.0) {
             return None;
         }
@@ -83,16 +85,18 @@ impl Gesture {
         })
     }
 
-    fn swipe(input: Input, x: f32) -> Option<Self> {
+    fn swipe(input: Input, x: f32, viewport: ReadingViewport) -> Option<Self> {
         let Input::Swipe { dx, dy, start_y: y } = input else {
             return None;
         };
+        let (width, height) = viewport.dimensions();
+        let (width, height) = (width as f32, height as f32);
         if !x.is_finite()
             || !y.is_finite()
             || !dx.is_finite()
             || !dy.is_finite()
-            || !(0.0..WIDTH as f32).contains(&x)
-            || !(0.0..HEIGHT as f32).contains(&y)
+            || !(0.0..width).contains(&x)
+            || !(0.0..height).contains(&y)
         {
             return None;
         }
@@ -102,7 +106,7 @@ impl Gesture {
         }
         if ay > ax * 1.5 {
             // Top/bottom menu swipes retain priority at their shared corners.
-            if !(HEIGHT as f32 / 8.0..HEIGHT as f32 * 0.875).contains(&y) {
+            if !(height / 8.0..height * 0.875).contains(&y) {
                 return None;
             }
             if x < 100.0 {
@@ -112,7 +116,7 @@ impl Gesture {
                     Self::LeftDown
                 });
             }
-            if x >= WIDTH as f32 - 100.0 {
+            if x >= width - 100.0 {
                 return Some(if dy < 0.0 {
                     Self::RightUp
                 } else {
@@ -127,14 +131,14 @@ impl Gesture {
                     Self::TopRight
                 });
             }
-            if y >= HEIGHT as f32 - 100.0 {
+            if y >= height - 100.0 {
                 return Some(if dx < 0.0 {
                     Self::BottomLeft
                 } else {
                     Self::BottomRight
                 });
             }
-        } else if ax.hypot(ay) <= WIDTH as f32 / 4.0 {
+        } else if ax.hypot(ay) <= width / 4.0 {
             return Some(Self::ShortDiagonal);
         }
         None
@@ -255,9 +259,10 @@ impl Reader {
         {
             return None;
         }
+        let viewport = self.reading_viewport();
         let gesture = match swipe_x {
-            Some(x) => Gesture::swipe(input, x)?,
-            None => Gesture::touch(input)?,
+            Some(x) => Gesture::swipe(input, x, viewport)?,
+            None => Gesture::touch(input, viewport)?,
         };
         let binding = self.gestures.get(gesture);
         if let (Binding::Default, Input::Swipe { dy, .. }) = (binding, input) {
@@ -294,7 +299,9 @@ impl Reader {
             Binding::Ignore => return Some(Change::None),
             Binding::Next => return Some(self.input(Input::PageForward)),
             Binding::Previous => return Some(self.input(Input::PageBack)),
-            Binding::Controls => return Some(self.open_reading_edge(true, WIDTH as f32 / 2.0)),
+            Binding::Controls => {
+                return Some(self.open_reading_edge(true, viewport.dimensions().0 as f32 / 2.0));
+            }
             Binding::Contents => Action::Show(if fixed {
                 Screen::FixedContents
             } else {
