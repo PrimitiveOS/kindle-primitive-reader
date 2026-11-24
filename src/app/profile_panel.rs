@@ -8,6 +8,7 @@ use crate::reading_profiles::{Field, FixedProfile};
 pub(super) mod on_open;
 mod opening_metadata;
 pub(super) mod opening_rules;
+pub(super) mod opening_shortcuts;
 pub(super) mod opening_time;
 pub(super) mod rendering_choices;
 

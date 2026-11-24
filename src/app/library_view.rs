@@ -37,6 +37,10 @@ pub(super) struct FileBrowser {
 }
 
 impl FileBrowser {
+    pub(super) fn directory(&self) -> &Path {
+        &self.directory
+    }
+
     pub(super) fn new(listing: BrowseList) -> Self {
         Self {
             directory: PathBuf::new(),

@@ -941,6 +941,7 @@ pub struct Reader {
     metadata_checkpoint: metadata_save::Checkpoint,
     editor: Editor,
     opening_metadata_phrase: Option<String>,
+    opening_path_overlay: Option<profile_panel::opening_shortcuts::Overlay>,
     nearby: nearby_search::Nearby,
     screen_page_jump: Option<go_to_page::PendingJump>,
     screen_page_worker: crate::session::screen_pages::background::Worker,
@@ -1176,6 +1177,7 @@ impl Reader {
             metadata_checkpoint: metadata_save::Checkpoint::new(Instant::now()),
             editor: Editor::new(64),
             opening_metadata_phrase: None,
+            opening_path_overlay: None,
             nearby: nearby_search::Nearby::default(),
             screen_page_jump: None,
             screen_page_worker: Default::default(),
@@ -1644,6 +1646,7 @@ impl Reader {
     }
 
     fn show(&mut self, screen: Screen) {
+        self.opening_path_overlay = None;
         if !matches!(
             screen,
             Screen::Book | Screen::Fixed | Screen::PublisherOffer
@@ -4538,6 +4541,9 @@ impl Reader {
     }
 
     fn name_editor_input(&mut self, input: Input) -> Change {
+        if let Some(change) = self.opening_path_shortcut_input(input) {
+            return change;
+        }
         let profile = match self.screen {
             Screen::ProfileName(mode) => Some(mode),
             _ => None,
@@ -7751,6 +7757,7 @@ impl Reader {
                     },
                 );
             }
+            self.draw_opening_path_shortcuts(canvas);
             return;
         }
         let (count, mut items) = self.list_window();

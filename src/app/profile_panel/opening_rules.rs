@@ -90,10 +90,9 @@ impl Reader {
             .as_ref()
             .map(|book| book.entry.library_path())
             .or_else(|| self.fixed.as_ref().map(|book| book.entry.library_path()));
-        let Some(path) = path
-            .and_then(std::path::Path::to_str)
-            .filter(|value| !value.contains(',') && valid_path(value))
-        else {
+        let Some(path) = path.and_then(std::path::Path::to_str).filter(|value| {
+            !value.contains(',') && !path::contains_shortcut(value) && valid_path(value)
+        }) else {
             return Some(self.report("Use a distinctive part of the current book's path"));
         };
         self.editor.text = path.chars().collect();
@@ -166,7 +165,10 @@ impl Reader {
                             "File path contains",
                             Action::Show(Screen::ProfileName(Name::OpeningPath(index))),
                         )
-                        .detail(rules.path.as_deref().unwrap_or("Off")),
+                        .detail(rules.path.as_deref().map_or_else(
+                            || "Off".into(),
+                            |pattern| self.opening_rule_path_detail(pattern),
+                        )),
                         Item::new(
                             "Book is in a collection",
                             Action::Show(Screen::ReadingProfileOpening(index, Page::Collections)),

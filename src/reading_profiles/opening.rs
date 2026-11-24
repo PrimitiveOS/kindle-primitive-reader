@@ -8,6 +8,8 @@ use std::{
     path::Path,
 };
 
+pub(crate) mod path;
+
 pub(crate) const PATH_LIMIT: usize = 160;
 pub(crate) const METADATA_LIMIT: usize = 160;
 const MAX_METADATA_VALUE_BYTES: usize = 16 * 1024;
@@ -123,6 +125,7 @@ pub(crate) struct Book<'a> {
     pub(crate) is_new: bool,
     pub(crate) metadata: Option<&'a Metadata>,
     pub(crate) local_minute: Option<u16>,
+    pub(crate) download_folder: &'a Path,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -197,10 +200,7 @@ impl Conditions {
         }
         self.orientations.contains(&book.orientation)
             || self.path.as_ref().is_some_and(|pattern| {
-                let path = book.path.to_string_lossy().to_lowercase();
-                pattern
-                    .split(',')
-                    .any(|part| path.contains(&part.trim().to_lowercase()))
+                path::matches(pattern, book.path, book.library, book.download_folder)
             })
             || book.metadata.is_some_and(|metadata| {
                 self.metadata

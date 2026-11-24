@@ -1413,6 +1413,10 @@ impl Library {
         &self.original_root
     }
 
+    pub(crate) fn canonical_documents_path(&self) -> &Path {
+        &self.root
+    }
+
     pub fn open(root: &Path, state_path: &Path) -> io::Result<Self> {
         let original_root = if root.is_absolute() {
             root.to_owned()

@@ -88,6 +88,7 @@ impl Reader {
             is_new,
             metadata,
             local_minute,
+            download_folder: self.browser.directory(),
         };
         let mut matching: Vec<_> = self
             .profiles
@@ -222,6 +223,7 @@ impl Reader {
             is_new: position.is_none(),
             metadata,
             local_minute,
+            download_folder: self.browser.directory(),
         };
         let mut adjusted = preferences.clone();
         for profile in self.opening_profiles(&book) {
@@ -282,6 +284,7 @@ impl Reader {
             is_new,
             metadata,
             local_minute,
+            download_folder: self.browser.directory(),
         };
         let profiles: Vec<_> = self
             .opening_profiles(&book)

@@ -471,7 +471,17 @@ mock("readcollection", {
         return name == "Sea surveys" and file == "/documents/enrolled.epub"
     end,
 })
-profiles.ui.folder_shortcuts = { expandPath = function(_, path) return path end }
+local folder_settings = { lastdir = "/documents/Downloads" }
+G_reader_settings = { readSetting = function(_, key, default) return folder_settings[key] or default end }
+for _, widget in ipairs({"buttondialog", "menu", "pathchooser"}) do
+    mock("ui/widget/" .. widget, {})
+end
+mock("ui/widget/screenshoter", { default_dir = "/app-data/screenshots" })
+mock("ui/widget/dictquicklookup", { getWikiSaveEpubDefaultDir = function() return "/documents/Wikipedia" end })
+mock("apps/filemanager/filemanagerutil", { getHomeFolder = function() return "/documents" end })
+mock("libs/libkoreader-lfs", {})
+local folders = dofile(root .. "/frontend/apps/filemanager/filemanagershortcuts.lua")
+profiles.ui.folder_shortcuts = folders
 profiles.ui.collections = {
     onShowCollList = function(_, _, callback) callback({ ["Sea surveys"] = true }) end,
 }
@@ -498,6 +508,44 @@ conditional_open("/documents/ordinary.epub", 0, true, false)
 conditional_open("/documents/ordinary.epub", 1, false, true)
 conditional_open("/documents/wayPOINT.epub", 0, false, true)
 conditional_open("/documents/enrolled.epub", 0, false, true)
+rules[5].hold_callback(menu) -- keep the path oracle independent of collection matches
+rules[2].sub_item_table_func()[2].callback()
+local function save_path(phrase, preview)
+    rules[4].callback(menu)
+    visible.input = phrase
+    if preview then
+        local dialog = visible
+        choose(dialog.buttons[#dialog.buttons - 1], "Show").callback()
+        assert(visible.text == preview and dialog.input == phrase)
+        visible = dialog
+    end
+    choose(visible.buttons[#visible.buttons], "Save").callback()
+end
+rules[4].callback(menu)
+choose(visible.buttons[#visible.buttons - 1], "Info").callback()
+assert(visible.text:find("%H% Home", 1, true) and visible.text:find("%S% Screenshot folder", 1, true))
+save_path("%H%/Survey, %D%/Loan", "/documents/Survey, /documents/Downloads/Loan")
+conditional_open("/documents/SURVEY/paper.epub", 0, false, true)
+conditional_open("/documents/Downloads/Loan/paper.epub", 0, false, true)
+conditional_open("/outside/Survey/paper.epub", 0, false, false)
+assert(rules[4].text_func():find("/documents/Downloads/Loan", 1, true))
+assert(folders:expandPath("%H%%D%") == "/documents/documents/Downloads")
+assert(folders:expandPath("%H% %S% %W% %h% %9% %Z%") == "/documents /app-data/screenshots /documents/Wikipedia %h% %9% %Z%")
+assert(folders:expandPath("%Z%H%") == "%Z%H%")
+assert(folders:expandPath("%%H%%") == "%/documents%")
+save_path('"%H%/Survey", %Z%', '"/documents/Survey", %Z%')
+conditional_open("/documents/Survey/paper.epub", 0, false, false) -- quotes are literal
+conditional_open('/library/"/documents/Survey".epub', 0, false, true)
+conditional_open("/documents/%z%.epub", 0, false, true) -- unknown variables remain literal
+folder_settings.lastdir = nil
+assert(folders:expandPath("%D%") == "%D%")
+folder_settings.download_dir = "/documents/Charts, atlas"
+save_path("%D%/Loan", "/documents/Charts, atlas/Loan")
+conditional_open("/documents/Charts/report.epub", 0, false, true)
+conditional_open("/elsewhere/atlas/Loan/report.epub", 0, false, true)
+folder_settings.download_dir, folder_settings.lastdir = nil, "/documents/Downloads"
+save_path("waypoint, ridge")
+rules[2].sub_item_table_func()[2].callback()
 rules[6].callback(menu)
 conditional_open("/documents/wayPOINT.epub", 1, false, false)
 conditional_open("/documents/wayPOINT.epub", 1, true, true)
@@ -619,5 +667,6 @@ print("Stock saved scans: eight Margin and Contrast presets, isolated until Appl
 print("Stock factory, action removal, rename/duplicate/delete, format gate and batched execution verified.")
 print("Stock book opening: Always toggle, ReaderReady dispatch, format gates, reload guard and disable verified.")
 print("Stock conditional opening: orientation/path/collection alternatives, a separate new-book gate, and one execution per event.")
+print("Stock path shortcuts: %H%/%D%/%S%/%W%, preview, single-pass expansion, literal quotes, and splitting after expansion.")
 print("Stock metadata opening: seven fields, effective title, Current book, OR/only-new, and save/clear.")
 print("Stock opening time: endpoint editor, every minute of daytime, overnight and equal-endpoint windows, conditional gating and clearing.")

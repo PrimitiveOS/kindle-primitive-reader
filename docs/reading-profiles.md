@@ -43,6 +43,24 @@ A saved reference to an unavailable collection can be removed from the collectio
 Choose **Current book** in the path editor to insert its path under Documents,
 including characters the Kindle keyboard cannot type.
 
+The path editor's **Shortcuts** guide and **Preview** show the folders
+used at opening. Use `%H%` for Documents, `%D%` for the last folder browsed
+in this Reader session, `%S%` for the `screenshots` folder in Reader data,
+and `%W%` for `Wikipedia` under Documents. `%D%` starts at Documents.
+These are path references. The editor saves the typed template, so the
+same rule can work after moving a Documents library. Reader creates no
+folders for a rule.
+
+As in KOReader, known tokens expand in one pass before comma alternatives
+are split. Quotes and unknown tokens are literal. A comma inside an
+expanded folder name also separates alternatives. For such a folder,
+use a distinctive comma-free phrase as the rule. Reader limits the saved
+template to 160 characters and ignores an expanded rule beyond 64 KiB.
+On desktop, an opening path can match either its resolved Documents root
+or the root originally supplied to Reader.
+
+[Folder shortcut guide](screenshots/landscape-profile-folder-shortcuts.png)
+
 **Book metadata contains** offers Title, Authors, Series, Series index,
 Language, Keywords, and Description. Any phrase in any configured field
 can match. Reader searches for literal substrings with Unicode lowercase
@@ -89,8 +107,10 @@ The native provider comparison uses authored EPUB, PDF, DjVu and CBZ
 documents. The Mac transaction tests check mixed metadata and screen-turn
 rules, byte-identical staged and accepted frames, and a PDF's position
 through a rejected turn. The legacy display path still uses the preferred
-orientation. Folder shortcut expansion, custom sidecar metadata,
-execution confirmation and dispatch delay remain open.
+orientation. The native comparison exercises the stock shortcut guide,
+preview, path expansion and reader-ready matching against Reader's own
+folder locations. Importing KOReader's custom folder settings and metadata,
+execution confirmation, and dispatch delay remain open.
 [Landscape simulator capture](screenshots/landscape-profile-apply-on-opening.png) ·
 [Opening conditions in the legacy display path](screenshots/landscape-profile-opening-conditions.png) ·
 [Current book path shortcut](screenshots/landscape-profile-current-book-path.png) ·
