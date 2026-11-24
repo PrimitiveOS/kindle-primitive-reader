@@ -82,7 +82,12 @@ impl Reader {
                     ..controls
                 }),
             );
-            if controls.end_action == action {
+            if controls.end_action == action
+                && action == EndAction::Next
+                && controls.folder_order.uses_reading_data()
+            {
+                row.detail("Selected · Prompts with this folder order")
+            } else if controls.end_action == action {
                 row.detail("Selected")
             } else {
                 row
@@ -108,7 +113,13 @@ impl Reader {
         if self.controls.finish_at_end {
             self.mark_at_end(false);
         }
-        let action = self.controls.end_action;
+        let action = if self.controls.end_action == EndAction::Next
+            && self.controls.folder_order.uses_reading_data()
+        {
+            EndAction::Ask
+        } else {
+            self.controls.end_action
+        };
         let result = self.apply_end_action(action, false);
         self.update_stats_activity(Instant::now());
         match result {
@@ -136,6 +147,14 @@ impl Reader {
     fn end_delete_available(&self) -> bool {
         self.current_document()
             .is_some_and(|(entry, _)| entry.can_delete_file())
+    }
+
+    fn end_action_available(&self, action: EndAction) -> bool {
+        match action {
+            EndAction::Delete => self.end_delete_available(),
+            EndAction::Next => self.controls.folder_order.supports_adjacent_files(),
+            _ => true,
+        }
     }
 
     fn apply_end_action(&mut self, action: EndAction, from_dialog: bool) -> Result<()> {
@@ -244,7 +263,7 @@ impl Reader {
         );
         for (index, action) in BUTTONS.into_iter().enumerate() {
             let rect = button(index);
-            let enabled = action != EndAction::Delete || self.end_delete_available();
+            let enabled = self.end_action_available(action);
             let pressed = enabled && canvas.control_pressed(rect, false);
             let ink = if !enabled {
                 SECONDARY
@@ -324,7 +343,7 @@ impl Reader {
                         .enumerate()
                         .find_map(|(index, action)| button(index).contains(x, y).then_some(action));
                     match action {
-                        Some(EndAction::Delete) if !self.end_delete_available() => {
+                        Some(action) if !self.end_action_available(action) => {
                             return Change::None;
                         }
                         Some(action) => self.apply_end_action(action, true),
@@ -566,6 +585,59 @@ mod tests {
             app.library.state(next_id).unwrap().status(),
             ReadingStatus::Finished
         );
+    }
+
+    #[test]
+    fn reading_folder_order_requires_a_deliberate_next_at_each_document_end() {
+        use crate::library::{FolderOrder, FolderSort};
+
+        let fixture = Fixture::new();
+        let folder = fixture.root.join("Series");
+        fs::create_dir(&folder).unwrap();
+        let first = folder.join("Volume 1.txt");
+        let second = folder.join("Volume 2.txt");
+        fs::write(&first, "Port lights").unwrap();
+        fs::write(&second, "A calm sea").unwrap();
+        let mut app = app(&fixture);
+        app.controls.end_action = EndAction::Next;
+        app.controls.finish_at_end = true;
+        app.activate(Action::SetFolderOrder(FolderOrder {
+            sort: FolderSort::ReadingProgress,
+            reverse: true,
+        }))
+        .unwrap();
+        app.open_path(&first).unwrap();
+        let first_id = app.open_book_id().unwrap();
+        page_input(&mut app, Input::PageForward);
+        assert_eq!(app.end_dialog, Some(Dialog::Actions));
+        assert_eq!(app.open_book_id(), Some(first_id));
+        assert_eq!(
+            app.library.state(first_id).unwrap().status(),
+            ReadingStatus::Finished
+        );
+        assert_eq!(app.input(tap(button(3))), Change::Partial);
+        let second_id = app.open_book_id().unwrap();
+        assert_ne!(second_id, first_id);
+        assert_eq!(
+            app.current_document().unwrap().0.path,
+            Path::new("Series/Volume 2.txt")
+        );
+        page_input(&mut app, Input::PageForward);
+        assert_eq!(app.end_dialog, Some(Dialog::Actions));
+        assert_eq!(app.open_book_id(), Some(second_id));
+        assert_eq!(app.controls.end_action, EndAction::Next);
+
+        app.activate(Action::SetFolderOrder(FolderOrder {
+            sort: FolderSort::LastRead,
+            reverse: false,
+        }))
+        .unwrap();
+        page_input(&mut app, Input::PageBack);
+        page_input(&mut app, Input::PageForward);
+        assert_eq!(app.end_dialog, Some(Dialog::Actions));
+        assert_eq!(app.input(tap(button(3))), Change::None);
+        assert_eq!(app.open_book_id(), Some(second_id));
+        assert_eq!(app.end_dialog, Some(Dialog::Actions));
     }
 
     #[test]

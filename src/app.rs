@@ -1700,6 +1700,7 @@ impl Reader {
         self.update_stats_activity(Instant::now());
         if screen == Screen::Library {
             self.reading_history.finish(Instant::now());
+            self.refresh_reading_order();
         }
         self.current_contents_row = None;
         if screen == Screen::PublisherPages {
@@ -1738,6 +1739,7 @@ impl Reader {
             return;
         }
         self.update_stats_activity(now);
+        let reading_percent = self.folder_reading_percent();
         let position_changed = if let Some(fixed) = &self.fixed {
             let saved = self
                 .library
@@ -1746,8 +1748,10 @@ impl Reader {
                 .highlight_color
                 .get_or_insert(self.controls.highlight_color);
             let position = fixed_position(&fixed.reading);
-            let changed = saved.position.as_ref() != Some(&position);
+            let changed = saved.position.as_ref() != Some(&position)
+                || saved.reading_percent != reading_percent;
             saved.position = Some(position);
+            saved.reading_percent = reading_percent;
             saved.fixed_preferences = fixed.reading.preferences();
             saved.ocr_language.clone_from(&fixed.reading.ocr_language);
             changed
@@ -1758,8 +1762,10 @@ impl Reader {
                 .highlight_color
                 .get_or_insert(self.controls.highlight_color);
             let position = position(&active.reading);
-            let changed = saved.position.as_ref() != Some(&position);
+            let changed = saved.position.as_ref() != Some(&position)
+                || saved.reading_percent != reading_percent;
             saved.position = Some(position);
+            saved.reading_percent = reading_percent;
             changed
         } else {
             return;

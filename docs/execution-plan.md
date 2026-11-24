@@ -69,10 +69,12 @@ same thumbnails and keep the current page, bookmark and jump history.
 
 ### Folder order
 
-Compare natural name, file name, file type and reverse order with the pinned
-KOReader file chooser. Test the saved choice after reopen, physical pagination,
-retained search result ranking and page, traversal between EPUB and PDF, and
-the existing next-file end action. [Folder order controls](document-end.md#choose-folder-order)
+Compare natural name, file name, file type, last read, progress and reverse
+order with the pinned KOReader file chooser. Test the saved choice after
+reopen, physical pagination, retained search ranking and page, and the folder
+traversal and end prompt under both saved reading orders. Use a mixed library
+of unopened, active, on-hold and finished titles, including older records
+with no saved percentage. [Folder order controls](document-end.md#choose-folder-order)
 
 ## Reader 0.1.38 verification plan
 

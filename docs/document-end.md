@@ -46,21 +46,43 @@ EPUB, and wrong-password retry and cancellation. [Reading menu](screenshots/adja
 
 ## Choose folder order
 
-In Library, tap **Sort** to choose **Natural name**, **File name** or **File type**.
-Natural name is the default and puts Volume 2 before Volume 10. File name
+In Library, tap **Sort**. **Natural name** is the default. **File name**,
+**File type**, **Last read**, and **Reading progress** are also available.
+Natural name puts Volume 2 before Volume 10. File name
 compares names alphabetically and puts Volume 10 before Volume 2. File type
 groups files by extension and orders each group by name. Folders stay
 above files. **Reverse order** flips the order within folders and within files.
 
-Reader uses one saved choice across all folders and restores it when you
-reopen the app. Manual previous and next file actions use that order and skip
-finished books. **Open next file** at the end of a book also uses that order and
-considers any readable file. Search uses its own result ranking and retains
-the visible results page when you change the folder sort. [Sort choices](screenshots/folder-order-menu.png) · [Alphabetical folder](screenshots/folder-order-picker.png)
+**Last read** follows Reader's saved History order, with the most recently
+opened book first. Unopened files follow in natural name order. The list shows
+whether Reader has opened each document. This setting serves browsing.
+Choose another sort to use the previous and next file actions.
 
-KOReader saves its sort and reverse choices in the file manager and uses
-the same folder sequence for adjacent reading. The implemented choices are
-its stable name, natural name and type modes. [Pinned sort definitions](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/booklist.lua#L19-L89) · [Pinned reverse preference](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/filemanager/filemanagermenu.lua#L467-L492) · [Pinned folder traversal](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/filechooser.lua#L425-L450)
+**Reading progress** places books with the highest active progress first.
+Older saved reading positions show **In progress** until Reader can record a
+percentage on reopen. After active books come **On hold**, **Unopened**, and
+**Finished** or **100%**. Ties use natural name order. PDF percentages follow
+saved source pages. Reflow percentages are weighted estimates from the saved
+reading location and cached chapter sizes. The folder picker uses this saved
+data without opening the books to calculate the order.
+
+Reader uses one saved choice across all folders and restores it when you
+reopen the app. Manual previous and next file actions follow the selected
+traversable order and skip finished books. The explicit **Open next file**
+end action considers any readable file in that order. If **Open next file**
+is your automatic end action, **Last read** and **Reading progress** show
+the end-of-book prompt so the changing order cannot repeat books on its own.
+Search retains its ranking and visible page while you change the folder sort.
+[Sort choices](screenshots/folder-reading-order-menu.png) · [Progress-sorted folder](screenshots/folder-reading-order-picker.png)
+
+KOReader saves its sort and reverse choices in the file manager. It uses
+filesystem access time for Last read and its sidecar percentages for progress.
+Reader uses its own saved reading data in both modes. A Lua check executed
+the pinned comparer, grouping and reverse methods in both directions, the
+Last read traversal guard, and both adjacent actions under progress. The
+Mac tests cover older records, physical pagination, reopen, natural ties,
+search result retention, progress across EPUB chapters, and the end prompt.
+[Pinned sort definitions](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/booklist.lua#L41-L179) · [Pinned chooser settings](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/filechooser.lua#L205-L262) · [Pinned adjacent guard](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerstatus.lua#L175-L194)
 
 ## Reference and tests
 
