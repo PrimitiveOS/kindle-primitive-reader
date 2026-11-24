@@ -54,6 +54,8 @@ the older text records and the new fixed-page settings. Compare publisher
 breaks around empty elements across the four pinned modes. Keep the same
 source anchor when returning from a blank slot to text. Verify the fixed
 PDF stage with a link, a selected word and the portrait return frame.
+The integrated Mac build passed 1,229 checks. Three profile captures and
+two PDF viewport captures map to the same published simulator fixtures.
 Landscape controls remain gated pending the app-wide viewport handoff.
 [Reading profiles](reading-profiles.md) · [Publisher breaks](render-modes.md#forced-breaks-through-empty-boxes) · [Fixed-page viewports](reading-edition-orientation.md#fixed-page-viewport-preparation)
 
