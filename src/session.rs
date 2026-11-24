@@ -473,7 +473,7 @@ impl Reading {
     }
 
     pub(crate) fn restore_with_scroll_top(
-        config: BookConfig,
+        mut config: BookConfig,
         chapter: usize,
         fallback_page: usize,
         anchor: Option<&Anchor>,
@@ -481,6 +481,14 @@ impl Reading {
     ) -> Result<Self> {
         let start = Instant::now();
         let mut probe = config.reading_chapter(chapter)?;
+        let typography = &mut config.settings.typography;
+        if typography.fallback.is_some() {
+            // Once opened, each chapter and subsequent reflow use the book's
+            // resolved locale independently of the defaults for new books.
+            typography.main = probe.main_language;
+            typography.fallback = None;
+            probe.settings.typography = *typography;
+        }
         let custom_flows = hidden_flows::Resolved::new(&config, &probe, chapter)?;
         if config.hidden_flows.enabled {
             probe.flow_pages = Some(custom_flows.map(chapter, probe.page_count()));

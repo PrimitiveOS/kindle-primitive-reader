@@ -552,6 +552,11 @@ impl BookPreferences {
     }
 
     pub fn apply_to(&self, settings: Settings) -> Settings {
+        let typography_language = self
+            .typography_language
+            .as_deref()
+            .and_then(crate::TypographyLocale::parse)
+            .or(settings.typography.main);
         let permitted_margin = |margin: &u32| *margin <= settings.width.min(settings.height) / 4;
         let edge = |specific: Option<u32>, inherited: Option<u32>| {
             specific.filter(permitted_margin).or_else(|| {
@@ -647,15 +652,14 @@ impl BookPreferences {
                 .automatic_hyphenation
                 .unwrap_or(settings.automatic_hyphenation),
             typography: crate::TypographyLanguages {
-                main: self
-                    .typography_language
-                    .as_deref()
-                    .and_then(crate::TypographyLocale::parse)
-                    .or(settings.typography.main),
+                main: typography_language,
+                fallback: settings
+                    .typography
+                    .fallback
+                    .filter(|_| typography_language.is_none()),
                 respect_embedded: self
                     .respect_embedded_languages
                     .unwrap_or(settings.typography.respect_embedded),
-                ..settings.typography
             },
             page_overlap_enabled: self
                 .page_overlap_enabled
