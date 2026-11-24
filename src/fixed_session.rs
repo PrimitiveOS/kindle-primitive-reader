@@ -19,8 +19,9 @@ use crate::fixed_epub::{FixedEpub, FixedSpread, SpreadPlan};
 use crate::fixed_text::{PdfPageText, PdfTextRect};
 use crate::library::hidden_flows::{HiddenFlows, PageFlows, ResolvedPoint};
 use crate::library::{
-    DocumentFormat, FixedPreferences as View, HighlightPage, MAX_CONTINUOUS_GAP,
-    MAX_HIGHLIGHT_TEXT_BYTES, MAX_SCAN_WHITE_LEVEL, MIN_SCAN_WHITE_LEVEL, PdfHighlight,
+    DocumentFormat, FixedPreferences as View, FixedTileAxis, FixedTileZoom, HighlightPage,
+    MAX_CONTINUOUS_GAP, MAX_HIGHLIGHT_TEXT_BYTES, MAX_SCAN_WHITE_LEVEL, MIN_SCAN_WHITE_LEVEL,
+    PdfHighlight,
 };
 use crate::session::{
     DONE, PAGE_HEIGHT, PAGE_REFRESH_GAP, PagePaint, PageTurns, draw_document_and_footer,
@@ -693,6 +694,7 @@ impl FixedReading {
             };
             view.width_fit = true;
             view.height_fit = false;
+            view.tile_zoom = None;
         } else {
             view.offset_y += center;
         }
@@ -768,10 +770,14 @@ impl FixedReading {
         view.zoom_overlap_v = vertical_overlap;
         view.zoom_direction_vertical = vertical_first;
         view.zoom_bottom_to_top = bottom_to_top;
+        let scale_changed = view.tile_zoom.is_some_and(|tile| match tile.axis {
+            FixedTileAxis::Columns => view.zoom_overlap_h() != self.view.zoom_overlap_h(),
+            FixedTileAxis::Rows => view.zoom_overlap_v() != self.view.zoom_overlap_v(),
+        });
         let direction_changed = self.view.zoom_direction_vertical()
             != view.zoom_direction_vertical()
             || self.view.zoom_bottom_to_top() != view.zoom_bottom_to_top();
-        if direction_changed {
+        if direction_changed || scale_changed {
             let size = self
                 .visible
                 .iter()
@@ -779,6 +785,15 @@ impl FixedReading {
                 .map(|visible| visible.size)
                 .map(Ok)
                 .unwrap_or_else(|| self.source.page_size(self.page))?;
+            if let Some(tile) = view.tile_zoom.filter(|_| scale_changed) {
+                view.tile_zoom = Some(tile_zoom(
+                    size,
+                    &view,
+                    self.frame.height,
+                    tile.axis,
+                    tile.count_tenths,
+                ));
+            }
             let metrics = view_metrics(size, &view, self.frame.height);
             let x_limit = ((metrics.width - WIDTH as f32) / 2.0).max(0.0);
             let y_limit = ((metrics.height - self.frame.height as f32) / 2.0).max(0.0);
@@ -979,6 +994,7 @@ impl FixedReading {
     pub(crate) fn show_search_fit_page(&mut self, page: usize) -> Result<()> {
         let view = View {
             zoom: 0,
+            tile_zoom: None,
             width_fit: false,
             height_fit: false,
             continuous: false,
@@ -1471,32 +1487,70 @@ impl FixedReading {
         self.apply_fit(Fit::Height)
     }
 
+    pub(crate) fn supports_tile_zoom(&self) -> bool {
+        matches!(self.source, FixedDocument::Pdf(_) | FixedDocument::Djvu(_))
+    }
+
+    fn tiled_metrics(&self) -> Option<ViewMetrics> {
+        self.view.tile_zoom?;
+        self.visible
+            .iter()
+            .find(|page| page.index == self.page)
+            .map(|page| view_metrics(page.size, &self.view, self.frame.height))
+    }
+
+    fn tiled_view_can_pan(&self) -> bool {
+        self.tiled_metrics().is_some_and(|metrics| {
+            metrics.width > WIDTH as f32 + 0.5 || metrics.height > self.frame.height as f32 + 0.5
+        })
+    }
+
+    pub(crate) fn set_tile_zoom(&mut self, axis: FixedTileAxis, count_tenths: u8) -> Result<()> {
+        if !self.supports_tile_zoom() || !(1..=80).contains(&count_tenths) {
+            return Err("Choose a column or row count from 0.1 to 8.0".into());
+        }
+        let size = self.source.page_size(self.page)?;
+        let tile_zoom = tile_zoom(size, &self.view, self.frame.height, axis, count_tenths);
+        let view = View {
+            tile_zoom: Some(tile_zoom),
+            zoom: 0,
+            width_fit: false,
+            height_fit: false,
+            continuous: false,
+            offset_x: if self.view.right_to_left {
+                -f32::MAX
+            } else {
+                f32::MAX
+            },
+            offset_y: if self.view.zoom_bottom_to_top() {
+                -f32::MAX
+            } else {
+                f32::MAX
+            },
+            ..self.view
+        };
+        self.present(self.page, view)?;
+        self.pause();
+        Ok(())
+    }
+
     fn apply_fit(&mut self, fit: Fit) -> Result<()> {
         let width_fit = matches!(fit, Fit::Width);
         self.present(
             self.page,
             View {
-                turns: self.view.turns,
+                zoom: 0,
+                tile_zoom: None,
                 width_fit,
                 height_fit: matches!(fit, Fit::Height),
                 continuous: width_fit && self.view.continuous,
-                spread: self.view.spread,
-                scan_contrast: self.view.scan_contrast,
-                dither: self.view.dither,
-                continuous_gap: self.view.continuous_gap,
-                scan_white_level: self.view.scan_white_level,
-                straighten_limit: self.view.straighten_limit,
-                force_ocr: self.view.force_ocr,
+                offset_x: 0.0,
                 offset_y: if width_fit && !self.is_continuous() {
                     f32::MAX
                 } else {
                     0.0
                 },
-                right_to_left: self.view.right_to_left,
-                epub_spread: self.view.epub_spread,
-                epub_right_to_left: self.view.epub_right_to_left,
-                crop: self.view.crop,
-                ..View::default()
+                ..self.view
             },
         )?;
         self.pause();
@@ -1644,6 +1698,7 @@ impl FixedReading {
             Input::Swipe { dx, dy, .. }
                 if !self.is_spread()
                     && (self.view.zoom > 0
+                        || self.tiled_view_can_pan()
                         || self.view.width_fit
                         || (self.view.height_fit && dx.abs() >= dy.abs())) =>
             {
@@ -1852,6 +1907,19 @@ impl FixedReading {
     }
 
     fn zoom(&mut self, delta: isize) -> Result<bool> {
+        if let Some(metrics) = self.tiled_metrics() {
+            let page_fit = metrics.width_scale.min(metrics.height_scale);
+            let scale = metrics.scale / page_fit;
+            let next = if delta > 0 {
+                ZOOM.iter().position(|preset| *preset > scale + 0.001)
+            } else {
+                ZOOM.iter().rposition(|preset| *preset < scale - 0.001)
+            };
+            return match next {
+                Some(index) => self.set_zoom(index),
+                None => Ok(false),
+            };
+        }
         self.set_zoom(
             self.view
                 .zoom
@@ -1861,13 +1929,17 @@ impl FixedReading {
     }
 
     pub(crate) fn set_zoom(&mut self, zoom: usize) -> Result<bool> {
-        if self.is_spread() || zoom == self.view.zoom {
+        if self.is_spread() || (zoom == self.view.zoom && self.view.tile_zoom.is_none()) {
             return Ok(false);
         }
         if zoom >= ZOOM.len() {
             return Err("That zoom level is unavailable".into());
         }
-        let mut view = View { zoom, ..self.view };
+        let mut view = View {
+            zoom,
+            tile_zoom: None,
+            ..self.view
+        };
         if self.is_continuous()
             && let FixedDocument::Pdf(pdf) = &self.source
         {
@@ -2053,7 +2125,16 @@ impl FixedReading {
 
     pub(crate) fn page_status(&self) -> String {
         let physical = self.page + 1;
-        let zoom = (ZOOM[self.view.zoom] * 100.0) as u32;
+        let zoom = self.view.tile_zoom.map_or_else(
+            || format!("{}%", (ZOOM[self.view.zoom] * 100.0) as u32),
+            |tile| {
+                format!(
+                    "{:.1} {}",
+                    f32::from(tile.count_tenths) / 10.0,
+                    tile.axis.label().to_ascii_lowercase()
+                )
+            },
+        );
         if self.is_spread() {
             match self.spread_pages() {
                 [Some(first), Some(last)] => {
@@ -2064,9 +2145,9 @@ impl FixedReading {
         } else {
             match self.page_label(self.page) {
                 Some(label) if label != physical.to_string() => {
-                    format!("Page {label}  ·  {physical}/{}  ·  {zoom}%", self.count())
+                    format!("Page {label}  ·  {physical}/{}  ·  {zoom}", self.count())
                 }
-                _ => format!("Page {physical} of {}  ·  {zoom}%", self.count()),
+                _ => format!("Page {physical} of {}  ·  {zoom}", self.count()),
             }
         }
     }
@@ -2775,6 +2856,32 @@ struct ViewMetrics {
     height: f32,
     left: f32,
     top: f32,
+    width_scale: f32,
+    height_scale: f32,
+}
+
+fn tile_zoom(
+    size: (f32, f32),
+    view: &View,
+    viewport_height: u32,
+    axis: FixedTileAxis,
+    count_tenths: u8,
+) -> FixedTileZoom {
+    let metric = view_metrics(size, view, viewport_height);
+    let (overlap, basis) = match axis {
+        FixedTileAxis::Columns => (view.zoom_overlap_h(), 1.0),
+        FixedTileAxis::Rows => (
+            view.zoom_overlap_v(),
+            metric.height_scale / metric.width_scale,
+        ),
+    };
+    let count = f32::from(count_tenths) / 10.0;
+    let width_factor = (count - (count - 1.0) * f32::from(overlap) / 100.0) * basis;
+    FixedTileZoom {
+        axis,
+        count_tenths,
+        width_factor,
+    }
 }
 
 fn view_metrics(
@@ -2807,13 +2914,21 @@ fn view_metrics(
     } else {
         width_scale.min(height_scale)
     };
-    let scale = (fit * ZOOM[view.zoom]).min(24_000.0 / width.max(height));
+    let scale = view
+        .tile_zoom
+        .map_or_else(
+            || fit * ZOOM[view.zoom],
+            |tile| width_scale * tile.width_factor,
+        )
+        .min(24_000.0 / width.max(height));
     ViewMetrics {
         scale,
         width: crop_width * scale,
         height: crop_height * scale,
         left: left * width * scale,
         top: top * height * scale,
+        width_scale,
+        height_scale,
     }
 }
 
@@ -3121,6 +3236,107 @@ pub(crate) mod tests {
 
     fn reading(pdf: Pdf, view: View) -> FixedReading {
         FixedReading::with_source(FixedDocument::Pdf(pdf.into()), 0, view).unwrap()
+    }
+
+    #[test]
+    fn tile_zoom_uses_stock_overlap_to_traverse_a_scan_then_turns_the_page() {
+        let mut reader = reading(striped_pdf(3), View::default());
+        reader.set_tile_zoom(FixedTileAxis::Columns, 20).unwrap();
+        let view = reader.preferences();
+        let tile = view.tile_zoom.unwrap();
+        assert!((tile.width_factor - 1.6).abs() < 0.0001);
+        let (size, initial) = reader.page_viewport().unwrap();
+        assert!((initial.scale - (WIDTH as f32 / size.0 * 1.6)).abs() < 0.001);
+        assert!(initial.x.abs() < 0.01);
+        assert!(initial.y > 0.0);
+        let origin = reader.history_point().unwrap();
+
+        reader.turns.next_refresh = Instant::now();
+        assert!(reader.input(Input::PageForward).unwrap());
+        assert_eq!(reader.page(), 0);
+        let edge = reader.history_point().unwrap();
+        assert!(
+            ((edge.x - origin.x) * f64::from(initial.scale) - f64::from(WIDTH) * 0.6).abs() < 0.05
+        );
+
+        reader.turns.next_refresh = Instant::now();
+        assert!(reader.input(Input::PageForward).unwrap());
+        assert_eq!(reader.page(), 1);
+        assert!((reader.history_point().unwrap() - origin).hypot() < 0.05);
+
+        reader.turns.next_refresh = Instant::now();
+        assert!(reader.input(Input::PageBack).unwrap());
+        assert_eq!(reader.page(), 0);
+        assert!((reader.history_point().unwrap() - edge).hypot() < 0.05);
+    }
+
+    #[test]
+    fn tile_zoom_respects_rotated_row_geometry_and_retains_width_factor_across_page_sizes() {
+        let mut reader = reading(
+            striped_pdf(3),
+            View {
+                turns: 1,
+                zoom_overlap_v: Some(20),
+                ..View::default()
+            },
+        );
+        reader.set_tile_zoom(FixedTileAxis::Rows, 25).unwrap();
+        let view = reader.preferences();
+        let tiles = view.tile_zoom.unwrap();
+        let (size, shown) = reader.page_viewport().unwrap();
+        // The rotated page height is the unrotated width. 2.5 rows at
+        // 20% overlap cover exactly 2.2 screen heights in the source.
+        assert!((shown.scale * size.0 / PAGE_HEIGHT as f32 - 2.2).abs() < 0.001);
+        assert!(shown.y.abs() < 0.01);
+        let other = view_metrics((250.0, 100.0), &view, PAGE_HEIGHT);
+        assert!((other.scale - WIDTH as f32 / 100.0 * tiles.width_factor).abs() < 0.001);
+
+        reader.show_search_fit_page(1).unwrap();
+        assert!(reader.preferences().tile_zoom.is_none());
+        reader.restore_view_at(0, view).unwrap();
+        assert_eq!(reader.preferences(), view);
+        assert_eq!(reader.page_viewport().unwrap().1.scale, shown.scale);
+        reader
+            .set_auto_turn_pan(None, Some(40), None, None)
+            .unwrap();
+        let changed = reader.page_viewport().unwrap().1;
+        assert!((changed.scale * size.0 / PAGE_HEIGHT as f32 - 1.9).abs() < 0.001);
+
+        reader.set_zoom(0).unwrap();
+        assert!(reader.preferences().tile_zoom.is_none());
+        reader.set_tile_zoom(FixedTileAxis::Rows, 25).unwrap();
+        assert!(reader.zoom(-1).unwrap());
+        assert_eq!(reader.preferences().zoom, 2);
+        assert!(reader.preferences().tile_zoom.is_none());
+        reader.set_tile_zoom(FixedTileAxis::Rows, 25).unwrap();
+        reader.fit_height().unwrap();
+        assert!(reader.preferences().tile_zoom.is_none());
+        assert_eq!(reader.preferences().zoom_overlap_v(), 40);
+    }
+
+    #[test]
+    fn tile_zoom_renders_djvu_and_starts_at_the_saved_right_edge() {
+        let path = crate::test_fixture("beacon-atlas.djvu");
+        let mut reader = FixedReading::open(
+            PAGE_HEIGHT,
+            DocumentFormat::Djvu,
+            &path,
+            0,
+            &[],
+            View {
+                right_to_left: true,
+                ..View::default()
+            },
+            None,
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        reader.set_tile_zoom(FixedTileAxis::Columns, 30).unwrap();
+        let (size, request) = reader.page_viewport().unwrap();
+        assert!((request.scale * size.0 / WIDTH as f32 - 2.2).abs() < 0.001);
+        assert!((request.x + request.scale * size.0 - WIDTH as f32).abs() < 0.01);
+        assert!(reader.frame.pixels.iter().any(|pixel| *pixel < 255));
     }
 
     #[test]

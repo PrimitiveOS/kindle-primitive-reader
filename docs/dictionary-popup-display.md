@@ -21,4 +21,27 @@ and restoring the original selection. Text tests cover paragraph endings,
 nonbreaking spaces and mixed left-to-right and right-to-left word positions.
 [Settings](screenshots/dictionary-popup-settings.png) · [Compact with justified text](screenshots/dictionary-justify-text.png) · [Large window in dark mode](screenshots/dictionary-large-window.png) · [Workflow tests](../src/app/dictionary_panel/tests.rs)
 
+## Closing nested lookups
+
+Tap **Back** to return to the previous definition. Hold the same control to close
+the lookup stack and return to the selected passage or original dictionary
+editor. The hold also works with Find active or the Results chooser open. An
+armed highlight becomes one saved mark for the original selection. The nested
+popup's status line shows the hold gesture. [Desktop capture](screenshots/dictionary-close-stack.png)
+
+The stock comparison executes KOReader's pinned close callbacks in Lua 5.1 with
+test doubles for the window manager and selection. It verifies that a tap closes
+one window, a hold closes the open Results menu and all three test windows in
+reverse order, and the original armed highlight is saved once. Reader's desktop
+tests exercise the same input actions on authored EPUB and PDF passages and
+check the original query editor's text and caret. [KOReader close callbacks](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/dictquicklookup.lua#L1618-L1672) · [Stock comparison script](../scripts/compare-dictionary-close-stack.py)
+
+Run the comparison with a Python environment providing `lupa` and the pinned
+`dictquicklookup.lua` file.
+
+```sh
+python3 scripts/compare-dictionary-close-stack.py /path/to/dictquicklookup.lua
+cargo test --locked --lib dictionary_hold_close
+```
+
 [Numbered senses and bilingual examples in HTML dictionary articles](dictionary-html-articles.md)

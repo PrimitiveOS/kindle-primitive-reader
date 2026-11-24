@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.37
+
+- Open the current book’s folder from the reading controls and save your place.
+- Hold Back to close nested dictionary definitions in one action.
+- Zoom PDF and DjVu scans by a chosen number of columns or rows.
+- Include Kindle’s clippings in History export and save clippings text from an open book or the library.
+
 ## 0.1.36
 
 - Calculate the optional top header percentage from exact rendered pages when available.

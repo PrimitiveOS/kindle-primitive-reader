@@ -45,6 +45,16 @@ separate from Oasis acceptance. Schedule only relevant reading controls from
 this inventory; excluded controls are not implementation tasks, and inventory
 counts do not measure completed parity.
 
+## Reader 0.1.37 verification plan
+
+Verify folder return for nested EPUBs and scans with saved reading data, and
+return from a deep dictionary lookup with the selected passage intact.
+Compare column and row zoom against the reference overlap calculation and
+reopen a saved scan viewport. Verify local Kindle clippings export from an
+open book and from History, including the original clippings file on the
+Oasis with a separate Reader profile.
+[Folder return](document-end.md) · [Dictionary dismissal](dictionary-popup-display.md) · [Scan zoom](fixed-tile-zoom.md) · [Clippings export](library-highlights-export.md)
+
 ## Reader 0.1.35 verification plan
 
 Compare the optional EPUB screen-page header with the pinned KOReader

@@ -8,6 +8,23 @@ Go to **Reading controls › At the end of a book** to select the default action
 
 **Delete file** presents a separate confirmation. It deletes the source file and keeps Reader’s saved notes, bookmarks and reading position. Reopening the same edition after restoring the file brings those records back. Whole unpacked EPUB folders can be managed in Files.
 
+## Return to the current book folder
+
+While reading, open the **Library** menu and choose **Current book folder**.
+Reader saves your position and marks, then shows the containing folder on
+the page where the book appears. This also works when you opened the book
+from Continue reading, search or a direct document link. An extracted EPUB
+appears as its containing package folder in the parent list.
+
+KOReader’s Home action closes the reader and passes the current file to its
+file chooser so the directory opens at that file. The Reader shortcut
+uses the same sequence after checking the destination can be read.
+[Pinned KOReader Home action](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/readerui.lua#L929-L934) · [Pinned file chooser handoff](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/readerui.lua#L581-L595)
+
+Desktop tests cover a resumed EPUB beyond the first folder page, saved
+bookmarks and position after restart, fixed PDF, extracted EPUB, and
+failed folder lookup or save. [Reading menu](screenshots/current-book-folder-menu.png) · [Containing folder](screenshots/current-book-folder.png)
+
 ## Reference and tests
 
 The installed KOReader source matched the v2026.07.1 reference. Thirteen checks exercised its dialog, automatic and manual reading status, next-file access under different sort orders, return to the beginning, Library, and the independent confirmation before deletion. Reader uses its natural filename order across regular document folders. Both reading providers treat a forward attempt at the boundary as the trigger. [KOReader end-of-book actions](https://github.com/koreader/koreader/blob/v2026.07.1/frontend/apps/reader/modules/readerstatus.lua#L38-L222) · [Reflow page turns](https://github.com/koreader/koreader/blob/v2026.07.1/frontend/apps/reader/modules/readerrolling.lua#L911-L945) · [Fixed-page and continuous turns](https://github.com/koreader/koreader/blob/v2026.07.1/frontend/apps/reader/modules/readerpaging.lua#L912-L1047)

@@ -106,6 +106,7 @@ impl FixedDefaults {
     pub(crate) fn apply(self, geometry: FixedPreferences) -> FixedPreferences {
         FixedPreferences {
             zoom: self.zoom,
+            tile_zoom: None,
             turns: self.turns,
             width_fit: self.width_fit,
             height_fit: self.height_fit,

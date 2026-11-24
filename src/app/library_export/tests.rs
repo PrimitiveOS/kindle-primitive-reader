@@ -604,3 +604,163 @@ fn exports_original_document_marks_without_changing_sources_or_reading_position(
         formats[0], formats[1]
     );
 }
+
+#[test]
+fn export_history_combines_kindle_and_reader_clippings_without_editing_sources() {
+    let fixture = Fixture::new();
+    let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+    let id = save_reflow_mark(&mut app, &fixture.book);
+    let book = app.library.state(id).unwrap();
+    let title = book.title.clone();
+    let author = book.author.clone();
+    let same_book = author
+        .as_ref()
+        .map_or_else(|| title.clone(), |author| format!("{title} ({author})"));
+    let clipping = format!(
+        "{same_book}\n- Your Highlight on page 42 | Added on 2024-08-09 13:11:12\n\nA stock highlight.\n==========\n",
+    );
+    let stock = format!(
+        "\u{feff}{clipping}{clipping}{same_book}\n- Your Note on Location 94 | Added on 2024-08-09 13:12:13\n\nA stock note.\n==========\n{title} (Other Author)\n- Your Bookmark on Location 132 | Added on 2024-08-09 13:13:14\n\n\n==========\n"
+    );
+    let stock_path = fixture.root.join(kindle_clippings::FILE);
+    fs::write(&stock_path, &stock).unwrap();
+    app.mark_book_changed();
+    app.save().unwrap();
+    let state_before = app.library.bytes().unwrap();
+    let position_before = app.current_history_location();
+
+    app.activate_library_export(Command::Open).unwrap();
+    tap_row(&mut app, "History");
+    assert_eq!(app.library_export.kindle_clippings, Some(true));
+    capture_test_screen(&app, &fonts, "READER_EXPORT_KINDLE_SOURCES_FRAME", false);
+    tap_row(&mut app, "Choose export format");
+    capture_test_screen(&app, &fonts, "READER_EXPORT_KINDLE_FORMATS_FRAME", false);
+    tap_row(&mut app, "KOReader JSON");
+    settle(&mut app);
+
+    let exports = &app.exports;
+    let json: serde_json::Value =
+        serde_json::from_slice(&fs::read(exports.join("library-highlights.json")).unwrap())
+            .unwrap();
+    let books = json["documents"].as_array().unwrap();
+    assert_eq!(books.len(), 2);
+    let entries = books[0]["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 3);
+    assert_eq!(entries[0]["text"], "The copper lantern");
+    assert_eq!(entries[1]["page"], 42);
+    assert!(entries[1].get("primitiveos").is_none());
+    assert_eq!(entries[2]["page"], "Location 94");
+    assert_eq!(entries[2]["sort"], "note");
+    assert_eq!(books[1]["author"], "Other Author");
+    assert_eq!(books[1]["entries"][0]["sort"], "bookmark");
+    assert!(books[1].get("file").is_none());
+
+    tap_row(&mut app, "Kindle clippings text");
+    settle(&mut app);
+    let exported = fs::read(app.exports.join("library-highlights.clippings.txt")).unwrap();
+    let records = kindle_clippings::parse(&exported).unwrap();
+    assert_eq!(records.len(), 5);
+    assert_eq!(records[1].kind, Kind::Note);
+    assert_eq!(records[1].text, "Keep <this> & compare [notes]");
+    assert_eq!(records[3].text, "A stock note.");
+    assert_eq!(records[4].location, Some(Location::Position("132")));
+    assert_eq!(fs::read_to_string(stock_path).unwrap(), stock);
+    assert_eq!(app.library.bytes().unwrap(), state_before);
+    assert_eq!(app.current_history_location(), position_before);
+}
+
+#[test]
+fn export_can_use_only_kindle_clippings_and_respects_filter_and_source_choices() {
+    let fixture = Fixture::new();
+    let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+    let stock_path = fixture.root.join(kindle_clippings::FILE);
+    fs::write(&stock_path,
+        "Kindle book\n- Your Highlight on page 4 | Added on 2024-03-01 00:00:00\n\nPassage.\n==========\n")
+        .unwrap();
+    app.activate_library_export(Command::Open).unwrap();
+    tap_row(&mut app, "History");
+    assert!(app.library_export.books.is_empty());
+    tap_row(&mut app, "Kindle clippings");
+    assert_eq!(app.library_export.kindle_clippings, Some(false));
+    assert!(
+        app.activate_library_export(Command::Start(Format::Json))
+            .is_err()
+    );
+    tap_row(&mut app, "Kindle clippings");
+    app.activate_library_export(Command::Color(Some(HighlightColor::Red)))
+        .unwrap();
+    assert!(
+        app.activate_library_export(Command::Start(Format::Json))
+            .is_err()
+    );
+    app.activate_library_export(Command::Color(None)).unwrap();
+    app.activate_library_export(Command::Start(Format::Html))
+        .unwrap();
+    settle(&mut app);
+    let html = fs::read_to_string(app.exports.join("library-highlights.html")).unwrap();
+    assert!(html.contains("Passage."));
+    assert!(html.contains("Page 4"));
+}
+
+#[test]
+fn exports_the_current_book_as_clippings_with_a_local_location_and_note() {
+    let fixture = Fixture::new();
+    let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+    let id = save_reflow_mark(&mut app, &fixture.book);
+    let before = app.current_history_location();
+    app.activate(Action::Show(Screen::ExportAnnotations))
+        .unwrap();
+    tap_row(&mut app, "Kindle clippings text");
+    let exported = fs::read(app.exports.join(format!("{id:016x}.clippings.txt"))).unwrap();
+    let records = kindle_clippings::parse(&exported).unwrap();
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0].kind, Kind::Highlight);
+    assert_eq!(
+        records[0].location,
+        Some(Location::Chapter("Chapter 1, page 1"))
+    );
+    assert_eq!(records[0].text, "The copper lantern");
+    assert_eq!(records[0].time, Some(1_740_777_900));
+    assert_eq!(records[1].kind, Kind::Note);
+    assert_eq!(records[1].text, "Keep <this> & compare [notes]");
+    assert_eq!(app.current_history_location(), before);
+}
+
+#[test]
+#[ignore = "requires an authorized original My Clippings.txt in READER_ORIGINAL_KINDLE_DOCUMENTS"]
+fn exports_original_kindle_clippings_to_an_isolated_profile() {
+    let root = std::path::PathBuf::from(
+        std::env::var_os("READER_ORIGINAL_KINDLE_DOCUMENTS").expect("Kindle Documents root"),
+    );
+    let original = root.join(kindle_clippings::FILE);
+    let before = fs::read(&original).unwrap();
+    let count = kindle_clippings::parse(&before).unwrap().len();
+    assert!(
+        count > 0,
+        "The authorized clippings file has no recognized entries"
+    );
+
+    let fixture = Fixture::new();
+    let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let mut app = Reader::open(&root, &fixture.state, fonts).unwrap();
+    app.activate_library_export(Command::Open).unwrap();
+    tap_row(&mut app, "History");
+    tap_row(&mut app, "Choose export format");
+    tap_row(&mut app, "KOReader JSON");
+    settle(&mut app);
+    let json: serde_json::Value =
+        serde_json::from_slice(&fs::read(app.exports.join("library-highlights.json")).unwrap())
+            .unwrap();
+    let documents = json["documents"].as_array();
+    let entries = |book: &serde_json::Value| book["entries"].as_array().unwrap().len();
+    let exported =
+        documents.map_or_else(|| entries(&json), |books| books.iter().map(entries).sum());
+    assert!(exported > 0 && exported <= count);
+    assert_eq!(fs::read(original).unwrap(), before);
+    println!(
+        "Original Kindle clippings: {count} recognized records, {exported} exported after deduplication"
+    );
+}

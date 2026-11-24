@@ -158,6 +158,102 @@ impl Simulation {
     fn back(&mut self) {
         self.tap(self.app.definition_layout().1);
     }
+
+    fn hold_back(&mut self) {
+        let back = self.app.definition_layout().1;
+        assert_eq!(
+            self.app.input(Input::LongTap(
+                (back.x + back.w / 2) as f32,
+                (back.y + back.h / 2) as f32
+            )),
+            Change::Partial
+        );
+    }
+}
+
+#[test]
+fn dictionary_hold_close_returns_from_nested_epub_results_to_the_same_passage() {
+    let mut s = Simulation::new();
+    s.open_epub_selection();
+    let original = s.app.selection.clone();
+    let location = s.app.current_history_location();
+    let passage = s.draw(None);
+    s.tap(s.app.selection_button(SelectionAction::Dictionary));
+    s.tap(definition_results_button(s.app.definition_layout().0));
+    s.tap(definition_result_row(s.app.definition_layout().0, 1));
+    s.draw(None);
+    s.hold_definition_word("beacon");
+    assert_eq!(s.app.dictionary_navigation.trail.len(), 1);
+    s.back();
+    assert_eq!(s.app.screen, Screen::Definition);
+    assert_eq!(s.app.list_page, 1);
+    assert_eq!(s.app.definition_word, "the");
+
+    s.draw(None);
+    s.hold_definition_word("beacon");
+    s.draw(None);
+    assert_eq!(s.app.finish_find("light"), Change::Partial);
+    s.draw(Some("dictionary-close-stack.png"));
+    s.tap(definition_results_button(s.app.definition_layout().0));
+    assert!(s.app.definition_results_page.is_some());
+    s.hold_back();
+    assert_eq!(s.app.screen, Screen::Book);
+    assert!(s.app.dictionary_navigation.trail.is_empty());
+    assert!(s.app.dictionary_navigation.view.find.is_none());
+    assert!(s.app.definition_results_page.is_none());
+    assert_eq!(s.app.current_history_location(), location);
+    assert_eq!(s.app.selection, original);
+    assert_eq!(s.draw(None), passage);
+}
+
+#[test]
+fn dictionary_hold_close_saves_the_armed_pdf_passage_once_across_nested_results() {
+    let mut s = Simulation::new();
+    let path = s.fixture.root.join("Nested definitions.pdf");
+    fs::write(&path, crate::fixed::tests::document()).unwrap();
+    s.app.open_path(&path).unwrap();
+    let reading = &s.app.fixed.as_ref().unwrap().reading;
+    let words = reading.page_text(0).unwrap();
+    let (size, viewport) = reading.page_viewport().unwrap();
+    let point = words.words[0]
+        .bounds
+        .in_viewport(size, viewport)
+        .unwrap()
+        .center();
+    s.app.input(Input::LongTap(point.x as f32, point.y as f32));
+    let selected = s.app.pdf_selection.as_ref().unwrap().highlight().clone();
+    let book_id = s.app.fixed.as_ref().unwrap().id;
+    let origin = s.app.current_history_location();
+    s.tap(s.app.selection_button(SelectionAction::Dictionary));
+    s.tap(action_row(s.app.definition_layout().0)[4]);
+    s.draw(None);
+    s.hold_definition_word("format");
+    s.tap(action_row(s.app.definition_layout().0)[4]);
+    assert!(s.app.dictionary_navigation.view.save_highlight);
+    assert!(s.app.dictionary_navigation.trail[0].view.save_highlight);
+    s.hold_back();
+    assert_eq!(s.app.screen, Screen::Fixed);
+    assert_eq!(s.app.current_history_location(), origin);
+    assert!(s.app.pdf_selection.is_none());
+    assert!(s.app.spelling_lookup.is_none());
+    let saved = &s.app.library.state(book_id).unwrap().pdf_highlights;
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].text, selected.text);
+    assert_eq!(saved[0].bounds, selected.bounds);
+}
+
+#[test]
+fn dictionary_hold_close_returns_to_the_original_lookup_editor() {
+    let mut s = Simulation::new();
+    s.app.show(Screen::DictionaryEntry);
+    s.app.editor.text = "The".chars().collect();
+    s.app.editor.caret = 1;
+    let editor = s.app.editor.clone();
+    s.tap_keyboard_key(primitive_ui::Key::Go, "Look up");
+    s.app.look_up("beacon").unwrap();
+    s.hold_back();
+    assert_eq!(s.app.screen, Screen::DictionaryEntry);
+    assert_eq!(s.app.editor, editor);
 }
 
 #[test]

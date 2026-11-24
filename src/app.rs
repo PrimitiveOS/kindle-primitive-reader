@@ -105,7 +105,7 @@ use crate::koreader_import::{self, ExportEntry, QuoteMatch, QuoteResolver};
 use crate::koreader_sidecar::{self, SidecarProgress};
 use crate::library::{
     BookMetadata, BookPreferences, BookState, Bookmark, DocumentFormat, FixedPreferences,
-    Highlight, Library, LibraryBook, PdfHighlight, ReadingPosition, ReadingStatus,
+    FixedTileAxis, Highlight, Library, LibraryBook, PdfHighlight, ReadingPosition, ReadingStatus,
 };
 use crate::ocr_job::{OcrAssets, OcrJob};
 use crate::pdf_annotations;
@@ -348,6 +348,7 @@ impl Screen {
             Self::NumberingValue(NumberField::WordSpacing(_)) => "Word spacing",
             Self::NumberingValue(NumberField::AutoTurn) => "Automatic page turns",
             Self::NumberingValue(NumberField::AutoTurnOverlapHorizontal) => "Horizontal overlap",
+            Self::NumberingValue(NumberField::FixedTileZoom(axis)) => axis.label(),
             Self::NumberingValue(NumberField::AutoTurnOverlapVertical) => "Vertical overlap",
             Self::NumberingValue(NumberField::FooterTrackMinimumWidth) => "Progress bar width",
             Self::NumberingValue(NumberField::FooterTrackMarginWidth) => "Progress bar margins",
@@ -435,6 +436,7 @@ enum Action {
     OpenTracked(u64),
     OpenPreviousDocument,
     Browse(PathBuf),
+    CurrentBookFolder,
     Continue,
     ClearLibraryFilter,
     ListBooks(BookList),
@@ -543,10 +545,12 @@ enum Action {
     EditNote,
     RemoveHighlight,
     ExportHighlights(annotation_export::Format),
+    ExportBookClippings,
     LibraryExport(library_export::Command),
     FitPage(bool),
     FitHeight,
     SetFixedZoom(usize),
+    SetFixedTileZoom(FixedTileAxis, u8),
     SetFixedRotation(u8),
     FixedScroll(bool),
     ComicSpread(bool),
@@ -1608,6 +1612,18 @@ impl Reader {
                 self.editor.caret = self.editor.text.len();
             }
         }
+        if let Screen::NumberingValue(NumberField::FixedTileZoom(axis)) = screen
+            && let Some(fixed) = &self.fixed
+        {
+            let count = fixed
+                .reading
+                .preferences()
+                .tile_zoom
+                .filter(|tile| tile.axis == axis)
+                .map_or(1.0, |tile| f32::from(tile.count_tenths) / 10.0);
+            self.editor.text = format!("{count:.1}").chars().collect();
+            self.editor.caret = self.editor.text.len();
+        }
         if screen == Screen::GoToPage {
             self.editor = Editor::new(96);
         }
@@ -2544,6 +2560,10 @@ impl Reader {
             return annotation_export::Format::ALL
                 .into_iter()
                 .map(|format| Item::new(format.label(), Action::ExportHighlights(format)))
+                .chain([Item::new(
+                    "Kindle clippings text",
+                    Action::ExportBookClippings,
+                )])
                 .collect();
         }
         if self.screen == Screen::ImportAnnotations
@@ -3222,6 +3242,7 @@ impl Reader {
             Action::LibraryExport(command) => self.activate_library_export(command)?,
             Action::Open(entry) => self.open_book(entry)?,
             Action::Browse(directory) => self.browse_to(directory)?,
+            Action::CurrentBookFolder => self.current_book_folder()?,
             Action::OpenTracked(id) => {
                 let entry = self.locate_tracked(id)?;
                 self.open_book(entry)?;
@@ -3532,6 +3553,15 @@ impl Reader {
                     .as_mut()
                     .ok_or("Open a fixed-page document first")?;
                 fixed.reading.set_zoom(level)?;
+                self.show(Screen::Fixed);
+                self.record_position();
+            }
+            Action::SetFixedTileZoom(axis, count) => {
+                let fixed = self
+                    .fixed
+                    .as_mut()
+                    .ok_or("Open a fixed-page document first")?;
+                fixed.reading.set_tile_zoom(axis, count)?;
                 self.show(Screen::Fixed);
                 self.record_position();
             }
@@ -3952,6 +3982,7 @@ impl Reader {
                 self.notice = Some("Highlight removed".into());
             }
             Action::ExportHighlights(format) => self.export_highlights(format)?,
+            Action::ExportBookClippings => self.export_book_clippings()?,
         }
         Ok(())
     }
@@ -6563,8 +6594,68 @@ impl Reader {
                     .map(|mark| (mark.text.as_str(), mark.note.as_deref())),
             );
         let contents = format.render(&state.title, quotes);
+        self.save_book_highlight_export(id, format.extension(), &contents)
+    }
+
+    fn export_book_clippings(&mut self) -> Result<()> {
+        use annotation_export::kindle_clippings;
+        let id = self.open_book_id().ok_or("No open book")?;
+        let state = self.library.state(id).ok_or("No reading history")?;
+        let mut contents = String::new();
+        if let Some(active) = &self.active {
+            let reading = &active.reading;
+            for mark in &state.highlights {
+                let start = &mark.selection.start;
+                let location = reading
+                    .probe
+                    .chapter_entries()
+                    .iter()
+                    .position(|chapter| chapter.href == start.chapter)
+                    .map(|chapter| {
+                        let page = (chapter == reading.chapter)
+                            .then(|| reading.probe.page_for(start))
+                            .flatten();
+                        match page {
+                            Some(page) => format!("Chapter {}, page {}", chapter + 1, page + 1),
+                            None => format!("Chapter {}", chapter + 1),
+                        }
+                    });
+                kindle_clippings::write_highlight(
+                    &mut contents,
+                    &state.title,
+                    state.author.as_deref(),
+                    location.as_deref(),
+                    mark.created_at,
+                    &mark.selection.text,
+                    mark.note.as_deref(),
+                );
+            }
+        }
+        if self.fixed.is_some() {
+            for mark in &state.pdf_highlights {
+                let location = format!("page {}", mark.page + 1);
+                kindle_clippings::write_highlight(
+                    &mut contents,
+                    &state.title,
+                    state.author.as_deref(),
+                    Some(&location),
+                    mark.created_at,
+                    &mark.text,
+                    mark.note.as_deref(),
+                );
+            }
+        }
+        self.save_book_highlight_export(id, "clippings.txt", &contents)
+    }
+
+    fn save_book_highlight_export(
+        &mut self,
+        id: u64,
+        extension: &str,
+        contents: &str,
+    ) -> Result<()> {
         with_storage(|| fs::create_dir_all(&self.exports))?;
-        let filename = format!("{id:016x}.{}", format.extension());
+        let filename = format!("{id:016x}.{extension}");
         primitive_app::save(&self.exports.join(&filename), contents.as_bytes())?;
         self.notice = Some(format!("Exported to Reader data/exports/{filename}"));
         Ok(())
@@ -7312,6 +7403,9 @@ impl Reader {
                 Screen::NumberingValue(
                     NumberField::AutoTurnOverlapHorizontal | NumberField::AutoTurnOverlapVertical,
                 ) => ("Zoom overlap: 0 to 90%", "Set"),
+                Screen::NumberingValue(NumberField::FixedTileZoom(_)) => {
+                    ("Choose 0.1 to 8.0, in steps of 0.1", "Set")
+                }
                 Screen::NumberingValue(NumberField::FooterTrackMinimumWidth) => {
                     ("Minimum progress bar width: 5 to 90%, in 5% steps", "Set")
                 }
@@ -7453,6 +7547,9 @@ impl Reader {
                         }
                         Action::ToggleLinkPreference(setting) => {
                             RowAccessory::Toggle(setting.checked(self.controls))
+                        }
+                        Action::LibraryExport(library_export::Command::ToggleKindleClippings) => {
+                            RowAccessory::Toggle(self.library_export.kindle_clippings_enabled())
                         }
                         Action::SetReadingControls(controls)
                             if self.screen == Screen::SearchSettings
@@ -12749,6 +12846,137 @@ mod tests {
             (rect.x + rect.w / 2) as f32,
             (rect.y + rect.h / 2) as f32,
         ))
+    }
+
+    #[test]
+    fn fixed_tile_zoom_controls_render_apply_custom_count_and_resume_a_scan() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Harbor Survey.pdf");
+        let mut page = String::from(
+            "BT /F1 36 Tf 42 532 Td (Harbor Survey) Tj ET\n+             BT /F1 14 Tf 43 501 Td (Approach notes for the eastern basin) Tj ET\n",
+        );
+        for (x, heading, notes) in [
+            (
+                43,
+                "Approach",
+                [
+                    "Enter between the shore markers.",
+                    "Keep the outer beacon in view.",
+                    "The western channel is narrow.",
+                ],
+            ),
+            (
+                332,
+                "Soundings",
+                [
+                    "Check the tide before crossing.",
+                    "Read depths at the north jetty.",
+                    "The rocks are exposed at low tide.",
+                ],
+            ),
+            (
+                621,
+                "Landing",
+                [
+                    "Wait beside the sheltered pier.",
+                    "Expect a strong ebb near the slip.",
+                    "Use the lower steps at low tide.",
+                ],
+            ),
+        ] {
+            page.push_str(&format!("BT /F1 22 Tf {x} 434 Td ({heading}) Tj ET\n"));
+            for (i, note) in notes.into_iter().enumerate() {
+                let y = 391 - i * 29;
+                page.push_str(&format!("BT /F1 13 Tf {x} {y} Td ({note}) Tj ET\n"));
+            }
+        }
+        fs::write(
+            &path,
+            crate::fixed::tests::pdf_objects(&[
+                "<< /Type /Catalog /Pages 2 0 R >>".into(),
+                "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 900 600] >>".into(),
+                "<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 6 0 R >> >> /Contents 5 0 R >>".into(),
+                "<< /Type /Page /Parent 2 0 R >>".into(),
+                format!("<< /Length {} >>\nstream\n{page}endstream", page.len()),
+                "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".into(),
+            ]),
+        )
+        .unwrap();
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        app.open_path(&path).unwrap();
+        assert!(
+            app.fixed
+                .as_ref()
+                .unwrap()
+                .reading
+                .preferences()
+                .tile_zoom
+                .is_none()
+        );
+
+        fn view_controls(app: &mut Reader) {
+            app.open_reading_edge(false, WIDTH as f32 / 2.0);
+            if app.reading_panel != Some(BarPanel::View) {
+                assert_eq!(tap_reading_control(app, "View"), Change::Partial);
+            }
+        }
+        view_controls(&mut app);
+        assert_eq!(
+            tap_reading_config_choice(&mut app, "Columns", "2"),
+            Change::Partial
+        );
+        let reading = &app.fixed.as_ref().unwrap().reading;
+        assert_eq!(
+            reading.preferences().tile_zoom.unwrap().axis,
+            FixedTileAxis::Columns
+        );
+        assert!(reading.page_status().contains("2.0 columns"));
+
+        view_controls(&mut app);
+        capture_test_screen(&app, &fonts, "READER_FIXED_TILE_ZOOM_FRAME", false);
+        assert_eq!(
+            tap_reading_config_choice(&mut app, "Rows", "Custom"),
+            Change::Partial
+        );
+        assert_eq!(
+            app.screen,
+            Screen::NumberingValue(NumberField::FixedTileZoom(FixedTileAxis::Rows))
+        );
+        let layout = Layout::new(WIDTH, HEIGHT, 4, 5);
+        let (_, submit) = layout
+            .keyboard_keys_with(app.editor.layer, "Set")
+            .into_iter()
+            .find(|(key, _)| key.key == primitive_ui::Key::Go)
+            .unwrap();
+        let set = Input::Tap(
+            (submit.x + submit.w / 2) as f32,
+            (submit.y + submit.h / 2) as f32,
+        );
+        app.editor.text = "8.1".chars().collect();
+        assert_eq!(app.input(set), Change::Partial);
+        assert!(app.notice.as_deref().unwrap().contains("0.1 to 8.0"));
+        app.editor.text = "2.5".chars().collect();
+        assert_eq!(app.input(set), Change::Partial);
+        assert_eq!(app.screen, Screen::Fixed);
+        let reading = &app.fixed.as_ref().unwrap().reading;
+        assert_eq!(reading.preferences().tile_zoom.unwrap().count_tenths, 25);
+        assert!(reading.page_status().contains("2.5 rows"));
+        app.input(Input::PageForward);
+        app.tick(Instant::now() + Duration::from_secs(1));
+        let saved = app.fixed.as_ref().unwrap().reading.preferences();
+        let origin = app.fixed.as_ref().unwrap().reading.history_point().unwrap();
+        assert_eq!(app.current_position().unwrap().page, 0);
+        app.save().unwrap();
+
+        let mut reopened = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+        reopened.open_path(&path).unwrap();
+        let reading = &reopened.fixed.as_ref().unwrap().reading;
+        assert_eq!(reading.preferences(), saved);
+        assert!((reading.history_point().unwrap() - origin).hypot() < 0.01);
     }
 
     #[test]

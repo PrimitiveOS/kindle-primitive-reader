@@ -2,6 +2,7 @@
 use super::{
     Action, ActiveBook, Change, Item, Reader, SEARCH_DELAY, SEARCH_REFRESH, Screen, position,
 };
+use crate::library::FixedTileAxis;
 use crate::{Result, epub::Book, library::DocumentFormat, synthetic_pages::CharacterPages};
 use primitive_app::with_storage;
 use std::{borrow::Cow, io, path::PathBuf, time::Instant};
@@ -18,6 +19,7 @@ pub(super) enum NumberField {
     AutoTurn,
     AutoTurnOverlapHorizontal,
     AutoTurnOverlapVertical,
+    FixedTileZoom(FixedTileAxis),
     FooterTrackMinimumWidth,
     FooterTrackMarginWidth,
     FooterBatteryHideThreshold,
@@ -38,6 +40,7 @@ impl NumberField {
             | Self::WordSpacing(_) => Screen::Book,
             Self::AutoTurn => Screen::AutoTurn,
             Self::AutoTurnOverlapHorizontal | Self::AutoTurnOverlapVertical => Screen::AutoTurnPan,
+            Self::FixedTileZoom(_) => Screen::Fixed,
             Self::FooterTrackMinimumWidth
             | Self::FooterTrackMarginWidth
             | Self::FooterBatteryHideThreshold
@@ -202,6 +205,15 @@ impl Reader {
 
     pub(super) fn apply_numbering_input(&mut self, field: NumberField) -> Result<()> {
         let value = self.editor.string();
+        if let NumberField::FixedTileZoom(axis) = field {
+            let value = value.trim();
+            let (whole, fraction) = value.split_once('.').unwrap_or((value, "0"));
+            let count = match (whole.parse::<u8>(), fraction.as_bytes()) {
+                (Ok(whole @ 0..=8), [digit @ b'0'..=b'9']) => whole * 10 + (digit - b'0'),
+                _ => 0,
+            };
+            return self.activate(Action::SetFixedTileZoom(axis, count));
+        }
         if field == NumberField::AutoTurn {
             let seconds = value
                 .trim()
@@ -329,6 +341,7 @@ impl Reader {
             NumberField::LineSpacing(owner) => return self.apply_line_spacing_input(owner),
             NumberField::WordSpacing(draft) => return self.apply_word_spacing_input(draft),
             NumberField::AutoTurn => unreachable!("handled above"),
+            NumberField::FixedTileZoom(_) => unreachable!("handled above"),
             NumberField::AutoTurnOverlapHorizontal | NumberField::AutoTurnOverlapVertical => {
                 unreachable!("handled above")
             }

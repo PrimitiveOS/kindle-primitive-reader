@@ -1,5 +1,7 @@
 //! Offline annotation exports with literal quotations and user notes.
 
+pub(crate) mod kindle_clippings;
+
 #[derive(Clone, Copy)]
 pub(crate) enum Format {
     Text,

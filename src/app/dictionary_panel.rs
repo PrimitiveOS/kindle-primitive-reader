@@ -725,48 +725,66 @@ impl Reader {
             self.list_page = index;
         }
     }
-    fn return_from_definition(&mut self) {
+    fn return_from_definition(&mut self, close_all: bool) {
         self.spelling_lookup = None;
         self.notice = None;
-        if self.dictionary_navigation.view.save_highlight {
-            let result = if self.pdf_selection.is_some() {
+        self.definition_results_page = None;
+        let save_highlight = self.dictionary_navigation.view.save_highlight
+            || close_all
+                && self
+                    .dictionary_navigation
+                    .trail
+                    .iter()
+                    .any(|parent| parent.view.save_highlight);
+        let highlight_error = if save_highlight {
+            let saved = if self.pdf_selection.is_some() {
                 self.save_pdf_highlight_in_place(None)
             } else {
                 self.save_highlight_in_place(None)
             };
-            if let Err(error) = result {
-                self.notice = Some(error.to_string());
+            if saved.is_ok() {
+                for parent in &mut self.dictionary_navigation.trail {
+                    parent.view.save_highlight = false;
+                }
             }
-        }
-        if let Some(previous) = self.dictionary_navigation.trail.pop() {
+            saved.err()
+        } else {
+            None
+        };
+        if let Some(previous) = (!close_all)
+            .then(|| self.dictionary_navigation.trail.pop())
+            .flatten()
+        {
             self.definition_word = previous.word;
             self.definitions = previous.definitions;
             self.list_page = previous.index;
             self.definition_expanded = previous.expanded;
-            self.definition_results_page = None;
             self.dictionary_navigation.view = previous.view;
             if previous.suggestions_pending {
                 self.start_spelling_lookup(&self.definition_word.clone());
             }
-            return;
+        } else {
+            let back = self.dictionary_navigation.origin.take().unwrap_or((
+                if self.fixed.is_some() {
+                    Screen::Fixed
+                } else {
+                    Screen::Book
+                },
+                0,
+            ));
+            let editor = self.dictionary_navigation.origin_editor.take();
+            if back.0 == Screen::VocabularyWord {
+                self.vocabulary_view.word = self.dictionary_navigation.review_word.take();
+            }
+            self.dictionary_navigation = Navigation::default();
+            self.show(back.0);
+            self.list_page = back.1;
+            if let Some(editor) = editor {
+                self.editor = editor;
+            }
         }
-        let back = self.dictionary_navigation.origin.take().unwrap_or((
-            if self.fixed.is_some() {
-                Screen::Fixed
-            } else {
-                Screen::Book
-            },
-            0,
-        ));
-        let editor = self.dictionary_navigation.origin_editor.take();
-        if back.0 == Screen::VocabularyWord {
-            self.vocabulary_view.word = self.dictionary_navigation.review_word.take();
-        }
-        self.dictionary_navigation = Navigation::default();
-        self.show(back.0);
-        self.list_page = back.1;
-        if let Some(editor) = editor {
-            self.editor = editor;
+        if let Some(error) = highlight_error {
+            self.notice = Some(error.to_string());
         }
     }
     fn select_definition(&mut self, index: usize) {
@@ -989,6 +1007,10 @@ impl Reader {
             return self.edit_find_input(input);
         }
         let (popup, back, _) = self.definition_layout();
+        if matches!(input, Input::LongTap(x, y) if back.contains(x, y)) {
+            self.return_from_definition(true);
+            return Change::Partial;
+        }
         let edit = definition_edit_button(popup, self.definitions.len() > 1);
         if !self.definition_word.is_empty() {
             match input {
@@ -1041,7 +1063,7 @@ impl Reader {
                     return Change::Partial;
                 }
                 if back.contains(x, y) || !popup.contains(x, y) {
-                    self.return_from_definition();
+                    self.return_from_definition(false);
                     return Change::Partial;
                 }
                 if self.definitions.len() > 1 && definition_results_button(popup).contains(x, y) {
@@ -1447,11 +1469,25 @@ impl Reader {
             ),
             None => String::new(),
         };
+        let show_close_hint = self.notice.is_none() && !self.dictionary_navigation.trail.is_empty();
+        let status_width = rect.w - if show_close_hint { 354 } else { 0 };
         canvas.text(
-            Rect::new(rect.x, popup.y + 78, rect.w, 34),
+            Rect::new(rect.x, popup.y + 78, status_width, 34),
             self.notice.as_deref().unwrap_or(&status),
             CAPTION,
         );
+        if show_close_hint {
+            canvas.text(
+                Rect::new(
+                    rect.x + status_width,
+                    popup.y + 78,
+                    rect.w - status_width,
+                    34,
+                ),
+                "Hold Back to close all",
+                CAPTION.right(),
+            );
+        }
     }
 }
 

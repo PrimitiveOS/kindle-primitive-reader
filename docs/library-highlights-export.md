@@ -1,8 +1,8 @@
 # Library highlight exports
 
-Open **Reading data › Export highlights**. Choose History, select individual books, or choose one or more collections. Select highlight styles and colors, then choose KOReader JSON, plain text, Markdown or HTML. The filters remain selected when Reader reopens. Color and style restrictions are combined; an empty selection matches no highlights. The saved file appears under `reader/data/exports/library-highlights` with the chosen extension.
+Open **Reading data › Export highlights**. Choose History, select individual books, or choose one or more collections. Select highlight styles and colors, then choose KOReader JSON, plain text, Markdown, HTML or Kindle clippings text. The filters remain selected when Reader reopens. Color and style restrictions are combined; an empty selection matches no highlights. The saved file appears under `reader/data/exports/library-highlights` with the chosen extension.
 
-Each book keeps its own title, author and source file. Different editions with the same title remain separate. Exports include highlighted quotations and attached notes. Page bookmarks are omitted. Books with no matching highlights are omitted. A source that has disappeared or changed is skipped and included in the completion count.
+Each book keeps its own title, author and source file. Different editions with the same title remain separate. Reader’s saved highlights export with their attached notes. History also includes eligible entries from Kindle’s clippings file when available. Books with matching entries appear in the export. A source that has disappeared or changed is skipped and included in the completion count.
 
 For fixed documents, the page reference is the one-based physical source page. For reflowable documents, Reader resolves the saved text anchor with that book's reading preferences and records a chapter-local page label. A reflow label such as “Chapter 3, page 2” identifies the current layout. Exact start and end anchors also appear in the JSON `primitiveos` field. Unknown creation times remain absent. The saved creation time is retained when it exists. Named highlight colors also appear in JSON. [Color controls and interchange](highlight-colors-and-note-markers.md)
 
@@ -21,7 +21,34 @@ The reference is KOReader commit `9192014d8bd82a91dc1012473be0f238dedfdb54`.
 | A single book is a JSON object, several books use a `documents` envelope | Both shapes follow the exporter schema and can be read by Reader's KOReader JSON parser. |
 | Human-readable text, Markdown and HTML | The quotation and note remain literal. HTML escapes markup and uses one document containing book sections. |
 
-The stock Kindle exporter also merges Amazon's `My Clippings.txt`. Its optional book MD5 setting requires further implementation in Reader. Named color filters are now available in the desktop candidate; see [selection and color-filter workflows](highlight-workflows.md). This increment covers Reader's own saved highlights. [KOReader export actions](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/exporter.koplugin/main.lua), [annotation fields](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/exporter.koplugin/clip.lua), [JSON shapes](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/exporter.koplugin/target/json.lua)
+[KOReader export actions](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/exporter.koplugin/main.lua), [annotation fields](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/exporter.koplugin/clip.lua), [JSON shapes](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/exporter.koplugin/target/json.lua)
+
+## Kindle clippings
+
+History includes `Documents/My Clippings.txt` when present. Use the **Kindle
+clippings** switch to choose whether to include it. All colors and all styles
+include Kindle entries, which carry their original type, quotation or note,
+page or location, and available date. Select a style or color to focus on
+Reader’s own marks. Choose books or collections to export those selections.
+
+Reader combines Kindle entries with a unique matching title and author,
+preserves distinct editions when the source is ambiguous, and removes exact
+duplicate Kindle records. Location-only and chapter-local references keep
+their labels. Kindle entries retain metadata from the clippings file. The parser handles English and Simplified Chinese Kindle
+records, UTF-8 with a byte-order mark, multiline text, and files up to 8 MiB
+and 8,192 recognized records.
+
+**Kindle clippings text** saves a separate `.clippings.txt` file. Export from
+an open book to include just its saved highlights and notes, or from Reading
+data to include the selected library sources. The original Kindle file stays
+in Documents. [Export options](screenshots/export-kindle-clippings-options.png) · [Export formats](screenshots/export-kindle-clippings-format.png)
+
+The pinned KOReader Lua parser and writer run against independent authored
+highlight and note fixtures. That comparison checks printed pages, Kindle
+location, local dates and the delimiter format. Reader tests also verify
+duplicate and same-title handling, combined JSON and text, selection filters,
+and byte equality for the original clipping source and saved library state.
+[Stock comparison script](../scripts/koreader-kindle-clippings-check.lua) · [Kindle text target](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/exporter.koplugin/target/my_clippings.lua)
 
 ## Verification
 
