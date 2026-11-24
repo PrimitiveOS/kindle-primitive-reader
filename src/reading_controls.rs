@@ -51,6 +51,9 @@ pub(crate) struct ReadingControls {
     pub night_pages: bool,
     pub footnote_popups: bool,
     pub prefer_footnotes: bool,
+    /// Show the all-results list when Find is used on selected text.
+    #[serde(skip_serializing_if = "is_false")]
+    pub selection_search_all: bool,
     pub left_touch: bool,
     pub large_toolbar: bool,
     pub disable_page_taps: bool,
