@@ -84,7 +84,7 @@ fn alternative_contents_switches_normal_contents_and_preserves_anchor_across_reo
     let rows = reader.alternative_entries(id).unwrap();
     assert_eq!(
         rows.iter()
-            .map(|row| (row.title.as_str(), row.depth))
+            .map(|row| (row.display_title(), row.depth))
             .collect::<Vec<_>>(),
         [
             ("Harbor Survey", 0),
@@ -166,7 +166,7 @@ fn alternative_contents_uses_fragment_starts_only_without_document_headings() {
         .unwrap();
     assert_eq!(rows.len(), 3);
     for (index, row) in rows.iter().enumerate() {
-        assert_eq!((row.title.as_str(), row.depth), ("–", 0));
+        assert_eq!((row.display_title(), row.depth), ("–", 0));
         assert_eq!(row.target, OutlineTarget::Chapter(index));
     }
     reader
@@ -200,7 +200,9 @@ fn long_marker_fixture(path: &Path) {
 
 #[test]
 fn alternative_markers_resolve_cross_spine_heading_pages_for_header_footer_and_skim() {
+    use super::super::chapter_navigation::Direction;
     use super::super::progress_markers::MarkerTrack;
+    use crate::reading_controls::{FooterItem, StatusBar};
     use primitive_app::App;
     use std::time::Duration;
     let fixture = Fixture::new();
@@ -241,6 +243,8 @@ fn alternative_markers_resolve_cross_spine_heading_pages_for_header_footer_and_s
     assert!(reader.needs_screen_page_count());
     let expiry = Instant::now() + Duration::from_secs(20);
     let expected_header: Vec<_> = wanted.iter().map(|page| local + page).collect();
+    assert_eq!(reader.active_alternative_chapter_title(), Some(""));
+    assert!(reader.alternative_chapter_progress().is_none());
     let (start, span, total) = {
         let weights = reading.progress_weights();
         (
@@ -274,6 +278,12 @@ fn alternative_markers_resolve_cross_spine_heading_pages_for_header_footer_and_s
         }
     }
     assert_eq!(reader.current_history_location(), original);
+    let first_section = format!("Chapter 1 of 4 - Page 1 of {}", expected_header[0]);
+    assert_eq!(
+        reader.status_caption().as_deref(),
+        Some(first_section.as_str())
+    );
+    let track = reader.footer_track_rect(0);
     capture(
         &reader,
         &mut wide,
@@ -289,9 +299,120 @@ fn alternative_markers_resolve_cross_spine_heading_pages_for_header_footer_and_s
     );
     assert_eq!(reader.current_history_location(), original);
     assert_eq!(reader.back, history);
+    reader.show(Screen::Book);
+    reader.activate(Action::Chapter(Direction::Next)).unwrap();
+    assert_eq!(
+        reader.active_alternative_chapter_title(),
+        Some("Harbor Survey")
+    );
+    reader.activate(Action::Chapter(Direction::Next)).unwrap();
+    assert_eq!(reader.active_alternative_chapter_title(), Some(""));
+    let after_jumps = reader.current_history_location();
+    let checked_history = reader.back.clone();
+    let east_pages = wanted[2] - wanted[1];
+    assert_eq!(
+        reader.status_caption(),
+        Some(format!("Chapter 3 of 4 - Page 1 of {east_pages}"))
+    );
+    assert_eq!(reader.footer_track_rect(0), track);
+    capture(
+        &reader,
+        &mut wide,
+        "alternative-section-count-landscape.png",
+        false,
+    );
+    reader.show(Screen::ChapterNavigation);
+    tap_contents_item(&mut reader, "Contents level 2");
+    tap_contents_item(&mut reader, "Footer chapter title");
+    assert_eq!(
+        reader.active_alternative_chapter_title(),
+        Some("East softhyphen quay")
+    );
+    assert_eq!(
+        reader.status_caption(),
+        Some(format!("Chapter 3 of 4 - Page 1 of {east_pages}"))
+    );
+    reader.show(Screen::Book);
+    reader.controls.status_bar = StatusBar::Custom;
+    reader.controls.footer_items = FooterItem::ChapterTitle.bit();
+    assert_eq!(
+        reader.status_caption().as_deref(),
+        Some("East softhyphen quay")
+    );
+    assert_eq!(
+        reader.export_progress_token('C').as_deref(),
+        Some("East softhyphen quay")
+    );
+    capture(
+        &reader,
+        &mut wide,
+        "alternative-section-title-landscape.png",
+        false,
+    );
+    assert_eq!(reader.current_history_location(), after_jumps);
+    assert_eq!(reader.back, checked_history);
+    reader.controls.status_bar = StatusBar::Chapter;
+    reader.activate(Action::Skim).unwrap();
+    capture(
+        &reader,
+        &mut wide,
+        "alternative-section-skim-landscape.png",
+        true,
+    );
+    reader.show(Screen::Book);
+    let reading = &mut reader.active.as_mut().unwrap().reading;
+    reading.go_to_page(1, wanted[1] + 1).unwrap();
+    assert_eq!(
+        reader.active_alternative_chapter_title(),
+        Some("East softhyphen quay")
+    );
+    reader.show(Screen::ChapterNavigation);
+    tap_contents_item(&mut reader, "Footer chapter title");
+    assert_eq!(
+        reader.active_alternative_chapter_title(),
+        Some("East softhyphen quay")
+    );
+    tap_contents_item(&mut reader, "Footer chapter title");
+    tap_contents_item(&mut reader, "Use levels for chapter jumps");
+    let reading = &mut reader.active.as_mut().unwrap().reading;
+    reading.go_to_page(2, 0).unwrap();
+    let only_included = total_pages - expected_header[1];
+    assert_eq!(
+        reader.active_alternative_chapter_title(),
+        Some("East softhyphen quay")
+    );
+    assert_eq!(
+        reader.status_caption(),
+        Some(format!(
+            "Chapter 3 of 3 - Page {} of {only_included}",
+            local + count - expected_header[1] + 1
+        ))
+    );
+    reader.save().unwrap();
+    let mut reopened = open(&fixture, &path);
+    complete(&mut reopened);
+    assert!(reopened.uses_alternative_contents());
+    assert!(
+        reopened
+            .library
+            .state(id)
+            .unwrap()
+            .contents_depths
+            .bind_title
+    );
+    assert!(
+        reopened
+            .library
+            .state(id)
+            .unwrap()
+            .contents_depths
+            .bind_navigation
+    );
+    let reading = &mut reader.active.as_mut().unwrap().reading;
+    reading.go_to_page(0, 0).unwrap();
+
     // Filter depths before merging headings that share a rendered page.
     let state = reader.library.state_mut(id).unwrap();
-    state.contents_depths.toggle(1);
     state.contents_depths.toggle(2);
     assert_eq!(
         reader

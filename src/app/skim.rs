@@ -493,12 +493,18 @@ impl Reader {
                 fixed.reading.count(),
             )
         } else if let Some(active) = &self.active {
-            format!(
-                "{} · Page {} of {}",
-                active.reading.probe.chapter_label,
-                active.reading.page + 1,
-                active.reading.probe.page_count(),
-            )
+            let title = self
+                .active_alternative_chapter_title()
+                .unwrap_or(&active.reading.probe.chapter_label);
+            let (page, count) = self.alternative_chapter_progress().map_or_else(
+                || (active.reading.page + 1, active.reading.probe.page_count()),
+                |chapter| (chapter.page, chapter.pages),
+            );
+            if title.is_empty() {
+                format!("Page {page} of {count}")
+            } else {
+                format!("{title} · Page {page} of {count}")
+            }
         } else {
             "No open document".into()
         }

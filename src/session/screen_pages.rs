@@ -243,7 +243,7 @@ impl ScreenPages {
         Some((marks, count))
     }
 
-    pub(super) fn alternative_markers(
+    pub(super) fn alternative_locations(
         &self,
         config: &BookConfig,
         probe: &Probe,
@@ -251,13 +251,17 @@ impl ScreenPages {
         page: usize,
         entries: &[OutlineEntry],
         allow_depth: impl Fn(usize) -> bool,
-    ) -> Option<AlternativeMarkers> {
-        let (_, count) = self.position(config, probe, chapter, page)?;
+    ) -> Option<AlternativeLocations> {
+        let (current, count) = self.position(config, probe, chapter, page)?;
         let slot = self.0.borrow();
         let generation = slot.as_ref()?;
         let prefix = generation.prefix.as_ref()?;
         let mut starts = Vec::new();
-        for entry in entries.iter().filter(|entry| allow_depth(entry.depth)) {
+        for (index, entry) in entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| allow_depth(entry.depth))
+        {
             let (chapter, local) = match &entry.target {
                 OutlineTarget::Chapter(chapter) => (*chapter, 0),
                 OutlineTarget::Heading(chapter, anchor) => {
@@ -288,16 +292,21 @@ impl ScreenPages {
             if local >= pages {
                 return None;
             }
-            starts.push(AlternativeMarker {
+            starts.push(AlternativeLocation {
+                index,
                 chapter,
                 page: local,
                 pages,
                 absolute: start + local,
             });
         }
-        starts.sort_unstable_by_key(|marker| marker.absolute);
-        starts.dedup_by_key(|marker| marker.absolute);
-        Some(AlternativeMarkers { starts, count })
+        // Keep source order within a rendered page for title selection.
+        starts.sort_by_key(|heading| heading.absolute);
+        Some(AlternativeLocations {
+            starts,
+            current: current - 1,
+            count,
+        })
     }
 
     pub(super) fn position(
@@ -440,15 +449,17 @@ impl Generation {
     }
 }
 
-pub(crate) struct AlternativeMarker {
+pub(crate) struct AlternativeLocation {
+    pub(crate) index: usize,
     pub(crate) chapter: usize,
     pub(crate) page: usize,
     pub(crate) pages: usize,
     pub(crate) absolute: usize,
 }
 
-pub(crate) struct AlternativeMarkers {
-    pub(crate) starts: Vec<AlternativeMarker>,
+pub(crate) struct AlternativeLocations {
+    pub(crate) starts: Vec<AlternativeLocation>,
+    pub(crate) current: usize,
     pub(crate) count: usize,
 }
 

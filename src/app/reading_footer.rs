@@ -189,6 +189,7 @@ impl<'a> PageSections<'a> {
 
 struct Progress<'a> {
     section_range: std::ops::Range<usize>,
+    alternative_sections: bool,
     section_index: usize,
     section_count: usize,
     section_name: &'a str,
@@ -206,7 +207,7 @@ struct Progress<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct FooterLocation {
     book_id: u64,
-    chapter: usize,
+    chapter: Option<usize>,
     flow: usize,
     section: usize,
 }
@@ -273,6 +274,7 @@ impl<'a> Progress<'a> {
         let (section_index, section_count) = sections.position(page, None);
         Self {
             section_range: start..end,
+            alternative_sections: false,
             section_index,
             section_count,
             section_name: name,
@@ -682,7 +684,7 @@ impl Reader {
                 .map_or(0, |flows| flows.flow(active.reading.page));
             return Some(FooterLocation {
                 book_id: active.id,
-                chapter: active.reading.chapter,
+                chapter: (!progress.alternative_sections).then_some(active.reading.chapter),
                 flow,
                 section: progress.section_index,
             });
@@ -694,7 +696,7 @@ impl Reader {
             .map_or(0, |flows| flows.flow(fixed.reading.page()));
         Some(FooterLocation {
             book_id: fixed.id,
-            chapter: 0,
+            chapter: Some(0),
             flow,
             section: progress.section_index,
         })
@@ -898,6 +900,14 @@ impl Reader {
         } else {
             progress.bound_screen_pages_left =
                 self.selected_chapter_pages_left(&progress, reading.last_visible_page());
+        }
+        if let Some(chapter) = self.alternative_chapter_progress() {
+            progress.alternative_sections = true;
+            progress.section_index = chapter.index;
+            progress.section_count = chapter.count;
+            progress.section_page = chapter.page;
+            progress.section_len = chapter.pages;
+            progress.bound_screen_pages_left = None;
         }
         Some(progress)
     }

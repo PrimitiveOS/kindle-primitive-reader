@@ -701,12 +701,12 @@ impl Reading {
         )
     }
 
-    pub(crate) fn whole_book_alternative_markers(
+    pub(crate) fn whole_book_alternative_locations(
         &self,
         entries: &[crate::generated_contents::OutlineEntry],
         allow_depth: impl Fn(usize) -> bool,
-    ) -> Option<screen_pages::AlternativeMarkers> {
-        self.config.screen_pages.alternative_markers(
+    ) -> Option<screen_pages::AlternativeLocations> {
+        self.config.screen_pages.alternative_locations(
             &self.config,
             &self.probe,
             self.chapter,

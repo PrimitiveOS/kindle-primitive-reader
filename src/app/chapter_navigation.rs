@@ -115,6 +115,8 @@ impl Reader {
             )
             .detail(if !levels.has_ignored() {
                 "Turn off a level to enable this option"
+            } else if self.uses_alternative_contents() {
+                "Chapter jumps and indexed chapter progress use the included levels"
             } else if self.has_whole_book_marker_coordinates() {
                 if self.chapter_pages_use_edition_labels() {
                     "Chapter jumps and reading time use the included levels"
@@ -134,13 +136,15 @@ impl Reader {
             .detail(format!("{count} {unit}"))
         }));
         rows.push(Item::new("Progress markers", Action::Heading).detail(
-            if self.has_whole_book_marker_coordinates() {
+            if self.uses_alternative_contents() {
+                "The reading header, footer and Skim use the included levels"
+            } else if self.has_whole_book_marker_coordinates() {
                 "The footer and Skim use the included levels"
             } else {
                 "The reading header uses the included levels for this book"
             },
         ));
-        if self.has_whole_book_marker_coordinates() {
+        if self.has_chapter_title_levels() {
             rows.push(
                 Item::new(
                     "Footer chapter title",
@@ -187,8 +191,12 @@ impl Reader {
         counts
     }
 
+    fn has_chapter_title_levels(&self) -> bool {
+        self.uses_alternative_contents() || self.has_whole_book_marker_coordinates()
+    }
+
     pub(super) fn set_chapter_level(&mut self, setting: LevelSetting) -> Result<()> {
-        if matches!(setting, LevelSetting::BindTitle) && !self.has_whole_book_marker_coordinates() {
+        if matches!(setting, LevelSetting::BindTitle) && !self.has_chapter_title_levels() {
             return Ok(());
         }
         let book = self.open_book_id().ok_or("Open a document first")?;

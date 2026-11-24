@@ -148,7 +148,7 @@ impl Reader {
             return entries
                 .iter()
                 .map(|entry| ContentsEntry {
-                    title: entry.title.clone(),
+                    title: entry.display_title().to_owned(),
                     depth: entry.depth,
                     target: Target::Alternative(entry.target.clone()),
                 })

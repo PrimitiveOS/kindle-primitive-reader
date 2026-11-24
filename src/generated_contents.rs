@@ -20,6 +20,16 @@ pub(crate) struct OutlineEntry {
     pub(crate) target: OutlineTarget,
 }
 
+impl OutlineEntry {
+    pub(crate) fn display_title(&self) -> &str {
+        if self.title.is_empty() {
+            "–"
+        } else {
+            &self.title
+        }
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct GeneratedContents {
     publication: Option<(u64, usize)>,
@@ -67,7 +77,7 @@ impl GeneratedContents {
             if self.entries.is_empty() {
                 self.entries
                     .extend(self.fragments.drain(..).map(|chapter| OutlineEntry {
-                        title: "–".into(),
+                        title: String::new(),
                         depth: 0,
                         target: OutlineTarget::Chapter(chapter),
                     }));
@@ -116,10 +126,10 @@ impl GeneratedContents {
                         return;
                     }
                     available -= 1;
-                    let title = if level == depth && !title.is_empty() {
+                    let title = if level == depth {
                         title.clone()
                     } else {
-                        "–".into()
+                        String::new()
                     };
                     self.entries.push(OutlineEntry {
                         title,

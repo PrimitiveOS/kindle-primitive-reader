@@ -11,6 +11,13 @@ pub(super) struct MarkerPages {
     pub(super) count: usize,
 }
 
+pub(super) struct ChapterProgress {
+    pub(super) index: usize,
+    pub(super) count: usize,
+    pub(super) page: usize,
+    pub(super) pages: usize,
+}
+
 #[derive(Clone, Copy)]
 pub(super) enum MarkerTrack {
     Footer,
@@ -81,15 +88,11 @@ impl Reader {
         let entries = self.alternative_entries(book.id)?;
         let state = self.library.state(book.id)?;
         let reading = &book.reading;
-        if let Some(markers) = reading
-            .whole_book_alternative_markers(entries, |depth| state.contents_depths.includes(depth))
-        {
+        if let Some(markers) = reading.whole_book_alternative_locations(entries, |depth| {
+            state.contents_depths.includes(depth)
+        }) {
             return Some(MarkerPages {
-                starts: markers
-                    .starts
-                    .into_iter()
-                    .map(|marker| marker.absolute)
-                    .collect(),
+                starts: sorted_pages(markers.starts.into_iter().map(|heading| heading.absolute)),
                 count: markers.count,
             });
         }
@@ -114,7 +117,7 @@ impl Reader {
         }
         let include = |depth| state.contents_depths.includes(depth);
         let mut starts =
-            if let Some(markers) = reading.whole_book_alternative_markers(entries, include) {
+            if let Some(markers) = reading.whole_book_alternative_locations(entries, include) {
                 markers
                     .starts
                     .into_iter()
@@ -162,7 +165,98 @@ impl Reader {
             .then(|| sorted_pages(local_headings(book, state).map(|(page, _)| page)))
     }
 
+    pub(super) fn active_alternative_chapter_title(&self) -> Option<&str> {
+        let book = self.active.as_ref()?;
+        let entries = self.alternative_entries(book.id)?;
+        if entries.is_empty() {
+            return None;
+        }
+        let levels = &self.library.state(book.id)?.contents_depths;
+        let include = |depth| !levels.bind_title || levels.includes(depth);
+        let reading = &book.reading;
+        let first = entries.partition_point(|entry| alternative_spine(entry) < reading.chapter);
+        let title = chapter_title_at(
+            entries[first..]
+                .iter()
+                .take_while(|entry| alternative_spine(entry) == reading.chapter)
+                .filter(|entry| include(entry.depth))
+                .filter_map(|entry| {
+                    Some((local_alternative_page(book, entry)?, entry.title.as_str()))
+                }),
+            reading.first_visible_page(),
+        );
+        if title.is_some() {
+            return title;
+        }
+        if !entries[..first].iter().any(|entry| include(entry.depth)) {
+            return Some("");
+        }
+
+        // A preceding spine may contain the current title. Use the measured
+        // layout and never load a remote chapter solely to paint the footer.
+        let locations = reading.whole_book_alternative_locations(entries, include)?;
+        Some(
+            chapter_title_at(
+                locations
+                    .starts
+                    .iter()
+                    .map(|heading| (heading.absolute, entries[heading.index].title.as_str())),
+                locations.current,
+            )
+            .unwrap_or_default(),
+        )
+    }
+
+    pub(super) fn alternative_chapter_progress(&self) -> Option<ChapterProgress> {
+        let book = self.active.as_ref()?;
+        let entries = self.alternative_entries(book.id)?;
+        let reading = &book.reading;
+        if entries.is_empty()
+            || !reading.has_exact_local_screen_pages()
+            || reading.hides_nonlinear()
+        {
+            return None;
+        }
+        let levels = &self.library.state(book.id)?.contents_depths;
+        let include = |depth| levels.use_for_navigation(depth);
+        let (mut starts, current, total) = if reading.probe.chapter_count() == 1 {
+            (
+                sorted_pages(
+                    entries
+                        .iter()
+                        .filter(|entry| include(entry.depth))
+                        .filter_map(|entry| local_alternative_page(book, entry)),
+                ),
+                reading.page,
+                reading.probe.page_count(),
+            )
+        } else {
+            let locations = reading.whole_book_alternative_locations(entries, include)?;
+            (
+                sorted_pages(locations.starts.into_iter().map(|heading| heading.absolute)),
+                locations.current,
+                locations.count,
+            )
+        };
+        // Front matter has a span of its own before the first chapter tick.
+        if starts.first() != Some(&0) {
+            starts.insert(0, 0);
+        }
+        let index = starts.partition_point(|&page| page <= current) - 1;
+        let start = starts[index];
+        let end = starts.get(index + 1).copied().unwrap_or(total);
+        Some(ChapterProgress {
+            index: index + 1,
+            count: starts.len(),
+            page: current - start + 1,
+            pages: end - start,
+        })
+    }
+
     pub(super) fn bound_footer_chapter_title(&self) -> Option<&str> {
+        if self.uses_alternative_contents() {
+            return self.active_alternative_chapter_title();
+        }
         let state = self.library.state(self.open_book_id()?)?;
         if !state.contents_depths.bind_title || !state.contents_depths.has_ignored() {
             return None;
@@ -177,6 +271,12 @@ impl Reader {
         (active.reading.probe.chapter_count() == 1).then(|| {
             chapter_title_at(local_headings(active, state), active.reading.page).unwrap_or_default()
         })
+    }
+}
+
+fn alternative_spine(entry: &OutlineEntry) -> usize {
+    match &entry.target {
+        OutlineTarget::Chapter(chapter) | OutlineTarget::Heading(chapter, _) => *chapter,
     }
 }
 
