@@ -27,6 +27,12 @@ reuse the prepared chapters for subsequent turns. Other typography controls
 still prepare the active chapter first.
 [Font size rendering and captures](whole-book-screen-pages.md#choose-how-to-render-font-size-changes)
 
+Footnote popup justification has a saved setting independent of the book.
+The stock callback defaults to On. The Mac replay verifies justified and
+start-aligned Latin text, identical right-to-left output, and a selection
+preserved through rotation and return to the reading passage.
+[Footnote alignment and captures](footnote-export-roots.md#preview-text-alignment)
+
 ## Dictionary layouts, alternative contents, partial typography and EPUB padding checkpoint
 
 Dictionary popup actions can be reordered, hidden and arranged one to four
