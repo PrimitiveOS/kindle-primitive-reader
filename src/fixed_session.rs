@@ -1878,6 +1878,7 @@ impl FixedReading {
         self.jump_to(page, None)
     }
 
+    #[cfg(test)]
     pub(crate) fn restore_history_offsets(&mut self, page: usize, x: f32, y: f32) -> Result<()> {
         self.present(
             page,

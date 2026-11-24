@@ -6,7 +6,11 @@ use primitive_ui::{Canvas, Input, Rect, Sheet, SheetAction};
 use serde::{Deserialize, Serialize};
 
 use super::{Action, Item, Reader, Screen};
-use crate::{Result, library::ReadingPosition, session::ReadingViewport};
+use crate::{
+    Result,
+    library::{FixedPreferences, ReadingPosition},
+    session::ReadingViewport,
+};
 
 const HISTORY_LIMIT: usize = 5_000;
 
@@ -92,12 +96,33 @@ enum ReadView {
     },
     Fixed {
         page: usize,
-        x: f32,
-        y: f32,
+        view: FixedPreferences,
         viewport: ReadingViewport,
-        continuous: bool,
         source_point: Option<hayro::kurbo::Point>,
     },
+}
+
+fn with_fixed_geometry(mut current: FixedPreferences, saved: FixedPreferences) -> FixedPreferences {
+    current.zoom = saved.zoom;
+    current.tile_zoom = saved.tile_zoom;
+    current.turns = saved.turns;
+    current.width_fit = saved.width_fit;
+    current.height_fit = saved.height_fit;
+    current.continuous = saved.continuous;
+    current.spread = saved.spread;
+    current.epub_spread = saved.epub_spread;
+    current.continuous_gap = saved.continuous_gap;
+    current.crop = saved.crop;
+    current.crop_margin_hundredths = saved.crop_margin_hundredths;
+    current.semi_auto_crop = saved.semi_auto_crop;
+    current.continuous_crop = saved.continuous_crop;
+    current.straighten_limit = saved.straighten_limit;
+    current.scan_contrast = saved.scan_contrast;
+    current.scan_gamma_tenths = saved.scan_gamma_tenths;
+    current.scan_white_level = saved.scan_white_level;
+    current.offset_x = saved.offset_x;
+    current.offset_y = saved.offset_y;
+    current
 }
 
 impl ReadView {
@@ -196,13 +221,10 @@ impl Reader {
         }
         let viewport = self.reading_viewport();
         let current = if let Some(fixed) = &self.fixed {
-            let offsets = fixed.reading.preferences();
             ReadView::Fixed {
                 page: fixed.reading.page(),
-                x: offsets.offset_x,
-                y: offsets.offset_y,
+                view: with_fixed_geometry(FixedPreferences::default(), fixed.reading.preferences()),
                 viewport,
-                continuous: fixed.reading.is_continuous(),
                 source_point: fixed.reading.history_point(),
             }
         } else if let Some(active) = &self.active {
@@ -242,18 +264,17 @@ impl Reader {
             } => self.restore_reading_position(position, top.filter(|_| viewport == *saved)),
             ReadView::Fixed {
                 page,
-                x,
-                y,
+                view,
                 viewport: saved,
-                continuous,
                 source_point,
             } => {
                 self.close_fixed_search_fit()?;
                 let fixed = &mut self.fixed.as_mut().ok_or("No open document")?.reading;
-                if fixed.is_continuous() != *continuous {
+                if fixed.is_continuous() != view.continuous {
                     self.jump_fixed(*page, None).map(|_| ())
                 } else if viewport == *saved {
-                    fixed.restore_history_offsets(*page, *x, *y)?;
+                    fixed
+                        .restore_view_at(*page, with_fixed_geometry(fixed.preferences(), *view))?;
                     self.finish_fixed_jump(*page, None);
                     Ok(())
                 } else {
@@ -262,6 +283,21 @@ impl Reader {
                 }
             }
         }
+    }
+
+    fn previous_jump_index(&self) -> Option<usize> {
+        let current = self.current_position()?;
+        self.back.iter().rposition(|saved| {
+            if self.fixed.is_some() {
+                return saved.position.page != current.page;
+            }
+            match (saved.position.anchor.as_ref(), current.anchor.as_ref()) {
+                (Some(saved), Some(current)) => saved != current,
+                _ => {
+                    saved.position.chapter != current.chapter || saved.position.page != current.page
+                }
+            }
+        })
     }
 
     pub(super) fn navigation_back(&mut self) -> Change {
@@ -277,11 +313,19 @@ impl Reader {
                 Reading::Exit => return self.back_to_exit(),
                 Reading::Library => self.current_book_folder(),
                 Reading::PreviousLocation => {
-                    let Some(index) = self.back.len().checked_sub(1) else {
+                    let Some(index) = self.previous_jump_index() else {
+                        self.back.clear();
                         return self.back_at_empty_history();
                     };
-                    self.reset_back_resistance();
-                    self.return_to_location(index)
+                    // Skip markers for the current location without making Forward revisit them.
+                    let skipped = self.back.split_off(index + 1);
+                    let result = self.return_to_location(index);
+                    if result.is_ok() {
+                        self.reset_back_resistance();
+                    } else {
+                        self.back.extend(skipped);
+                    }
+                    result
                 }
                 Reading::PreviousPage => {
                     let Some(previous) = self.back_navigation.previous.back().cloned() else {
@@ -527,6 +571,62 @@ mod tests {
     }
 
     #[test]
+    fn back_skips_the_opening_marker_and_reaches_the_previous_distinct_location() {
+        let fixture = Fixture::new();
+        let mut app = fixture.app();
+        bind_back(&mut app);
+        app.activate(Action::SetReadingControls(
+            crate::reading_controls::ReadingControls {
+                remember_opening_location: true,
+                ..app.controls
+            },
+        ))
+        .unwrap();
+        app.open_path(&fixture.book).unwrap();
+        let opening = app.current_history_location().unwrap();
+        assert_eq!(app.back, vec![opening.clone()]);
+        assert_eq!(app.input(BACK), Change::Partial);
+        assert_eq!(app.notice.as_deref(), Some("Location history is empty."));
+        assert!(app.back.is_empty() && app.forward.is_empty());
+        assert_eq!(app.input(BACK), Change::Partial);
+        assert!(app.back_exit_confirmation_open());
+        assert_eq!(app.input(Input::PageBack), Change::Partial);
+
+        app.follow_reflow_page(1, 0).unwrap();
+        let later = app.current_history_location().unwrap();
+        assert_ne!(opening, later);
+        app.push_history(later.clone());
+        assert_eq!(app.input(BACK), Change::Partial);
+        assert_eq!(app.current_history_location(), Some(opening));
+        assert!(app.back.is_empty());
+        assert_eq!(app.forward, vec![later.clone()]);
+        app.activate(Action::NextLocation).unwrap();
+        assert_eq!(app.current_history_location(), Some(later));
+    }
+
+    #[test]
+    fn back_in_fixed_books_skips_jump_markers_on_the_current_page() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Tilted scan.pdf");
+        fs::copy(crate::test_fixture("tilted-scan.pdf"), &path).unwrap();
+        let mut app = fixture.app();
+        bind_back(&mut app);
+        app.open_path(&path).unwrap();
+        let opening = app.current_history_location().unwrap();
+        app.follow_fixed(1, None).unwrap();
+        let later = app.current_history_location().unwrap();
+        let mut marker = later.clone();
+        marker.scan_point = Some(hayro::kurbo::Point::new(25.0, 75.0));
+        assert_ne!(marker, later);
+        app.push_history(marker);
+
+        assert_eq!(app.input(BACK), Change::Partial);
+        assert_eq!(app.current_position(), Some(opening.position));
+        assert!(app.back.is_empty());
+        assert_eq!(app.forward, vec![later]);
+    }
+
+    #[test]
     fn previous_read_page_restores_pdf_view_and_settings_survive_restart() {
         let fixture = Fixture::new();
         let path = fixture.root.join("Tilted scan.pdf");
@@ -574,6 +674,53 @@ mod tests {
         assert_ne!(panned.scan_point, origin.scan_point);
         assert_eq!(app.input(BACK), Change::Partial);
         assert_eq!(app.current_history_location().unwrap(), origin);
+    }
+
+    #[test]
+    fn previous_read_page_restores_fixed_zoom_and_rotation_at_the_same_page() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Tilted scan.pdf");
+        fs::copy(crate::test_fixture("tilted-scan.pdf"), &path).unwrap();
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        bind_back(&mut app);
+        configure(&mut app, Options::Reading, 1);
+        capture_test_screen(&app, &fonts, "READER_BACK_READER_CHOICES", false);
+        app.open_path(&path).unwrap();
+
+        let view = |app: &Reader| app.fixed.as_ref().unwrap().reading.preferences();
+        let origin = view(&app);
+        app.activate(Action::SetFixedZoom(3)).unwrap();
+        let zoomed = view(&app);
+        assert_ne!(zoomed.zoom, origin.zoom);
+        app.activate(Action::RotatePage).unwrap();
+        assert_ne!(view(&app).turns, zoomed.turns);
+        app.activate(Action::FixedDither(true)).unwrap();
+        assert_eq!(app.current_position().unwrap().page, 0);
+        assert_eq!(app.back_navigation.previous.len(), 2);
+
+        assert_eq!(app.input(BACK), Change::Partial);
+        assert_eq!(
+            view(&app),
+            FixedPreferences {
+                dither: true,
+                ..zoomed
+            }
+        );
+        assert_eq!(app.current_position().unwrap().page, 0);
+        capture_test_screen(&app, &fonts, "READER_BACK_FIXED_VIEW", false);
+        assert_eq!(app.input(BACK), Change::Partial);
+        assert_eq!(
+            view(&app),
+            FixedPreferences {
+                dither: true,
+                ..origin
+            }
+        );
+        assert!(app.back_navigation.previous.is_empty());
     }
 
     #[test]
