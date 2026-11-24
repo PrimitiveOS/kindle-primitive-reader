@@ -72,9 +72,12 @@ pub(crate) struct ReadingControls {
     pub bookmark_reverse: bool,
     /// Text shown for each saved highlight in the in-book annotations list.
     pub annotation_list_text: AnnotationListText,
-    /// Reader-wide appearance for the Contents list.
-    #[serde(skip_serializing_if = "ContentsDensity::is_default")]
-    pub contents_density: ContentsDensity,
+    /// Reader-wide appearance of the in-book saved marks list.
+    #[serde(skip_serializing_if = "ListDensity::is_default")]
+    pub bookmark_density: ListDensity,
+    /// Reader-wide appearance of the Contents list.
+    #[serde(skip_serializing_if = "ListDensity::is_default")]
+    pub contents_density: ListDensity,
     /// Show the known length of each Contents section beside its heading.
     #[serde(skip_serializing_if = "is_false")]
     pub contents_chapter_lengths: bool,
@@ -156,14 +159,14 @@ pub(crate) struct ReadingControls {
 /// KOReader keeps the list density separate from the document's layout.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
-pub(crate) struct ContentsDensity {
+pub(crate) struct ListDensity {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rows_per_page: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub font_size: Option<u8>,
 }
 
-impl ContentsDensity {
+impl ListDensity {
     pub(crate) const MIN_ROWS: u8 = 6;
     pub(crate) const MAX_ROWS: u8 = 24;
     pub(crate) const DEFAULT_ROWS: u8 = 14;
@@ -200,7 +203,11 @@ impl ContentsDensity {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 pub(crate) struct TopHeader {
-    pub enabled: bool,
+    /// Activation in profiles written before the per-book control.
+    #[serde(rename = "enabled")]
+    pub legacy_enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub book_default: Option<bool>,
     pub auto_refresh: bool,
     pub title: bool,
     pub author: bool,
@@ -216,7 +223,8 @@ pub(crate) struct TopHeader {
 impl Default for TopHeader {
     fn default() -> Self {
         Self {
-            enabled: false,
+            legacy_enabled: false,
+            book_default: None,
             auto_refresh: true,
             title: true,
             author: true,
@@ -233,6 +241,18 @@ impl Default for TopHeader {
 
 impl TopHeader {
     pub(crate) const HEIGHT: u32 = 48;
+
+    pub(crate) fn default_enabled(self) -> bool {
+        self.book_default.unwrap_or(self.legacy_enabled)
+    }
+
+    pub(crate) fn height(enabled: bool, scrolling: bool) -> u32 {
+        if enabled && !scrolling {
+            Self::HEIGHT
+        } else {
+            0
+        }
+    }
 
     pub(crate) fn is_default(&self) -> bool {
         *self == Self::default()
@@ -1624,7 +1644,7 @@ mod tests {
     #[test]
     fn top_header_matches_stock_item_defaults_and_persists_configuration() {
         let legacy: ReadingControls = serde_json::from_str("{}").unwrap();
-        assert!(!legacy.top_header.enabled);
+        assert!(!legacy.top_header.default_enabled());
         assert!(legacy.top_header.auto_refresh);
         assert!(legacy.top_header.title);
         assert!(legacy.top_header.author);
@@ -1638,7 +1658,8 @@ mod tests {
 
         let controls = ReadingControls {
             top_header: TopHeader {
-                enabled: true,
+                legacy_enabled: true,
+                book_default: Some(false),
                 auto_refresh: false,
                 title: false,
                 author: true,

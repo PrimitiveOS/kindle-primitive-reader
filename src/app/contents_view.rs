@@ -1,12 +1,12 @@
 //! The Contents screen projects provider headings without changing reading targets.
 use primitive_ui::{BLACK, HAIRLINE, Icon, PAPER, SECONDARY, TextStyle};
 
-use super::contents_density::list_text_pixels;
 use super::contents_position::ContentsPositions;
 use super::contents_tree::{Branch, ContentsTree, SearchOutcome, VisibleRow};
+use super::list_density::{Geometry, list_text_pixels};
 use super::{
     Action, CAPTION, Canvas, Change, CustomAction, DocumentFormat, Editor, HEIGHT, Input, Item,
-    LIST_X, LIST_Y, Layout, NEXT, PREV, Press, Reader, Rect, Screen, WIDTH, keyboard_key,
+    LIST_X, Layout, NEXT, PREV, Press, Reader, Rect, Screen, WIDTH, keyboard_key,
 };
 use crate::epub::Destination;
 
@@ -17,8 +17,6 @@ mod row_metadata_tests;
 const SEARCH: Rect = Rect::new(338, HEIGHT as i32 - 104, 276, 72);
 const CLEAR: Rect = Rect::new(653, HEIGHT as i32 - 104, 276, 72);
 const QUERY_LIMIT: usize = 128;
-// Keep the existing height available to the Contents card above its pager.
-const LIST_HEIGHT: i32 = HEIGHT as i32 - LIST_Y - 250;
 const EXPAND: Icon = Icon {
     stroke: &["M9 5 L16 12 L9 19"],
     fill: &[],
@@ -64,24 +62,16 @@ impl Screen {
 }
 
 impl Reader {
+    fn contents_geometry(&self) -> Geometry {
+        Geometry::dense(self.controls.contents_density)
+    }
+
     pub(super) fn contents_rows(&self) -> usize {
-        usize::from(self.controls.contents_density.rows())
+        self.contents_geometry().rows
     }
 
     pub(super) fn contents_row_rect(&self, offset: usize) -> Rect {
-        let height = LIST_HEIGHT / i32::from(self.controls.contents_density.rows());
-        Rect::new(
-            LIST_X,
-            LIST_Y + offset as i32 * height,
-            WIDTH as i32 - 2 * LIST_X,
-            height,
-        )
-    }
-
-    fn contents_list_rect(&self, shown: usize) -> Rect {
-        let mut rect = self.contents_row_rect(0);
-        rect.h *= shown as i32;
-        rect
+        self.contents_geometry().row(offset)
     }
 
     #[cfg(test)]
@@ -285,7 +275,7 @@ impl Reader {
         let first = self.list_page * rows;
         let (count, lines) = self.contents_window(first, rows);
         if !lines.is_empty() {
-            canvas.card(self.contents_list_rect(lines.len()));
+            canvas.card(self.contents_geometry().bounds(lines.len()));
         }
         let row_height = self.contents_row_rect(0).h;
         let font = self.controls.contents_density.font();
@@ -477,12 +467,12 @@ impl Reader {
         if footer_hit(NEXT).contains(x, y) {
             return self.turn_contents_page(1);
         }
-        let rows = self.contents_rows();
-        if !self.contents_list_rect(rows).contains(x, y) {
+        let geometry = self.contents_geometry();
+        let Some(offset) = geometry.offset_at(geometry.rows, x, y) else {
             return Change::None;
-        }
-        let offset = ((y as i32 - LIST_Y) / self.contents_row_rect(0).h) as usize;
-        let (_, mut lines) = self.contents_window(self.list_page * rows + offset, 1);
+        };
+        let index = self.list_page * geometry.rows + offset;
+        let (_, mut lines) = self.contents_window(index, 1);
         let Some(line) = lines.pop() else {
             return Change::None;
         };

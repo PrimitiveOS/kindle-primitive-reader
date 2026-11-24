@@ -1,7 +1,11 @@
+use super::super::list_density::{
+    APPLY, CANCEL, DECREASE, DEFAULT, INCREASE, list_text_pixels, reference_scale,
+};
 use super::super::tests::{Fixture, capture_test_screen, tap_contents_item, tap_reading_control};
+use super::super::{Change, Input, Rect, WIDTH};
 use super::super::{Screen, TopGroup};
 use super::*;
-use crate::reading_controls::ReadingControls;
+use crate::reading_controls::{ListDensity, ReadingControls};
 use primitive_app::App;
 use std::fs;
 
@@ -60,14 +64,14 @@ fn contents_from_settings(app: &mut Reader) {
 
 #[test]
 fn contents_density_uses_stock_defaults_size_scale_and_font_cap() {
-    let defaults = ContentsDensity::default();
+    let defaults = ListDensity::default();
     assert_eq!(defaults.rows(), 14);
     assert_eq!(defaults.font(), 19);
     let expected = [
         24, 23, 22, 22, 21, 21, 20, 20, 19, 19, 18, 17, 17, 16, 16, 15, 15, 14, 14,
     ];
     for (rows, expected) in (6..=24).zip(expected) {
-        let density = ContentsDensity {
+        let density = ListDensity {
             rows_per_page: Some(rows),
             ..defaults
         };
@@ -80,7 +84,7 @@ fn contents_density_uses_stock_defaults_size_scale_and_font_cap() {
     assert_eq!(list_text_pixels(72, 53), 36);
     assert_eq!(list_text_pixels(14, 53), 30);
     assert_eq!(
-        ContentsDensity {
+        ListDensity {
             rows_per_page: Some(250),
             font_size: Some(2)
         }
@@ -88,7 +92,7 @@ fn contents_density_uses_stock_defaults_size_scale_and_font_cap() {
         14
     );
     assert_eq!(
-        ContentsDensity {
+        ListDensity {
             rows_per_page: Some(24),
             font_size: Some(73)
         }
@@ -192,13 +196,10 @@ fn contents_density_failed_save_keeps_the_active_preferences_and_draft() {
     assert_eq!(tap(&mut app, INCREASE), Change::Partial);
     assert_eq!(tap(&mut app, APPLY), Change::Partial);
     assert_eq!(app.controls.contents_density.rows(), 14);
-    assert_eq!(
-        app.contents_density_picker.as_ref().unwrap().value,
-        Some(15)
-    );
+    assert_eq!(app.list_density_picker.as_ref().unwrap().value, Some(15));
     assert!(app.notice.is_some());
     fs::remove_dir(&app.controls_path).unwrap();
     assert_eq!(tap(&mut app, APPLY), Change::Partial);
-    assert!(app.contents_density_picker.is_none());
+    assert!(app.list_density_picker.is_none());
     assert_eq!(app.controls.contents_density.rows(), 15);
 }

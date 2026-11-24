@@ -49,16 +49,15 @@ device-system evidence. This count tracks plan milestones, not overall feature
 parity; many reading requirements and the foreground Kindle acceptance gates
 remain open.
 
-**Control evidence snapshot:** 188 of 536 in-scope reading-control rows have
-an implemented workflow, 236 are partial, 67 are gaps, and 45 need audit.
-Reader 0.1.29 adds [Contents row and font settings](contents-list-settings.md),
-[page labels and chapter lengths](contents-row-metadata.md), and
-[Previous and Next chapter](chapter-navigation.md) to the searchable outline. The top status
-header has its own settings and desktop and native suite evidence. The
-matrix distinguishes these controls from their remaining stock differences,
-including per-book header activation and document-wide page labels. These
-unweighted rows do not represent a percentage of feature parity. Foreground
-Kindle checks remain a separate gate.
+**Control evidence snapshot:** 189 of 536 in-scope reading-control rows have
+an implemented workflow, 238 are partial, 67 are gaps, and 42 need audit.
+Reader 0.1.30 adds [chapter levels and progress markers](chapter-level-settings.md),
+[bookmark list settings](bookmark-list-settings.md), and
+[per-book top status header activation](per-book-top-status-header.md).
+The checklist tracks remaining stock differences, including document-wide
+page labels and whole-book reflow marker coordinates. Foreground Kindle
+checks remain a separate gate.
+
 
 - [x] Set the active Reader goal to KOReader's core Kindle reading workflows: document open/render, navigation/layout, search/lookup, bookmarks/annotations, reading progress, accessibility, offline scans, and local reading data.
 - [x] Keep general extension/plugin systems, Terminal/shell, unrelated utilities, book acquisition, and remote services out of implementation, parity counts, test requirements, and release gates. Reading-specific capabilities remain eligible when implemented as native Reader features.

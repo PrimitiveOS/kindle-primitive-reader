@@ -215,6 +215,9 @@ impl Reader {
         let preferences = BookPreferences::for_new_reflow();
         let mut config = recovery.config;
         config.settings = preferences.apply_to(self.device_reading_settings());
+        let top_status_header = self.top_header_for_book(recovery.id);
+        config.settings.status_header_height =
+            crate::reading_controls::TopHeader::height(top_status_header, false);
         config.fonts = self.fonts.clone();
         config.scroll = false;
         config.facing_pages = false;
@@ -255,6 +258,7 @@ impl Reader {
             recovery.id,
             preferences,
             position(&candidate),
+            top_status_header,
         )?;
         self.fixed = None;
         self.footnote = None;

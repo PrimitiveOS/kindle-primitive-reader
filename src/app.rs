@@ -14,11 +14,13 @@ mod contents_tree;
 mod contents_view;
 mod custom_contents;
 mod line_spacing;
+mod list_density;
 mod logical_font;
 #[cfg(test)]
 mod page_overlap_tests;
 pub(crate) mod publisher_pages;
 mod reading_history;
+mod saved_marks_view;
 mod word_spacing;
 use character_page_settings::NumberField;
 mod cjk_selection;
@@ -53,6 +55,7 @@ mod nearby_search;
 #[cfg(test)]
 mod nonlinear_tests;
 mod online_panel;
+mod progress_markers;
 mod quick_display;
 mod read_alarm;
 mod reader_timer;
@@ -66,6 +69,7 @@ mod sidecar_marks;
 mod skim;
 mod style_tweaks;
 mod top_config;
+mod top_header;
 mod user_hyphenation;
 mod vocabulary;
 #[cfg(test)]
@@ -186,6 +190,7 @@ enum Screen {
     EndActionSettings,
     MetadataSaveSettings,
     HiddenFlows,
+    ChapterNavigation,
     Gestures,
     GestureBinding(Gesture),
     ReadingData,
@@ -309,6 +314,7 @@ impl Screen {
             Self::EndActionSettings => "At the end of a book",
             Self::MetadataSaveSettings => "Save reading data",
             Self::HiddenFlows => "Custom hidden flows",
+            Self::ChapterNavigation => "Chapter navigation",
             Self::Gestures => "Reading gestures",
             Self::GestureBinding(gesture) => gesture.label(),
             Self::ReadingData => "Reading data",
@@ -433,7 +439,7 @@ enum Action {
     NameCollection(Option<String>),
     RemoveCollection,
     SetReadingControls(ReadingControls),
-    EditContentsDensity(contents_density::Field),
+    EditListDensity(list_density::Scope, list_density::Field),
     BindGesture(Gesture, Binding),
     SetDisplayLevel(DisplayLevel, u32),
     RefreshDisplay,
@@ -463,6 +469,7 @@ enum Action {
     Show(Screen),
     Jump(Destination),
     Chapter(chapter_navigation::Direction),
+    ChapterLevel(chapter_navigation::LevelSetting),
     SetCharacterPages(Option<u16>),
     CharacterPage(usize),
     AcceptPublisherNumbers,
@@ -507,6 +514,8 @@ enum Action {
     DeleteFooterPreset(usize),
     ResetText,
     ReadingMode(bool),
+    TopStatusHeader(bool),
+    ConfirmTopStatusHeaderDefault(bool),
     FacingPages(bool),
     SearchHit(usize),
     PdfSearchHit(usize),
@@ -763,13 +772,14 @@ pub struct Reader {
     refresh_display: bool,
     auto_turn: AutoTurn,
     read_alarm: read_alarm::ReadAlarm,
+    top_header_default_prompt: Option<bool>,
     list_page: usize,
     matches_page: usize,
     result_context: Option<result_context::ResultContext>,
     focused_result: Option<usize>,
     current_contents_row: Option<usize>,
     contents_view: Option<contents_view::ContentsView>,
-    contents_density_picker: Option<contents_density::Picker>,
+    list_density_picker: Option<list_density::Picker>,
     publisher_label_canvas: std::cell::RefCell<Option<Canvas>>,
     map_window: fixed_book_map::MapWindow,
     back: Vec<HistoryLocation>,
@@ -962,13 +972,14 @@ impl Reader {
             refresh_display: false,
             auto_turn: AutoTurn::default(),
             read_alarm: read_alarm::ReadAlarm::open(data.join("read-timer.json")),
+            top_header_default_prompt: None,
             list_page: 0,
             matches_page: 0,
             result_context: None,
             focused_result: None,
             current_contents_row: None,
             contents_view: None,
-            contents_density_picker: None,
+            list_density_picker: None,
             publisher_label_canvas: Default::default(),
             map_window: fixed_book_map::MapWindow::default(),
             back: Vec::new(),
@@ -1066,6 +1077,7 @@ impl Reader {
             }
         })?;
         let unseen = self.library.state(id).is_none();
+        let top_status_header = self.top_header_for_book(id);
         let mut initial_preferences = self
             .document_defaults
             .templates
@@ -1075,11 +1087,8 @@ impl Reader {
         let mut default_font_missing = false;
         let mut settings = initial_preferences.apply_to(self.device_reading_settings());
         let mut scroll = initial_preferences.scroll;
-        settings.status_header_height = if self.controls.top_header.enabled && !scroll {
-            crate::reading_controls::TopHeader::HEIGHT
-        } else {
-            0
-        };
+        settings.status_header_height =
+            crate::reading_controls::TopHeader::height(top_status_header, scroll);
         let mut facing_pages = initial_preferences.facing_pages;
         let mut fixed_preferences = self
             .document_defaults
@@ -1092,11 +1101,8 @@ impl Reader {
             // template, including older records with empty/default preferences.
             settings = state.preferences.apply_to(self.device_reading_settings());
             scroll = state.preferences.scroll;
-            settings.status_header_height = if self.controls.top_header.enabled && !scroll {
-                crate::reading_controls::TopHeader::HEIGHT
-            } else {
-                0
-            };
+            settings.status_header_height =
+                crate::reading_controls::TopHeader::height(top_status_header, scroll);
             facing_pages = state.preferences.facing_pages;
             fixed_preferences = state.fixed_preferences;
             state.position.clone()
@@ -1283,12 +1289,10 @@ impl Reader {
         } else {
             Reading::open(config)?
         };
-        let status_header_height = if self.controls.top_header.enabled && !reading.is_continuous() {
-            crate::reading_controls::TopHeader::HEIGHT
-        } else {
-            0
-        };
-        reading.set_status_header_height(status_header_height)?;
+        reading.set_status_header_height(crate::reading_controls::TopHeader::height(
+            top_status_header,
+            reading.is_continuous(),
+        ))?;
         entry.author.clone_from(&reading.probe.author);
         self.save_library()?;
         self.pages_since_refresh = 0;
@@ -1301,12 +1305,14 @@ impl Reader {
             numbering: None,
         });
         self.style_view = Default::default();
+        let active = self.active.as_ref().unwrap();
+        let state = self
+            .library
+            .remember(&active.entry, id, &active.reading.probe.title);
         if unseen {
-            let active = self.active.as_ref().unwrap();
-            self.library
-                .remember(&active.entry, id, &active.reading.probe.title)
-                .preferences = initial_preferences;
+            state.preferences = initial_preferences;
         }
+        state.top_status_header = Some(top_status_header);
         let offer_publisher = self.apply_new_numbering_defaults();
         self.restore_character_pages();
         self.fixed = None;
@@ -1339,8 +1345,8 @@ impl Reader {
 
     fn show(&mut self, screen: Screen) {
         let previous = self.screen;
-        if screen != Screen::ContentsSettings {
-            self.contents_density_picker = None;
+        if screen != previous {
+            self.list_density_picker = None;
         }
         if !matches!(screen, Screen::Book | Screen::Fixed) {
             self.touch_hold = None;
@@ -1748,7 +1754,8 @@ impl Reader {
             let rows = self.contents_rows();
             return self.contents_items(self.list_page * rows, rows);
         }
-        let first = self.list_page * ROWS_PER_PAGE;
+        let rows = self.list_geometry().rows;
+        let first = self.list_page * rows;
         if let Screen::BookmarkBrowser(page) = self.screen {
             return self.bookmark_window(page, first, ROWS_PER_PAGE);
         }
@@ -1783,10 +1790,7 @@ impl Reader {
             return (self.hits.len(), items);
         }
         let all = self.items();
-        (
-            all.len(),
-            all.into_iter().skip(first).take(ROWS_PER_PAGE).collect(),
-        )
+        (all.len(), all.into_iter().skip(first).take(rows).collect())
     }
 
     fn has_list_shortcuts(&self, count: usize) -> bool {
@@ -1828,6 +1832,9 @@ impl Reader {
         }
         if self.screen == Screen::HiddenFlows {
             return self.hidden_flow_items();
+        }
+        if self.screen == Screen::ChapterNavigation {
+            return self.chapter_level_items();
         }
         if matches!(
             self.screen,
@@ -1955,6 +1962,7 @@ impl Reader {
                     )
                     .detail(self.controls.annotation_list_text.label()),
                 );
+                items.extend(self.list_density_items(list_density::Scope::Bookmarks));
                 return items;
             }
             Screen::AnnotationListSettings => {
@@ -3080,7 +3088,7 @@ impl Reader {
 
     fn activate(&mut self, action: Action) -> Result<()> {
         match action {
-            Action::EditContentsDensity(field) => self.open_contents_density(field),
+            Action::EditListDensity(scope, field) => self.open_list_density(scope, field),
             Action::BookmarkBrowser(command) => self.activate_bookmark_browser(command)?,
             Action::ReadingHistory(command) => self.activate_reading_history(command)?,
             Action::Flow(action) => self.flow_action(action)?,
@@ -3186,8 +3194,7 @@ impl Reader {
                         controls.footer_items = crate::reading_controls::FooterItem::DEFAULT_MASK;
                     }
                 }
-                let reflow_layout_changed = controls.overlap_footer != self.controls.overlap_footer
-                    || controls.top_header.enabled != self.controls.top_header.enabled;
+                let reflow_layout_changed = controls.overlap_footer != self.controls.overlap_footer;
                 let resized = if reflow_layout_changed {
                     self.active
                         .as_ref()
@@ -3199,12 +3206,6 @@ impl Reader {
                             } else {
                                 PAGE_HEIGHT
                             };
-                            config.settings.status_header_height =
-                                if controls.top_header.enabled && !reading.is_continuous() {
-                                    crate::reading_controls::TopHeader::HEIGHT
-                                } else {
-                                    0
-                                };
                             Reading::restore(
                                 config,
                                 reading.chapter,
@@ -3348,6 +3349,7 @@ impl Reader {
             Action::Show(screen) => self.show(screen),
             Action::Jump(target) => self.follow(target)?,
             Action::Chapter(direction) => self.jump_chapter(direction)?,
+            Action::ChapterLevel(setting) => self.set_chapter_level(setting)?,
             Action::Custom(action) => self.custom_action(action)?,
             Action::SetCharacterPages(stride) => self.set_character_pages(stride)?,
             Action::AcceptPublisherNumbers => self.accept_publisher_numbers()?,
@@ -3705,13 +3707,17 @@ impl Reader {
             Action::ResetText => self.apply_text_profile(BookPreferences::for_new_reflow())?,
             Action::DocumentDefaults(command) => self.activate_document_defaults(command)?,
             Action::Style(command) => self.activate_style(command)?,
+            Action::TopStatusHeader(enabled) => self.set_book_top_header(enabled)?,
+            Action::ConfirmTopStatusHeaderDefault(enabled) => {
+                self.top_header_default_prompt = Some(enabled);
+            }
             Action::ReadingMode(scroll) => {
-                let active = self.active.as_mut().ok_or("No open book")?;
-                let status_header_height = if self.controls.top_header.enabled && !scroll {
-                    crate::reading_controls::TopHeader::HEIGHT
-                } else {
-                    0
-                };
+                let id = self.active.as_ref().ok_or("No open book")?.id;
+                let status_header_height = crate::reading_controls::TopHeader::height(
+                    self.top_header_for_book(id),
+                    scroll,
+                );
+                let active = self.active.as_mut().unwrap();
                 active
                     .reading
                     .set_scroll_and_header(scroll, status_header_height)?;
@@ -3872,6 +3878,9 @@ impl Reader {
         let location = position(&active.reading);
         let mut config = active.reading.config.clone();
         config.settings = preferences.apply_to(base);
+        let top_status_header = self.top_header_for_book(id);
+        config.settings.status_header_height =
+            crate::reading_controls::TopHeader::height(top_status_header, preferences.scroll);
         config.scroll = preferences.scroll;
         config.facing_pages = preferences.facing_pages;
         config.fonts = fonts;
@@ -3881,13 +3890,10 @@ impl Reader {
             location.page,
             location.anchor.as_ref(),
         )?;
-        let status_header_height = if self.controls.top_header.enabled && !candidate.is_continuous()
-        {
-            crate::reading_controls::TopHeader::HEIGHT
-        } else {
-            0
-        };
-        candidate.set_status_header_height(status_header_height)?;
+        candidate.set_status_header_height(crate::reading_controls::TopHeader::height(
+            top_status_header,
+            candidate.is_continuous(),
+        ))?;
         if candidate.probe.book != active.reading.probe.book
             || with_storage(|| self.library.identify(&active.entry))? != id
         {
@@ -7274,16 +7280,23 @@ impl Reader {
                         Action::ToggleRomanizations => RowAccessory::Toggle(
                             self.lookup_history.online_languages.show_romanizations,
                         ),
+                        Action::ChapterLevel(setting) => {
+                            RowAccessory::Toggle(self.chapter_level_checked(setting))
+                        }
                         _ => RowAccessory::Disclosure,
                     }
                 },
             })
             .collect();
         let group = Rows {
-            bounds: list_rect(rows.len()),
+            bounds: self.list_geometry().bounds(rows.len()),
             rows: &rows,
         };
-        group.draw(canvas, None);
+        if self.screen.is_bookmark_list() {
+            self.draw_saved_mark_rows(canvas, &group, &items);
+        } else {
+            group.draw(canvas, None);
+        }
         if self.screen == Screen::BookMap
             && let Some(active) = &self.active
         {
@@ -7387,7 +7400,8 @@ impl Reader {
             if self.list_page > 0 {
                 canvas.button(PREV, "Previous", false, false);
             }
-            if (self.list_page + 1) * ROWS_PER_PAGE < count {
+            let rows = self.list_geometry().rows;
+            if (self.list_page + 1) * rows < count {
                 canvas.button(NEXT, "Next", false, false);
             }
             if let Some(notice) = &self.notice {
@@ -7395,6 +7409,12 @@ impl Reader {
                     Rect::new(310, HEIGHT as i32 - 104, WIDTH as i32 - 620, 80),
                     notice,
                     CAPTION,
+                );
+            } else if self.screen.is_bookmark_list() && count > rows {
+                canvas.text(
+                    Rect::new(310, HEIGHT as i32 - 93, WIDTH as i32 - 620, 50),
+                    &format!("{} / {}", self.list_page + 1, count.div_ceil(rows)),
+                    CAPTION.center(),
                 );
             }
         }
@@ -7667,7 +7687,8 @@ impl App for Reader {
             self.draw_skim(canvas);
         }
         self.draw_flow_popup(canvas);
-        self.draw_contents_density_picker(canvas);
+        self.draw_list_density_picker(canvas);
+        self.draw_top_header_default_prompt(canvas);
         self.read_alarm.draw(canvas, self.screen == Screen::Book);
         self.draw_vocabulary_dialog(canvas);
         self.draw_logical_recovery(canvas);
@@ -7696,6 +7717,9 @@ impl App for Reader {
         }
         if self.read_alarm.modal() {
             return self.read_alarm_input(input);
+        }
+        if let Some(change) = self.top_header_default_input(input) {
+            return change;
         }
         if let Some(change) = self.style_editor_input(input) {
             return change;
@@ -7826,6 +7850,9 @@ impl App for Reader {
         }
         if self.read_alarm.modal() {
             return self.read_alarm_input(input);
+        }
+        if let Some(change) = self.top_header_default_input(input) {
+            return change;
         }
         if let Some(change) = self.style_editor_input(input) {
             return change;
@@ -7993,7 +8020,7 @@ impl App for Reader {
         if self.screen.is_contents() {
             return self.contents_input(input);
         }
-        if let Some(change) = self.contents_density_input(input) {
+        if let Some(change) = self.list_density_input(input) {
             return change;
         }
         if self.screen == Screen::PdfPassword {
@@ -8037,6 +8064,7 @@ impl App for Reader {
             return Change::None;
         }
         let (count, mut items) = self.list_window();
+        let geometry = self.list_geometry();
         let broad = self.has_list_shortcuts(count);
         let (prev, next) = if broad {
             (PREV_MATCH_PAGE, NEXT_MATCH_PAGE)
@@ -8159,6 +8187,9 @@ impl App for Reader {
                     Screen::CustomEdits | Screen::CustomBookmarks => {
                         self.show(Screen::CustomContents)
                     }
+                    Screen::ChapterNavigation => {
+                        self.open_reading_edge(true, 100.0);
+                    }
                     Screen::NumberingDefaults => self.show(Screen::PageNumbering),
                     Screen::AutoTurnDistance => self.show(Screen::AutoTurn),
                     Screen::AutoTurnPan => self.show(Screen::AutoTurn),
@@ -8190,16 +8221,11 @@ impl App for Reader {
                     Err(error) => self.report(error),
                 };
             }
-            Input::LongTap(x, y)
-                if matches!(
-                    self.screen,
-                    Screen::Bookmarks | Screen::FixedBookmarks | Screen::Highlights
-                ) =>
-            {
-                let Some(index) = list_item_at(self.list_page, count, x, y) else {
+            Input::LongTap(x, y) if self.screen.is_bookmark_list() => {
+                let Some(index) = geometry.item_at(self.list_page, count, x, y) else {
                     return Change::None;
                 };
-                let action = match items.swap_remove(index % ROWS_PER_PAGE).action {
+                let action = match items.swap_remove(index % geometry.rows).action {
                     Action::Highlight(index) | Action::PdfHighlight(index) => {
                         Action::ManageHighlight(index)
                     }
@@ -8225,8 +8251,8 @@ impl App for Reader {
                 };
             }
             Input::Tap(x, y) => {
-                if let Some(index) = list_item_at(self.list_page, count, x, y) {
-                    let action = items.swap_remove(index % ROWS_PER_PAGE).action;
+                if let Some(index) = geometry.item_at(self.list_page, count, x, y) {
+                    let action = items.swap_remove(index % geometry.rows).action;
                     return match self.activate(action) {
                         Ok(()) => self.applied_change(),
                         Err(error) => self.report(error),
@@ -8239,7 +8265,7 @@ impl App for Reader {
         let Some(page) = self
             .list_page
             .checked_add_signed(direction)
-            .filter(|page| page * ROWS_PER_PAGE < count)
+            .filter(|page| page * geometry.rows < count)
         else {
             return Change::None;
         };
@@ -8663,13 +8689,9 @@ fn column_view(original: FixedPreferences, bounds: PdfTextRect) -> FixedPreferen
     }
 }
 
+#[cfg(test)]
 fn list_rect(rows: usize) -> Rect {
-    Rect::new(
-        LIST_X,
-        LIST_Y,
-        WIDTH as i32 - 2 * LIST_X,
-        rows as i32 * ROW_HEIGHT,
-    )
+    list_density::Geometry::STANDARD.bounds(rows)
 }
 
 fn overview_start(first: Option<usize>, count: usize) -> usize {
@@ -8697,12 +8719,7 @@ fn map_detail(current: bool, bookmarks: usize, highlights: usize) -> String {
 }
 
 fn list_item_at(page: usize, count: usize, x: f32, y: f32) -> Option<usize> {
-    let first = page * ROWS_PER_PAGE;
-    let shown = count.saturating_sub(first).min(ROWS_PER_PAGE);
-    list_rect(shown)
-        .contains(x, y)
-        .then(|| first + ((y as i32 - LIST_Y) / ROW_HEIGHT) as usize)
-        .filter(|&index| index < count)
+    list_density::Geometry::STANDARD.item_at(page, count, x, y)
 }
 
 fn tracked_book_item(book: &BookState) -> Item {
@@ -10771,7 +10788,8 @@ mod tests {
             .iter()
             .position(|item| matches!(item.action, Action::Highlight(1)))
             .unwrap();
-        let y = LIST_Y + (second_mark as i32 * ROW_HEIGHT) + ROW_HEIGHT / 2;
+        let row = app.list_geometry().row(second_mark);
+        let y = row.y + row.h / 2;
         assert_eq!(
             app.input(Input::Tap(LIST_X as f32 + 30.0, y as f32)),
             Change::Partial
@@ -10785,7 +10803,8 @@ mod tests {
             .iter()
             .position(|item| matches!(item.action, Action::Highlight(1)))
             .unwrap();
-        let y = LIST_Y + (second_mark as i32 * ROW_HEIGHT) + ROW_HEIGHT / 2;
+        let row = app.list_geometry().row(second_mark);
+        let y = row.y + row.h / 2;
         assert_eq!(
             app.input(Input::LongTap(LIST_X as f32 + 30.0, y as f32)),
             Change::Partial
@@ -10863,7 +10882,8 @@ mod tests {
             .iter()
             .position(|item| matches!(item.action, Action::PdfHighlight(0)))
             .unwrap();
-        let y = LIST_Y + (highlight_row as i32 * ROW_HEIGHT) + ROW_HEIGHT / 2;
+        let row = app.list_geometry().row(highlight_row);
+        let y = row.y + row.h / 2;
         assert_eq!(
             app.input(Input::LongTap(LIST_X as f32 + 30.0, y as f32)),
             Change::Partial
@@ -12754,7 +12774,7 @@ mod tests {
         let rows = if app.screen.is_contents() {
             app.contents_rows()
         } else {
-            ROWS_PER_PAGE
+            app.list_geometry().rows
         };
         let page = index / rows;
         while app.list_page < page {
@@ -12772,7 +12792,8 @@ mod tests {
             let row = app.contents_row_rect(offset);
             (730.0, row.y + row.h / 2)
         } else {
-            (160.0, LIST_Y + offset as i32 * ROW_HEIGHT + ROW_HEIGHT / 2)
+            let row = app.list_geometry().row(offset);
+            (160.0, row.y + row.h / 2)
         };
         assert_eq!(app.input(Input::Tap(x, y as f32)), Change::Partial);
     }
@@ -14414,14 +14435,7 @@ mod tests {
         assert!(app.footer_refresh_at.is_none());
 
         use crate::reading_controls::TopHeader;
-        app.activate(Action::SetReadingControls(ReadingControls {
-            top_header: TopHeader {
-                enabled: true,
-                ..app.controls.top_header
-            },
-            ..app.controls
-        }))
-        .unwrap();
+        app.activate(Action::TopStatusHeader(true)).unwrap();
         assert!(app.footer_refresh_at.is_some());
         app.activate(Action::SetReadingControls(ReadingControls {
             top_header: TopHeader {
@@ -14467,14 +14481,11 @@ mod tests {
         app.input(Input::Wake);
         assert!(app.footer_refresh_at.is_some());
 
+        app.activate(Action::TopStatusHeader(false)).unwrap();
         app.activate(Action::SetReadingControls(ReadingControls {
             status_bar: StatusBar::Custom,
             footer_auto_refresh: false,
             footer_items: FooterItem::DEFAULT_MASK | FooterItem::BatteryPercentage.bit(),
-            top_header: crate::reading_controls::TopHeader {
-                enabled: false,
-                ..app.controls.top_header
-            },
             ..app.controls
         }))
         .unwrap();
@@ -14945,9 +14956,9 @@ mod tests {
             .config
             .settings
             .top_margin();
+        app.activate(Action::TopStatusHeader(true)).unwrap();
         app.activate(Action::SetReadingControls(ReadingControls {
             top_header: TopHeader {
-                enabled: true,
                 battery: HeaderBattery::Percentage,
                 reading_percent: true,
                 ..app.controls.top_header
@@ -14981,12 +14992,10 @@ mod tests {
                 .iter()
                 .any(|item| item.title == "Header battery status")
         );
-        assert_eq!(
+        assert!(
             settings
                 .iter()
-                .find(|item| item.title == "Show status at top")
-                .and_then(|item| item.detail.as_deref()),
-            Some("On")
+                .all(|item| item.title != "Show status at top")
         );
         let mut canvas = Canvas::new(
             WIDTH,
@@ -15027,14 +15036,7 @@ mod tests {
         fs::write(&long, include_bytes!("../tests/fixtures/long-chapter.epub")).unwrap();
         let mut app = fixture.app();
         app.open_path(&long).unwrap();
-        app.activate(Action::SetReadingControls(ReadingControls {
-            top_header: TopHeader {
-                enabled: true,
-                ..app.controls.top_header
-            },
-            ..app.controls
-        }))
-        .unwrap();
+        app.activate(Action::TopStatusHeader(true)).unwrap();
         assert_eq!(
             app.active
                 .as_ref()

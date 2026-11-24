@@ -1,6 +1,8 @@
 use super::*;
 use crate::app::tests::{Fixture, capture_test_screen, write_outline_fixture};
-use crate::app::{Action, Change, FixedJump, Input, ReadingPosition, Screen};
+use crate::app::{
+    Action, Change, FixedJump, Input, LIST_Y, ROW_HEIGHT, ReadingPosition, Screen, WIDTH,
+};
 use crate::library::hidden_flows::{FlowPoint, HiddenFlows};
 use kurbo::Point;
 use primitive_app::App;
@@ -26,6 +28,18 @@ fn tap_chapter(app: &mut Reader, label: &str) -> Change {
     app.input(Input::Tap(
         (rect.x + rect.w / 2) as f32,
         (rect.y + rect.h / 2) as f32,
+    ))
+}
+
+fn tap_level(app: &mut Reader, label: &str) -> Change {
+    let index = app
+        .items()
+        .iter()
+        .position(|item| item.title == label)
+        .unwrap();
+    app.input(Input::Tap(
+        320.0,
+        (LIST_Y + index as i32 * ROW_HEIGHT + 24) as f32,
     ))
 }
 
@@ -274,4 +288,127 @@ fn pdf_chapter_jump_restores_original_pan_and_obeys_custom_contents_and_flows() 
     custom(&mut app).enabled = false;
     tap_chapter(&mut app, "Next chapter");
     assert_eq!(location(&app), (0, 5));
+}
+
+#[test]
+fn epub_chapter_levels_filter_only_when_bound_and_keep_same_page_children() {
+    let fixture = Fixture::new();
+    let nav = br##"<html xmlns:epub="http://www.idpf.org/2007/ops"><body><nav epub:type="toc"><ol>
+        <li><a href="first.xhtml">Start</a></li>
+        <li><a href="first.xhtml#passage5">Part one</a><ol>
+            <li><a href="first.xhtml#passage5">Opening section</a></li>
+            <li><a href="first.xhtml#passage8">Closing section</a></li>
+        </ol></li>
+        <li><a href="first.xhtml#passage12">Last part</a></li>
+        </ol></nav></body></html>"##;
+    write_outline_fixture(&fixture.book, Some(nav), None);
+    let mut app = open(&fixture, &fixture.book);
+    let id = app.open_book_id().unwrap();
+    let heads = app.contents_entries(id);
+    let probe = &reflow(&mut app).probe;
+    let [opening, closing, last] = ["passage5", "passage8", "passage12"]
+        .map(|id| probe.page_for(&probe.fragment(id).unwrap()).unwrap());
+
+    reflow(&mut app).go_to_page(0, closing).unwrap();
+    tap_chapter(&mut app, "Chapter navigation");
+    assert_eq!(app.screen, Screen::ChapterNavigation);
+    let rows = app.items();
+    assert!(matches!(rows[0].action, Action::Heading));
+    assert_eq!(rows[1].detail.as_deref(), Some("3 headings"));
+    assert_eq!(rows[2].detail.as_deref(), Some("2 headings"));
+    assert_eq!(tap_level(&mut app, "Contents level 1"), Change::Partial);
+    let back = primitive_ui::back_button(WIDTH as i32);
+    app.input(Input::Tap(
+        (back.x + back.w / 2) as f32,
+        (back.y + back.h / 2) as f32,
+    ));
+    assert_eq!(app.top_group, Some(super::super::TopGroup::Navigation));
+    tap_chapter(&mut app, "Next chapter");
+    assert_eq!(location(&app), (0, last));
+
+    tap_chapter(&mut app, "Chapter navigation");
+    assert_eq!(
+        tap_level(&mut app, "Use levels for chapter jumps"),
+        Change::Partial
+    );
+    assert!(app.chapter_level_checked(&LevelSetting::BindNavigation));
+    assert!(!app.chapter_level_checked(&LevelSetting::ToggleLevel(0)));
+    assert!(app.chapter_level_checked(&LevelSetting::ToggleLevel(1)));
+    capture_test_screen(&app, &app.fonts, "READER_CHAPTER_LEVELS_SCREEN", false);
+    assert!(app.contents_entries(id) == heads);
+    reflow(&mut app).go_to_page(0, 0).unwrap();
+    tap_chapter(&mut app, "Next chapter");
+    assert_eq!(location(&app), (0, opening));
+    tap_chapter(&mut app, "Next chapter");
+    assert_eq!(location(&app), (0, closing));
+    let history_len = app.back.len();
+    tap_chapter(&mut app, "Next chapter");
+    assert_eq!(app.back.len(), history_len);
+    assert_eq!(location(&app), (0, closing));
+    tap_chapter(&mut app, "Previous chapter");
+    assert_eq!(location(&app), (0, opening));
+
+    app.save().unwrap();
+    let mut reopened = open(&fixture, &fixture.book);
+    assert!(reopened.chapter_level_checked(&LevelSetting::BindNavigation));
+    assert!(!reopened.chapter_level_checked(&LevelSetting::ToggleLevel(0)));
+    tap_chapter(&mut reopened, "Next chapter");
+    assert_eq!(location(&reopened), (0, closing));
+    let other = fixture.root.join("Another book.txt");
+    fs::write(
+        &other,
+        "A different document starts with all levels included.",
+    )
+    .unwrap();
+    reopened.open_path(&other).unwrap();
+    assert!(!reopened.chapter_level_checked(&LevelSetting::BindNavigation));
+    assert!(reopened.chapter_level_checked(&LevelSetting::ToggleLevel(0)));
+}
+
+#[test]
+fn fixed_and_custom_contents_share_the_books_level_selection() {
+    let fixture = Fixture::new();
+    let path = fixture.root.join("Nested chart.pdf");
+    fs::write(&path, crate::fixed::tests::pdf_objects(&[
+        "<< /Type /Catalog /Pages 2 0 R /Outlines 7 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R 6 0 R] /Count 4 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 180 220] >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 180 220] >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 180 220] >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 180 220] >>",
+        "<< /Type /Outlines /First 8 0 R /Last 8 0 R /Count 2 >>",
+        "<< /Title (Part) /Dest [4 0 R /Fit] /Parent 7 0 R /First 9 0 R /Last 9 0 R /Count 1 >>",
+        "<< /Title (Child) /Dest [5 0 R /Fit] /Parent 8 0 R >>",
+    ])).unwrap();
+    let mut app = open(&fixture, &path);
+    app.set_chapter_level(LevelSetting::ToggleLevel(0)).unwrap();
+    app.set_chapter_level(LevelSetting::BindNavigation).unwrap();
+    tap_chapter(&mut app, "Next chapter");
+    assert_eq!(location(&app), (0, 2));
+
+    custom(&mut app)
+        .save(
+            ReadingPosition {
+                chapter: 0,
+                page: 3,
+                anchor: None,
+            },
+            "My chapter",
+        )
+        .unwrap();
+    custom(&mut app).enabled = true;
+    let id = app.open_book_id().unwrap();
+    assert_eq!(app.chapter_level_counts(id), BTreeMap::from([(0, 1)]));
+    let history_len = app.back.len();
+    tap_chapter(&mut app, "Next chapter");
+    assert_eq!(location(&app), (0, 2));
+    assert_eq!(app.back.len(), history_len);
+    app.set_chapter_level(LevelSetting::BindNavigation).unwrap();
+    tap_chapter(&mut app, "Next chapter");
+    assert_eq!(location(&app), (0, 3));
+
+    custom(&mut app).enabled = false;
+    app.set_chapter_level(LevelSetting::BindNavigation).unwrap();
+    tap_chapter(&mut app, "Previous chapter");
+    assert_eq!(location(&app), (0, 2));
 }

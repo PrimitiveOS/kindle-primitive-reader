@@ -175,7 +175,11 @@ fn footer_controls(controls: ReadingControls) -> ReadingControls {
         footer_item_bold: controls.footer_item_bold,
         footer_container_height: controls.footer_container_height,
         footer_container_bottom_margin: controls.footer_container_bottom_margin,
-        top_header: controls.top_header,
+        top_header: crate::reading_controls::TopHeader {
+            legacy_enabled: false,
+            book_default: None,
+            ..controls.top_header
+        },
         chapter_marker_width: controls.chapter_marker_width,
         overlap_footer: controls.overlap_footer,
         footer_scope: controls.footer_scope,
@@ -211,7 +215,11 @@ fn apply_footer_controls(current: ReadingControls, preset: ReadingControls) -> R
         footer_item_bold: preset.footer_item_bold,
         footer_container_height: preset.footer_container_height,
         footer_container_bottom_margin: preset.footer_container_bottom_margin,
-        top_header: preset.top_header,
+        top_header: crate::reading_controls::TopHeader {
+            legacy_enabled: current.top_header.legacy_enabled,
+            book_default: current.top_header.book_default,
+            ..preset.top_header
+        },
         chapter_marker_width: preset.chapter_marker_width,
         overlap_footer: preset.overlap_footer,
         footer_scope: preset.footer_scope,
@@ -295,6 +303,11 @@ mod tests {
             footer_container_bottom_margin: Some(8),
             invert_page_turn_buttons: true,
             night_pages: true,
+            top_header: crate::reading_controls::TopHeader {
+                book_default: Some(false),
+                clock: false,
+                ..Default::default()
+            },
             ..ReadingControls::default()
         };
         let mut presets = Vec::new();
@@ -315,6 +328,11 @@ mod tests {
             footer_horizontal_separator: false,
             invert_page_turn_buttons: false,
             night_pages: false,
+            top_header: crate::reading_controls::TopHeader {
+                legacy_enabled: true,
+                book_default: Some(true),
+                ..Default::default()
+            },
             ..ReadingControls::default()
         };
         let (applied, font_file, custom_text) = reopened[0].apply(current);
@@ -329,6 +347,9 @@ mod tests {
         assert_eq!(applied.footer_container_bottom_margin, Some(8));
         assert!(!applied.invert_page_turn_buttons);
         assert!(!applied.night_pages);
+        assert!(!applied.top_header.clock);
+        assert!(applied.top_header.legacy_enabled);
+        assert_eq!(applied.top_header.book_default, Some(true));
         fs::remove_file(path).unwrap();
     }
 

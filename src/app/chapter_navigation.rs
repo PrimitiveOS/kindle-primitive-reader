@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
 
 use super::contents_view::{ContentsEntry, Target};
-use super::{Reader, position};
+use super::{Action, Item, Reader, position};
 use crate::fixed_session::FixedReading;
 use crate::library::Bookmark;
 use crate::session::Reading;
@@ -14,6 +14,11 @@ use crate::{Anchor, Probe, Result};
 pub(super) enum Direction {
     Previous,
     Next,
+}
+
+pub(super) enum LevelSetting {
+    BindNavigation,
+    ToggleLevel(usize),
 }
 
 impl Direction {
@@ -35,13 +40,18 @@ impl Direction {
 impl Reader {
     pub(super) fn jump_chapter(&mut self, direction: Direction) -> Result<()> {
         let book = self.open_book_id().ok_or("Open a document first")?;
-        let headings = self.contents_entries(book);
-        let custom = self
-            .library
-            .state(book)
-            .map_or(&[][..], |state| state.custom_contents.entries());
+        let state = self.library.state(book);
+        let custom = state.map_or(&[][..], |state| state.custom_contents.entries());
+        let headings =
+            self.contents_entries(book)
+                .into_iter()
+                .enumerate()
+                .filter(|(_, heading)| {
+                    state
+                        .is_none_or(|state| state.contents_depths.use_for_navigation(heading.depth))
+                });
         if let Some(fixed) = &self.fixed {
-            if let Some(page) = fixed_page(&fixed.reading, &headings, custom, direction) {
+            if let Some(page) = fixed_page(&fixed.reading, headings, custom, direction) {
                 let previous = self.jump_fixed(page, None)?;
                 if self.current_history_location().as_ref() != Some(&previous) {
                     self.push_history(previous);
@@ -49,8 +59,12 @@ impl Reader {
                 }
             }
         } else if let Some(active) = &mut self.active
-            && let Some((chapter, page, probe)) =
-                reflow_page(&active.reading, headings, custom, direction)
+            && let Some((chapter, page, probe)) = reflow_page(
+                &active.reading,
+                headings.map(|(_, heading)| heading),
+                custom,
+                direction,
+            )
         {
             let previous = position(&active.reading);
             active.reading.go_to_laid_out_page(chapter, page, probe)?;
@@ -66,11 +80,103 @@ impl Reader {
         );
         Ok(())
     }
+
+    pub(super) fn chapter_level_items(&self) -> Vec<Item> {
+        let Some(book) = self.open_book_id() else {
+            return Vec::new();
+        };
+        let Some(state) = self.library.state(book) else {
+            return Vec::new();
+        };
+        let levels = &state.contents_depths;
+        let counts = self.chapter_level_counts(book);
+        if counts.is_empty() {
+            return vec![
+                Item::new("No chapter levels", Action::Heading)
+                    .detail("The active Contents has no chapter destinations"),
+            ];
+        }
+        let mut rows = vec![
+            Item::new(
+                "Use levels for chapter jumps",
+                if levels.has_ignored() {
+                    Action::ChapterLevel(LevelSetting::BindNavigation)
+                } else {
+                    Action::Heading
+                },
+            )
+            .detail(if !levels.has_ignored() {
+                "Turn off a level to enable this option"
+            } else {
+                "Previous and next chapter use the included levels"
+            }),
+        ];
+        rows.extend(counts.into_iter().map(|(depth, count)| {
+            let unit = if count == 1 { "heading" } else { "headings" };
+            Item::new(
+                format!("Contents level {}", depth.saturating_add(1)),
+                Action::ChapterLevel(LevelSetting::ToggleLevel(depth)),
+            )
+            .detail(format!("{count} {unit}"))
+        }));
+        rows.push(Item::new("Progress markers", Action::Heading).detail(
+            if self.has_whole_book_marker_coordinates() {
+                "The footer and Skim use the included levels"
+            } else {
+                "The reading header uses the included levels for this book"
+            },
+        ));
+        rows
+    }
+
+    pub(super) fn chapter_level_checked(&self, setting: &LevelSetting) -> bool {
+        self.open_book_id()
+            .and_then(|book| self.library.state(book))
+            .is_some_and(|state| match *setting {
+                LevelSetting::BindNavigation => state.contents_depths.bind_navigation,
+                LevelSetting::ToggleLevel(depth) => state.contents_depths.includes(depth),
+            })
+    }
+
+    fn chapter_level_counts(&self, book: u64) -> BTreeMap<usize, usize> {
+        let mut counts = BTreeMap::new();
+        for (index, heading) in self.contents_entries(book).into_iter().enumerate() {
+            let available = match heading.target {
+                Target::Fixed(page) => self.fixed.as_ref().is_some_and(|fixed| {
+                    page < fixed.reading.count() && fixed.reading.stable_outline_destination(index)
+                }),
+                Target::None => false,
+                _ => true,
+            };
+            if available {
+                *counts.entry(heading.depth).or_default() += 1;
+            }
+        }
+        counts
+    }
+
+    pub(super) fn set_chapter_level(&mut self, setting: LevelSetting) -> Result<()> {
+        let book = self.open_book_id().ok_or("Open a document first")?;
+        let levels = &mut self
+            .library
+            .state_mut(book)
+            .ok_or("This book is unavailable")?
+            .contents_depths;
+        match setting {
+            LevelSetting::BindNavigation if levels.has_ignored() => {
+                levels.bind_navigation = !levels.bind_navigation;
+            }
+            LevelSetting::BindNavigation => return Ok(()),
+            LevelSetting::ToggleLevel(depth) => levels.toggle(depth),
+        }
+        self.mark_book_changed();
+        Ok(())
+    }
 }
 
 fn fixed_page(
     reading: &FixedReading,
-    headings: &[ContentsEntry],
+    headings: impl Iterator<Item = (usize, ContentsEntry)>,
     custom: &[Bookmark],
     direction: Direction,
 ) -> Option<usize> {
@@ -79,8 +185,6 @@ fn fixed_page(
     let current_flow = flows.map_or(0, |map| map.flow(current));
     direction.closest(
         headings
-            .iter()
-            .enumerate()
             .filter_map(|(index, entry)| match entry.target {
                 Target::Fixed(page) if reading.stable_outline_destination(index) => Some(page),
                 Target::Custom(index) => {
@@ -115,7 +219,7 @@ impl AnchorTarget<'_> {
 
 fn reflow_page(
     reading: &Reading,
-    headings: Vec<ContentsEntry>,
+    headings: impl Iterator<Item = ContentsEntry>,
     custom: &[Bookmark],
     direction: Direction,
 ) -> Option<(usize, usize, Option<Probe>)> {
