@@ -76,7 +76,7 @@ Tap a PDF web link to inspect its address over the current page. **Copy** makes 
 
 **Controls › Reading status bar › Overlap status bar** lets books, PDFs and comics fill the screen. Tap **Status** to reveal progress over the same page. [Status bar settings and screenshots](docs/status-bar-overlap.md)
 
-The reading footer shows `Chapter x of y - Page m of n`, with the horizontal progress bar below and Exit at the right. Choose left, center or right alignment, adjust text size, or turn on bold text. [Footer typography and progress track](docs/footer-font-size.md)
+The reading footer shows `Chapter x of y - Page m of n`, with the horizontal progress bar and vertical chapter ticks below and Exit at the far right. Choose a font, adjust the text size, add custom text, or save a status bar preset. [Oasis release capture](docs/screenshots/footer-release-oasis.png) · [Footer appearance](docs/footer-font-size.md) · [Custom footer text](docs/footer-custom-text.md)
 
 Publisher styling can keep a paragraph’s first or last lines together at a page break. [Paragraph settings and two-page comparison](docs/paragraph-ends.md)
 
