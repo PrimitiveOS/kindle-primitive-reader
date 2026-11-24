@@ -3227,7 +3227,8 @@ impl Reader {
                 let mut items = text_items(
                     settings,
                     reading.config.scroll,
-                    self.active.as_ref().unwrap().id,
+                    active.id,
+                    self.pending_logical_size(active.id),
                 );
                 if !reading.probe.is_vertical()
                     && settings.hyphenation_mode() == crate::HyphenationMode::Automatic
@@ -4659,6 +4660,7 @@ impl Reader {
             *self.library.state_mut(id).unwrap() = prior;
             return Err(error.into());
         }
+        self.eager_typography.cancel();
         self.active.as_mut().unwrap().reading = candidate;
         self.show(Screen::Book);
         self.record_position();
@@ -10179,10 +10181,10 @@ fn device_settings() -> Settings {
     }
 }
 
-fn text_size_items(settings: Settings, owner: u64) -> [Item; 3] {
+fn text_size_items(settings: Settings, owner: u64, pending_size: Option<f64>) -> [Item; 3] {
     let size = format!("Current size {}", settings.font_label());
     let change = |delta: f64| {
-        settings.logical_font_size.map_or_else(
+        pending_size.or(settings.logical_font_size).map_or_else(
             || {
                 Action::Text(Settings {
                     font_size: (settings.font_size + settings.font_scale.physical_delta(delta))
@@ -10203,7 +10205,12 @@ fn text_size_items(settings: Settings, owner: u64) -> [Item; 3] {
     ]
 }
 
-fn text_items(settings: Settings, scroll: bool, owner: u64) -> Vec<Item> {
+fn text_items(
+    settings: Settings,
+    scroll: bool,
+    owner: u64,
+    pending_size: Option<f64>,
+) -> Vec<Item> {
     let margin = format!("Current margin {} px", settings.margin);
     let spacing = settings.effective_line_spacing_percent();
     let (alignment, next_alignment) = match settings.alignment {
@@ -10214,7 +10221,7 @@ fn text_items(settings: Settings, scroll: bool, owner: u64) -> Vec<Item> {
         TextAlignment::Center => ("Centered", TextAlignment::Justify),
         TextAlignment::Justify => ("Justified", TextAlignment::Publisher),
     };
-    let [larger, smaller, set_size] = text_size_items(settings, owner);
+    let [larger, smaller, set_size] = text_size_items(settings, owner, pending_size);
     vec![
         Item::new(
             if scroll {

@@ -198,7 +198,10 @@ impl Reader {
             match panel {
                 BarPanel::Text => {
                     let fine_step = settings.font_scale.physical_delta(0.5);
-                    let smaller = settings.logical_font_size.map_or_else(
+                    let step_basis = self
+                        .pending_logical_size(active.id)
+                        .or(settings.logical_font_size);
+                    let smaller = step_basis.map_or_else(
                         || {
                             Action::Text(Settings {
                                 font_size: (settings.font_size - fine_step).max(20.),
@@ -207,7 +210,7 @@ impl Reader {
                         },
                         |n| Action::ApplyLogicalFont(active.id, (n - 0.5).max(12.)),
                     );
-                    let larger = settings.logical_font_size.map_or_else(
+                    let larger = step_basis.map_or_else(
                         || {
                             Action::Text(Settings {
                                 font_size: (settings.font_size + fine_step).min(100.),

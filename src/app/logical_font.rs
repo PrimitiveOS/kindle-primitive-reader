@@ -13,11 +13,9 @@ impl Reader {
         // The shared Lower layer includes the number row; Symbols does not.
         self.editor.layer = primitive_ui::Layer::Lower;
         if let Some(active) = self.active.as_ref().filter(|active| active.id == owner) {
-            self.editor.text = active
-                .reading
-                .config
-                .settings
-                .logical_font_size
+            self.editor.text = self
+                .pending_logical_size(owner)
+                .or(active.reading.config.settings.logical_font_size)
                 .unwrap_or(crate::logical_font::DEFAULT)
                 .to_string()
                 .chars()

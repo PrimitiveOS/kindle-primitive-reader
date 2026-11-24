@@ -185,6 +185,40 @@ fn whole_typography_supersedes_edits_and_keeps_old_settings_on_cancel_and_failed
 }
 
 #[test]
+fn whole_typography_steps_from_pending_size_and_can_reselect_the_accepted_size() {
+    let (_fixture, mut app, _) = setup();
+    app.set_font_rendering(Scope::Book, Some(Mode::WholeBook))
+        .unwrap();
+    let owner = app.open_book_id().unwrap();
+    let old = size(&app).unwrap();
+    let default_rendering = app.controls.font_size_rendering;
+    app.apply_logical_font(owner, 40.0).unwrap();
+    app.tick(Instant::now());
+    app.show(Screen::Typography);
+    tap_contents_item(&mut app, "Larger text");
+    assert_eq!(app.pending_logical_size(owner), Some(40.5));
+    app.show(Screen::Typography);
+    tap_contents_item(&mut app, "Larger text");
+    assert_eq!(app.pending_logical_size(owner), Some(41.0));
+    app.show(Screen::NumberingValue(NumberField::LogicalFont(owner)));
+    assert_eq!(app.editor.string(), "41");
+    assert_eq!(size(&app), Some(old));
+    app.apply_logical_font(owner, old).unwrap();
+    wait(&mut app);
+    assert!(!app.eager_typography.pending());
+    assert_eq!(size(&app), Some(old));
+
+    app.apply_logical_font(owner, 37.0).unwrap();
+    app.tick(Instant::now());
+    app.activate(Action::ResetText).unwrap();
+    wait(&mut app);
+    assert!(!app.eager_typography.pending());
+    assert_eq!(size(&app), Some(old));
+    assert_eq!(app.selected_font_rendering(), Some(Mode::WholeBook));
+    assert_eq!(app.controls.font_size_rendering, default_rendering);
+}
+
+#[test]
 fn whole_typography_uses_chapter_first_for_a_spine_outside_the_budget() {
     let (fixture, mut app, _) = setup();
     app.set_font_rendering(Scope::Default, Some(Mode::WholeBook))

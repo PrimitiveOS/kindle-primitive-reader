@@ -75,10 +75,11 @@ waits for the reading surface, resolves the latest source passage in
 the prepared layouts, paints the new frame, then saves and installs
 the font size and verified page index together. Next and previous
 chapter turns can reuse the prepared Parley layouts. Glyph masks are
-released when returning a chapter to the cache. A newer size replaces
-an older request. **Cancel preparation**, sleep, changing books, and USB
-return discard a pending edit. If the source changes or a save fails,
-the current reading state stays in use.
+released when returning a chapter to the cache. Repeated size steps
+adjust the pending value. Choosing the displayed size, resetting text
+settings, **Cancel preparation**, sleep, changing books, and USB return
+discard a pending edit. If the source changes or a save fails, the current
+reading state stays in use.
 
 The prepared path covers regular horizontal paged EPUBs with 2–32 spine
 items, 512 ZIP members, up to 2 MiB compressed and 4 MiB expanded, 256 KiB

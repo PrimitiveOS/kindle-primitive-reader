@@ -160,6 +160,7 @@ impl Reader {
             *self.library.state_mut(id).unwrap() = old;
             return Err(error.into());
         }
+        self.eager_typography.cancel();
         self.active.as_mut().unwrap().reading = candidate;
         self.record_position();
         self.show(Screen::DocumentDefaults);

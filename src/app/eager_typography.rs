@@ -178,10 +178,15 @@ impl Reader {
         let Some(book) = self.active.as_ref() else {
             return false;
         };
-        if mode != Mode::WholeBook
-            || !supported(&book.reading)
-            || layout.settings == book.reading.config.settings
-        {
+        if mode != Mode::WholeBook || !supported(&book.reading) {
+            return false;
+        }
+        if layout.settings == book.reading.config.settings {
+            if self.eager_typography.pending() {
+                self.eager_typography.cancel();
+                self.show(Screen::Book);
+                return true;
+            }
             return false;
         }
         let baseline = book.reading.config.clone();
@@ -198,6 +203,13 @@ impl Reader {
         self.show(Screen::Book);
         self.notice = Some("Preparing font size for the whole book…".into());
         true
+    }
+
+    pub(super) fn pending_logical_size(&self, owner: u64) -> Option<f64> {
+        let active = self.active.as_ref().filter(|book| book.id == owner)?;
+        let draft = self.eager_typography.draft.as_ref()?;
+        (draft.owner == owner && same_layout(&draft.baseline, &active.reading.config))
+            .then_some(draft.size)
     }
 
     fn eager_commit_visible(&self) -> bool {

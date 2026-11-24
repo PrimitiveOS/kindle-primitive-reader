@@ -22,7 +22,7 @@ fn legacy_font_size_taps_use_half_logical_steps_and_preserve_the_reading_anchor(
     let origin = app.active.as_ref().unwrap().reading.anchor();
     let step = legacy.font_scale.physical_delta(0.5);
 
-    let larger = text_size_items(legacy, book_id)
+    let larger = text_size_items(legacy, book_id, None)
         .into_iter()
         .find(|item| item.title == "Larger text")
         .unwrap()
