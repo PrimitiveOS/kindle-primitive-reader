@@ -44,12 +44,12 @@ only to find and compare relevant controls.
 
 ### Execution checklist
 
-**Milestone status:** 53 of the 59 checklist items have desktop, scope, or
+**Milestone status:** 67 of the 73 checklist items have desktop, scope, or
 device evidence. The control inventory and foreground Kindle acceptance
 checks below track the remaining feature and device work.
 
-**Pinned control inventory:** 250 of 537 in-scope reading-control rows have
-an implemented workflow, 225 are partial, 44 are gaps, and 18 need audit. The
+**Pinned control inventory:** 258 of 537 in-scope reading-control rows have
+an implemented workflow, 217 are partial, 44 are gaps, and 18 need audit. The
 [statistics reset comparison](reading-statistics.md#reset-statistics) updates
 seven rows with an executable stock check and Mac verification. The
 [corner hold comparison](corner-hold-gestures.md) covers the ignore toggle,
@@ -189,6 +189,10 @@ other typography controls and broader publication types remains open.
 - [x] Compose current page in chapter and flexible spacing in the custom footer while retaining the default caption, progress ticks and Exit. [Footer composition](footer-composition.md)
 - [x] Group local dictionary results by source, with nested lookup and a return to the exact chooser page and original passage. Compare the stock Results tap and hold on EPUB and PDF. [Grouped dictionaries](shared-dictionaries.md#choosing-among-matching-sources)
 - [x] Compose explicit trailing EPUB notes in an in-page band. Match saved book choice, live default, the master style switch, canonical link and selection positions, and long-note continuation. Wider note layouts remain open. [In-page footnotes](in-page-footnotes.md)
+- [x] Size eligible EPUB in-page notes with all seven measured percentages and the legacy rule. Preserve inline scaling, body text, saved overrides, and original EPUB anchors. [Footnote size comparison](in-page-footnotes.md#footnote-size)
+- [x] Show linked FictionBook footnotes and endnotes independently, with regular-size override, deduplicated references, and the canonical backlink. Check ordinary heading keeps and saved position through reopen. [FictionBook comparison](fb2-footnotes.md#in-page-footnotes-and-endnotes)
+- [x] Add independent tap and swipe page-turn controls, stock zone shapes and bounds, a touch-lock exception, and per-edition direction and dialog mirroring. [Page-turn controls](page-turn-controls.md)
+- [x] Export local KOReader-format annotation transfers on book closing, choose an existing folder, and preview merges with the Keep all policy. Stock automatic import and unsupported locations remain open. [Local exchange](annotation-exchange.md)
 - [x] Implement horizontal, text-only inline-block geometry for the supported Flat, Book and Web policies. Check native width, atomic page carry, links and selections. Complex inline content remains open. [Inline-block comparison](render-modes.md#text-only-inline-blocks)
 - [x] Audit all four native CREngine Render Mode masks against authored CSS and compare Reader’s existing Parley and Blitz paths. The merged policies now have per-edition and new-book settings with device verification pending. [Reference and captures](render-modes.md#composed-policies-in-reader)
 - [x] Recount exact screen pages after committed typography edits for supported EPUBs. Check canonical position, ordinary opens, paint-only edits, rollback, sleep, USB and immediate Go to page after completion. [Native comparison and Mac captures](whole-book-screen-pages.md#partial-typography-rendering-comparison)
