@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.29
+
+- Choose how many entries appear on a Contents page and adjust their font size.
+- Show right-aligned page labels, dot leaders, and optional lengths when Reader can resolve the chapter positions.
+- Use Previous chapter and Next chapter in the Navigation menu to jump through the active outline. Return history brings you back to the original reading position.
+
 ## 0.1.28
 
 - Expand and search nested Contents in reflow and fixed-page books. Opening Contents reveals headings on the current page.
