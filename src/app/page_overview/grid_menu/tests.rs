@@ -411,3 +411,102 @@ fn page_browser_grid_edge_swipes_keep_rtl_book_focus_and_obey_bounds() {
         origin
     );
 }
+
+#[test]
+fn page_browser_blank_body_taps_page_and_keep_controls_and_tail_slots_distinct() {
+    let fixture = Fixture::new();
+    let path = fixture.root.join("Harbor Atlas.pdf");
+    pdf(&path, 13);
+    let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+    let mut reader = Reader::open(&fixture.root, &fixture.state, vec![font]).unwrap();
+    reader.open_path(&path).unwrap();
+    reader.follow_fixed(5, None).unwrap();
+    reader.open_overview().unwrap();
+    let before_turn = reader.current_history_location().unwrap().position.page;
+    let width = reader.navigation_layout().width as f32;
+    let layout = OverviewLayout::new(reader.navigation_layout());
+    let y = (layout.tile(0).y + 50) as f32;
+    let first = |reader: &Reader| reader.overview.as_ref().unwrap().first;
+    assert_eq!(first(&reader), 4);
+    assert_eq!(reader.input(Input::Tap(width - 12.0, y)), Change::Partial);
+    assert_eq!(first(&reader), 8);
+    assert_eq!(reader.input(Input::Tap(12.0, y)), Change::Partial);
+    assert_eq!(first(&reader), 4);
+    assert_eq!(reader.input(Input::Tap(12.0, 100.0)), Change::None);
+    assert_eq!(
+        reader.input(Input::Tap(12.0, layout.track_caption().y as f32 + 1.0)),
+        Change::None
+    );
+    open_menu(&mut reader);
+    assert_eq!(reader.input(Input::Tap(12.0, y)), Change::Partial);
+    assert!(!reader.overview.as_ref().unwrap().grid_menu);
+    assert_eq!(first(&reader), 4);
+
+    let mut landscape = adopt(&mut reader, ReadingViewport::LANDSCAPE, 1);
+    let origin = reader.current_history_location();
+    let history = reader.back.clone();
+    assert_eq!(origin.as_ref().unwrap().position.page, before_turn);
+    let nav = reader.navigation_layout();
+    let layout = OverviewLayout::new(nav);
+    let ribbon = layout.track();
+    let y = (ribbon.y + ribbon.h / 2) as f32;
+    assert_eq!(
+        reader.input(Input::Tap((ribbon.right() - 4) as f32, y)),
+        Change::Partial
+    );
+    assert_eq!(first(&reader), 12);
+    assert_eq!(reader.overview.as_ref().unwrap().tiles.len(), 1);
+    capture(
+        &reader,
+        &mut landscape,
+        "page-browser-empty-tail-landscape.png",
+        false,
+    );
+    let right_empty = layout.tile(3);
+    assert_eq!(
+        reader.input(Input::Tap(
+            (right_empty.x + 40) as f32,
+            (right_empty.y + 50) as f32
+        )),
+        Change::None
+    );
+    assert_eq!(first(&reader), 12);
+    tap(&mut reader, layout.tile(1));
+    assert_eq!(first(&reader), 8);
+    assert_eq!(reader.current_history_location(), origin);
+    assert_eq!(reader.back, history);
+
+    // The source page is real even when its thumbnail is unavailable.
+    reader.overview.as_mut().unwrap().tiles[2] = None;
+    tap(&mut reader, layout.tile(2));
+    assert_eq!(reader.screen, Screen::Fixed);
+    assert_eq!(reader.current_history_location().unwrap().position.page, 10);
+    assert_eq!(reader.back.last(), origin.as_ref());
+}
+
+#[test]
+fn page_browser_blank_body_tap_moves_the_epub_preview_without_moving_the_reading_anchor() {
+    let fixture = Fixture::new();
+    let path = fixture.root.join("Long Chapter.epub");
+    fs::copy(crate::test_fixture("long-chapter.epub"), &path).unwrap();
+    let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let mut reader = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+    reader.open_path(&path).unwrap();
+    reader.follow_reflow_page(0, 3).unwrap();
+    let origin = reader.current_history_location().unwrap().position.anchor;
+    reader.open_overview().unwrap();
+    let layout = OverviewLayout::new(reader.navigation_layout());
+    // The center of the gutter belongs to the forward half.
+    let x = layout.navigation.width as f32 / 2.0;
+    let y = (layout.tile(0).y + 70) as f32;
+    assert_eq!(reader.input(Input::Tap(x, y)), Change::Partial);
+    let focus = reader.overview.as_ref().unwrap().focus.clone();
+    assert_eq!(focus.page, 4);
+    assert!(focus.anchor.is_some());
+    adopt(&mut reader, ReadingViewport::LANDSCAPE, 1);
+    assert_eq!(reader.overview.as_ref().unwrap().focus.anchor, focus.anchor);
+    assert_eq!(
+        reader.current_history_location().unwrap().position.anchor,
+        origin
+    );
+}

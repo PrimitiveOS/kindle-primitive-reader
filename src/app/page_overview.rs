@@ -142,6 +142,15 @@ impl OverviewLayout {
         )
     }
 
+    fn blank_tap_direction(self, x: f32, y: f32) -> Option<isize> {
+        let width = self.navigation.width as f32;
+        let body = self.tile(0).y as f32..self.track_caption().y as f32;
+        if !(0.0..width).contains(&x) || !body.contains(&y) {
+            return None;
+        }
+        Some(if x < width / 2.0 { -1 } else { 1 })
+    }
+
     fn track_caption(self) -> Rect {
         let track = self.track();
         let offset = if self.grid.is_some() { 30 } else { 55 };
@@ -584,21 +593,24 @@ impl Reader {
                 return Change::Partial;
             }
             Input::Tap(x, y) => {
-                let Some(index) =
-                    (0..overview.tiles.len()).find(|&index| layout.tile(index).contains(x, y))
-                else {
+                let index =
+                    (0..overview.tiles.len()).find(|&index| layout.tile(index).contains(x, y));
+                if let Some(index) = index {
+                    let page = overview.first + index;
+                    let result = if let Some(chapter) = overview.chapter {
+                        self.follow_reflow_page(chapter, page)
+                    } else {
+                        self.follow_fixed(page, None)
+                    };
+                    return match result {
+                        Ok(()) => Change::Partial,
+                        Err(error) => self.report(error),
+                    };
+                }
+                let Some(direction) = layout.blank_tap_direction(x, y) else {
                     return Change::None;
                 };
-                let page = overview.first + index;
-                let result = if let Some(chapter) = overview.chapter {
-                    self.follow_reflow_page(chapter, page)
-                } else {
-                    self.follow_fixed(page, None)
-                };
-                return match result {
-                    Ok(()) => Change::Partial,
-                    Err(error) => self.report(error),
-                };
+                (direction, batch)
             }
             _ => return Change::None,
         };
