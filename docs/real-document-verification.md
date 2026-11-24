@@ -223,6 +223,33 @@ file hashes matched before and after. The first frames took 1,504 ms,
 12,955 ms, 1,296 ms and 1,954 ms respectively. [Bookmark and header
 verification](bookmark-max-lines.md) records native and simulator evidence.
 
+## Reader 0.1.34 release on the Oasis
+
+The first GitHub runner failed during setup. The retry passed all release
+steps and published the verified ARMHF package. The Store transaction
+installed it on the Oasis 3 and the installed executable matched the
+published binary.
+[Release workflow](https://github.com/PrimitiveOS/kindle-primitive-reader/actions/runs/45339345521) · [Release assets](https://github.com/PrimitiveOS/kindle-primitive-reader/releases/tag/v0.1.34)
+
+| Verified file | SHA-256 | Bytes |
+| --- | --- | ---: |
+| ARMHF ZIP | `92ca791a88bd1f6fa1914503141013b6676f0807cc6303cae2a0764920850f54` | 21,392,971 |
+| Kindle executable | `4566e7fef6b517e4f305390615ba3fd8918e446fca5f647d255a003769943ad5` | 33,919,464 |
+
+The Mac run passed 1,051 Reader library tests, one Kindle binary test,
+14 EPUB package tests and four layout checks. The native test bundle passed
+1,055 Reader library tests, 14 EPUB package tests and four layout checks.
+Both suites skipped 62 optional tests. All three authored Kindle renders
+for chapter-scoped search matched the Mac simulator pixel for pixel.
+[Chapter filter](screenshots/search-results-chapter-options.png) · [EPUB results](screenshots/search-results-chapter-epub.png) · [PDF results](screenshots/search-results-chapter-pdf.png)
+
+The exact installed executable opened an original EPUB, PDF, AZW3 and MOBI
+through the picker, advanced to a changed frame and resumed from an isolated
+profile. The original files matched their starting SHA-256 hashes. First
+frames took 1,714 ms, 21,257 ms, 2,502 ms and 2,297 ms respectively.
+These are offscreen Kindle checks. Foreground touch and E Ink refresh
+remain separate acceptance checks.
+
 ## Reader 0.1.33 release on the Oasis
 
 The ARMHF package installed through the Store transaction and the installed
