@@ -3,6 +3,7 @@
 # Author: Primitive AI
 # DontUseFBInk
 # PrimitiveUSBLease
+# PrimitiveViewportHandoff: 2
 # Wake: redraw
 
 # Under the launcher SIGUSR1 asks the app to redraw: this script ignores it (a shell ends on it otherwise); the
