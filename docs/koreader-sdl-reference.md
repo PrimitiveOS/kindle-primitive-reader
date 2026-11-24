@@ -6,6 +6,8 @@ Current evidence for `T3-6.1` through `T3-6.3` covers Back in Reader and the fil
 
 Current evidence for `T4-4.2.3` through `T4-4.2.8` includes the four stock starting weekdays, ranked book spans, hourly calendar bins, a minute-based timeline start and a separate calendar shift. The earlier matrix retains the captured baseline. [Calendar and timeline settings](reading-statistics.md#calendar-and-timeline-settings)
 
+The follow-up for `T4-4.2.1` compares the stock page duration editor and the matched whole-second workflow in Reader. It verifies tap, hold, direct entry, defaults, Cancel, Apply and elapsed-time boundaries. [Page duration limits](reading-statistics.md#page-duration-limits)
+
 The follow-up for `T4-4.6` captures the seven-day widget in genuine pinned KOReader and verifies matching weekly, daily and session totals in Reader. [Seven-day progress](reading-statistics.md#seven-day-reading-progress)
 
 ## Scope and reproducibility

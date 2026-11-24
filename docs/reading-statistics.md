@@ -131,6 +131,27 @@ uses an exclusive upper date boundary to preserve visits at the next midnight.
 
 New history defaults to the stock five-second minimum and 120-second maximum per visit. Quick skims do not count. Re-reading keeps a new visit. Reading time includes those rereads; capped page time sums at most the configured maximum for each distinct reading screen. These are separate values, as in KOReader's uncapped and capped book queries. Finished books continue recording by default, with an option to freeze them. [Stock defaults and total queries](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L29-L90) · [Page visit accounting](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L2560-L2652)
 
+### Page duration limits
+
+Open **Reading statistics › Statistics settings › Read page duration limits**.
+The minimum accepts 0–120 seconds, with 1-second taps and 10-second holds.
+The maximum accepts 10–7200 seconds, with 10-second taps and 60-second holds.
+Tap a value to type it on the number pad. **Defaults** loads 5 and 120 seconds
+into the draft. **Apply** saves both values together. Cancel leaves the saved
+limits in place, and a failed write keeps the draft available for retry.
+
+The pinned KOReader widget and page accounting confirm the independent bounds.
+With minimum 120 and maximum 10, a ten-second visit is below the minimum.
+An eleven-second visit exceeds the maximum and contributes ten seconds.
+Reader's keypad accepts whole seconds. KOReader's general number field also
+evaluates arithmetic expressions and accepts fractional inputs.
+Reader keeps already recorded visits when the limits change.
+[Reader editor](screenshots/reading-statistics-duration.png) ·
+[Reader number pad](screenshots/reading-statistics-duration-keypad.png) ·
+[Stock editor](screenshots/reading-statistics-duration-stock.png) ·
+[Pinned settings](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/main.lua#L1065-L1104) ·
+[Stock simulator check](../scripts/koreader-reading-progress-check.py)
+
 Daily history groups visits by their civil start date. Reader clips the elapsed intervals used by the calendar and timeline to the chosen day's boundaries. A visit that crosses a boundary can contribute time to both calendar days while its daily-history total remains on the start date. KOReader's monthly SQL assigns each visit to a date using its start timestamp, with the optional offset. Day boundaries follow the current device time zone, including daylight-saving transitions. [Stock daily totals](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L1453-L1479) · [Stock calendar query](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/main.lua#L2822-L2861) · [Stock day timeline](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L2862-L2934)
 
 Disabling statistics or freezing a finished book pauses all three time trackers, including the existing screen-time and pace counters. Sleep, USB storage and non-reading screens pause recording. Short intervals on the same page can combine across sleep toward the minimum, without counting the pause or resetting the visit's maximum. Returning to Library finishes that visit. Timeline rows merge adjacent intervals for the same book when their gap is no more than the larger of 30 seconds and the minimum visit time. Gaps contribute no reading time to totals or the histogram.
@@ -153,8 +174,8 @@ rescaling view. Reader's pace estimator has its own sample policy.
 The pinned Lua/SQLite check exercises the save and shift callbacks, picker
 wrapping, book duration ranking, and spans across adjacent days. Rust tests
 cover the 04:20 boundary in a fractional-offset zone, both shift choices,
-failed saves, book filtering, and the saved reading position. The separate
-exact visit-duration editor and local statistics database import remain open.
+failed saves, book filtering, and the saved reading position.
+Local statistics database import remains open.
 Reader records the actual pre- and
 post-pause portions of each visit.
 [Stock calendar comparison](../scripts/compare-calendar-options.py) · [Stock layout rescaling](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L439-L441) · [Stock pause and resume timestamps](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L2694-L2732)

@@ -8115,6 +8115,7 @@ impl App for Reader {
         self.draw_vocabulary_dialog(canvas);
         self.draw_back_exit_confirmation(canvas);
         self.draw_history_timeline_start(canvas);
+        self.draw_history_duration_limits(canvas);
         self.draw_logical_recovery(canvas);
     }
 

@@ -1,6 +1,7 @@
 //! Reading statistics, reports, a month calendar and clipped day timelines.
 mod calendar;
 mod calendar_options;
+mod duration_options;
 mod period_reset;
 mod progress;
 mod ranges;
@@ -82,6 +83,7 @@ pub(super) enum Command {
     RunPage(i32),
     Configure(Options),
     EditTimelineStart,
+    EditDurationLimits,
     ConfirmReset,
     ConfirmPeriodReset,
     CancelReset,
@@ -97,6 +99,7 @@ pub(super) struct View {
     ranges: ranges::View,
     calendar_settings_page: usize,
     timeline_start_draft: Option<u16>,
+    duration_limits_draft: Option<duration_options::Draft>,
     reset_list_page: usize,
     period_reset: Option<period_reset::Pending>,
 }
@@ -113,6 +116,7 @@ impl Default for View {
             ranges: Default::default(),
             calendar_settings_page: 0,
             timeline_start_draft: None,
+            duration_limits_draft: None,
             reset_list_page: 0,
             period_reset: None,
         }
@@ -276,6 +280,7 @@ impl Reader {
                 self.history_view.timeline_start_draft =
                     Some(self.reading_history.options().day_start);
             }
+            EditDurationLimits => self.open_duration_limits(),
             ConfirmReset => self.confirm_history_reset()?,
             ConfirmPeriodReset => self.confirm_period_reset()?,
             CancelReset => self.history_back(),
@@ -480,35 +485,16 @@ impl Reader {
                         ..options
                     },
                 ));
-                let min = match options.min_seconds {
-                    1 => 5,
-                    5 => 10,
-                    10 => 15,
-                    _ => 1,
-                };
-                rows.push(opt(
-                    "Minimum time per visit",
-                    format!("{} seconds", options.min_seconds),
-                    Options {
-                        min_seconds: min.min(options.max_seconds),
-                        ..options
-                    },
-                ));
-                let max = match options.max_seconds {
-                    60 => 120,
-                    120 => 300,
-                    300 => 600,
-                    _ => 60,
-                };
-                rows.push(opt(
-                    "Maximum time per visit",
-                    format!("{} seconds", options.max_seconds),
-                    Options {
-                        max_seconds: max,
-                        min_seconds: options.min_seconds.min(max),
-                        ..options
-                    },
-                ));
+                rows.push(
+                    Item::new(
+                        "Read page duration limits",
+                        Action::ReadingHistory(Command::EditDurationLimits),
+                    )
+                    .detail(format!(
+                        "{} s - {} s",
+                        options.min_seconds, options.max_seconds
+                    )),
+                );
                 rows.push(opt(
                     "Freeze finished books",
                     if options.freeze_finished { "On" } else { "Off" }.into(),
@@ -560,6 +546,9 @@ impl Reader {
             return self.reading_progress_input(input);
         }
         if let Some(change) = self.timeline_start_input(input) {
+            return Some(change);
+        }
+        if let Some(change) = self.duration_limits_input(input) {
             return Some(change);
         }
         if matches!(input,Input::Tap(x,y) if back_button(WIDTH as i32).contains(x,y)) {

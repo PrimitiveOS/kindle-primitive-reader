@@ -18,6 +18,76 @@ fn fixture(name: &str) -> (History, Instant, i64, PathBuf) {
     let history = History::load(dir.join("history.json"), BTreeMap::from([(99, 1234)]));
     (history, Instant::now(), stamp("2026-01-31T23:59:30Z"), dir)
 }
+
+#[test]
+fn duration_limits_preserve_two_hour_visits_in_storage_and_backups() {
+    let (mut history, now, wall, dir) = fixture("two-hour-visit");
+    let at = |seconds| now + Duration::from_secs(seconds);
+    let limits = Options {
+        min_seconds: 0,
+        max_seconds: 7200,
+        ..Options::default()
+    };
+    history.configure(limits, now, Some(wall)).unwrap();
+    history.set_page_at(Some((1, 1)), at(0), Some(wall));
+    history.set_page_at(Some((1, 2)), at(0), Some(wall)); // zero time
+    history.set_page_at(Some((1, 3)), at(1), Some(wall + 1));
+    history.save(at(61), Some(wall + 61), false).unwrap();
+    history.set_page_at(None, at(8001), Some(wall + 8001));
+    assert_eq!(
+        history
+            .data
+            .visits
+            .iter()
+            .map(|v| v.seconds)
+            .collect::<Vec<_>>(),
+        [1, 7200]
+    );
+    history
+        .configure(Options::default(), at(8001), Some(wall + 8001))
+        .unwrap();
+    let path = dir.join("history.json");
+    let saved = backup_value(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(saved["visits"][1]["seconds"], 7200);
+    let restored = History::load(path, BTreeMap::new());
+    assert_eq!(restored.options(), Options::default());
+    assert_eq!(restored.summary(None, None).seconds, 7201);
+    assert_eq!(restored.summary(None, None).capped_seconds, 121);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn duration_limits_accept_stock_independent_bounds_and_legacy_saved_values() {
+    let (mut history, now, wall, dir) = fixture("independent-duration-limits");
+    let at = |seconds| now + Duration::from_secs(seconds);
+    history
+        .configure(
+            Options {
+                min_seconds: 120,
+                max_seconds: 10,
+                ..Options::default()
+            },
+            now,
+            Some(wall),
+        )
+        .unwrap();
+    history.set_page_at(Some((1, 1)), at(0), Some(wall));
+    history.set_page_at(Some((1, 2)), at(10), Some(wall + 10));
+    assert_eq!(history.summary(None, None).seconds, 0);
+    history.set_page_at(None, at(21), Some(wall + 21));
+    assert_eq!(history.summary(None, None).seconds, 10);
+    let legacy = Options {
+        min_seconds: 180,
+        max_seconds: 1800,
+        ..Options::default()
+    };
+    history.configure(legacy, at(21), Some(wall + 21)).unwrap();
+    let path = dir.join("history.json");
+    assert!(backup_value(&fs::read(&path).unwrap()).is_ok());
+    assert_eq!(History::load(path, BTreeMap::new()).options(), legacy);
+    fs::remove_dir_all(dir).unwrap();
+}
+
 #[test]
 fn filters_rereads_checkpoints_and_undated_legacy_totals_are_distinct() {
     let (mut h, t, w, dir) = fixture("filters");

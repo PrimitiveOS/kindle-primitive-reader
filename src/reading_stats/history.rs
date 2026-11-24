@@ -16,6 +16,9 @@ const MAX_VISITS: usize = 100_000;
 const MAX_BOOKS: usize = 10_000;
 const MAX_BYTES: u64 = 16 * 1024 * 1024;
 const CHECKPOINT: Duration = Duration::from_secs(60);
+pub(crate) const MIN_DURATION_RANGE: std::ops::RangeInclusive<u32> = 0..=120;
+pub(crate) const MAX_DURATION_RANGE: std::ops::RangeInclusive<u32> = 10..=7200;
+const MAX_VISIT_SECONDS: u32 = *MAX_DURATION_RANGE.end();
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default)]
@@ -51,9 +54,12 @@ impl Default for Options {
 }
 impl Options {
     fn valid(self) -> bool {
-        self.min_seconds > 0
+        let stock_limits = MIN_DURATION_RANGE.contains(&self.min_seconds)
+            && MAX_DURATION_RANGE.contains(&self.max_seconds);
+        let legacy_limits = self.min_seconds > 0
             && self.min_seconds <= self.max_seconds
-            && self.max_seconds <= 3600
+            && self.max_seconds <= 3600;
+        (stock_limits || legacy_limits)
             && self.week_start <= 6
             && self.day_start < 1440
             && (1..=5).contains(&self.calendar_book_spans)
@@ -89,6 +95,12 @@ pub(crate) struct Visit {
     // Checkpoints can append to the same visit without making a second reread.
     id: u64,
 }
+
+impl Visit {
+    fn valid(&self) -> bool {
+        (1..=MAX_VISIT_SECONDS).contains(&self.seconds) && self.start.is_none_or(valid_wall)
+    }
+}
 #[derive(Clone, Default, Deserialize, Serialize)]
 struct Data {
     version: u8,
@@ -113,10 +125,7 @@ pub(crate) fn backup_value(bytes: &[u8]) -> io::Result<serde_json::Value> {
         || data.resets.len() > MAX_BOOKS
         || data.visits.len() > MAX_VISITS
         || data.titles.values().any(|s| s.len() > 1024)
-        || data
-            .visits
-            .iter()
-            .any(|v| v.seconds == 0 || v.seconds > 3600 || v.start.is_some_and(|s| !valid_wall(s)))
+        || data.visits.iter().any(|visit| !visit.valid())
     {
         return Err(invalid());
     }
@@ -221,9 +230,7 @@ impl History {
                 || data.resets.len() > MAX_BOOKS
                 || data.visits.len() > MAX_VISITS
                 || data.titles.values().any(|s| s.len() > 1024)
-                || data.visits.iter().any(|v| {
-                    v.seconds == 0 || v.seconds > 3600 || v.start.is_some_and(|s| !valid_wall(s))
-                })
+                || data.visits.iter().any(|visit| !visit.valid())
             {
                 return Err(invalid());
             }
@@ -386,7 +393,11 @@ impl History {
             return;
         };
         active.observe(now, wall.filter(|&w| valid_wall(w)), self.data.options);
-        if active.elapsed.as_secs() < u64::from(self.data.options.min_seconds) {
+        let seconds = active.elapsed.as_secs();
+        // Stock counts a visit above the maximum at the cap, even when Min exceeds Max.
+        if seconds < u64::from(self.data.options.min_seconds)
+            && seconds <= u64::from(self.data.options.max_seconds)
+        {
             return;
         }
         let mut consumed = 0;
