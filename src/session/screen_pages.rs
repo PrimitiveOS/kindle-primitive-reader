@@ -338,6 +338,7 @@ mod tests {
 
     pub(super) fn config(fixture: &str) -> BookConfig {
         BookConfig {
+            viewport: crate::session::ReadingViewport::PORTRAIT,
             user_styles: Default::default(),
             user_hyphenation: Default::default(),
             engine: Engine::Parley,

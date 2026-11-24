@@ -14,6 +14,30 @@ With sticky rotation off, KOReader reads the current edition’s rotation first,
 
 The Mac comparison executed the pinned Lua callbacks for both document types and the File Manager. Reader tests opened authored EPUB and PDF files, switched between editions, changed and cancelled format defaults, and reopened private state. The original EPUB source anchor, PDF page and independent PDF page rotation survived those actions. The simulated screenshots show the actual lower Screen panel and the confirmation sheet.
 
-## Landscape remains open
+## Landscape session preparation
 
-Landscape requires a shared-runtime viewport transition that supplies the logical width, height and orientation before Reader lays out the page. The runtime must commit the canvas geometry, framebuffer transform, touch coordinates, page buttons and Launcher handoff together, with a rollback path for an unsuccessful transition. Reader can then rebuild the viewport around its saved source anchor and validate both landscape directions with one or two columns and fixed-page zoom and crop. [KOReader dimension-change path](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerview.lua#L892-L919)
+`Reading::prepare_viewport` builds a separate reflow session and its rendered
+frame for the requested canvas. The layout, raster stride, footer reservation
+and selection coordinates use that session's geometry. It passes the same
+canonical chapter, block and byte offset to the new pagination and checks that
+the anchor is visible before accepting the candidate. The current frame and
+queued page turns survive a refusal, as does the old geometry's page-count
+cache.
+
+The staged transition covers 1264×1680 and 1680×1264 for single-page and
+continuous horizontal reflow. Facing pages and vertical writing defer the
+transition until their column and writing geometry can be updated safely.
+Fixed pages currently keep the portrait viewport.
+
+The app runtime still has to prepare its chrome and canvas, publish an
+accepted frame through the shared handoff, and change the input generation
+together with the reading session. Its lists, overlays and hardware resume
+need to use those committed dimensions. The landscape control stays disabled
+until those paths are integrated. [KOReader dimension-change path](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerview.lua#L892-L919)
+
+Run the authored EPUB transition tests with
+`cargo test --locked --lib session::viewport_tests`. Set
+`READER_REFLOW_VIEWPORT_CAPTURE_DIR` to save the portrait, landscape and
+returned frames. The fixture repeats the same sentence in two distinct
+source blocks, so the test identifies the selected word by its exact anchor
+and checks its hit region before and after changing viewport.

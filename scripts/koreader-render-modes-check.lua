@@ -115,13 +115,13 @@ local legacy, flat, book, web = unpack(result)
 local function pitch(mode, before, after)
     return mode[after].doc_y - mode[before].doc_y
 end
-assert(pitch(legacy, "Before joined margins", "After joined margins") == 184)
-for _, mode in ipairs{flat, book, web} do
-    assert(pitch(mode, "Before joined margins", "After joined margins") == 144)
+for _, check in ipairs{{legacy, 184, 136, 71}, {flat, 144, 103, 64},
+                       {book, 144, 103, 64}, {web, 144, 103, 46}} do
+    local mode, positive, mixed, negative = unpack(check)
+    assert(pitch(mode, "Before joined margins", "After joined margins") == positive)
+    assert(pitch(mode, "Before negative margins", "After negative margins") == mixed)
+    assert(pitch(mode, "Before net negative gap", "After net negative gap") == negative)
 end
-assert(pitch(flat, "Before net negative gap", "After net negative gap") == 64)
-assert(pitch(book, "Before net negative gap", "After net negative gap") == 64)
-assert(pitch(web, "Before net negative gap", "After net negative gap") == 46)
 assert(flat["Neighbor starts here"].box.x0 == flat["Floating card marker"].box.x0)
 assert(pitch(flat, "Floating card marker", "Neighbor starts here") > 0)
 for _, mode in ipairs{book, web} do

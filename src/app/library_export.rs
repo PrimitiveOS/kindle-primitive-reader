@@ -642,6 +642,7 @@ impl Reader {
             state.preferences.scroll,
         );
         let config = book.map(|_| BookConfig {
+            viewport: crate::session::ReadingViewport::PORTRAIT,
             user_styles: styles,
             user_hyphenation: self.user_hyphenation.clone(),
             chapter_offsets: Default::default(),

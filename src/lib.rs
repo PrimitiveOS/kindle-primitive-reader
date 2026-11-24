@@ -5,6 +5,7 @@ mod annotation_export;
 #[cfg(feature = "kindle")]
 pub mod app;
 mod blitz;
+mod block_margins;
 mod book_menus;
 mod book_style;
 mod cbr;
@@ -29,6 +30,7 @@ pub mod fixed_epub;
 #[cfg(feature = "kindle")]
 mod fixed_session;
 pub mod fixed_text;
+mod float_layout;
 mod flow_probe;
 mod flow_projection;
 mod flow_view;
@@ -279,6 +281,27 @@ impl PageOverlapStyle {
     }
 }
 
+/// Experimental publisher block spacing for the horizontal Parley provider.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BlockMarginMode {
+    #[default]
+    Ignore,
+    Separate,
+    Collapse,
+    CollapseNegative,
+}
+
+/// Experimental horizontal float policy for the Parley provider.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FloatMode {
+    #[default]
+    Ignore,
+    ContentHeight,
+    PublisherHeight,
+}
+
 const LEGACY_DEFAULT_LINE_HEIGHT: f32 = 1.35;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -300,6 +323,11 @@ pub struct Settings {
     pub link_vertical_margins: bool,
     pub margin_top: Option<u32>,
     pub margin_bottom: Option<u32>,
+    /// The default preserves the existing book layout and preference contract.
+    #[doc(hidden)]
+    pub block_margins: BlockMarginMode,
+    #[doc(hidden)]
+    pub float_mode: FloatMode,
     pub line_height: f32,
     /// None preserves legacy multiplier-based line spacing for existing profiles.
     pub line_spacing_percent: Option<u16>,
@@ -358,6 +386,8 @@ impl Default for Settings {
             link_vertical_margins: false,
             margin_top: None,
             margin_bottom: None,
+            block_margins: BlockMarginMode::Ignore,
+            float_mode: FloatMode::Ignore,
             line_height: 1.35,
             line_spacing_percent: None,
             word_spacing: 0.0,

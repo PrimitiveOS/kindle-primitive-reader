@@ -49,8 +49,8 @@ device-system evidence. This count tracks plan milestones, not overall feature
 parity; many reading requirements and the foreground Kindle acceptance gates
 remain open.
 
-**Control evidence snapshot:** 229 of 536 in-scope reading-control rows have
-an implemented workflow, 234 are partial, 49 are gaps, and 24 need audit. The
+**Control evidence snapshot:** 230 of 536 in-scope reading-control rows have
+an implemented workflow, 235 are partial, 47 are gaps, and 24 need audit. The
 [statistics reset comparison](reading-statistics.md#reset-statistics) updates
 seven rows with an executable stock check and Mac verification.
 Reader 0.1.32 adds [search from selection](selection-search.md),
@@ -67,6 +67,8 @@ separate gates.
 
 - [x] Set the active Reader goal to KOReader's core Kindle reading workflows: document open/render, navigation/layout, search/lookup, bookmarks/annotations, reading progress, accessibility, offline scans, and local reading data.
 - [x] Audit all four native CREngine Render Mode masks against authored CSS and compare Reader’s existing Parley and Blitz paths. The mode control remains open for the measured layout and source-position work. [Reference and captures](render-modes.md)
+- [x] Match the measured vertical margin contributions in the horizontal Parley provider behind an internal opt-in. Check direct sibling edges, structural boundaries, and source-range restoration after pagination changes. [Block spacing comparison](render-modes.md#horizontal-block-spacing)
+- [x] Add physical left and right text float exclusions and side-specific clearance to the horizontal Parley provider behind an internal opt-in. Verify per-line width, source hit-testing and ordinary-flow rollback. [Float comparison](render-modes.md#horizontal-floats-and-clearance)
 - [x] Keep general extension/plugin systems, Terminal/shell, unrelated utilities, book acquisition, and remote services out of implementation, parity counts, test requirements, and release gates. Reading-specific capabilities remain eligible when implemented as native Reader features.
 - [x] Remove OPDS acquisition and WebDAV progress-sync modules, screens, and worker commands from the current source. Keep local progress, backup, restore, and migration workflows.
 - [x] Apply saved overlap and axis-order preferences to manual fixed-page turns. Physical buttons and page-turn tap zones pan through the zoomed page before advancing, matching KOReader's reading order. Fixed-page and app-level regressions pass on the Mac; the device comparison remains open.

@@ -173,6 +173,7 @@ pub(crate) struct ParleyChapter {
     markers: Vec<PaintedMarker>,
     table_frames: Vec<crate::table_borders::Frame>,
     padded_backgrounds: Vec<crate::vertical_padding::Fill>,
+    float_geometry: bool,
     limitations: Vec<String>,
     glyphs: GlyphCache,
 }
@@ -227,12 +228,66 @@ impl ParleyChapter {
         book: &mut Book,
         href: &str,
         source: &Source,
+        fonts: FontContext,
+        settings: Settings,
+        styles: &[Style],
+        user_rules: &crate::user_hyphenation::Rules,
+        flow: &ChapterFlow,
+        source_order: bool,
+    ) -> Result<(Self, Vec<Line>, f32)> {
+        let float_plan = crate::float_layout::Plan::prepare(source, styles, settings);
+        let mut layout = |fonts, float_plan| {
+            Self::layout_flow(
+                book,
+                href,
+                source,
+                fonts,
+                settings,
+                styles,
+                user_rules,
+                flow,
+                source_order,
+                float_plan,
+            )
+        };
+        let Some(plan) = &float_plan else {
+            return layout(fonts, None);
+        };
+        let trial = layout(fonts.clone(), Some(plan)).and_then(|(chapter, mut lines, extent)| {
+            lines.sort_by(|a, b| a.top.total_cmp(&b.top));
+            crate::Pagination::with_breaks_capped(
+                &lines,
+                settings.text_height() as f32,
+                extent,
+                &[],
+                settings.chapter_height_limit(),
+            )?;
+            Ok((chapter, lines, extent))
+        });
+        match trial {
+            Err(error) if error.downcast_ref::<crate::PageContentTooTall>().is_some() => {
+                let (mut chapter, lines, extent) = layout(fonts, None)?;
+                chapter.limitations.push(
+                    "Float geometry could not fit a reading page; the chapter uses ordinary flow"
+                        .into(),
+                );
+                Ok((chapter, lines, extent))
+            }
+            result => result,
+        }
+    }
+
+    fn layout_flow(
+        book: &mut Book,
+        href: &str,
+        source: &Source,
         mut fonts: FontContext,
         settings: Settings,
         styles: &[Style],
         user_rules: &crate::user_hyphenation::Rules,
         flow: &ChapterFlow,
         source_order: bool,
+        float_plan: Option<&crate::float_layout::Plan>,
     ) -> Result<(Self, Vec<Line>, f32)> {
         if source
             .blocks
@@ -250,6 +305,7 @@ impl ParleyChapter {
             markers: Vec::new(),
             table_frames: Vec::new(),
             padded_backgrounds: Vec::new(),
+            float_geometry: false,
             limitations: Vec::new(),
             glyphs: GlyphCache::with_hinting(
                 settings.logical_font_size.is_some(),
@@ -260,7 +316,7 @@ impl ParleyChapter {
             ),
         };
         let mut context = LayoutContext::new();
-        let mut lines = Vec::new();
+        let mut lines: Vec<Line> = Vec::new();
         let mut y = 0.0_f32;
         let mut image_budget = MAX_IMAGE_PIXELS;
         let fallback = Arc::new(GrayImage::from_pixel(
@@ -333,6 +389,7 @@ impl ParleyChapter {
                     false,
                     indent,
                     &Default::default(),
+                    None,
                 );
                 let widths = layout.calculate_content_widths();
                 (widths.min.ceil() as u32, widths.max.ceil() as u32)
@@ -351,6 +408,15 @@ impl ParleyChapter {
             settings,
             &table_flow,
         );
+        let block_margins = crate::block_margins::before_blocks(
+            source,
+            styles,
+            publisher_boxes.as_deref(),
+            settings,
+        );
+        chapter.float_geometry = float_plan.is_some();
+        let mut float_flow = crate::float_layout::Flow::default();
+        let mut float_fills = Vec::new();
         let column_for = |block: &Block| {
             if let Some(boxes) = &publisher_boxes {
                 return boxes[block.element].cell;
@@ -461,13 +527,51 @@ impl ParleyChapter {
             let input = flow.layout_block(source, source_block)?;
             let block = &input;
             let cell = column_for(block);
+            let (natural_column, natural_width) = bounds_for(block);
+            let float = float_plan.and_then(|plan| plan.floats[index]);
+            if let Some(plan) = float_plan {
+                use crate::float_layout::{Clear, simple_box};
+                y = float_flow.leave_closed_boxes(index, y);
+                let style = &styles[block.element];
+                let separate = source_block.table_cell.is_some()
+                    || block.list_item.is_some()
+                    || !block.images.is_empty()
+                    || !block.ruby.is_empty()
+                    || float.is_none() && style.background.is_some()
+                    || natural_column != 0
+                    || natural_width != outer_width
+                    || style
+                        .text_indent
+                        .box_pixels(outer_width, settings.font_size)
+                        != 0.0
+                    || !simple_box(style, outer_width, settings.font_size);
+                y = float_flow.clear(
+                    if separate {
+                        Clear::BOTH
+                    } else {
+                        plan.clears[index]
+                    },
+                    y,
+                );
+            }
             let padding = vertical_padding
                 .as_ref()
                 .map_or_else(Default::default, |g| g[index]);
+            let margin = block_margins.as_ref().map_or(0.0, |g| g[index]);
             if padding.before_grid > 0 {
                 y = row_flow.end(y) + padding.before_grid as f32;
             }
+            if margin > 0.0 && cell.is_some() {
+                y = row_flow.end(y) + margin;
+            }
             y = row_flow.enter(cell, y);
+            if margin != 0.0 && cell.is_none() {
+                // A large negative margin may overlap its previous box, but
+                // cannot reverse the layout's line and paragraph origins.
+                let floor = lines.last().map_or(0.0, |line| line.top + 1.0);
+                let floor = chapter.paragraphs.last().map_or(floor, |p| floor.max(p.y));
+                y = (y + margin).max(if margin < 0.0 { floor } else { 0.0 });
+            }
             let start_of_cell = y;
             let decorated = cell.and_then(|cell| Some((cell, borders.as_ref()?.cells.get(&cell)?)));
             if let Some((c, _)) = decorated
@@ -477,7 +581,13 @@ impl ParleyChapter {
             }
             last_cell = cell;
             y += padding.before as f32;
-            let (column_x, column_width) = bounds_for(block);
+            let (column_x, column_width) = if let Some(spec) = float {
+                let (x, top) = float_flow.place(spec, outer_width, y);
+                y = top;
+                (x, spec.width)
+            } else {
+                (natural_column, natural_width)
+            };
             let gutter = gutter_for(block);
             let image_width = column_width - gutter;
             let marker = block
@@ -500,6 +610,7 @@ impl ParleyChapter {
             let block_y = y;
             let mut rtl = matches!(block.direction, parley::BaseDirection::Rtl);
             let mut marker_baseline = None;
+            let mut float_height = 0.0_f32;
             let first_image = chapter.illustrations.len();
             let available = MAX_IMAGE_BOXES
                 .saturating_sub(first_image)
@@ -565,11 +676,15 @@ impl ParleyChapter {
             }
             if !block.text.is_empty() {
                 let style = &styles[block.element];
+                let publication_box = if float.is_none() {
+                    publisher_boxes.as_ref().map(|boxes| boxes[block.element])
+                } else {
+                    None
+                };
                 let (text_x, text_width, indent_base) =
-                    publisher_boxes
+                    publication_box
                         .as_ref()
-                        .map_or((column_x, width, image_width), |boxes| {
-                            let area = boxes[block.element];
+                        .map_or((column_x, width, image_width), |area| {
                             let (x, expanded) = area.paragraph_bounds_for_text(
                                 block.direction,
                                 block.text,
@@ -589,6 +704,11 @@ impl ParleyChapter {
                     settings.font_size,
                     hanging,
                 );
+                let contour = if float.is_none() && float_plan.is_some() {
+                    float_flow.contour(y, outer_width, settings.font_size * 4.0)
+                } else {
+                    None
+                };
                 let (layout, ruby) = layout_with_images(
                     &mut context,
                     &mut fonts,
@@ -599,9 +719,15 @@ impl ParleyChapter {
                     &inline_boxes,
                     indent,
                     user_rules,
+                    contour,
                 );
                 if lines.len() + layout.len() > MAX_LINES {
                     return Err("The chapter exceeds the Parley line limit".into());
+                }
+                if float.is_some() {
+                    // The CSS footprint follows line boxes. Glyph overhang in
+                    // Parley's ink bounds must not exclude an extra line.
+                    float_height = layout.height();
                 }
                 let origin = y - layout
                     .lines()
@@ -663,13 +789,10 @@ impl ParleyChapter {
                 y = bottom + gap;
                 chapter.paragraphs.push(Paragraph {
                     key: block.key,
-                    column: publisher_boxes.as_ref().map_or(
-                        column_x as f32..(column_x + column_width) as f32,
-                        |boxes| {
-                            let area = boxes[block.element];
+                    column: publication_box
+                        .map_or(column_x as f32..(column_x + column_width) as f32, |area| {
                             area.outer_x as f32..(area.outer_x + area.outer_width) as f32
-                        },
-                    ),
+                        }),
                     max_bottom: bottom,
                     x,
                     y: origin,
@@ -787,9 +910,26 @@ impl ParleyChapter {
             if padding.after_grid > 0 {
                 y = row_flow.end(y) + padding.after_grid as f32;
             }
+            if let Some(spec) = float {
+                let bottom = block_y + float_height.max(spec.publisher_height.unwrap_or(0.0));
+                if bottom - block_y > settings.text_height() as f32 * 0.5 {
+                    return Err(Box::new(crate::PageContentTooTall));
+                }
+                float_flow.record(spec, column_x, bottom);
+                if let Some(gray) = spec.gray {
+                    float_fills.push(crate::vertical_padding::Fill::rectangle(
+                        spec.owner,
+                        column_x..column_x + column_width,
+                        block_y,
+                        bottom,
+                        gray,
+                    ));
+                }
+                y = block_y;
+            }
         }
 
-        if source.blocks.iter().any(|b| column_for(b).is_some()) {
+        if chapter.float_geometry || source.blocks.iter().any(|b| column_for(b).is_some()) {
             chapter.paragraphs.sort_by(|a, b| a.y.total_cmp(&b.y));
         }
         let mut maximum = 0.0_f32;
@@ -811,6 +951,7 @@ impl ParleyChapter {
                 positions.finish(b, boxes, styles, &mut chapter.padded_backgrounds);
             chapter.padded_backgrounds.sort_by_key(|f| f.element);
         }
+        chapter.padded_backgrounds.extend(float_fills);
         let painted = chapter
             .table_frames
             .iter()
@@ -822,7 +963,7 @@ impl ParleyChapter {
                     .map(|f| f.painted_bottom()),
             )
             .fold(0., f32::max);
-        let extent = (row_flow.end(y) - gap).max(painted).max(0.0);
+        let extent = float_flow.finish((row_flow.end(y) - gap).max(painted).max(0.0));
         if !extent.is_finite() || extent > settings.chapter_height_limit() {
             return Err("The chapter exceeds the Parley height limit".into());
         }
@@ -876,25 +1017,41 @@ impl ParleyChapter {
 
     pub(crate) fn source_at(&self, x: f32, y: f32, visible: &Range<f32>) -> Option<(usize, usize)> {
         let start = self.paragraphs.partition_point(|p| p.max_bottom <= y);
-        let paragraph = self.paragraphs[start..]
+        let mut candidates = self.paragraphs[start..]
             .iter()
             .take_while(|p| p.y <= y)
-            .find(|p| p.bottom > y && p.column.contains(&x))?;
-        let (cluster, _) =
-            parley::Cluster::from_point_exact(&paragraph.layout, x - paragraph.x, y - paragraph.y)?;
-        let line = cluster.line();
-        let metrics = line.metrics();
-        if paragraph.y + metrics.content_block_max_coord <= visible.start
-            || paragraph.y + metrics.content_block_min_coord >= visible.end
-        {
-            return None;
-        }
-        let offset = cluster.text_range().start;
-        let offset = match &paragraph.flow {
-            Some(flow) => flow.source_offset(offset, crate::flow_projection::Affinity::After)?,
-            None => offset,
+            .filter(|p| p.bottom > y && p.column.contains(&x));
+        let hit = |paragraph: &Paragraph| {
+            let (cluster, _) = parley::Cluster::from_point_exact(
+                &paragraph.layout,
+                x - paragraph.x,
+                y - paragraph.y,
+            )?;
+            let line = cluster.line();
+            let metrics = line.metrics();
+            if paragraph.y + metrics.content_block_max_coord <= visible.start
+                || paragraph.y + metrics.content_block_min_coord >= visible.end
+            {
+                return None;
+            }
+            let offset = cluster.text_range().start;
+            let offset = match &paragraph.flow {
+                Some(flow) => {
+                    flow.source_offset(offset, crate::flow_projection::Affinity::After)?
+                }
+                None => offset,
+            };
+            Some((paragraph.key, offset))
         };
-        Some((paragraph.key, offset))
+        if self.float_geometry {
+            candidates.find_map(hit)
+        } else {
+            candidates.next().and_then(hit)
+        }
+    }
+
+    pub(crate) fn uses_float_geometry(&self) -> bool {
+        self.float_geometry
     }
 
     pub(crate) fn mapping(&self, key: usize) -> Option<&OwnedProjection> {
@@ -1267,6 +1424,7 @@ fn layout_paragraph(
         &[],
         indent,
         &crate::user_hyphenation::Rules::default(),
+        None,
     )
 }
 
@@ -1280,6 +1438,7 @@ fn layout_with_images(
     images: &[parley::InlineBox],
     indent: LineIndent,
     user_rules: &crate::user_hyphenation::Rules,
+    contour: Option<crate::float_layout::Contour>,
 ) -> (Layout<PaintBrush>, Vec<RubyOverlay>) {
     let automatic = crate::hyphenation::with_user_rules_text(
         block.text,
@@ -1300,6 +1459,7 @@ fn layout_with_images(
         false,
         indent,
         &automatic,
+        contour,
     );
     // Some embedded fonts have ascenders and descenders taller than the publisher's
     // line advance. A long paragraph can then have no page break between full lines.
@@ -1318,6 +1478,7 @@ fn layout_with_images(
             true,
             indent,
             &automatic,
+            contour,
         );
     }
     let mut candidates = Vec::new();
@@ -1385,6 +1546,7 @@ fn layout_with_images(
         fit_font_metrics,
         indent,
         &automatic,
+        contour,
     );
     let mut overlays = Vec::new();
     for candidate in candidates {
@@ -1641,6 +1803,7 @@ fn make_paragraph(
     fit_font_metrics: bool,
     indent: LineIndent,
     automatic: &crate::user_hyphenation::Opportunities,
+    contour: Option<crate::float_layout::Contour>,
 ) -> Layout<PaintBrush> {
     let style = &styles[block.element];
     let language = block.language;
@@ -1833,7 +1996,21 @@ fn make_paragraph(
         );
     }
     let Some(width) = width else { return layout };
-    layout.break_all_lines(Some(width as f32));
+    if let Some(contour) = contour {
+        let mut breaker = layout.break_lines();
+        breaker.state_mut().set_layout_max_advance(width as f32);
+        while !breaker.is_done() {
+            let (y, x, advance) = contour.for_line(breaker.committed_y());
+            let state = breaker.state_mut();
+            state.set_line_y(y);
+            state.set_line_x(x);
+            state.set_line_max_advance(advance);
+            breaker.break_next();
+        }
+        breaker.finish();
+    } else {
+        layout.break_all_lines(Some(width as f32));
+    }
     let alignment = match settings.alignment {
         crate::TextAlignment::Publisher => style.alignment.unwrap_or(Alignment::Start),
         crate::TextAlignment::Start => Alignment::Start,

@@ -389,6 +389,7 @@ mod tests {
     // fixtures. The public verifier must receive the actual Reader snapshot.
     fn legacy_test_config(path: &Path, fonts: &[PathBuf]) -> BookConfig {
         BookConfig {
+            viewport: crate::session::ReadingViewport::PORTRAIT,
             book: path.to_owned(),
             fonts: fonts.to_vec(),
             engine: Engine::Parley,
@@ -590,6 +591,7 @@ mod logical_configuration_tests {
     #[test]
     fn configured_receipt_distinguishes_raw_requested_effective_and_legacy_units_without_paths() {
         let mut config = BookConfig {
+            viewport: crate::session::ReadingViewport::PORTRAIT,
             user_styles: Default::default(),
             user_hyphenation: Default::default(),
             engine: Engine::Parley,

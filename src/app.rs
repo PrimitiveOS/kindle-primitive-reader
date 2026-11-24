@@ -293,6 +293,7 @@ enum Screen {
     OnlineEdit,
     OnlineHistory,
     TranslationSettings,
+    WikipediaSettings,
     ClearOnlineHistory,
     DictionaryHistory,
     Vocabulary,
@@ -450,6 +451,7 @@ impl Screen {
             Self::OnlineEdit => "Online lookup",
             Self::OnlineHistory => "Online lookup history",
             Self::TranslationSettings => "Translation settings",
+            Self::WikipediaSettings => "Wikipedia settings",
             Self::ClearOnlineHistory => "Online lookup history",
             Self::DictionaryHistory => "Dictionary history",
             Self::Vocabulary => "Vocabulary",
@@ -558,6 +560,8 @@ enum Action {
     RepeatOnline(usize),
     ToggleOnlineHistory,
     ToggleRomanizations,
+    ToggleWikipediaImage,
+    ToggleWikipediaMoreImages,
     ClearOnlineHistory,
     RepeatSearch(SearchQuery),
     StepNearby(crate::search::SearchDirection),
@@ -1329,6 +1333,7 @@ impl Reader {
             .fonts_for(custom_font)
             .unwrap_or_else(|_| self.fonts.clone());
         let config = BookConfig {
+            viewport: crate::session::ReadingViewport::PORTRAIT,
             user_styles: self.style_store.data.snapshot(id)?,
             user_hyphenation: self.user_hyphenation.clone(),
             chapter_offsets: Default::default(),
@@ -2489,6 +2494,7 @@ impl Reader {
             Screen::TranslationSettings => {
                 return self.translation_settings_items();
             }
+            Screen::WikipediaSettings => return self.wikipedia_settings_items(),
             Screen::SearchHistory => {
                 return self
                     .lookup_history
@@ -3669,6 +3675,17 @@ impl Reader {
             Action::ToggleRomanizations => self.update_lookup_history(|h| {
                 h.online_languages.show_romanizations = !h.online_languages.show_romanizations
             })?,
+            Action::ToggleWikipediaImage => self.update_lookup_history(|h| {
+                h.online_languages.show_wiki_image = !h.online_languages.show_wiki_image
+            })?,
+            Action::ToggleWikipediaMoreImages
+                if self.lookup_history.online_languages.show_wiki_image =>
+            {
+                self.update_lookup_history(|h| {
+                    h.online_languages.show_wiki_more = !h.online_languages.show_wiki_more
+                })?;
+            }
+            Action::ToggleWikipediaMoreImages => {}
             Action::ClearOnlineHistory => {
                 self.update_lookup_history(|h| h.online.clear())?;
                 self.show(Screen::OnlineHistory);
@@ -7776,6 +7793,12 @@ impl Reader {
                         Action::ToggleRomanizations => RowAccessory::Toggle(
                             self.lookup_history.online_languages.show_romanizations,
                         ),
+                        Action::ToggleWikipediaImage => RowAccessory::Toggle(
+                            self.lookup_history.online_languages.show_wiki_image,
+                        ),
+                        Action::ToggleWikipediaMoreImages => RowAccessory::Toggle(
+                            self.lookup_history.online_languages.show_wiki_more,
+                        ),
                         Action::DictionarySource(SourceAction::LargeWindow) => {
                             RowAccessory::Toggle(self.dictionary_settings.large_window)
                         }
@@ -8385,9 +8408,8 @@ impl App for Reader {
         }
         if input == Input::Sleep
             && let Some(panel) = &mut self.online
-            && panel.job.take().is_some()
         {
-            panel.message = Some("Lookup cancelled when Reader went to sleep.".into());
+            panel.cancel_for_sleep();
         }
         if matches!(input, Input::Sleep) && self.ocr.take().is_some() {
             self.notice = None;
@@ -8963,11 +8985,7 @@ impl App for Reader {
                     .as_ref()
                     .and_then(|import| import.deadline),
             )
-            .chain(
-                self.online
-                    .as_ref()
-                    .and_then(|p| p.job.as_ref().map(|j| j.poll_at)),
-            )
+            .chain(self.online.as_ref().and_then(online_panel::Panel::deadline))
             .chain(self.ocr.as_ref().map(|job| job.deadline))
             .chain(self.text_flow.as_ref().and_then(TextFlow::deadline))
             .chain(self.stats.deadline())
@@ -9741,6 +9759,7 @@ impl App for ReaderRuntime {
 
 pub fn run_probe(engine: Engine, book: PathBuf, fonts: Vec<PathBuf>, home: &Path) -> Result<()> {
     let reading = Reading::open(BookConfig {
+        viewport: crate::session::ReadingViewport::PORTRAIT,
         user_styles: Default::default(),
         user_hyphenation: Default::default(),
         chapter_offsets: Default::default(),
