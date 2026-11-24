@@ -9,11 +9,47 @@ use parley::{BaseDirection, Language};
 
 const MAX_DEPTH: usize = 32;
 const MAX_TRANSITIONS: usize = 1024;
-pub(super) const MAX_PARAGRAPHS: usize = 512;
+const MAX_PARAGRAPHS: usize = 512;
+const MAX_LINKS: usize = 64;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Article {
     pub(crate) paragraphs: Vec<Paragraph>,
+    pub(crate) links: Vec<Link>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Link {
+    pub(crate) range: Range<usize>,
+    pub(crate) target: Option<String>,
+}
+
+impl Article {
+    pub(super) fn is_empty(&self) -> bool {
+        self.paragraphs.is_empty() && self.links.is_empty()
+    }
+
+    pub(super) fn append(&mut self, other: Self, offset: usize) {
+        let limit = MAX_PARAGRAPHS.saturating_sub(self.paragraphs.len());
+        self.paragraphs.extend(
+            other
+                .paragraphs
+                .into_iter()
+                .take(limit)
+                .map(|mut paragraph| {
+                    paragraph.range.start += offset;
+                    paragraph.range.end += offset;
+                    paragraph
+                }),
+        );
+        let limit = MAX_LINKS.saturating_sub(self.links.len());
+        self.links
+            .extend(other.links.into_iter().take(limit).map(|mut link| {
+                link.range.start += offset;
+                link.range.end += offset;
+                link
+            }));
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -57,12 +93,37 @@ pub(super) struct Tracker {
     transitions: Vec<(usize, Style)>,
     next_item: usize,
     overflow: bool,
+    links: Vec<Link>,
+    open_link: Option<(usize, Option<String>)>,
 }
 
 pub(super) fn language(tag: &str) -> Option<Language> {
     (tag.len() <= crate::source::MAX_LANGUAGE_BYTES)
         .then(|| Language::parse(tag).ok())
         .flatten()
+}
+
+fn reference(href: &str) -> Option<String> {
+    let encoded = href.strip_prefix("bword://")?;
+    if encoded.len() > super::MAX_WORD_BYTES * 3 {
+        return None;
+    }
+    let mut bytes = encoded.as_bytes().iter();
+    while let Some(&byte) = bytes.next() {
+        if byte == b'%' && !(bytes.next()?.is_ascii_hexdigit() && bytes.next()?.is_ascii_hexdigit())
+        {
+            return None;
+        }
+    }
+    let decoded = percent_encoding::percent_decode_str(encoded)
+        .decode_utf8()
+        .ok()?;
+    if decoded.chars().any(char::is_control) {
+        return None;
+    }
+    let word = decoded.trim();
+    (!word.is_empty() && word.len() <= super::MAX_WORD_BYTES && !word.contains("://"))
+        .then(|| word.to_owned())
 }
 
 impl Tracker {
@@ -76,6 +137,8 @@ impl Tracker {
             transitions: Vec::new(),
             next_item: 0,
             overflow: false,
+            links: Vec::new(),
+            open_link: None,
         }
     }
 
@@ -84,6 +147,17 @@ impl Tracker {
     }
 
     pub(super) fn tag(&mut self, tag: &Tag, offset: usize) {
+        if !self.overflow && &*tag.name == "a" {
+            self.close_link(offset);
+            if tag.kind == TagKind::StartTag
+                && !tag.self_closing
+                && self.links.len() < MAX_LINKS
+                && let Some(href) = tag.attrs.iter().find(|attr| &*attr.name.local == "href")
+            {
+                self.open_link = Some((offset, reference(&href.value)));
+            }
+            return;
+        }
         if self.overflow
             || !matches!(
                 tag.name.as_ref(),
@@ -125,6 +199,17 @@ impl Tracker {
             } else {
                 self.overflow = true;
             }
+        }
+    }
+
+    fn close_link(&mut self, end: usize) {
+        if let Some((start, target)) = self.open_link.take()
+            && start < end
+        {
+            self.links.push(Link {
+                range: start..end,
+                target,
+            });
         }
     }
 
@@ -199,23 +284,51 @@ impl Tracker {
         });
     }
 
-    pub(super) fn finish(self, text: &str) -> (String, Vec<Paragraph>) {
+    pub(super) fn finish(mut self, text: &str) -> (String, Article) {
         if self.overflow {
-            return (super::display_text(text), Vec::new());
+            return (super::display_text(text), Article::default());
         }
+        self.close_link(text.len());
         let mut output = String::new();
         let mut paragraphs = Vec::new();
+        let mut links: Vec<Link> = Vec::new();
+        let mut last = None;
+        let mut source_links = self.links.into_iter().enumerate().peekable();
         let mut marked = BTreeSet::new();
         let mut transitions = self.transitions.into_iter().peekable();
         let mut style = self.root;
         let mut start = 0;
         for line in text.split_inclusive('\n') {
+            let line_offset = start;
             let first = start + line.len() - line.trim_start().len();
             start += line.len();
             while transitions.peek().is_some_and(|event| event.0 <= first) {
                 style = transitions.next().unwrap().1;
             }
-            let Some(range) = super::push_display_line(&mut output, line) else {
+            let Some(range) = super::push_display_line(&mut output, line, |source, visible| {
+                let at = line_offset + source;
+                while source_links
+                    .peek()
+                    .is_some_and(|(_, link)| link.range.end <= at)
+                {
+                    source_links.next();
+                }
+                let Some((index, link)) = source_links
+                    .peek()
+                    .filter(|(_, link)| link.range.contains(&at))
+                else {
+                    return;
+                };
+                if last == Some(*index) {
+                    links.last_mut().unwrap().range.end = visible.end;
+                } else {
+                    links.push(Link {
+                        range: visible,
+                        target: link.target.clone(),
+                    });
+                    last = Some(*index);
+                }
+            }) else {
                 continue;
             };
             if range.is_empty() || style == Style::default() || paragraphs.len() >= MAX_PARAGRAPHS {
@@ -232,6 +345,6 @@ impl Tracker {
                 language: style.language,
             });
         }
-        (output, paragraphs)
+        (output, Article { paragraphs, links })
     }
 }

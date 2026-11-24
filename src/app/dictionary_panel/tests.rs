@@ -398,6 +398,128 @@ fn dictionary_html_uses_locale_for_neutral_paragraphs_and_explicit_direction_fir
 }
 
 #[test]
+fn dictionary_cross_reference_opens_the_originating_source_and_restores_the_passage() {
+    let mut s = Simulation::new();
+    let root = s.fixture.root.join("dictionaries");
+    let article = b"<p>See <a href='bword://Harbour%20Light'>the harbour<br>reference</a> for the closest meaning.</p>\
+        <p><a href='bword://elsewhere'>Unlisted sense</a>, <a href='https://example.invalid'>Web article</a>, \
+        and <a href='elsewhere'>Bare target</a>.</p>";
+    write_dictionary(
+        &root,
+        "Reference glossary",
+        "sametypesequence=h\n",
+        &[
+            (
+                "harbour light",
+                b"<p>A light marking the entry to the harbour.</p>",
+            ),
+            ("The", article),
+        ],
+    );
+    write_dictionary(
+        &root,
+        "Other glossary",
+        "sametypesequence=m\n",
+        &[
+            ("elsewhere", b"Only available from the other source."),
+            (
+                "harbour light",
+                b"Different meaning from a dictionary with the same display name.",
+            ),
+        ],
+    );
+    let duplicate = root.join("Other glossary.ifo");
+    let metadata = fs::read_to_string(&duplicate)
+        .unwrap()
+        .replace("bookname=Other glossary", "bookname=Reference glossary");
+    fs::write(&duplicate, metadata).unwrap();
+
+    s.open_epub_selection();
+    let selection = s.app.selection.clone();
+    let location = s.app.current_history_location();
+    let passage = s.draw(None);
+    s.tap(s.app.selection_button(SelectionAction::Dictionary));
+    let index = s
+        .app
+        .definitions
+        .iter()
+        .position(|entry| entry.source == Path::new("Reference glossary.ifo"))
+        .unwrap();
+    s.tap(definition_results_button(s.app.definition_layout().0));
+    s.tap(definition_result_row(s.app.definition_layout().0, index));
+    s.draw(Some("dictionary-cross-reference.png"));
+    let link_point = |s: &Simulation, label: &str| {
+        let entry = &s.app.definitions[s.app.list_page];
+        let link = entry
+            .article
+            .as_ref()
+            .unwrap()
+            .links
+            .iter()
+            .position(|link| &entry.text[link.range.clone()] == label)
+            .unwrap();
+        let (popup, _, rows) = s.app.definition_layout();
+        let view = &s.app.dictionary_navigation.view;
+        let rect = body(popup);
+        view.layout
+            .get()
+            .unwrap()
+            .iter()
+            .skip(view.first_line(rows))
+            .take(rows)
+            .enumerate()
+            .filter_map(|(row, line)| {
+                let (_, left, right) = line
+                    .links
+                    .get()?
+                    .iter()
+                    .find(|(index, _, _)| *index == link)?;
+                let x = line.bounds(rect).x + (right + left) / 2;
+                let y = rect.y + row as i32 * LINE + LINE / 2;
+                Some((x as f32, y as f32))
+            })
+            .last()
+            .unwrap()
+    };
+    let before = s.app.lookup_history.dictionary.clone();
+    for label in ["Web article", "Bare target"] {
+        let (x, y) = link_point(&s, label);
+        assert_eq!(s.app.input(Input::Tap(x, y)), Change::None);
+    }
+    let (x, y) = link_point(&s, "Unlisted sense");
+    assert_eq!(s.app.input(Input::Tap(x, y)), Change::Partial);
+    assert_eq!(
+        s.app.notice.as_deref(),
+        Some("Reference not found in this dictionary")
+    );
+    assert_eq!(s.app.list_page, index);
+    assert_eq!(s.app.lookup_history.dictionary, before);
+    assert!(s.app.spelling_lookup.is_none());
+    assert_eq!(s.app.finish_find("closest"), Change::Partial);
+    let previous = s.draw(None);
+    let (x, y) = link_point(&s, "the harbour\nreference");
+    assert_eq!(s.app.input(Input::Tap(x, y)), Change::Partial);
+    assert_eq!(s.app.definition_word, "Harbour Light");
+    assert_eq!(s.app.definitions.len(), 1);
+    assert_eq!(
+        s.app.definitions[0].text,
+        "A light marking the entry to the harbour."
+    );
+    assert_eq!(
+        s.app.definitions[0].source,
+        Path::new("Reference glossary.ifo")
+    );
+    assert!(s.app.spelling_lookup.is_none());
+    s.back();
+    assert_eq!(s.app.list_page, index);
+    assert_eq!(s.draw(None), previous);
+    s.back();
+    assert_eq!(s.app.current_history_location(), location);
+    assert_eq!(s.app.selection, selection);
+    assert_eq!(s.draw(None), passage);
+}
+
+#[test]
 fn dictionary_navigation_restores_each_result_and_the_epub_selection() {
     let mut s = Simulation::new();
     s.open_epub_selection();

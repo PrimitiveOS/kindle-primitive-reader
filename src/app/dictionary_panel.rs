@@ -103,6 +103,7 @@ struct TextLine {
     marker: Option<dictionary::article::Marker>,
     placed: OnceCell<PlacedLine>,
     words: OnceCell<Vec<(Range<usize>, i32, i32)>>,
+    links: OnceCell<Vec<(usize, i32, i32)>>,
 }
 
 #[derive(Debug)]
@@ -167,6 +168,7 @@ fn layout(canvas: &mut Canvas, text: &str, width: i32) -> Vec<TextLine> {
             marker: None,
             placed: OnceCell::new(),
             words: OnceCell::new(),
+            links: OnceCell::new(),
         })
         .collect()
 }
@@ -176,7 +178,11 @@ fn article_layout(
     result: &dictionary::LookupEntry,
     width: i32,
 ) -> Vec<TextLine> {
-    let Some(article) = &result.article else {
+    let Some(article) = result
+        .article
+        .as_ref()
+        .filter(|article| !article.paragraphs.is_empty())
+    else {
         return layout(canvas, &result.text, width);
     };
     let mut prior = 0;
@@ -639,6 +645,10 @@ impl Reader {
     }
 
     pub(super) fn look_up(&mut self, word: &str) -> Result<()> {
+        self.look_up_entry(word, None)
+    }
+
+    fn look_up_entry(&mut self, word: &str, source: Option<&Path>) -> Result<()> {
         let nested = self.screen == Screen::Definition;
         let word = word.trim();
         if !lookup_history::valid(word) {
@@ -647,7 +657,13 @@ impl Reader {
         if nested && self.dictionary_navigation.trail.len() >= MAX_DEPTH {
             return Err("Go back one lookup to open another definition".into());
         }
-        let results = with_storage(|| self.lookup_sources(word))?;
+        let results = with_storage(|| match source {
+            Some(source) => self.dictionaries.lookup_reference(source, word),
+            None => self.lookup_sources(word),
+        })?;
+        if source.is_some() && results.is_empty() {
+            return Err("Reference not found in this dictionary".into());
+        }
         let entry = self.vocabulary_entry(word);
         let reviewing = if self.screen == Screen::VocabularyWord {
             self.vocabulary_view.word.as_deref() == Some(word)
@@ -696,7 +712,11 @@ impl Reader {
         if repeated {
             self.vocabulary_view.repeated = Some((word.to_owned(), entry));
         }
-        self.start_spelling_lookup(word);
+        if source.is_some() {
+            self.spelling_lookup = None;
+        } else {
+            self.start_spelling_lookup(word);
+        }
         Ok(())
     }
 
@@ -788,16 +808,25 @@ impl Reader {
             Change::None
         }
     }
-    fn dictionary_word_at(&self, popup: Rect, x: f32, y: f32) -> Option<String> {
+    fn dictionary_row_at(&self, popup: Rect, x: f32, y: f32) -> Option<(&TextLine, i32)> {
         let rect = body(popup);
         if !rect.contains(x, y) {
             return None;
         }
         let view = &self.dictionary_navigation.view;
-        let n = view.first_line((rect.h / LINE) as usize)
-            + (y as i32 - rect.y) as usize / LINE as usize;
+        let rows = (rect.h / LINE) as usize;
+        let row = (y as i32 - rect.y) as usize / LINE as usize;
+        if row >= rows {
+            return None;
+        }
+        let n = view.first_line(rows) + row;
         let line = view.layout.get()?.get(n)?;
         let pos = x as i32 - line.bounds(rect).x;
+        Some((line, pos))
+    }
+
+    fn dictionary_word_at(&self, popup: Rect, x: f32, y: f32) -> Option<String> {
+        let (line, pos) = self.dictionary_row_at(popup, x, y)?;
         let (bytes, _, _) = line
             .words
             .get()?
@@ -805,6 +834,25 @@ impl Reader {
             .find(|(_, left, right)| (*left..*right).contains(&pos))?;
         let text = &self.definitions.get(self.list_page)?.text;
         Some(text[crate::selection::word_range(text, bytes.start)?].to_owned())
+    }
+
+    fn dictionary_reference_at(
+        &self,
+        popup: Rect,
+        x: f32,
+        y: f32,
+    ) -> Option<(&Path, &dictionary::article::Link)> {
+        let (line, pos) = self.dictionary_row_at(popup, x, y)?;
+        let (index, _, _) = line
+            .links
+            .get()?
+            .iter()
+            .find(|(_, start, end)| (*start..*end).contains(&pos))?;
+        let current = self.definitions.get(self.list_page)?;
+        Some((
+            &current.source,
+            current.article.as_ref()?.links.get(*index)?,
+        ))
     }
     fn find_step(&mut self, step: isize) -> Change {
         let rows = self.definition_layout().2;
@@ -1074,6 +1122,16 @@ impl Reader {
                     return Change::Partial;
                 }
                 if body(popup).contains(x, y) {
+                    if let Some((source, reference)) = self.dictionary_reference_at(popup, x, y) {
+                        let Some(target) = reference.target.clone() else {
+                            return Change::None;
+                        };
+                        let source = source.to_owned();
+                        return match self.look_up_entry(&target, Some(&source)) {
+                            Ok(()) => Change::Partial,
+                            Err(error) => self.report(error),
+                        };
+                    }
                     let step = if x < (popup.x + popup.w / 2) as f32 {
                         -1
                     } else {
@@ -1245,6 +1303,42 @@ impl Reader {
                     let words: Vec<_> = crate::selection::word_ranges(content).collect();
                     placement.range_boxes(canvas, content, line.range.start, &words)
                 });
+                if let Some(article) = &result.article {
+                    let links = line.links.get_or_init(|| {
+                        let first = article
+                            .links
+                            .partition_point(|link| link.range.end <= line.range.start);
+                        let mut boxes = Vec::new();
+                        for (index, link) in article
+                            .links
+                            .iter()
+                            .enumerate()
+                            .skip(first)
+                            .take_while(|(_, link)| link.range.start < line.range.end)
+                        {
+                            let span = link.range.start.saturating_sub(line.range.start)
+                                ..link.range.end.min(line.range.end) - line.range.start;
+                            boxes.extend(
+                                placement
+                                    .range_boxes(canvas, content, line.range.start, &[span])
+                                    .into_iter()
+                                    .map(|(_, left, right)| {
+                                        (index, left.max(0), right.min(line_rect.w))
+                                    })
+                                    .filter(|(_, left, right)| left < right),
+                            );
+                        }
+                        boxes
+                    });
+                    for &(index, left, right) in links {
+                        if article.links[index].target.is_some() {
+                            canvas.fill(
+                                Rect::new(line_rect.x + left, y + LINE - 3, right - left, 2),
+                                0,
+                            );
+                        }
+                    }
+                }
                 if let Some(hit) = current
                     && line.range.start < hit.end
                     && hit.start < line.range.end

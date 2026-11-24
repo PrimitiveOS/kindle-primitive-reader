@@ -60,6 +60,7 @@ pub struct Definition {
 pub(crate) struct LookupEntry {
     pub(crate) definition: Definition,
     pub(crate) article: Option<article::Article>,
+    pub(crate) source: PathBuf,
 }
 
 impl std::ops::Deref for LookupEntry {
@@ -248,19 +249,8 @@ impl DictionarySources {
             dictzip_bytes: MAX_DZ_LOOKUP_BYTES,
         };
         let mut read_any = false;
-        for (DictionaryFile { root, path, .. }, info) in sources {
-            let aliases =
-                synonym_targets(&root, &path, &info, query, &mut budget).unwrap_or_default();
-            let result = lookup_dictionary(
-                &root,
-                &path,
-                &info,
-                IndexQuery {
-                    headword: query,
-                    aliases,
-                },
-                &mut budget,
-            );
+        for (file, info) in sources {
+            let result = lookup_dictionary(&file, &info, query, &mut budget);
             match result {
                 Ok(found) => {
                     read_any = true;
@@ -284,6 +274,30 @@ impl DictionarySources {
             return Err(error);
         }
         Ok(hits.into_best())
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn lookup_reference(
+        &self,
+        source: &Path,
+        word: &str,
+    ) -> io::Result<Vec<LookupEntry>> {
+        // An article's source is a key from discovery, not a path from its HTML.
+        let Some(file) = self.files()?.into_iter().find(|file| file.key == source) else {
+            return Ok(Vec::new());
+        };
+        let info = Info::load(open_dictionary_file(&file.root, &file.path)?)?;
+        let folded = CaseMapper::new().fold_string(word);
+        let query = Query {
+            forms: None,
+            word,
+            folded: &folded,
+        };
+        let mut budget = LookupBudget {
+            index_bytes: MAX_TOTAL_INDEX_BYTES,
+            dictzip_bytes: MAX_DZ_LOOKUP_BYTES,
+        };
+        Ok(lookup_dictionary(&file, &info, query, &mut budget)?.into_best())
     }
 }
 
@@ -566,6 +580,7 @@ fn open_index_and_data(
 fn read_definitions(
     data: &mut Data,
     info: &Info,
+    source: &Path,
     budget: &mut LookupBudget,
     matches: Vec<IndexMatch>,
 ) -> io::Result<Vec<LookupEntry>> {
@@ -586,6 +601,7 @@ fn read_definitions(
                     text,
                 },
                 article,
+                source: source.to_owned(),
             });
         }
     }
@@ -594,15 +610,23 @@ fn read_definitions(
 }
 
 fn lookup_dictionary(
-    root: &Path,
-    path: &Path,
+    file: &DictionaryFile,
     info: &Info,
-    query: IndexQuery<'_>,
+    query: Query<'_>,
     budget: &mut LookupBudget,
 ) -> io::Result<Hits<LookupEntry>> {
-    let (index, mut data) = open_index_and_data(root, path, info, budget)?;
-    let matches = scan_index(index, info, query, data.len()?)?;
-    let mut read_hits = |hits| read_definitions(&mut data, info, budget, hits);
+    let aliases = synonym_targets(&file.root, &file.path, info, query, budget).unwrap_or_default();
+    let (index, mut data) = open_index_and_data(&file.root, &file.path, info, budget)?;
+    let matches = scan_index(
+        index,
+        info,
+        IndexQuery {
+            headword: query,
+            aliases,
+        },
+        data.len()?,
+    )?;
+    let mut read_hits = |hits| read_definitions(&mut data, info, &file.key, budget, hits);
     let exact = read_hits(matches.exact)?;
     let fallback = if exact.is_empty() {
         read_hits(matches.fallback)?
@@ -1063,7 +1087,7 @@ fn definition_with_article(
     language: Option<parley::Language>,
 ) -> Option<(String, Option<article::Article>)> {
     let mut text = String::new();
-    let mut paragraphs = Vec::new();
+    let mut article = article::Article::default();
     for index in 0..sequence.map_or(MAX_FIELDS, <[u8]>::len) {
         if data.is_empty() && sequence.is_none() {
             break;
@@ -1096,32 +1120,22 @@ fn definition_with_article(
             continue;
         }
         let value = std::str::from_utf8(value).ok()?.trim_end_matches('\0');
-        let (value, styles) = if matches!(kind, b'h' | b'g' | b'x' | b'k') {
+        let (value, field) = if matches!(kind, b'h' | b'g' | b'x' | b'k') {
             let tracker = (kind == b'h').then(|| article::Tracker::new(language));
             markup_text(value, kind == b'x', tracker)
         } else {
-            (display_text(value), Vec::new())
+            (display_text(value), article::Article::default())
         };
         if !value.is_empty() {
             if !text.is_empty() {
                 text.push('\n');
             }
-            let offset = text.len();
-            paragraphs.extend(
-                styles
-                    .into_iter()
-                    .take(article::MAX_PARAGRAPHS.saturating_sub(paragraphs.len()))
-                    .map(|mut paragraph| {
-                        paragraph.range.start += offset;
-                        paragraph.range.end += offset;
-                        paragraph
-                    }),
-            );
+            article.append(field, text.len());
             text.push_str(&value);
         }
     }
     (data.is_empty() && !text.is_empty()).then(|| {
-        let article = (!paragraphs.is_empty()).then(|| article::Article { paragraphs });
+        let article = (!article.is_empty()).then_some(article);
         (text, article)
     })
 }
@@ -1129,12 +1143,16 @@ fn definition_with_article(
 fn display_text(text: &str) -> String {
     let mut output = String::new();
     for line in text.lines() {
-        push_display_line(&mut output, line);
+        push_display_line(&mut output, line, |_, _| {});
     }
     output
 }
 
-fn push_display_line(output: &mut String, line: &str) -> Option<std::ops::Range<usize>> {
+fn push_display_line(
+    output: &mut String,
+    line: &str,
+    mut map: impl FnMut(usize, std::ops::Range<usize>),
+) -> Option<std::ops::Range<usize>> {
     let mut words = line.split_whitespace().peekable();
     words.peek()?;
     if !output.is_empty() {
@@ -1145,7 +1163,12 @@ fn push_display_line(output: &mut String, line: &str) -> Option<std::ops::Range<
         if index > 0 {
             output.push(' ');
         }
-        output.extend(word.chars().filter(|ch| !ch.is_control()));
+        let source = word.as_ptr() as usize - line.as_ptr() as usize;
+        for (offset, ch) in word.char_indices().filter(|(_, ch)| !ch.is_control()) {
+            let at = output.len();
+            output.push(ch);
+            map(source + offset, at..output.len());
+        }
     }
     Some(start..output.len())
 }
@@ -1243,7 +1266,7 @@ fn markup_text(
     text: &str,
     xdxf: bool,
     article: Option<article::Tracker>,
-) -> (String, Vec<article::Paragraph>) {
+) -> (String, article::Article) {
     let queue = BufferQueue::default();
     queue.push_back(StrTendril::from_slice(text));
     let tokenizer = Tokenizer::new(
@@ -1259,7 +1282,7 @@ fn markup_text(
     let raw = tokenizer.sink.text.into_inner();
     match tokenizer.sink.article {
         Some(tracker) => tracker.into_inner().finish(&raw),
-        None => (display_text(&raw), Vec::new()),
+        None => (display_text(&raw), article::Article::default()),
     }
 }
 
@@ -1623,6 +1646,35 @@ pub(crate) mod tests {
         assert_eq!(paragraphs[5].marker, Some(Marker::Number(8)));
         assert_eq!(paragraphs[6].direction, None);
         assert_eq!(paragraphs[6].language.unwrap().as_str(), "ara");
+    }
+
+    #[test]
+    fn dictionary_cross_references_keep_canonical_ranges_and_reject_other_targets() {
+        let prefix = "Header\0";
+        let html = "<p>See <a href='bword://port%20%C3%A9clair'> café <br> au   lait </a>. \
+            <a href='https://example.invalid'>Web</a> <a href='file:///private/file'>File</a> \
+            <a href='bword://https%3A%2F%2Fexample.invalid'>Wrapped URL</a> \
+            <a href='bword://bad%GG'>Bad escape</a> <a href='bword://%0Aheader'>Control</a> \
+            <a href='bword://'>Empty destination</a></p>";
+        let record = format!("{prefix}{html}");
+        let (text, article) =
+            definition_with_article(record.as_bytes(), Some(b"mh"), None).unwrap();
+        let links = article.unwrap().links;
+        assert_eq!(
+            text,
+            "Header\nSee café\nau lait . Web File Wrapped URL Bad escape Control Empty destination"
+        );
+        assert_eq!(&text[links[0].range.clone()], "café\nau lait");
+        assert_eq!(links[0].target.as_deref(), Some("port éclair"));
+        assert_eq!(links.len(), 7);
+        assert!(links[1..].iter().all(|link| link.target.is_none()));
+        assert_eq!(&text[links[1].range.clone()], "Web");
+        assert_eq!(&text[links[6].range.clone()], "Empty destination");
+        assert!(
+            links
+                .windows(2)
+                .all(|pair| pair[0].range.end <= pair[1].range.start)
+        );
     }
 
     #[test]

@@ -22,3 +22,16 @@ It verifies two numbered senses, an indented Arabic translation that wraps,
 Find, a long press within that translation, and pixel-exact return to the first
 lookup. Parser tests include malformed nesting, oversized attribute values, and
 inert script, style, and resource references. [Kindle-sized desktop capture](screenshots/dictionary-structured-article.png) · [Popup tests](../src/app/dictionary_panel/tests.rs)
+
+## Cross-references
+
+Tap an underlined `bword://` reference to look up its target in the dictionary
+that supplied the current definition. Reader accepts case variants and indexed
+synonyms through its exact lookup. Back restores the previous definition, its
+scroll position and Find highlight. A missing target leaves the current
+definition open. External links and unqualified link targets remain plain text.
+[KOReader reference handler](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerdictionary.lua#L863-L898)
+
+An authored desktop workflow taps a reference that wraps across two lines,
+distinguishes two dictionaries with the same display name, and verifies that
+Back restores both the definition and the selected passage. [Cross-reference popup](screenshots/dictionary-cross-reference.png) · [Workflow test](../src/app/dictionary_panel/tests.rs)

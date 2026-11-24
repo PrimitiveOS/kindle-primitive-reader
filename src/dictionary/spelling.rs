@@ -342,7 +342,7 @@ impl SuggestionQueries {
             Ok(())
         })?;
         hits.into_iter()
-            .map(|h| read_definitions(&mut data, info, budget, h.values))
+            .map(|h| read_definitions(&mut data, info, &file.key, budget, h.values))
             .collect()
     }
 }

@@ -10653,6 +10653,7 @@ mod tests {
                     text: text.into(),
                 },
                 article: None,
+                source: PathBuf::new(),
             })
             .into();
         app.show(Screen::Definition);
