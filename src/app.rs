@@ -8391,11 +8391,16 @@ impl App for Reader {
                 self.show(Screen::Fixed);
                 return Change::Partial;
             }
-            if let (Some(flow), Some(fixed)) = (&mut self.text_flow, &self.fixed) {
+            if let (Some(flow), Some(fixed)) = (&mut self.text_flow, &mut self.fixed) {
                 let Some(input) = self.controls.page_input(input) else {
                     return Change::None;
                 };
+                let spacing = flow.line_spacing();
                 let result = flow.input(input, &fixed.reading);
+                if result.is_ok() && flow.line_spacing() != spacing {
+                    fixed.reading.set_fixed_reflow_spacing(flow.line_spacing());
+                    self.record_position();
+                }
                 return self.finish_text_flow_update(result);
             }
         }
@@ -9181,6 +9186,7 @@ fn column_view(original: FixedPreferences, bounds: PdfTextRect) -> FixedPreferen
         crop: Some(bounds),
         scan_contrast: original.scan_contrast,
         scan_gamma_tenths: original.scan_gamma_tenths,
+        fixed_reflow_spacing: original.fixed_reflow_spacing,
         dither: original.dither,
         straighten_limit: original.straighten_limit,
         force_ocr: original.force_ocr,
@@ -19041,6 +19047,90 @@ mod tests {
             .activate(Action::ExportHighlights(annotation_export::Format::Text))
             .unwrap();
         assert!(fs::read_dir(&reopened.exports).unwrap().next().is_some());
+    }
+
+    #[test]
+    fn fixed_reflow_spacing_persists_per_book_and_is_shared_across_the_two_views() {
+        use crate::library::FixedReflowSpacing;
+        let paths = Fixture::new();
+        let source = paths.root.join("Harbor scan.pdf");
+        let vector = paths.root.join("Harbor text.pdf");
+        fs::copy(crate::test_fixture("scan-reflow/raster.pdf"), &source).unwrap();
+        fs::copy(crate::test_fixture("scan-reflow/vector.pdf"), &vector).unwrap();
+        let mut app = paths.app();
+        app.open_path(&source).unwrap();
+        app.activate(Action::FixedPage(1)).unwrap();
+        let ocr = crate::ocr::parse_tsv(
+            include_bytes!("../tests/fixtures/scan-reflow/page-2-ocr.tsv"),
+            1350,
+            1800,
+        )
+        .unwrap();
+        app.fixed
+            .as_mut()
+            .unwrap()
+            .reading
+            .remember_ocr(1, "eng", ocr.text)
+            .unwrap();
+        let fixed_position = app.current_history_location();
+        app.activate(Action::ReflowScan).unwrap();
+        let toolbar = Input::Tap(718.0, PAGE_HEIGHT as f32 + 30.0);
+        let large = Input::Tap(506.0, PAGE_HEIGHT as f32 - 48.0);
+        let cancel = Input::Tap(929.0, PAGE_HEIGHT as f32 - 48.0);
+        let apply = Input::Tap(1129.0, PAGE_HEIGHT as f32 - 48.0);
+        assert_eq!(app.input(toolbar), Change::Partial);
+        assert_eq!(app.input(large), Change::Partial);
+        assert_eq!(app.input(cancel), Change::Partial);
+        assert_eq!(
+            app.text_flow.as_ref().unwrap().line_spacing(),
+            FixedReflowSpacing::Medium
+        );
+        assert_eq!(
+            app.fixed
+                .as_ref()
+                .unwrap()
+                .reading
+                .preferences()
+                .fixed_reflow_spacing,
+            None
+        );
+
+        app.input(toolbar);
+        app.input(large);
+        let fonts = [
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        capture_test_screen(&app, &fonts, "READER_FIXED_REFLOW_SPACING", false);
+        assert_eq!(app.input(apply), Change::Partial);
+        assert_eq!(
+            app.text_flow.as_ref().unwrap().line_spacing(),
+            FixedReflowSpacing::Large
+        );
+        assert_eq!(app.current_history_location(), fixed_position);
+        app.save().unwrap();
+        drop(app);
+
+        let mut reopened = paths.app();
+        reopened.open_path(&source).unwrap();
+        reopened.activate(Action::ReflowScan).unwrap();
+        assert_eq!(
+            reopened.text_flow.as_ref().unwrap().line_spacing(),
+            FixedReflowSpacing::Large
+        );
+        reopened.activate(Action::ReadFixedText).unwrap();
+        assert_eq!(
+            reopened.text_flow.as_ref().unwrap().line_spacing(),
+            FixedReflowSpacing::Large
+        );
+        assert_eq!(reopened.current_history_location(), fixed_position);
+
+        reopened.open_path(&vector).unwrap();
+        reopened.activate(Action::ReadFixedText).unwrap();
+        assert_eq!(
+            reopened.text_flow.as_ref().unwrap().line_spacing(),
+            FixedReflowSpacing::Medium
+        );
     }
 
     #[test]

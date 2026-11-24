@@ -723,6 +723,8 @@ pub struct FixedPreferences {
     pub semi_auto_crop: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub continuous_crop: Option<ContinuousCrop>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fixed_reflow_spacing: Option<FixedReflowSpacing>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -730,6 +732,27 @@ pub struct FixedPreferences {
 pub enum ContinuousCrop {
     Manual,
     Auto,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FixedReflowSpacing {
+    Small,
+    #[default]
+    Medium,
+    Large,
+}
+
+impl FixedReflowSpacing {
+    #[cfg(feature = "kindle")]
+    pub(crate) fn scaled_pitch(self, pitch: u32) -> u32 {
+        let stock = match self {
+            Self::Small => 100,
+            Self::Medium => 120,
+            Self::Large => 140,
+        };
+        (pitch * stock + 60) / 120
+    }
 }
 
 impl FixedPreferences {
@@ -783,6 +806,9 @@ impl FixedPreferences {
             offset_x: normalized_offset(f64::from(self.offset_x)),
             offset_y: normalized_offset(f64::from(self.offset_y)),
             continuous_crop: self.continuous_crop.filter(|_| !self.semi_auto_crop),
+            fixed_reflow_spacing: self
+                .fixed_reflow_spacing
+                .filter(|value| *value != FixedReflowSpacing::Medium),
             crop_margin_hundredths: self
                 .crop_margin_hundredths
                 .filter(|&value| value != DEFAULT_CROP_MARGIN && value <= MAX_CROP_MARGIN),
@@ -867,6 +893,9 @@ impl<'de> Deserialize<'de> for FixedPreferences {
             semi_auto_crop: switch("semi_auto_crop"),
             continuous_crop: values
                 .get("continuous_crop")
+                .and_then(|value| serde_json::from_value(value.clone()).ok()),
+            fixed_reflow_spacing: values
+                .get("fixed_reflow_spacing")
                 .and_then(|value| serde_json::from_value(value.clone()).ok()),
         }
         .normalized())
@@ -3634,6 +3663,7 @@ mod tests {
                 crop_margin_hundredths: None,
                 semi_auto_crop: false,
                 continuous_crop: None,
+                fixed_reflow_spacing: None,
             }
         );
         assert!(state.fixed_preferences.is_valid());
