@@ -781,6 +781,8 @@ pub struct Probe {
     publisher_positions: std::cell::OnceCell<app::publisher_pages::PublisherPositions>,
     #[cfg(feature = "kindle")]
     pub(crate) flow_pages: Option<crate::library::hidden_flows::PageFlows>,
+    #[cfg(feature = "kindle")]
+    screen_page_sources: Option<session::screen_pages::ScreenPageSources>,
     settings: Settings,
     spine_rtl: bool,
     source: Source,
@@ -1085,6 +1087,8 @@ impl Probe {
             publisher_positions: Default::default(),
             #[cfg(feature = "kindle")]
             flow_pages: None,
+            #[cfg(feature = "kindle")]
+            screen_page_sources: None,
             settings,
             #[cfg(feature = "kindle")]
             custom_hyphenation_allowed,

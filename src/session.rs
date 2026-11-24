@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 #[cfg(test)]
 mod css_flow_tests;
 mod hidden_flows;
+pub(crate) mod screen_pages;
 
 use crate::epub::{Book, Destination};
 use crate::selection::{HighlightRect, TextSelection};
@@ -130,15 +131,22 @@ pub(crate) struct BookConfig {
     pub(crate) hidden_flows: std::rc::Rc<crate::library::hidden_flows::HiddenFlows>,
     // Shared across chapter layouts, previews and font changes for the same open publication.
     pub(crate) chapter_offsets: std::rc::Rc<std::cell::OnceCell<Vec<u64>>>,
+    pub(crate) screen_pages: screen_pages::ScreenPages,
 }
 
 impl BookConfig {
     pub(crate) fn chapter(&self, index: usize) -> Result<Probe> {
         let start = Instant::now();
         let probe = with_storage(|| {
+            let sources = screen_pages::ScreenPageSources::read(self);
             let book = Book::open(&self.book).map_err(io::Error::other)?;
-            self.layout_chapter(book, index).map_err(io::Error::other)
-        })?;
+            self.layout_chapter(book, index, sources)
+                .map_err(io::Error::other)
+        });
+        if probe.is_err() {
+            self.screen_pages.reset();
+        }
+        let probe = probe?;
         eprintln!(
             "reader engine={:?} chapter={} layout_us={} pages={}",
             self.engine,
@@ -149,7 +157,13 @@ impl BookConfig {
         Ok(probe)
     }
 
-    fn layout_chapter(&self, mut book: Book, index: usize) -> Result<Probe> {
+    fn layout_chapter(
+        &self,
+        mut book: Book,
+        index: usize,
+        sources: Option<screen_pages::ScreenPageSources>,
+    ) -> Result<Probe> {
+        let eligible = sources.is_some() && book.supports_screen_page_count();
         self.chapter_offsets
             .get_or_init(|| book.chapter_offsets().unwrap_or_default());
         let settings = if self.facing_pages && !self.scroll {
@@ -169,7 +183,7 @@ impl BookConfig {
         };
         settings.validate()?;
         let narrow = settings.width == FACING_PAGE_WIDTH;
-        match Probe::from_book_with_rules(
+        let mut probe = match Probe::from_book_with_rules(
             book,
             self.engine,
             &self.fonts,
@@ -196,7 +210,15 @@ impl BookConfig {
                     &self.user_styles,
                 )
             }
+        }?;
+        if eligible
+            && !probe.is_vertical()
+            && !(self.hide_nonlinear && probe.has_nonlinear_chapters())
+            && sources == screen_pages::ScreenPageSources::read(self)
+        {
+            probe.screen_page_sources = sources;
         }
+        Ok(probe)
     }
 }
 
@@ -332,6 +354,10 @@ impl Reading {
             flow_weights: Vec::new(),
             custom_flows,
         };
+        session
+            .config
+            .screen_pages
+            .observe(&session.config, &session.probe, chapter);
         session.refresh_flow_weights();
         session.schedule_prefetch();
         Ok(session)
@@ -404,6 +430,12 @@ impl Reading {
             && self.probe.has_nonlinear_chapters()
     }
 
+    pub(crate) fn whole_book_screen_pages(&self) -> Option<(usize, usize)> {
+        self.config
+            .screen_pages
+            .position(&self.config, &self.probe, self.chapter, self.page)
+    }
+
     pub(crate) fn progress_weights(&self) -> &[u64] {
         if self.hides_nonlinear() || self.config.hidden_flows.enabled {
             &self.flow_weights
@@ -417,6 +449,9 @@ impl Reading {
     }
 
     pub(crate) fn set_hide_nonlinear(&mut self, enabled: bool) {
+        if self.config.hide_nonlinear != enabled {
+            self.config.screen_pages.reset();
+        }
         self.config.hide_nonlinear = enabled;
         self.pause_turns();
         self.refresh_flow_weights();
@@ -1028,6 +1063,9 @@ impl Reading {
         });
         let page = top.map_or(page, |top| probe.page_at(top));
         self.frame = capture(&mut probe, chapter, page, top)?;
+        self.config
+            .screen_pages
+            .observe(&self.config, &probe, chapter);
         self.probe = probe;
         self.chapter = chapter;
         self.page = page;
@@ -1063,7 +1101,8 @@ impl Reading {
             return self.jump_custom_progress(fraction);
         }
         let hide = self.hides_nonlinear();
-        let (chapter, in_chapter, probe) = with_storage(|| {
+        let candidate = with_storage(|| {
+            let sources = screen_pages::ScreenPageSources::read(&self.config);
             let mut book = Book::open(&self.config.book).map_err(io::Error::other)?;
             let (chapter, in_chapter) = if hide {
                 book.linear_progress_target(fraction)
@@ -1073,10 +1112,14 @@ impl Reading {
             };
             let probe = self
                 .config
-                .layout_chapter(book, chapter)
+                .layout_chapter(book, chapter, sources)
                 .map_err(io::Error::other)?;
             Ok((chapter, in_chapter, probe))
-        })?;
+        });
+        if candidate.is_err() {
+            self.config.screen_pages.reset();
+        }
+        let (chapter, in_chapter, probe) = candidate?;
         let anchor = (0.0 < in_chapter && in_chapter < 1.0)
             .then(|| probe.proportional_anchor(in_chapter))
             .flatten();
@@ -1135,6 +1178,9 @@ impl Reading {
         });
         let frame = capture(probe, chapter, page, top)?;
         if let Some(candidate) = candidate {
+            self.config
+                .screen_pages
+                .observe(&self.config, &candidate, chapter);
             self.probe = candidate;
         }
         self.frame = frame;
@@ -1683,6 +1729,7 @@ impl App for Reading {
     }
 
     fn storage_returned(&mut self) -> io::Result<()> {
+        self.config.screen_pages.reset();
         self.turns = PageTurns::new(Instant::now());
         self.schedule_prefetch();
         Ok(())
@@ -1882,6 +1929,7 @@ mod tests {
             user_hyphenation: Default::default(),
             user_styles: Default::default(),
             chapter_offsets: Default::default(),
+            screen_pages: Default::default(),
             engine: Engine::Parley,
             book: crate::test_fixture(book),
             fonts: vec![crate::test_fixture("fonts/Silkscreen-Regular.ttf")],
@@ -2638,6 +2686,7 @@ mod tests {
             user_hyphenation: Default::default(),
             user_styles: Default::default(),
             chapter_offsets: Default::default(),
+            screen_pages: Default::default(),
             engine: Engine::Parley,
             book: crate::test_fixture("vertical-chapters.epub"),
             fonts: vec![crate::test_fixture("fonts/Silkscreen-Regular.ttf")],

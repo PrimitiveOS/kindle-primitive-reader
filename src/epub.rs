@@ -430,6 +430,14 @@ impl Book {
         self.revision
     }
 
+    #[cfg(feature = "kindle")]
+    pub(crate) fn supports_screen_page_count(&self) -> bool {
+        matches!(
+            &self.content,
+            Content::Archive { archive: Archive::Zip(archive), .. } if archive.missing.is_empty()
+        )
+    }
+
     pub(crate) fn package_xml(&mut self) -> Result<String> {
         match &mut self.content {
             Content::Archive {
