@@ -34,7 +34,7 @@ pub(crate) fn local_clock() -> Option<ClockTokens> {
     clock_at(crate::mark_time::now()?)
 }
 
-fn clock_at(epoch_seconds: i64) -> Option<ClockTokens> {
+pub(super) fn clock_at(epoch_seconds: i64) -> Option<ClockTokens> {
     primitive_device::local_time_at(epoch_seconds).map(ClockTokens::from_time)
 }
 

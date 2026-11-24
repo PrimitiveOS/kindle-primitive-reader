@@ -5,7 +5,7 @@ local function mock(name, value)
     package.preload[name] = function() return value end
 end
 
-local shown, chooser, shortcut, exported
+local shown, chooser, shortcut, exported, last_file, twelve_hour
 local widget = { new = function(_, options) return options end }
 local text = {
     name = "text",
@@ -49,7 +49,23 @@ mock("ffi/util", {
 })
 mock("util", { getSafeFilename = function(value) return value end })
 mock("provider", { size = function() return 0 end })
-for _, name in ipairs{ "device", "dispatcher", "logger", "readerhighlight", "clip", "ui/network/manager",
+local device = {
+    hasBattery = function() return true end,
+    hasAuxBattery = function() return false end,
+    getPowerDevice = function()
+        return {
+            getCapacity = function() return 81 end,
+            isCharged = function() return false end,
+            isCharging = function() return true end,
+            getBatterySymbol = function(_, charged, charging, level)
+                assert(not charged and charging and level == 81)
+                return "Charging"
+            end,
+        }
+    end,
+}
+mock("device", device)
+for _, name in ipairs{ "dispatcher", "logger", "readerhighlight", "clip", "ui/network/manager",
     "ui/widget/buttonselector", "apps/reader/modules/readerhighlight" } do
     mock(name, {})
 end
@@ -66,12 +82,34 @@ local f = assert(io.open(source .. "/frontend/apps/filemanager/filemanagerbookin
 local book_info_source = f:read("*all")
 f:close()
 local expand = assert(book_info_source:match("(function BookInfo:expandString%b()%s+.-\nend)"))
-local book_info = { document = { file = "/documents/Books/Field Notes.epub" },
-    ui = { doc_props = { display_title = "Field Notes", authors = "Linh Nguyen" },
-           view = { footer = { percent_finished = 0.25 } } } }
+local book_info = {
+    document = {
+        file = "/documents/Books/Field Notes.epub",
+        hasHiddenFlows = function() return false end,
+        getTotalPagesLeft = function(_, page) return 100 - page end,
+    },
+    ui = {
+        doc_props = { display_title = "Field Notes", authors = "Linh Nguyen", series = "Field Library", series_index = "2" },
+        view = { footer = {
+            pages = 100, pageno = 25, percent_finished = 0.25,
+            settings = { pages_left_includes_current_page = true },
+            genSeparator = function() return " | " end,
+            getChapterProgress = function() return 0.75 end,
+        } },
+        toc = { getTocTitleByPage = function() return "Shore" end, getChapterPagesLeft = function() return 8 end },
+        statistics = { getTimeForPages = function(_, count) return tostring(count) .. " min" end },
+    },
+}
 setfenv(assert(loadstring(expand)), {
     BookInfo = book_info, _ = function(value) return value end,
-    G_reader_settings = { readSetting = function() return nil end },
+    G_reader_settings = {
+        readSetting = function(_, key) assert(key == "lastfile") return last_file end,
+        isTrue = function(_, key) assert(key == "twelve_hour_clock") return twelve_hour end,
+    },
+    Device = device,
+    datetime = { secondsToHour = function(timestamp, twelve)
+        return os.date(twelve and "%I:%M %p" or "%H:%M", timestamp)
+    end },
     Math = { round = function(v) return math.floor(v + 0.5) end },
     os = os,
 })()
@@ -91,6 +129,17 @@ local function action(label)
 end
 
 local when = os.time{ year = 2024, month = 2, day = 29, hour = 10, min = 15, sec = 2 }
+assert(book_info:expandString("%T/%A/%S/%t/%c/%p/%C/%l/%P/%H/%h", book_info.document.file, when)
+    == "Field Notes/Linh Nguyen/Field Library #2/100/25/25/Shore/9/75/75 min/8 min")
+assert(book_info:expandString("%f/%F/%b/%B/%r/%D/%d/%m/%M", book_info.document.file, when)
+    == "Field Notes.epub//documents/Books/Field Notes.epub/81/Charging/ | /2024-02-29/02-29/10:15/10-15-02")
+twelve_hour = true
+assert(book_info:expandString("%m", book_info.document.file, when) == "10:15 AM")
+twelve_hour = false
+book_info.ui.doc_props.display_title = "Field %A"
+assert(book_info:expandString("%% %%T %Z %1 %é %T %", book_info.document.file, when)
+    == "%% %Field %A N/A %1 %é Field %A %")
+book_info.ui.doc_props.display_title = "Field Notes"
 local time = os.time
 os.time = function() return when end
 local single = { book = { file = book_info.document.file } }
@@ -125,12 +174,31 @@ exporter:exportClippings(single)
 assert(exported[1] == "/documents/Books/Field Notes from Field Notes.epub")
 exporter:exportClippings(multi)
 assert(exported[1] == "/documents/Study/Notebook 2024-02-29" and exported[2] == 2)
+last_file = book_info.document.file
+exporter.settings.clipping_filename_multiple = "Notebook %T"
+exporter:exportClippings(multi)
+assert(exported[1] == "/documents/Study/Notebook Field Notes" and exported[2] == 2)
+exporter.settings.clipping_filename_multiple = "Notebook %D"
 alongside.callback()
 assert(not alongside.checked_func())
 
 names.callback()
 dialog = shown
 assert(dialog.fields[1].text == "%T from %f" and dialog.fields[2].text == "Notebook %D")
+dialog.values = { "Discard", "Discard" }
+dialog.buttons[2][1].callback()
+assert(exporter.settings.clipping_filename_single == "%T from %f" and exporter.settings.clipping_filename_multiple == "Notebook %D")
+names.callback()
+dialog = shown
+local restored
+dialog._input_widget = {
+    hint = dialog.fields[1].hint,
+    setText = function(_, value) restored = value end,
+    goToEnd = function() end,
+}
+dialog.buttons[1][2].callback()
+assert(restored == "%D-%M %A - %T")
+assert(exporter.settings.clipping_filename_single == "%T from %f")
 dialog.values = { "", "%D-%M all-books" }
 dialog.buttons[2][2].callback()
 assert(exporter.settings.clipping_filename_single == nil and exporter.settings.clipping_filename_multiple == nil)
@@ -138,4 +206,4 @@ folder.callback()
 chooser.callback(chooser.default)
 assert(exporter.settings.clipping_dir == "/reader/clipboard")
 os.time = time
-print("KOReader local export folder, independent naming templates, reset and single-book folder precedence verified")
+print("KOReader’s local export paths, token catalog, escaping, separate templates, Cancel and Default verified")

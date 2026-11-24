@@ -113,6 +113,7 @@ impl Reader {
                     | Screen::BookmarkFind
                     | Screen::DictionaryEntry
                     | Screen::VocabularySearch
+                    | Screen::ExportSettings(_, export_settings::Page::Template(_))
             )
     }
 

@@ -1,6 +1,8 @@
 //! Local destination and filename preferences shared by annotation file exporters.
 use super::*;
+mod filename;
 use crate::library::{BrowseKind, display_filename};
+pub(super) use filename::{Context as FilenameContext, Scope, Subject, Values as FilenameValues};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::os::unix::fs::MetadataExt;
@@ -8,6 +10,7 @@ use std::os::unix::fs::MetadataExt;
 const SETTINGS_BYTES: u64 = 16 * 1024;
 const MAX_NAME_BYTES: usize = 200;
 const MAX_COPIES: usize = 999;
+const CLEAR_DRAFT: Rect = Rect::new(LIST_X, LIST_Y + 240, 320, 96);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Origin {
@@ -19,6 +22,8 @@ pub(super) enum Origin {
 pub(super) enum Page {
     Settings,
     Folders,
+    Template(Scope),
+    Tokens,
 }
 
 #[derive(Clone)]
@@ -29,6 +34,8 @@ pub(super) enum Command {
     UseDefault,
     ToggleBookFolder,
     ToggleBookName,
+    EditTemplate(Scope),
+    Tokens,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -37,6 +44,27 @@ pub(super) struct Preferences {
     folder: Option<PathBuf>,
     pub(super) book_folder: bool,
     pub(super) book_title: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    single_template: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    multiple_template: Option<String>,
+}
+
+impl Preferences {
+    pub(super) fn template(&self, scope: Scope) -> Option<&str> {
+        match scope {
+            Scope::Single => self.single_template.as_deref(),
+            Scope::Multiple => self.multiple_template.as_deref(),
+        }
+    }
+
+    fn store_template(&mut self, scope: Scope, value: String) {
+        let field = match scope {
+            Scope::Single => &mut self.single_template,
+            Scope::Multiple => &mut self.multiple_template,
+        };
+        *field = (!value.trim().is_empty() && filename::valid_template(&value)).then_some(value);
+    }
 }
 
 pub(super) struct Settings {
@@ -53,10 +81,17 @@ struct FolderPicker {
 
 impl Settings {
     pub(super) fn load(path: PathBuf) -> Self {
-        let preferences = read_import_file(&path, SETTINGS_BYTES)
+        let mut preferences: Preferences = read_import_file(&path, SETTINGS_BYTES)
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_default();
+        for scope in [Scope::Single, Scope::Multiple] {
+            if let Some(template) = preferences.template(scope)
+                && (template.trim().is_empty() || !filename::valid_template(template))
+            {
+                preferences.store_template(scope, String::new());
+            }
+        }
         Self {
             path,
             preferences,
@@ -93,8 +128,14 @@ impl Reader {
         let row = |title, command| Item::new(title, Action::ExportSettings(origin, command));
         let settings = &self.export_settings;
         let preferences = &settings.preferences;
+        if page == Page::Tokens {
+            return filename::GUIDE
+                .iter()
+                .map(|(tokens, meaning)| Item::new(*tokens, Action::Heading).detail(*meaning))
+                .collect();
+        }
         if page == Page::Settings {
-            return vec![
+            let mut rows = vec![
                 row(
                     "Choose export folder",
                     Command::Browse(preferences.folder.clone().unwrap_or_default()),
@@ -112,8 +153,8 @@ impl Reader {
                         "Default folder"
                     },
                 ),
-                row("Export beside the current book", Command::ToggleBookFolder)
-                    .detail("Single-book exports only"),
+                row("Export beside the book", Command::ToggleBookFolder)
+                    .detail("When one book with a source file is exported"),
                 row("Use book titles for filenames", Command::ToggleBookName).detail(
                     if preferences.book_title {
                         "Book title · Field Notes.txt"
@@ -122,6 +163,12 @@ impl Reader {
                     },
                 ),
             ];
+            rows.extend([Scope::Single, Scope::Multiple].map(|scope| {
+                row(scope.title(), Command::EditTemplate(scope))
+                    .detail(preferences.template(scope).unwrap_or("Default name"))
+            }));
+            rows.push(row("Filename tokens", Command::Tokens));
+            return rows;
         }
         let Some(picker) = &settings.picker else {
             return Vec::new();
@@ -157,6 +204,19 @@ impl Reader {
         match command {
             Command::Open => {
                 self.show(Screen::ExportSettings(origin, Page::Settings));
+                return Ok(());
+            }
+            Command::EditTemplate(scope) => {
+                self.show(Screen::ExportSettings(origin, Page::Template(scope)));
+                self.editor = Editor::new(filename::MAX_TEMPLATE_CHARS);
+                if let Some(template) = preferences.template(scope) {
+                    self.editor.text = template.chars().collect();
+                    self.editor.caret = self.editor.text.len();
+                }
+                return Ok(());
+            }
+            Command::Tokens => {
+                self.show(Screen::ExportSettings(origin, Page::Tokens));
                 return Ok(());
             }
             Command::Browse(directory) => {
@@ -204,7 +264,9 @@ impl Reader {
 
     pub(super) fn back_from_export_settings(&mut self, origin: Origin, page: Page) {
         self.show(match (origin, page) {
-            (_, Page::Folders) => Screen::ExportSettings(origin, Page::Settings),
+            (_, Page::Folders | Page::Template(_) | Page::Tokens) => {
+                Screen::ExportSettings(origin, Page::Settings)
+            }
             (Origin::Book, Page::Settings) => Screen::ExportAnnotations,
             (Origin::Library, Page::Settings) => {
                 Screen::LibraryExport(library_export::Page::Options)
@@ -212,41 +274,129 @@ impl Reader {
         });
     }
 
+    pub(super) fn draw_export_template(&self, canvas: &mut Canvas, scope: Scope) {
+        canvas.single_line_field(
+            Rect::new(LIST_X, LIST_Y, WIDTH as i32 - 2 * LIST_X, 130),
+            &self.editor,
+            scope.hint(),
+            false,
+        );
+        canvas.text(
+            Rect::new(LIST_X, LIST_Y + 148, WIDTH as i32 - 2 * LIST_X, 74),
+            self.notice
+                .as_deref()
+                .unwrap_or("Save an empty field to use the default name."),
+            CAPTION,
+        );
+        canvas.button(CLEAR_DRAFT, "Clear", false, false);
+        canvas.keyboard(self.editor.layer, "Save", None);
+        if self.can_paste_text() {
+            external_link::draw_paste(canvas);
+        }
+    }
+
+    pub(super) fn export_template_input(
+        &mut self,
+        origin: Origin,
+        scope: Scope,
+        input: Input,
+    ) -> Change {
+        if input == Input::PageBack
+            || matches!(input, Input::Tap(x, y) if primitive_ui::back_button(WIDTH as i32).contains(x, y))
+        {
+            self.back_from_export_settings(origin, Page::Template(scope));
+            return Change::Partial;
+        }
+        let Input::Tap(x, y) = input else {
+            return Change::None;
+        };
+        if CLEAR_DRAFT.contains(x, y) {
+            self.editor.text.clear();
+            self.editor.caret = 0;
+            self.notice = None;
+            return Change::Partial;
+        }
+        let layout = Layout::new(WIDTH, HEIGHT, 4, 5);
+        let Some(key) = keyboard_key(&layout, &self.editor, "Save", x, y) else {
+            return Change::None;
+        };
+        if matches!(self.editor.press(key), Press::Go) {
+            let text = self.editor.string();
+            if !filename::valid_template(&text) {
+                return self.report("Enter up to 120 characters on one line");
+            }
+            let mut preferences = self.export_settings.preferences.clone();
+            preferences.store_template(scope, text);
+            if let Err(error) = self.export_settings.save(preferences) {
+                return self.report(error);
+            }
+            self.back_from_export_settings(origin, Page::Template(scope));
+        }
+        Change::Partial
+    }
+
     pub(super) fn write_annotation_export(
         &self,
         preferences: &Preferences,
-        single: Option<(&BookState, &LibraryBook)>,
+        name: FilenameContext<'_>,
         extension: &str,
         contents: &[u8],
     ) -> io::Result<String> {
+        let scope = if name.source.is_some() {
+            Scope::Single
+        } else {
+            Scope::Multiple
+        };
+        let template = preferences.template(scope);
+        let legacy_book = name.source.filter(|_| !name.bundled);
+        let titled = legacy_book.is_some() && preferences.book_title;
+        let fallback = || {
+            legacy_book
+                .and_then(|book| {
+                    if titled && let Some(title) = safe_stem(book.title) {
+                        return Some(title);
+                    }
+                    book.id.map(|id| format!("{id:016x}"))
+                })
+                .unwrap_or_else(|| "library-highlights".into())
+        };
+        let stem = template
+            .and_then(|template| {
+                let values;
+                let context =
+                    if let Some(last) = name.last_opened.filter(|_| scope == Scope::Multiple) {
+                        last
+                    } else {
+                        values = self.filename_values(template, name.source, name.started_at);
+                        &values
+                    };
+                safe_stem(&filename::expand(template, context))
+            })
+            .unwrap_or_else(fallback);
         with_storage(|| {
-            let folder = if let Some((_, book)) = single.filter(|_| preferences.book_folder) {
-                self.library.absolute_path(&book.path)?;
+            let source = name
+                .source
+                .and_then(|book| book.file)
+                .filter(|_| preferences.book_folder);
+            let book_folder = if let Some(source) = source {
+                let book = self.library.resolve(source)?;
                 Some(
                     book.library_path()
                         .parent()
-                        .unwrap_or_else(|| Path::new("")),
+                        .unwrap_or_else(|| Path::new(""))
+                        .to_owned(),
                 )
             } else {
-                preferences.folder.as_deref()
+                None
             };
-            let (stem, named) = if let Some((state, _)) = single {
-                let id = format!("{:016x}", state.id);
-                let title = preferences
-                    .book_title
-                    .then(|| safe_stem(&state.title))
-                    .flatten();
-                (title.unwrap_or(id), preferences.book_title)
-            } else {
-                ("library-highlights".into(), false)
-            };
+            let folder = book_folder.as_deref().or(preferences.folder.as_deref());
             let directory = if let Some(folder) = folder {
                 self.library.browse_folder(folder)?
             } else {
                 fs::create_dir_all(&self.exports)?;
                 self.exports.clone()
             };
-            let filename = if folder.is_some() || named {
+            let filename = if folder.is_some() || titled || template.is_some() {
                 save_keep_both(&directory, &stem, extension, contents)?
             } else {
                 let filename = format!("{stem}.{extension}");

@@ -350,6 +350,8 @@ impl Screen {
             Self::ExportAnnotations => "Export annotations",
             Self::ExportSettings(_, export_settings::Page::Settings) => "Export settings",
             Self::ExportSettings(_, export_settings::Page::Folders) => "Export folder",
+            Self::ExportSettings(_, export_settings::Page::Template(scope)) => scope.title(),
+            Self::ExportSettings(_, export_settings::Page::Tokens) => "Filename tokens",
             Self::Book
             | Self::Fixed
             | Self::BookTools
@@ -6795,15 +6797,14 @@ impl Reader {
         contents: &str,
     ) -> Result<()> {
         let state = self.library.state(id).ok_or("No reading history")?;
-        let book = self
-            .fixed
-            .as_ref()
-            .map(|book| &book.entry)
-            .or_else(|| self.active.as_ref().map(|book| &book.entry))
-            .ok_or("No open book")?;
         let path = self.write_annotation_export(
             &self.export_settings.preferences,
-            Some((state, book)),
+            export_settings::FilenameContext {
+                source: Some(state.into()),
+                bundled: false,
+                started_at: crate::mark_time::now(),
+                last_opened: None,
+            },
             extension,
             contents.as_bytes(),
         )?;
@@ -7469,6 +7470,10 @@ impl Reader {
             title
         };
         header(canvas, title, "Back");
+        if let Screen::ExportSettings(_, export_settings::Page::Template(scope)) = self.screen {
+            self.draw_export_template(canvas, scope);
+            return;
+        }
         self.draw_search_results_options(canvas);
         if self.screen == Screen::Matches && self.draw_flexible_results(canvas) {
             return;
@@ -8495,6 +8500,10 @@ impl App for Reader {
         }
         if self.screen == Screen::OnlineEdit {
             return self.online_editor_input(input);
+        }
+        if let Screen::ExportSettings(origin, export_settings::Page::Template(scope)) = self.screen
+        {
+            return self.export_template_input(origin, scope, input);
         }
         if self.screen == Screen::Definition {
             return self.definition_input(input);

@@ -1,4 +1,7 @@
 //! Export highlights from History, chosen books or collections without moving the reader.
+use super::export_settings::{
+    FilenameContext, FilenameValues, Preferences as FilenamePreferences, Scope, Subject,
+};
 use super::{Action, Book, BookConfig, Change, Engine, Item, Reader, Result, Screen, with_storage};
 use crate::annotation_export::kindle_clippings::{self, Kind, Location};
 use crate::highlight_style::{HighlightColor, HighlightStyle};
@@ -196,7 +199,9 @@ struct Job {
     done: usize,
     skipped: usize,
     format: Format,
-    preferences: super::export_settings::Preferences,
+    preferences: FilenamePreferences,
+    started_at: Option<i64>,
+    last_opened: Option<FilenameValues>,
     documents: Vec<Document>,
     kindle_clippings: Vec<Document>,
     pending: Option<PendingBook>,
@@ -520,6 +525,15 @@ impl Reader {
                     return Err("Choose a book with highlights or include Kindle clippings".into());
                 }
                 self.save_library()?;
+                let preferences = self.export_settings.preferences.clone();
+                let started_at = crate::mark_time::now();
+                let last_opened = preferences.template(Scope::Multiple).map(|template| {
+                    let book = self
+                        .open_book_id()
+                        .and_then(|id| self.library.state(id))
+                        .or_else(|| self.library.recently_read().next());
+                    self.filename_values(template, book.map(Subject::from), started_at)
+                });
                 self.library_export.saved = None;
                 self.library_export.job = Some(Job {
                     ids: self.library_export.books.iter().copied().collect(),
@@ -527,7 +541,9 @@ impl Reader {
                     done: 0,
                     skipped: 0,
                     format,
-                    preferences: self.export_settings.preferences.clone(),
+                    preferences,
+                    started_at,
+                    last_opened,
                     documents: Vec::new(),
                     kindle_clippings,
                     pending: None,
@@ -761,9 +777,26 @@ impl Reader {
                 return Err("No highlights to export from the available books".into());
             }
             let contents = render(&job.documents, job.format)?;
+            let source = match job.documents.as_slice() {
+                [document] => Some(Subject {
+                    id: document
+                        .primitiveos_book_id
+                        .as_deref()
+                        .and_then(|id| u64::from_str_radix(id, 16).ok()),
+                    title: &document.title,
+                    author: document.author.as_deref(),
+                    file: document.file.as_deref(),
+                }),
+                _ => None,
+            };
             let destination = self.write_annotation_export(
                 &job.preferences,
-                None,
+                FilenameContext {
+                    source,
+                    bundled: true,
+                    started_at: job.started_at,
+                    last_opened: job.last_opened.as_ref(),
+                },
                 job.format.extension(),
                 &contents,
             )?;
