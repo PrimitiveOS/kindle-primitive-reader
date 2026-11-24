@@ -218,7 +218,7 @@ impl Reader {
         }
         let preferences = BookPreferences::for_new_reflow();
         let mut config = recovery.config;
-        config.settings = preferences.apply_to(self.device_reading_settings());
+        config.settings = preferences.apply_to(self.device_reading_settings_for(config.viewport));
         let top_status_header = self.top_header_for_book(recovery.id);
         config.settings.status_header_height =
             crate::reading_controls::TopHeader::height(top_status_header, false);

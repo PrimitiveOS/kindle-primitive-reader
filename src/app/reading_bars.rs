@@ -565,11 +565,7 @@ impl Reader {
     pub(super) fn page_paint(&self) -> PagePaint {
         let inverted = self.uses_night_pages();
         let viewport = self.reading_viewport();
-        let height = if self.overlapping_book_page() {
-            viewport.dimensions().1
-        } else {
-            viewport.page_height()
-        };
+        let height = viewport.document_height(self.overlapping_book_page());
         let visible = if matches!(self.screen, Screen::BookTools | Screen::FixedTools) {
             self.reading_bars().visible(height)
         } else {

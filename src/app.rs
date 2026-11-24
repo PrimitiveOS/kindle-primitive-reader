@@ -3554,18 +3554,16 @@ impl Reader {
                             .into_iter()
                             .find(|item| controls.footer_items & item.bit() != 0);
                 }
-                let reflow_layout_changed = controls.overlap_footer != self.controls.overlap_footer;
-                let resized = if reflow_layout_changed {
+                let footer_overlap_changed =
+                    controls.overlap_footer != self.controls.overlap_footer;
+                let resized = if footer_overlap_changed {
                     self.active
                         .as_ref()
                         .map(|book| {
                             let reading = &book.reading;
                             let mut config = reading.config.clone();
-                            config.settings.height = if controls.overlap_footer {
-                                HEIGHT
-                            } else {
-                                PAGE_HEIGHT
-                            };
+                            config.settings.height =
+                                config.viewport.document_height(controls.overlap_footer);
                             Reading::restore(
                                 config,
                                 reading.chapter,
@@ -3577,14 +3575,11 @@ impl Reader {
                 } else {
                     None
                 };
-                if controls.overlap_footer != self.controls.overlap_footer
-                    && let Some(fixed) = &mut self.fixed
-                {
-                    let height = if controls.overlap_footer {
-                        HEIGHT
-                    } else {
-                        PAGE_HEIGHT
-                    };
+                if footer_overlap_changed && let Some(fixed) = &mut self.fixed {
+                    let height = fixed
+                        .reading
+                        .viewport()
+                        .document_height(controls.overlap_footer);
                     fixed
                         .reading
                         .resize(height, || controls.save(&self.controls_path))?;
@@ -4243,7 +4238,6 @@ impl Reader {
     fn apply_text_profile(&mut self, preferences: BookPreferences) -> Result<()> {
         crate::document_defaults::validate_preferences(&preferences)?;
         let fonts = self.fonts_for(preferences.font_file.as_deref())?;
-        let base = self.device_reading_settings();
         let active = self.active.as_ref().ok_or("Open a book first")?;
         let id = active.id;
         if with_storage(|| self.library.identify(&active.entry))? != id {
@@ -4251,7 +4245,7 @@ impl Reader {
         }
         let location = position(&active.reading);
         let mut config = active.reading.config.clone();
-        config.settings = preferences.apply_to(base);
+        config.settings = preferences.apply_to(self.device_reading_settings_for(config.viewport));
         let top_status_header = self.top_header_for_book(id);
         config.settings.status_header_height =
             crate::reading_controls::TopHeader::height(top_status_header, preferences.scroll);

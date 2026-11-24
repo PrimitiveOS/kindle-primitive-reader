@@ -70,5 +70,13 @@ workflows. The tests cover saving selected EPUB settings, rejecting an
 empty selection, discarding an uncommitted draft, renaming, duplicating,
 replacing and deleting PDF profiles, and returning to the book location.
 A viewport round trip restores the same visible profile list in portrait.
+
+Applying a text profile prepares the book at its accepted viewport size.
+The chapter caption and Exit remain visible after applying 122% line
+spacing in a landscape EPUB. The host checks also keep the same book
+anchor through a text-default reset, and retain the visible footer when
+toggling document overlap in an EPUB or PDF.
+[Reading page after Apply](screenshots/landscape-profile-applied.png)
+
 Set `READER_LANDSCAPE_TOOLS_CAPTURES` to save the desktop render.
 [Included settings in landscape](screenshots/landscape-reading-profile-fields.png)

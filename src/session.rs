@@ -43,6 +43,14 @@ impl ReadingViewport {
         self.height - FOOTER_HEIGHT
     }
 
+    pub(crate) const fn document_height(self, overlap_footer: bool) -> u32 {
+        if overlap_footer {
+            self.height
+        } else {
+            self.page_height()
+        }
+    }
+
     pub(crate) const fn show_status(self) -> Rect {
         Rect::new(8, self.page_height() as i32 + 5, 148, 60)
     }
@@ -826,13 +834,9 @@ impl Reading {
             .ok_or("The current reading position is unavailable")?;
         let mut config = self.config.clone();
         config.viewport = viewport;
-        let (width, height) = viewport.dimensions();
-        config.settings.width = width;
-        config.settings.height = if self.config.settings.height == self.config.viewport.height {
-            height
-        } else {
-            viewport.page_height()
-        };
+        config.settings.width = viewport.dimensions().0;
+        config.settings.height =
+            viewport.document_height(self.config.settings.height == self.config.viewport.height);
         // Counts and sample positions came from the old geometry. A failed
         // attempt must leave the currently visible session's cache untouched.
         config.screen_pages = Default::default();

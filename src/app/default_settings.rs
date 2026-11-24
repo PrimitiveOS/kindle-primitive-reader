@@ -126,11 +126,10 @@ impl Reader {
     fn reset_reflow_defaults(&mut self) -> Result<()> {
         let (prefs, missing_font) = self.default_reflow_preferences();
         let fonts = self.fonts_for(prefs.font_file.as_deref())?;
-        let base = self.device_reading_settings();
         let active = self.active.as_ref().ok_or("Open a reflowable book first")?;
         let location = position(&active.reading);
         let mut config = active.reading.config.clone();
-        config.settings = prefs.apply_to(base);
+        config.settings = prefs.apply_to(self.device_reading_settings_for(config.viewport));
         let top_status_header = self.top_header_for_book(active.id);
         config.settings.status_header_height =
             crate::reading_controls::TopHeader::height(top_status_header, prefs.scroll);

@@ -10,10 +10,10 @@ use crate::reading_controls::{
     FooterAlignment, FooterItem, FooterItemCycle, FooterSymbolStyle, FooterTrackPosition,
     HeaderBattery, ProgressScope, ReadingControls, StatusBar, TopHeader,
 };
-use crate::session::PAGE_HEIGHT;
+use crate::session::ReadingViewport;
+use primitive_app::Change;
 #[cfg(test)]
-use primitive_app::WIDTH;
-use primitive_app::{Change, HEIGHT};
+use primitive_app::{HEIGHT, WIDTH};
 use primitive_ui::{Canvas, HAIRLINE, Icon, Rect, SECONDARY, TextStyle};
 use std::io;
 use std::time::{Duration, Instant};
@@ -722,12 +722,13 @@ impl Reader {
     }
 
     pub(super) fn device_reading_settings(&self) -> crate::Settings {
+        self.device_reading_settings_for(ReadingViewport::PORTRAIT)
+    }
+
+    pub(super) fn device_reading_settings_for(&self, viewport: ReadingViewport) -> crate::Settings {
         crate::Settings {
-            height: if self.controls.overlap_footer {
-                HEIGHT
-            } else {
-                PAGE_HEIGHT
-            },
+            width: viewport.dimensions().0,
+            height: viewport.document_height(self.controls.overlap_footer),
             ..super::device_settings()
         }
     }
