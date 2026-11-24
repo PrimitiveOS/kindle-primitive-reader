@@ -4618,7 +4618,15 @@ impl Reader {
         self.stats_awake
             && self.screen == Screen::Book
             && self.top_header_visible()
-            && (header.reading_percent
+            && ((header.chapter_marks
+                && self.active.as_ref().is_some_and(|book| {
+                    !book.reading.probe.toc.is_empty()
+                        && self
+                            .library
+                            .state(book.id)
+                            .is_some_and(|state| !state.custom_contents.enabled)
+                }))
+                || header.reading_percent
                 || ((header.page_number || header.page_count)
                     && self.top_header_page_labels().is_none()))
     }

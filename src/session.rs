@@ -436,6 +436,19 @@ impl Reading {
             .position(&self.config, &self.probe, self.chapter, self.page)
     }
 
+    pub(crate) fn whole_book_publisher_markers(
+        &self,
+        allow_depth: impl Fn(usize) -> bool,
+    ) -> Option<(Vec<usize>, usize)> {
+        self.config.screen_pages.publisher_markers(
+            &self.config,
+            &self.probe,
+            self.chapter,
+            self.page,
+            allow_depth,
+        )
+    }
+
     pub(crate) fn progress_weights(&self) -> &[u64] {
         if self.hides_nonlinear() || self.config.hidden_flows.enabled {
             &self.flow_weights

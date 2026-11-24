@@ -40,6 +40,27 @@ It keeps the existing progress estimate until exact screen pagination is ready.
 The bottom progress track and Contents marks have their own position rules.
 [Installed layout observation](../src/session.rs) · [Validated counts](../src/session/screen_pages.rs) · [Background worker](../src/session/screen_pages/background.rs)
 
+## Whole-book chapter marks
+
+The optional header places publisher contents marks against the completed
+whole-book screen-page index. The index records each heading’s actual laid
+out page in its spine item, then adds its chapter’s exact prefix. It applies
+selected Contents depths, sorts positions, and draws one mark per page. The
+worker can run with chapter marks as the only enabled header metric.
+Custom outlines and publishers outside the background indexing limits use
+current-chapter marks while full positions are unavailable. The document
+and the existing reading footer keep the same painted positions during the
+header update.
+[Kindle-sized simulator](screenshots/whole-book-header-marks.png)
+
+KOReader’s ReaderRolling passes the full screen-page count and sorted
+Contents ticks to the header renderer. The bridge converts a tick at
+one-based page `p` to the fraction `(p - 1) / page_count`. The pinned Lua
+check verifies duplicate and depth handling. Reader’s authored EPUB
+check measures the marks against normal layouts before and after
+filtering, and compares the frame below the header pixel for pixel.
+[ReaderRolling marker callback](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerrolling.lua#L1257-L1264) · [Header bridge](https://github.com/koreader/koreader-base/blob/6e4bc81af4e04f78d81677a323a780a71b29702a/cre.cpp#L1626-L1646) · [Stock callback check](../scripts/koreader-header-marks-check.lua)
+
 ## Cache and storage
 
 The count is held in memory for one generation. Its identity covers the

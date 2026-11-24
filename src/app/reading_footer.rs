@@ -84,6 +84,22 @@ pub(super) fn fixed_chapters(reading: &FixedReading) -> Vec<(usize, String)> {
     chapters
 }
 
+fn draw_header_ticks(
+    canvas: &mut Canvas,
+    pages: impl ExactSizeIterator<Item = usize>,
+    count: usize,
+    ink: u8,
+) {
+    let width = (WIDTH - 24) as usize;
+    if pages.len() >= width / 5 {
+        return;
+    }
+    for page in pages {
+        let x = 12 + (width as f64 * page as f64 / count.max(1) as f64).round() as i32;
+        canvas.fill(Rect::new(x, TopHeader::HEIGHT as i32 - 5, 2, 4), ink);
+    }
+}
+
 fn sort_chapters(chapters: &mut Vec<(usize, String)>) {
     chapters.sort_by_key(|(page, _)| *page);
     chapters.dedup_by_key(|(page, _)| *page);
@@ -1082,22 +1098,20 @@ impl Reader {
                 Rect::new(12, TopHeader::HEIGHT as i32 - 2, WIDTH as i32 - 24, 1),
                 HAIRLINE,
             );
-            let count = self
-                .active
-                .as_ref()
-                .map_or(0, |book| book.reading.probe.page_count())
-                .max(1);
             if let Some(book) = &self.active {
-                let mut mark = |page: usize| {
-                    let x = 12 + ((WIDTH - 24) as f64 * page as f64 / count as f64).round() as i32;
-                    canvas.fill(Rect::new(x, TopHeader::HEIGHT as i32 - 5, 2, 4), ink);
-                };
-                if let Some(selected) = self.customized_header_marker_pages(book) {
-                    selected.into_iter().for_each(mark);
+                let local_count = book.reading.probe.page_count();
+                if let Some(published) = self.publisher_header_marker_pages(book) {
+                    draw_header_ticks(canvas, published.starts.into_iter(), published.count, ink);
+                } else if let Some(selected) = self.customized_header_marker_pages(book) {
+                    draw_header_ticks(canvas, selected.into_iter(), local_count, ink);
                 } else {
-                    for (page, _) in book.reading.probe.footer_sections() {
-                        mark(*page);
-                    }
+                    let pages = book
+                        .reading
+                        .probe
+                        .footer_sections()
+                        .iter()
+                        .map(|(page, _)| *page);
+                    draw_header_ticks(canvas, pages, local_count, ink);
                 }
             }
         } else {

@@ -274,3 +274,80 @@ fn top_header_labels_use_only_completed_character_maps_and_reopen_exactly() {
     app.activate(Action::SetCharacterPages(None)).unwrap();
     assert_eq!(header(&app), screen_numbers(&app));
 }
+
+#[test]
+fn optional_header_resolves_whole_book_contents_marks_and_filters_depths() {
+    use primitive_app::App;
+    use std::time::{Duration, Instant};
+
+    let fixture = Fixture::new();
+    let contents = br#"<html><body><nav type="toc"><ol>
+      <li><a href="first.xhtml">The first chapter</a><ol>
+        <li><a href="first.xhtml#passage5">The fifth passage</a></li>
+      </ol></li>
+      <li><a href="second.xhtml">The next chapter</a></li>
+    </ol></nav></body></html>"#;
+    write_outline_fixture(&fixture.book, Some(contents), None);
+    let fonts = fonts();
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+    open(&mut app, &fixture);
+    app.activate(Action::SetReadingControls(ReadingControls {
+        top_header: TopHeader {
+            page_number: false,
+            page_count: false,
+            reading_percent: false,
+            chapter_marks: true,
+            ..app.controls.top_header
+        },
+        ..app.controls
+    }))
+    .unwrap();
+    assert!(app.needs_screen_page_count());
+    let book = app.active.as_ref().unwrap();
+    assert!(app.publisher_header_marker_pages(book).is_none());
+    let reading = &book.reading;
+    let first_count = reading.probe.page_count();
+    let next_count = reading.config.chapter(1).unwrap().page_count();
+    let fragment = reading.probe.fragment("passage5").unwrap();
+    let detail = reading.probe.page_for(&fragment).unwrap();
+    assert!(detail > 0 && detail < first_count);
+    let original = app.current_history_location();
+    let fonts_for_canvas: Vec<_> = fonts
+        .iter()
+        .map(|font| font.display().to_string())
+        .collect();
+    let mut canvas = Canvas::new(WIDTH, HEIGHT, &fonts_for_canvas).unwrap();
+    let before = primitive_app::frame(&app, &mut canvas, false);
+    let time_limit = Instant::now() + Duration::from_secs(30);
+
+    loop {
+        if let Some(markers) = app.publisher_header_marker_pages(app.active.as_ref().unwrap()) {
+            assert_eq!(markers.starts, vec![0, detail, first_count]);
+            assert_eq!(markers.count, first_count + next_count);
+            break;
+        }
+        assert!(
+            Instant::now() < time_limit,
+            "Whole-book marks should finish"
+        );
+        app.tick(Instant::now());
+        std::thread::sleep(Duration::from_millis(15));
+    }
+    let after = primitive_app::frame(&app, &mut canvas, false);
+    let header_end = (WIDTH * TopHeader::HEIGHT) as usize;
+    assert_ne!(&before[..header_end], &after[..header_end]);
+    assert_eq!(&before[header_end..], &after[header_end..]);
+    assert_eq!(app.current_history_location(), original);
+    capture_test_screen(&app, &fonts, "READER_WHOLE_BOOK_HEADER_MARKS_FRAME", false);
+
+    app.activate(Action::ChapterLevel(
+        crate::app::chapter_navigation::LevelSetting::ToggleLevel(1),
+    ))
+    .unwrap();
+    let marks = app
+        .publisher_header_marker_pages(app.active.as_ref().unwrap())
+        .unwrap();
+    assert_eq!(marks.starts, vec![0, first_count]);
+    assert_eq!(marks.count, first_count + next_count);
+    assert_eq!(app.current_history_location(), original);
+}
