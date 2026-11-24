@@ -23,6 +23,9 @@ reference where available. [KOReader chapter length rules](https://github.com/ko
 
 The Reader workflow tests open a PDF with nested outline entries and Roman and
 decimal labels and an EPUB with publisher labels and unopened targets. They
-check the displayed values, saved settings and unchanged jump destinations.
+check the displayed values, saved settings and exact jump destinations. A
+24-row integration test enables lengths from Contents settings, checks stable
+labels and jumps from the final visible row. The captures are from the desktop
+renderer.
 
-[PDF Contents](screenshots/contents-numbered-pdf.png) · [EPUB Contents](screenshots/contents-numbered-epub.png) · [Dark mode](screenshots/contents-numbered-dark.png)
+[PDF Contents](screenshots/contents-numbered-pdf.png) · [EPUB Contents](screenshots/contents-numbered-epub.png) · [Dark mode](screenshots/contents-numbered-dark.png) · [24 rows with stable labels](screenshots/contents-numbered-dense.png)
