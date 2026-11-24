@@ -392,3 +392,97 @@ fn search_results_chapter_pdf_reuses_filtered_ordinals_for_pagers_fit_and_origin
     app.open_path(&fixture.book).unwrap();
     assert!(!app.search_chapter_active());
 }
+
+#[test]
+fn document_search_viewport_epub_keyboard_pagers_context_and_return_follow_the_view() {
+    use crate::app::selection_viewport_tests::{adopt, capture, key, press, tap as press_tap};
+    use crate::app::{FIND_CASE, FIND_PATTERN, LAST_MATCH_PAGE, MATCH_PREV, NEXT_MATCH_PAGE};
+    use crate::session::ReadingViewport;
+    use primitive_ui::Key;
+
+    let fixture = Fixture::new();
+    std::fs::copy(crate::test_fixture("long-chapter.epub"), &fixture.book).unwrap();
+    let fonts = vec![
+        crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+        crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+    ];
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+    app.open_path(&fixture.book).unwrap();
+    let portrait_rows = app.match_geometry().rows;
+    let mut canvas = adopt(&mut app, ReadingViewport::LANDSCAPE, 2);
+    let origin = app.current_history_location();
+    app.show(Screen::Find);
+    let layout = app.search_layout();
+    let (_, height) = layout.viewport.dimensions();
+    let pattern = layout.find_option(FIND_PATTERN);
+    assert!(pattern.x + pattern.w / 2 > WIDTH as i32);
+    press(&app, &mut canvas, layout.find_option(FIND_CASE), false);
+    press_tap(&mut app, layout.find_option(FIND_CASE));
+    assert!(app.find_match_case);
+    press_tap(&mut app, layout.find_option(FIND_CASE));
+    press_tap(&mut app, pattern);
+    assert!(app.find_regex);
+    press_tap(&mut app, pattern);
+    app.clipboard_text = Some("changing ".into());
+    let paste = app.editor_paste_rect();
+    assert!(paste.x > WIDTH as i32);
+    press(&app, &mut canvas, paste, false);
+    press_tap(&mut app, paste);
+    for ch in "wind".chars() {
+        let rect = key(&app, Key::Char(ch), "Find all");
+        press_tap(&mut app, rect);
+    }
+    assert_eq!(app.editor.string(), "changing wind");
+    let find = key(&app, Key::Go, "Find all");
+    assert!(find.x > WIDTH as i32 && find.bottom() <= height as i32);
+    capture(&app, &mut canvas, "landscape-find-document.png", false);
+    press_tap(&mut app, find);
+    assert_eq!(app.screen, Screen::Matches);
+    wait_for_search(&mut app, usize::MAX);
+    let geometry = app.match_geometry();
+    assert!(geometry.rows < portrait_rows && app.hits.len() > geometry.rows * 2);
+    assert!(geometry.row(0).right() > WIDTH as i32);
+    let next = layout.list_button(NEXT_MATCH_PAGE);
+    press(&app, &mut canvas, next, false);
+    capture(&app, &mut canvas, "landscape-document-matches.png", false);
+    press_tap(&mut app, next);
+    assert_eq!(app.list_page, 1);
+    let last = layout.list_button(LAST_MATCH_PAGE);
+    press_tap(&mut app, last);
+    let ordinal = app.list_page * geometry.rows;
+    let row = geometry.row(0);
+    let (x, y) = ((row.right() - 30) as f32, (row.y + row.h / 2) as f32);
+    assert!(x > WIDTH as f32);
+    assert_eq!(app.input(Input::LongTap(x, y)), Change::Partial);
+    assert!(app.result_context.is_some());
+    assert_eq!(app.focused_result, Some(ordinal));
+    assert_eq!(app.current_history_location(), origin);
+    capture(&app, &mut canvas, "landscape-held-result-context.png", true);
+    assert_eq!(app.input(Input::PageBack), Change::Partial);
+    assert!(app.result_context.is_none());
+    assert_eq!(app.input(Input::Tap(x, y)), Change::Partial);
+    assert_eq!(
+        app.result_selection.as_ref().unwrap().start,
+        app.hits[ordinal].anchor
+    );
+    let previous = layout.reading_footer(MATCH_PREV);
+    press_tap(&mut app, previous);
+    assert_eq!(app.search_result, Some(ordinal - 1));
+    app.show(Screen::Matches);
+    let options = layout.options_button(OPTIONS);
+    assert!(options.x > WIDTH as i32);
+    press(&app, &mut canvas, options, false);
+    press_tap(&mut app, options);
+    press_tap(&mut app, layout.centered(ORIGINAL));
+    assert_eq!(app.current_history_location(), origin);
+
+    app.show(Screen::Matches);
+    press_tap(&mut app, last);
+    let first = app.list_page * geometry.rows;
+    app.show(Screen::Book);
+    let _portrait = adopt(&mut app, ReadingViewport::PORTRAIT, 3);
+    app.show(Screen::Matches);
+    let page = app.list_page;
+    assert!(page > 0);
+    assert!((page * portrait_rows..(page + 1) * portrait_rows).contains(&first));
+}

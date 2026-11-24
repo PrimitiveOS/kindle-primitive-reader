@@ -181,14 +181,15 @@ impl Reader {
         if !self.has_search_result_navigation() {
             return;
         }
-        canvas.button(OPTIONS, "", false, false);
-        let ink = if canvas.is_control_pressed(OPTIONS) {
+        let options = self.search_layout().options_button(OPTIONS);
+        canvas.button(options, "", false, false);
+        let ink = if canvas.is_control_pressed(options) {
             255
         } else {
             0
         };
         canvas.icon(
-            Rect::new(OPTIONS.x + 27, OPTIONS.y + 27, 46, 46),
+            Rect::new(options.x + 27, options.y + 27, 46, 46),
             icons::SETTINGS,
             ink,
         );
@@ -201,20 +202,44 @@ impl Reader {
         let Some(origin) = self.results_origin() else {
             return;
         };
-        canvas.popup(SHEET);
-        canvas.text(TITLE, "Search result options", TextStyle::new(50).bold());
-        let scoped = self.search_chapter_active();
-        canvas.button(ALL, "All results", !scoped, false);
-        canvas.button(CHAPTER, "Results in current chapter", scoped, false);
-        canvas.button(CURRENT, "Focus results near current page", false, false);
+        let layout = self.search_layout();
+        canvas.popup(layout.centered(SHEET));
         canvas.text(
-            CURRENT_LABEL,
+            layout.centered(TITLE),
+            "Search result options",
+            TextStyle::new(50).bold(),
+        );
+        let scoped = self.search_chapter_active();
+        canvas.button(layout.centered(ALL), "All results", !scoped, false);
+        canvas.button(
+            layout.centered(CHAPTER),
+            "Results in current chapter",
+            scoped,
+            false,
+        );
+        canvas.button(
+            layout.centered(CURRENT),
+            "Focus results near current page",
+            false,
+            false,
+        );
+        canvas.text(
+            layout.centered(CURRENT_LABEL),
             &self.search_result_page_label(),
             CAPTION.center(),
         );
-        canvas.button(ORIGINAL, "Return to original page", false, false);
-        canvas.text(ORIGINAL_LABEL, &origin.label, CAPTION.center());
-        canvas.button(CLOSE, "Done", true, false);
+        canvas.button(
+            layout.centered(ORIGINAL),
+            "Return to original page",
+            false,
+            false,
+        );
+        canvas.text(
+            layout.centered(ORIGINAL_LABEL),
+            &origin.label,
+            CAPTION.center(),
+        );
+        canvas.button(layout.centered(CLOSE), "Done", true, false);
     }
 
     fn search_result_page_label(&self) -> String {
@@ -241,8 +266,9 @@ impl Reader {
             self.search_results_navigation.menu_open = false;
             return None;
         }
+        let layout = self.search_layout();
         if !self.search_results_navigation.menu_open {
-            if matches!(input, Input::Tap(x, y) if OPTIONS.contains(x, y)) {
+            if matches!(input, Input::Tap(x, y) if layout.options_button(OPTIONS).contains(x, y)) {
                 self.result_context = None;
                 self.search_results_navigation.menu_open = true;
                 return Some(Change::Partial);
@@ -250,14 +276,25 @@ impl Reader {
             return None;
         }
         let outcome = match input {
-            Input::Tap(x, y) if ALL.contains(x, y) => {
+            Input::Tap(x, y) if layout.centered(ALL).contains(x, y) => {
                 self.reset_search_chapter();
                 Ok(())
             }
-            Input::Tap(x, y) if CHAPTER.contains(x, y) => self.focus_on_current_chapter(),
-            Input::Tap(x, y) if CURRENT.contains(x, y) => self.focus_results_at_current_page(),
-            Input::Tap(x, y) if ORIGINAL.contains(x, y) => self.go_to_search_origin(),
-            Input::Tap(x, y) if CLOSE.contains(x, y) || !SHEET.contains(x, y) => Ok(()),
+            Input::Tap(x, y) if layout.centered(CHAPTER).contains(x, y) => {
+                self.focus_on_current_chapter()
+            }
+            Input::Tap(x, y) if layout.centered(CURRENT).contains(x, y) => {
+                self.focus_results_at_current_page()
+            }
+            Input::Tap(x, y) if layout.centered(ORIGINAL).contains(x, y) => {
+                self.go_to_search_origin()
+            }
+            Input::Tap(x, y)
+                if layout.centered(CLOSE).contains(x, y)
+                    || !layout.centered(SHEET).contains(x, y) =>
+            {
+                Ok(())
+            }
             Input::PageBack => Ok(()),
             _ => return Some(Change::None),
         };
@@ -315,7 +352,7 @@ impl Reader {
 
     fn go_to_match_list_index(&mut self, index: usize) {
         self.list_page = self.match_page_for_index(index);
-        self.matches_page = self.list_page;
+        self.remember_match_window(self.list_page);
         self.focused_result = Some(index);
     }
 }

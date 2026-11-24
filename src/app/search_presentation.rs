@@ -86,8 +86,12 @@ impl Reader {
         });
     }
 
+    pub(super) fn configured_search_rows(&self) -> u8 {
+        Field::Rows.value(&self.controls)
+    }
+
     pub(super) fn match_geometry(&self) -> Geometry {
-        Geometry::with_rows(Field::Rows.value(&self.controls))
+        Geometry::with_rows(self.configured_search_rows()).in_navigation(self.navigation_layout())
     }
 
     pub(super) fn search_context_words(&self) -> u8 {
@@ -111,9 +115,13 @@ impl Reader {
             self.matches_page = 0;
         } else {
             let old_rows = self.match_geometry().rows;
-            let new_rows = usize::from(Field::Rows.value(controls));
+            let configured_rows = Field::Rows.value(controls);
+            let new_rows = Geometry::with_rows(configured_rows)
+                .in_navigation(self.navigation_layout())
+                .rows;
             if self.search_max_lines() != Field::Lines.saved_value(controls)
-                || (old_rows != new_rows && self.search_max_lines().is_some())
+                || (self.configured_search_rows() != configured_rows
+                    && self.search_max_lines().is_some())
             {
                 self.clear_flexible_results();
                 self.matches_page = 0;

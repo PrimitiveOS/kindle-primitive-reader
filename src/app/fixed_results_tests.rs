@@ -216,3 +216,67 @@ fn partial_fixed_results_cancel_and_replace_without_stale_rows() {
     );
     assert_eq!(app.list_page, 0);
 }
+
+#[test]
+fn document_search_viewport_pdf_flexible_rows_fit_hold_and_return_to_the_result_list() {
+    use crate::app::selection_viewport_tests::{adopt, capture, key, press};
+    use crate::session::ReadingViewport;
+    use primitive_ui::Key;
+
+    let fixture = Fixture::new();
+    let file = fixture.root.join("Harbour register.pdf");
+    fs::write(&file, tide_register()).unwrap();
+    let fonts = vec![
+        crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+        crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+    ];
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+    app.open_path(&file).unwrap();
+    app.controls.search_max_lines = Some(3);
+    let mut canvas = adopt(&mut app, ReadingViewport::LANDSCAPE, 2);
+    let origin = app.current_history_location();
+    app.show(Screen::Find);
+    for ch in "station".chars() {
+        let rect = key(&app, Key::Char(ch), "Find all");
+        assert_eq!(tap(&mut app, rect), Change::Partial);
+    }
+    let go = key(&app, Key::Go, "Find all");
+    assert_eq!(tap(&mut app, go), Change::Partial);
+    while let Some(at) = app.search_at {
+        app.step_pdf_search(at).unwrap();
+    }
+    assert_eq!(app.pdf_hits.len(), 120);
+    let layout = app.search_layout();
+    let next = layout.list_button(NEXT_MATCH_PAGE);
+    press(&app, &mut canvas, next, true);
+    capture(
+        &app,
+        &mut canvas,
+        "landscape-flexible-pdf-matches.png",
+        true,
+    );
+    assert_eq!(tap(&mut app, next), Change::Partial);
+    let start = app.flexible_result_range().unwrap().start;
+    assert!(start > 0 && start < app.pdf_hits.len());
+    let point = ((layout.width() - 64) as f32, (LIST_Y + 45) as f32);
+    assert!(point.0 > WIDTH as f32);
+    assert_eq!(app.input(Input::LongTap(point.0, point.1)), Change::Partial);
+    assert!(app.result_context.is_some());
+    assert_eq!(app.current_history_location(), origin);
+    assert_eq!(app.input(Input::PageBack), Change::Partial);
+    assert_eq!(app.input(Input::Tap(point.0, point.1)), Change::Partial);
+    assert_eq!(app.screen, Screen::Fixed);
+    assert_eq!(
+        app.current_position().unwrap().page,
+        app.pdf_hits[start].page
+    );
+    assert!(!app.pdf_result_regions.is_empty());
+    assert!(app.fixed_search_fit_active());
+    let results = layout.reading_footer(Rect::new(534, MATCH_PREV.y, 176, MATCH_PREV.h));
+    press(&app, &mut canvas, results, false);
+    assert_eq!(tap(&mut app, results), Change::Partial);
+    assert_eq!(app.screen, Screen::Matches);
+    assert!(app.flexible_result_range().unwrap().contains(&start));
+    app.activate(Action::ReturnToLocation).unwrap();
+    assert_eq!(app.current_history_location(), origin);
+}

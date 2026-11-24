@@ -342,7 +342,8 @@ impl Reader {
         self.pdf_result_regions = regions.into_iter().map(|bounds| (page, bounds)).collect();
         self.search_result = Some(index);
         self.focused_result = Some(index);
-        self.matches_page = self.match_page_for_index(index);
+        let page = self.match_page_for_index(index);
+        self.remember_match_window(page);
         Ok(())
     }
 
@@ -354,7 +355,8 @@ impl Reader {
     }
 
     fn fixed_list_result_control(&mut self, x: f32, y: f32, hold: bool) -> Option<Change> {
-        if !hold && LIST_RESULT_LIST.contains(x, y) {
+        let layout = self.search_layout();
+        if !hold && layout.reading_footer(LIST_RESULT_LIST).contains(x, y) {
             return Some(match self.close_fixed_search_fit() {
                 Ok(()) => {
                     self.matches_return_to_reading = true;
@@ -364,9 +366,9 @@ impl Reader {
                 Err(error) => self.report(error),
             });
         }
-        let direction = if LIST_RESULT_PREVIOUS.contains(x, y) {
+        let direction = if layout.reading_footer(LIST_RESULT_PREVIOUS).contains(x, y) {
             -1
-        } else if LIST_RESULT_NEXT.contains(x, y) {
+        } else if layout.reading_footer(LIST_RESULT_NEXT).contains(x, y) {
             1
         } else {
             return None;
@@ -402,13 +404,23 @@ impl Reader {
         }
         if let Some(index) = self.search_result {
             let order = self.search_result_order();
+            let layout = self.search_layout();
             FixedNavigation::Previous.draw(
                 canvas,
-                LIST_RESULT_PREVIOUS,
+                layout.reading_footer(LIST_RESULT_PREVIOUS),
                 order.step(index, -1).is_some(),
             );
-            canvas.button(LIST_RESULT_LIST, "Results", false, false);
-            FixedNavigation::Next.draw(canvas, LIST_RESULT_NEXT, order.step(index, 1).is_some());
+            canvas.button(
+                layout.reading_footer(LIST_RESULT_LIST),
+                "Results",
+                false,
+                false,
+            );
+            FixedNavigation::Next.draw(
+                canvas,
+                layout.reading_footer(LIST_RESULT_NEXT),
+                order.step(index, 1).is_some(),
+            );
         }
         true
     }
@@ -452,9 +464,10 @@ impl Reader {
         if self.screen != Screen::Fixed || !self.fixed_search_fit_active() {
             return None;
         }
+        let layout = self.search_layout();
         let keep = match input {
             Input::Tap(x, y) => {
-                if DONE.contains(x, y) {
+                if layout.viewport.done().contains(x, y) {
                     return Some(self.exit());
                 }
                 let change = if self.fixed_list_result_active() {
@@ -482,6 +495,7 @@ impl Reader {
             } if self.fixed_list_result_active() => {
                 if [LIST_RESULT_PREVIOUS, LIST_RESULT_NEXT]
                     .into_iter()
+                    .map(|rect| layout.reading_footer(rect))
                     .any(|rect| rect.contains(start_x, start_y) && rect.contains(x, y))
                 {
                     return self.fixed_list_result_control(x, y, true);
@@ -506,7 +520,7 @@ impl Reader {
     pub(super) fn draw_fixed_search_fit_close(&self, canvas: &mut Canvas) {
         // Replace the temporary view's zoom controls in the reserved footer
         // area. The status caption and Exit keep their normal positions.
-        let rect = SEARCH_FIT_CLOSE;
+        let rect = self.reading_viewport().bottom_right(SEARCH_FIT_CLOSE);
         canvas.fill(rect, 255);
         canvas.button(rect, "Close search", false, false);
     }
@@ -559,15 +573,16 @@ impl Reader {
         if !self.supports_nearby_search() {
             return None;
         }
+        let layout = self.search_layout();
         if self.fixed.is_some() && !self.nearby.searching_direction() {
             let step = FixedNavigation::ITEMS
                 .into_iter()
-                .find(|s| s.entry().0.contains(x, y))?;
+                .find(|s| layout.find_direction(s.entry().0).contains(x, y))?;
             return Some(self.fixed_navigation(step, false));
         }
-        let direction = if PREVIOUS.contains(x, y) {
+        let direction = if layout.find_direction(PREVIOUS).contains(x, y) {
             SearchDirection::Previous
-        } else if NEXT_HERE.contains(x, y) {
+        } else if layout.find_direction(NEXT_HERE).contains(x, y) {
             SearchDirection::Next
         } else {
             return None;
@@ -587,16 +602,27 @@ impl Reader {
         if !self.supports_nearby_search() {
             return;
         }
+        let layout = self.search_layout();
         if self.nearby.searching_direction() {
-            canvas.button(PREVIOUS, "Cancel search", false, false);
+            canvas.button(
+                layout.find_direction(PREVIOUS),
+                "Cancel search",
+                false,
+                false,
+            );
         } else if self.fixed.is_some() {
             for step in FixedNavigation::ITEMS {
                 let (rect, label) = step.entry();
-                canvas.button(rect, label, false, false);
+                canvas.button(layout.find_direction(rect), label, false, false);
             }
         } else {
-            canvas.button(PREVIOUS, "Find previous", false, false);
-            canvas.button(NEXT_HERE, "Find next", false, false);
+            canvas.button(
+                layout.find_direction(PREVIOUS),
+                "Find previous",
+                false,
+                false,
+            );
+            canvas.button(layout.find_direction(NEXT_HERE), "Find next", false, false);
         }
     }
     fn fixed_navigation(&mut self, step: FixedNavigation, continuing: bool) -> Change {
@@ -611,9 +637,10 @@ impl Reader {
     }
 
     pub(super) fn fixed_result_input(&mut self, x: f32, y: f32) -> Option<Change> {
+        let layout = self.search_layout();
         let step = FixedNavigation::ITEMS
             .into_iter()
-            .find(|s| s.button().contains(x, y))?;
+            .find(|s| layout.reading_footer(s.button()).contains(x, y))?;
         Some(
             if step.from_edge() || self.nearby.can_step(step.direction()) {
                 self.fixed_navigation(step, true)
@@ -628,7 +655,7 @@ impl Reader {
             return false;
         }
         for step in FixedNavigation::ITEMS {
-            let rect = step.button();
+            let rect = self.search_layout().reading_footer(step.button());
             let active = step.from_edge() || self.nearby.can_step(step.direction());
             step.draw(canvas, rect, active);
         }

@@ -103,6 +103,9 @@ impl Reader {
     }
 
     pub(super) fn editor_paste_rect(&self) -> Rect {
+        if self.screen == Screen::Find {
+            return self.search_layout().find_paste(PASTE);
+        }
         let mut rect = PASTE;
         if self.screen.uses_reading_text_editor() {
             rect.x += self.reading_viewport().dimensions().0 as i32 - WIDTH as i32;

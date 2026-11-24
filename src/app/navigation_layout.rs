@@ -79,6 +79,8 @@ impl Screen {
                 Self::GoToPage
                     | Self::ContentsSearch
                     | Self::LibraryFind
+                    | Self::Find
+                    | Self::Matches
                     | Self::BookmarkFind
                     | Self::BookmarkMatches
                     | Self::BookMap

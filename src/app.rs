@@ -67,7 +67,6 @@ mod nonlinear_tests;
 mod online_panel;
 mod overview_bookmarks;
 mod page_overview;
-mod visual_navigation;
 mod profile_panel;
 mod progress_markers;
 mod quick_display;
@@ -82,6 +81,7 @@ mod reading_viewport_stage;
 mod result_context;
 mod saved_highlight_popup;
 mod search_chapter_scope;
+mod search_layout;
 mod selection_html;
 mod selection_popup;
 #[cfg(test)]
@@ -95,6 +95,7 @@ mod top_config;
 mod top_header;
 mod top_header_font;
 mod user_hyphenation;
+mod visual_navigation;
 mod vocabulary;
 #[cfg(test)]
 mod workflow_integration_tests;
@@ -138,9 +139,7 @@ use crate::reading_profiles::{self, Profile};
 use crate::reading_stats::ReadingStats;
 use crate::search::{MAX_FIXED_SEARCH_HITS, PdfSearch, PdfSearchHit, Search, SearchHit};
 use crate::selection::TextSelection;
-use crate::session::{
-    BookConfig, DONE, PAGE_HEIGHT, PAGE_REFRESH_GAP, PageTurns, Reading,
-};
+use crate::session::{BookConfig, DONE, PAGE_HEIGHT, PAGE_REFRESH_GAP, PageTurns, Reading};
 use crate::text_flow::TextFlow;
 use crate::{Engine, Probe, Result, Settings, TextAlignment};
 
@@ -660,7 +659,6 @@ struct BookDetails {
     metadata: Option<BookMetadata>,
 }
 
-
 struct OutlineScan {
     contents: GeneratedContents,
     deadline: Option<Instant>,
@@ -873,6 +871,7 @@ pub struct Reader {
     top_header_font_picker: Option<top_header_font::Picker>,
     list_page: usize,
     matches_page: usize,
+    match_window: Option<search_layout::MatchWindow>,
     matches_return_to_reading: bool,
     result_context: Option<result_context::ResultContext>,
     flexible_results: std::cell::RefCell<Option<flexible_results::FlexibleResults>>,
@@ -1098,6 +1097,7 @@ impl Reader {
             top_header_font_picker: None,
             list_page: 0,
             matches_page: 0,
+            match_window: None,
             matches_return_to_reading: false,
             result_context: None,
             flexible_results: Default::default(),
@@ -1800,7 +1800,7 @@ impl Reader {
             self.cancel_search();
         }
         if self.screen == Screen::Matches && screen != Screen::Matches {
-            self.matches_page = self.list_page;
+            self.remember_match_window(self.list_page);
         }
         self.link_popup = None;
         self.screen = screen;
@@ -1828,7 +1828,7 @@ impl Reader {
             self.prepare_contents(previous != Screen::ContentsSearch);
         }
         self.list_page = if screen == Screen::Matches {
-            self.matches_page
+            self.reopen_match_window()
         } else if let Some(chapter) = self.book_map_focus {
             chapter / self.list_geometry().rows
         } else {
@@ -4116,7 +4116,8 @@ impl Reader {
                     self.push_history(previous);
                 }
                 self.search_result = Some(index);
-                self.matches_page = self.match_page_for_index(index);
+                let page = self.match_page_for_index(index);
+                self.remember_match_window(page);
             }
             Action::PdfSearchHit(index) => self.open_fixed_list_result(index)?,
             Action::PdfHighlight(index) => {
@@ -4955,6 +4956,7 @@ impl Reader {
     fn handle_find(&mut self, input: Input) -> Change {
         let edit = self.screen == Screen::EditNote;
         let note = self.screen == Screen::Note || edit;
+        let search = self.search_layout();
         let navigation = if self.screen.uses_navigation_viewport() {
             self.navigation_layout()
         } else {
@@ -5002,11 +5004,14 @@ impl Reader {
                 }
             }
         }
-        if self.screen == Screen::Find && FIND_CASE.contains(x, y) {
+        if self.screen == Screen::Find && search.find_option(FIND_CASE).contains(x, y) {
             self.find_match_case = !self.find_match_case;
             return Change::Partial;
         }
-        if self.screen == Screen::Find && self.active.is_some() && FIND_PATTERN.contains(x, y) {
+        if self.screen == Screen::Find
+            && self.active.is_some()
+            && search.find_option(FIND_PATTERN).contains(x, y)
+        {
             self.find_regex = !self.find_regex;
             if self.find_regex {
                 self.find_ignore_accents = false;
@@ -5014,7 +5019,7 @@ impl Reader {
             self.notice = None;
             return Change::Partial;
         }
-        if self.screen == Screen::Find && FIND_ACCENTS.contains(x, y) {
+        if self.screen == Screen::Find && search.find_option(FIND_ACCENTS).contains(x, y) {
             self.find_regex = false;
             self.find_ignore_accents = !self.find_ignore_accents;
             return Change::Partial;
@@ -5659,9 +5664,10 @@ impl Reader {
         if self.fixed_result_navigation() && !self.nearby.searching_direction() {
             return self.fixed_result_input(x, y);
         }
-        let step = if MATCH_PREV.contains(x, y) {
+        let layout = self.search_layout();
+        let step = if layout.reading_footer(MATCH_PREV).contains(x, y) {
             -1
-        } else if MATCH_NEXT.contains(x, y) {
+        } else if layout.reading_footer(MATCH_NEXT).contains(x, y) {
             1
         } else {
             return None;
@@ -5680,21 +5686,22 @@ impl Reader {
     }
 
     fn draw_search_steps(&self, canvas: &mut Canvas) {
+        let layout = self.search_layout();
         if self.draw_fixed_list_search(canvas) {
             return;
         }
         if self.nearby.searching_direction() {
-            canvas.button(MATCH_PREV, "Cancel", false, false);
+            canvas.button(layout.reading_footer(MATCH_PREV), "Cancel", false, false);
             return;
         }
         if self.draw_fixed_result_navigation(canvas) {
             return;
         }
         if self.search_step(-1).is_some() {
-            canvas.button(MATCH_PREV, "Previous", false, false);
+            canvas.button(layout.reading_footer(MATCH_PREV), "Previous", false, false);
         }
         if self.search_step(1).is_some() {
-            canvas.button(MATCH_NEXT, "Next", false, false);
+            canvas.button(layout.reading_footer(MATCH_NEXT), "Next", false, false);
         }
     }
 
@@ -7420,8 +7427,13 @@ impl Reader {
                 Screen::Find => ("Search text", "Find all"),
                 _ => ("Search text", "Find"),
             };
+            let search = self.search_layout();
             canvas.single_line_field(
-                navigation.body(LIST_Y, 130),
+                if self.screen == Screen::Find {
+                    search.find_field(self.can_paste_text())
+                } else {
+                    navigation.body(LIST_Y, 130)
+                },
                 &self.editor,
                 hint,
                 self.screen == Screen::PdfPassword,
@@ -7450,20 +7462,38 @@ impl Reader {
                 } else {
                     "Match case off"
                 };
-                canvas.button(FIND_CASE, label, self.find_match_case, false);
                 canvas.button(
-                    FIND_ACCENTS,
+                    search.find_option(FIND_CASE),
+                    label,
+                    self.find_match_case,
+                    false,
+                );
+                canvas.button(
+                    search.find_option(FIND_ACCENTS),
                     "Ignore accents",
                     self.find_ignore_accents,
                     false,
                 );
                 if self.active.is_some() {
-                    canvas.button(FIND_PATTERN, "Regular expression", self.find_regex, false);
+                    canvas.button(
+                        search.find_option(FIND_PATTERN),
+                        "Regular expression",
+                        self.find_regex,
+                        false,
+                    );
                 }
                 self.draw_nearby(canvas);
             }
             if let Some(notice) = &self.notice {
-                canvas.text(navigation.body(LIST_Y + 158, 75), notice, CAPTION);
+                canvas.text(
+                    if self.screen == Screen::Find {
+                        search.find_notice()
+                    } else {
+                        navigation.body(LIST_Y + 158, 75)
+                    },
+                    notice,
+                    CAPTION,
+                );
             }
             return;
         }
@@ -7607,6 +7637,11 @@ impl Reader {
                 }
             }
         }
+        let layout = if self.screen == Screen::Matches {
+            self.search_layout()
+        } else {
+            search_layout::SearchLayout::PORTRAIT
+        };
         if rows.is_empty() {
             let empty = match self.screen {
                 Screen::Bookmarks | Screen::FixedBookmarks | Screen::Highlights => {
@@ -7638,14 +7673,26 @@ impl Reader {
             let page_rows = self.list_geometry().rows;
             let last = count.saturating_sub(1) / page_rows;
             for (rect, icon, available) in [
-                (FIRST_MATCH_PAGE, bar_icons::FIRST_PAGE, self.list_page > 0),
                 (
-                    PREV_MATCH_PAGE,
+                    layout.list_button(FIRST_MATCH_PAGE),
+                    bar_icons::FIRST_PAGE,
+                    self.list_page > 0,
+                ),
+                (
+                    layout.list_button(PREV_MATCH_PAGE),
                     bar_icons::PREVIOUS_PAGE,
                     self.list_page > 0,
                 ),
-                (NEXT_MATCH_PAGE, bar_icons::NEXT_PAGE, self.list_page < last),
-                (LAST_MATCH_PAGE, bar_icons::LAST_PAGE, self.list_page < last),
+                (
+                    layout.list_button(NEXT_MATCH_PAGE),
+                    bar_icons::NEXT_PAGE,
+                    self.list_page < last,
+                ),
+                (
+                    layout.list_button(LAST_MATCH_PAGE),
+                    bar_icons::LAST_PAGE,
+                    self.list_page < last,
+                ),
             ] {
                 if available {
                     canvas.button(rect, "", false, false);
@@ -7658,7 +7705,13 @@ impl Reader {
                         42,
                     ),
                     icon,
-                    if available { 20 } else { 178 },
+                    if self.screen == Screen::Matches && canvas.is_control_pressed(rect) {
+                        255
+                    } else if available {
+                        20
+                    } else {
+                        178
+                    },
                 );
             }
             let first = self.list_page * page_rows + 1;
@@ -7669,16 +7722,12 @@ impl Reader {
                 ""
             };
             canvas.text(
-                Rect::new(435, HEIGHT as i32 - 104, WIDTH as i32 - 870, 72),
+                layout.list_caption(435, 104, 72),
                 &format!("{first}–{last} of {count}{more}"),
-                CAPTION,
+                layout.counter_style(),
             );
             if let Some(notice) = &self.notice {
-                canvas.text(
-                    Rect::new(LIST_X, HEIGHT as i32 - 179, WIDTH as i32 - 2 * LIST_X, 64),
-                    notice,
-                    CAPTION,
-                );
+                canvas.text(layout.list_caption(LIST_X, 179, 64), notice, CAPTION);
             }
         } else {
             if self.list_page > 0 {
@@ -8516,6 +8565,11 @@ impl App for Reader {
         }
         let (count, mut items) = self.list_window();
         let geometry = self.list_geometry();
+        let layout = if self.screen == Screen::Matches {
+            self.search_layout()
+        } else {
+            search_layout::SearchLayout::PORTRAIT
+        };
         let broad = self.has_list_shortcuts(count);
         let navigation = self
             .screen
@@ -8526,20 +8580,27 @@ impl App for Reader {
             |layout| layout.back(),
         );
         let (prev, next) = if broad {
-            (PREV_MATCH_PAGE, NEXT_MATCH_PAGE)
+            (
+                layout.list_button(PREV_MATCH_PAGE),
+                layout.list_button(NEXT_MATCH_PAGE),
+            )
         } else if let Some(layout) = navigation {
             (layout.previous(), layout.next())
         } else {
-            (PREV, NEXT)
+            (layout.list_button(PREV), layout.list_button(NEXT))
         };
         let direction = match input {
-            Input::Tap(x, y) if broad && FIRST_MATCH_PAGE.contains(x, y) && self.list_page > 0 => {
+            Input::Tap(x, y)
+                if broad
+                    && layout.list_button(FIRST_MATCH_PAGE).contains(x, y)
+                    && self.list_page > 0 =>
+            {
                 self.list_page = 0;
                 return Change::Partial;
             }
             Input::Tap(x, y)
                 if broad
-                    && LAST_MATCH_PAGE.contains(x, y)
+                    && layout.list_button(LAST_MATCH_PAGE).contains(x, y)
                     && (self.list_page + 1) * geometry.rows < count =>
             {
                 self.list_page = count.saturating_sub(1) / geometry.rows;

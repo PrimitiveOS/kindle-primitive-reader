@@ -40,10 +40,12 @@ impl ResultContext {
             } else {
                 0
             };
+        let width = WIDTH as i32 - 216;
+        let bounds = canvas.bounds();
         let panel = Rect::new(
-            108,
-            (HEIGHT as i32 - height) / 2,
-            WIDTH as i32 - 216,
+            (bounds.w - width) / 2,
+            (bounds.h - height) / 2,
+            width,
             height,
         );
         canvas.panel(panel, 18, 3, 255);
@@ -53,7 +55,11 @@ impl ResultContext {
             BODY.bold(),
         );
         let close = Rect::new(panel.right() - 86, panel.y + 21, 48, 48);
-        canvas.icon(close, bar_icons::CLOSE, 30);
+        let pressed = canvas.control_pressed(close.inset(-24), false);
+        if pressed {
+            canvas.fill(close.inset(-7), 20);
+        }
+        canvas.icon(close, bar_icons::CLOSE, if pressed { 255 } else { 30 });
         for (row, title) in shown.enumerate() {
             let y = panel.y + 102 + 70 * row as i32;
             let indent = 34 + 27 * (row as i32).min(5);

@@ -1,14 +1,14 @@
-//! Full-text result rows measured and packed against the reference canvas.
+//! Full-text result rows measured and packed against the active viewport.
 use std::{borrow::Cow, ops::Range};
 
 use primitive_ui::{HAIRLINE, SECONDARY, TextStyle, chevron};
 
-use super::list_density::{LIST_HEIGHT, measure_rows};
+use super::list_density::{LIST_FOOTER_SPACE, measure_rows};
 use super::result_context::row_excerpt;
+use super::search_layout::SearchLayout;
 use super::*;
+use crate::session::ReadingViewport;
 
-const CARD_WIDTH: i32 = WIDTH as i32 - 2 * LIST_X;
-const TEXT_WIDTH: i32 = CARD_WIDTH - 116;
 const INSET_Y: i32 = 9;
 const GAP: i32 = 4;
 
@@ -16,6 +16,7 @@ pub(super) struct FlexibleResults {
     pages: Vec<ResultPage>,
     spill: Option<ResultRow>,
     canvas: Canvas,
+    viewport: ReadingViewport,
     max_lines: usize,
     font: ResultFont,
 }
@@ -81,8 +82,9 @@ impl ResultRow {
         text: ResultText<'_>,
         max_lines: usize,
         font: ResultFont,
+        card_width: i32,
     ) -> Self {
-        let glyph_bounds = Rect::new(0, 0, TEXT_WIDTH, font.line_height);
+        let glyph_bounds = Rect::new(0, 0, card_width - 116, font.line_height);
         // Measure with the result's font and a bold upper bound, since Canvas's
         // line measurement API lacks rich spans. Paint bolds only the hit.
         let style = TextStyle::new(font.title).bold().break_long_words();
@@ -116,7 +118,7 @@ impl ResultRow {
         let height =
             (lines as i32 * font.line_height + font.detail_height + 2 * INSET_Y + GAP).max(100);
         Self {
-            bounds: Rect::new(LIST_X, 0, CARD_WIDTH, height),
+            bounds: Rect::new(LIST_X, 0, card_width, height),
             lines,
             prefix,
             visible_end,
@@ -151,7 +153,7 @@ impl ResultRow {
             }
         }
         canvas.emphasized_text(
-            Rect::new(left, row.y + INSET_Y, TEXT_WIDTH, height),
+            Rect::new(left, row.y + INSET_Y, row.w - 116, height),
             &text,
             TextStyle::new(font.title)
                 .break_long_words()
@@ -163,7 +165,7 @@ impl ResultRow {
             Rect::new(
                 left,
                 row.y + INSET_Y + height + GAP,
-                TEXT_WIDTH,
+                row.w - 116,
                 font.detail_height,
             ),
             caption,
@@ -184,7 +186,12 @@ impl ResultRow {
 }
 
 impl FlexibleResults {
-    fn new(fonts: &[PathBuf], max_lines: u8, font: ResultFont) -> Option<Self> {
+    fn new(
+        fonts: &[PathBuf],
+        max_lines: u8,
+        font: ResultFont,
+        viewport: ReadingViewport,
+    ) -> Option<Self> {
         let fonts: Vec<_> = fonts
             .iter()
             .map(|font| font.display().to_string())
@@ -192,7 +199,8 @@ impl FlexibleResults {
         Some(Self {
             pages: Vec::new(),
             spill: None,
-            canvas: Canvas::new(WIDTH, 1, &fonts).ok()?,
+            canvas: Canvas::new_viewport(viewport.dimensions().0, 1, WIDTH, &fonts).ok()?,
+            viewport,
             max_lines: usize::from(max_lines),
             font,
         })
@@ -200,6 +208,13 @@ impl FlexibleResults {
 
     fn measured_count(&self) -> usize {
         self.pages.last().map_or(0, ResultPage::end)
+    }
+
+    fn ensure_page(&mut self, app: &Reader, page: usize) {
+        while self.pages.len() <= page
+            && self.measured_count() < app.fulltext_result_count()
+            && self.append(app)
+        {}
     }
 
     fn append(&mut self, app: &Reader) -> bool {
@@ -220,10 +235,13 @@ impl FlexibleResults {
         {
             self.pages.pop();
         }
+        let layout = SearchLayout {
+            viewport: self.viewport,
+        };
         let (rows, spill) = measure_rows(
             first,
             count,
-            LIST_Y + LIST_HEIGHT,
+            layout.height() - LIST_FOOTER_SPACE,
             self.spill.take(),
             |index| {
                 ResultRow::measure(
@@ -231,6 +249,7 @@ impl FlexibleResults {
                     app.result_text(order.provider_index(index).expect("measured result index")),
                     self.max_lines,
                     self.font,
+                    layout.width() - 2 * LIST_X,
                 )
             },
             |row| &mut row.bounds,
@@ -282,11 +301,13 @@ impl Reader {
     ) -> Option<T> {
         let lines = self.search_max_lines()?;
         let mut view = self.flexible_results.borrow_mut();
-        if view.is_none() {
+        let viewport = self.reading_viewport();
+        if view.as_ref().is_none_or(|view| view.viewport != viewport) {
             *view = FlexibleResults::new(
                 &self.fonts,
                 lines,
-                ResultFont::new(self.match_geometry().rows as u8),
+                ResultFont::new(self.configured_search_rows()),
+                viewport,
             );
         }
         let view = view.as_mut()?;
@@ -316,20 +337,27 @@ impl Reader {
     }
 
     pub(super) fn flexible_result_range(&self) -> Option<Range<usize>> {
+        self.flexible_result_range_at(self.list_page)
+    }
+
+    pub(super) fn flexible_result_range_at(&self, page: usize) -> Option<Range<usize>> {
         self.with_flexible_results(|view| {
+            view.ensure_page(self, page);
             view.pages
-                .get(self.list_page)
+                .get(page)
                 .map_or(0..0, |page| page.first..page.end())
         })
     }
 
     pub(super) fn draw_flexible_results(&self, canvas: &mut Canvas) -> bool {
+        let layout = self.search_layout();
         self.with_flexible_results(|view| {
+            view.ensure_page(self, self.list_page);
             let order = self.search_result_order();
             let count = order.len();
             let Some(page) = view.pages.get(self.list_page) else {
                 canvas.text(
-                    Rect::new(LIST_X, LIST_Y, CARD_WIDTH, 110),
+                    layout.body(LIST_Y, 110),
                     self.search_results_empty_label(),
                     BODY,
                 );
@@ -337,12 +365,7 @@ impl Reader {
                 return;
             };
             if let Some(last) = page.rows.last() {
-                canvas.card(Rect::new(
-                    LIST_X,
-                    LIST_Y,
-                    CARD_WIDTH,
-                    last.bounds.bottom() - LIST_Y,
-                ));
+                canvas.card(layout.body(LIST_Y, last.bounds.bottom() - LIST_Y));
             }
             for (offset, row) in page.rows.iter().enumerate() {
                 let Some(index) = order.provider_index(page.first + offset) else {
@@ -359,14 +382,26 @@ impl Reader {
             }
             if page.end() < count || self.list_page > 0 {
                 for (rect, icon, available) in [
-                    (FIRST_MATCH_PAGE, bar_icons::FIRST_PAGE, self.list_page > 0),
                     (
-                        PREV_MATCH_PAGE,
+                        layout.list_button(FIRST_MATCH_PAGE),
+                        bar_icons::FIRST_PAGE,
+                        self.list_page > 0,
+                    ),
+                    (
+                        layout.list_button(PREV_MATCH_PAGE),
                         bar_icons::PREVIOUS_PAGE,
                         self.list_page > 0,
                     ),
-                    (NEXT_MATCH_PAGE, bar_icons::NEXT_PAGE, page.end() < count),
-                    (LAST_MATCH_PAGE, bar_icons::LAST_PAGE, page.end() < count),
+                    (
+                        layout.list_button(NEXT_MATCH_PAGE),
+                        bar_icons::NEXT_PAGE,
+                        page.end() < count,
+                    ),
+                    (
+                        layout.list_button(LAST_MATCH_PAGE),
+                        bar_icons::LAST_PAGE,
+                        page.end() < count,
+                    ),
                 ] {
                     if available {
                         let pressed = canvas.control_pressed(pager_hit(rect), false);
@@ -397,9 +432,9 @@ impl Reader {
                     ""
                 };
                 canvas.text(
-                    Rect::new(435, HEIGHT as i32 - 104, WIDTH as i32 - 870, 72),
+                    layout.list_caption(435, 104, 72),
                     &format!("{}–{} of {count}{more}", page.first + 1, page.end()),
-                    CAPTION,
+                    layout.counter_style(),
                 );
             }
             self.draw_flexible_result_notice(canvas);
@@ -420,7 +455,7 @@ impl Reader {
     fn draw_flexible_result_notice(&self, canvas: &mut Canvas) {
         if let Some(notice) = &self.notice {
             canvas.text(
-                Rect::new(LIST_X, HEIGHT as i32 - 179, CARD_WIDTH, 64),
+                self.search_layout().list_caption(LIST_X, 179, 64),
                 notice,
                 CAPTION,
             );
@@ -434,12 +469,13 @@ impl Reader {
         if self.search_max_lines().is_none() || self.screen != Screen::Matches {
             return None;
         }
-        if matches!(input, Input::Tap(x, y) if primitive_ui::back_button(WIDTH as i32).contains(x, y))
-        {
+        if matches!(input, Input::Tap(x, y) if self.reading_editor_back().contains(x, y)) {
             return None;
         }
         let page = self.list_page;
+        let layout = self.search_layout();
         let target = self.with_flexible_results(|view| {
+            view.ensure_page(self, page);
             let move_page = |next: bool| {
                 if next {
                     page.checked_add(1)
@@ -451,10 +487,24 @@ impl Reader {
                 Input::PageBack => move_page(false),
                 Input::PageForward => move_page(true),
                 Input::Swipe { dx, dy, .. } if dy.abs() > dx.abs() => move_page(dy < 0.0),
-                Input::Tap(x, y) if pager_hit(FIRST_MATCH_PAGE).contains(x, y) => Some(0),
-                Input::Tap(x, y) if pager_hit(PREV_MATCH_PAGE).contains(x, y) => move_page(false),
-                Input::Tap(x, y) if pager_hit(NEXT_MATCH_PAGE).contains(x, y) => move_page(true),
-                Input::Tap(x, y) if pager_hit(LAST_MATCH_PAGE).contains(x, y) => {
+                Input::Tap(x, y)
+                    if pager_hit(layout.list_button(FIRST_MATCH_PAGE)).contains(x, y) =>
+                {
+                    Some(0)
+                }
+                Input::Tap(x, y)
+                    if pager_hit(layout.list_button(PREV_MATCH_PAGE)).contains(x, y) =>
+                {
+                    move_page(false)
+                }
+                Input::Tap(x, y)
+                    if pager_hit(layout.list_button(NEXT_MATCH_PAGE)).contains(x, y) =>
+                {
+                    move_page(true)
+                }
+                Input::Tap(x, y)
+                    if pager_hit(layout.list_button(LAST_MATCH_PAGE)).contains(x, y) =>
+                {
                     while view.measured_count() < self.fulltext_result_count() && view.append(self)
                     {
                     }
