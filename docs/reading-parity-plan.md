@@ -128,17 +128,18 @@ delay. A separate closing profile can apply automatically or ask while the
 outgoing book is still open. Close rules match any configured orientation,
 metadata, path or collection and can require a local time window. Switching
 to an encrypted PDF keeps the outgoing book available until the new
-password is accepted. Page Browser grids can use one
-to six rows and columns. A horizontal
-swipe along the top changes columns and a vertical swipe along the left
-changes rows. The Reader simulator checks ebook source focus and PDF page
+password is accepted. Page Browser grids can use one to six rows and
+columns. A horizontal swipe along the top changes columns and a vertical
+swipe along the left changes rows. The Reader simulator checks ebook source focus and PDF page
 focus through grid changes and viewport turns. Blank space in the left or
 right half of the grid moves by one full grid while preserving the reading
-position. [Metadata sources](reading-profiles.md#apply-a-profile-on-book-opening) ·
+position. Holding the ribbon opens Book Map at a fixed page or reflow
+chapter. Back restores the exact browser focus, including its EPUB anchor.
+[Metadata sources](reading-profiles.md#apply-a-profile-on-book-opening) ·
 [Conditional closing](reading-profiles.md#apply-a-profile-on-book-closing) ·
 [Opening confirmation and delay](reading-profiles.md#confirm-or-delay-an-opening-profile) ·
-[Closing profiles](reading-profiles.md#apply-a-profile-on-book-closing) ·
-[Page Browser grid](reading-orientation-contract.md#thumbnail-grid)
+[Page Browser grid](reading-orientation-contract.md#thumbnail-grid) ·
+[Ribbon hold](reading-orientation-contract.md#open-book-map-from-the-ribbon)
 
 The experimental Parley policies match the pinned KOReader Web mode's
 width and horizontal placement for two authored paragraphs and a
@@ -152,9 +153,11 @@ beside a sibling keep. The measured Web constraint policy also resolves
 ordinary paragraph widths, minimum and maximum sizes, and side alignment.
 The combined constraint and signed-margin policies preserve unclipped text
 positions when a wide publisher box extends beyond the physical screen.
-The measured Book and Web policies also size plain `fit-content` paragraphs
-to their text. Full Render Mode behavior and its user-facing choices remain
-open. [Publisher comparisons](render-modes.md)
+The measured Book and Web policies also size `fit-content` paragraphs
+to their text, including supported horizontal padding and solid borders.
+Full Render Mode behavior and its user-facing choices remain open.
+[Publisher comparisons](render-modes.md) ·
+[Partial typography rendering comparison](whole-book-screen-pages.md#partial-typography-rendering-comparison)
 
 
 - [x] Set the active Reader goal to KOReader's core Kindle reading workflows: document open/render, navigation/layout, search/lookup, bookmarks/annotations, reading progress, accessibility, offline scans, and local reading data.

@@ -78,7 +78,7 @@ fn conditional_closing_epub_requires_a_match_and_keeps_the_outgoing_passage() {
     let back = app.navigation_layout().back();
     tap(&mut app, back);
     tap_contents_item(&mut app, "File path contains");
-    app.editor.text = "other location, %H%/Field Notes.epub".chars().collect();
+    app.editor.text = "other location, Field Notes.epub".chars().collect();
     app.editor.caret = app.editor.text.len();
     let save = key(&app, Key::Go, "Save");
     tap(&mut app, save);
@@ -93,6 +93,11 @@ fn conditional_closing_epub_requires_a_match_and_keeps_the_outgoing_passage() {
         "profile-closing-conditions-portrait.png",
         false,
     );
+    tap_contents_item(&mut app, "File path contains");
+    app.editor.text = "other location, %H%/Field Notes.epub".chars().collect();
+    app.editor.caret = app.editor.text.len();
+    let save = key(&app, Key::Go, "Save");
+    tap(&mut app, save);
 
     app.show(Screen::Book);
     app.open_path(&ordinary).unwrap();

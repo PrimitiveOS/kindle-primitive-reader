@@ -2,6 +2,56 @@
 
 ## Current Mac simulator checkpoint
 
+Dictionary definitions use a saved font size from 8 to 32. The pinned
+KOReader callbacks and Mac tests check the default of 20, tap and hold
+steps, bounds and Apply. The simulator checks line wrapping, long-press
+lookup, four-digit HTML sense markers, and return to the original EPUB
+passage and PDF selection.
+[Dictionary controls and captures](dictionary-popup-display.md#definition-font-size)
+
+Closing profiles can match the outgoing book's accepted screen turn,
+metadata, path or collection, with an optional time window. The native
+stock replay checks all four conditions and the overnight clock endpoints.
+Reader's test confirms one prompt for multiple matches and saves the
+approved profile to the outgoing EPUB at its original anchor. The PDF
+case retains its physical page. Reader saves opening and closing time
+windows separately.
+[Closing profile comparison and captures](reading-profiles.md#apply-a-profile-on-book-closing)
+
+Holding the Page Browser ribbon opens Book Map at the chosen page in
+fixed-layout documents or chapter in reflowable books. Mac tests cover
+PDF, CBZ, DjVu and EPUB. The nested Back path restores the launching
+thumbnail window and preserves the live reading position through a turn.
+[Ribbon comparison and captures](reading-orientation-contract.md#open-book-map-from-the-ribbon)
+
+The internal EPUB Book and Web policies support fitted paragraphs with
+horizontal padding, opaque solid borders and either box-sizing convention.
+The native oracle checks 32 geometry cases across four stock modes and
+recovers 128 saved quotes. Mac tests verify the selected text and links
+inside the padded box and the border placement during fractional scrolling.
+Vertical padding, patterned and translucent strokes, and the full Render
+Mode control remain open.
+[Decorated widths and captures](render-modes.md#horizontal-padding-and-solid-paragraph-borders)
+
+The four-thread Mac suite passed 1,438 library tests, one Kindle entry
+test, 14 EPUB package tests, and four layout tests. Sixty-seven opt-in
+tests were skipped in the main run. Twelve simulator captures reproduced
+the reviewed PNGs byte for byte.
+
+The Mac simulator opened original EPUB, PDF, AZW3 and MOBI files through
+the picker, turned a page and resumed at matching positions and page
+pixels. The source hashes matched. The separate reading-statistics and
+positive EPUB margin checks also used original files.
+
+The local ARMHF stage verified a stripped, statically linked 37,505,732-byte
+executable with SHA-256
+`6e0bbe8e06c440cf8215b365782e3f4a7e0807b063a023bbdf27d939e5e181f9`.
+The stage assembled 28 files totaling 47,079,581 bytes uncompressed and
+verified the SQLite notices, embedded Launcher icon and OCR model.
+Physical Kindle verification and the Store release remain open.
+
+## Central metadata, closing profiles, grid gestures and intrinsic widths checkpoint
+
 Opening profiles read KOReader custom metadata by adjacent sidecar,
 centralized path, or sampled fingerprint. The pinned KOReader runtime
 verified the location preference and settings backup, source paths, and
