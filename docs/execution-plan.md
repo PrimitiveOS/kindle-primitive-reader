@@ -55,6 +55,11 @@ identity, and confirm Back restores the same selection. Keep the four-mode
 CREngine reference as evidence for the remaining provider work.
 [Reading guides](reading-guides.md) · [EPUB selection markup](selection-html.md) · [Render modes](render-modes.md)
 
+The Mac suite passed 1,195 checks. The Oasis passed 1,180 Reader library
+tests, 14 EPUB package tests and four layout probes. Both skipped 66 opt-in
+cases. All six Oasis captures matched the Mac simulator pixel for pixel.
+Foreground touch and panel refresh have separate acceptance checks.
+
 ## Reader 0.1.44 verification plan
 
 Compare scan and text reflow spacing with the pinned PDF provider. Verify
