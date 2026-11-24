@@ -79,6 +79,7 @@ impl Screen {
                 Self::GoToPage
                     | Self::ContentsSearch
                     | Self::LibraryFind
+                    | Self::PdfPassword
                     | Self::Find
                     | Self::Matches
                     | Self::BookmarkFind

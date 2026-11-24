@@ -73,6 +73,8 @@ Desktop tests check both directions across a saved EPUB and PDF, both
 folder boundaries, skipping completed and unsupported files, an extracted
 EPUB, and wrong-password retry and cancellation. [Reading menu](screenshots/adjacent-folder-files-menu.png) · [Resumed EPUB](screenshots/adjacent-folder-files-target.png)
 
+When the next file is password-protected, Reader keeps its accepted screen turn and lays out the password field, keyboard and Back button for that viewport. A rejected password clears the field. Cancel restores the outgoing book and its touch-lock state. A verified password opens the PDF at the current screen size before applying that PDF’s reading orientation preference. KOReader also shows a masked keyboard prompt, clears the entry on retry and resumes opening only after the document verifies the password. [Pinned KOReader password workflow](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/readerui.lua#L749-L775) · [Pinned prompt callbacks](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/readerui.lua#L794-L837)
+
 ## Choose folder order
 
 In Library, tap **Sort**. **Natural name** is the default. **File name**,

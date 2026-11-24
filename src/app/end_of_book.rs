@@ -309,16 +309,19 @@ impl Reader {
         let Some(dialog) = self.end_dialog else {
             return Change::None;
         };
+        let viewport = self.reading_viewport();
         let result = match input {
             Input::PageBack => {
                 self.end_dialog = None;
                 Ok(())
             }
-            Input::Tap(x, y) if self.touch_locked && UNLOCK_TOUCH.contains(x, y) => {
+            Input::Tap(x, y)
+                if self.touch_locked && viewport.bottom_right(UNLOCK_TOUCH).contains(x, y) =>
+            {
                 self.touch_locked = false;
                 Ok(())
             }
-            Input::Tap(x, y) if self.touch_locked && DONE.contains(x, y) => {
+            Input::Tap(x, y) if self.touch_locked && viewport.done().contains(x, y) => {
                 return self.exit();
             }
             Input::Tap(x, y) if !self.touch_locked => match dialog {

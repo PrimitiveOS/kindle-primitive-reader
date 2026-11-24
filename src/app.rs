@@ -67,6 +67,8 @@ mod nonlinear_tests;
 mod online_panel;
 mod overview_bookmarks;
 mod page_overview;
+#[cfg(test)]
+mod pdf_password_viewport_tests;
 mod profile_panel;
 mod progress_markers;
 mod quick_display;
@@ -1257,7 +1259,7 @@ impl Reader {
                 .state(id)
                 .map(|state| state.pdf_crop_seeds.clone()),
         );
-        let fixed = match fixed {
+        let mut fixed = match fixed {
             Err(error)
                 if error.downcast_ref::<PdfError>() == Some(&PdfError::PasswordProtected) =>
             {
@@ -1272,6 +1274,13 @@ impl Reader {
             }
             result => result?,
         };
+        if self.screen == Screen::PdfPassword
+            && let Some(reading) = &mut fixed
+            && reading.viewport() != self.reading_viewport()
+        {
+            let prepared = reading.prepare_viewport(self.reading_viewport())?;
+            reading.commit_viewport(prepared)?;
+        }
         self.locked = None;
         self.numbering_scan = None;
         self.touch_locked = false;
@@ -5233,8 +5242,9 @@ impl Reader {
     }
 
     fn handle_pdf_password(&mut self, input: Input) -> Change {
+        let navigation = self.navigation_layout();
         if matches!(input, Input::PageBack)
-            || matches!(input, Input::Tap(x, y) if primitive_ui::back_button(WIDTH as i32).contains(x, y))
+            || matches!(input, Input::Tap(x, y) if navigation.back().contains(x, y))
         {
             self.locked = None;
             self.editor = Editor::new(64);
@@ -5246,6 +5256,7 @@ impl Reader {
                 self.show(screen);
                 return Change::Partial;
             }
+            self.library_viewport = self.reading_viewport();
             return match self.activate(Action::Show(Screen::Library)) {
                 Ok(()) => Change::Partial,
                 Err(error) => self.report(error),
@@ -5254,7 +5265,7 @@ impl Reader {
         let Input::Tap(x, y) = input else {
             return Change::None;
         };
-        let layout = Layout::new(WIDTH, HEIGHT, 4, 5);
+        let layout = navigation.keyboard();
         let Some(key) = keyboard_key(&layout, &self.editor, "Open", x, y) else {
             return Change::None;
         };
@@ -8040,6 +8051,7 @@ impl App for Reader {
         match input {
             Input::Tap(x, y)
                 if !self.touch_locked
+                    || self.screen == Screen::PdfPassword
                     || self
                         .reading_viewport()
                         .bottom_right(UNLOCK_TOUCH)
@@ -8146,6 +8158,14 @@ impl App for Reader {
     }
 
     fn viewport_request(&self) -> Option<primitive_app::viewport::ViewportRequest> {
+        use primitive_app::viewport::ViewportRequest;
+
+        // Keep the displayed turn while the next document is still locked.
+        if self.screen == Screen::PdfPassword
+            && let Some(viewport) = self.accepted_viewport
+        {
+            return Some(ViewportRequest::Fixed(viewport.turn));
+        }
         Some(self.requested_reading_orientation().viewport_policy())
     }
 
@@ -8354,6 +8374,9 @@ impl App for Reader {
         {
             return self.paste_text();
         }
+        if self.screen == Screen::PdfPassword {
+            return self.handle_pdf_password(input);
+        }
         if self.touch_locked {
             match input {
                 Input::Tap(x, y)
@@ -8531,9 +8554,6 @@ impl App for Reader {
         }
         if let Some(change) = self.list_density_input(input) {
             return change;
-        }
-        if self.screen == Screen::PdfPassword {
-            return self.handle_pdf_password(input);
         }
         if self.screen == Screen::FixedCrop {
             return self.crop_input(input);
