@@ -88,10 +88,11 @@ Saved profile editing covers reflow typography, hinting, kerning,
 publisher styles and fonts, image rendering, page overlap, PDF crop
 margin, and PDF or comic scan contrast. Enabled profiles can also apply
 their included settings whenever Reader opens a matching book. The opening
-rules cover file path, collections, seven metadata fields and a separate
-new-book requirement. They also use the screen turn accepted when Launcher
-offers a verified viewport. Older Launchers and the desktop API use the
-saved preference when the accepted turn is unavailable.
+rules cover file path and folder shortcuts, collections, seven metadata
+fields and a separate new-book requirement. A local time window can gate
+either automatic opening mode. The rules also use the screen turn
+accepted when Launcher offers a verified viewport. Older Launchers and
+the desktop API use the saved preference when the turn is unavailable.
 Reading statistics has a whole-second duration editor with the stock
 bounds, steps, defaults and accounting. It can preview and import dated
 visits for the open PDF or self-contained DjVu book from a closed KOReader
@@ -109,6 +110,7 @@ lookup history groups consecutive records by book, shows local timestamps,
 and provides its own recording and clearing controls.
 [Saved reading profiles](reading-profiles.md#editing-saved-values) ·
 [Opening profiles](reading-profiles.md#apply-a-profile-on-book-opening) ·
+[Opening time windows](reading-profiles.md#limit-opening-profiles-by-time) ·
 [Page duration limits](reading-statistics.md#page-duration-limits) ·
 [Fixed-page statistics import](reading-statistics.md#import-koreader-statistics-for-a-pdf-or-djvu-book) ·
 [Calendar month navigation](reading-statistics.md#jumping-to-a-month) ·
@@ -124,12 +126,15 @@ a box's background fills across a page break. In supported ordinary
 paragraphs, the opt-in policies also match stock's positive physical
 margins, Web mode's signed sides with physical screen clipping inside
 ordinary wrappers, and explicit opening breaks inside keep groups and
-beside a sibling keep. Full Render Mode
+beside a sibling keep. The measured Web constraint policy also resolves
+ordinary paragraph widths, minimum and maximum sizes, and side alignment.
+Full Render Mode
 behavior and its user-facing choices remain open. [Publisher comparisons](render-modes.md)
 
 
 - [x] Set the active Reader goal to KOReader's core Kindle reading workflows: document open/render, navigation/layout, search/lookup, bookmarks/annotations, reading progress, accessibility, offline scans, and local reading data.
 - [x] Audit all four native CREngine Render Mode masks against authored CSS and compare Reader’s existing Parley and Blitz paths. The mode control remains open for the measured layout and source-position work. [Reference and captures](render-modes.md)
+- [x] Match the normal Book Map's browser-on-tap and direct jump options in the Mac simulator. Check focused EPUB and PDF previews, cancel back to the same map, and one return entry on commit. [Book Map evidence](reading-orientation-contract.md#book-map-and-page-overview)
 - [x] Match the measured vertical margin contributions in the horizontal Parley provider behind an internal opt-in. Check direct sibling edges, structural boundaries, and source-range restoration after pagination changes. [Block spacing comparison](render-modes.md#horizontal-block-spacing)
 - [x] Add physical left and right text float exclusions and side-specific clearance to the horizontal Parley provider behind an internal opt-in. Verify per-line width, source hit-testing and ordinary-flow rollback. [Float comparison](render-modes.md#horizontal-floats-and-clearance)
 - [x] Match the measured forced-break page topology through empty horizontal native boxes behind an internal opt-in. Check blank-slot reopen and canonical text resume. [Empty-break comparison](render-modes.md#forced-breaks-through-empty-boxes)

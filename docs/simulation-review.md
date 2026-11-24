@@ -2,6 +2,45 @@
 
 ## Current Mac simulator checkpoint
 
+Opening profiles can use a local clock window and folder shortcuts in
+saved paths. The pinned profile callbacks cover every minute of daytime,
+overnight and equal-endpoint windows and verify that time gates both
+automatic opening modes. The native shortcut comparison checks expansion
+before comma splitting, literal quotes, preview and matching. Reader uses
+the folders of its own library session.
+[Opening time windows and captures](reading-profiles.md#limit-opening-profiles-by-time) ·
+[Folder shortcut guide](screenshots/landscape-profile-folder-shortcuts.png)
+
+The Book Map can focus the Page Browser on the tapped location in EPUB
+and fixed-page documents. Closing the preview returns to the map, and
+choosing a page records one reading jump. The stock callback comparison
+also verifies the optional direct jump through the same map setting.
+[Book Map and Page Overview](reading-orientation-contract.md#book-map-and-page-overview)
+
+The opt-in EPUB constraints policy matches eight pinned KOReader Web
+paint bands for explicit widths, minimum and maximum sizes, and margin
+alignment. The Reader tests cover linked text, repagination and restored
+source quotes. The mode stays experimental.
+[Constrained layout and captures](render-modes.md#explicit-widths-constraints-and-side-placement)
+
+The four-thread Mac suite passed 1,395 library tests, one Kindle entry
+test, 14 EPUB package tests, and four layout tests. Sixty-seven opt-in
+tests were skipped in the main run. The normal picker opened an original
+EPUB, PDF, AZW3 and MOBI, turned a page, and resumed at the saved position
+with identical central page pixels and unchanged source hashes. The
+separate original-file reading statistics and positive margin tests also
+passed.
+
+The Mac ARMHF release build produced a stripped, statically linked
+37,381,156-byte executable with SHA-256
+`ef43e5fefb91ab1d4292c140409884ce0cb606c1dd041721670807bf56978f4d`.
+The local hard-float stage assembled 28 files totaling 46,955,005 bytes
+uncompressed and verified the SQLite notices, embedded Launcher icon,
+and OCR model. Kindle foreground acceptance and the Store release remain
+open.
+
+## Accepted screen turn, metadata, calendar and clipping checkpoint
+
 Reader composes book-opening profiles against the accepted screen turn
 when Launcher offers a verified viewport. The Mac transactions preserve
 the EPUB anchor, resolve competing metadata and orientation rules in list
