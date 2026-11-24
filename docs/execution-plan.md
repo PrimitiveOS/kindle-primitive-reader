@@ -55,6 +55,14 @@ verify cutoff boundaries, preserved visits and failed writes. Test portrait
 defaults and per-book choices with both supported and earlier Launchers.
 [Scan reflow](scan-controls.md) · [Annotation export](library-highlights-export.md) · [Statistics](reading-statistics.md#reset-one-book-for-a-day-week-or-month) · [Portrait orientation](reading-edition-orientation.md)
 
+The Mac suite passed 1,187 checks. The Oasis passed 1,172 Reader library
+tests, 14 EPUB package tests and four layout probes. Both skipped 66 opt-in
+cases. The first Oasis test bundle lacked the symbol font used by two
+tests. The verified rerun used the same test binaries with the bundled
+font. All eleven Oasis frames matched the Mac simulator after capturing
+the two updated export screens from the integrated build. Foreground
+touch, panel refresh and live orientation have separate acceptance checks.
+
 ## Reader 0.1.43 verification plan
 
 Compare detected PDF crop padding and fit to the pinned native provider.
