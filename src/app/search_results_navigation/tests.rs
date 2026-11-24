@@ -88,6 +88,17 @@ fn search_results_navigation_focuses_current_epub_page_and_returns_to_query_orig
     app.activate(Action::Show(Screen::Matches)).unwrap();
     assert_eq!(app.list_page, list_page);
     assert!(!app.search_results_navigation.menu_open);
+
+    app.activate(Action::SearchHit(137)).unwrap();
+    assert_eq!(app.current_history_location(), Some(on_match));
+    app.controls.search_max_lines = Some(4);
+    app.clear_flexible_results();
+    app.activate(Action::Show(Screen::Matches)).unwrap();
+    assert_eq!(app.input(tap(FIRST_MATCH_PAGE)), Change::Partial);
+    assert_eq!(app.input(tap(OPTIONS)), Change::Partial);
+    assert_eq!(app.input(tap(CURRENT)), Change::Partial);
+    assert_eq!(app.focused_result, Some(expected));
+    assert!(app.flexible_result_range().unwrap().contains(&expected));
 }
 
 #[test]
