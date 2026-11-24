@@ -15425,6 +15425,97 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires a user-authorized DRM-free EPUB in READER_PARITY_EPUB"]
+    fn screen_pages_background_verifies_an_original_epub() {
+        let original = PathBuf::from(
+            std::env::var_os("READER_PARITY_EPUB")
+                .expect("set READER_PARITY_EPUB to the authorized original document"),
+        )
+        .canonicalize()
+        .unwrap();
+        assert!(
+            fs::metadata(&original).unwrap().len() <= 8 * 1024 * 1024,
+            "choose an original EPUB inside the background archive limit"
+        );
+        let digest = md5::compute(fs::read(&original).unwrap());
+        let fixture = Fixture::new();
+        let fonts = simulation_fonts();
+        let paths: Vec<_> = fonts.iter().map(|p| p.display().to_string()).collect();
+        let mut canvas = Canvas::new(WIDTH, HEIGHT, &paths).unwrap();
+        let mut app = Reader::open(original.parent().unwrap(), &fixture.state, fonts).unwrap();
+        app.controls.top_header.book_default = Some(true);
+        app.controls.top_header.clock = false;
+        let started = Instant::now();
+        app.open_path(&original).unwrap();
+        if app.screen == Screen::PublisherOffer {
+            app.show(Screen::Book);
+        }
+        if app.publisher_footer_enabled() {
+            app.activate(Action::TogglePublisherFooter).unwrap();
+        }
+        assert!(app.needs_screen_page_count());
+        let active = &app.active.as_ref().unwrap().reading;
+        let chapters = active.probe.chapter_count();
+        assert!(
+            (2..=32).contains(&chapters),
+            "choose a short multi-chapter original EPUB"
+        );
+        let reading_position = position(active);
+        let before = primitive_app::frame(&app, &mut canvas, false);
+        let first_frame_ms = started.elapsed().as_millis();
+        let shown = |app: &Reader| {
+            app.active
+                .as_ref()
+                .unwrap()
+                .reading
+                .whole_book_screen_pages()
+        };
+        assert_eq!(shown(&app), None);
+
+        let timeout = Instant::now() + Duration::from_secs(90);
+        while shown(&app).is_none() && Instant::now() < timeout {
+            app.tick(Instant::now());
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let (ordinal, total) =
+            shown(&app).expect("the original EPUB should produce a bounded background count");
+        let settled_ms = started.elapsed().as_millis();
+        let peak_rss_kib = fs::read_to_string("/proc/self/status")
+            .ok()
+            .and_then(|status| {
+                status.lines().find_map(|line| {
+                    line.strip_prefix("VmHWM:")?
+                        .split_whitespace()
+                        .next()?
+                        .parse::<u64>()
+                        .ok()
+                })
+            });
+        let reading = &app.active.as_ref().unwrap().reading;
+        assert_eq!(position(reading), reading_position);
+        let after = primitive_app::frame(&app, &mut canvas, false);
+        let header_end = crate::reading_controls::TopHeader::HEIGHT as usize * WIDTH as usize;
+        assert!(before[header_end..] == after[header_end..]);
+        let counts: Vec<_> = (0..chapters)
+            .map(|chapter| reading.config.chapter(chapter).unwrap().page_count())
+            .collect();
+        assert_eq!(
+            ordinal,
+            counts[..reading.chapter].iter().sum::<usize>() + reading.page + 1
+        );
+        assert_eq!(total, counts.iter().sum::<usize>());
+        assert!(md5::compute(fs::read(&original).unwrap()) == digest);
+        println!(
+            "{}",
+            serde_json::json!({
+                "chapters": chapters, "screen_page": ordinal, "screen_pages": total,
+                "first_frame_ms": first_frame_ms, "whole_book_ready_ms": settled_ms,
+                "peak_rss_kib": peak_rss_kib,
+            })
+        );
+    }
+
+    #[test]
     fn top_header_is_removed_for_continuous_scroll_and_restored_for_page_turns() {
         use crate::reading_controls::TopHeader;
 

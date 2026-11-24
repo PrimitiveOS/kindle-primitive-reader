@@ -43,7 +43,13 @@ position rules.
 The count is held in memory for one generation. Its identity covers the
 ordered spine, publication revision, current viewport and header reservation,
 typography, publisher styles and user CSS, hyphenation, and the ordered
-reading and fallback font file stamps. The Probe's EPUB publication revision
+reading and fallback font file stamps. Raster contrast, gamma, overlap clues,
+night-image inversion, and the linked-margin switch reuse the current page
+counts when the page geometry and layout are unchanged. KOReader's gamma
+handler also repaints the current view, while its font-size and CJK-width
+changes request a position update and repagination. [Pinned KOReader font controls](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerfont.lua#L203-L275)
+
+The Probe's EPUB publication revision
 comes from the package XML. The worker also checks archive and font file
 stamps before and after taking its snapshot, and again before delivering the
 counts. USB return clears the generation. A future durable cache would need
@@ -87,3 +93,61 @@ export, eject, sleep and wake with the first page already visible while the
 count runs. Record first-frame latency, page-turn latency and peak RSS on the
 Oasis before and after. Check that the default footer pixels, Exit, reading
 position, and saved annotations stay intact.
+
+## Native verification recipe
+
+Build the ARMHF test bundle from the candidate commit with
+`python3 scripts/prepare-device-tests.py --offline build/device-pagination`.
+Use a dedicated directory on user storage and run the tests from there.
+Keep the existing Launcher and Reader install in place. Record the exact
+tested commit, executable checksum, firmware and device profile.
+
+Run the authored Harbor Notebook case first. It opens at page 1, renders the
+fallback, waits for the background worker without turning the page, and
+captures the completed `1/48` header. Compare frame bytes below the first
+48 rows and confirm the original anchor, chapter footer, division marks and
+Exit. The repaint test keeps the number stable through gamma, contrast and
+other paint changes, then drops the old total after a font-size change.
+The cancellation test drives visibility, reflow, book switching and USB
+return in the app model.
+
+```sh
+umask 077
+run=$(mktemp -d /mnt/us/reader-pagination.XXXXXX)
+export TMPDIR="$run" READER_TEST_FIXTURES="$PWD/fixtures"
+READER_BACKGROUND_SCREEN_PAGE_BEFORE="$run/before.png" \
+READER_BACKGROUND_SCREEN_PAGE_AFTER="$run/after.png" \
+  ./reader --exact app::tests::screen_pages_background_finishes_the_latin_book_without_a_page_turn
+./reader --exact session::screen_pages::tests::screen_pages_keep_the_completed_count_through_repaints
+./reader --exact session::screen_pages::background::tests::screen_pages_background_discards_stale_work_on_visibility_reflow_and_usb
+```
+
+Run the original EPUB check against the authorized file in Documents. Pick a
+regular DRM-free EPUB with 2–32 spine items within the snapshot limits. Use
+the Reader font stack, including existing firmware fallbacks where present,
+as a colon-separated `READER_TEST_FONTS` value. The original path is opened
+directly. The test saves only a scratch profile, confirms the original
+bytes, sums foreground chapter counts for an independent reference and emits
+only aggregate page, timing and peak-memory values. Allow up to 90 seconds
+for the exact total and 240 seconds for the entire run, including reference
+layouts. Keep private filenames, file hashes and displayed personal pages
+out of the test report.
+
+```sh
+READER_PARITY_EPUB="$APPROVED_EPUB" READER_TEST_FONTS="$READING_FONT_PATHS" \
+  timeout 240 ./reader --ignored --exact \
+    app::tests::screen_pages_background_verifies_an_original_epub --nocapture
+```
+
+Collect the two authored PNGs from the device before removing the scratch
+directory. These are ARM-rendered app frames. A foreground framebuffer
+capture is a separate check. With the authored EPUB displayed through
+Launcher, use the existing SSH transport to stream `/dev/fb0` to the Mac.
+Confirm Y8, a 1,280-byte stride, 1,264 × 1,680 visible dimensions and zero
+x-offset. Crop each visible row to 1,264 bytes and start at the current
+y-offset. Convert the cropped rows to an 8-bit grayscale PNG. On the Oasis,
+this avoids a 4.5 MB staging file on its small `/var` volume. For the physical
+handoff, record one foreground timing sequence with the header disabled and
+enabled, turn across a chapter boundary during counting and try one
+sleep/wake and one USB eject. Use the snapshot limits and separate renderer
+totals when comparing against the pinned KOReader reference.

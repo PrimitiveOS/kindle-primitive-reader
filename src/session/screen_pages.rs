@@ -122,7 +122,7 @@ struct Generation {
     id: Rc<()>,
     book: PathBuf,
     publication: u64,
-    settings: Settings,
+    layout_settings: Settings,
     fonts: Vec<PathBuf>,
     styles: user_styles::Snapshot,
     hyphenation: Rc<user_hyphenation::Rules>,
@@ -159,7 +159,7 @@ impl Generation {
             id: Rc::new(()),
             book: config.book.clone(),
             publication: probe.book,
-            settings: config.settings,
+            layout_settings: layout_settings(config.settings),
             fonts: config.fonts.clone(),
             styles: config.user_styles.clone(),
             hyphenation: config.user_hyphenation.clone(),
@@ -180,8 +180,8 @@ impl Generation {
             && !config.hidden_flows.enabled
             && config.engine == Engine::Parley
             && self.hide_nonlinear == config.hide_nonlinear
-            && self.settings == config.settings
-            && self.settings == probe.settings
+            && self.layout_settings == layout_settings(config.settings)
+            && self.layout_settings == layout_settings(probe.settings)
             && self.publication == probe.book
             && self.book == config.book
             && self.fonts == config.fonts
@@ -234,6 +234,21 @@ impl Generation {
         let start = *prefix.get(chapter)?;
         let end = *prefix.get(chapter.checked_add(1)?)?;
         (page < end - start).then(|| (start + page + 1, *prefix.last().unwrap()))
+    }
+}
+
+fn layout_settings(settings: Settings) -> Settings {
+    let defaults = Settings::default();
+    // These controls only repaint or change interaction state in Reading::reflow.
+    Settings {
+        font_gamma_index: defaults.font_gamma_index,
+        text_contrast: defaults.text_contrast,
+        page_overlap_enabled: defaults.page_overlap_enabled,
+        page_overlap_lines: defaults.page_overlap_lines,
+        page_overlap_style: defaults.page_overlap_style,
+        invert_night_images: defaults.invert_night_images,
+        link_vertical_margins: defaults.link_vertical_margins,
+        ..settings
     }
 }
 
@@ -391,6 +406,35 @@ mod tests {
         assert_eq!(reading.whole_book_screen_pages(), None);
         reading.set_facing_pages(true).unwrap();
         reading.jump(0, None).unwrap();
+        assert_eq!(reading.whole_book_screen_pages(), None);
+    }
+
+    #[test]
+    fn screen_pages_keep_the_completed_count_through_repaints() {
+        let mut reading = Reading::open(config("field-notes-epub2.epub")).unwrap();
+        reading.jump(1, None).unwrap();
+        let expected = reading.whole_book_screen_pages().unwrap();
+        let anchor = reading.anchor();
+        let mut settings = reading.config.settings;
+        settings.font_gamma_index = 24;
+        settings.text_contrast = true;
+        reading.reflow(settings).unwrap();
+        assert_eq!(reading.whole_book_screen_pages(), Some(expected));
+
+        settings.page_overlap_enabled = true;
+        settings.page_overlap_lines = 7;
+        settings.page_overlap_style = crate::PageOverlapStyle::Line;
+        reading.reflow(settings).unwrap();
+        assert_eq!(reading.whole_book_screen_pages(), Some(expected));
+
+        settings.invert_night_images = true;
+        settings.link_vertical_margins = true;
+        reading.reflow(settings).unwrap();
+        assert_eq!(reading.whole_book_screen_pages(), Some(expected));
+        assert_eq!(reading.anchor(), anchor);
+
+        settings.font_size += 8.0;
+        reading.reflow(settings).unwrap();
         assert_eq!(reading.whole_book_screen_pages(), None);
     }
 
