@@ -3,6 +3,7 @@ use super::{Line, Settings, book_style::Style, source::Source};
 use std::ops::Range;
 
 mod empty;
+pub(crate) use empty::physical::{PositionedRun, plan as plan_empty_geometry};
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Edge {
@@ -24,6 +25,7 @@ pub(crate) struct BoxRules {
     extent: Range<f32>,
     rules: Rules,
     extra_splits: u16,
+    physical_cuts: Option<Box<[f32]>>,
 }
 
 /// Protect only the opening and closing lines of each formatted paragraph. Taking
@@ -70,6 +72,7 @@ fn protect_paragraph_end<'a>(
                     ..Default::default()
                 },
                 extra_splits: 0,
+                physical_cuts: None,
             });
         }
     }
@@ -79,7 +82,7 @@ fn protect_paragraph_end<'a>(
 /// around other blocks. An empty separator shares the next visible block's edge.
 #[cfg(test)]
 pub(crate) fn geometry(source: &Source, styles: &[Style], lines: &[Line]) -> Vec<BoxRules> {
-    layout(source, styles, lines, Settings::default())
+    layout(source, styles, lines, Settings::default(), &[])
 }
 
 pub(crate) fn layout(
@@ -87,6 +90,7 @@ pub(crate) fn layout(
     styles: &[Style],
     lines: &[Line],
     settings: Settings,
+    positioned: &[PositionedRun],
 ) -> Vec<BoxRules> {
     let mut result = Vec::new();
     protect_paragraph_end(
@@ -123,7 +127,8 @@ pub(crate) fn layout(
             extend(&mut boxes, source.blocks[i].element, line.top, line.bottom);
         }
     }
-    let direct = settings.empty_break_mode.expands().then(|| boxes.clone());
+    let expands = settings.empty_break_mode.expands();
+    let direct = (expands || !positioned.is_empty()).then(|| boxes.clone());
     for (i, element) in source.elements.iter().enumerate().rev() {
         if let (Some(p), Some(extent)) = (element.parent, boxes[i].clone()) {
             extend(&mut boxes, p, extent.start, extent.end);
@@ -146,6 +151,7 @@ pub(crate) fn layout(
                     extent,
                     rules,
                     extra_splits: 0,
+                    physical_cuts: None,
                 });
             }
         }
@@ -154,7 +160,19 @@ pub(crate) fn layout(
         }
     }
     if let Some(direct) = &direct {
-        empty::propagate(source, styles, direct, &boxes, settings, &mut result);
+        if expands {
+            empty::propagate(source, styles, direct, &boxes, settings, &mut result);
+        }
+        for run in positioned {
+            if let Some(range) = &direct[run.target] {
+                result.push(BoxRules {
+                    extent: range.start..range.start,
+                    rules: Rules::default(),
+                    extra_splits: 0,
+                    physical_cuts: Some(run.cuts.clone()),
+                });
+            }
+        }
     }
     result
 }
@@ -210,6 +228,34 @@ pub(crate) fn structural_splits(lines: &[Range<f32>], boxes: &[BoxRules]) -> Vec
     extra
 }
 
+pub(crate) fn physical_cuts<'a>(
+    lines: &[Range<f32>],
+    boxes: &'a [BoxRules],
+) -> Vec<Option<&'a [f32]>> {
+    if !boxes.iter().any(|item| item.physical_cuts.is_some()) {
+        return Vec::new();
+    }
+    let mut cuts = vec![None; lines.len()];
+    for item in boxes {
+        let Some(positions) = item.physical_cuts.as_deref() else {
+            continue;
+        };
+        let first = lines.partition_point(|line| line.end <= item.extent.start);
+        if first > 0
+            && lines
+                .get(first)
+                .is_some_and(|line| line.start == item.extent.start)
+            && positions
+                .first()
+                .is_some_and(|&y| y >= lines[first - 1].end)
+            && positions.last().is_some_and(|&y| y <= item.extent.start)
+        {
+            cuts[first] = Some(positions);
+        }
+    }
+    cuts
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -221,6 +267,7 @@ mod tests {
             extent: at..at,
             rules: Rules::default(),
             extra_splits: 2,
+            physical_cuts: None,
         };
         assert_eq!(
             structural_splits(&[0.0..20.0, 30.0..80.0], &[marker(30.0)]),
@@ -344,6 +391,7 @@ mod tests {
                 ..Rules::default()
             },
             extra_splits: 0,
+            physical_cuts: None,
         };
         let pages = Pagination::with_breaks(&lines, 100., 218., &[keep(60., 138.)]).unwrap();
         assert_eq!(pages.bounds, [0., 60., 160., 218.]);
@@ -360,6 +408,7 @@ mod tests {
                 ..Default::default()
             },
             extra_splits: 0,
+            physical_cuts: None,
         };
         let pages =
             Pagination::with_breaks(&lines, 100., 218., &[keep(60., 138.), explicit]).unwrap();

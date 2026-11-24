@@ -347,6 +347,9 @@ pub struct Settings {
     pub float_mode: FloatMode,
     #[doc(hidden)]
     pub empty_break_mode: EmptyBreakMode,
+    /// Position and paint supported empty boxes between ordinary text blocks.
+    #[doc(hidden)]
+    pub empty_break_geometry: bool,
     pub line_height: f32,
     /// None preserves legacy multiplier-based line spacing for existing profiles.
     pub line_spacing_percent: Option<u16>,
@@ -408,6 +411,7 @@ impl Default for Settings {
             block_margins: BlockMarginMode::Ignore,
             float_mode: FloatMode::Ignore,
             empty_break_mode: EmptyBreakMode::Current,
+            empty_break_geometry: false,
             line_height: 1.35,
             line_spacing_percent: None,
             word_spacing: 0.0,
@@ -740,6 +744,7 @@ impl Pagination {
         }
         let boundaries = publisher_breaks::boundaries(&intervals, breaks);
         let extra_splits = publisher_breaks::structural_splits(&intervals, breaks);
+        let physical_cuts = publisher_breaks::physical_cuts(&intervals, breaks);
         let mut bounds = vec![0.0];
         let mut allowed_start = 0.0;
         for (index, interval) in intervals.iter().enumerate() {
@@ -753,6 +758,17 @@ impl Pagination {
                 allowed_start = interval.start;
             }
             let forced = index > 0 && edge == Edge::Force;
+            if forced
+                && let Some(cuts) = physical_cuts.get(index).copied().flatten()
+                && cuts.len()
+                    == 1 + usize::from(extra_splits.get(index).copied().unwrap_or_default())
+                && cuts[0] > origin
+                && cuts[0] <= origin + height
+                && interval.end <= cuts[cuts.len() - 1] + height
+            {
+                bounds.extend_from_slice(cuts);
+                continue;
+            }
             let overflows = interval.end > origin + height && interval.start > origin;
             if forced || overflows {
                 let next = if allowed_start > origin && interval.end <= allowed_start + height {
@@ -1112,8 +1128,13 @@ impl Probe {
                         } else {
                             lay_out(&source, fonts)?
                         };
-                        publisher_edges =
-                            publisher_breaks::layout(&source, &styles, &lines, settings);
+                        publisher_edges = publisher_breaks::layout(
+                            &source,
+                            &styles,
+                            &lines,
+                            settings,
+                            layout.empty_break_runs(),
+                        );
                         (Renderer::Parley(layout), lines, extent)
                     }
                 }

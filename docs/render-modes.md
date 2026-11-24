@@ -80,9 +80,9 @@ source-selection rectangles use the Parley or vertical engines.
 | Mechanism | Reader work required for the observed mode behavior |
 | --- | --- |
 | Legacy | Match the legacy inline model and the old handling of incomplete CSS tables. Separate publisher margins are measured below. |
-| Flat | Extend source-owned margin collapse to parent and empty boxes, add prepared inline float boxes and anonymous box repair, and reproduce the physical spacing around coalesced page breaks. |
+| Flat | Extend the measured empty-box geometry below to nested and margin-only boxes, and add the remaining parent collapse, inline float, and anonymous box behavior. |
 | Book | Extend the horizontal float model below to complex boxes and inline floats, and implement the remaining style-width and auto-margin behavior |
-| Web | Extend signed margins and float geometry, implement full publisher box sizing and automatic placement, and draw the physical extent of empty forced-break pages |
+| Web | Extend signed margins and float geometry, implement full publisher box sizing and automatic placement, and extend physical break-page painting to complex boxes |
 
 The four options depend on independent box geometry, pagination and
 source mappings. A Reader renderer choice would currently change several
@@ -225,16 +225,63 @@ coordinate for adjacent blank slots. Continuous reading follows source
 coordinates, so it does not stop on these slots. Reader bounds the number
 of additional slots per chapter.
 
-Empty-box painting and vertical position are separate from this topology.
-For example, the pinned Flat and Book specimen keeps 104 pixels of empty
-space above the next paragraph. Reader places that paragraph at its
-ordinary top margin. Native decorated empty pages can draw borders or
-backgrounds. Reader currently shows white in the added slots. Leading and
-trailing empty runs, boxes inside tables, floats and lists, and more complex
-forced, keep and collapsed-margin interactions are outside this slice.
+The topology-only policy places following text at the ordinary top margin
+and leaves the inserted slots white. The separate physical policy below
+positions and paints supported empty boxes. Leading and trailing empty
+runs, boxes inside tables, floats and lists, and more complex forced,
+keep and collapsed-margin interactions remain out of scope.
 [Stock decorated intermediate page](screenshots/empty-break-stock-web-intermediate.png) ·
 [Reader intermediate page](screenshots/empty-break-reader-intermediate.png) ·
 [Reader following text](screenshots/empty-break-reader-following.png)
+
+### Physical space and paint
+
+The physical Parley policy reserves publisher padding, supported borders,
+margins and definite height for direct sibling empty boxes between two
+ordinary text blocks. It positions the existing forced boundaries in that
+space, then draws opaque solid top and bottom borders and grayscale
+backgrounds. Text offsets, fragment identifiers and selections still use
+the original source. The reader can paint an intermediate page that has
+no source text anchor.
+
+The legacy policy uses separate margins and the older empty-block height
+rule. The compact policy collapses adjoining margins, keeps the space on
+the surviving page, and uses the box’s padding and borders for its height.
+The sized policy honors content height and drops the outgoing margin when
+a sized box forces a break after itself. The page starts where the pinned
+renderer places the surviving separator, so top margins can still move a
+border or the following text down on screen.
+
+| Authored run | Legacy space and following y | Flat or Book space and following y | Web space and following y |
+| --- | ---: | ---: | ---: |
+| Two original decorated boxes | 124 px / 54 | 104 px / 158 | 84 px / 54 |
+| Two asymmetric boxes with both edges forced | 94 px / 54 | 81 px / 135 | 62 px / 54 |
+| Same boxes with definite publisher heights | 130 px / 54 | 81 px / 135 | 114 px / 54 |
+
+The space column is measured separately from the ordinary text pitch.
+Reader's pixel snap adds 0.20 pixels at the start of these authored runs.
+The measured page-relative bands and following text coordinates match
+the pinned renderer in the supported cases.
+Coordinates are native screen positions in the 1264 × 1606 specimen.
+The asymmetric fixture uses distinct grayscale tones for each solid
+border and background. The native probe checks the position, thickness,
+and tone of each uninterrupted band at screen x=1201 with the same setup
+used for the pagination probe. It also checks before-only and after-only
+rules and preserves the original 25 structures.
+
+Reader currently projects full-width direct siblings with nonnegative
+margins and compatible text neighbors. Nested empty boxes, unsized
+collapsed-margin runs in the enhanced policies, side and patterned
+borders, percentage heights, and complex keeps still use the existing
+topology. Physical cuts also depend on safe intervals in the existing
+paginator. The provider decisions are opt-in, and the settings interface
+does not expose the unfinished Render Mode choices.
+[Physical layout provider](../src/publisher_breaks/empty/physical.rs) ·
+[Pinned comparison](../scripts/koreader-empty-breaks-check.lua) ·
+[KOReader Book](screenshots/empty-geometry-stock-book.png) ·
+[Reader compact](screenshots/empty-geometry-reader-compact.png) ·
+[KOReader Web](screenshots/empty-geometry-stock-web.png) ·
+[Reader sized](screenshots/empty-geometry-reader-sized.png)
 
 ## Reproduce
 
@@ -276,3 +323,5 @@ with the same cache, font and capture arguments. Run
 `cargo test --locked --lib publisher_breaks -- --nocapture` for the Reader
 page assignments and resume checks. Set `READER_EMPTY_BREAK_CAPTURE_DIR`
 to an existing directory to save the original specimen’s page sequence.
+Set `READER_EMPTY_GEOMETRY_CAPTURE_DIR` to save the physical box pages
+from the asymmetric specimen.

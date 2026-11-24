@@ -173,6 +173,7 @@ pub(crate) struct ParleyChapter {
     markers: Vec<PaintedMarker>,
     table_frames: Vec<crate::table_borders::Frame>,
     padded_backgrounds: Vec<crate::vertical_padding::Fill>,
+    empty_break_runs: Vec<crate::publisher_breaks::PositionedRun>,
     float_geometry: bool,
     limitations: Vec<String>,
     glyphs: GlyphCache,
@@ -305,6 +306,7 @@ impl ParleyChapter {
             markers: Vec::new(),
             table_frames: Vec::new(),
             padded_backgrounds: Vec::new(),
+            empty_break_runs: Vec::new(),
             float_geometry: false,
             limitations: Vec::new(),
             glyphs: GlyphCache::with_hinting(
@@ -414,6 +416,8 @@ impl ParleyChapter {
             publisher_boxes.as_deref(),
             settings,
         );
+        let empty_geometry = crate::publisher_breaks::plan_empty_geometry(source, styles, settings);
+        let mut empty_fills = Vec::new();
         chapter.float_geometry = float_plan.is_some();
         let mut float_flow = crate::float_layout::Flow::default();
         let mut float_fills = Vec::new();
@@ -571,6 +575,18 @@ impl ParleyChapter {
                 let floor = lines.last().map_or(0.0, |line| line.top + 1.0);
                 let floor = chapter.paragraphs.last().map_or(floor, |p| floor.max(p.y));
                 y = (y + margin).max(if margin < 0.0 { floor } else { 0.0 });
+            }
+            if let Some(run) = empty_geometry
+                .as_ref()
+                .and_then(|runs| runs[index].as_ref())
+                && cell.is_none()
+                && float.is_none()
+                && float_flow.finish(y) <= y
+            {
+                let (after, positioned) =
+                    run.place(block.element, y, outer_width, &mut empty_fills);
+                y = after;
+                chapter.empty_break_runs.push(positioned);
             }
             let start_of_cell = y;
             let decorated = cell.and_then(|cell| Some((cell, borders.as_ref()?.cells.get(&cell)?)));
@@ -952,6 +968,7 @@ impl ParleyChapter {
             chapter.padded_backgrounds.sort_by_key(|f| f.element);
         }
         chapter.padded_backgrounds.extend(float_fills);
+        chapter.padded_backgrounds.extend(empty_fills);
         let painted = chapter
             .table_frames
             .iter()
@@ -968,6 +985,10 @@ impl ParleyChapter {
             return Err("The chapter exceeds the Parley height limit".into());
         }
         Ok((chapter, lines, extent))
+    }
+
+    pub(crate) fn empty_break_runs(&self) -> &[crate::publisher_breaks::PositionedRun] {
+        &self.empty_break_runs
     }
 
     /// Last conservative paint bound. Parley's paragraph height also includes leading

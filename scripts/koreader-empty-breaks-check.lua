@@ -15,13 +15,99 @@ Cre.registerFont(font)
 local cases = {"Bare", "Padding", "Margin", "Border", "Height", "Background", "Decorated", "Removed",
                "Nested", "OnlyBefore", "OnlyAfter", "Mixed", "Between", "One", "Text", "BareOne",
                "BareThree", "BareOnlyBefore", "BareOnlyAfter", "BareMixed", "BareBetween", "NestedBare",
-               "BareThenPadding", "PaddingThenBare", "PaddingAcrossBare"}
-local compact = {1,1,1,1,1,1,1,0,1,1,1,1,1,1,2,1,1,1,1,1,1,1,1,1,1}
+               "BareThenPadding", "PaddingThenBare", "PaddingAcrossBare",
+               "Paint", "PaintAfter", "PaintBefore", "PaintHeight"}
+local compact = {1,1,1,1,1,1,1,0,1,1,1,1,1,1,2,1,1,1,1,1,1,1,1,1,1,1,1,1,1}
 local advances = {
-    Legacy = {3,3,3,3,3,3,3,0,4,2,2,2,2,2,2,2,4,2,2,2,1,4,3,3,1},
+    Legacy = {3,3,3,3,3,3,3,0,4,2,2,2,2,2,2,2,4,2,2,2,1,4,3,3,1,3,2,2,3},
     Flat = compact, Book = compact,
-    Web = {2,3,2,3,3,2,3,0,4,2,2,2,2,2,2,1,3,2,2,2,2,2,3,2,1},
+    Web = {2,3,2,3,3,2,3,0,4,2,2,2,2,2,2,1,3,2,2,2,2,2,3,2,1,3,2,2,3},
 }
+local geometry = {
+    Legacy = {
+        Decorated = { y = 54, pitch = 188, bands = {
+            "",
+            "74-76:136",
+            "74-76:136",
+            "",
+        }},
+        Paint = { y = 54, pitch = 158, bands = {
+            "",
+            "65-67:119,67-83:221,83-86:85",
+            "71-75:153,75-83:204,83-84:170",
+            "",
+        }},
+        PaintAfter = { y = 54, pitch = 158, bands = {
+            "129-131:119,131-147:221,147-150:85",
+            "71-75:153,75-83:204,83-84:170",
+            "",
+        }},
+        PaintBefore = { y = 103, pitch = 158, bands = {
+            "",
+            "65-67:119,67-83:221,83-86:85",
+            "71-75:153,75-83:204,83-84:170",
+        }},
+        PaintHeight = { y = 54, pitch = 194, bands = {
+            "",
+            "65-67:119,67-98:221,98-101:85",
+            "71-75:153,75-104:204,104-105:170",
+            "",
+        }},
+    },
+    Flat = {
+        Decorated = { y = 158, pitch = 168, bands = {
+            "",
+            "74-76:136,116-118:136",
+        }},
+        Paint = { y = 135, pitch = 145, bands = {
+            "",
+            "65-67:119,67-83:221,83-86:85,103-107:153,107-115:204,115-116:170",
+        }},
+        PaintAfter = { y = 103, pitch = 145, bands = {
+            "129-131:119,131-147:221,147-150:85",
+            "71-75:153,75-83:204,83-84:170",
+        }},
+        PaintBefore = { y = 135, pitch = 145, bands = {
+            "",
+            "65-67:119,67-83:221,83-86:85,103-107:153,107-115:204,115-116:170",
+        }},
+        PaintHeight = { y = 135, pitch = 145, bands = {
+            "",
+            "65-67:119,67-83:221,83-86:85,103-107:153,107-115:204,115-116:170",
+        }},
+    },
+    Web = {
+        Decorated = { y = 54, pitch = 148, bands = {
+            "",
+            "74-76:136",
+            "74-76:136",
+            "",
+        }},
+        Paint = { y = 54, pitch = 126, bands = {
+            "",
+            "65-67:119,67-83:221,83-86:85",
+            "71-75:153,75-83:204,83-84:170",
+            "",
+        }},
+        PaintAfter = { y = 54, pitch = 126, bands = {
+            "129-131:119,131-147:221,147-150:85",
+            "71-75:153,75-83:204,83-84:170",
+            "",
+        }},
+        PaintBefore = { y = 103, pitch = 145, bands = {
+            "",
+            "65-67:119,67-83:221,83-86:85",
+            "71-75:153,75-83:204,83-84:170",
+        }},
+        PaintHeight = { y = 54, pitch = 178, bands = {
+            "",
+            "65-67:119,67-107:221,107-110:85",
+            "71-75:153,75-111:204,111-112:170",
+            "",
+        }},
+    },
+}
+geometry.Book = geometry.Flat
 for mode, name in ipairs{"Legacy", "Flat", "Book", "Web"} do
     local view = Cre.newDocView(width, height, 1)
     local typeset = setmetatable({ ui = {
@@ -59,12 +145,26 @@ for mode, name in ipairs{"Legacy", "Flat", "Book", "Web"} do
         assert(b.page-a.page == advances[name][index], name .. " " .. case)
         print(string.format("BREAK %s|%s|pages=%d..%d|advance=%d|screen_y=%d,%d|pitch=%d",
             name, case, a.page, b.page, b.page-a.page, a.screen_y,b.screen_y,b.doc_y-a.doc_y))
-        if case == "Decorated" then
+        local expected = geometry[name][case]
+        if expected then
+            assert(b.screen_y == expected.y and b.doc_y-a.doc_y == expected.pitch, name .. " " .. case)
             for page = a.page, b.page do
                 view:gotoPage(page)
                 local frame = BB.new(width, height, BB.TYPE_BB8)
                 view:drawCurrentPage(frame, false, false, false, false)
-                frame:writePNG(captures .. "/" .. name .. "-" .. (page-a.page) .. ".png", false)
+                local start, shade = 0, 255
+                local bands = {}
+                for y = 0, height do
+                    local next_shade = y < height and frame:getPixel(1201, y):getColor8().a or 255
+                    if next_shade ~= shade then
+                        if shade ~= 255 then bands[#bands + 1] = start .. "-" .. y .. ":" .. shade end
+                        start, shade = y, next_shade
+                    end
+                end
+                local measured = table.concat(bands, ",")
+                assert(measured == expected.bands[page-a.page+1], name .. " " .. case .. " page " .. page)
+                print(string.format("BANDS %s|%s|%d|%s", name, case, page-a.page, measured))
+                frame:writePNG(captures .. "/" .. name .. "-" .. case .. "-" .. (page-a.page) .. ".png", false)
                 frame:free()
             end
         end

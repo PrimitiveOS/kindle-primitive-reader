@@ -8,6 +8,8 @@ use crate::{
 };
 use std::ops::Range;
 
+pub(crate) mod physical;
+
 const MAX_EXTRA_PAGES: u16 = 512;
 
 #[derive(Default)]
@@ -35,17 +37,16 @@ impl Chain {
         }: &Leaf,
         parent: Option<usize>,
         structure: bool,
-    ) {
+    ) -> (bool, bool) {
         let adjacent = before
             && self
                 .after
                 .is_some_and(|(owner, sized)| owner == parent && (structure || sized));
-        let amount = if before && after && !(structure || inner_extent) {
-            1
-        } else {
-            u16::from(before) + u16::from(after)
-        };
-        self.splits = self.splits.saturating_add(amount - u16::from(adjacent));
+        let opening = before && !adjacent;
+        let closing = after && (!before || structure || inner_extent);
+        self.splits = self
+            .splits
+            .saturating_add(u16::from(opening) + u16::from(closing));
         // An unforced zero-size sibling can share the same edge. A different
         // parent or an intervening box with physical space ends that edge.
         if after {
@@ -57,6 +58,7 @@ impl Chain {
         {
             self.after = None;
         }
+        (opening, closing)
     }
 }
 
@@ -154,6 +156,7 @@ pub(super) fn propagate(
                 extent: y..y,
                 rules: Rules::default(),
                 extra_splits: count,
+                physical_cuts: None,
             });
             budget -= count;
         }
@@ -205,11 +208,23 @@ mod tests {
     }
 
     fn open(book: &str, mode: EmptyBreakMode, chapter: usize) -> Probe {
+        open_with_geometry(book, mode, chapter, false)
+    }
+
+    fn open_with_geometry(
+        book: &str,
+        mode: EmptyBreakMode,
+        chapter: usize,
+        geometry: bool,
+    ) -> Probe {
         Probe::open(
             &crate::test_fixture(book),
             Engine::Parley,
             &[crate::test_fixture("fonts/NotoSans-Regular.ttf")],
-            settings(mode),
+            Settings {
+                empty_break_geometry: geometry,
+                ..settings(mode)
+            },
             chapter,
         )
         .unwrap()
@@ -278,6 +293,17 @@ mod tests {
                 assert_eq!(probe.page_for(&first_anchor), Some(0), "{mode:?} {name}");
                 assert_eq!(probe.page_for(&start), Some(expected), "{mode:?} {name}");
                 assert_eq!(probe.page_count(), expected + 1, "{mode:?} {name}");
+                let physical = open_with_geometry(book, mode, chapter, true);
+                assert_eq!(
+                    physical.page_for(&start),
+                    Some(expected),
+                    "physical {mode:?} {name}"
+                );
+                assert_eq!(
+                    physical.page_count(),
+                    expected + 1,
+                    "physical {mode:?} {name}"
+                );
                 assert_eq!(probe.anchor_top(&start), baseline.anchor_top(&start));
                 assert_eq!(
                     probe.select_range(&selection.start, &selection.end),
@@ -302,6 +328,191 @@ mod tests {
                 println!("{mode:?}|{name}|advance={expected}");
             }
         }
+    }
+
+    #[test]
+    fn physical_box_bands_and_text_insets_match_the_pinned_renderer() {
+        use EmptyBreakMode::{Coalesce, PreserveSized, PreserveStructure};
+        let book = "render-empty-breaks.epub";
+        let fixtures = [
+            (
+                6,
+                "Decorated",
+                Coalesce,
+                1,
+                158,
+                104,
+                1,
+                "74-76:136,116-118:136",
+            ),
+            (
+                6,
+                "Decorated",
+                PreserveStructure,
+                3,
+                54,
+                124,
+                1,
+                "74-76:136",
+            ),
+            (6, "Decorated", PreserveSized, 3, 54, 84, 2, "74-76:136"),
+            (
+                25,
+                "Paint",
+                Coalesce,
+                1,
+                135,
+                81,
+                1,
+                "65-67:119,67-83:221,83-86:85,103-107:153,107-115:204,115-116:170",
+            ),
+            (
+                25,
+                "Paint",
+                PreserveStructure,
+                3,
+                54,
+                94,
+                1,
+                "65-67:119,67-83:221,83-86:85",
+            ),
+            (
+                25,
+                "Paint",
+                PreserveSized,
+                3,
+                54,
+                62,
+                2,
+                "71-75:153,75-83:204,83-84:170",
+            ),
+            (
+                26,
+                "PaintAfter",
+                Coalesce,
+                1,
+                103,
+                81,
+                1,
+                "71-75:153,75-83:204,83-84:170",
+            ),
+            (
+                26,
+                "PaintAfter",
+                PreserveSized,
+                2,
+                54,
+                62,
+                1,
+                "71-75:153,75-83:204,83-84:170",
+            ),
+            (
+                27,
+                "PaintBefore",
+                PreserveStructure,
+                2,
+                103,
+                94,
+                2,
+                "71-75:153,75-83:204,83-84:170",
+            ),
+            (
+                27,
+                "PaintBefore",
+                PreserveSized,
+                2,
+                103,
+                81,
+                2,
+                "71-75:153,75-83:204,83-84:170",
+            ),
+            (
+                28,
+                "PaintHeight",
+                Coalesce,
+                1,
+                135,
+                81,
+                1,
+                "65-67:119,67-83:221,83-86:85,103-107:153,107-115:204,115-116:170",
+            ),
+            (
+                28,
+                "PaintHeight",
+                PreserveStructure,
+                3,
+                54,
+                130,
+                1,
+                "65-67:119,67-98:221,98-101:85",
+            ),
+            (
+                28,
+                "PaintHeight",
+                PreserveSized,
+                3,
+                54,
+                114,
+                2,
+                "71-75:153,75-111:204,111-112:170",
+            ),
+        ];
+        for (chapter, name, mode, page, screen_y, extent, band_page, expected_bands) in fixtures {
+            let mut probe = open_with_geometry(book, mode, chapter, true);
+            let baseline = open(book, mode, chapter);
+            let phrase = format!("Test {name} last marker");
+            let start = baseline.matches(&phrase)[0].clone();
+            let end = Anchor {
+                offset: start.offset + phrase.len(),
+                ..start.clone()
+            };
+            let selection = baseline.select_range(&start, &end).unwrap();
+            assert_eq!(probe.select_range(&start, &end), Some(selection.clone()));
+            assert_eq!(probe.page_for(&start), Some(page), "{mode:?} {name}");
+            let measured = probe.anchor_top(&start).unwrap() - baseline.anchor_top(&start).unwrap();
+            assert!(
+                (measured - extent as f32).abs() < 1.,
+                "{mode:?} {name} measured extent {measured}, expected {extent}"
+            );
+            let rect = probe.selection_rects(page, &selection)[0];
+            assert_eq!((rect.x, rect.y), (54, screen_y), "{mode:?} {name}");
+            let captured = probe.capture(band_page).unwrap();
+            let bands = sample_bands(&captured, 1201, settings(mode).width as usize);
+            assert_eq!(bands, expected_bands, "{mode:?} {name} page {band_page}");
+            if band_page < page {
+                assert_eq!(probe.page_anchor(band_page), None);
+            }
+            println!(
+                "{mode:?}|{name}|advance={page}|screen_y={screen_y}|extent={measured:.2}|bands={bands}"
+            );
+            if let Some(dir) = std::env::var_os("READER_EMPTY_GEOMETRY_CAPTURE_DIR") {
+                let path = std::path::PathBuf::from(dir);
+                let settings = settings(mode);
+                image::GrayImage::from_raw(settings.width, settings.height, captured)
+                    .unwrap()
+                    .save(path.join(format!("{mode:?}-{name}-{band_page}.png")))
+                    .unwrap();
+            }
+        }
+    }
+
+    fn sample_bands(frame: &[u8], x: usize, width: usize) -> String {
+        let mut bands = Vec::new();
+        let (mut start, mut shade) = (0, 255);
+        for (y, next) in frame
+            .chunks_exact(width)
+            .map(|row| row[x])
+            .chain([255])
+            .enumerate()
+        {
+            if next != shade {
+                if shade != 255 {
+                    bands.push(format!("{start}-{y}:{shade}"));
+                }
+                (start, shade) = (y, next);
+            }
+        }
+        bands.join(",")
     }
 
     #[test]
