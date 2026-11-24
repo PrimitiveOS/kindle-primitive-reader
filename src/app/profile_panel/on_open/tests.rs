@@ -9,6 +9,7 @@ use crate::reading_profiles::opening::MetadataField;
 use crate::reading_profiles::{Field, ValueField};
 use crate::session::ReadingViewport;
 use primitive_app::App;
+use primitive_app::viewport::{LogicalTurn, Viewport, ViewportDecision, ViewportRequest};
 use primitive_ui::Key;
 use serde_json::json;
 use std::fs;
@@ -360,6 +361,247 @@ fn set_path(app: &mut Reader, index: usize, value: &str) {
     app.editor.caret = app.editor.text.len();
     let save = key(app, Key::Go, "Save");
     tap(app, save);
+}
+
+fn stage_opening(app: &mut Reader, generation: u64, turn: LogicalTurn) -> (Viewport, Vec<u8>) {
+    use crate::app::selection_viewport_tests::canvas;
+    let size = if matches!(turn, LogicalTurn::Clockwise | LogicalTurn::Counterclockwise) {
+        ReadingViewport::LANDSCAPE
+    } else {
+        ReadingViewport::PORTRAIT
+    };
+    let candidate = Viewport {
+        generation,
+        turn,
+        logical_size: size.dimensions(),
+    };
+    let mut display = canvas(app, size);
+    app.stage_viewport(candidate).unwrap();
+    display.begin();
+    app.draw_staged_viewport(&mut display).unwrap();
+    (candidate, display.finish(false))
+}
+
+#[test]
+fn accepted_opening_turn_composes_epub_rules_on_same_turn_and_keeps_anchor() {
+    let f = Fixture::new();
+    let mut app = Reader::open(&f.root, &f.state, fonts()).unwrap();
+    app.open_path(&f.book).unwrap();
+    let basis = app.current_text_preferences().unwrap();
+    let night_images = basis.invert_night_images;
+    for (name, size, inverted) in [
+        ("Alpha upside down", 32.0, !night_images),
+        ("Zulu EPUB title", 26.0, night_images),
+    ] {
+        app.apply_text_profile(BookPreferences {
+            logical_font_size: Some(size),
+            invert_night_images: inverted,
+            ..basis.clone()
+        })
+        .unwrap();
+        app.save_reading_profile(name).unwrap();
+    }
+    include(&mut app, 0, vec![Field::FontSize, Field::NightImages]);
+    include(&mut app, 1, vec![Field::FontSize]);
+    let mut profiles = app.profiles.clone();
+    profiles[0].set_opening_conditions(crate::reading_profiles::opening::Conditions {
+        orientations: vec![ReadingOrientation::UpsideDown],
+        ..Default::default()
+    });
+    profiles[1].set_opening_conditions(crate::reading_profiles::opening::Conditions {
+        metadata: [(MetadataField::Title, "at dusk (epub 3)".into())].into(),
+        ..Default::default()
+    });
+    app.commit_profiles(profiles).unwrap();
+    app.apply_text_profile(basis.clone()).unwrap();
+    app.follow_reflow_page(1, 0).unwrap();
+    let saved = app.current_position().unwrap();
+    let id = app.open_book_id().unwrap();
+    let (prior, _) = stage_opening(&mut app, 1, LogicalTurn::UpsideDown);
+    app.finish_viewport(prior, ViewportDecision::Commit);
+
+    app.negotiated_opening_profiles = true;
+    app.open_path(&f.book).unwrap();
+    assert_eq!(
+        app.reading_orientation(),
+        ReadingOrientation::FollowLauncher
+    );
+    assert!(app.viewport_needs_stage(prior));
+    assert_eq!(app.library.state(id).unwrap().preferences, basis);
+    let (stale, _) = stage_opening(&mut app, 2, LogicalTurn::UpsideDown);
+    app.open_path(&f.book).unwrap();
+    app.finish_viewport(stale, ViewportDecision::Abort);
+    assert_eq!(
+        app.viewport_request(),
+        Some(ViewportRequest::FollowLauncher)
+    );
+    app.finish_viewport(stale, ViewportDecision::Commit);
+    assert_eq!(app.library.state(id).unwrap().preferences, basis);
+    let (accepted, staged) = stage_opening(&mut app, 3, LogicalTurn::UpsideDown);
+    assert_eq!(app.library.state(id).unwrap().preferences, basis);
+    assert_eq!(app.current_position(), Some(saved.clone()));
+    app.finish_viewport(accepted, ViewportDecision::Commit);
+    let settings = app.active.as_ref().unwrap().reading.config.settings;
+    assert_eq!(settings.logical_font_size, Some(26.0));
+    assert_eq!(settings.invert_night_images, !night_images);
+    assert_eq!(app.current_position().unwrap().anchor, saved.anchor);
+    assert!(!app.viewport_needs_stage(accepted));
+    let mut display = crate::app::selection_viewport_tests::canvas(&app, ReadingViewport::PORTRAIT);
+    assert!(primitive_app::frame(&app, &mut display, false) == staged);
+    app.save().unwrap();
+    let mut headless = Reader::open(&f.root, &f.state, fonts()).unwrap();
+    headless.open_path(&f.book).unwrap();
+    assert!(headless.pending_opening_profiles.is_none());
+    assert_eq!(headless.current_position().unwrap().anchor, saved.anchor);
+}
+
+#[test]
+fn accepted_opening_turn_rolls_back_pdf_and_uses_a_verified_fallback() {
+    let f = Fixture::new();
+    let source = f.root.join("Tall profile source.pdf");
+    let target = f.root.join("Survey print target.pdf");
+    fs::write(&source, striped_pdf_sized_bytes(3, 612, 820)).unwrap();
+    let source_bytes = striped_pdf_sized_bytes(3, 820, 612);
+    fs::write(&target, &source_bytes).unwrap();
+    let mut app = Reader::open(&f.root, &f.state, fonts()).unwrap();
+    app.open_path(&source).unwrap();
+    app.activate(Action::SetFixedTileZoom(FixedTileAxis::Rows, 24))
+        .unwrap();
+    app.activate(Action::ScanGamma(27)).unwrap();
+    app.save_reading_profile("Alpha wide view").unwrap();
+    include(&mut app, 0, vec![Field::FitAndZoom, Field::ScanContrast]);
+    app.activate(Action::ScanGamma(19)).unwrap();
+    app.save_reading_profile("Zulu print contrast").unwrap();
+    include(&mut app, 1, vec![Field::ScanContrast]);
+    let mut profiles = app.profiles.clone();
+    profiles[0].set_opening_conditions(crate::reading_profiles::opening::Conditions {
+        orientations: vec![ReadingOrientation::LandscapeRight],
+        ..Default::default()
+    });
+    profiles[1].set_opening_conditions(crate::reading_profiles::opening::Conditions {
+        path: Some("print target".into()),
+        ..Default::default()
+    });
+    app.open_path(&target).unwrap();
+    app.activate(Action::FixedPage(2)).unwrap();
+    let id = app.open_book_id().unwrap();
+    let base_view = app.fixed.as_ref().unwrap().reading.preferences();
+    let (prior, _) = stage_opening(&mut app, 1, LogicalTurn::Upright);
+    app.finish_viewport(prior, ViewportDecision::Commit);
+    app.library.state_mut(id).unwrap().screen_orientation =
+        Some(ReadingOrientation::LandscapeRight);
+    app.commit_profiles(profiles).unwrap();
+    app.negotiated_opening_profiles = true;
+    app.open_path(&target).unwrap();
+    let (rejected, _) = stage_opening(&mut app, 2, LogicalTurn::Clockwise);
+    assert_eq!(app.fixed.as_ref().unwrap().reading.preferences(), base_view);
+    app.finish_viewport(rejected, ViewportDecision::Abort);
+    assert_eq!(
+        app.viewport_request(),
+        Some(ViewportRequest::Fixed(LogicalTurn::Upright))
+    );
+    assert_eq!(app.library.state(id).unwrap().fixed_preferences, base_view);
+    app.input(primitive_ui::Input::PageBack);
+    if let Some(deadline) = app.fixed.as_ref().unwrap().reading.deadline() {
+        app.tick(deadline);
+    }
+    assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 1);
+    assert!(app.pending_opening_profiles.is_some());
+    assert_eq!(
+        app.library
+            .state(id)
+            .unwrap()
+            .position
+            .as_ref()
+            .unwrap()
+            .page,
+        2
+    );
+    let (fallback, staged) = stage_opening(&mut app, 3, LogicalTurn::Upright);
+    app.finish_viewport(fallback, ViewportDecision::Commit);
+    let reading = &app.fixed.as_ref().unwrap().reading;
+    assert_eq!(reading.page(), 1);
+    assert!(reading.preferences().tile_zoom.is_none());
+    assert_eq!(reading.preferences().scan_gamma_tenths, Some(19));
+    let mut display = crate::app::selection_viewport_tests::canvas(&app, ReadingViewport::PORTRAIT);
+    assert!(primitive_app::frame(&app, &mut display, false) == staged);
+    assert!(app.pending_opening_profiles.is_none());
+
+    app.open_path(&target).unwrap();
+    let (wide, staged) = stage_opening(&mut app, 4, LogicalTurn::Clockwise);
+    assert!(
+        app.fixed
+            .as_ref()
+            .unwrap()
+            .reading
+            .preferences()
+            .tile_zoom
+            .is_none()
+    );
+    app.finish_viewport(wide, ViewportDecision::Commit);
+    let reading = &app.fixed.as_ref().unwrap().reading;
+    assert_eq!(reading.page(), 1);
+    assert_eq!(reading.preferences().scan_gamma_tenths, Some(19));
+    let tile = reading.preferences().tile_zoom.unwrap();
+    assert_eq!((tile.axis, tile.count_tenths), (FixedTileAxis::Rows, 24));
+    let mut display =
+        crate::app::selection_viewport_tests::canvas(&app, ReadingViewport::LANDSCAPE);
+    assert!(primitive_app::frame(&app, &mut display, false) == staged);
+    assert_eq!(fs::read(&target).unwrap(), source_bytes);
+}
+
+#[test]
+fn accepted_opening_turn_startup_retry_retains_new_book_status_until_commit() {
+    let f = Fixture::new();
+    let target = f.root.join("Rain log.txt");
+    fs::write(&target, "Rain filled the water tank by nightfall.").unwrap();
+    let mut app = Reader::open(&f.root, &f.state, fonts()).unwrap();
+    app.open_path(&f.book).unwrap();
+    let basis = app.current_text_preferences().unwrap();
+    let color = basis.invert_night_images;
+    app.apply_text_profile(BookPreferences {
+        invert_night_images: !color,
+        ..basis.clone()
+    })
+    .unwrap();
+    app.save_reading_profile("Only first inverted view")
+        .unwrap();
+    include(&mut app, 0, vec![Field::NightImages]);
+    let mut profiles = app.profiles.clone();
+    profiles[0].set_opening_conditions(crate::reading_profiles::opening::Conditions {
+        orientations: vec![ReadingOrientation::UpsideDown],
+        new_only: true,
+        ..Default::default()
+    });
+    app.commit_profiles(profiles).unwrap();
+    app.controls.reflow_orientation_default = Some(ReadingOrientation::LandscapeRight);
+    app.negotiated_opening_profiles = true;
+    app.open_path(&target).unwrap();
+    let id = app.open_book_id().unwrap();
+    assert!(app.library.state(id).unwrap().position.is_none());
+    let (first, _) = stage_opening(&mut app, 1, LogicalTurn::Clockwise);
+    app.finish_viewport(first, ViewportDecision::Abort);
+    assert_eq!(
+        app.viewport_request(),
+        Some(ViewportRequest::FollowLauncher)
+    );
+    assert!(app.library.state(id).unwrap().position.is_none());
+    let (fallback, _) = stage_opening(&mut app, 2, LogicalTurn::UpsideDown);
+    app.finish_viewport(fallback, ViewportDecision::Commit);
+    assert!(app.library.state(id).unwrap().position.is_some());
+    assert_eq!(
+        app.current_text_preferences().unwrap().invert_night_images,
+        !color
+    );
+    let mut prefs = app.current_text_preferences().unwrap();
+    prefs.invert_night_images = color;
+    app.apply_text_profile(prefs).unwrap();
+    app.open_path(&target).unwrap();
+    assert!(app.pending_opening_profiles.is_none());
+    assert_eq!(
+        app.current_text_preferences().unwrap().invert_night_images,
+        color
+    );
 }
 
 #[test]

@@ -5,7 +5,7 @@ use super::{navigation_layout::NavigationLayout, *};
 use crate::reading_profiles::opening::MetadataField;
 use crate::reading_profiles::{Field, FixedProfile};
 
-mod on_open;
+pub(super) mod on_open;
 mod opening_metadata;
 pub(super) mod opening_rules;
 pub(super) mod rendering_choices;

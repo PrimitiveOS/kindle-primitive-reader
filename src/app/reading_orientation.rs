@@ -81,6 +81,7 @@ impl Reader {
         if orientation.is_landscape() && !self.landscape_choices_available() {
             return Err("Landscape needs a compatible Launcher and reading view".into());
         }
+        self.settle_pending_opening();
         if self.accepted_viewport.is_some() {
             if before != orientation || self.pending_orientation.is_some() {
                 self.notice = None;

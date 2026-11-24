@@ -2933,6 +2933,45 @@ impl FixedReading {
         self.restore_view_with(view, save)
     }
 
+    /// Borrow the candidate viewport to use the ordinary profile painter. The
+    /// original session owns the source throughout, including a decrypted PDF.
+    pub(crate) fn prepare_opening_profile_viewport<'a>(
+        &mut self,
+        target: ReadingViewport,
+        profiles: impl IntoIterator<
+            Item = (
+                crate::reading_profiles::FixedProfile,
+                &'a [crate::reading_profiles::Field],
+            ),
+        >,
+    ) -> Result<PreparedFixedViewport> {
+        let original_page = self.page;
+        let generation = self.presentation_generation;
+        let refresh = self.turns.next_refresh;
+        let mut staged = self.prepare_viewport(target)?;
+        // Even a noncontinuous profile can resolve an automatic crop while
+        // painting. Keep that work with the candidate on both success and error.
+        staged
+            .detected_crops
+            .get_or_insert_with(|| self.detected_crops.clone());
+        self.exchange_prepared_viewport(&mut staged)?;
+        let result = self.restore_fixed_profiles_with(profiles, |page, _| {
+            if page == original_page {
+                Ok(())
+            } else {
+                Err(io::Error::other(
+                    "This profile would move to a different page",
+                ))
+            }
+        });
+        self.presentation_generation = generation;
+        self.turns.next_refresh = refresh;
+        staged.basis = self.viewport_basis();
+        self.exchange_prepared_viewport(&mut staged)?;
+        result?;
+        Ok(staged)
+    }
+
     fn present_in_saved(
         &mut self,
         page: usize,

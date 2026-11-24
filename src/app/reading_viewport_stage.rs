@@ -9,8 +9,11 @@ use super::{
 };
 use crate::Result;
 use crate::fixed_session::PreparedFixedViewport;
+use crate::library::BookPreferences;
+use crate::reading_profiles::Profile;
 use crate::session::{Reading, ReadingViewport};
 use primitive_app::App;
+use primitive_app::viewport::LogicalTurn;
 use primitive_ui::Canvas;
 use std::ops::Range;
 
@@ -38,15 +41,89 @@ pub(super) struct Stage {
     bookmark_page: Option<(usize, usize)>,
     reading_list: Option<ReadingListStage>,
     bookmark_text_pages: Option<Vec<Range<usize>>>,
+    opening: Option<Opening>,
+}
+
+struct Opening {
+    epoch: u64,
+    text: Option<BookPreferences>,
+    warning: Option<String>,
 }
 
 impl Reader {
     pub(super) fn prepare_reading_viewport(&self, target: ReadingViewport) -> Result<Stage> {
+        self.prepare_reading_viewport_with(target, None)
+    }
+
+    pub(super) fn prepare_reading_opening_viewport(
+        &mut self,
+        target: ReadingViewport,
+        turn: LogicalTurn,
+    ) -> Result<Stage> {
+        let Some(plan) = &self.pending_opening_profiles else {
+            return self.prepare_reading_viewport(target);
+        };
+        let mut opening = Opening {
+            epoch: plan.epoch,
+            text: None,
+            warning: None,
+        };
+        let candidate = if plan.text.is_some() {
+            self.prepare_opening_profile_text_for_turn(target, turn)
+                .map(|ready| {
+                    ready.map(|(reading, preferences)| {
+                        opening.text = Some(preferences);
+                        Candidate::Reflow(Box::new(reading))
+                    })
+                })
+        } else {
+            let profiles: Vec<_> = plan
+                .profiles(turn)
+                .filter_map(|profile| match profile {
+                    Profile::Fixed { fixed, .. } => Some((*fixed, profile.selection())),
+                    Profile::Text { .. } => None,
+                })
+                .collect();
+            if profiles.is_empty() {
+                Ok(None)
+            } else {
+                self.fixed
+                    .as_mut()
+                    .ok_or("The document closed before opening")?
+                    .reading
+                    .prepare_opening_profile_viewport(
+                        target,
+                        profiles
+                            .iter()
+                            .map(|(fixed, fields)| (*fixed, fields.as_slice())),
+                    )
+                    .map(|ready| Some(Candidate::Fixed(Box::new(ready))))
+            }
+        };
+        let candidate = match candidate {
+            Ok(candidate) => candidate,
+            Err(error) => {
+                opening.warning = Some(format!("Opening profile could not be applied: {error}"));
+                None
+            }
+        };
+        let mut stage = self.prepare_reading_viewport_with(target, candidate)?;
+        stage.opening = Some(opening);
+        Ok(stage)
+    }
+
+    fn prepare_reading_viewport_with(
+        &self,
+        target: ReadingViewport,
+        prepared: Option<Candidate>,
+    ) -> Result<Stage> {
         let from = self.reading_viewport();
         if target != from && self.screen == Screen::FixedCrop {
             return Err("Finish the crop preview before changing the screen size".into());
         }
-        let candidate = if target == from {
+        let candidate = if let Some(prepared) = prepared {
+            prepared
+        } else if target == from {
             Candidate::Current
         } else if let Some(book) = &self.active {
             Candidate::Reflow(Box::new(book.reading.prepare_viewport(target)?))
@@ -108,6 +185,7 @@ impl Reader {
                 .then(|| ReadingListStage::capture(self))
                 .flatten(),
             bookmark_text_pages: None,
+            opening: None,
         })
     }
 
@@ -138,7 +216,23 @@ impl Reader {
                 )
             ))
         .then(|| self.bookmark_browser.replace_text_pages(Vec::new()));
+        let initial_footer = staged.opening.as_ref().map(|_| {
+            let previous = self.footer_initial_position.take();
+            self.reset_footer_initial_position();
+            previous
+        });
+        let previous_notice = staged
+            .opening
+            .as_ref()
+            .and_then(|opening| opening.warning.as_ref())
+            .map(|warning| self.notice.replace(warning.clone()));
         let drawn = self.draw_staged_content(staged, canvas);
+        if let Some(previous) = initial_footer {
+            self.footer_initial_position = previous;
+        }
+        if let Some(previous) = previous_notice {
+            self.notice = previous;
+        }
         if let Some(previous_page) = previous_page {
             self.list_page = previous_page;
         }
@@ -180,7 +274,8 @@ impl Reader {
     pub(super) fn commit_reading_viewport(&mut self, mut staged: Stage) -> Result<()> {
         staged.check_origin(self)?;
         match std::mem::replace(&mut staged.candidate, Candidate::Current) {
-            Candidate::Current => return Ok(()),
+            Candidate::Current if staged.opening.is_none() => return Ok(()),
+            Candidate::Current => {}
             Candidate::Library(viewport) => {
                 self.library_viewport = viewport;
             }
@@ -230,7 +325,20 @@ impl Reader {
         }
         self.screen_page_worker.cancel();
         self.pages_since_refresh = 0;
-        self.record_position();
+        if let Some(opening) = staged.opening {
+            self.pending_opening_profiles = None;
+            if let Some(preferences) = opening.text
+                && let Some(state) = staged.book.and_then(|id| self.library.state_mut(id))
+            {
+                state.preferences = preferences;
+            }
+            self.settle_opening_location();
+            if let Some(warning) = opening.warning {
+                self.notice = Some(warning);
+            }
+        } else {
+            self.record_position();
+        }
         Ok(())
     }
 
@@ -288,6 +396,12 @@ impl Stage {
 
     fn check_origin(&self, reader: &Reader) -> Result<()> {
         if reader.open_book_id() != self.book
+            || self.opening.as_ref().is_some_and(|opening| {
+                reader
+                    .pending_opening_profiles
+                    .as_ref()
+                    .is_none_or(|plan| plan.epoch != opening.epoch)
+            })
             || reader.screen != self.screen
             || reader.current_position() != self.position
             || reader.reading_viewport() != self.from

@@ -35,9 +35,11 @@ with commas. Matching is case-insensitive. **Only for new books** also
 requires a book with no saved reading position. Choosing Always clears
 the conditions, as in KOReader.
 
-**Preferred opening orientation** uses the book's saved setting or the current default.
-Choose **Follow Launcher** to match that setting. A saved reference to an
-unavailable collection can be removed from the collections list.
+When Launcher offers a verified viewport, the four screen orientations use
+the turn accepted for the opening frame. **Follow Launcher** still matches
+the book's saved policy. Older Launcher versions and the desktop API lack a
+verified turn, so that path continues to use the book's preferred orientation.
+A saved reference to an unavailable collection can be removed from the collections list.
 Choose **Current book** in the path editor to insert its path under Documents,
 including characters the Kindle keyboard cannot type.
 Reader combines matching profiles in the
@@ -45,11 +47,17 @@ alphabetical order shown in the profile list. If two profiles include the
 same setting, the later profile supplies that value. Renaming a profile
 carries its switch with it. A duplicate starts with the switch off.
 
-Reader prepares the combined settings before showing the book. It
-resolves older page-only positions to a source anchor and checks the
-book's requested landscape layout before accepting reflow settings.
-A newly selected missing font or an incompatible view falls back to the
-book's saved settings and shows a notice. The EPUB tests check a saved
+Reader prepares the combined settings before showing the book. It resolves
+older page-only positions to a source anchor. When a physical orientation
+condition is eligible, Reader composes every matching profile from the same
+original preferences. The candidate frame and its settings commit together.
+A rejected turn discards that candidate and retries with the last verified
+turn or the inherited Launcher turn at startup. Page turns during that retry
+keep the pending rules and supply the latest reading position. Leaving the
+page for a menu or selection keeps the readable fallback. Opening rules run
+once per book opening. A newly selected missing
+font or an incompatible view falls back to the book's saved settings and
+shows a notice. The EPUB tests check a saved
 passage after restart. The PDF test checks the exact physical page,
 tiled zoom and overlap after combining two profiles.
 

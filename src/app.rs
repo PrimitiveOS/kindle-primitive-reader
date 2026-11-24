@@ -831,6 +831,9 @@ pub struct Reader {
         Option<reading_viewport_stage::Stage>,
     )>,
     accepted_viewport: Option<primitive_app::viewport::Viewport>,
+    negotiated_opening_profiles: bool,
+    opening_profile_epoch: u64,
+    pending_opening_profiles: Option<profile_panel::on_open::OpeningPlan>,
     pending_orientation: Option<reading_orientation::PendingOrientation>,
     staged_frame_orientation: Option<ReadingOrientation>,
     flow_popup: Option<hidden_flows::FlowPopup>,
@@ -1056,6 +1059,9 @@ impl Reader {
             library_viewport: crate::session::ReadingViewport::PORTRAIT,
             staged_viewport: None,
             accepted_viewport: None,
+            negotiated_opening_profiles: false,
+            opening_profile_epoch: 0,
+            pending_opening_profiles: None,
             pending_orientation: None,
             staged_frame_orientation: None,
             flow_popup: None,
@@ -1352,9 +1358,28 @@ impl Reader {
                 position.as_ref().map_or(0, |saved| saved.page),
                 fixed_preferences,
             )?;
-            let profile_warning = self
-                .apply_opening_fixed_profiles(&mut reading, id, &absolute, position.is_none())
-                .err();
+            let is_new = position.is_none();
+            let metadata = self.opening_fixed_metadata(&reading, &absolute, is_new);
+            let opening = reading.profile_provider().and_then(|provider| {
+                self.opening_profile_plan(id, &absolute, is_new, Some(provider), metadata.as_ref())
+            });
+            let profile_warning = if opening.is_some() {
+                let target = self.opening_display_viewport();
+                if target != reading.viewport() {
+                    let baseline = reading.prepare_viewport(target)?;
+                    reading.commit_viewport(baseline)?;
+                }
+                None
+            } else {
+                self.apply_opening_fixed_profiles(
+                    &mut reading,
+                    id,
+                    &absolute,
+                    is_new,
+                    metadata.as_ref(),
+                )
+                .err()
+            };
             reading.set_ocr_path(self.ocr_root.join(format!("{id:016x}")));
             reading.ocr_language = self
                 .library
@@ -1371,6 +1396,7 @@ impl Reader {
             entry.author = reading.author();
             self.save_library()?;
             self.pending_orientation = None;
+            self.install_opening_profile_plan(opening);
             self.active = None;
             self.pages_since_refresh = 0;
             self.range_edit = None;
@@ -1392,9 +1418,9 @@ impl Reader {
             self.restore_reading_menus(id);
             self.reading_history.begin_session(crate::mark_time::now());
             self.show(Screen::Fixed);
-            self.reset_footer_initial_position();
-            self.remember_opening_location();
-            self.record_position();
+            if self.pending_opening_profiles.is_none() {
+                self.settle_opening_location();
+            }
             if let Some(error) = profile_warning {
                 self.notice = Some(format!("Opening profile could not be applied: {error}"));
             }
@@ -1449,15 +1475,28 @@ impl Reader {
             .library
             .state(id)
             .map_or(&initial_preferences, |state| &state.preferences);
-        let (automatic, profile_warning) = match self.prepare_opening_text_profiles(
-            &config,
-            saved_preferences,
-            position.as_ref(),
-            top_status_header,
-            id,
-        ) {
-            Ok(prepared) => (prepared, None),
-            Err(error) => (None, Some(error)),
+        let is_new = position.is_none();
+        let metadata = self.opening_text_metadata(&config, is_new);
+        let opening = self
+            .opening_profile_plan(id, &config.book, is_new, None, metadata.as_ref())
+            .map(|mut plan| {
+                plan.text = Some((saved_preferences.clone(), top_status_header));
+                plan
+            });
+        let (automatic, profile_warning) = if opening.is_some() {
+            (None, None)
+        } else {
+            match self.prepare_opening_text_profiles(
+                &config,
+                saved_preferences,
+                position.as_ref(),
+                top_status_header,
+                id,
+                metadata.as_ref(),
+            ) {
+                Ok(prepared) => (prepared, None),
+                Err(error) => (None, Some(error)),
+            }
         };
         if automatic.is_none()
             && config.settings.logical_font_size.is_some()
@@ -1524,12 +1563,16 @@ impl Reader {
             top_status_header,
             reading.is_continuous(),
         ))?;
+        if opening.is_some() && reading.config.viewport != self.opening_display_viewport() {
+            reading = reading.prepare_viewport(self.opening_display_viewport())?;
+        }
         entry.author.clone_from(&reading.probe.author);
         self.save_library()?;
         self.pages_since_refresh = 0;
         self.range_edit = None;
         self.saved_popup = None;
         self.pending_orientation = None;
+        self.install_opening_profile_plan(opening);
         self.active = Some(ActiveBook {
             entry,
             id,
@@ -1565,9 +1608,9 @@ impl Reader {
         } else {
             Screen::Book
         });
-        self.reset_footer_initial_position();
-        self.remember_opening_location();
-        self.record_position();
+        if self.pending_opening_profiles.is_none() {
+            self.settle_opening_location();
+        }
         if let Some(error) = profile_warning {
             self.notice = Some(format!("Opening profile could not be applied: {error}"));
         } else if default_font_missing {
@@ -1581,6 +1624,12 @@ impl Reader {
     }
 
     fn show(&mut self, screen: Screen) {
+        if !matches!(
+            screen,
+            Screen::Book | Screen::Fixed | Screen::PublisherOffer
+        ) {
+            self.settle_pending_opening();
+        }
         self.reading_list_anchor = None;
         if screen != Screen::ReadingFonts {
             self.font_chooser_return = None;
@@ -1963,7 +2012,8 @@ impl Reader {
     }
 
     fn record_position_at(&mut self, now: Instant) {
-        if self.fixed_search_fit_active()
+        if self.pending_opening_profiles.is_some()
+            || self.fixed_search_fit_active()
             || self.crop_dialog.is_some()
             || self.semi_auto_crop.is_some()
         {
@@ -2016,8 +2066,10 @@ impl Reader {
     }
 
     fn update_stats_activity(&mut self, now: Instant) {
-        let reading =
-            self.stats_awake && self.end_dialog.is_none() && !self.fixed_search_fit_active();
+        let reading = self.stats_awake
+            && self.pending_opening_profiles.is_none()
+            && self.end_dialog.is_none()
+            && !self.fixed_search_fit_active();
         let book = match self.screen {
             Screen::Book if reading => self.active.as_ref().map(|book| book.id),
             Screen::Illustration if reading && self.book_details.is_none() => self
@@ -4853,6 +4905,7 @@ impl Reader {
     }
 
     fn close_book_to_library(&mut self) {
+        self.settle_pending_opening();
         self.pending_orientation = None;
         self.active = None;
         self.numbering_scan = None;
@@ -4948,6 +5001,7 @@ impl Reader {
 
     fn auto_turn_eligible(&self) -> bool {
         self.stats_awake
+            && self.pending_opening_profiles.is_none()
             && !self.fixed_search_fit_active()
             && !self.touch_locked
             && self.end_dialog.is_none()
@@ -8372,11 +8426,19 @@ impl App for Reader {
         {
             return Some(ViewportRequest::Fixed(viewport.turn));
         }
+        if let Some(fallback) = self
+            .pending_opening_profiles
+            .as_ref()
+            .and_then(|plan| plan.fallback)
+        {
+            return Some(fallback);
+        }
         Some(self.requested_reading_orientation().viewport_policy())
     }
 
     fn viewport_needs_stage(&self, accepted: primitive_app::viewport::Viewport) -> bool {
         self.has_pending_orientation()
+            || self.pending_opening_profiles.is_some()
             || self.reading_viewport().dimensions() != accepted.logical_size
     }
 
@@ -8394,7 +8456,7 @@ impl App for Reader {
             }
         };
         let staged = self
-            .prepare_reading_viewport(target)
+            .prepare_reading_opening_viewport(target, candidate.turn)
             .map_err(io::Error::other)?;
         self.staged_viewport = Some((candidate, Some(staged)));
         Ok(())
@@ -8431,6 +8493,12 @@ impl App for Reader {
             return;
         };
         if decision != primitive_app::viewport::ViewportDecision::Commit {
+            if let Some(plan) = &mut self.pending_opening_profiles {
+                plan.fallback = Some(self.accepted_viewport.map_or(
+                    primitive_app::viewport::ViewportRequest::FollowLauncher,
+                    |prior| primitive_app::viewport::ViewportRequest::Fixed(prior.turn),
+                ));
+            }
             self.reject_pending_orientation();
             return;
         }
@@ -8457,6 +8525,9 @@ impl App for Reader {
     }
 
     fn input(&mut self, input: Input) -> Change {
+        if matches!(input, Input::HoldStart(..) | Input::LongTap(..)) {
+            self.settle_pending_opening();
+        }
         if let Some(change) = self.back_exit_confirmation_input(input) {
             return change;
         }
@@ -9371,6 +9442,7 @@ impl App for Reader {
     }
 
     fn storage_returned(&mut self) -> io::Result<()> {
+        self.install_opening_profile_plan(None);
         self.screen_page_worker.cancel();
         self.cancel_screen_page_jump();
         self.document_defaults.reload();
@@ -9830,6 +9902,11 @@ pub fn run_reader(
         std::env::var_os("KL_RUN").map_or_else(|| PathBuf::from("/var/tmp/kl"), PathBuf::from);
     let turn_file = std::env::var_os("KL_APP_TURN_FILE").map(PathBuf::from);
     app.launcher_orientation_handoff = has_launcher_orientation_handoff(&run, turn_file.as_deref());
+    if std::env::var("PRIMITIVE_LAUNCHER").as_deref() == Ok("1") {
+        let offer = std::env::var_os("KL_APP_VIEWPORT_FILE").map(PathBuf::from);
+        app.negotiated_opening_profiles =
+            primitive_app::viewport::ViewportPublisher::new(&run, offer)?.is_some();
+    }
     if let Some(file) = file
         && let Err(error) = app.open_path(file)
     {

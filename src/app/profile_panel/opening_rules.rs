@@ -143,7 +143,11 @@ impl Reader {
                 if !profile.applies_on_open() {
                     items.extend([
                         Item::new(
-                            "Preferred opening orientation",
+                            if self.negotiated_opening_profiles {
+                                "Opening screen orientation"
+                            } else {
+                                "Preferred opening orientation"
+                            },
                             Action::Show(Screen::ReadingProfileOpening(index, Page::Orientation)),
                         )
                         .detail(selected(rules.orientations.len())),

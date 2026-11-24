@@ -4,7 +4,7 @@ use crate::reading_profiles::opening::{Metadata, MetadataField::*};
 use std::path::Path;
 
 impl Reader {
-    pub(super) fn opening_text_metadata(
+    pub(in crate::app) fn opening_text_metadata(
         &self,
         config: &BookConfig,
         is_new: bool,
@@ -13,7 +13,7 @@ impl Reader {
             .then(|| text_metadata(&config.book))
     }
 
-    pub(super) fn opening_fixed_metadata(
+    pub(in crate::app) fn opening_fixed_metadata(
         &self,
         reading: &FixedReading,
         path: &Path,
