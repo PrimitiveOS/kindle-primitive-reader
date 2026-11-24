@@ -19,6 +19,7 @@ pub(super) struct Stage {
     from: ReadingViewport,
     target: ReadingViewport,
     candidate: Candidate,
+    marks: Option<(super::saved_marks_view::FlexibleMarks, usize)>,
 }
 
 impl Reader {
@@ -39,6 +40,7 @@ impl Reader {
             from,
             target,
             candidate,
+            marks: None,
         })
     }
 
@@ -53,8 +55,25 @@ impl Reader {
             return Err("The staged canvas has different reading dimensions".into());
         }
         self.exchange_staged_reading(&mut staged.candidate)?;
-        self.draw(canvas);
-        self.exchange_staged_reading(&mut staged.candidate)
+        let drawn = self.draw_staged_content(staged, canvas);
+        let restored = self.exchange_staged_reading(&mut staged.candidate);
+        drawn.and(restored)
+    }
+
+    fn draw_staged_content(&mut self, staged: &mut Stage, canvas: &mut Canvas) -> Result<()> {
+        if staged.from != staged.target
+            && let Some((marks, page)) = self.resize_flexible_marks()?
+        {
+            let previous_marks = self.flexible_marks.replace(marks);
+            let previous_page = std::mem::replace(&mut self.list_page, page);
+            self.draw(canvas);
+            staged.marks = self.flexible_marks.take().map(|view| (view, page));
+            self.flexible_marks = previous_marks;
+            self.list_page = previous_page;
+        } else {
+            self.draw(canvas);
+        }
+        Ok(())
     }
 
     pub(super) fn commit_reading_viewport(&mut self, staged: Stage) -> Result<()> {
@@ -71,6 +90,10 @@ impl Reader {
                     .reading
                     .commit_viewport(*prepared)?;
             }
+        }
+        if let Some((marks, page)) = staged.marks {
+            self.flexible_marks = Some(marks);
+            self.list_page = page;
         }
         self.screen_page_worker.cancel();
         self.pages_since_refresh = 0;

@@ -1151,16 +1151,25 @@ pub(crate) enum ReadingOrientation {
     FollowLauncher,
     Upright,
     UpsideDown,
+    LandscapeLeft,
+    LandscapeRight,
 }
 
 impl ReadingOrientation {
     pub const ALL: [Self; 3] = [Self::FollowLauncher, Self::Upright, Self::UpsideDown];
+    pub const LANDSCAPE: [Self; 2] = [Self::LandscapeLeft, Self::LandscapeRight];
+
+    pub fn is_landscape(self) -> bool {
+        matches!(self, Self::LandscapeLeft | Self::LandscapeRight)
+    }
 
     pub fn label(self) -> &'static str {
         match self {
             Self::FollowLauncher => "Follow Launcher",
             Self::Upright => "Upright",
             Self::UpsideDown => "Upside down",
+            Self::LandscapeLeft => "Landscape left",
+            Self::LandscapeRight => "Landscape right",
         }
     }
 
@@ -1168,7 +1177,7 @@ impl ReadingOrientation {
         match self {
             Self::FollowLauncher => Self::Upright,
             Self::Upright => Self::UpsideDown,
-            Self::UpsideDown => Self::FollowLauncher,
+            Self::UpsideDown | Self::LandscapeLeft | Self::LandscapeRight => Self::FollowLauncher,
         }
     }
 }

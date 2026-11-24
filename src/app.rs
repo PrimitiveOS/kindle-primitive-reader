@@ -797,6 +797,8 @@ pub struct Reader {
         primitive_app::viewport::Viewport,
         reading_viewport_stage::Stage,
     )>,
+    accepted_viewport: Option<primitive_app::viewport::Viewport>,
+    pending_orientation: Option<reading_orientation::PendingOrientation>,
     flow_popup: Option<hidden_flows::FlowPopup>,
     outline: Option<OutlineScan>,
     numbering_scan: Option<character_page_settings::Scan>,
@@ -1012,6 +1014,8 @@ impl Reader {
             overview: None,
             skim: None,
             staged_viewport: None,
+            accepted_viewport: None,
+            pending_orientation: None,
             flow_popup: None,
             outline: None,
             numbering_scan: None,
@@ -1308,6 +1312,7 @@ impl Reader {
             }
             entry.author = reading.author();
             self.save_library()?;
+            self.pending_orientation = None;
             self.active = None;
             self.pages_since_refresh = 0;
             self.range_edit = None;
@@ -1442,6 +1447,7 @@ impl Reader {
         self.pages_since_refresh = 0;
         self.range_edit = None;
         self.saved_popup = None;
+        self.pending_orientation = None;
         self.active = Some(ActiveBook {
             entry,
             id,
@@ -4714,6 +4720,7 @@ impl Reader {
     }
 
     fn close_book_to_library(&mut self) {
+        self.pending_orientation = None;
         self.active = None;
         self.numbering_scan = None;
         self.fixed = None;
@@ -7695,7 +7702,8 @@ impl Reader {
                 external_link::draw_paste(canvas);
             }
             if self.screen == Screen::BookmarkFind {
-                self.annotation_search.draw_filters(canvas, navigation.width);
+                self.annotation_search
+                    .draw_filters(canvas, navigation.width);
             }
             if self.screen == Screen::Find {
                 let label = if self.find_match_case {
@@ -8337,20 +8345,21 @@ impl App for Reader {
         use primitive_app::Rotation;
 
         match self.reading_orientation() {
-            ReadingOrientation::FollowLauncher => None,
+            ReadingOrientation::FollowLauncher
+            | ReadingOrientation::LandscapeLeft
+            | ReadingOrientation::LandscapeRight => None,
             ReadingOrientation::Upright => Some(Rotation::Upright),
             ReadingOrientation::UpsideDown => Some(Rotation::UpsideDown),
         }
     }
 
     fn viewport_request(&self) -> Option<primitive_app::viewport::ViewportRequest> {
-        use primitive_app::viewport::{LogicalTurn, ViewportRequest};
+        Some(self.requested_reading_orientation().viewport_policy())
+    }
 
-        Some(match self.reading_orientation() {
-            ReadingOrientation::FollowLauncher => ViewportRequest::FollowLauncher,
-            ReadingOrientation::Upright => ViewportRequest::Fixed(LogicalTurn::Upright),
-            ReadingOrientation::UpsideDown => ViewportRequest::Fixed(LogicalTurn::UpsideDown),
-        })
+    fn viewport_needs_stage(&self, accepted: primitive_app::viewport::Viewport) -> bool {
+        self.has_pending_orientation()
+            || self.reading_viewport().dimensions() != accepted.logical_size
     }
 
     fn stage_viewport(&mut self, candidate: primitive_app::viewport::Viewport) -> io::Result<()> {
@@ -8390,14 +8399,24 @@ impl App for Reader {
         candidate: primitive_app::viewport::Viewport,
         decision: primitive_app::viewport::ViewportDecision,
     ) {
-        let Some((expected, staged)) = self.staged_viewport.take() else {
+        let staged = self.staged_viewport.take();
+        if decision != primitive_app::viewport::ViewportDecision::Commit {
+            self.reject_pending_orientation();
             return;
-        };
-        if expected == candidate
-            && decision == primitive_app::viewport::ViewportDecision::Commit
-            && let Err(error) = self.commit_reading_viewport(staged)
+        }
+        if let Some((expected, staged)) = staged
+            && expected == candidate
         {
-            eprintln!("reader viewport_commit_failed={error}");
+            match self.commit_reading_viewport(staged) {
+                Ok(()) => {
+                    self.accepted_viewport = Some(candidate);
+                    self.accept_pending_orientation(candidate.turn);
+                }
+                Err(error) => {
+                    eprintln!("reader viewport_commit_failed={error}");
+                    self.reject_pending_orientation();
+                }
+            }
         }
     }
 
@@ -9808,6 +9827,10 @@ impl App for ReaderRuntime {
 
     fn viewport_request(&self) -> Option<primitive_app::viewport::ViewportRequest> {
         self.0.viewport_request()
+    }
+
+    fn viewport_needs_stage(&self, accepted: primitive_app::viewport::Viewport) -> bool {
+        self.0.viewport_needs_stage(accepted)
     }
 
     fn stage_viewport(&mut self, candidate: primitive_app::viewport::Viewport) -> io::Result<()> {

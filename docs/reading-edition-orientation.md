@@ -1,4 +1,4 @@
-# Portrait orientation for each edition
+# Screen orientation for each edition
 
 In the lower Screen panel, tap Follow Launcher, Upright or Upside down to set the open edition’s screen orientation. Quick Display uses the same setting. Hold one of the three choices and confirm Set as default to change the starting orientation for either new reflowable books or new fixed-page documents. An edition opened before a default change keeps its saved choice. The existing app orientation supplies the fallback when a format has no saved default. [Reader Screen controls](../src/app/bottom_config.rs) · [Reader orientation policy](../src/app/reading_orientation.rs)
 
@@ -135,11 +135,28 @@ as its scale reference. The new captures show the full chapter and page
 caption above the progress track, with Exit at the right edge. The
 Reader stages a document and draws the candidate before adoption.
 Aborting the handoff leaves the accepted source and viewport intact.
-The integrated Mac library passed 1,228 tests, with 66 opt-in tests
-skipped. The Reader hook test exercises reflow and PDF, a wrong-size
-canvas, abort, and a retried acceptance. The new runtime still exposes
-the previous portrait choices. Live landscape requires the navigation
-pages, selection overlays, both reflow panes and Launcher device checks.
+The integrated Mac library passed 1,234 tests, with 66 opt-in tests
+skipped. The Reader hook tests exercise reflow and PDF, a wrong-size
+canvas, abort, retry, and switching documents while the display is
+already in the requested direction. The supported controls include
+Contents, Go to page, and saved marks, with both leaves laid out in a
+facing-page EPUB.
+
+A session with a negotiated Launcher display shows Landscape Left and
+Landscape Right in the lower Screen panel and Quick Display. Selecting
+a direction saves the edition preference after the runtime confirms the
+prepared frame and the applied direction. Behind older Launchers the
+existing portrait controls remain available. Library, vertical chapters
+and other scenes awaiting their viewport updates follow Launcher and
+retain the edition preference for later reading.
+
+[Negotiated portrait options](screenshots/negotiated-orientation-portrait.png) ·
+[Negotiated landscape options](screenshots/negotiated-orientation-landscape.png) ·
+[Navigation in landscape](landscape-navigation.md)
+
+The Mac simulation exercises the foreground contract with a test runtime.
+The device gate includes native display readback, touch coordinates,
+physical page buttons, sleep and USB resume, and return to Launcher.
 [Shared viewport runtime](https://github.com/PrimitiveOS/kindle-primtitive-tools/tree/feature/app-viewport-runtime) ·
 [Portrait](screenshots/reading-viewport-portrait.png) ·
 [Landscape](screenshots/reading-viewport-landscape.png) ·

@@ -168,7 +168,12 @@ impl FlexibleMarks {
         let measuring = if items.is_empty() {
             None
         } else {
-            Some(Canvas::new(layout.width as u32, 1, fonts)?)
+            Some(Canvas::new_viewport(
+                layout.width as u32,
+                1,
+                primitive_app::WIDTH.min(primitive_app::HEIGHT),
+                fonts,
+            )?)
         };
         let mut view = Self {
             items,
@@ -225,30 +230,53 @@ impl FlexibleMarks {
 
 impl Reader {
     pub(in crate::app) fn prepare_flexible_marks(&mut self) {
-        self.flexible_marks = None;
+        self.flexible_marks = match self.build_flexible_marks() {
+            Ok(view) => view,
+            Err(error) => {
+                self.report(error);
+                None
+            }
+        };
+    }
+
+    fn build_flexible_marks(&self) -> Result<Option<FlexibleMarks>, String> {
         if !self.screen.is_bookmark_list() {
-            return;
+            return Ok(None);
         }
         let Some(max_lines) = self.controls.bookmark_max_lines() else {
-            return;
+            return Ok(None);
         };
         let fonts = self
             .fonts
             .iter()
             .map(|font| font.display().to_string())
             .collect::<Vec<_>>();
-        match FlexibleMarks::new(
+        FlexibleMarks::new(
             self.items(),
             &fonts,
             self.controls.bookmark_density.font(),
             max_lines,
             self.navigation_layout(),
-        ) {
-            Ok(view) => self.flexible_marks = Some(view),
-            Err(error) => {
-                self.report(error);
-            }
-        }
+        )
+        .map(Some)
+    }
+
+    pub(in crate::app) fn resize_flexible_marks(
+        &self,
+    ) -> Result<Option<(FlexibleMarks, usize)>, String> {
+        let Some(previous) = &self.flexible_marks else {
+            return Ok(None);
+        };
+        let first = previous
+            .pages
+            .get(self.list_page)
+            .map_or(0, |page| page.first);
+        let Some(mut next) = self.build_flexible_marks()? else {
+            return Ok(None);
+        };
+        while next.pages.last().is_some_and(|page| page.end() <= first) && next.append_page() {}
+        let page = next.pages.len().saturating_sub(1);
+        Ok(Some((next, page)))
     }
 
     pub(in crate::app) fn draw_flexible_marks(&self, canvas: &mut Canvas) -> bool {

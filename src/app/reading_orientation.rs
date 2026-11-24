@@ -1,8 +1,7 @@
-//! Portrait screen orientation is independent of fixed-page rotation and reading position.
-use super::{
-    Canvas, Change, HEIGHT, Input, Reader, ReadingControls, ReadingOrientation, Rect, WIDTH,
-};
+//! Screen orientation is independent of fixed-page rotation and reading position.
+use super::{Canvas, Change, Input, Reader, ReadingControls, ReadingOrientation, Rect, Screen};
 use crate::Result;
+use primitive_app::viewport::{LogicalTurn, ViewportRequest};
 use primitive_ui::{Sheet, SheetAction};
 
 #[derive(Clone, Copy)]
@@ -15,6 +14,23 @@ enum Format {
 pub(super) struct DefaultPrompt {
     format: Format,
     orientation: ReadingOrientation,
+}
+
+pub(super) struct PendingOrientation {
+    book: Option<u64>,
+    orientation: ReadingOrientation,
+}
+
+impl ReadingOrientation {
+    pub(super) fn viewport_policy(self) -> ViewportRequest {
+        match self {
+            Self::FollowLauncher => ViewportRequest::FollowLauncher,
+            Self::Upright => ViewportRequest::Fixed(LogicalTurn::Upright),
+            Self::UpsideDown => ViewportRequest::Fixed(LogicalTurn::UpsideDown),
+            Self::LandscapeLeft => ViewportRequest::Fixed(LogicalTurn::Counterclockwise),
+            Self::LandscapeRight => ViewportRequest::Fixed(LogicalTurn::Clockwise),
+        }
+    }
 }
 
 impl Reader {
@@ -47,6 +63,25 @@ impl Reader {
         orientation: ReadingOrientation,
     ) -> Result<()> {
         let before = self.reading_orientation();
+        if orientation.is_landscape() && !self.landscape_choices_available() {
+            return Err("Landscape needs a compatible Launcher and reading view".into());
+        }
+        if self.accepted_viewport.is_some() {
+            if before != orientation || self.pending_orientation.is_some() {
+                self.notice = None;
+                self.pending_orientation = Some(PendingOrientation {
+                    book: self.open_book_id(),
+                    orientation,
+                });
+            }
+            return Ok(());
+        }
+        self.persist_reading_orientation(orientation)?;
+        self.refresh_display |= self.reading_orientation() != before;
+        Ok(())
+    }
+
+    fn persist_reading_orientation(&mut self, orientation: ReadingOrientation) -> Result<()> {
         let mut controls = self.controls;
         if controls.sticky_orientation.is_some() {
             controls.sticky_orientation = Some(orientation);
@@ -58,8 +93,81 @@ impl Reader {
             self.controls = controls;
         }
         self.remember_book_orientation(orientation);
-        self.refresh_display |= self.reading_orientation() != before;
         Ok(())
+    }
+
+    fn pending_reading_orientation(&self) -> Option<ReadingOrientation> {
+        self.pending_orientation
+            .as_ref()
+            .filter(|pending| pending.book == self.open_book_id())
+            .map(|pending| pending.orientation)
+    }
+
+    pub(super) fn has_pending_orientation(&self) -> bool {
+        self.pending_reading_orientation().is_some()
+    }
+
+    pub(super) fn requested_reading_orientation(&self) -> ReadingOrientation {
+        let desired = self
+            .pending_reading_orientation()
+            .unwrap_or_else(|| self.reading_orientation());
+        if desired.is_landscape() && !self.supports_landscape_scene() {
+            ReadingOrientation::FollowLauncher
+        } else {
+            desired
+        }
+    }
+
+    pub(super) fn accept_pending_orientation(&mut self, turn: LogicalTurn) {
+        let pending = self.pending_reading_orientation();
+        self.pending_orientation = None;
+        if let Some(orientation) = pending {
+            let matches = match orientation.viewport_policy() {
+                ViewportRequest::FollowLauncher => {
+                    matches!(turn, LogicalTurn::Upright | LogicalTurn::UpsideDown)
+                }
+                ViewportRequest::Fixed(requested) => requested == turn,
+            };
+            if matches && let Err(error) = self.persist_reading_orientation(orientation) {
+                self.notice = Some(error.to_string());
+            }
+        }
+    }
+
+    pub(super) fn reject_pending_orientation(&mut self) {
+        if self.has_pending_orientation() {
+            self.notice =
+                Some("The screen could not turn. The previous setting is still active.".into());
+        }
+        self.pending_orientation = None;
+    }
+
+    fn supports_landscape_scene(&self) -> bool {
+        (matches!(
+            self.screen,
+            Screen::Book | Screen::BookTools | Screen::Fixed | Screen::FixedTools | Screen::Skim
+        ) || self.screen.uses_navigation_viewport())
+            && self.open_book_id().is_some()
+            && self
+                .active
+                .as_ref()
+                .is_none_or(|book| !book.reading.probe.is_vertical())
+    }
+
+    pub(super) fn landscape_choices_available(&self) -> bool {
+        self.accepted_viewport.is_some() && self.supports_landscape_scene()
+    }
+
+    pub(super) fn next_reading_orientation(&self) -> ReadingOrientation {
+        let current = self.reading_orientation();
+        if self.landscape_choices_available() {
+            match current {
+                ReadingOrientation::UpsideDown => return ReadingOrientation::LandscapeLeft,
+                ReadingOrientation::LandscapeLeft => return ReadingOrientation::LandscapeRight,
+                _ => {}
+            }
+        }
+        current.next()
     }
 
     fn remember_book_orientation(&mut self, orientation: ReadingOrientation) {
@@ -99,13 +207,14 @@ impl Reader {
         }
     }
 
-    fn orientation_default_sheet(prompt: DefaultPrompt) -> Sheet<'static> {
+    fn orientation_default_sheet(&self, prompt: DefaultPrompt) -> Sheet<'static> {
         let title = match prompt.format {
             Format::Reflow => "Default book orientation",
             Format::Fixed => "Default fixed-page orientation",
         };
+        let (width, height) = self.reading_viewport().dimensions();
         Sheet::centered(
-            Rect::new(0, 0, WIDTH as i32, HEIGHT as i32),
+            Rect::new(0, 0, width as i32, height as i32),
             title,
             prompt.orientation.label(),
             "Set as default",
@@ -114,7 +223,7 @@ impl Reader {
 
     pub(super) fn draw_orientation_default_prompt(&self, canvas: &mut Canvas) {
         if let Some(prompt) = self.orientation_default_prompt {
-            Self::orientation_default_sheet(prompt).draw(canvas, None);
+            self.orientation_default_sheet(prompt).draw(canvas, None);
         }
     }
 
@@ -123,7 +232,7 @@ impl Reader {
         let confirm = match input {
             Input::Sleep | Input::Wake => return None,
             Input::PageBack => false,
-            Input::Tap(x, y) => match Self::orientation_default_sheet(prompt).hit(x, y) {
+            Input::Tap(x, y) => match self.orientation_default_sheet(prompt).hit(x, y) {
                 Some(SheetAction::Cancel) => false,
                 Some(SheetAction::Confirm) => true,
                 None => return Some(Change::None),
@@ -155,6 +264,7 @@ mod tests {
     };
     use ReadingOrientation::{FollowLauncher, Upright, UpsideDown};
     use primitive_app::App;
+    use primitive_app::viewport::{Viewport, ViewportDecision};
     use std::{fs, path::PathBuf};
 
     fn document(fixture: &Fixture, asset: &str, name: &str) -> PathBuf {
@@ -166,6 +276,177 @@ mod tests {
     fn choose(app: &mut Reader, orientation: ReadingOrientation) {
         app.activate(Action::SetReadingOrientation(orientation))
             .unwrap();
+    }
+
+    fn present(app: &mut Reader, generation: u64, turn: LogicalTurn, decision: ViewportDecision) {
+        let landscape = matches!(turn, LogicalTurn::Clockwise | LogicalTurn::Counterclockwise);
+        let (width, height) = if landscape {
+            (1680, 1264)
+        } else {
+            (1264, 1680)
+        };
+        let candidate = Viewport {
+            generation,
+            turn,
+            logical_size: (width, height),
+        };
+        let fonts: Vec<_> = app
+            .fonts
+            .iter()
+            .map(|font| font.display().to_string())
+            .collect();
+        let mut canvas = Canvas::new_viewport(width, height, 1264, &fonts).unwrap();
+        app.stage_viewport(candidate).unwrap();
+        canvas.begin();
+        app.draw_staged_viewport(&mut canvas).unwrap();
+        let pixels = canvas.finish(false);
+        assert_eq!(pixels.len(), (width * height) as usize);
+        app.finish_viewport(candidate, decision);
+    }
+
+    #[test]
+    fn negotiated_turn_acceptance_controls_persistence_and_legacy_fallback() {
+        use ReadingOrientation::{LandscapeLeft, LandscapeRight};
+
+        let fixture = Fixture::new();
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        app.open_path(&fixture.book).unwrap();
+        let position = app.current_position().unwrap();
+        assert!(!app.landscape_choices_available());
+        assert!(app.set_reading_orientation(LandscapeLeft).is_err());
+        assert_eq!(app.reading_orientation(), FollowLauncher);
+        present(&mut app, 1, LogicalTurn::Upright, ViewportDecision::Commit);
+        assert!(app.landscape_choices_available());
+        orientation_controls(&mut app);
+        capture_test_screen(
+            &app,
+            &fonts,
+            "READER_NEGOTIATED_ORIENTATION_PORTRAIT",
+            false,
+        );
+
+        choose(&mut app, Upright);
+        assert_eq!(app.reading_orientation(), FollowLauncher);
+        assert!(app.viewport_needs_stage(app.accepted_viewport.unwrap()));
+        present(&mut app, 2, LogicalTurn::Upright, ViewportDecision::Commit);
+        assert_eq!(app.reading_orientation(), Upright);
+        assert!(!app.viewport_needs_stage(app.accepted_viewport.unwrap()));
+        let left = app.reading_button_in_row("Landscape", "Left");
+        assert_eq!(
+            app.input(Input::Tap(
+                (left.x + left.w / 2) as f32,
+                (left.y + left.h / 2) as f32,
+            )),
+            Change::Partial
+        );
+        assert_eq!(
+            app.viewport_request(),
+            Some(ViewportRequest::Fixed(LogicalTurn::Counterclockwise))
+        );
+        assert_eq!(app.reading_orientation(), Upright);
+        present(
+            &mut app,
+            3,
+            LogicalTurn::Counterclockwise,
+            ViewportDecision::Abort,
+        );
+        assert_eq!(app.reading_orientation(), Upright);
+        assert_eq!(app.current_position().as_ref(), Some(&position));
+        assert_eq!(app.reading_viewport().dimensions(), (1264, 1680));
+        assert!(app.notice.is_some());
+
+        choose(&mut app, LandscapeRight);
+        present(
+            &mut app,
+            4,
+            LogicalTurn::Clockwise,
+            ViewportDecision::Commit,
+        );
+        assert_eq!(app.reading_orientation(), LandscapeRight);
+        assert_eq!(app.reading_viewport().dimensions(), (1680, 1264));
+        assert_eq!(app.preferred_rotation(), None);
+        assert_eq!(app.current_position().unwrap().chapter, position.chapter);
+        assert!(app.notice.is_none());
+        if let Some(path) = std::env::var_os("READER_NEGOTIATED_ORIENTATION_LANDSCAPE") {
+            let fonts: Vec<_> = fonts
+                .iter()
+                .map(|font| font.display().to_string())
+                .collect();
+            let mut canvas = Canvas::new_viewport(1680, 1264, 1264, &fonts).unwrap();
+            let frame = primitive_app::frame(&app, &mut canvas, false);
+            primitive_app::write_png(std::path::Path::new(&path), 1680, 1264, &frame).unwrap();
+        }
+
+        app.show(Screen::ReadingControls);
+        assert_eq!(
+            app.viewport_request(),
+            Some(ViewportRequest::FollowLauncher)
+        );
+        present(&mut app, 5, LogicalTurn::Upright, ViewportDecision::Commit);
+        assert_eq!(app.reading_orientation(), LandscapeRight);
+        app.show(Screen::Book);
+        assert_eq!(
+            app.viewport_request(),
+            Some(ViewportRequest::Fixed(LogicalTurn::Clockwise))
+        );
+        let other = document(&fixture, "tilted-scan.pdf", "Other.pdf");
+        app.open_path(&other).unwrap();
+        assert_ne!(app.reading_orientation(), LandscapeRight);
+        app.save().unwrap();
+        let mut reopened = fixture.app();
+        reopened.open_path(&fixture.book).unwrap();
+        assert_eq!(reopened.reading_orientation(), LandscapeRight);
+        assert_eq!(reopened.preferred_rotation(), None);
+        assert!(!reopened.landscape_choices_available());
+    }
+
+    #[test]
+    fn a_sticky_turn_stages_a_new_book_at_the_same_accepted_angle() {
+        use ReadingOrientation::{LandscapeLeft, LandscapeRight};
+
+        let fixture = Fixture::new();
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+        app.open_path(&fixture.book).unwrap();
+        present(&mut app, 1, LogicalTurn::Upright, ViewportDecision::Commit);
+        choose(&mut app, LandscapeRight);
+        present(
+            &mut app,
+            2,
+            LogicalTurn::Clockwise,
+            ViewportDecision::Commit,
+        );
+        app.keep_reading_orientation(true).unwrap();
+
+        choose(&mut app, LandscapeLeft);
+        assert!(app.has_pending_orientation());
+        let other = document(&fixture, "tilted-scan.pdf", "Other.pdf");
+        app.open_path(&other).unwrap();
+        assert!(!app.has_pending_orientation());
+        let accepted = app.accepted_viewport.unwrap();
+        assert_eq!(accepted.turn, LogicalTurn::Clockwise);
+        assert_eq!(
+            app.viewport_request(),
+            Some(ViewportRequest::Fixed(accepted.turn))
+        );
+        assert!(app.viewport_needs_stage(accepted));
+        let initial = app.current_position().unwrap();
+        present(&mut app, 3, accepted.turn, ViewportDecision::Commit);
+        assert_eq!(app.reading_viewport().dimensions(), accepted.logical_size);
+        assert_eq!(app.current_position().unwrap().page, initial.page);
+        assert!(!app.viewport_needs_stage(app.accepted_viewport.unwrap()));
+        assert_eq!(app.controls.sticky_orientation, Some(LandscapeRight));
+
+        app.open_path(&fixture.book).unwrap();
+        assert!(!app.has_pending_orientation());
+        assert_eq!(app.reading_orientation(), LandscapeRight);
     }
 
     fn orientation_controls(app: &mut Reader) {
@@ -191,7 +472,8 @@ mod tests {
     }
 
     fn confirm_default(app: &mut Reader) {
-        let rect = Reader::orientation_default_sheet(app.orientation_default_prompt.unwrap())
+        let rect = app
+            .orientation_default_sheet(app.orientation_default_prompt.unwrap())
             .button(SheetAction::Confirm);
         assert_eq!(
             app.input(Input::Tap((rect.x + 15) as f32, (rect.y + 15) as f32)),

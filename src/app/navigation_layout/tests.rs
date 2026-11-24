@@ -35,7 +35,13 @@ fn prepare(app: &mut Reader, viewport: ReadingViewport) {
 fn canvas(app: &Reader) -> Canvas {
     let (w, h) = app.reading_viewport().dimensions();
     let fonts: Vec<_> = app.fonts.iter().map(|p| p.display().to_string()).collect();
-    Canvas::new(w, h, &fonts).unwrap()
+    Canvas::new_viewport(
+        w,
+        h,
+        primitive_app::WIDTH.min(primitive_app::HEIGHT),
+        &fonts,
+    )
+    .unwrap()
 }
 
 fn capture(app: &Reader, setting: &str, dark: bool) {

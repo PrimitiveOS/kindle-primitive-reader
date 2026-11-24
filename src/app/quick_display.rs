@@ -106,7 +106,7 @@ impl Reader {
         items.extend([
             Item::new(
                 "Screen orientation",
-                Action::SetReadingOrientation(orientation.next()),
+                Action::SetReadingOrientation(self.next_reading_orientation()),
             )
             .detail(orientation.label()),
             Item::new("Refresh screen now", Action::RefreshDisplay),

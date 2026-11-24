@@ -1375,7 +1375,7 @@ dependencies = [
 [[package]]
 name = "kl-core"
 version = "0.1.0"
-source = "git+https://github.com/PrimitiveOS/kindle-primtitive-tools.git?rev=34fbc98be3eabd6fc195d02f86834da6fc9de458#34fbc98be3eabd6fc195d02f86834da6fc9de458"
+source = "git+https://github.com/PrimitiveOS/kindle-primtitive-tools.git?rev=95a7f58ef1ca11931f8480c699dbaaa458eb47bf#95a7f58ef1ca11931f8480c699dbaaa458eb47bf"
 dependencies = [
  "kl-store",
  "primitive-keyboard",
@@ -1387,7 +1387,7 @@ dependencies = [
 [[package]]
 name = "kl-kindle"
 version = "0.1.0"
-source = "git+https://github.com/PrimitiveOS/kindle-primtitive-tools.git?rev=34fbc98be3eabd6fc195d02f86834da6fc9de458#34fbc98be3eabd6fc195d02f86834da6fc9de458"
+source = "git+https://github.com/PrimitiveOS/kindle-primtitive-tools.git?rev=95a7f58ef1ca11931f8480c699dbaaa458eb47bf#95a7f58ef1ca11931f8480c699dbaaa458eb47bf"
 dependencies = [
  "kl-core",
  "kl-store",
@@ -1402,7 +1402,7 @@ dependencies = [
 [[package]]
 name = "kl-render"
 version = "0.1.0"
-source = "git+https://github.com/PrimitiveOS/kindle-primtitive-tools.git?rev=34fbc98be3eabd6fc195d02f86834da6fc9de458#34fbc98be3eabd6fc195d02f86834da6fc9de458"
+source = "git+https://github.com/PrimitiveOS/kindle-primtitive-tools.git?rev=95a7f58ef1ca11931f8480c699dbaaa458eb47bf#95a7f58ef1ca11931f8480c699dbaaa458eb47bf"
 dependencies = [
  "kl-core",
  "parley",
@@ -1415,7 +1415,7 @@ dependencies = [
 [[package]]
 name = "kl-store"
 version = "0.1.0"
-source = "git+https://github.com/PrimitiveOS/kindle-primtitive-tools.git?rev=34fbc98be3eabd6fc195d02f86834da6fc9de458#34fbc98be3eabd6fc195d02f86834da6fc9de458"
+source = "git+https://github.com/PrimitiveOS/kindle-primtitive-tools.git?rev=95a7f58ef1ca11931f8480c699dbaaa458eb47bf#95a7f58ef1ca11931f8480c699dbaaa458eb47bf"
 dependencies = [
  "http",
  "ring",
@@ -1953,7 +1953,7 @@ checksum = "925383efa346730478fb4838dbe9137d2a47675ad789c546d150a6e1dd4ab31c"
 [[package]]
 name = "primitive-app"
 version = "0.1.0"
-source = "git+https://github.com/PrimitiveOS/kindle-primtitive-tools.git?rev=34fbc98be3eabd6fc195d02f86834da6fc9de458#34fbc98be3eabd6fc195d02f86834da6fc9de458"
+source = "git+https://github.com/PrimitiveOS/kindle-primtitive-tools.git?rev=95a7f58ef1ca11931f8480c699dbaaa458eb47bf#95a7f58ef1ca11931f8480c699dbaaa458eb47bf"
 dependencies = [
  "kl-core",
  "kl-kindle",
@@ -1967,7 +1967,7 @@ dependencies = [
 [[package]]
 name = "primitive-device"
 version = "0.1.0"
-source = "git+https://github.com/PrimitiveOS/kindle-primtitive-tools.git?rev=34fbc98be3eabd6fc195d02f86834da6fc9de458#34fbc98be3eabd6fc195d02f86834da6fc9de458"
+source = "git+https://github.com/PrimitiveOS/kindle-primtitive-tools.git?rev=95a7f58ef1ca11931f8480c699dbaaa458eb47bf#95a7f58ef1ca11931f8480c699dbaaa458eb47bf"
 dependencies = [
  "kl-core",
  "libc",
@@ -1977,7 +1977,7 @@ dependencies = [
 [[package]]
 name = "primitive-eink"
 version = "0.1.0"
-source = "git+https://github.com/PrimitiveOS/kindle-primtitive-tools.git?rev=34fbc98be3eabd6fc195d02f86834da6fc9de458#34fbc98be3eabd6fc195d02f86834da6fc9de458"
+source = "git+https://github.com/PrimitiveOS/kindle-primtitive-tools.git?rev=95a7f58ef1ca11931f8480c699dbaaa458eb47bf#95a7f58ef1ca11931f8480c699dbaaa458eb47bf"
 dependencies = [
  "kl-core",
  "kl-render",
@@ -1988,7 +1988,7 @@ dependencies = [
 [[package]]
 name = "primitive-input"
 version = "0.1.0"
-source = "git+https://github.com/PrimitiveOS/kindle-primtitive-tools.git?rev=34fbc98be3eabd6fc195d02f86834da6fc9de458#34fbc98be3eabd6fc195d02f86834da6fc9de458"
+source = "git+https://github.com/PrimitiveOS/kindle-primtitive-tools.git?rev=95a7f58ef1ca11931f8480c699dbaaa458eb47bf#95a7f58ef1ca11931f8480c699dbaaa458eb47bf"
 dependencies = [
  "kl-core",
  "libc",
@@ -1998,12 +1998,12 @@ dependencies = [
 [[package]]
 name = "primitive-keyboard"
 version = "0.1.0"
-source = "git+https://github.com/PrimitiveOS/kindle-primtitive-tools.git?rev=34fbc98be3eabd6fc195d02f86834da6fc9de458#34fbc98be3eabd6fc195d02f86834da6fc9de458"
+source = "git+https://github.com/PrimitiveOS/kindle-primtitive-tools.git?rev=95a7f58ef1ca11931f8480c699dbaaa458eb47bf#95a7f58ef1ca11931f8480c699dbaaa458eb47bf"
 
 [[package]]
 name = "primitive-quick"
 version = "0.1.0"
-source = "git+https://github.com/PrimitiveOS/kindle-primtitive-tools.git?rev=34fbc98be3eabd6fc195d02f86834da6fc9de458#34fbc98be3eabd6fc195d02f86834da6fc9de458"
+source = "git+https://github.com/PrimitiveOS/kindle-primtitive-tools.git?rev=95a7f58ef1ca11931f8480c699dbaaa458eb47bf#95a7f58ef1ca11931f8480c699dbaaa458eb47bf"
 dependencies = [
  "libc",
 ]
@@ -2011,7 +2011,7 @@ dependencies = [
 [[package]]
 name = "primitive-ui"
 version = "0.1.0"
-source = "git+https://github.com/PrimitiveOS/kindle-primtitive-tools.git?rev=34fbc98be3eabd6fc195d02f86834da6fc9de458#34fbc98be3eabd6fc195d02f86834da6fc9de458"
+source = "git+https://github.com/PrimitiveOS/kindle-primtitive-tools.git?rev=95a7f58ef1ca11931f8480c699dbaaa458eb47bf#95a7f58ef1ca11931f8480c699dbaaa458eb47bf"
 dependencies = [
  "kl-core",
  "kl-render",

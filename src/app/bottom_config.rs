@@ -82,28 +82,42 @@ impl Reader {
     pub(super) fn bottom_config_rows(&self, panel: BarPanel) -> Vec<ConfigRow> {
         if matches!(panel, BarPanel::TextScreen | BarPanel::ViewScreen) {
             let controls = self.controls;
-            let mut rows = vec![
-                ConfigRow::new(
-                    "Screen orientation",
-                    ReadingOrientation::ALL.map(|orientation| {
+            let mut rows = vec![ConfigRow::new(
+                "Screen orientation",
+                ReadingOrientation::ALL.map(|orientation| {
+                    Choice::option(
+                        orientation.label(),
+                        Action::SetReadingOrientation(orientation),
+                        self.reading_orientation() == orientation,
+                    )
+                }),
+            )];
+            if self.landscape_choices_available() {
+                rows.push(ConfigRow::new(
+                    "Landscape",
+                    [
+                        ("Left", ReadingOrientation::LandscapeLeft),
+                        ("Right", ReadingOrientation::LandscapeRight),
+                    ]
+                    .map(|(label, orientation)| {
                         Choice::option(
-                            orientation.label(),
+                            label,
                             Action::SetReadingOrientation(orientation),
                             self.reading_orientation() == orientation,
                         )
                     }),
-                ),
-                ConfigRow::new(
-                    "Keep orientation",
-                    [("Off", false), ("On", true)].map(|(title, keep)| {
-                        Choice::option(
-                            title,
-                            Action::KeepReadingOrientation(keep),
-                            controls.sticky_orientation.is_some() == keep,
-                        )
-                    }),
-                ),
-            ];
+                ));
+            }
+            rows.push(ConfigRow::new(
+                "Keep orientation",
+                [("Off", false), ("On", true)].map(|(title, keep)| {
+                    Choice::option(
+                        title,
+                        Action::KeepReadingOrientation(keep),
+                        controls.sticky_orientation.is_some() == keep,
+                    )
+                }),
+            ));
             // Under Primitive Launcher the theme is the launcher's: no light or dark switch here.
             if !self.under_launcher() {
                 rows.extend([
