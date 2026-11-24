@@ -33,6 +33,24 @@ start-aligned Latin text, identical right-to-left output, and a selection
 preserved through rotation and return to the reading passage.
 [Footnote alignment and captures](footnote-export-roots.md#preview-text-alignment)
 
+The Mac suite passed 1,464 library tests, one Kindle entry test, 14 EPUB
+package tests and four layout tests. The standard run skipped 67 opt-in
+tests. The separate screenshot replay passed 13 workflow tests.
+
+The normal file picker opened original EPUB, PDF, AZW3 and MOBI files. Each
+turned a page and resumed at matching positions and central page pixels.
+The original bytes matched. Separate reading-statistics and positive EPUB
+margin checks passed with original files. Twelve replayed Mac simulator
+screenshots and two native reference screenshots matched the reviewed PNGs
+byte for byte.
+
+The local ARMHF stage verified a stripped, statically linked 37,726,092-byte
+executable with SHA-256
+`357ccdf9c7b2521a8aa4475001f86f4c71c1607c6d46e61a110ee23a904e63df`.
+It assembled 30 files totaling 47,325,592 bytes uncompressed and verified
+both project license files, the SQLite notices, embedded Launcher icon and
+OCR model. Foreground Kindle verification and the Store release remain open.
+
 ## Dictionary layouts, alternative contents, partial typography and EPUB padding checkpoint
 
 Dictionary popup actions can be reordered, hidden and arranged one to four
