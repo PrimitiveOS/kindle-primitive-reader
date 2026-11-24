@@ -26,16 +26,20 @@ fn open_tools(app: &mut Reader) {
     assert!(app.read_alarm.panel == Some(Panel::Settings));
 }
 
+fn authored_reading_page(fixture: &Fixture) -> PathBuf {
+    let specimen = fixture.root.join("Early light.xhtml");
+    fs::write(&specimen, r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Early light</title></head>
+            <body><h1>Early light</h1><p>Just after dawn, the path along the shore was quiet. We stopped beside the boathouse to watch the tide turn.</p>
+            <p>At the end of the pier, someone had left a notebook open on the rail. A page lifted in the breeze and settled again.</p></body></html>"#).unwrap();
+    specimen
+}
+
 #[test]
 fn read_alarm_interval_preserves_page_persists_choices_and_repeats_once() {
     let fixture = Fixture::new();
     let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
     let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
-    let specimen = fixture.root.join("Early light.xhtml");
-    fs::write(&specimen, r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Early light</title></head>
-            <body><h1>Early light</h1><p>Just after dawn, the path along the shore was quiet. We stopped beside the boathouse to watch the tide turn.</p>
-            <p>At the end of the pier, someone had left a notebook open on the rail. A page lifted in the breeze and settled again.</p></body></html>"#).unwrap();
-    app.open_path(&specimen).unwrap();
+    app.open_path(&authored_reading_page(&fixture)).unwrap();
     let original = frame(&app, &fonts);
     let location = app.current_history_location().unwrap();
     open_tools(&mut app);
@@ -231,7 +235,7 @@ fn read_alarm_confirmation_leaves_the_reading_page_available_and_dismisses() {
     let fixture = Fixture::new();
     let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
     let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
-    app.open_path(&fixture.book).unwrap();
+    app.open_path(&authored_reading_page(&fixture)).unwrap();
     let original = frame(&app, &fonts);
     let position = app.current_history_location().unwrap();
     open_tools(&mut app);
