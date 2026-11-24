@@ -2,6 +2,46 @@
 
 ## Current Mac simulator checkpoint
 
+The opening-profile simulator checks conditional file paths, collections,
+preferred orientation and first-time reading. The pinned KOReader callbacks
+confirm that any configured condition can match and that the new-book gate
+applies separately. Reader keeps its alphabetical profile order and can fill
+the current book's path directly, including characters outside the Kindle
+keyboard. Matching the actual display turn remains open.
+[Opening profiles and captures](reading-profiles.md#apply-a-profile-on-book-opening)
+
+The fixed-page statistics importer can browse nested Documents folders for
+a KOReader SQLite snapshot. The simulator checks that the chosen database
+stays associated with its preview and that the original reading anchor and
+source files survive the import. Dictionary history groups local lookups by
+book and time and has its own recording and clear controls. The pinned Lua
+comparison checks logging, dates, repeat lookup and privacy.
+[Statistics import and captures](reading-statistics.md#import-koreader-statistics-for-a-pdf-or-djvu-book) ·
+[Dictionary history and captures](shared-dictionaries.md#dictionary-history)
+
+The opt-in EPUB renderer matches the pinned Web mode's 20-pixel extensions
+into either user margin for two authored paragraphs. The simulator checks
+visible link hits, text selection, source anchors and the painted result.
+[Signed margins and captures](render-modes.md#one-negative-physical-side-on-an-auto-width-paragraph)
+
+The four-thread Mac suite passed 1,376 library tests, one Kindle entry
+test, 14 EPUB package tests, and four layout tests. Sixty-seven opt-in
+tests were skipped in the main run. Separate original-file checks passed
+for the dated statistics workflow and positive publisher margins. The
+normal picker opened an original EPUB, PDF, AZW3, and MOBI, turned a page,
+and resumed at the saved position with identical pixels in the central
+reading area and unchanged source hashes.
+
+The Mac ARMHF release build produced a stripped, statically linked
+37,298,996-byte executable with SHA-256
+`ce0f519a8706abb7a6d92f206ca96601181f9efd250f2537fc3db0573c95f4a3`.
+The local hard-float stage assembled 28 files totaling 46,872,845 bytes
+uncompressed and verified the SQLite notices, embedded Launcher icon,
+and OCR model. This checkpoint used the Mac only. Kindle foreground
+acceptance and the Store release remain open.
+
+## DjVu history and positive EPUB margins checkpoint
+
 Reader imports reading-history visits for self-contained DjVu books.
 Pinned KOReader's four visits mapped to the same physical pages in
 Reader and totaled 75 seconds across three distinct pages. Import kept
