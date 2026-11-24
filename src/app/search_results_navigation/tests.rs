@@ -147,7 +147,7 @@ fn search_results_navigation_pdf_selection_restores_its_rotated_view_and_replace
         app.input(tap(app.selection_button(SelectionAction::Find))),
         Change::Partial
     );
-    assert!(app.matches_from_selection);
+    assert!(app.matches_return_to_reading);
     while app.search_at.is_some() {
         app.step_pdf_search(Instant::now()).unwrap();
     }
