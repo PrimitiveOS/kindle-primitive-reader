@@ -1,8 +1,8 @@
 # Contents list settings
 
 Open the upper **Navigation** menu, then choose **Contents settings**. These
-preferences apply to publisher and active custom outlines in reflow and
-fixed-page books.
+list preferences apply to publisher, alternative and custom contents.
+The alternative source option is available in reflowable books.
 
 | Setting | Behavior |
 | --- | --- |
@@ -31,6 +31,33 @@ recovered. The simulator captures use the bundled EPUB.
 | <img src="screenshots/contents-density-sparse.png" alt="Six Contents rows with the automatic font and a Next button" width="260"> | <img src="screenshots/contents-density-dense.png" alt="Twenty-four Contents rows with the large font fitted to the available height" width="260"> | <img src="screenshots/contents-density-picker.png" alt="Dark Contents font picker with value 72, Automatic, Cancel, and Apply" width="260"> |
 
 [Reader settings tests](../src/app/contents_density/tests.rs) · [KOReader bounds and persistence](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readertoc.lua#L1345-L1387) · [Automatic font formula](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/menu.lua#L1546-L1550) · [One-line fit](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/menu.lua#L132-L141)
+
+## Alternative table of contents
+
+In **Navigation › Contents settings**, choose **Alternative table of
+contents**, then confirm **Use headings**. Reader opens its normal Contents
+list with document headings in their source order. Expand the branches to
+see nested headings. When the whole book has no headings, the list points
+to the start of each readable spine item. Selecting a row adds a jump to
+the reading history. Changing modes keeps the current reading position.
+
+Each edition remembers its mode. Use the same setting and confirm
+**Restore** to return to publisher contents. Disable custom contents before
+changing this setting. Changing modes clears exclusions tied to the previous
+outline's depths. It keeps the preferences for applying depth filters.
+
+The pinned Mac comparison replayed the menu, confirmation, saved mode and
+restore callbacks from `readertoc.lua` against the native CREngine provider.
+It matched the heading hierarchy, soft-hyphen removal, unnamed
+intermediate levels, and fragment fallback across both authored EPUBs.
+Reader shares alternative anchors with section jumps and chapter-filtered
+search. Its outline scan is bounded. Whole-book footer and Skim marker
+reprojection and the separate CSS `-cr-hint` workflow remain open.
+[Confirmation](screenshots/alternative-contents-landscape-confirmation.png) ·
+[Alternative list](screenshots/alternative-contents-landscape.png) ·
+[Reader tests](../src/app/alternative_contents/tests.rs) ·
+[KOReader menu](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readertoc.lua#L1199-L1254) ·
+[Native comparison](../scripts/koreader-alternative-contents-check.lua)
 
 ## Edit a PDF chapter from Page browser
 
