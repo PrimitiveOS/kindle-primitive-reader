@@ -2,11 +2,11 @@ use super::*;
 use crate::app::tests::{Fixture, capture_test_screen};
 use primitive_app::{App, Lifecycle};
 use std::{fs, path::PathBuf, time::Duration};
-fn setup(f: &Fixture) -> Reader {
+pub(super) fn setup(f: &Fixture) -> Reader {
     let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
     Reader::open(&f.root, &f.state, fonts).unwrap()
 }
-fn seed(app: &mut Reader, id: u64, title: &str, day: Date, seconds: u64) {
+pub(super) fn seed(app: &mut Reader, id: u64, title: &str, day: Date, seconds: u64) {
     let wall = Zone::Local.range(day, 0).unwrap().0 + 10 * 3600;
     let now = Instant::now();
     app.reading_history.discard_active();

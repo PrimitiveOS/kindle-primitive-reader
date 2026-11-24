@@ -2,6 +2,7 @@
 mod calendar;
 mod calendar_options;
 mod duration_options;
+mod month_navigation;
 mod period_reset;
 mod progress;
 mod ranges;
@@ -101,6 +102,7 @@ pub(super) enum Command {
 pub(super) struct View {
     back: Screen,
     pub month: Date,
+    month_entry: Option<month_navigation::Entry>,
     pub book: Option<u64>,
     day_back: Page,
     run_page: usize,
@@ -121,6 +123,7 @@ impl Default for View {
         Self {
             back: Screen::Library,
             month: Date::today().first(),
+            month_entry: None,
             book: None,
             day_back: Page::Calendar,
             run_page: 0,
@@ -218,6 +221,7 @@ impl Reader {
                 }
                 self.history_view.book = book;
                 self.history_view.month = Date::today().first();
+                self.history_view.month_entry = None;
                 self.history_view.report = Default::default();
                 self.show(Screen::ReadingHistory(Page::Summary));
             }
@@ -245,13 +249,12 @@ impl Reader {
             Filter(book) => {
                 self.history_view.book = book;
                 self.history_view.month = Date::today().first();
+                self.history_view.month_entry = None;
                 self.history_view.report = Default::default();
                 self.show(Screen::ReadingHistory(Page::Summary));
             }
             Month(delta) => {
-                if let Some(month) = self.history_view.month.add_months(delta)
-                    && self.history_month_allowed(month)
-                {
+                if let Some(month) = self.history_month_step(delta) {
                     self.history_view.month = month;
                 }
             }
@@ -308,15 +311,23 @@ impl Reader {
         }
         Ok(())
     }
-    fn history_month_allowed(&self, month: Date) -> bool {
-        let first = self
-            .reading_history
+    fn history_first_month(&self) -> Date {
+        self.reading_history
             .first_calendar_day(self.history_view.book, Zone::Local)
             .unwrap_or_else(Date::today)
             .first()
-            .min(Date::today().first());
-        month >= first
-            && (self.reading_history.options().future_months || month <= Date::today().first())
+            .min(Date::today().first())
+    }
+    fn history_month_step(&self, delta: i32) -> Option<Date> {
+        let month = self.history_view.month.add_months(delta)?;
+        let allowed = match delta.cmp(&0) {
+            std::cmp::Ordering::Less => month >= self.history_first_month(),
+            std::cmp::Ordering::Greater => {
+                self.reading_history.options().future_months || month <= Date::today().first()
+            }
+            std::cmp::Ordering::Equal => false,
+        };
+        allowed.then_some(month)
     }
     fn history_timeline_today(&self) -> Date {
         crate::mark_time::now()
@@ -351,7 +362,12 @@ impl Reader {
                     Some(self.history_view.import_summary_page),
                 )
             }
-            Page::Day(_) => (Screen::ReadingHistory(self.history_view.day_back), None),
+            Page::Day(day) => {
+                if self.history_view.day_back == Page::Calendar {
+                    self.history_view.month = day.first();
+                }
+                (Screen::ReadingHistory(self.history_view.day_back), None)
+            }
             Page::BookDay(day, _) => (Screen::ReadingHistory(Page::Day(day)), None),
             Page::Range(page) => self.history_view.ranges.back(page),
             Page::Periods(_) => (Screen::ReadingHistory(Page::TimeRange), None),
@@ -592,6 +608,11 @@ impl Reader {
         if let Some(change) = self.duration_limits_input(input) {
             return Some(change);
         }
+        if page == Page::Calendar
+            && let Some(change) = self.history_month_navigation_input(input)
+        {
+            return Some(change);
+        }
         let back = if matches!(page, Page::ImportKoReader | Page::ChooseKoReaderDatabase) {
             self.navigation_layout().back()
         } else {
@@ -636,18 +657,10 @@ impl Reader {
                 })
             }
             Input::Tap(x, y) if matches!(page, Page::Calendar | Page::Day(_)) => {
-                if PREVIOUS.contains(x, y) {
-                    Some(if page == Page::Calendar {
-                        Command::Month(-1)
-                    } else {
-                        Command::Day(-1)
-                    })
-                } else if NEXT.contains(x, y) {
-                    Some(if page == Page::Calendar {
-                        Command::Month(1)
-                    } else {
-                        Command::Day(1)
-                    })
+                if page != Page::Calendar && PREVIOUS.contains(x, y) {
+                    Some(Command::Day(-1))
+                } else if page != Page::Calendar && NEXT.contains(x, y) {
+                    Some(Command::Day(1))
                 } else if SUMMARY.contains(x, y) {
                     Some(Command::Show(Page::Summary))
                 } else if DAILY.contains(x, y) {

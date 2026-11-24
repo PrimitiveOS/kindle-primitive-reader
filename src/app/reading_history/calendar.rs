@@ -52,6 +52,21 @@ fn calendar_spans_keep_contiguous_books_in_their_rows_after_duration_rank_change
     assert_eq!(swapped[1][..3], [Some(1), Some(5), Some(4)]);
 }
 
+pub(super) fn history_arrow(canvas: &mut Canvas, rect: Rect, icon: primitive_ui::Icon) {
+    let pressed = canvas.control_pressed(rect, false);
+    canvas.button(rect, "", false, false);
+    canvas.icon(
+        Rect::new(
+            rect.x + (rect.w - 40) / 2,
+            rect.y + (rect.h - 40) / 2,
+            40,
+            40,
+        ),
+        icon,
+        if pressed { 255 } else { 0 },
+    );
+}
+
 impl Reader {
     pub(in crate::app) fn draw_reading_history(&self, canvas: &mut Canvas) -> bool {
         let Screen::ReadingHistory(page) = self.screen else {
@@ -68,55 +83,26 @@ impl Reader {
         canvas.button(SUMMARY, "Summary", false, false);
         canvas.button(DAILY, "Daily history", false, false);
         canvas.button(TODAY, "Today", false, false);
-        let label = if let Page::Day(day) = page {
-            format!(
-                "{} · {} start",
-                day.label(),
-                timeline_clock(self.reading_history.options().day_start),
-            )
-        } else {
-            self.history_view.month.month_label()
-        };
-        canvas.text(Rect::new(220, 146, 824, 80), &label, BODY.bold().center());
-        let (prev, next) = if let Page::Day(day) = page {
-            (
-                day.add_days(-1).is_some(),
-                day < self.history_timeline_today(),
-            )
-        } else {
-            (
-                self.history_view
-                    .month
-                    .add_months(-1)
-                    .is_some_and(|m| self.history_month_allowed(m)),
-                self.history_view
-                    .month
-                    .add_months(1)
-                    .is_some_and(|m| self.history_month_allowed(m)),
-            )
-        };
-        for (rect, icon, available) in [
-            (PREVIOUS, crate::app::bar_icons::PREVIOUS_PAGE, prev),
-            (NEXT, crate::app::bar_icons::NEXT_PAGE, next),
-        ] {
-            if available {
-                let pressed = canvas.control_pressed(rect, false);
-                canvas.button(rect, "", false, false);
-                canvas.icon(
-                    Rect::new(
-                        rect.x + (rect.w - 40) / 2,
-                        rect.y + (rect.h - 40) / 2,
-                        40,
-                        40,
-                    ),
-                    icon,
-                    if pressed { 255 } else { 0 },
-                );
-            }
-        }
         match page {
-            Page::Calendar => self.draw_history_calendar(canvas),
-            Page::Day(day) => self.draw_history_day(canvas, day),
+            Page::Calendar => {
+                self.draw_history_month_navigation(canvas);
+                self.draw_history_calendar(canvas);
+            }
+            Page::Day(day) => {
+                let label = format!(
+                    "{} · {} start",
+                    day.label(),
+                    timeline_clock(self.reading_history.options().day_start),
+                );
+                canvas.text(Rect::new(220, 146, 824, 80), &label, BODY.bold().center());
+                if day.add_days(-1).is_some() {
+                    history_arrow(canvas, PREVIOUS, crate::app::bar_icons::PREVIOUS_PAGE);
+                }
+                if day < self.history_timeline_today() {
+                    history_arrow(canvas, NEXT, crate::app::bar_icons::NEXT_PAGE);
+                }
+                self.draw_history_day(canvas, day);
+            }
             _ => {}
         }
         canvas.button(OPTIONS, "Settings", false, false);
@@ -129,6 +115,9 @@ impl Reader {
             false,
             false,
         );
+        if page == Page::Calendar {
+            self.draw_history_month_editor(canvas);
+        }
         true
     }
     fn draw_history_calendar(&self, canvas: &mut Canvas) {

@@ -22,7 +22,7 @@ pub(super) struct Calendar {
 impl Date {
     pub(crate) fn new(year: i32, month: u8, day: u8) -> Option<Self> {
         let date = Self { year, month, day };
-        ((1900..=9999).contains(&year)
+        ((1000..=9999).contains(&year)
             && (1..=12).contains(&month)
             && day > 0
             && day <= date.month_days())
