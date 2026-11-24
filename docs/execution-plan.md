@@ -51,7 +51,10 @@ Cycle enabled custom footer items through the hidden step in EPUB and PDF.
 Check the default chapter-page label, ticks and Exit, locked taps, and clock
 refresh. Open a footnote with a relative and a fixed size, page through a
 large note, and return to the original passage. Verify saved choices after
-reopen and capture the settings and reading views.
+reopen and capture the settings and reading views. Hold a PDF thumbnail to
+add, rename or remove its chapter. Confirm Save and Cancel return to the
+same thumbnails and keep the current page, bookmark and jump history.
+[Edit chapters from thumbnails](contents-list-settings.md#edit-a-pdf-chapter-from-page-browser)
 [Footer items](footer-item-cycle.md) · [Footnote size](footnote-export-roots.md#preview-font-size)
 
 ### Folder order

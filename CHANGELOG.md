@@ -5,6 +5,7 @@
 - Tap the status bar to cycle through enabled custom items.
 - Choose the folder order used by the library and previous or next file actions.
 - Set footnote preview text to a relative or fixed size.
+- Add, rename or remove PDF chapters from thumbnails in Page browser.
 
 ## 0.1.38
 
