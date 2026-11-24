@@ -898,6 +898,11 @@ impl Reading {
         self.probe.link_in(range, x, y)
     }
 
+    pub(crate) fn link_href_at(&self, x: f32, y: f32) -> Option<&str> {
+        let (range, x, y) = self.column_at(x, y)?;
+        self.probe.link_href_in(range, x, y)
+    }
+
     pub(crate) fn illustration_at(&self, x: f32, y: f32) -> Option<&str> {
         let (range, x, y) = self.column_at(x, y)?;
         self.probe.illustration_in(range, x, y)
@@ -959,6 +964,7 @@ impl Reading {
         text
     }
 
+    #[cfg(test)]
     pub(crate) fn links(&self) -> Vec<(String, Destination)> {
         let mut links = Vec::new();
         for (range, _) in self.visible_columns() {

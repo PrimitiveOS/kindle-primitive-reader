@@ -177,11 +177,7 @@ impl Reader {
                 }),
             );
         }
-        if self
-            .active
-            .as_ref()
-            .is_some_and(|active| !active.reading.links().is_empty())
-        {
+        if !self.page_link_items().is_empty() {
             items.push(Item::new("Links on this page", Action::Show(Screen::Links)));
         }
         if !self.back.is_empty() {
@@ -339,6 +335,8 @@ impl Reader {
                 .detail("Settings for new books; existing books stay unchanged"),
             Item::new("Reading gestures", Action::Show(Screen::Gestures))
                 .detail("Assign taps, holds and swipes"),
+            Item::new("Link taps", Action::Show(Screen::LinkTapSettings))
+                .detail("Choose which links open on a tap"),
             Item::new(
                 "Invert page-turn buttons",
                 Action::SetReadingControls(ReadingControls {

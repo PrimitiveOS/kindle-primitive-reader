@@ -981,6 +981,15 @@ impl ParleyChapter {
             .filter_map(|(image, _, _)| Some((image.label.as_str(), image.link.as_deref()?)))
     }
 
+    pub(crate) fn image_link_regions(
+        &self,
+        range: Range<f32>,
+        settings: Settings,
+    ) -> impl Iterator<Item = (&str, Range<usize>, Range<usize>)> {
+        self.visible_artwork(range, settings)
+            .filter_map(|(image, cols, rows)| Some((image.link.as_deref()?, cols, rows)))
+    }
+
     fn visible_artwork(
         &self,
         range: Range<f32>,
