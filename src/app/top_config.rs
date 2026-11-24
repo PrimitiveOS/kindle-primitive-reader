@@ -301,6 +301,12 @@ impl Reader {
             ));
         }
         items.push(self.reading_guide_entry());
+        if self.pdf_profiles_available() {
+            items.push(Item::new(
+                "Reading profiles",
+                Action::Show(Screen::ReadingProfiles),
+            ));
+        }
         items
     }
 

@@ -141,7 +141,7 @@ fn dpi_live_controls_reflow_retain_source_selection_and_restore_book_and_profile
     .unwrap();
     app.save_reading_profile("Publisher zoom").unwrap();
     assert_eq!(
-        app.profiles.last().unwrap().preferences.render_dpi,
+        app.profiles.last().unwrap().text_preferences().render_dpi,
         Some(212)
     );
     app.save().unwrap();

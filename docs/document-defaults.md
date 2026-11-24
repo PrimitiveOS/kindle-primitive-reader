@@ -26,7 +26,7 @@ Reader considers a content fingerprint with no saved `BookState` unseen. The fir
 
 The optional `reader/data/document-defaults.json` file uses version 1 with separate `reflow` and `fixed` templates. It has a 64 KiB limit and stores no progress, annotations or source-specific crop/pan geometry. Writes use the app kit's atomic save. Unreadable, oversized, symlinked or unknown-version files remain untouched and read-only. The same typed and range validators are exposed to the user-data backup importer.
 
-Reset prepares the replacement layout/frame and persists the resulting preferences before replacing the visible reading object. If rendering or persistence fails, the prior preferences, frame and reading position remain available. Text profiles reuse the same current-settings snapshot helper, while remaining a separate manual preset feature.
+Reset prepares the replacement layout/frame and persists the resulting preferences before replacing the visible reading object. If rendering or persistence fails, the prior preferences, frame and reading position remain available. [Reading profiles](reading-profiles.md) reuse the same supported settings and apply on demand to the open book.
 
 ## Verification
 

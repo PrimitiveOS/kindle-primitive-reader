@@ -77,7 +77,7 @@ impl Key {
             Self::Library => "Book progress, marks and collections".into(),
             Self::Controls => "Reading controls".into(),
             Self::FooterCustomText => "Custom status bar text".into(),
-            Self::Profiles => "Typography profiles".into(),
+            Self::Profiles => "Reading profiles".into(),
             Self::Gestures => "Reading gestures".into(),
             Self::Dictionaries => "Dictionary preferences".into(),
             Self::Lookup => "Vocabulary and local lookup history".into(),

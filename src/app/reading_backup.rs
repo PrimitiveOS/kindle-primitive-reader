@@ -117,21 +117,7 @@ fn canonical(key: Key, value: Value) -> io::Result<Value> {
         }
         Key::FooterCustomText => footer_custom_text::backup_value(&bytes),
         Key::Profiles => {
-            let profiles: Vec<crate::reading_profiles::Profile> = serde_json::from_value(value)?;
-            let mut names = BTreeSet::new();
-            if profiles.len() > 16 {
-                return Err(archive::invalid("Too many reading profiles"));
-            }
-            for profile in &profiles {
-                if profile.name.trim().is_empty()
-                    || profile.name.chars().count() > 48
-                    || profile.name.chars().any(char::is_control)
-                    || !names.insert(profile.name.to_lowercase())
-                {
-                    return Err(archive::invalid("The typography profile names are invalid"));
-                }
-                crate::document_defaults::validate_preferences(&profile.preferences)?;
-            }
+            let profiles = crate::reading_profiles::decode(value)?;
             serde_json::to_value(profiles).map_err(io::Error::other)
         }
         Key::Gestures => {

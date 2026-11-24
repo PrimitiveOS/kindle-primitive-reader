@@ -64,6 +64,7 @@ mod nearby_search;
 mod nonlinear_tests;
 mod online_panel;
 mod overview_bookmarks;
+mod profile_panel;
 mod progress_markers;
 mod quick_display;
 mod read_alarm;
@@ -274,8 +275,9 @@ enum Screen {
     StyleReview,
     StyleEditor,
     StyleClear,
-    ProfileName,
-    RemoveProfiles,
+    ProfileName(profile_panel::Name),
+    ReadingProfile(usize),
+    ConfirmProfile(usize, profile_panel::Confirm),
     Find,
     Matches,
     SearchHistory,
@@ -433,8 +435,8 @@ impl Screen {
             Self::StyleReview => "Review CSS",
             Self::StyleEditor => "Book CSS",
             Self::StyleClear => "Clear book CSS?",
-            Self::ProfileName => "Save reading profile",
-            Self::RemoveProfiles => "Remove a reading profile",
+            Self::ProfileName(_) => "Name reading profile",
+            Self::ReadingProfile(_) | Self::ConfirmProfile(_, _) => "Reading profile",
             Self::Find => "Find in book",
             Self::Matches => "Search results",
             Self::SearchSettings => "Search settings",
@@ -568,6 +570,7 @@ enum Action {
     SetFont(Option<String>),
     ApplyProfile(usize),
     RemoveProfile(usize),
+    UpdateReadingProfile(usize),
     UpdateFooterPreset(usize),
     ApplyFooterPreset(usize),
     RenameFooterPreset(usize),
@@ -1728,8 +1731,14 @@ impl Reader {
         if screen == Screen::GoToPage {
             self.editor = Editor::new(96);
         }
-        if screen == Screen::ProfileName {
+        if let Screen::ProfileName(mode) = screen {
             self.editor = Editor::new(reading_profiles::MAX_NAME);
+            if let profile_panel::Name::Rename(index) = mode
+                && let Some(profile) = self.profiles.get(index)
+            {
+                self.editor.text = profile.name().chars().collect();
+                self.editor.caret = self.editor.text.len();
+            }
         }
         if let Screen::FooterPresetName(mode) = screen {
             self.editor = Editor::new(footer_presets::MAX_NAME);
@@ -1994,6 +2003,12 @@ impl Reader {
         }
         if self.screen == Screen::ReadingGuides {
             return self.reading_guide_items();
+        }
+        if matches!(
+            self.screen,
+            Screen::ReadingProfiles | Screen::ReadingProfile(_) | Screen::ConfirmProfile(_, _)
+        ) {
+            return self.reading_profile_items();
         }
         if self.screen == Screen::ReadingGuidesAbout {
             return vec![
@@ -2882,32 +2897,6 @@ impl Reader {
             | Screen::StyleReview
             | Screen::StyleClear
             | Screen::StyleEditor => Vec::new(),
-            Screen::ReadingProfiles => {
-                let mut items = vec![Item::new(
-                    "Save current text settings",
-                    Action::Show(Screen::ProfileName),
-                )];
-                items.extend(self.profiles.iter().enumerate().map(|(index, profile)| {
-                    Item::new(&profile.name, Action::ApplyProfile(index))
-                        .detail("Apply to this book")
-                }));
-                if !self.profiles.is_empty() {
-                    items.push(Item::new(
-                        "Remove a profile",
-                        Action::Show(Screen::RemoveProfiles),
-                    ));
-                }
-                items
-            }
-            Screen::RemoveProfiles => self
-                .profiles
-                .iter()
-                .enumerate()
-                .map(|(index, profile)| {
-                    Item::new(&profile.name, Action::RemoveProfile(index))
-                        .detail("Remove this profile")
-                })
-                .collect(),
             Screen::Highlights => self.bookmark_items(active.id),
             _ => Vec::new(),
         }
@@ -3976,23 +3965,9 @@ impl Reader {
                 self.show(Screen::Book);
                 self.record_position();
             }
-            Action::ApplyProfile(index) => {
-                let profile = self
-                    .profiles
-                    .get(index)
-                    .ok_or("That profile is unavailable")?;
-                self.apply_text_profile(profile.preferences.clone())?;
-            }
-            Action::RemoveProfile(index) => {
-                if index >= self.profiles.len() {
-                    return Err("That profile is unavailable".into());
-                }
-                let mut profiles = self.profiles.clone();
-                profiles.remove(index);
-                reading_profiles::save(&self.profiles_path, &profiles)?;
-                self.profiles = profiles;
-                self.show(Screen::ReadingProfiles);
-            }
+            Action::ApplyProfile(index) => self.apply_reading_profile(index)?,
+            Action::RemoveProfile(index) => self.remove_reading_profile(index)?,
+            Action::UpdateReadingProfile(index) => self.update_reading_profile(index)?,
             Action::UpdateFooterPreset(index) => {
                 let mut presets = self.footer_presets.clone();
                 footer_presets::update(
@@ -4252,17 +4227,6 @@ impl Reader {
         Ok(())
     }
 
-    fn save_reading_profile(&mut self, name: &str) -> Result<()> {
-        let preferences = self.current_text_preferences()?;
-        let mut profiles = self.profiles.clone();
-        reading_profiles::insert(&mut profiles, name, preferences)?;
-        reading_profiles::save(&self.profiles_path, &profiles)?;
-        self.profiles = profiles;
-        self.show(Screen::ReadingProfiles);
-        self.notice = Some("Reading profile saved".into());
-        Ok(())
-    }
-
     fn save_footer_preset_name(&mut self, mode: FooterPresetName, name: &str) -> Result<()> {
         let mut presets = self.footer_presets.clone();
         match mode {
@@ -4353,7 +4317,10 @@ impl Reader {
     }
 
     fn name_editor_input(&mut self, input: Input) -> Change {
-        let profile = self.screen == Screen::ProfileName;
+        let profile = match self.screen {
+            Screen::ProfileName(mode) => Some(mode),
+            _ => None,
+        };
         let footer_preset = match self.screen {
             Screen::FooterPresetName(mode) => Some(mode),
             _ => None,
@@ -4361,8 +4328,8 @@ impl Reader {
         if matches!(input, Input::PageBack)
             || matches!(input, Input::Tap(x, y) if primitive_ui::back_button(WIDTH as i32).contains(x, y))
         {
-            let back = if profile {
-                Screen::ReadingProfiles
+            let back = if let Some(mode) = profile {
+                mode.back()
             } else if let Some(mode) = footer_preset {
                 match mode {
                     FooterPresetName::Create => Screen::FooterPresets,
@@ -4385,8 +4352,8 @@ impl Reader {
         };
         if matches!(self.editor.press(key), Press::Go) {
             let name = self.editor.string();
-            let result = if profile {
-                self.save_reading_profile(name.trim())
+            let result = if let Some(mode) = profile {
+                self.edit_reading_profile_name(mode, name.trim())
             } else if let Some(mode) = footer_preset {
                 self.save_footer_preset_name(mode, name.trim())
             } else {
@@ -7605,7 +7572,7 @@ impl Reader {
                 | Screen::DictionaryEntry
                 | Screen::BookmarkFind
                 | Screen::CollectionName
-                | Screen::ProfileName
+                | Screen::ProfileName(_)
                 | Screen::FooterPresetName(_)
                 | Screen::FooterCustomText
                 | Screen::Note
@@ -7623,7 +7590,7 @@ impl Reader {
                 Screen::DictionaryEntry => ("Word or phrase", "Look up"),
                 Screen::BookmarkFind => ("Bookmark, highlighted text, or note", "Find"),
                 Screen::CollectionName => ("Collection name", "Save"),
-                Screen::ProfileName => ("Profile name", "Save"),
+                Screen::ProfileName(_) => ("Profile name", "Save"),
                 Screen::FooterPresetName(_) => ("Status bar preset name", "Save"),
                 Screen::FooterCustomText => (
                     "Use %T title, %A author, %c page, and %t total pages",
@@ -8254,6 +8221,7 @@ impl App for Reader {
         }
         self.draw_flow_popup(canvas);
         self.draw_archive_confirmation(canvas);
+        self.draw_profile_confirmation(canvas);
         self.draw_list_density_picker(canvas);
         self.draw_search_results_navigation(canvas);
         self.draw_top_header_default_prompt(canvas);
@@ -8478,6 +8446,9 @@ impl App for Reader {
             return change;
         }
         self.sync_auto_turn(Instant::now());
+        if let Some(change) = self.profile_confirmation_input(input) {
+            return change;
+        }
         if let Some(change) = self.archive_confirmation_input(input) {
             return change;
         }
@@ -8651,7 +8622,7 @@ impl App for Reader {
         }
         if matches!(
             self.screen,
-            Screen::CollectionName | Screen::ProfileName | Screen::FooterPresetName(_)
+            Screen::CollectionName | Screen::ProfileName(_) | Screen::FooterPresetName(_)
         ) {
             return self.name_editor_input(input);
         }
@@ -8799,8 +8770,14 @@ impl App for Reader {
                         Screen::StyleTweaks
                     }),
                     Screen::StyleEditor => self.show(Screen::StyleTweaks),
-                    Screen::ReadingProfiles => self.show(Screen::Typography),
-                    Screen::RemoveProfiles => self.show(Screen::ReadingProfiles),
+                    Screen::ReadingProfiles => self.show(if self.fixed.is_some() {
+                        Screen::Fixed
+                    } else if self.active.is_some() {
+                        Screen::Typography
+                    } else {
+                        Screen::Library
+                    }),
+                    Screen::ReadingProfile(_) => self.show(Screen::ReadingProfiles),
                     Screen::BookDetails => {
                         if self
                             .book_details

@@ -163,9 +163,8 @@ pub(super) fn action_icon(action: &Action) -> Icon {
             | Screen::FooterSettings,
         )
         | Action::EditSearchPresentation(_) => SLIDERS,
-        Action::Show(Screen::Typography | Screen::ReadingProfiles)
-        | Action::ShowFonts
-        | Action::Text(_) => TEXT,
+        Action::Show(Screen::Typography) | Action::ShowFonts | Action::Text(_) => TEXT,
+        Action::Show(Screen::ReadingProfiles | Screen::ReadingProfile(_)) => SLIDERS,
         Action::Show(Screen::BookDetails) | Action::OrganizeCurrent | Action::AboutTopHeader => {
             INFO
         }

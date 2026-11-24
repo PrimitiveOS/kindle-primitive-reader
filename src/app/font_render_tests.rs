@@ -166,7 +166,11 @@ fn numeric_gamma_repaints_glyphs_keeps_layout_and_survives_a_profile_and_reopen(
     );
     app.save_reading_profile("Neutral contrast").unwrap();
     assert_eq!(
-        app.profiles.last().unwrap().preferences.font_gamma_index,
+        app.profiles
+            .last()
+            .unwrap()
+            .text_preferences()
+            .font_gamma_index,
         Some(15)
     );
     app.save().unwrap();
@@ -251,7 +255,11 @@ fn numeric_weight_changes_fractional_glyphs_and_keeps_each_saved_source_location
     );
     app.save_reading_profile("Lighter type").unwrap();
     assert_eq!(
-        app.profiles.last().unwrap().preferences.font_weight_delta,
+        app.profiles
+            .last()
+            .unwrap()
+            .text_preferences()
+            .font_weight_delta,
         Some(-0.25)
     );
     app.save().unwrap();

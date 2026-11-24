@@ -442,7 +442,7 @@ fn custom_dpi_profiles_defaults_and_real_v2_restore_preserve_values_and_reject_3
             .render_dpi,
         Some(123)
     );
-    assert_eq!(restored.profiles[0].preferences.render_dpi, Some(72));
+    assert_eq!(restored.profiles[0].text_preferences().render_dpi, Some(72));
     restored.open_path(&copy).unwrap();
     assert_eq!(dpi(&restored), 123);
     restored.activate(Action::ApplyProfile(0)).unwrap();

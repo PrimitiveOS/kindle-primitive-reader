@@ -1,0 +1,20 @@
+# Reading profiles
+
+Open a reflowable book or PDF and choose **Appearance › Reading profiles** from the top bar. The lower **Text** and **View › Layout** controls also lead to the same page. Set up the book as you like, then use **Save current settings** and give the profile a name.
+
+Tap a profile to **Apply to this book**, **Replace with current settings**, **Rename**, **Duplicate**, or **Delete**. Replacing and deleting ask for confirmation. Reader lists reflowable-book and PDF profiles together and enables each Apply or Replace action only in the matching format. Profiles apply to the open book on demand. [Document defaults for new books](document-defaults.md) and [Status bar presets](status-bar-presets.md) are separate.
+
+| Format | Settings saved |
+| --- | --- |
+| Reflowable books | Font and size, line and word spacing, margins, alignment, typography and publisher options, single or facing pages, and scroll or page turns. Older text profiles keep their existing names and values. |
+| PDF documents | Page fit and zoom, row or column tile count, PDF page rotation, scroll and spacing, scan contrast, and pan overlap and order. Tile magnification is calculated using the target page geometry. Each PDF retains its own saved crop area, OCR policy and annotations. Crop margin settings can update an automatically calculated crop. A mode that would disable an active continuous crop is refused. |
+
+Applying a profile preserves the current book's page or source anchor and annotations. PDF pan offsets stay within the limits of the new view. Reader prepares the new layout, checks the document edition and saves the settings before changing the visible page. Shared profiles live in `reader/data/reading-profiles.json` with up to 16 case-insensitively unique names. If the file is unreadable or has changed since opening Reader, the existing file is preserved. Reading-data backups use the same validation and accept the original reflow-only file. [Backup format](reading-data-backups.md)
+
+## Comparison with KOReader
+
+The pinned stock **Profiles** entry appears in Tools on frame 006 of the SDL reference. **New with current book settings** captures different action lists for rolling and fixed documents. The stock editor can change or remove individual saved actions, and Execute dispatches supported actions for the open format in order. Reader covers the current-book capture, explicit apply and profile-management workflow for reflowable books and PDFs. To edit a native snapshot, adjust the book and replace the profile. Stock also offers single-action editing, other fixed document providers, empty profiles, automatic execution and a general action list. [Stock factory and commands](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/profiles.koplugin/main.lua#L98) · [Stock format settings](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/profiles.koplugin/main.lua#L346) · [Stock action editor](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/dispatcher.lua#L1054) · [Stock apply and format gating](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/dispatcher.lua#L1372)
+
+The executable fixture runs stock snapshot creation, the individual horizontal overlap editor with its shipped default, duplicate, rename and confirmed deletion, and batched application with format gating. Run with LuaJIT and the pinned source directory as the sole argument. Desktop Reader tests use the production lists, keyboard submit, confirmation and rendering paths with an authored EPUB and two PDFs of different page sizes. They cover stored-profile compatibility, source and position guards, protected crop geometry, retry after failed saves, and backup validation. [Stock fixture](../scripts/koreader-reading-profiles-check.lua) · [Desktop workflows](../src/app/profile_panel/tests.rs)
+
+[Profile list](screenshots/reading-profiles.png) · [PDF profile options in dark mode](screenshots/reading-profile-pdf-dark.png) · [Delete confirmation](screenshots/reading-profile-delete.png)

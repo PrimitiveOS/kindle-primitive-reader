@@ -45,7 +45,7 @@ network request, timer, download or queued job is started by restore.
 | Book library | Progress, bookmarks, highlights, notes, collections and per-book preferences; existing additive merge | Existing library limit, approximately 4 MiB |
 | Reading controls | Effective global controls, highlight appearance, menus, footer, save policy, page-number defaults and similar reading choices | 4 KiB |
 | Custom status bar text | Footer template and repetition count | 1 KiB |
-| Typography profiles | Named reflow presets, with shared typed preference/font-name validation | 32 KiB; 16 profiles |
+| Reading profiles | Named reflow and PDF snapshots, with shared typed view and preference validation | 32 KiB; 16 profiles |
 | New book defaults | Validated reflow and geometry-free fixed-page templates | 64 KiB |
 | Reading gestures | Supported single-contact gesture/action bindings | 8 KiB |
 | Dictionary preferences | Global source ordering, disabled sources and local word-form preferences | 64 KiB |

@@ -2582,6 +2582,32 @@ impl FixedReading {
         self.present_in_saved(self.page, view.normalized(), self.frame.height, save)
     }
 
+    pub(crate) fn restore_pdf_profile_with(
+        &mut self,
+        profile: crate::reading_profiles::PdfProfile,
+        save: impl FnOnce(usize, View) -> io::Result<()>,
+    ) -> Result<()> {
+        if !matches!(self.source, FixedDocument::Pdf(_)) {
+            return Err("Open a PDF to use this profile".into());
+        }
+        let mut view = profile.apply(self.view);
+        if view.continuous_crop.is_some() && !(view.continuous && view.width_fit) {
+            return Err("This viewing mode conflicts with the PDF's continuous crop".into());
+        }
+        if let Some(tile) = profile.tile {
+            view = self.resolve_crop(self.page, view)?;
+            let size = self.source.page_size(self.page)?;
+            view.tile_zoom = Some(tile_zoom(
+                size,
+                &view,
+                self.frame.height,
+                tile.axis,
+                tile.count_tenths,
+            ));
+        }
+        self.restore_view_with(view, save)
+    }
+
     fn present_in_saved(
         &mut self,
         page: usize,
@@ -3793,7 +3819,7 @@ pub(crate) mod tests {
         striped_pdf_sized_bytes(pages, 120, 80)
     }
 
-    fn striped_pdf_sized_bytes(pages: usize, width: u32, height: u32) -> Vec<u8> {
+    pub(crate) fn striped_pdf_sized_bytes(pages: usize, width: u32, height: u32) -> Vec<u8> {
         let kids = (0..pages)
             .map(|index| format!("{} 0 R", 3 + index * 2))
             .collect::<Vec<_>>()
