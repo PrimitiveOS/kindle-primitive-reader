@@ -102,8 +102,20 @@ the landscape canvas, verify that Exit remains reachable and leave the
 original reflow source position intact on return to portrait. They also
 check the PDF zoom and footer boundaries after resizing.
 
-The legacy shared Canvas scales its type and strokes by width. The
-landscape captures showed clipped captions in the unchanged compact row
-height. A negotiated Canvas needs a physical-size reference independent
-of turn before the control can be enabled. Lists, keyboard sheets,
-selection popups and the Launcher handoff retain separate checks.
+The width-scaled Canvas clipped landscape captions in the first
+simulation. The negotiated Canvas uses the native panel’s short edge
+as its scale reference. The new captures show the full chapter and page
+caption above the progress track, with Exit at the right edge. The
+Reader stages a document and draws the candidate before adoption.
+Aborting the handoff leaves the accepted source and viewport intact.
+The integrated Mac library passed 1,228 tests, with 66 opt-in tests
+skipped. The Reader hook test exercises reflow and PDF, a wrong-size
+canvas, abort, and a retried acceptance. The new runtime still exposes
+the previous portrait choices. Live landscape requires the navigation
+pages, selection overlays, both reflow panes and Launcher device checks.
+[Shared viewport runtime](https://github.com/PrimitiveOS/kindle-primtitive-tools/tree/feature/app-viewport-runtime) ·
+[Portrait](screenshots/reading-viewport-portrait.png) ·
+[Landscape](screenshots/reading-viewport-landscape.png) ·
+[Landscape toolbar](screenshots/reading-viewport-bars.png) ·
+[Landscape Skim](screenshots/reading-viewport-skim.png) ·
+[Landscape PDF](screenshots/reading-viewport-pdf.png)

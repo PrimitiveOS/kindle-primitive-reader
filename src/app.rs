@@ -75,6 +75,7 @@ mod reading_bars;
 mod reading_footer;
 pub(crate) mod reading_guides;
 mod reading_orientation;
+mod reading_viewport_stage;
 mod result_context;
 mod saved_highlight_popup;
 mod search_chapter_scope;
@@ -791,6 +792,10 @@ pub struct Reader {
     book_details: Option<BookDetails>,
     overview: Option<PageOverview>,
     skim: Option<skim::Session>,
+    staged_viewport: Option<(
+        primitive_app::viewport::Viewport,
+        reading_viewport_stage::Stage,
+    )>,
     flow_popup: Option<hidden_flows::FlowPopup>,
     outline: Option<OutlineScan>,
     numbering_scan: Option<character_page_settings::Scan>,
@@ -1005,6 +1010,7 @@ impl Reader {
             book_details: None,
             overview: None,
             skim: None,
+            staged_viewport: None,
             flow_popup: None,
             outline: None,
             numbering_scan: None,
@@ -8329,6 +8335,64 @@ impl App for Reader {
         }
     }
 
+    fn viewport_request(&self) -> Option<primitive_app::viewport::ViewportRequest> {
+        use primitive_app::viewport::{LogicalTurn, ViewportRequest};
+
+        Some(match self.reading_orientation() {
+            ReadingOrientation::FollowLauncher => ViewportRequest::FollowLauncher,
+            ReadingOrientation::Upright => ViewportRequest::Fixed(LogicalTurn::Upright),
+            ReadingOrientation::UpsideDown => ViewportRequest::Fixed(LogicalTurn::UpsideDown),
+        })
+    }
+
+    fn stage_viewport(&mut self, candidate: primitive_app::viewport::Viewport) -> io::Result<()> {
+        use crate::session::ReadingViewport;
+
+        self.staged_viewport = None;
+        let target = match candidate.logical_size {
+            (WIDTH, HEIGHT) => ReadingViewport::PORTRAIT,
+            (HEIGHT, WIDTH) => ReadingViewport::LANDSCAPE,
+            _ => {
+                return Err(io::Error::other(
+                    "Reader received unsupported viewport dimensions",
+                ));
+            }
+        };
+        let staged = self
+            .prepare_reading_viewport(target)
+            .map_err(io::Error::other)?;
+        self.staged_viewport = Some((candidate, staged));
+        Ok(())
+    }
+
+    fn draw_staged_viewport(&mut self, canvas: &mut Canvas) -> io::Result<()> {
+        let (candidate, mut staged) = self
+            .staged_viewport
+            .take()
+            .ok_or_else(|| io::Error::other("No prepared Reader viewport"))?;
+        let render = self
+            .draw_prepared_reading_viewport(&mut staged, canvas)
+            .map_err(io::Error::other);
+        self.staged_viewport = Some((candidate, staged));
+        render
+    }
+
+    fn finish_viewport(
+        &mut self,
+        candidate: primitive_app::viewport::Viewport,
+        decision: primitive_app::viewport::ViewportDecision,
+    ) {
+        let Some((expected, staged)) = self.staged_viewport.take() else {
+            return;
+        };
+        if expected == candidate
+            && decision == primitive_app::viewport::ViewportDecision::Commit
+            && let Err(error) = self.commit_reading_viewport(staged)
+        {
+            eprintln!("reader viewport_commit_failed={error}");
+        }
+    }
+
     fn preferred_dark_mode(&self) -> Option<bool> {
         // Under Primitive Launcher the menus follow the launcher's theme, which the app kit reads.
         if self.under_launcher() {
@@ -9722,6 +9786,26 @@ impl App for ReaderRuntime {
             return None;
         }
         self.0.preferred_rotation()
+    }
+
+    fn viewport_request(&self) -> Option<primitive_app::viewport::ViewportRequest> {
+        self.0.viewport_request()
+    }
+
+    fn stage_viewport(&mut self, candidate: primitive_app::viewport::Viewport) -> io::Result<()> {
+        self.0.stage_viewport(candidate)
+    }
+
+    fn draw_staged_viewport(&mut self, canvas: &mut Canvas) -> io::Result<()> {
+        self.0.draw_staged_viewport(canvas)
+    }
+
+    fn finish_viewport(
+        &mut self,
+        candidate: primitive_app::viewport::Viewport,
+        decision: primitive_app::viewport::ViewportDecision,
+    ) {
+        self.0.finish_viewport(candidate, decision);
     }
 
     fn preferred_dark_mode(&self) -> Option<bool> {

@@ -2693,22 +2693,35 @@ impl FixedReading {
     /// Commit only after the new frame has been accepted and while its source is still current.
     #[allow(dead_code)]
     pub(crate) fn commit_viewport(&mut self, next: PreparedFixedViewport) -> Result<()> {
+        let mut next = next;
+        self.exchange_prepared_viewport(&mut next)?;
+        self.presentation_generation = self.presentation_generation.wrapping_add(1);
+        self.pause();
+        Ok(())
+    }
+
+    // A staged draw can borrow the candidate presentation and return the old
+    // one without changing the presentation generation or pending turns.
+    pub(crate) fn exchange_prepared_viewport(
+        &mut self,
+        next: &mut PreparedFixedViewport,
+    ) -> Result<()> {
         if !Rc::ptr_eq(&next.owner, &self.viewport_owner) || next.basis != self.viewport_basis() {
             return Err("The fixed reading view changed before the resize was committed".into());
         }
-        self.viewport = next.viewport;
-        self.page = next.page;
-        self.view = next.view;
-        self.frame = next.frame;
-        self.visible = next.visible;
-        self.deskew_cache = next.deskew_cache;
-        self.retained_viewport_anchor = next.anchor;
-        self.presentation_generation = self.presentation_generation.wrapping_add(1);
-        self.epub_spreads = next.epub_spreads;
-        if let Some(crops) = next.detected_crops {
-            self.detected_crops = crops;
+        use std::mem::swap;
+        swap(&mut self.viewport, &mut next.viewport);
+        swap(&mut self.page, &mut next.page);
+        swap(&mut self.view, &mut next.view);
+        swap(&mut self.frame, &mut next.frame);
+        swap(&mut self.visible, &mut next.visible);
+        swap(&mut self.deskew_cache, &mut next.deskew_cache);
+        swap(&mut self.retained_viewport_anchor, &mut next.anchor);
+        swap(&mut self.epub_spreads, &mut next.epub_spreads);
+        if let Some(crops) = next.detected_crops.as_mut() {
+            swap(&mut self.detected_crops, crops);
         }
-        self.pause();
+        next.basis = self.viewport_basis();
         Ok(())
     }
 

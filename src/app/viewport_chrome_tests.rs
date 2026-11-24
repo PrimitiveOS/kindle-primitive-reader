@@ -29,7 +29,7 @@ fn capture(app: &Reader, key: &str) {
         .iter()
         .map(|font| font.display().to_string())
         .collect();
-    let mut canvas = Canvas::new(width, height, &fonts).unwrap();
+    let mut canvas = Canvas::new_viewport(width, height, WIDTH, &fonts).unwrap();
     let page = primitive_app::frame(app, &mut canvas, false);
     primitive_app::write_png(Path::new(&path), width, height, &page).unwrap();
 }
