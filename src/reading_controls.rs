@@ -69,6 +69,10 @@ pub(crate) struct ReadingControls {
     pub ignore_corner_holds: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub corner_hold_pause_seconds: Option<u8>,
+    #[serde(skip_serializing_if = "crate::app::scrolling::Method::is_default")]
+    pub scroll_method: crate::app::scrolling::Method,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scroll_delay_ms: Option<u16>,
     /// Seconds in tenths. `None` retains KOReader's three-second default in legacy settings.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub very_long_press_tenths: Option<u16>,

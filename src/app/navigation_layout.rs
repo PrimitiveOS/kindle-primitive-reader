@@ -109,6 +109,7 @@ impl Screen {
             Self::Links
                 | Self::NavigationSettings
                 | Self::Gestures
+                | Self::Scrolling
                 | Self::GestureBinding(_)
                 | Self::BackOptions(_)
                 | Self::LocationHistory

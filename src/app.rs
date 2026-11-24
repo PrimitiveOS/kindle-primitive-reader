@@ -23,6 +23,7 @@ mod page_overlap_tests;
 pub(crate) mod publisher_pages;
 mod reading_history;
 mod saved_marks_view;
+pub(crate) mod scrolling;
 mod search_presentation;
 mod search_results_navigation;
 mod word_spacing;
@@ -235,6 +236,7 @@ enum Screen {
     HiddenFlows,
     ChapterNavigation,
     Gestures,
+    Scrolling,
     GestureBinding(Gesture),
     ReadingData,
     LibraryExport(library_export::Page),
@@ -385,6 +387,7 @@ impl Screen {
             Self::HiddenFlows => "Custom hidden flows",
             Self::ChapterNavigation => "Chapter navigation",
             Self::Gestures => "Reading gestures",
+            Self::Scrolling => "Scrolling",
             Self::GestureBinding(gesture) => gesture.label(),
             Self::ReadingData => "Reading data",
             Self::LibraryExport(page) => page.title(),
@@ -420,6 +423,7 @@ impl Screen {
             }
             Self::NumberingValue(NumberField::AutoTurn) => "Automatic page turns",
             Self::NumberingValue(NumberField::CornerHoldPause) => "Corner hold pause",
+            Self::NumberingValue(NumberField::ScrollDelay) => "Scroll activation delay",
             Self::NumberingValue(NumberField::AutoTurnOverlapHorizontal) => "Horizontal overlap",
             Self::NumberingValue(NumberField::FixedTileZoom(axis)) => axis.label(),
             Self::NumberingValue(NumberField::CropMargin) => "Crop margin",
@@ -1000,6 +1004,7 @@ pub struct Reader {
     selection: Option<TextSelection>,
     selection_html: Option<selection_html::Inspector>,
     touch_hold: Option<TouchHold>,
+    scroll_pan: scrolling::Pan,
     selection_mode: bool,
     highlight_prompt_stage: Option<selection_popup::HighlightPromptStage>,
     pending_highlight_style: Option<crate::highlight_style::HighlightStyle>,
@@ -1243,6 +1248,7 @@ impl Reader {
             selection: None,
             selection_html: None,
             touch_hold: None,
+            scroll_pan: scrolling::Pan::default(),
             selection_mode: false,
             highlight_prompt_stage: None,
             pending_highlight_style: None,
@@ -1742,6 +1748,7 @@ impl Reader {
     }
 
     fn show(&mut self, screen: Screen) {
+        self.finish_interrupted_scroll();
         self.opening_path_overlay = None;
         if !matches!(
             screen,
@@ -1922,6 +1929,8 @@ impl Reader {
                     24
                 } else if matches!(screen, Screen::NumberingValue(NumberField::AutoTurn)) {
                     5
+                } else if matches!(screen, Screen::NumberingValue(NumberField::ScrollDelay)) {
+                    4
                 } else if matches!(
                     screen,
                     Screen::NumberingValue(
@@ -1970,6 +1979,9 @@ impl Reader {
                 self.editor.caret = self.editor.text.len();
             }
             match screen {
+                Screen::NumberingValue(NumberField::ScrollDelay) => {
+                    self.set_scroll_delay_draft(self.scroll_delay_ms());
+                }
                 Screen::NumberingValue(NumberField::CornerHoldPause) => {
                     self.editor.text = gestures::corner_pause_seconds(&self.controls)
                         .to_string()
@@ -2773,6 +2785,7 @@ impl Reader {
                     .collect();
             }
             Screen::Gestures => return self.reading_gesture_items(),
+            Screen::Scrolling => return self.scroll_settings_items(),
             Screen::GestureBinding(gesture) => return self.gestures.choices(gesture),
             Screen::BookMap => return self.book_map_items(),
             Screen::AutoTurn => {
@@ -5235,6 +5248,7 @@ impl Reader {
 
     fn auto_turn_eligible(&self) -> bool {
         self.stats_awake
+            && !self.scroll_pan.busy()
             && self.closing_profile.is_none()
             && !self.opening_ask_visible()
             && self.pending_opening_profiles.is_none()
@@ -5357,7 +5371,7 @@ impl Reader {
         change
     }
 
-    fn reading_edge_swipe(&mut self, input: Input, start_x: f32) -> Option<Change> {
+    fn reading_edge_swipe_direction(&self, input: Input, start_x: f32) -> Option<bool> {
         let Input::Swipe { dx, dy, start_y } = input else {
             return None;
         };
@@ -5385,12 +5399,14 @@ impl Reader {
         };
         let from_top = dy > 0.0 && (0.0..=edge).contains(&start_y);
         let from_bottom = dy < 0.0 && (screen_height - edge..=screen_height).contains(&start_y);
-        if from_top || from_bottom {
-            self.selection = None;
-            self.pdf_selection = None;
-            return Some(self.open_reading_edge(from_top, start_x));
-        }
-        None
+        (from_top || from_bottom).then_some(from_top)
+    }
+
+    fn reading_edge_swipe(&mut self, input: Input, start_x: f32) -> Option<Change> {
+        let from_top = self.reading_edge_swipe_direction(input, start_x)?;
+        self.selection = None;
+        self.pdf_selection = None;
+        Some(self.open_reading_edge(from_top, start_x))
     }
 
     fn highlight_state(&mut self) -> Result<&mut crate::library::BookState> {
@@ -5610,6 +5626,9 @@ impl Reader {
     }
 
     fn handle_page_number(&mut self, input: Input) -> Change {
+        if let Some(change) = self.scroll_delay_input(input) {
+            return change;
+        }
         if let Some(change) = self.footnote_font_input(input) {
             return change;
         }
@@ -7878,6 +7897,7 @@ impl Reader {
                     ("Page-turn interval: 1 to 86,400 seconds", "Set")
                 }
                 Screen::NumberingValue(NumberField::CornerHoldPause) => ("5 to 30 seconds", "Set"),
+                Screen::NumberingValue(NumberField::ScrollDelay) => ("0 to 2,000 ms", "Set"),
                 Screen::NumberingValue(
                     NumberField::AutoTurnOverlapHorizontal | NumberField::AutoTurnOverlapVertical,
                 ) => ("Zoom overlap: 0 to 90%", "Set"),
@@ -7951,6 +7971,7 @@ impl Reader {
             if let Some(button) = self.current_opening_book_button() {
                 canvas.button(button, "Current book", false, false);
             }
+            self.draw_scroll_delay(canvas);
             self.draw_content_dpi(canvas);
             self.draw_logical_font(canvas);
             self.draw_line_spacing(canvas);
@@ -8128,6 +8149,9 @@ impl Reader {
                         }
                         Action::ToggleLinkPreference(setting) => {
                             RowAccessory::Toggle(setting.checked(self.controls))
+                        }
+                        Action::SetReadingControls(_) if self.screen == Screen::Scrolling => {
+                            RowAccessory::None
                         }
                         Action::ExportSettings(_, export_settings::Command::ToggleBookFolder) => {
                             RowAccessory::Toggle(self.export_settings.preferences.book_folder)
@@ -8644,6 +8668,7 @@ impl App for Reader {
     }
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
+        self.finish_interrupted_scroll();
         if let Some(change) = self.closing_profile_input(input) {
             return change;
         }
@@ -8748,6 +8773,14 @@ impl App for Reader {
             .unwrap_or_else(|| self.input(input))
     }
 
+    fn live_touch_pan(&self) -> bool {
+        true
+    }
+
+    fn touch_pan(&mut self, pan: primitive_app::TouchPan) -> Change {
+        self.continuous_touch_pan(pan)
+    }
+
     fn preferred_rotation(&self) -> Option<primitive_app::Rotation> {
         use primitive_app::Rotation;
 
@@ -8788,6 +8821,7 @@ impl App for Reader {
     fn stage_viewport(&mut self, candidate: primitive_app::viewport::Viewport) -> io::Result<()> {
         use crate::session::ReadingViewport;
 
+        self.finish_interrupted_scroll();
         self.staged_viewport = Some((candidate, None));
         let target = match candidate.logical_size {
             (WIDTH, HEIGHT) => ReadingViewport::PORTRAIT,
@@ -8868,6 +8902,7 @@ impl App for Reader {
     }
 
     fn input(&mut self, input: Input) -> Change {
+        self.finish_interrupted_scroll();
         if self.gestures.consume_assigned_corner_hold(input) {
             return Change::None;
         }
@@ -9325,6 +9360,7 @@ impl App for Reader {
                             .unwrap()
                             / self.list_geometry().rows;
                     }
+                    Screen::Scrolling => self.show(Screen::Gestures),
                     Screen::Gestures | Screen::LinkSettings => self.show(Screen::ReadingControls),
                     Screen::BackOptions(_) => self.show(Screen::NavigationSettings),
                     Screen::ReadingFonts => self.close_font_chooser(),
@@ -9823,6 +9859,7 @@ impl App for Reader {
     }
 
     fn save(&mut self) -> io::Result<()> {
+        self.finish_interrupted_scroll();
         self.eager_typography.cancel();
         self.screen_page_worker.cancel();
         self.save_library()?;
@@ -9838,6 +9875,7 @@ impl App for Reader {
     }
 
     fn storage_returned(&mut self) -> io::Result<()> {
+        self.finish_interrupted_scroll();
         self.gestures.clear_assigned_corner_hold();
         if let Some(book) = &mut self.active {
             book.embedded_font_inventory = None;
@@ -10378,6 +10416,14 @@ impl App for ReaderRuntime {
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
         self.0.swipe(input, start_x)
+    }
+
+    fn live_touch_pan(&self) -> bool {
+        self.0.live_touch_pan()
+    }
+
+    fn touch_pan(&mut self, pan: primitive_app::TouchPan) -> Change {
+        self.0.touch_pan(pan)
     }
 
     fn preferred_rotation(&self) -> Option<primitive_app::Rotation> {

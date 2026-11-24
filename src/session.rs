@@ -1364,6 +1364,14 @@ impl Reading {
         })
     }
 
+    pub(crate) fn drag_scroll(&mut self, distance: f32) -> Result<Change> {
+        let Some(top) = self.scroll_top.filter(|_| distance.is_finite()) else {
+            return Ok(Change::None);
+        };
+        self.pause_turns();
+        self.scroll(top, distance)
+    }
+
     fn scroll(&mut self, top: f32, distance: f32) -> Result<Change> {
         if self.config.hidden_flows.enabled {
             return self.scroll_in_custom_flow(top, distance);

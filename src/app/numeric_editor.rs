@@ -122,6 +122,7 @@ impl Reader {
                     | NumberField::LineSpacing(_)
                     | NumberField::ProfileValue(_, _)
                     | NumberField::WordSpacing(_)
+                    | NumberField::ScrollDelay
             ) | Screen::FootnoteFontSize(_)
         );
         NumericLayout {

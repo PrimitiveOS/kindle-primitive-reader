@@ -2090,19 +2090,7 @@ impl FixedReading {
                 return Ok(false);
             }
             let (dx, dy) = std::mem::take(&mut self.pending_scroll);
-            let previous = (self.page, self.view);
-            let mut view = self.view;
-            view.offset_x += dx;
-            view.offset_y += dy;
-            self.present(self.page, view)?;
-            self.end_attempt = dy < -0.5
-                && previous.0 == self.page
-                && previous.1.offset_y == self.view.offset_y
-                && self
-                    .visible
-                    .last()
-                    .is_some_and(|page| self.next_reading_page(page.index, 1).is_none());
-            return Ok(previous != (self.page, self.view));
+            return self.apply_scroll(dx, dy);
         }
         let count = self.count();
         let mut page = self.page;
@@ -2394,6 +2382,33 @@ impl FixedReading {
         view.offset_x = next_x_limit - next_x_start;
         view.offset_y = next_y_limit - next_y_start;
         Ok(Some((page, view)))
+    }
+
+    pub(crate) fn drag_scroll(&mut self, dx: f32, dy: f32) -> Result<bool> {
+        if !self.is_continuous() || !dx.is_finite() || !dy.is_finite() {
+            return Ok(false);
+        }
+        self.pause();
+        let changed = self.apply_scroll(dx, dy)?;
+        // A continuous drag can rest against the edge without opening the end dialog.
+        self.end_attempt = false;
+        Ok(changed)
+    }
+
+    fn apply_scroll(&mut self, dx: f32, dy: f32) -> Result<bool> {
+        let previous = (self.page, self.view);
+        let mut view = self.view;
+        view.offset_x += dx;
+        view.offset_y += dy;
+        self.present(self.page, view)?;
+        self.end_attempt = dy < -0.5
+            && previous.0 == self.page
+            && previous.1.offset_y == self.view.offset_y
+            && self
+                .visible
+                .last()
+                .is_some_and(|page| self.next_reading_page(page.index, 1).is_none());
+        Ok(previous != (self.page, self.view))
     }
 
     fn queue_scroll(&mut self, dx: f32, dy: f32) -> Result<bool> {

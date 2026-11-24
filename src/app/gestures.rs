@@ -311,6 +311,25 @@ impl GestureBindings {
     pub(super) fn clear_assigned_corner_hold(&mut self) {
         self.claimed_corner_hold = false;
     }
+
+    pub(super) fn reserves_swipe(
+        &self,
+        input: Input,
+        start_x: f32,
+        viewport: ReadingViewport,
+    ) -> bool {
+        Gesture::swipe(input, start_x, viewport).is_some_and(|gesture| {
+            self.get(gesture) != Binding::Default
+                || matches!(
+                    gesture,
+                    Gesture::LeftUp
+                        | Gesture::LeftDown
+                        | Gesture::RightUp
+                        | Gesture::RightDown
+                        | Gesture::ShortDiagonal
+                )
+        })
+    }
 }
 
 impl Reader {
@@ -329,6 +348,7 @@ impl Reader {
                 Action::Show(Screen::NumberingValue(super::NumberField::CornerHoldPause)),
             )
             .detail(format!("{} seconds", corner_pause_seconds(&self.controls))),
+            self.scroll_settings_item(),
         ]);
         items
     }

@@ -19,6 +19,7 @@ pub(super) enum NumberField {
     ProfileValue(usize, crate::reading_profiles::ValueField),
     WordSpacing(super::word_spacing::Draft),
     CornerHoldPause,
+    ScrollDelay,
     AutoTurn,
     AutoTurnOverlapHorizontal,
     AutoTurnOverlapVertical,
@@ -72,6 +73,7 @@ impl NumberField {
             Self::ProfileValue(index, _) => Screen::ReadingProfileValues(index),
             Self::AutoTurn => Screen::AutoTurn,
             Self::CornerHoldPause => Screen::Gestures,
+            Self::ScrollDelay => Screen::Scrolling,
             Self::AutoTurnOverlapHorizontal | Self::AutoTurnOverlapVertical => Screen::AutoTurnPan,
             Self::FixedTileZoom(_) | Self::CropMargin => Screen::Fixed,
             Self::ReadingGuide(_) => Screen::ReadingGuides,
@@ -278,6 +280,9 @@ impl Reader {
             self.show(field.parent());
             return Ok(());
         }
+        if field == NumberField::ScrollDelay {
+            return self.apply_scroll_delay();
+        }
         if field == NumberField::FooterBatteryHideThreshold {
             let threshold = value
                 .trim()
@@ -397,7 +402,9 @@ impl Reader {
             }
             NumberField::WordSpacing(draft) => return self.apply_word_spacing_input(draft),
             NumberField::ReadingGuide(field) => return self.set_reading_guide(field, &value),
-            NumberField::AutoTurn | NumberField::CornerHoldPause => unreachable!("handled above"),
+            NumberField::AutoTurn | NumberField::CornerHoldPause | NumberField::ScrollDelay => {
+                unreachable!("handled above")
+            }
             NumberField::FixedTileZoom(_) | NumberField::CropMargin => {
                 unreachable!("handled above")
             }
