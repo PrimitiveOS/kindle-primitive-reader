@@ -39,10 +39,9 @@ simulator, continuous-scroll suppression and restoration in page mode, the
 charging icon, and minute-boundary clock scheduling across sleep and wake.
 Kindle visual and battery acceptance remain open.
 
-Current and total page values come from the active reflow layout. In a book
-with several sections they can differ from KOReader's document-wide values
-or publisher labels. Reader uses a font-size cycle. The stock size picker
-also offers Reset.
+Current and total page values use [stable labels](top-header-page-labels.md)
+when enabled and resolved. The fallback is the current reflow section.
+The [font picker](top-header-font-picker.md) includes a 14 px Reset choice.
 Reader's 24-hour clock uses the Kindle time zone. [Clock details](device-local-time.md)
 
 The KOReader **About alt status bar** information dialog is still a checklist

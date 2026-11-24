@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.31
+
+- Let bookmarks show more text with automatic font fitting or a saved maximum of 1–10 lines per bookmark.
+- Let selected Contents levels set the footer chapter title and remaining chapter pages or time in fixed-page and single-section reflow books.
+- Add a bounded font size picker and stable publisher or generated page labels to the alternate top status header.
+
 ## 0.1.30
 
 - Choose which Contents levels to use for chapter jumps and progress marks. Fixed-page and single-section books support the filtered marks in the footer and Skim.
