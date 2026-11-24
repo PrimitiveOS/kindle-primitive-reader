@@ -174,20 +174,21 @@ committed dimensions. Scenes awaiting their viewport updates follow Launcher
 and retain the edition preference for later reading.
 [Selection and lookups in landscape](landscape-selection.md)
 
-The combined workflow passed 1,277 Mac tests with 66 opt-in cases skipped.
+The combined workflow passed 1,283 Mac tests with 66 opt-in cases skipped.
 It covered cross-book Bookmark Browser, full-document search and live
 results rotation, Book Map, Page Overview, Footnote, View HTML, the personal
 hyphenation editor, encrypted PDF entry, PDF crop, custom Contents, page
 links, location history, printed pages, numeric controls, illustration
-inspection, scan text, the end-of-book panel, and dictionary and online
-lookup settings and history. A delayed
-callback from a superseded viewport leaves the current proposal and the
-edition’s orientation preference intact.
+inspection, scan text, the end-of-book panel, dictionary and online lookup settings and
+history, reading profiles, in-book font selection, and publisher styles and
+book CSS. A delayed callback from a superseded viewport leaves the current
+proposal and the edition’s orientation preference intact.
 [Search screenshots](landscape-document-search.md) ·
 [Reading tools](landscape-reading-tools.md) ·
 [Visual navigation](reading-orientation-contract.md#book-map-and-page-overview) ·
 [Custom Contents](landscape-custom-contents.md) ·
-[PDF unlock](reading-orientation-contract.md#unlocking-a-pdf)
+[PDF unlock](reading-orientation-contract.md#unlocking-a-pdf) ·
+[Reading profiles](reading-profiles.md) · [Book styles](style-tweaks.md)
 
 [Negotiated portrait options](screenshots/negotiated-orientation-portrait.png) ·
 [Negotiated landscape options](screenshots/negotiated-orientation-landscape.png) ·
@@ -226,4 +227,4 @@ chooser at 1680 × 1264, select a different face near the right edge, rotate
 back to 1264 × 1680 and reopen the edition. The test verifies the same EPUB
 source position, the saved face, and selectable rows across different page
 counts. Set `READER_TYPEFACE_LANDSCAPE_CAPTURE` to write the landscape frame.
-[Authored EPUB test](../src/app/typeface/tests.rs)
+[Landscape font chooser](screenshots/landscape-reading-font.png) · [Authored EPUB test](../src/app/typeface/tests.rs)
