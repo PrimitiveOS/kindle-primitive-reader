@@ -2600,7 +2600,7 @@ impl FixedReading {
             view.tile_zoom = Some(tile_zoom(
                 size,
                 &view,
-                self.frame.height,
+                self.frame_size(),
                 tile.axis,
                 tile.count_tenths,
             ));
