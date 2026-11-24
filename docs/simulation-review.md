@@ -2,6 +2,54 @@
 
 ## Current Mac simulator checkpoint
 
+**Typography rules** now supports the 53 main language choices, the
+publication language, independent embedded-language tags, and a default or
+fallback for new books. The simulator checks English US and UK break
+positions, a Vietnamese span, the exact reading anchor, landscape list
+navigation, and reopening. The stock replay exercises the actual preset
+and embedded-tag handlers and confirms CREngine selects the expected
+language. Broader language-specific dictionaries and layout remain open.
+[Typography workflow and captures](english-hyphenation.md#typography-language)
+
+**Grouped dictionary results** allows source selection and a deeper
+lookup from EPUB and PDF. Back returns to the same page of results and
+keeps the original passage selected. The pinned KOReader tap and hold
+callbacks were replayed against the grouped result contract.
+[Dictionary workflow and captures](shared-dictionaries.md#choosing-among-matching-sources)
+
+**In-page EPUB footnotes** have an internal opt-in for supported
+same-chapter trailing notes. The reading band follows a boxed marker
+across a page break, preserves a short note's complete paint, and carries
+a long note onto the next page. Reopening a continuation and selecting
+links still use the original source. The visible preference and broader
+note layouts remain open.
+[Footnote replay and captures](in-page-footnotes.md)
+
+**Text-only inline blocks** follow the measured Legacy, Flat, Book and
+Web behavior in the supported horizontal layouts. The native and Mac
+checks cover fixed and intrinsic widths, linked text, and an entire box
+moving to the next page. The selector and unsupported box contents remain
+open. [Render-mode comparison and captures](render-modes.md#text-only-inline-blocks)
+
+The focused replay passed 14 Mac tests. Nine Reader simulator frames and
+four pinned KOReader frames reproduced byte for byte. Original EPUB, PDF,
+AZW3 and MOBI files opened through Reader's picker, turned a page and
+resumed without source changes. The reading statistics and publisher-margin
+checks also passed on original files.
+
+The full Mac suite passed 1,499 library tests, one Kindle entry test,
+14 EPUB package tests and four layout tests. The standard run skipped
+67 opt-in tests.
+
+The local ARMHF stage verified a stripped, statically linked 37,971,644-byte
+executable with SHA-256
+`ee0ebc194185a779e9de1bcd5c8de53024ba84e9a6563c0abb27cf6dc55acfb2`.
+It assembled 30 files totaling 47,571,144 bytes uncompressed and verified
+both project licenses, SQLite notices, the Launcher icon and OCR model.
+Physical Kindle verification and Store publication remain open for this build.
+
+## Font reports, FictionBook links, saved marks, and consecutive floats checkpoint
+
 The Embedded Fonts details panel shows declared families and actual use.
 The Mac report identifies a family used only in a later chapter, preserves
 the settings panel and reading position through rotation, and labels
