@@ -2,6 +2,54 @@
 
 ## Current Mac simulator checkpoint
 
+The Embedded Fonts details panel shows declared families and actual use.
+The Mac report identifies a family used only in a later chapter, preserves
+the settings panel and reading position through rotation, and labels
+unchecked families in layouts outside the whole-book scan. The pinned
+help callback reports the same used and unused families for the authored
+EPUB. [Font family reports and captures](embedded-font-families.md#font-family-details)
+
+Classic FictionBook note and comment links can preview their full sections.
+The native replay and the Mac workflow distinguish trusted sections from
+ordinary links and verify source position on dismissal. The Mac run also
+checks an actual backlink and reopen.
+[FictionBook comparison and captures](fb2-footnotes.md)
+
+Alternative Contents now supplies the chapter title saved with new EPUB
+and PDF bookmarks and annotations. The native replay verifies source
+position and same-page heading ties. The Mac run checks the saved label
+through editing, reopen and backup. The reading footer keeps its established
+caption, section ticks, progress bar and Exit placement.
+[Saved mark chapters and captures](bookmark-browser.md#chapter-titles-on-saved-marks)
+
+The internal horizontal renderer packs consecutive publisher floats at
+the available edges, chooses the first gap for dropped floats, and
+applies left and right clearance independently. The pinned Legacy,
+Flat, Book and Web comparisons exercise 108 source and geometry marks.
+The four-mode selector remains open.
+[Consecutive float comparison and captures](render-modes.md#consecutive-floats-and-available-width)
+
+The full Mac suite passed 1,486 library tests, one Kindle entry test,
+14 EPUB package tests and four layout tests. The standard run skipped
+67 opt-in tests.
+
+The screenshot replay passed 18 workflows. Thirteen new and updated
+Reader frames and five pinned stock frames matched the reviewed PNGs byte
+for byte. Original EPUB, PDF, AZW3 and MOBI files opened through the picker,
+turned a page and resumed at matching positions without changes to their
+source bytes. Two additional original EPUBs matched all 31,258 sampled
+glyph clusters to the assigned publisher font resource. The original-file
+reading statistics and EPUB margin checks also passed.
+
+The local ARMHF stage verified a stripped, statically linked 38,023,004-byte
+executable with SHA-256
+`75b96b01a1ee81aa66f2f8e2e6d68e0a18c210a155ec95cc0e28da682aa40880`.
+It assembled 30 files totaling 47,622,504 bytes uncompressed and verified
+both project licenses, SQLite notices, the Launcher icon and OCR model.
+Physical Kindle checks and Store publication remain open.
+
+## Continuous scrolling, embedded fonts, chapter spans, and CSS tables checkpoint
+
 Embedded fonts are a separate saved book choice. The pinned KOReader
 replay and Mac tests verify that the toggle changes the bundled face while
 leaving the installed family, other publisher styling, and source

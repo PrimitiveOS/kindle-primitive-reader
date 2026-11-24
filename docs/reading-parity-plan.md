@@ -60,6 +60,10 @@ The Mac comparisons also verify the [embedded-font switch](embedded-font-familie
 [chapter titles from alternative Contents](contents-list-settings.md#chapter-titles-and-page-ranges-in-alternative-mode),
 [repair of simple CSS tables](render-modes.md#repairing-missing-css-table-rows-and-roots),
 and [continuous scrolling modes](reading-scrolling.md).
+The next Mac comparison covers [font family details](embedded-font-families.md#font-family-details),
+[FictionBook note previews](fb2-footnotes.md),
+[saved mark chapter labels](bookmark-browser.md#chapter-titles-on-saved-marks),
+and [consecutive publisher floats](render-modes.md#consecutive-floats-and-available-width).
 Reader 0.1.32 adds [search from selection](selection-search.md),
 [results density and context](search-result-presentation.md),
 [temporary PDF fit](fixed-search-fit.md),
