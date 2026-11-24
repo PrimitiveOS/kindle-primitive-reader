@@ -584,3 +584,130 @@ fn original_document_note_links_open_by_default_and_preserve_source_frame_and_pr
         references.len()
     );
 }
+
+#[test]
+fn footnote_justification_is_independent_and_keeps_rtl_and_source_selection() {
+    use crate::TextAlignment;
+    use crate::app::selection_viewport_tests::{adopt, capture, tap};
+    use std::io::{Read, Write};
+
+    let fixture = Fixture::new();
+    let base = std::fs::File::open(crate::test_fixture("footnote-export-roots.epub")).unwrap();
+    let mut base = zip::ZipArchive::new(base).unwrap();
+    let mut book = zip::ZipWriter::new(std::fs::File::create(&fixture.book).unwrap());
+    let ltr = "The sheltered harbor contains a tide gauge, four narrow channels, and a marker beside the eastern approach. ".repeat(4);
+    let rtl = "تبدأ الرحلة من الميناء ثم تمر بالقناة الضيقة قبل الوصول إلى الرصيف. ".repeat(4);
+    for index in 0..base.len() {
+        let mut entry = base.by_index(index).unwrap();
+        let mut source = Vec::new();
+        entry.read_to_end(&mut source).unwrap();
+        if entry.name() == "OPS/chapter.xhtml" {
+            source = format!(r##"<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+                <head><title>Harbor notes</title></head><body><p>Read the harbor entry <a epub:type="noteref" href="#left">[1]</a>
+                and the parallel entry <a epub:type="noteref" href="#right">[2]</a>.</p>
+                <aside epub:type="footnote"><p id="left">{ltr}</p><p dir="rtl" lang="ar" id="right">{rtl}</p></aside>
+                </body></html>"##).into_bytes();
+        }
+        book.start_file(entry.name(), zip::write::SimpleFileOptions::default())
+            .unwrap();
+        book.write_all(&source).unwrap();
+    }
+    book.finish().unwrap();
+
+    let fonts = [
+        "fonts/NotoSans-Regular.ttf",
+        "fonts/NotoSansArabic-Regular.ttf",
+    ]
+    .into_iter()
+    .map(crate::test_fixture)
+    .collect::<Vec<_>>();
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+    assert_eq!(app.controls.footnote_justify, None);
+    app.open_path(&fixture.book).unwrap();
+    let document = Settings {
+        alignment: TextAlignment::Center,
+        ..app.active.as_ref().unwrap().reading.config.settings
+    };
+    app.activate(Action::Text(document)).unwrap();
+    app.show(Screen::Book);
+    let origin = app.current_history_location();
+    let history = app.back.clone();
+    let open = |app: &mut Reader, n| {
+        let (x, y) = source_point(app, n);
+        assert_eq!(app.input(Input::Tap(x, y)), Change::Partial);
+        assert_eq!(app.screen, Screen::Footnote);
+    };
+    let close = |app: &mut Reader| {
+        let button = app.footnote.as_ref().unwrap().close_button();
+        tap(app, button);
+    };
+    let word = |app: &mut Reader| {
+        let note = app.footnote.as_mut().unwrap();
+        let start = note
+            .preview
+            .matches("sheltered")
+            .into_iter()
+            .next()
+            .unwrap();
+        let mut end = start.clone();
+        end.offset += "sheltered".len();
+        let quote = note.preview.select_range(&start, &end).unwrap();
+        let rect = note.preview.selection_rects(note.page, &quote)[0];
+        (quote, rect)
+    };
+
+    open(&mut app, "[1]");
+    let ltr_on = app.footnote.as_ref().unwrap().frame.pixels.clone();
+    let (quote, rect_on) = word(&mut app);
+    screenshot(&app, "justify-on", &fonts, &[false]);
+    let note = app.footnote.as_mut().unwrap();
+    let body = note.content();
+    assert_eq!(
+        note.select_at(
+            (body.x + rect_on.x + rect_on.width / 2) as f32,
+            (body.y + rect_on.y + rect_on.height / 2) as f32,
+            false
+        )
+        .as_deref(),
+        Some("sheltered")
+    );
+    let selection = note.selection.clone();
+    let mut wide = adopt(&mut app, ReadingViewport::LANDSCAPE, 2);
+    assert_eq!(app.footnote.as_ref().unwrap().selection, selection);
+    capture(&app, &mut wide, "footnote-justify-landscape.png", false);
+    adopt(&mut app, ReadingViewport::PORTRAIT, 3);
+    close(&mut app);
+    open(&mut app, "[2]");
+    let rtl_on = app.footnote.as_ref().unwrap().frame.pixels.clone();
+    close(&mut app);
+
+    app.show(Screen::LinkSettings);
+    tap_contents_item(&mut app, "Justify text in popups");
+    assert_eq!(app.controls.footnote_justify, Some(false));
+    app.show(Screen::Book);
+    open(&mut app, "[1]");
+    let (same_quote, rect_off) = word(&mut app);
+    assert_eq!(same_quote, quote);
+    assert_ne!(rect_on.x, rect_off.x);
+    assert_ne!(app.footnote.as_ref().unwrap().frame.pixels, ltr_on);
+    screenshot(&app, "justify-off", &fonts, &[false]);
+    close(&mut app);
+    open(&mut app, "[2]");
+    assert_eq!(app.footnote.as_ref().unwrap().frame.pixels, rtl_on);
+    close(&mut app);
+    assert_eq!(app.current_history_location(), origin);
+    assert_eq!(app.back, history);
+    assert_eq!(
+        app.active
+            .as_ref()
+            .unwrap()
+            .reading
+            .config
+            .settings
+            .alignment,
+        TextAlignment::Center
+    );
+    app.save().unwrap();
+    let reopened = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+    assert_eq!(reopened.controls.footnote_justify, Some(false));
+}

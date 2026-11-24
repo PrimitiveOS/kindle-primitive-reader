@@ -18,6 +18,7 @@ pub(super) enum LinkPreference {
     SwipeIgnoreExternal,
     SwipeLatestBookmark,
     FootnoteBookFont,
+    FootnoteJustify,
 }
 
 impl LinkPreference {
@@ -31,6 +32,7 @@ impl LinkPreference {
             Self::SwipeIgnoreExternal => controls.swipe_ignore_external_links.unwrap_or(true),
             Self::SwipeLatestBookmark => controls.swipe_to_latest_bookmark,
             Self::FootnoteBookFont => controls.footnote_book_font,
+            Self::FootnoteJustify => controls.footnote_justify.unwrap_or(true),
         }
     }
 
@@ -44,6 +46,7 @@ impl LinkPreference {
             Self::SwipeIgnoreExternal => "Ignore external links on swipe",
             Self::SwipeLatestBookmark => "Swipe to jump to latest bookmark",
             Self::FootnoteBookFont => "Use book font in popups",
+            Self::FootnoteJustify => "Justify text in popups",
         }
     }
 
@@ -55,10 +58,10 @@ impl LinkPreference {
             Self::SwipeIgnoreExternal if !Self::SwipeFollow.checked(controls) => {
                 Some("Available when swipe to follow nearest link is on")
             }
-            Self::FootnoteBookFont if !controls.footnote_popups => {
+            Self::FootnoteBookFont | Self::FootnoteJustify if !controls.footnote_popups => {
                 Some("Available when footnote previews are on")
             }
-            Self::FootnoteBookFont
+            Self::FootnoteBookFont | Self::FootnoteJustify
                 if !Self::Follow.checked(controls) && !Self::SwipeFollow.checked(controls) =>
             {
                 Some("Available when tap or swipe to follow links is on")
@@ -140,6 +143,11 @@ impl Reader {
                 .detail(size.description())
             };
             items.push(item);
+            let justify = LinkPreference::FootnoteJustify;
+            items.push(match justify.unavailable_reason(self.controls) {
+                Some(reason) => Item::new(justify.label(), Action::Heading).detail(reason),
+                None => Item::new(justify.label(), Action::ToggleLinkPreference(justify)),
+            });
         }
         items
     }
@@ -161,6 +169,7 @@ impl Reader {
             }
             LinkPreference::SwipeLatestBookmark => controls.swipe_to_latest_bookmark = !checked,
             LinkPreference::FootnoteBookFont => controls.footnote_book_font = !checked,
+            LinkPreference::FootnoteJustify => controls.footnote_justify = checked.then_some(false),
         }
         self.activate(Action::SetReadingControls(controls))
     }

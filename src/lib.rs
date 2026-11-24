@@ -165,6 +165,10 @@ pub enum TextAlignment {
     Start,
     Center,
     Justify,
+    /// The preview has its own defaults, with start alignment for RTL text.
+    #[doc(hidden)]
+    #[serde(skip)]
+    FootnoteJustify,
 }
 
 /// Grid fitting applied to the native grayscale glyph renderer.

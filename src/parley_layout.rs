@@ -2377,6 +2377,11 @@ fn make_paragraph(
         crate::TextAlignment::Start => Alignment::Start,
         crate::TextAlignment::Center => Alignment::Center,
         crate::TextAlignment::Justify => Alignment::Justify,
+        crate::TextAlignment::FootnoteJustify => style.alignment.unwrap_or(if layout.is_rtl() {
+            Alignment::Start
+        } else {
+            Alignment::Justify
+        }),
     };
     layout.align_with_word_expansion(
         alignment,

@@ -340,6 +340,14 @@ impl Reader {
             margin_bottom: Some(8),
             font_size: font.clamp(MIN_FONT_PIXELS, MAX_FONT_PIXELS),
             logical_font_size: None,
+            // The popup uses its own text defaults. Keep inline publisher
+            // styles, without inheriting the book's base stylesheet or alignment.
+            base_stylesheet: crate::BaseStylesheet::None,
+            alignment: if self.controls.footnote_justify.unwrap_or(true) {
+                crate::TextAlignment::FootnoteJustify
+            } else {
+                crate::TextAlignment::Publisher
+            },
             ..reading.config.settings
         };
         let render = |book, settings| {

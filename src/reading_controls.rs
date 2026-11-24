@@ -92,6 +92,9 @@ pub(crate) struct ReadingControls {
     pub prefer_footnotes: bool,
     #[serde(skip_serializing_if = "is_false")]
     pub footnote_book_font: bool,
+    /// None follows the stock default of justified footnote text.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub footnote_justify: Option<bool>,
     #[serde(skip_serializing_if = "crate::footnotes::font_size::FontSize::is_default")]
     pub footnote_font_size: crate::footnotes::font_size::FontSize,
     /// Show the all-results list when Find is used on selected text.

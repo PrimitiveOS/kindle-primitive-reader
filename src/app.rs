@@ -10207,7 +10207,9 @@ fn text_items(settings: Settings, scroll: bool, owner: u64) -> Vec<Item> {
     let margin = format!("Current margin {} px", settings.margin);
     let spacing = settings.effective_line_spacing_percent();
     let (alignment, next_alignment) = match settings.alignment {
-        TextAlignment::Publisher => ("Publisher", TextAlignment::Start),
+        TextAlignment::Publisher | TextAlignment::FootnoteJustify => {
+            ("Publisher", TextAlignment::Start)
+        }
         TextAlignment::Start => ("Start", TextAlignment::Center),
         TextAlignment::Center => ("Centered", TextAlignment::Justify),
         TextAlignment::Justify => ("Justified", TextAlignment::Publisher),
