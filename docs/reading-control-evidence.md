@@ -185,3 +185,21 @@ The desktop run inspected 1,509 sections and painted 27,911 pages across 48 dist
 ## Cross-book saved marks
 
 Reader adds a grouped browser for page bookmarks, highlights and notes across History, collections, selected books, archived records and chosen folders. Its simulator checks cover the normal source chooser, author selection, case-sensitive and Unicode searches, per-book date order, full-text previews, password retry and cancel, and saved source locations. Two original EPUBs and two original PDFs passed bookmark navigation and return checks in isolated Mac profiles. Twenty checks against the installed KOReader data and preview methods confirmed reference filtering, sorting, navigation and history-before-jump behavior. The Mac suite passed 558 library, 14 integration and four system tests. The full comparison retains open color and metadata filtering requirements. [Bookmark browser behavior and remaining gaps](bookmark-browser.md)
+
+## Oasis foreground preflight
+
+Run `scripts/verify-oasis-foreground.sh preflight` through the Kindle shell
+before a foreground test. The probe checks active power, the supported grayscale
+framebuffer, input device names, mounted user storage and Launcher availability.
+On the Oasis 3 it reported the 1,264 × 1,680 display, stride 1,280, upright
+rotation and the two input devices. It returned `foreground=busy` while an app
+was open. An attempted capture from the ordinary Reader home produced no output.
+
+The `capture` operation is for a Launcher-started Reader session with an
+isolated `PRIMITIVE_READER_HOME` under `/mnt/us/reader/tests/*/foreground`.
+Use an authored document. A successful call streams 1,680 rows of 1,280 bytes
+from the visible framebuffer. Keep the first 1,264 bytes of each row for a
+visible grayscale image. The helper checks the process and framebuffer again
+before returning those bytes. The successful foreground capture, touch and
+physical panel timing gates require a separate on-device run.
+[Oasis probe and capture](../scripts/verify-oasis-foreground.sh)
