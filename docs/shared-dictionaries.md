@@ -28,6 +28,25 @@ edition settings, lookup filter, and reset against the pinned Lua module.
 | `koreader/data/dict/` | Reuse dictionaries installed with KOReader. The metadata, index, compressed definitions and optional synonyms remain in place. |
 | `koreader/data/dict_ext/` | Include dictionaries from KOReader's additional directory. Preferences distinguish all three locations even if filenames match. |
 
+## Named dictionary presets
+
+Open **Dictionaries › Dictionary presets** and choose **Create preset from
+enabled dictionaries**. Name the set, then select it to apply, update,
+rename, or delete it. Applying a preset replaces the library's default
+enabled set with its available members. That makes it possible to switch
+between small groups of dictionaries for different languages or subjects.
+Lookup still uses each edition's preferred sources and exclusions.
+A preset can report how many saved sources are unavailable.
+
+KOReader's named presets also snapshot membership and disable sources added
+after the snapshot. Its missing-source notice lists the source names, and it
+has a separate one-query **Search with preset** workflow. Those comparisons
+remain open in Reader. The Mac workflow covers management, lookup precedence,
+backup compatibility, and failed-write recovery.
+[Landscape simulator](screenshots/landscape-dictionary-preset.png) ·
+[Pinned snapshot and apply](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerdictionary.lua#L1970-L2013) ·
+[Pinned one-query selection](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerdictionary.lua#L1200-L1230)
+
 ## What determines a match
 
 An exact headword and an alias may both resolve in one dictionary. Another dictionary may have a direct entry for the same selected word. Reader consults the optional synonym table before streaming the main index, so each dictionary needs one main-index pass. The result set retains distinct senses with identical spellings. Some bilingual indexes return legitimate alias headwords with a zero-byte definition. These appear as **Headword only**. Entries with definition text appear first within the same dictionary. Unicode case folding supplies a fallback. Each lookup has shared scan and decompression limits.

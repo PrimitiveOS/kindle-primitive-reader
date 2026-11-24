@@ -13,7 +13,7 @@ deleted from Dictionaries. Presets record which sources to enable.
 [Duration controls and frames](reading-statistics.md#page-duration-limits) ·
 [Saved scan profile controls](reading-profiles.md#editing-saved-values) ·
 [Opening-break comparison](render-modes.md) ·
-[Offline dictionaries](shared-dictionaries.md)
+[Offline dictionary presets](shared-dictionaries.md#named-dictionary-presets)
 
 The normal picker opened cached original EPUB, PDF, AZW3, and MOBI files.
 Each turned a page and reopened with identical resumed pixels and an
