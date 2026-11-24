@@ -122,7 +122,7 @@ impl Reader {
         self.update_contents_focus();
     }
 
-    fn contents_entries(&self, book: u64) -> Vec<ContentsEntry> {
+    pub(super) fn contents_entries(&self, book: u64) -> Vec<ContentsEntry> {
         if let Some(state) = self
             .library
             .state(book)

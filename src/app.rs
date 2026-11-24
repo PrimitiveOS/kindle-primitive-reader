@@ -5,6 +5,7 @@ pub(crate) const NOTE_MARK_ICON: primitive_ui::Icon = bar_icons::HIGHLIGHT;
 #[cfg(test)]
 mod base_stylesheet_tests;
 mod bookmark_browser;
+mod chapter_navigation;
 mod character_page_settings;
 mod content_dpi;
 mod contents_density;
@@ -461,6 +462,7 @@ enum Action {
     ExportAnnotatedPdf,
     Show(Screen),
     Jump(Destination),
+    Chapter(chapter_navigation::Direction),
     SetCharacterPages(Option<u16>),
     CharacterPage(usize),
     AcceptPublisherNumbers,
@@ -3345,6 +3347,7 @@ impl Reader {
             }
             Action::Show(screen) => self.show(screen),
             Action::Jump(target) => self.follow(target)?,
+            Action::Chapter(direction) => self.jump_chapter(direction)?,
             Action::Custom(action) => self.custom_action(action)?,
             Action::SetCharacterPages(stride) => self.set_character_pages(stride)?,
             Action::AcceptPublisherNumbers => self.accept_publisher_numbers()?,
