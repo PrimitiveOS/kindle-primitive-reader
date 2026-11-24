@@ -23,7 +23,7 @@ use crate::library::hidden_flows::{HiddenFlows, PageFlows, ResolvedPoint};
 use crate::library::{
     ContinuousCrop, DocumentFormat, FixedPreferences as View, FixedTileAxis, FixedTileZoom,
     HighlightPage, MAX_CONTINUOUS_GAP, MAX_HIGHLIGHT_TEXT_BYTES, MAX_SCAN_WHITE_LEVEL,
-    MIN_SCAN_WHITE_LEVEL, PdfHighlight,
+    MIN_SCAN_WHITE_LEVEL, PdfHighlight, SCAN_GAMMA_DEFAULT, valid_scan_gamma,
 };
 use crate::pdf_crop::{self, Seed, Seeds};
 use crate::session::{
@@ -923,6 +923,19 @@ impl FixedReading {
             return Err("Contrast adjustment is available for PDF, DjVu, and comics".into());
         }
         self.view.scan_contrast = higher;
+        self.view.scan_gamma_tenths = None;
+        Ok(())
+    }
+
+    pub(crate) fn set_scan_gamma(&mut self, tenths: u16) -> Result<()> {
+        if !valid_scan_gamma(&tenths) {
+            return Err("Contrast must be between 0.8 and 50.0".into());
+        }
+        if tenths != SCAN_GAMMA_DEFAULT && !self.supports_scan_contrast() {
+            return Err("Contrast adjustment is available for PDF, DjVu, and comics".into());
+        }
+        self.view.scan_contrast = false;
+        self.view.scan_gamma_tenths = (tenths != SCAN_GAMMA_DEFAULT).then_some(tenths);
         Ok(())
     }
 
@@ -1224,6 +1237,7 @@ impl FixedReading {
             View {
                 turns: original.turns,
                 scan_contrast: original.scan_contrast,
+                scan_gamma_tenths: original.scan_gamma_tenths,
                 dither: original.dither,
                 continuous_gap: original.continuous_gap,
                 scan_white_level: original.scan_white_level,
@@ -2328,10 +2342,13 @@ impl FixedReading {
 
     fn display_frame(&self, rows: Range<u32>) -> GrayImage {
         let mut frame = self.frame.clone();
-        let contrast = self
-            .scan_contrast()
-            .then(|| scan_contrast_table(&self.frame.pixels))
-            .flatten();
+        let contrast = if let Some(gamma) = self.view.scan_gamma_tenths {
+            Some(scan_gamma_table(gamma))
+        } else if self.view.scan_contrast {
+            scan_contrast_table(&self.frame.pixels)
+        } else {
+            None
+        };
         let white_level = self.view.scan_white_level;
         if contrast.is_none() && white_level.is_none() && !self.view.dither {
             return frame;
@@ -2653,6 +2670,7 @@ impl FixedDocument {
         }
         if !self.supports_scan_contrast() {
             view.scan_contrast = false;
+            view.scan_gamma_tenths = None;
             view.scan_white_level = None;
         }
         if view.continuous
@@ -2757,6 +2775,11 @@ fn ordered_gray(gray: u8, x: usize, y: usize) -> u8 {
     let residual = u16::from(gray % 17) * 32;
     let threshold = (BAYER4[y % 4][x % 4] * 2 + 1) * 17;
     (level + u8::from(residual > threshold)) * 17
+}
+
+fn scan_gamma_table(tenths: u16) -> [u8; 256] {
+    let gamma = f32::from(tenths) / 10.0;
+    std::array::from_fn(|gray| ((gray as f32 / 255.0).powf(gamma) * 255.0) as u8)
 }
 
 fn scan_contrast_table(pixels: &[u8]) -> Option<[u8; 256]> {
@@ -4409,6 +4432,113 @@ pub(crate) mod tests {
             reader.display_frame(0..PAGE_HEIGHT).pixels,
             reader.frame.pixels
         );
+    }
+
+    #[test]
+    fn scan_gamma_matches_pinned_mupdf_ramp() {
+        let source = [
+            0, 17, 33, 51, 68, 85, 102, 119, 135, 153, 170, 187, 204, 221, 238, 255,
+        ];
+        let stock = [
+            (
+                8,
+                [
+                    0, 29, 49, 70, 88, 105, 122, 138, 153, 169, 184, 198, 213, 227, 241, 255,
+                ],
+            ),
+            (10, source),
+            (
+                15,
+                [
+                    0, 4, 11, 22, 35, 49, 64, 81, 98, 118, 138, 160, 182, 205, 229, 255,
+                ],
+            ),
+            (
+                20,
+                [
+                    0, 1, 4, 10, 18, 28, 40, 55, 71, 91, 113, 137, 163, 191, 222, 255,
+                ],
+            ),
+            (
+                23,
+                [
+                    0, 0, 2, 6, 12, 20, 30, 44, 59, 78, 100, 124, 152, 183, 217, 255,
+                ],
+            ),
+            (
+                40,
+                [0, 0, 0, 0, 1, 3, 6, 12, 20, 33, 50, 73, 104, 143, 193, 255],
+            ),
+            (
+                60,
+                [0, 0, 0, 0, 0, 0, 1, 2, 5, 11, 22, 39, 66, 108, 168, 255],
+            ),
+            (100, [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 4, 11, 27, 60, 127, 255]),
+            (500, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 255]),
+        ];
+        for (gamma, expected) in stock {
+            let found = scan_gamma_table(gamma);
+            assert_eq!(
+                source.map(|tone| found[usize::from(tone)]),
+                expected,
+                "gamma {gamma}"
+            );
+        }
+    }
+
+    #[test]
+    fn scan_gamma_repaints_pdf_and_djvu_without_changing_selection_geometry() {
+        let mut pdf = reading(
+            Pdf::open(crate::fixed::tests::document()).unwrap(),
+            View::default(),
+        );
+        let djvu = Djvu::open(crate::djvu::tests::grayscale_document()).unwrap();
+        let mut djvu =
+            FixedReading::with_source(FixedDocument::Djvu(Box::new(djvu)), 0, View::default())
+                .unwrap();
+        for reader in [&mut pdf, &mut djvu] {
+            let original = reader.frame.pixels.clone();
+            let viewport = reader.page_viewport();
+            let text = reader.page_text(0).unwrap();
+            let point = text
+                .words
+                .iter()
+                .find_map(|word| {
+                    reader
+                        .visible_rectangle(0, word.bounds)
+                        .map(|rect| rect.center())
+                })
+                .expect("authored page contains visible words");
+            let choose = |reading: &FixedReading| {
+                let WordAtTouch::Ready(Some(word)) =
+                    reading.select_word(point.x as f32, point.y as f32).unwrap()
+                else {
+                    panic!("Expected a word at its original source coordinates");
+                };
+                (word.text().to_owned(), reading.selection_bounds(&word))
+            };
+            let original_selection = choose(reader);
+            reader.set_scan_gamma(23).unwrap();
+            assert!(!reader.scan_contrast());
+            assert_eq!(reader.preferences().scan_gamma_tenths, Some(23));
+            assert_ne!(reader.display_frame(0..PAGE_HEIGHT).pixels, original);
+            assert_eq!(reader.frame.pixels, original);
+            assert_eq!(reader.page_viewport(), viewport);
+            assert_eq!(choose(reader), original_selection);
+            reader.set_scan_white_level(Some(220)).unwrap();
+            reader.set_dither(true);
+            assert_eq!(choose(reader), original_selection);
+            assert!(reader.set_scan_gamma(7).is_err());
+            assert!(reader.set_scan_gamma(501).is_err());
+            assert_eq!(reader.preferences().scan_gamma_tenths, Some(23));
+            reader.set_scan_contrast(true).unwrap();
+            assert!(reader.scan_contrast());
+            assert_eq!(reader.preferences().scan_gamma_tenths, None);
+            reader.set_scan_white_level(None).unwrap();
+            reader.set_dither(false);
+            reader.set_scan_gamma(10).unwrap();
+            assert_eq!(reader.display_frame(0..PAGE_HEIGHT).pixels, original);
+        }
     }
 
     #[test]

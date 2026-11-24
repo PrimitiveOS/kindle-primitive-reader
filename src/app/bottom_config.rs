@@ -1,9 +1,13 @@
 //! Reading adjustments that can be applied without leaving the visible page.
 use super::{Action, BarPanel, Reader, Screen};
 use crate::app::NumberField;
-use crate::library::FixedTileAxis;
+use crate::library::{FixedTileAxis, SCAN_GAMMA_DEFAULT, SCAN_GAMMA_MAX, SCAN_GAMMA_MIN};
 use crate::reading_controls::{ReadingOrientation, ScreenPalette};
 use crate::{BaseStylesheet, FontHinting, Settings, TextAlignment};
+
+fn format_scan_gamma(tenths: u16) -> String {
+    format!("{}.{}", tenths / 10, tenths % 10)
+}
 
 pub(super) struct Choice {
     pub(super) title: String,
@@ -968,20 +972,37 @@ impl Reader {
                         }),
                     ));
                     if reading.supports_scan_contrast() {
+                        let gamma = prefs.scan_gamma_tenths.unwrap_or(SCAN_GAMMA_DEFAULT);
                         rows.push(ConfigRow::new(
                             "Contrast",
-                            [false, true].map(|higher| {
+                            [8, 10, 15, 20, 40, 60, 100, 500].map(|tenths| {
                                 Choice::option(
-                                    if higher {
-                                        "Higher contrast"
-                                    } else {
-                                        "Normal contrast"
-                                    },
-                                    Action::ScanContrast(higher),
-                                    reading.scan_contrast() == higher,
+                                    format_scan_gamma(tenths),
+                                    Action::ScanGamma(tenths),
+                                    !prefs.scan_contrast && gamma == tenths,
                                 )
                             }),
                         ));
+                        let steps = [("-1.0", -10), ("-0.1", -1), ("+0.1", 1), ("+1.0", 10)]
+                            .into_iter()
+                            .filter_map(|(label, delta)| {
+                                let value = gamma
+                                    .saturating_add_signed(delta)
+                                    .clamp(SCAN_GAMMA_MIN, SCAN_GAMMA_MAX);
+                                (value != gamma)
+                                    .then(|| Choice::live(label, Action::ScanGamma(value)))
+                            });
+                        let adaptive = Choice::option(
+                            "Adaptive",
+                            Action::ScanContrast(true),
+                            prefs.scan_contrast,
+                        );
+                        let label = if prefs.scan_contrast {
+                            "Fine contrast".into()
+                        } else {
+                            format!("Fine · {}", format_scan_gamma(gamma))
+                        };
+                        rows.push(ConfigRow::new(label, steps.chain([adaptive])));
                         rows.push(ConfigRow::new(
                             "Scan white level",
                             [

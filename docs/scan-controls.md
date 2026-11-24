@@ -2,6 +2,24 @@
 
 Open a PDF or DjVu, open the bottom reading controls, and choose **Scan**. Reader saves the scan controls for that book. Source pages, OCR word rectangles, bookmarks and exported annotation coordinates retain their original coordinate system.
 
+## Contrast
+
+The **Contrast** presets are 0.8, 1.0, 1.5, 2.0, 4.0, 6.0, 10.0 and 50.0.
+Choose 1.0 for the original tones, 0.8 to lighten midtones, or a higher setting to darken faint ink.
+The **Fine** row adjusts contrast in steps of 0.1 or 1.0.
+The **Adaptive** button uses Reader’s existing Higher contrast adjustment for paper and ink.
+Books that already had Higher contrast enabled keep that adjustment.
+
+Reader adjusts the visible grayscale image before scan white level and dithering.
+Word selection, links and saved annotations still use the original page coordinates.
+The same controls affect PDF, DjVu and comics in Reader.
+
+Reader’s contrast lookup matches the pinned KOReader PDF renderer at all 16 sampled input tones for each preset and custom 2.3.
+On the authored DjVu fixture, its renderer kept the same output at all 132 sampled tones.
+Reader applies its numeric settings to DjVu pixels as well.
+The comparison used fixed pages with reflow, rotation and background cleanup disabled.
+[Simulator capture](screenshots/scan-contrast-levels.png) · [Executable comparison](../scripts/verify-stock-scan-contrast.lua) · [KOReader contrast settings](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/koptoptions.lua#L486-L507)
+
 ## Auto straighten
 
 **Auto straighten** sets the maximum tilt Reader will correct. The five presets are Off, 5°, 10°, 15° and 25°. **Decrease 1°** and **Increase 1°** adjust the limit between presets. Each visible page gets its own estimate. A 5° limit leaves an 8° tilt alone. A 10° limit straightens that page. Blank pages and pages with weak evidence of tilted text retain their original appearance.
