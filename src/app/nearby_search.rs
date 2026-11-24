@@ -656,6 +656,7 @@ impl Reader {
             .with_flow_config(context.flow.clone())
             .for_publication(context.publication, chapters);
         self.update_lookup_history(|h| h.search(pattern, case, accents, regex))?;
+        self.remember_all_results_origin();
         self.cancel_search();
         self.search_result = None;
         self.matches_page = 0;
