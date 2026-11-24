@@ -132,6 +132,7 @@ impl Screen {
                 | Self::ReadingProfileFontRendering(_)
                 | Self::ReadingProfileBookRendering(_)
                 | Self::ReadingProfileChoice(_, _)
+                | Self::ReadingProfileOpening(_, _)
                 | Self::ConfirmProfile(_, _)
                 | Self::ReadingFonts
                 | Self::Typography

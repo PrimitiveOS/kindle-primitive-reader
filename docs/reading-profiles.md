@@ -27,9 +27,18 @@ The executable fixture runs stock snapshot creation, the font size, content zoom
 
 ## Apply a profile on book opening
 
-Turn on **Apply on book opening** in a profile to apply its included
-settings whenever Reader opens a matching book. This covers new books and
-books with a saved position. Reader combines enabled profiles in the
+Open **Apply on book opening** in a profile. **Always apply** uses its
+included settings for every matching book format. With Always off, add
+one or more opening orientations, a file-path phrase, or collections.
+A book matches if any configured condition matches. Separate path phrases
+with commas. Matching is case-insensitive. **Only for new books** also
+requires a book with no saved reading position. Choosing Always clears
+the conditions, as in KOReader.
+
+Orientation uses the book's saved opening setting or the current default.
+Choose **Follow Launcher** to match that setting. A saved reference to an
+unavailable collection can be removed from the collections list.
+Reader combines matching profiles in the
 alphabetical order shown in the profile list. If two profiles include the
 same setting, the later profile supplies that value. Renaming a profile
 carries its switch with it. A duplicate starts with the switch off.
@@ -42,10 +51,11 @@ book's saved settings and shows a notice. The EPUB tests check a saved
 passage after restart. The PDF test checks the exact physical page,
 tiled zoom and overlap after combining two profiles.
 
-This covers KOReader's **on book opening › always**. Its conditional
-triggers for orientation, metadata, file paths and collections, plus its
-optional confirmation and scheduling, remain separate parity work.
+The pinned comparison exercises Always, orientation, path and collection
+routing, and the separate new-book gate. Stock metadata filters, folder
+shortcut expansion, confirmation and scheduling remain open.
 [Landscape simulator capture](screenshots/landscape-profile-apply-on-opening.png) ·
+[Opening conditions in landscape](screenshots/landscape-profile-opening-conditions.png) ·
 [Pinned opening menu](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/profiles.koplugin/main.lua#L879-L928) ·
 [Pinned ReaderReady callback](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/profiles.koplugin/main.lua#L1217-L1287) ·
 [Executable stock comparison](../scripts/koreader-reading-profiles-check.lua)

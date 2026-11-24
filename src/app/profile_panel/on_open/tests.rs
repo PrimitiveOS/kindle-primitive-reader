@@ -1,13 +1,15 @@
 use super::*;
 use crate::app::profile_panel::Name;
-use crate::app::selection_viewport_tests::{adopt, capture};
+use crate::app::selection_viewport_tests::{adopt, capture, key, tap};
 use crate::app::tests::{Fixture, tap_contents_item};
-use crate::app::{Action, ReadingOrientation, Screen, Settings};
+use crate::app::{Action, Change, ReadingOrientation, Screen, Settings};
 use crate::fixed_session::tests::striped_pdf_sized_bytes;
 use crate::library::FixedTileAxis;
 use crate::reading_profiles::{Field, ValueField};
 use crate::session::ReadingViewport;
 use primitive_app::App;
+use primitive_ui::Key;
+use serde_json::json;
 use std::fs;
 
 fn fonts() -> Vec<std::path::PathBuf> {
@@ -26,6 +28,180 @@ fn include(app: &mut Reader, index: usize, fields: Vec<Field>) {
 fn toggle(app: &mut Reader, index: usize) {
     app.show(Screen::ReadingProfile(index));
     tap_contents_item(app, "Apply on book opening");
+    tap_contents_item(app, "Always apply");
+    let back = app.navigation_layout().back();
+    tap(app, back);
+}
+
+fn open_rules(app: &mut Reader, index: usize) {
+    app.show(Screen::ReadingProfile(index));
+    tap_contents_item(app, "Apply on book opening");
+}
+
+fn set_path(app: &mut Reader, index: usize, value: &str) {
+    tap_contents_item(app, "File path contains");
+    assert_eq!(app.screen, Screen::ProfileName(Name::OpeningPath(index)));
+    app.editor.text = value.chars().collect();
+    app.editor.caret = app.editor.text.len();
+    let save = key(app, Key::Go, "Save");
+    tap(app, save);
+}
+
+#[test]
+fn opening_conditions_use_orientation_paths_and_collections_as_alternatives() {
+    let f = Fixture::new();
+    let enrolled = f.root.join("Outside inventory.txt");
+    let matched = f.root.join("WAyPoint.txt");
+    let unmatched = f.root.join("Rain notes.txt");
+    let first_time = f.root.join("Ridge survey.txt");
+    let no_matchers = f.root.join("Second field report.txt");
+    for (path, contents) in [
+        (&enrolled, "Survey the eastern shelf."),
+        (&matched, "The waypoint is along the coast."),
+        (&unmatched, "Rain filled the water tank."),
+        (&first_time, "Record samples from the ridge."),
+        (&no_matchers, "Ship the results to the office."),
+    ] {
+        fs::write(path, contents).unwrap();
+    }
+    let mut app = Reader::open(&f.root, &f.state, fonts()).unwrap();
+    app.open_path(&enrolled).unwrap();
+    let id = app.open_book_id().unwrap();
+    app.library.create_collection("Sea surveys").unwrap();
+    app.library
+        .set_collection_membership("Sea surveys", id, true)
+        .unwrap();
+    app.open_path(&f.book).unwrap();
+    let normal = app.active.as_ref().unwrap().reading.config.settings;
+    let pos = app.current_position();
+    app.activate(Action::Text(Settings {
+        invert_night_images: true,
+        ..normal
+    }))
+    .unwrap();
+    app.save_reading_profile("Evening contrast").unwrap();
+    include(&mut app, 0, vec![Field::NightImages]);
+    app.activate(Action::Text(normal)).unwrap();
+
+    open_rules(&mut app, 0);
+    tap_contents_item(&mut app, "Opening orientation");
+    tap_contents_item(&mut app, "Upside down");
+    let back = app.navigation_layout().back();
+    tap(&mut app, back);
+    set_path(&mut app, 0, "waypoint, ridge");
+    tap_contents_item(&mut app, "Book is in a collection");
+    tap_contents_item(&mut app, "Sea surveys");
+    tap(&mut app, back);
+    assert_eq!(app.current_position(), pos);
+    let mut canvas = adopt(&mut app, ReadingViewport::LANDSCAPE, 1);
+    capture(
+        &app,
+        &mut canvas,
+        "landscape-profile-opening-conditions.png",
+        false,
+    );
+    app.save().unwrap();
+
+    let mut app = Reader::open(&f.root, &f.state, fonts()).unwrap();
+    let inverted = |app: &Reader| {
+        app.active
+            .as_ref()
+            .unwrap()
+            .reading
+            .config
+            .settings
+            .invert_night_images
+    };
+    app.open_path(&enrolled).unwrap();
+    assert!(inverted(&app));
+    app.open_path(&matched).unwrap();
+    assert!(inverted(&app));
+    app.open_path(&unmatched).unwrap();
+    assert!(!inverted(&app));
+    app.set_reading_orientation(ReadingOrientation::UpsideDown)
+        .unwrap();
+    assert_eq!(app.applied_change(), Change::Full);
+    app.open_path(&unmatched).unwrap();
+    assert!(inverted(&app));
+
+    open_rules(&mut app, 0);
+    tap_contents_item(&mut app, "Only for new books");
+    app.open_path(&enrolled).unwrap();
+    let applied = app.active.as_ref().unwrap().reading.config.settings;
+    app.activate(Action::Text(Settings {
+        invert_night_images: false,
+        ..applied
+    }))
+    .unwrap();
+    app.open_path(&enrolled).unwrap();
+    assert!(!inverted(&app));
+    app.open_path(&first_time).unwrap();
+    assert!(inverted(&app));
+
+    open_rules(&mut app, 0);
+    tap_contents_item(&mut app, "Clear conditions");
+    tap_contents_item(&mut app, "Only for new books");
+    app.open_path(&no_matchers).unwrap();
+    assert!(!inverted(&app));
+    open_rules(&mut app, 0);
+    tap_contents_item(&mut app, "Always apply");
+    assert!(app.profiles[0].applies_on_open());
+    assert!(app.profiles[0].opening_conditions().is_none());
+}
+
+#[test]
+fn opening_path_rules_apply_to_fixed_profiles_and_validate_backups() {
+    let f = Fixture::new();
+    let source = f.root.join("Source.pdf");
+    let target = f.root.join("Survey print.pdf");
+    fs::write(&source, striped_pdf_sized_bytes(3, 612, 820)).unwrap();
+    fs::write(&target, striped_pdf_sized_bytes(3, 820, 612)).unwrap();
+    let mut app = Reader::open(&f.root, &f.state, fonts()).unwrap();
+    app.open_path(&source).unwrap();
+    app.activate(Action::ScanGamma(23)).unwrap();
+    app.save_reading_profile("Survey gamma").unwrap();
+    include(&mut app, 0, vec![Field::ScanContrast]);
+    open_rules(&mut app, 0);
+    set_path(&mut app, 0, " survey ,,");
+    assert_eq!(app.screen, Screen::ProfileName(Name::OpeningPath(0)));
+    assert!(app.notice.as_deref().unwrap().contains("nonempty phrase"));
+    assert!(app.profiles[0].opening_conditions().is_none());
+    app.editor.text = "Survey".chars().collect();
+    app.editor.caret = app.editor.text.len();
+    let save = key(&app, Key::Go, "Save");
+    tap(&mut app, save);
+    app.open_path(&target).unwrap();
+    assert_eq!(
+        app.fixed
+            .as_ref()
+            .unwrap()
+            .reading
+            .preferences()
+            .scan_gamma_tenths,
+        Some(23)
+    );
+    app.open_path(&f.book).unwrap();
+    assert!(app.active.is_some());
+    assert!(app.notice.is_none());
+
+    let value = serde_json::to_value(&app.profiles).unwrap();
+    assert_eq!(
+        crate::reading_profiles::decode(value.clone()).unwrap(),
+        app.profiles
+    );
+    for bad in [
+        json!({"path":"a,,b"}),
+        json!({"orientations":["upright","upright"]}),
+        json!({"path": "a".repeat(161)}),
+        json!({"collections":["Sea surveys", "sea SURVEYS"]}),
+    ] {
+        let mut corrupt = value.clone();
+        corrupt[0]["opening"] = bad;
+        assert!(crate::reading_profiles::decode(corrupt).is_err());
+    }
+    let mut contradictory = value;
+    contradictory[0]["apply_on_open"] = json!(true);
+    assert!(crate::reading_profiles::decode(contradictory).is_err());
 }
 
 #[test]

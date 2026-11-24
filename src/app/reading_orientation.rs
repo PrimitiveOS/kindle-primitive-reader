@@ -1,7 +1,6 @@
 //! Screen orientation is independent of fixed-page rotation and reading position.
 use super::{Canvas, Change, Input, Reader, ReadingControls, ReadingOrientation, Rect, Screen};
 use crate::Result;
-use crate::session::ReadingViewport;
 use primitive_app::viewport::{LogicalTurn, ViewportRequest};
 use primitive_ui::{Sheet, SheetAction};
 
@@ -63,16 +62,15 @@ impl Reader {
             .or_else(|| self.library.state(id?)?.screen_orientation)
     }
 
-    pub(super) fn opening_reflow_viewport(&self, id: u64) -> ReadingViewport {
-        let orientation = self
-            .saved_reading_orientation(Some(id))
-            .or(self.controls.reflow_orientation_default)
-            .unwrap_or(self.controls.orientation);
-        if orientation.is_landscape() {
-            ReadingViewport::LANDSCAPE
+    pub(super) fn opening_orientation(&self, id: u64, fixed: bool) -> ReadingOrientation {
+        let default = if fixed {
+            self.controls.fixed_orientation_default
         } else {
-            ReadingViewport::PORTRAIT
-        }
+            self.controls.reflow_orientation_default
+        };
+        self.saved_reading_orientation(Some(id))
+            .or(default)
+            .unwrap_or(self.controls.orientation)
     }
 
     pub(super) fn set_reading_orientation(

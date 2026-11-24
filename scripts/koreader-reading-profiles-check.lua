@@ -31,6 +31,14 @@ local function clone(value)
 end
 mock("ffi/util", {template = template, orderedPairs = ordered})
 mock("util", {
+    gsplit = function(text, separator)
+        assert(separator == ",")
+        return text:gmatch("[^,]+")
+    end,
+    trim = function(value) return value:match("^%s*(.-)%s*$") end,
+    stringSearch = function(value, term)
+        return value:lower():find(term:lower(), 1, true) or 0
+    end,
     arrayContains = function(array, searched)
         for index, value in ipairs(array) do if value == searched then return index end end
     end,
@@ -451,6 +459,46 @@ profiles:onReaderReady()
 assert(not text_open.checked_func() and not pdf_open.checked_func() and #next_tick == 0)
 profile_ui.instance = {rolling = true}
 
+mock("readcollection", {
+    isFileInCollection = function(_, file, name)
+        return name == "Sea surveys" and file == "/documents/enrolled.epub"
+    end,
+})
+profiles.ui.folder_shortcuts = { expandPath = function(_, path) return path end }
+profiles.ui.collections = {
+    onShowCollList = function(_, _, callback) callback({ ["Sea surveys"] = true }) end,
+}
+profiles.document.file = "/documents/ordinary.epub"
+local rotation = 0
+screen.getRotationMode = function() return rotation end
+local rules = text_open.sub_item_table_func()
+rules[2].sub_item_table_func()[2].callback() -- clockwise
+rules[4].callback(menu)
+visible.input = "waypoint, ridge"
+choose(visible.buttons[#visible.buttons], "Save").callback()
+rules[5].callback(menu)
+assert(rules[2].checked_func() and rules[4].checked_func() and rules[5].checked_func())
+local function conditional_open(file, turn, new_book, matches)
+    profiles.document.file, profiles.document.is_new = file, new_book
+    rotation = turn
+    events, next_tick = {}, {}
+    profiles:onReaderReady()
+    assert(#next_tick == (matches and 1 or 0))
+    for _, callback in ipairs(next_tick) do callback() end
+    assert(sent_setting("font_size") == (matches and 31.5 or nil))
+end
+conditional_open("/documents/ordinary.epub", 0, true, false)
+conditional_open("/documents/ordinary.epub", 1, false, true)
+conditional_open("/documents/wayPOINT.epub", 0, false, true)
+conditional_open("/documents/enrolled.epub", 0, false, true)
+rules[6].callback(menu)
+conditional_open("/documents/wayPOINT.epub", 1, false, false)
+conditional_open("/documents/wayPOINT.epub", 1, true, true)
+always_text.callback()
+assert(text_open.checked_func() and not rules[2].enabled_func())
+assert(not require("util").tableGetValue(profiles.autoexec, "ReaderReadyAll", "Text"))
+always_text.callback()
+
 for _, item in ipairs(profiles:getSubMenuItems()) do
     if item.name == "PDF copy" then commands = item.sub_item_table; break end
 end
@@ -468,3 +516,4 @@ print("Stock saved horizontal and vertical overlap: 0–84%, default 36%, held s
 print("Stock saved scans: eight Margin and Contrast presets, isolated until Apply. Live exact range/steps match the stock option definitions.")
 print("Stock factory, action removal, rename/duplicate/delete, format gate and batched execution verified.")
 print("Stock book opening: Always toggle, ReaderReady dispatch, format gates, reload guard and disable verified.")
+print("Stock conditional opening: orientation/path/collection alternatives, a separate new-book gate, and one execution per event.")

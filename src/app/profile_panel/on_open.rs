@@ -2,25 +2,16 @@
 use super::{
     BookConfig, BookPreferences, FixedReading, Profile, Reader, Reading, ReadingPosition, Result,
 };
+use crate::reading_profiles::opening::Book;
 use crate::session::ReadingViewport;
+use std::path::Path;
 
 impl Reader {
-    pub(in crate::app) fn toggle_opening_profile(&mut self, index: usize) -> Result<()> {
-        let mut profiles = self.profiles.clone();
-        let profile = profiles
-            .get_mut(index)
-            .ok_or("That profile is unavailable")?;
-        profile.set_apply_on_open(!profile.applies_on_open());
-        self.commit_profiles(profiles)?;
-        self.notice = None;
-        Ok(())
-    }
-
-    fn opening_profiles(&self) -> Vec<&Profile> {
+    fn opening_profiles(&self, book: &Book<'_>) -> Vec<&Profile> {
         let mut profiles: Vec<_> = self
             .profiles
             .iter()
-            .filter(|profile| profile.applies_on_open())
+            .filter(|profile| profile.matches_opening(book))
             .collect();
         profiles.sort_by_cached_key(|profile| profile.name().to_lowercase());
         profiles
@@ -32,10 +23,18 @@ impl Reader {
         preferences: &BookPreferences,
         position: Option<&ReadingPosition>,
         top_status_header: bool,
-        target_viewport: ReadingViewport,
+        id: u64,
     ) -> Result<Option<(Reading, BookPreferences)>> {
+        let orientation = self.opening_orientation(id, false);
+        let book = Book {
+            id,
+            path: &base.book,
+            library: &self.library,
+            orientation,
+            is_new: position.is_none(),
+        };
         let mut adjusted = preferences.clone();
-        for profile in self.opening_profiles() {
+        for profile in self.opening_profiles(&book) {
             if let Some(projected) = profile.apply_text(&adjusted) {
                 adjusted = projected;
             }
@@ -67,8 +66,8 @@ impl Reader {
         } else {
             Reading::open(config)?
         };
-        if target_viewport != base.viewport {
-            reading.prepare_viewport(target_viewport)?;
+        if orientation.is_landscape() && base.viewport != ReadingViewport::LANDSCAPE {
+            reading.prepare_viewport(ReadingViewport::LANDSCAPE)?;
         }
         Ok(Some((reading, adjusted)))
     }
@@ -76,12 +75,22 @@ impl Reader {
     pub(in crate::app) fn apply_opening_fixed_profiles(
         &self,
         reading: &mut FixedReading,
+        id: u64,
+        path: &Path,
+        is_new: bool,
     ) -> Result<()> {
         let Some(provider) = reading.profile_provider() else {
             return Ok(());
         };
+        let book = Book {
+            id,
+            path,
+            library: &self.library,
+            orientation: self.opening_orientation(id, true),
+            is_new,
+        };
         let profiles: Vec<_> = self
-            .opening_profiles()
+            .opening_profiles(&book)
             .into_iter()
             .filter_map(|profile| match profile {
                 Profile::Fixed { fixed, .. } if fixed.provider == provider => {

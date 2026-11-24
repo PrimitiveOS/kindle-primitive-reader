@@ -297,6 +297,7 @@ enum Screen {
     ReadingProfileFontRendering(usize),
     ReadingProfileBookRendering(usize),
     ReadingProfileChoice(usize, reading_profiles::Field),
+    ReadingProfileOpening(usize, profile_panel::opening_rules::Page),
     ConfirmProfile(usize, profile_panel::Confirm),
     Find,
     Matches,
@@ -464,6 +465,7 @@ impl Screen {
             Self::StyleReview => "Review CSS",
             Self::StyleEditor => "Book CSS",
             Self::StyleClear => "Clear book CSS?",
+            Self::ProfileName(profile_panel::Name::OpeningPath(_)) => "Opening file path",
             Self::ProfileName(_) => "Name reading profile",
             Self::ReadingProfile(_) | Self::ConfirmProfile(_, _) => "Reading profile",
             Self::ReadingProfileFields(_) => "Included settings",
@@ -472,6 +474,7 @@ impl Screen {
             Self::ReadingProfileFontRendering(_) => "Saved font rendering",
             Self::ReadingProfileBookRendering(_) => "Saved book rendering",
             Self::ReadingProfileChoice(_, field) => field.label(),
+            Self::ReadingProfileOpening(_, page) => page.title(),
             Self::Find => "Find in book",
             Self::Matches => "Search results",
             Self::SearchSettings => "Search settings",
@@ -611,7 +614,7 @@ enum Action {
     EditReadingProfileFields(usize),
     ToggleReadingProfileField(reading_profiles::Field),
     SetReadingProfileFields(bool),
-    ToggleOpeningProfile(usize),
+    OpeningProfileRule(usize, profile_panel::opening_rules::Command),
     SetProfileRendering(usize, profile_panel::rendering_choices::Value),
     ToggleProfileMarginLink(usize),
     UpdateFooterPreset(usize),
@@ -1343,7 +1346,9 @@ impl Reader {
                 position.as_ref().map_or(0, |saved| saved.page),
                 fixed_preferences,
             )?;
-            let profile_warning = self.apply_opening_fixed_profiles(&mut reading).err();
+            let profile_warning = self
+                .apply_opening_fixed_profiles(&mut reading, id, &absolute, position.is_none())
+                .err();
             reading.set_ocr_path(self.ocr_root.join(format!("{id:016x}")));
             reading.ocr_language = self
                 .library
@@ -1443,7 +1448,7 @@ impl Reader {
             saved_preferences,
             position.as_ref(),
             top_status_header,
-            self.opening_reflow_viewport(id),
+            id,
         ) {
             Ok(prepared) => (prepared, None),
             Err(error) => (None, Some(error)),
@@ -1860,13 +1865,7 @@ impl Reader {
             self.editor = Editor::new(96);
         }
         if let Screen::ProfileName(mode) = screen {
-            self.editor = Editor::new(reading_profiles::MAX_NAME);
-            if let profile_panel::Name::Rename(index) = mode
-                && let Some(profile) = self.profiles.get(index)
-            {
-                self.editor.text = profile.name().chars().collect();
-                self.editor.caret = self.editor.text.len();
-            }
+            self.prepare_profile_name(mode);
         }
         if let Screen::DictionaryPresets(dictionary_presets::Page::Name(mode)) = screen {
             self.prepare_dictionary_preset_name(mode);
@@ -2170,6 +2169,7 @@ impl Reader {
                 | Screen::ReadingProfileFontRendering(_)
                 | Screen::ReadingProfileBookRendering(_)
                 | Screen::ReadingProfileChoice(_, _)
+                | Screen::ReadingProfileOpening(_, _)
                 | Screen::ConfirmProfile(_, _)
         ) {
             return self.reading_profile_items();
@@ -4111,7 +4111,9 @@ impl Reader {
             Action::EditReadingProfileFields(index) => self.edit_profile_fields(index)?,
             Action::ToggleReadingProfileField(field) => self.toggle_profile_field(field)?,
             Action::SetReadingProfileFields(all) => self.set_profile_fields(all)?,
-            Action::ToggleOpeningProfile(index) => self.toggle_opening_profile(index)?,
+            Action::OpeningProfileRule(index, command) => {
+                self.change_opening_rule(index, command)?
+            }
             Action::SetProfileRendering(index, value) => {
                 self.save_profile_rendering_choice(index, value)?
             }
@@ -7465,6 +7467,9 @@ impl Reader {
                 Screen::DictionaryEntry => ("Word or phrase", "Look up"),
                 Screen::BookmarkFind => ("Bookmark, highlighted text, or note", "Find"),
                 Screen::CollectionName => ("Collection name", "Save"),
+                Screen::ProfileName(profile_panel::Name::OpeningPath(_)) => {
+                    ("Path text, separated by commas", "Save")
+                }
                 Screen::ProfileName(_) => ("Profile name", "Save"),
                 Screen::FooterPresetName(_) => ("Status bar preset name", "Save"),
                 Screen::DictionaryPresets(dictionary_presets::Page::Name(_)) => {
@@ -7689,11 +7694,9 @@ impl Reader {
                             RowAccessory::Toggle(self.profile_fields.contains(field))
                         }
                         Action::SetReadingProfileFields(_) => RowAccessory::None,
-                        Action::ToggleOpeningProfile(index) => RowAccessory::Toggle(
-                            self.profiles
-                                .get(*index)
-                                .is_some_and(Profile::applies_on_open),
-                        ),
+                        Action::OpeningProfileRule(index, command) => self
+                            .opening_rule_checked(*index, command)
+                            .map_or(RowAccessory::Disclosure, RowAccessory::Toggle),
                         Action::SetProfileRendering(_, _) => RowAccessory::None,
                         Action::ToggleProfileMarginLink(index) => RowAccessory::Toggle(
                             self.profiles
@@ -8886,6 +8889,9 @@ impl App for Reader {
                     }
                     Screen::ReadingProfileChoice(index, field) => {
                         self.show(profile_panel::rendering_choices::parent(index, field));
+                    }
+                    Screen::ReadingProfileOpening(index, page) => {
+                        self.show(page.back(index));
                     }
                     Screen::BookDetails => {
                         if self

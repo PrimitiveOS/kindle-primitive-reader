@@ -52,7 +52,7 @@ pub(crate) const MAX_CROP_MARGIN: u8 = 150;
 const MIN_CROP_SIZE: f32 = 0.025;
 const BACKUP_VERSION: u32 = 1;
 const MAX_BACKUP_BOOKS: usize = 16_384;
-const MAX_COLLECTIONS: usize = 128;
+pub(crate) const MAX_COLLECTIONS: usize = 128;
 const MAX_COLLECTION_MEMBERS: usize = 4096;
 const MAX_COLLECTION_NAME_CHARS: usize = 64;
 const MAX_IMPORTED_MARKS: usize = 512;
@@ -2256,7 +2256,7 @@ impl Library {
     }
 }
 
-fn collection_name(value: &str) -> io::Result<&str> {
+pub(crate) fn collection_name(value: &str) -> io::Result<&str> {
     let name = value.trim();
     if name.is_empty()
         || name.chars().any(char::is_control)

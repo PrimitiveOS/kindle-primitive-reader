@@ -5,6 +5,7 @@ use super::{navigation_layout::NavigationLayout, *};
 use crate::reading_profiles::{Field, FixedProfile};
 
 mod on_open;
+pub(super) mod opening_rules;
 pub(super) mod rendering_choices;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -12,6 +13,7 @@ pub(super) enum Name {
     Create,
     Rename(usize),
     Duplicate(usize),
+    OpeningPath(usize),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,6 +27,9 @@ impl Name {
         match self {
             Self::Create => Screen::ReadingProfiles,
             Self::Rename(index) | Self::Duplicate(index) => Screen::ReadingProfile(index),
+            Self::OpeningPath(index) => {
+                Screen::ReadingProfileOpening(index, opening_rules::Page::Overview)
+            }
         }
     }
 }
@@ -86,6 +91,9 @@ impl Reader {
         if let Screen::ReadingProfileChoice(index, field) = self.screen {
             return self.profile_rendering_choices(index, field);
         }
+        if let Screen::ReadingProfileOpening(index, page) = self.screen {
+            return self.opening_rule_items(index, page);
+        }
         if let Screen::ReadingProfileFields(index) = self.screen {
             return self.profile_field_items(index);
         }
@@ -121,7 +129,14 @@ impl Reader {
                     profile.available().len()
                 ),
             ),
-            Item::new("Apply on book opening", Action::ToggleOpeningProfile(index)),
+            Item::new(
+                "Apply on book opening",
+                Action::Show(Screen::ReadingProfileOpening(
+                    index,
+                    opening_rules::Page::Overview,
+                )),
+            )
+            .detail(opening_rules::summary(profile)),
             Item::new(
                 "Rename",
                 Action::Show(Screen::ProfileName(Name::Rename(index))),
@@ -241,6 +256,7 @@ impl Reader {
                 fixed: FixedProfile::from_view(provider, book.reading.preferences()),
                 fields: None,
                 apply_on_open: false,
+                opening: None,
             });
         }
         Ok(Profile::Text {
@@ -248,6 +264,7 @@ impl Reader {
             preferences: self.current_text_preferences()?,
             fields: None,
             apply_on_open: false,
+            opening: None,
         })
     }
 
@@ -269,6 +286,7 @@ impl Reader {
     pub(super) fn edit_reading_profile_name(&mut self, mode: Name, name: &str) -> Result<()> {
         let index = match mode {
             Name::Create => return self.save_reading_profile(name),
+            Name::OpeningPath(index) => return self.save_opening_path(index, name),
             Name::Rename(index) | Name::Duplicate(index) => index,
         };
         let mut profiles = self.profiles.clone();
@@ -280,10 +298,10 @@ impl Reader {
             Name::Duplicate(_) => {
                 let mut copy = profile.clone();
                 copy.set_name(name);
-                copy.set_apply_on_open(false);
+                copy.set_opening_conditions(Default::default());
                 profiles.push(copy);
             }
-            Name::Create => unreachable!(),
+            Name::Create | Name::OpeningPath(_) => unreachable!(),
         }
         self.commit_profiles(profiles)?;
         self.show(match mode {

@@ -12,6 +12,7 @@ use crate::document_defaults::{FixedDefaults, validate_preferences};
 use crate::library::{BookPreferences, FixedPreferences, FixedTileAxis};
 
 mod fields;
+pub(crate) mod opening;
 mod values;
 pub(crate) use fields::Field;
 pub(crate) use values::{MarginEdge, ValueField};
@@ -30,6 +31,8 @@ pub(crate) enum Profile {
         fields: Option<Vec<Field>>,
         #[serde(default, skip_serializing_if = "is_false")]
         apply_on_open: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        opening: Option<opening::Conditions>,
     },
     Fixed {
         name: String,
@@ -38,6 +41,8 @@ pub(crate) enum Profile {
         fields: Option<Vec<Field>>,
         #[serde(default, skip_serializing_if = "is_false")]
         apply_on_open: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        opening: Option<opening::Conditions>,
     },
 }
 
@@ -50,10 +55,44 @@ impl Profile {
 
     pub(crate) fn set_apply_on_open(&mut self, enabled: bool) {
         match self {
-            Self::Text { apply_on_open, .. } | Self::Fixed { apply_on_open, .. } => {
-                *apply_on_open = enabled
+            Self::Text {
+                apply_on_open,
+                opening,
+                ..
+            }
+            | Self::Fixed {
+                apply_on_open,
+                opening,
+                ..
+            } => {
+                *apply_on_open = enabled;
+                if enabled {
+                    *opening = None;
+                }
             }
         }
+    }
+
+    pub(crate) fn opening_conditions(&self) -> Option<&opening::Conditions> {
+        match self {
+            Self::Text { opening, .. } | Self::Fixed { opening, .. } => opening.as_ref(),
+        }
+    }
+
+    pub(crate) fn set_opening_conditions(&mut self, conditions: opening::Conditions) {
+        self.set_apply_on_open(false);
+        match self {
+            Self::Text { opening, .. } | Self::Fixed { opening, .. } => {
+                *opening = (conditions != opening::Conditions::default()).then_some(conditions);
+            }
+        }
+    }
+
+    pub(crate) fn matches_opening(&self, context: &opening::Book<'_>) -> bool {
+        self.applies_on_open()
+            || self
+                .opening_conditions()
+                .is_some_and(|rules| rules.matches(context))
     }
 
     pub(crate) fn name(&self) -> &str {
@@ -353,6 +392,12 @@ fn validate(profiles: &[Profile]) -> io::Result<()> {
         }
         if let Some(fields) = profile.mask() {
             validate_selection(fields, &profile.available())?;
+        }
+        if profile
+            .opening_conditions()
+            .is_some_and(|conditions| profile.applies_on_open() || !conditions.valid())
+        {
+            return Err(invalid());
         }
         match profile {
             Profile::Text { preferences, .. } => validate_preferences(preferences)?,
