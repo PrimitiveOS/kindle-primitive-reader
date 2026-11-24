@@ -299,6 +299,8 @@ pub(crate) struct Style {
     pub marker: crate::list_marker::MarkerKind,
     pub image_width: Option<ImageLength>,
     pub image_height: Option<ImageLength>,
+    pub image_max_width: Option<ImageLength>,
+    pub image_max_height: Option<ImageLength>,
     pub image_align: parley::VerticalAlign,
     pub alignment: Option<Alignment>,
     pub line_break: Option<LineBreak>,
@@ -336,6 +338,8 @@ impl Default for Style {
             marker: crate::list_marker::MarkerKind::None,
             image_width: None,
             image_height: None,
+            image_max_width: None,
+            image_max_height: None,
             image_align: parley::VerticalAlign::BASELINE,
             alignment: None,
             line_break: None,
@@ -533,6 +537,8 @@ impl BookStyle {
             }
             style.image_width = style.image_width.map(|value| value.for_dpi(dpi));
             style.image_height = style.image_height.map(|value| value.for_dpi(dpi));
+            style.image_max_width = style.image_max_width.map(|value| value.for_dpi(dpi));
+            style.image_max_height = style.image_max_height.map(|value| value.for_dpi(dpi));
         }
         styles
     }
@@ -584,6 +590,8 @@ impl BookStyle {
             }
             style.image_width = None;
             style.image_height = None;
+            style.image_max_width = None;
+            style.image_max_height = None;
             style.image_align = parley::VerticalAlign::BASELINE;
             let mut decoration = TextDecoration {
                 underline: matches!(element.tag.as_str(), "u" | "ins")
@@ -615,7 +623,7 @@ impl BookStyle {
                 .as_deref()
                 .filter(|text| self.author_inline && text.len() <= MAX_INLINE_BYTES)
                 .map_or_else(Vec::new, |text| declarations(&mut Parser::new(text)));
-            let mut winners: Winners = [None; 42];
+            let mut winners: Winners = [None; 44];
             for (origin, rules) in [
                 (CascadeOrigin::User, &self.user_rules),
                 (CascadeOrigin::Author, &self.rules),
@@ -764,7 +772,10 @@ impl BookStyle {
                     }
                     Property::Hyphens(mode) => style.hyphens = *mode,
                     Property::WritingMode(mode) => style.writing_mode = *mode,
-                    Property::Width(value) | Property::Height(value) => {
+                    Property::Width(value)
+                    | Property::Height(value)
+                    | Property::MaxWidth(value)
+                    | Property::MaxHeight(value) => {
                         let value = match value {
                             ImageLength::RootEm(value) => {
                                 let root = result.first().map_or_else(
@@ -781,10 +792,12 @@ impl BookStyle {
                             }
                             value => *value,
                         };
-                        if matches!(property, Property::Width(_)) {
-                            style.image_width = Some(value);
-                        } else {
-                            style.image_height = Some(value);
+                        match property {
+                            Property::Width(_) => style.image_width = Some(value),
+                            Property::Height(_) => style.image_height = Some(value),
+                            Property::MaxWidth(_) => style.image_max_width = Some(value),
+                            Property::MaxHeight(_) => style.image_max_height = Some(value),
+                            _ => unreachable!(),
                         }
                     }
                     Property::VerticalAlign(value) => style.image_align = *value,
@@ -1332,7 +1345,7 @@ fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
 }
 
 type Priority = (u8, bool, Specificity);
-type Winners<'a> = [Option<(Priority, &'a Property)>; 42];
+type Winners<'a> = [Option<(Priority, &'a Property)>; 44];
 
 #[derive(Clone, Copy)]
 enum CascadeOrigin {
@@ -1354,6 +1367,8 @@ fn choose<'a>(
             Property::ResetMany(..) => continue,
             Property::Display(_) => 40,
             Property::Visibility(_) => 41,
+            Property::MaxWidth(_) => 42,
+            Property::MaxHeight(_) => 43,
             Property::Family(_) => 0,
             Property::Size(_) => 1,
             Property::LineHeight(_) => 2,
@@ -1467,6 +1482,8 @@ enum Property {
     WritingMode(WritingMode),
     Width(ImageLength),
     Height(ImageLength),
+    MaxWidth(ImageLength),
+    MaxHeight(ImageLength),
     VerticalAlign(parley::VerticalAlign),
 }
 
@@ -1623,9 +1640,16 @@ impl<'i> DeclarationParser<'i> for Properties {
                         },
                     )
                 }
-                "width" | "height" => {
+                "width" | "height" | "max-width" | "max-height" => {
+                    let maximum = name.eq_ignore_ascii_case("max-width")
+                        || name.eq_ignore_ascii_case("max-height");
                     let length = match input.next()?.clone() {
-                        Token::Ident(s) if s.eq_ignore_ascii_case("auto") => ImageLength::Auto,
+                        Token::Ident(s)
+                            if !maximum && s.eq_ignore_ascii_case("auto")
+                                || maximum && s.eq_ignore_ascii_case("none") =>
+                        {
+                            ImageLength::Auto
+                        }
                         Token::Percentage { unit_value, .. }
                             if unit_value.is_finite() && unit_value > 0.0 =>
                         {
@@ -1649,10 +1673,11 @@ impl<'i> DeclarationParser<'i> for Properties {
                         }
                         _ => return Err(ParseError::unexpected_token()),
                     };
-                    if name.eq_ignore_ascii_case("width") {
-                        Property::Width(length)
-                    } else {
-                        Property::Height(length)
+                    match name.to_ascii_lowercase().as_str() {
+                        "width" => Property::Width(length),
+                        "height" => Property::Height(length),
+                        "max-width" => Property::MaxWidth(length),
+                        _ => Property::MaxHeight(length),
                     }
                 }
                 "font-family" => Property::Family(input.parse_comma_separated(font_family)?),

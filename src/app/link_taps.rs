@@ -87,7 +87,7 @@ impl ReflowLink {
 
 impl Reader {
     pub(super) fn link_settings_items(&self) -> Vec<Item> {
-        [
+        let mut items: Vec<_> = [
             LinkPreference::Follow,
             LinkPreference::LargerArea,
             LinkPreference::IgnoreExternal,
@@ -118,7 +118,23 @@ impl Reader {
                 _ => item,
             }
         })
-        .collect()
+        .collect();
+        if self.active.is_some() {
+            let size = self.controls.footnote_font_size;
+            let item = if let Some(reason) =
+                LinkPreference::FootnoteBookFont.unavailable_reason(self.controls)
+            {
+                Item::new("Footnote popup font size", Action::Heading).detail(reason)
+            } else {
+                Item::new(
+                    "Footnote popup font size",
+                    Action::Show(Screen::FootnoteFontSize(footnote_font::Mode::current(size))),
+                )
+                .detail(size.description())
+            };
+            items.push(item);
+        }
+        items
     }
 
     pub(super) fn toggle_link_preference(&mut self, setting: LinkPreference) -> Result<()> {

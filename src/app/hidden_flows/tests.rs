@@ -1,4 +1,5 @@
 use super::*;
+use crate::app::overview_bookmarks::{PageAction, tap_page_action};
 use crate::app::tests::{Fixture, capture_test_screen};
 
 fn center(rect: Rect) -> (f32, f32) {
@@ -19,6 +20,7 @@ fn mark(app: &mut Reader, chapter: usize, page: usize) {
     let (x, y) = center(super::super::overview_tile(page - first));
     assert_eq!(app.input(Input::LongTap(x, y)), Change::Partial);
     assert!(app.flow_popup.is_some());
+    tap_page_action(app, PageAction::HiddenFlow);
     confirm(app);
 }
 
@@ -62,6 +64,7 @@ fn custom_fixed_page_flows_skip_pages_in_paged_and_continuous_views_and_resume_n
         let (x, y) = center(super::super::overview_tile(index));
         app.input(Input::LongTap(x, y));
         assert!(app.flow_popup.is_some());
+        tap_page_action(&mut app, PageAction::HiddenFlow);
         confirm(&mut app);
     }
     let id = app.open_book_id().unwrap();
@@ -128,6 +131,7 @@ fn custom_fixed_page_flows_skip_pages_in_paged_and_continuous_views_and_resume_n
     let index = 5 - reopened.overview.as_ref().unwrap().first;
     let (x, y) = center(super::super::overview_tile(index));
     reopened.input(Input::LongTap(x, y));
+    tap_page_action(&mut reopened, PageAction::HiddenFlow);
     confirm(&mut reopened);
     reopened.follow_fixed(5, None).unwrap();
     assert_eq!(reopened.fixed.as_ref().unwrap().reading.page(), 5);
@@ -214,6 +218,7 @@ fn custom_flow_markers_skip_source_ranges_and_preserve_explicit_jumps_and_repagi
     );
     let (x, y) = center(super::super::overview_tile(1));
     app.input(Input::LongTap(x, y));
+    tap_page_action(&mut app, PageAction::HiddenFlow);
     capture_test_screen(
         &app,
         &app.fonts,

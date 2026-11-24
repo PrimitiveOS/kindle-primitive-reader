@@ -11,6 +11,11 @@ const PANEL_WIDTH: i32 = WIDTH as i32 - 32;
 const CONTENT_WIDTH: u32 = PANEL_WIDTH as u32 - 32;
 const CONTENT_HEIGHT: u32 = HEIGHT / 3 - 112;
 const HEADER: i32 = 76;
+const MIN_FONT_PIXELS: f32 = 12.0;
+// Match the renderer's physical-font ceiling across base and inline runs.
+const MAX_FONT_PIXELS: f32 = 192.0;
+// A second size for lines with large authored spacing in the 448 px viewport.
+const TALL_LINE_FONT_PIXELS: f32 = 140.0;
 
 #[cfg(test)]
 mod tests;
@@ -183,7 +188,10 @@ impl Footnote {
         let mut end = start.clone();
         end.offset += text.len();
         let selection = self.preview.select_range(&start, &end).unwrap();
-        let r = self.preview.selection_rects(self.page, &selection)[0];
+        let rects = self.preview.selection_rects(self.page, &selection);
+        let r = rects
+            .first()
+            .unwrap_or_else(|| panic!("{text} is not on footnote page {}", self.page));
         let content = self.content();
         (
             (content.x + r.x + r.width / 2) as f32,
@@ -192,6 +200,10 @@ impl Footnote {
     }
     pub(super) fn test_page(&self) -> (usize, usize) {
         (self.page, self.preview.page_count())
+    }
+    pub(super) fn test_word_page(&self, text: &str) -> usize {
+        let anchor = self.preview.matches(text).into_iter().next().unwrap();
+        self.preview.page_for(&anchor).unwrap()
     }
     pub(super) fn test_selected(&self) -> Option<&str> {
         self.selection.as_ref().map(|s| s.text.as_str())
@@ -230,27 +242,22 @@ impl Reader {
         if context.kind == Reference::Ordinary {
             return false;
         }
-        // Logical document units do not introduce a new popup-size preference.
-        // Preserve the prior compact popup's retained pixel baseline.
-        let popup_font = if reading.config.settings.logical_font_size.is_some() {
-            self.library
-                .state(active.id)
-                .and_then(|state| state.preferences.font_size)
-                .unwrap_or(Settings::default().font_size)
-        } else {
-            reading.config.settings.font_size
-        };
+        let preview_font = self
+            .controls
+            .footnote_font_size
+            .requested_pixels(reading.config.settings);
         let settings = Settings {
             width: CONTENT_WIDTH,
             height: CONTENT_HEIGHT,
+            status_header_height: 0,
             margin: 16,
             margin_sides: Some(22),
             margin_left: None,
             margin_right: None,
             margin_top: Some(8),
             margin_bottom: Some(8),
-            font_size: (popup_font - 2.0).clamp(18.0, 64.0),
-            // The existing compact popup keeps its independent physical-pixel policy.
+            font_size: preview_font.clamp(MIN_FONT_PIXELS, MAX_FONT_PIXELS),
+            // The popup size has already been converted to physical pixels.
             logical_font_size: None,
             ..reading.config.settings
         };
@@ -292,27 +299,47 @@ impl Reader {
             ) else {
                 return Ok(None);
             };
-            let mut preview = Probe::from_book_with_font_loader(
-                book,
-                Engine::Parley,
-                settings,
-                index,
-                Some(excerpt),
-                &reading.config.user_hyphenation,
-                // KOReader's extracted popup has a separate stylesheet context.
-                // Main-book tweaks must not hide or restyle the extracted note.
-                &crate::user_styles::Snapshot::default(),
-                || {
-                    if self.controls.footnote_book_font
-                        && reading.config.fonts != self.fonts
-                        && let Ok(fonts) = crate::font_context(&reading.config.fonts)
-                    {
-                        return Ok(fonts);
+            let render = |book, settings| {
+                Probe::from_book_with_font_loader(
+                    book,
+                    Engine::Parley,
+                    settings,
+                    index,
+                    Some(excerpt.clone()),
+                    &reading.config.user_hyphenation,
+                    // Keep the independent stylesheet context of the popup.
+                    &crate::user_styles::Snapshot::default(),
+                    || {
+                        if self.controls.footnote_book_font
+                            && reading.config.fonts != self.fonts
+                            && let Ok(fonts) = crate::font_context(&reading.config.fonts)
+                        {
+                            return Ok(fonts);
+                        }
+                        crate::font_context(&self.fonts)
+                    },
+                )
+            };
+            let mut preview = match render(book, settings) {
+                Err(error)
+                    if error.downcast_ref::<crate::PageContentTooTall>().is_some()
+                        && settings.font_size > TALL_LINE_FONT_PIXELS =>
+                {
+                    let book = Book::open(&reading.config.book).map_err(io::Error::other)?;
+                    if book.revision() != reading.probe.book {
+                        return Ok(None);
                     }
-                    crate::font_context(&self.fonts)
-                },
-            )
-            .map_err(io::Error::other)?;
+                    render(
+                        book,
+                        Settings {
+                            font_size: TALL_LINE_FONT_PIXELS,
+                            ..settings
+                        },
+                    )
+                    .map_err(io::Error::other)?
+                }
+                result => result.map_err(io::Error::other)?,
+            };
             let frame = Footnote::frame(&mut preview, 0).map_err(io::Error::other)?;
             Ok(Some((preview, frame)))
         });

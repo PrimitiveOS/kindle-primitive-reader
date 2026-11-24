@@ -45,6 +45,35 @@ separate from Oasis acceptance. Schedule only relevant reading controls from
 this inventory; excluded controls are not implementation tasks, and inventory
 counts do not measure completed parity.
 
+## Reader 0.1.40 verification plan
+
+Add and remove bookmarks from PDF and EPUB thumbnails. Keep the reading
+location and jump history, including when an EPUB bookmark repaginates.
+Check publisher image maximum dimensions in portrait and landscape; follow
+an inline passage through the change and open the full illustration. Compare
+PDF crop bounds for edge specks, rotated pages, shaded paper and sparse ink
+with the pinned KOReader detector. Retest the existing default reading footer.
+[Thumbnail bookmarks](bookmark-browser.md) · [Publisher illustrations](publisher-image-maxima.md) · [Scan crop sample](scan-margin-specks.md)
+
+## Reader 0.1.39 verification plan
+
+Cycle enabled custom footer items through the hidden step in EPUB and PDF.
+Check the default chapter-page label, ticks and Exit, locked taps, and clock
+refresh. Open a footnote with a relative and a fixed size, page through a
+large note, and return to the original passage. Verify saved choices after
+reopen and capture the settings and reading views. Hold a PDF thumbnail to
+add, rename or remove its chapter. Confirm Save and Cancel return to the
+same thumbnails and keep the current page, bookmark and jump history.
+[Edit chapters from thumbnails](contents-list-settings.md#edit-a-pdf-chapter-from-page-browser)
+[Footer items](footer-item-cycle.md) · [Footnote size](footnote-export-roots.md#preview-font-size)
+
+### Folder order
+
+Compare natural name, file name, file type and reverse order with the pinned
+KOReader file chooser. Test the saved choice after reopen, physical pagination,
+retained search result ranking and page, traversal between EPUB and PDF, and
+the existing next-file end action. [Folder order controls](document-end.md#choose-folder-order)
+
 ## Reader 0.1.38 verification plan
 
 Compare the optional top header’s published chapter marks across an entire

@@ -985,7 +985,14 @@ impl FixedReading {
         self.crop_seeds = seeds;
         self.detected_crops.get_mut().clear();
         if self.view.semi_auto_crop {
-            self.restore_view(self.view)?;
+            let resolved = self.resolve_crop(self.page, self.view)?;
+            if resolved != self.view {
+                if let Some(anchor) = self.history_point() {
+                    self.jump_to(self.page, Some(&FixedJump::LinkPoint(anchor)))?;
+                } else {
+                    self.restore_view(resolved)?;
+                }
+            }
         }
         Ok(())
     }

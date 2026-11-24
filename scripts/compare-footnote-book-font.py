@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Execute pinned KOReader's footnote font switch and face selection in Lua."""
+"""Execute pinned KOReader's footnote font switches and sizing in Lua."""
 import argparse
 import hashlib
 from pathlib import Path
@@ -28,15 +28,26 @@ link = load("readerlink.lua")
 widget = load("footnotewidget.lua")
 lua = LuaRuntime(unpack_returned_tuples=True)
 lua.execute("""
-ReaderLink = {}
+ReaderLink = {document = {configurable = {font_size = 21}}}
 local preferences = {}
 G_reader_settings = {
     isTrue = function(_, key) return preferences[key] == true end,
     flipNilOrFalse = function(_, key) preferences[key] = not preferences[key] end,
+    readSetting = function(_, key) return preferences[key] end,
+    saveSetting = function(_, key, value) preferences[key] = value end,
+    delSetting = function(_, key) preferences[key] = nil end,
+    has = function(_, key) return preferences[key] ~= nil end,
 }
 Device = {isTouchDevice = function() return true end}
-Screen = {scaleBySize = function(_, value) return value end}
+Screen = {
+    getWidth = function() return 1264 end,
+    scaleBySize = function(_, value) return value * 2 end,
+}
 InputContainer = {extend = function(_, attrs) return attrs end}
+UIManager = {
+    show = function(_, widget) shown = widget end,
+    close = function() shown = nil end,
+}
 _ = function(value) return value end
 tap_links, swipe_links, previews = true, false, true
 isTapToFollowLinksOn = function() return tap_links end
@@ -45,6 +56,9 @@ isFootnoteLinkInPopupEnabled = function() return previews end
 isPreferFootnoteEnabled = function() return false end
 local real_require = require
 require = function(module)
+    if module == "ui/widget/spinwidget" then
+        return {new = function(_, widget) return widget end}
+    end
     if module ~= "document/credocument" then return real_require(module) end
     return {engineInit = function()
         return {getFontFaceFilenameAndFaceIndex = function(name, bold, italic)
@@ -98,3 +112,41 @@ lua.execute("previews = false")
 assert not setting.enabled_func()
 
 print(f"KOReader {PIN} on {lua.lua_implementation}: popup default uses Noto Sans; the saved switch enables configured face lookup")
+
+lua.execute("previews = true")
+size = lua.execute("""
+    for _, item in ipairs(ReaderLink:getFootnoteSettingsMenuTable()[2].sub_item_table) do
+        if item.text == "Footnote popup font size" then return item end
+    end
+""")
+start = widget.index('    local font_size = G_reader_settings:readSetting("footnote_popup_absolute_font_size")')
+end = widget.index('    local font_css = ""', start)
+font_size = lua.eval("function(pixels) local self = {doc_font_size = pixels}\n" + widget[start:end] + "return font_size end")
+assert size.enabled_func()
+assert font_size(46) == 44
+size.callback()
+spin = lua.globals().shown
+assert (spin.value, spin.value_min, spin.value_max) == (-2, -10, 5)
+for offset in (-10, 5):
+    spin.value = offset
+    spin.callback(spin)
+    assert font_size(46) == 46 + offset
+    assert font_size(76) == 76 + offset
+spin.extra_callback()
+spin = lua.globals().shown
+assert (spin.value, spin.value_min, spin.value_max) == (42, 12, 255)
+assert font_size(46) == 51
+for absolute in (12, 255):
+    spin.value = absolute
+    spin.callback(spin)
+    assert font_size(46) == font_size(76) == absolute * 2
+size.callback()
+spin = lua.globals().shown
+assert spin.value == 255
+spin.extra_callback()
+spin = lua.globals().shown
+assert spin.value == -2
+assert font_size(46) == 510
+spin.callback(spin)
+assert font_size(46) == 44
+print("Footnote size callbacks: relative −10…+5 px (default −2) and fixed 12…255; saving a mode replaces the other")

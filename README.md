@@ -56,6 +56,8 @@ The development candidate offers **Text › Type** presets and a decimal **More*
 
 At the end of a book, Reader can show actions, mark the book as finished, open the next readable file or return to Library. [End-of-book actions](docs/document-end.md)
 
+Choose **Sort** in Library to set the order shared by the folder picker and previous or next file actions. [Folder ordering](docs/document-end.md#choose-folder-order)
+
 Choose when Reader saves your position, bookmarks and notes, or save them immediately from the reading tools. [Save reading data](docs/metadata-save.md)
 
 Browse page bookmarks, highlights and notes across books from **Library › Bookmark browser**. Choose History, collections, selected books, archived records or a folder. Select books by author, series, language or keyword, and inspect available covers and descriptions. Preview a mark, then tap **View in book** to open its passage. [Bookmark browser](docs/bookmark-browser.md)
@@ -297,7 +299,7 @@ for a local ARMHF build.
 | Preview an EPUB footnote | In the top Navigation panel, turn on **Footnote previews** and tap a note reference. Hold a word for its definition, close the note to keep reading, or choose **Open in book** and use **Previous location** to return. [Footnote preview](docs/screenshots/footnote-preview.png) |
 | Track progress | Tap the footer for progress or time left in the chapter or book. Hold it to preview a position, return to your start, or choose where to continue. [Skim workflow and screenshot](docs/skim-navigation.md) · [Reading-time estimates](docs/reading-time-estimates.md) · [Footer screenshot](docs/screenshots/reading-footer.png) |
 | Customize touch | Assign an action to a corner tap, hold or edge swipe in Reading gestures. [Gesture grid](docs/screenshots/reading-gestures.png) |
-| Edit the outline | Add a named entry at a reading location and jump back from Contents. [Custom contents](docs/screenshots/custom-contents.png) |
+| Edit the outline | Add a named entry at a reading location and jump back from Contents. Hold a PDF thumbnail in Page browser to add or edit a chapter on that page. [Custom contents](docs/contents-list-settings.md#edit-a-pdf-chapter-from-page-browser) |
 | Read a scan | Straighten a tilted PDF or DjVu page. Run offline OCR when the embedded text is missing or inaccurate. [Scan controls](docs/scan-controls.md) |
 | Look up a passage | Open a dictionary, Wikipedia or translation from the selection sheet. Online lookup requires choosing a provider action. [Lookup controls and privacy](docs/online-lookups.md) |
 

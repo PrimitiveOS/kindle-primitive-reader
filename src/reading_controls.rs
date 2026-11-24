@@ -22,6 +22,8 @@ pub(crate) const MAX_VERY_LONG_PRESS_TENTHS: u16 = 200;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 pub(crate) struct ReadingControls {
+    #[serde(skip_serializing_if = "crate::library::FolderOrder::is_default")]
+    pub folder_order: crate::library::FolderOrder,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub search_rows: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -72,6 +74,8 @@ pub(crate) struct ReadingControls {
     pub prefer_footnotes: bool,
     #[serde(skip_serializing_if = "is_false")]
     pub footnote_book_font: bool,
+    #[serde(skip_serializing_if = "crate::footnotes::font_size::FontSize::is_default")]
+    pub footnote_font_size: crate::footnotes::font_size::FontSize,
     /// Show the all-results list when Find is used on selected text.
     #[serde(skip_serializing_if = "is_false")]
     pub selection_search_all: bool,
@@ -131,6 +135,8 @@ pub(crate) struct ReadingControls {
     pub footer_items: u16,
     #[serde(default, skip_serializing_if = "is_zero_u64")]
     pub footer_order: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub footer_item_cycle: Option<FooterItemCycle>,
     #[serde(skip_serializing_if = "FooterSeparator::is_default")]
     pub footer_separator: FooterSeparator,
     /// Show KOReader's optional hairline above the status footer.
@@ -653,7 +659,15 @@ impl StatusBar {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default)]
+pub(crate) struct FooterItemCycle {
+    /// The unselected step hides the status until the next tap.
+    pub selected: Option<FooterItem>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
 #[repr(u8)]
 pub(crate) enum FooterItem {
     CurrentPage,
@@ -1297,6 +1311,9 @@ impl ReadingControls {
                 return Err(io::Error::other("Reading controls settings are too large"));
             }
             let mut controls: Self = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+            if !controls.footnote_font_size.valid() {
+                controls.footnote_font_size = crate::footnotes::font_size::FontSize::default();
+            }
             if controls.auto_turn_seconds > MAX_AUTO_TURN_SECONDS {
                 controls.auto_turn_seconds = 0;
                 controls.auto_turn_enabled = false;

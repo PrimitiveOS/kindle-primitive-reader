@@ -46,6 +46,7 @@ mod font_render_tests;
 mod footer_custom_text;
 mod footer_font_face;
 mod footer_presets;
+mod footnote_font;
 mod footnote_popup;
 mod gestures;
 mod hidden_flows;
@@ -59,6 +60,7 @@ mod nearby_search;
 #[cfg(test)]
 mod nonlinear_tests;
 mod online_panel;
+mod overview_bookmarks;
 mod progress_markers;
 mod quick_display;
 mod read_alarm;
@@ -106,8 +108,8 @@ use crate::koreader_import::{self, ExportEntry, QuoteMatch, QuoteResolver};
 use crate::koreader_sidecar::{self, SidecarProgress};
 use crate::library::{
     BookMetadata, BookPreferences, BookState, Bookmark, DocumentFormat, FixedPreferences,
-    FixedTileAxis, FolderDirection, Highlight, Library, LibraryBook, PdfHighlight, ReadingPosition,
-    ReadingStatus,
+    FixedTileAxis, FolderDirection, FolderOrder, Highlight, Library, LibraryBook, PdfHighlight,
+    ReadingPosition, ReadingStatus,
 };
 use crate::ocr_job::{OcrAssets, OcrJob};
 use crate::pdf_annotations;
@@ -174,6 +176,7 @@ enum Screen {
     Footnote,
     Library,
     LibraryFind,
+    FolderOrder,
     OrganizeLibrary,
     BookmarkBrowser(bookmark_browser::Page),
     ReadingHistory(reading_history::Page),
@@ -246,6 +249,7 @@ enum Screen {
     CustomBookmarks,
     Links,
     LinkSettings,
+    FootnoteFontSize(footnote_font::Mode),
     Bookmarks,
     Typography,
     ReadingFonts,
@@ -300,6 +304,7 @@ impl Screen {
             Self::Footnote => "Footnote",
             Self::Library => "Reader",
             Self::LibraryFind => "Find a document",
+            Self::FolderOrder => "Folder order",
             Self::OrganizeLibrary => "Library organization",
             Self::BookmarkBrowser(page) => page.title(),
             Self::ReadingHistory(page) => page.title(),
@@ -390,6 +395,7 @@ impl Screen {
             Self::GeneratedContents => "Generated outline",
             Self::Links => "Links on this page",
             Self::LinkSettings => "Links",
+            Self::FootnoteFontSize(_) => "Footnote popup font size",
             Self::Bookmarks | Self::FixedBookmarks => "Bookmarks",
             Self::Typography => "Text settings",
             Self::ReadingFonts => "Reading font",
@@ -442,6 +448,7 @@ enum Action {
     CurrentBookFolder,
     Continue,
     ClearLibraryFilter,
+    SetFolderOrder(FolderOrder),
     ListBooks(BookList),
     OrganizeCurrent,
     BookmarkBrowser(bookmark_browser::Command),
@@ -892,15 +899,17 @@ impl Reader {
     }
 
     fn open_data(documents: &Path, state: &Path, fonts: Vec<PathBuf>) -> io::Result<Self> {
-        let (library, browser) = with_storage(|| {
+        let library = with_storage(|| {
             let mut library = Library::open(documents, state)?;
             library.scan()?;
-            let browser = FileBrowser::new(library.browse(Path::new(""))?);
-            Ok((library, browser))
+            Ok(library)
         })?;
         let data = state.parent().unwrap_or(documents);
         let controls_path = data.join("reading-controls.json");
         let controls = ReadingControls::load(&controls_path, !library.recents().is_empty());
+        let browser = FileBrowser::new(with_storage(|| {
+            library.browse_with_order(Path::new(""), controls.folder_order)
+        })?);
         let fonts_directory = data.join("fonts");
         let footer_font_path = data.join("status-bar-font.json");
         let footer_font_file = footer_font_face::load(&footer_font_path, &fonts_directory);
@@ -1198,6 +1207,9 @@ impl Reader {
         if let Some(mut reading) = fixed {
             if let Some(state) = self.library.state(id) {
                 reading.load_crop_seeds(state.pdf_crop_seeds.clone())?;
+                if fixed_preferences.semi_auto_crop {
+                    fixed_preferences = reading.preferences();
+                }
             }
             let flows = self
                 .library
@@ -1682,6 +1694,7 @@ impl Reader {
         self.prepare_logical_font_editor();
         self.prepare_line_spacing_editor();
         self.prepare_word_spacing_editor();
+        self.prepare_footnote_font_editor();
         self.map_window = fixed_book_map::MapWindow::default();
         self.sync_auto_turn(Instant::now());
         self.update_stats_activity(Instant::now());
@@ -2409,6 +2422,9 @@ impl Reader {
         }
         if self.screen == Screen::Library {
             return self.library_items().collect();
+        }
+        if self.screen == Screen::FolderOrder {
+            return self.folder_order_items();
         }
         if let Some(items) = self.organization_items() {
             return items;
@@ -3331,6 +3347,7 @@ impl Reader {
                 self.book_list = None;
                 self.show(Screen::OrganizeLibrary);
             }
+            Action::SetFolderOrder(order) => self.set_folder_order(order)?,
             Action::SetReadingControls(mut controls) => {
                 if controls.status_bar == crate::reading_controls::StatusBar::Custom
                     && self.controls.status_bar != crate::reading_controls::StatusBar::Custom
@@ -3339,6 +3356,16 @@ impl Reader {
                     if controls.footer_items == 0 {
                         controls.footer_items = crate::reading_controls::FooterItem::DEFAULT_MASK;
                     }
+                }
+                if let Some(cycle) = &mut controls.footer_item_cycle
+                    && cycle
+                        .selected
+                        .is_some_and(|item| controls.footer_items & item.bit() == 0)
+                {
+                    cycle.selected =
+                        crate::reading_controls::FooterItem::ordered(controls.footer_order)
+                            .into_iter()
+                            .find(|item| controls.footer_items & item.bit() != 0);
                 }
                 let reflow_layout_changed = controls.overlap_footer != self.controls.overlap_footer;
                 let resized = if reflow_layout_changed {
@@ -4269,14 +4296,7 @@ impl Reader {
         };
         let state = self.library.remember(entry, id, title);
         if !already_bookmarked {
-            if state.bookmarks.len() >= 256 {
-                return Err("This book has reached its bookmark limit".into());
-            }
-            state.bookmarks.push(Bookmark {
-                created_at: crate::mark_time::now(),
-                label,
-                position,
-            });
+            overview_bookmarks::push_page_bookmark(state, position, label)?;
             self.mark_book_changed();
         }
         self.show(screen);
@@ -4305,22 +4325,20 @@ impl Reader {
     fn current_bookmark_index(&self) -> Option<usize> {
         let book = self.library.state(self.open_book_id()?)?;
         if let Some(fixed) = &self.fixed {
-            return book
-                .bookmarks
-                .iter()
-                .position(|mark| mark.position.page == fixed.reading.page());
+            return overview_bookmarks::bookmark_index_for_page(
+                book,
+                None,
+                fixed.reading.page(),
+                None,
+            );
         }
         let reading = &self.active.as_ref()?.reading;
-        book.bookmarks.iter().position(|mark| {
-            let position = &mark.position;
-            position.chapter == reading.chapter
-                && position
-                    .anchor
-                    .as_ref()
-                    .and_then(|anchor| reading.probe.page_for(anchor))
-                    .unwrap_or(position.page)
-                    == reading.page
-        })
+        overview_bookmarks::bookmark_index_for_page(
+            book,
+            Some(reading.chapter),
+            reading.page,
+            Some(&reading.probe),
+        )
     }
 
     fn toggle_bookmark(&mut self) -> Result<()> {
@@ -4929,6 +4947,9 @@ impl Reader {
     }
 
     fn handle_page_number(&mut self, input: Input) -> Change {
+        if let Some(change) = self.footnote_font_input(input) {
+            return change;
+        }
         if let Some(change) = self.logical_font_input(input) {
             return change;
         }
@@ -4946,6 +4967,7 @@ impl Reader {
         {
             self.show(match self.screen {
                 Screen::NumberingValue(field) => field.parent(),
+                Screen::FootnoteFontSize(_) => Screen::LinkSettings,
                 Screen::FooterCustomText | Screen::FooterCustomTextGuide => Screen::FooterSettings,
                 _ if self.fixed.is_some() => Screen::FixedTools,
                 _ => Screen::BookTools,
@@ -4956,7 +4978,10 @@ impl Reader {
             return Change::None;
         };
         let layout = Layout::new(WIDTH, HEIGHT, 4, 5);
-        let action = if matches!(self.screen, Screen::NumberingValue(_)) {
+        let action = if matches!(
+            self.screen,
+            Screen::NumberingValue(_) | Screen::FootnoteFontSize(_)
+        ) {
             "Set"
         } else if self.screen == Screen::FooterCustomText {
             "Save"
@@ -4970,6 +4995,12 @@ impl Reader {
             match self.screen {
                 Screen::NumberingValue(field) => {
                     return match self.apply_numbering_input(field) {
+                        Ok(()) => Change::Partial,
+                        Err(error) => self.report(error),
+                    };
+                }
+                Screen::FootnoteFontSize(mode) => {
+                    return match self.apply_footnote_font_input(mode) {
                         Ok(()) => Change::Partial,
                         Err(error) => self.report(error),
                     };
@@ -5247,6 +5278,7 @@ impl Reader {
                     CAPTION.center(),
                 );
             }
+            self.draw_overview_bookmark(canvas, rect, overview.chapter, page);
             canvas.button(
                 Rect::new(rect.x + 18, rect.y + rect.h - 84, rect.w - 36, 68),
                 &label,
@@ -5325,7 +5357,7 @@ impl Reader {
                 else {
                     return Change::None;
                 };
-                let result = self.show_flow_page_popup(overview.chapter, overview.first + index);
+                let result = self.hold_overview_page(overview.chapter, overview.first + index);
                 return match result {
                     Ok(()) => Change::Partial,
                     Err(error) => self.report(error),
@@ -7391,6 +7423,7 @@ impl Reader {
                 | Screen::EditNote
                 | Screen::GoToPage
                 | Screen::NumberingValue(_)
+                | Screen::FootnoteFontSize(_)
                 | Screen::PdfPassword
         ) {
             let (hint, action) = match self.screen {
@@ -7408,6 +7441,7 @@ impl Reader {
                     "Save",
                 ),
                 Screen::PdfPassword => ("PDF password", "Open"),
+                Screen::FootnoteFontSize(mode) => (mode.hint(), "Set"),
                 Screen::NumberingValue(NumberField::ContentDpi(_)) => {
                     ("Content zoom: 0 to 300 dpi", "Set")
                 }
@@ -7486,6 +7520,9 @@ impl Reader {
             self.draw_logical_font(canvas);
             self.draw_line_spacing(canvas);
             self.draw_word_spacing(canvas);
+            if let Screen::FootnoteFontSize(mode) = self.screen {
+                self.draw_footnote_font_editor(canvas, mode);
+            }
             if self.can_paste_text() {
                 external_link::draw_paste(canvas);
             }
@@ -7577,6 +7614,13 @@ impl Reader {
                         }
                         Action::LibraryExport(library_export::Command::ToggleKindleClippings) => {
                             RowAccessory::Toggle(self.library_export.kindle_clippings_enabled())
+                        }
+                        Action::SetReadingControls(controls)
+                            if self.screen == Screen::FooterSettings
+                                && controls.footer_item_cycle.is_some()
+                                    != self.controls.footer_item_cycle.is_some() =>
+                        {
+                            RowAccessory::Toggle(self.controls.footer_item_cycle.is_some())
                         }
                         Action::SetReadingControls(controls)
                             if self.screen == Screen::SearchSettings
@@ -8344,7 +8388,10 @@ impl App for Reader {
         }
         if matches!(
             self.screen,
-            Screen::GoToPage | Screen::NumberingValue(_) | Screen::FooterCustomText
+            Screen::GoToPage
+                | Screen::NumberingValue(_)
+                | Screen::FooterCustomText
+                | Screen::FootnoteFontSize(_)
         ) {
             return self.handle_page_number(input);
         }
@@ -8451,7 +8498,7 @@ impl App for Reader {
             Input::Tap(x, y) if primitive_ui::back_button(WIDTH as i32).contains(x, y) => {
                 match self.screen {
                     Screen::LibraryExport(page) => self.back_from_library_export(page),
-                    Screen::OrganizeLibrary => self.show(Screen::Library),
+                    Screen::OrganizeLibrary | Screen::FolderOrder => self.show(Screen::Library),
                     Screen::BookList if matches!(self.book_list, Some(BookList::Author(_))) => {
                         self.book_list = Some(BookList::Authors);
                         self.show(Screen::BookList);
@@ -12514,7 +12561,11 @@ mod tests {
         let panel = note.panel();
         assert!(panel.y >= HEIGHT as i32 * 2 / 3);
         assert!(panel.bottom() <= HEIGHT as i32);
-        let (wx, wy) = note.test_word("shore");
+        let shore_page = note.test_word_page("shore");
+        for _ in 0..shore_page {
+            assert_eq!(app.input(Input::PageForward), Change::Partial);
+        }
+        let (wx, wy) = app.footnote.as_ref().unwrap().test_word("shore");
         capture_test_screen(&app, &fonts, "READER_FOOTNOTE_SCREENSHOT", false);
         let font_paths: Vec<_> = fonts.iter().map(|p| p.display().to_string()).collect();
         let mut canvas = Canvas::new(WIDTH, HEIGHT, &font_paths).unwrap();
@@ -12593,6 +12644,10 @@ mod tests {
         app.activate(Action::ReturnToLocation).unwrap();
         assert_eq!(position(&app.active.as_ref().unwrap().reading), original);
         app.input(Input::Tap(x, y));
+        let return_page = app.footnote.as_ref().unwrap().test_word_page("Return");
+        for _ in 0..return_page {
+            assert_eq!(app.input(Input::PageForward), Change::Partial);
+        }
         let (bx, by) = app.footnote.as_ref().unwrap().test_word("Return");
         app.input(Input::Tap(bx, by));
         assert_eq!(app.screen, Screen::Book);
