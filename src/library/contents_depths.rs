@@ -10,11 +10,13 @@ pub(crate) struct ContentsDepths {
     ignored: BTreeSet<usize>,
     #[serde(skip_serializing_if = "super::is_false")]
     pub(crate) bind_navigation: bool,
+    #[serde(skip_serializing_if = "super::is_false")]
+    pub(crate) bind_title: bool,
 }
 
 impl ContentsDepths {
     pub(crate) fn is_default(&self) -> bool {
-        !self.bind_navigation && self.ignored.is_empty()
+        !self.bind_navigation && !self.bind_title && self.ignored.is_empty()
     }
 
     pub(crate) fn has_ignored(&self) -> bool {
@@ -45,6 +47,7 @@ mod tests {
         let local: BookState =
             serde_json::from_str(r#"{"id":7,"path":"book.epub","title":"Book"}"#).unwrap();
         assert!(local.contents_depths.use_for_navigation(1));
+        assert!(!local.contents_depths.bind_title);
         assert!(
             serde_json::to_value(&local)
                 .unwrap()
@@ -54,12 +57,14 @@ mod tests {
 
         let mut source = local.clone();
         source.contents_depths.toggle(1);
+        source.contents_depths.bind_title = true;
         assert!(source.contents_depths.use_for_navigation(1));
         source.contents_depths.bind_navigation = true;
         let source: BookState =
             serde_json::from_value(serde_json::to_value(source).unwrap()).unwrap();
         assert!(!source.contents_depths.use_for_navigation(1));
         assert!(source.contents_depths.use_for_navigation(0));
+        assert!(source.contents_depths.bind_title);
 
         let (restored, _) = merge_states(&[], std::slice::from_ref(&source));
         assert_eq!(restored[0].contents_depths, source.contents_depths);

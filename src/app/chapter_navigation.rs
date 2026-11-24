@@ -18,6 +18,7 @@ pub(super) enum Direction {
 
 pub(super) enum LevelSetting {
     BindNavigation,
+    BindTitle,
     ToggleLevel(usize),
 }
 
@@ -132,6 +133,23 @@ impl Reader {
                 "The reading header uses the included levels for this book"
             },
         ));
+        if self.has_whole_book_marker_coordinates() {
+            rows.push(
+                Item::new(
+                    "Footer chapter title",
+                    if levels.has_ignored() {
+                        Action::ChapterLevel(LevelSetting::BindTitle)
+                    } else {
+                        Action::Heading
+                    },
+                )
+                .detail(if levels.has_ignored() {
+                    "Use titles from the included levels"
+                } else {
+                    "Turn off a level to enable this option"
+                }),
+            );
+        }
         rows
     }
 
@@ -140,6 +158,7 @@ impl Reader {
             .and_then(|book| self.library.state(book))
             .is_some_and(|state| match *setting {
                 LevelSetting::BindNavigation => state.contents_depths.bind_navigation,
+                LevelSetting::BindTitle => state.contents_depths.bind_title,
                 LevelSetting::ToggleLevel(depth) => state.contents_depths.includes(depth),
             })
     }
@@ -162,6 +181,9 @@ impl Reader {
     }
 
     pub(super) fn set_chapter_level(&mut self, setting: LevelSetting) -> Result<()> {
+        if matches!(setting, LevelSetting::BindTitle) && !self.has_whole_book_marker_coordinates() {
+            return Ok(());
+        }
         let book = self.open_book_id().ok_or("Open a document first")?;
         let levels = &mut self
             .library
@@ -172,7 +194,10 @@ impl Reader {
             LevelSetting::BindNavigation if levels.has_ignored() => {
                 levels.bind_navigation = !levels.bind_navigation;
             }
-            LevelSetting::BindNavigation => return Ok(()),
+            LevelSetting::BindTitle if levels.has_ignored() => {
+                levels.bind_title = !levels.bind_title;
+            }
+            LevelSetting::BindNavigation | LevelSetting::BindTitle => return Ok(()),
             LevelSetting::ToggleLevel(depth) => levels.toggle(depth),
         }
         self.mark_book_changed();
