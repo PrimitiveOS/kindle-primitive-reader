@@ -18,6 +18,7 @@ fn harbour_pdf() -> Vec<u8> {
     let pages = pdf.new_object_id();
     let index = pdf.new_object_id();
     let chart = pdf.new_object_id();
+    let log = pdf.new_object_id();
     let font = pdf.add_object(dictionary! {
         "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
     });
@@ -51,12 +52,17 @@ fn harbour_pdf() -> Vec<u8> {
         "Type" => "Annot", "Subtype" => "Link", "Rect" => vec![323.into(), 276.into(), 393.into(), 304.into()],
         "Dest" => vec![index.into(), Object::Name(b"Fit".to_vec())],
     });
-    for (page, content, annots) in [
-        (index, index_stream, vec![]),
-        (chart, chart_stream, vec![link.into()]),
+    let log_stream = pdf.add_object(Stream::new(
+        dictionary!(),
+        b"0 g BT /F2 20 Tf 70 380 Td (Harbour log) Tj ET".to_vec(),
+    ));
+    for (page, content, width, annots) in [
+        (index, index_stream, 480, vec![]),
+        (chart, chart_stream, 480, vec![link.into()]),
+        (log, log_stream, 360, vec![]),
     ] {
         pdf.objects.insert(page, dictionary! {
-            "Type" => "Page", "Parent" => pages, "MediaBox" => vec![0.into(), 0.into(), 480.into(), 640.into()],
+            "Type" => "Page", "Parent" => pages, "MediaBox" => vec![0.into(), 0.into(), width.into(), 640.into()],
             "Contents" => content, "Annots" => annots,
             "Resources" => dictionary! { "Font" => dictionary! { "F1" => font, "F2" => bold }},
         }.into());
@@ -64,7 +70,7 @@ fn harbour_pdf() -> Vec<u8> {
     pdf.objects.insert(
         pages,
         dictionary! {
-            "Type" => "Pages", "Kids" => vec![index.into(), chart.into()], "Count" => 2,
+            "Type" => "Pages", "Kids" => vec![index.into(), chart.into(), log.into()], "Count" => 3,
         }
         .into(),
     );
@@ -191,7 +197,7 @@ fn pdf_viewport_preserves_source_crop_rotation_policy_and_actual_hit_geometry() 
     assert_eq!(reading.frame.pixels, original_pixels);
     assert_eq!(reading.preferences(), original_prefs);
     assert_eq!(reading.viewport, ReadingViewport::PORTRAIT);
-    assert_eq!(wide.source_point, anchor);
+    assert_eq!(wide.anchor, Some(ViewportAnchor::PageCenter(anchor)));
     reading.commit_viewport(wide).unwrap();
     assert_eq!(reading.page(), 1);
     assert!((natural_anchor(&reading) - anchor).hypot() < 0.001);
@@ -264,7 +270,10 @@ fn rotated_row_zoom_recomputes_fit_without_changing_source_point_or_annotation()
     reading.commit_viewport(wide).unwrap();
     assert_eq!(reading.view.turns, 1);
     assert_eq!(reading.view.crop, Some(CROP));
-    assert_eq!(reading.retained_viewport_point, Some(anchor));
+    assert_eq!(
+        reading.retained_viewport_anchor,
+        Some(ViewportAnchor::PageCenter(anchor))
+    );
     let after = reading
         .annotation_rectangle(1, annotation)
         .unwrap()
@@ -358,7 +367,10 @@ fn still_images_and_comic_pages_keep_source_geometry_and_refuse_missing_pages() 
         assert!(reading.view.height_fit);
         assert_eq!(reading.view.zoom, 2);
         assert_eq!(reading.view.turns, 3);
-        assert_eq!(reading.retained_viewport_point, Some(anchor));
+        assert_eq!(
+            reading.retained_viewport_anchor,
+            Some(ViewportAnchor::PageCenter(anchor))
+        );
         let back = reading.prepare_viewport(ReadingViewport::PORTRAIT).unwrap();
         reading.commit_viewport(back).unwrap();
         assert!((natural_anchor(reading) - anchor).hypot() < 0.001);
@@ -376,7 +388,7 @@ fn still_images_and_comic_pages_keep_source_geometry_and_refuse_missing_pages() 
 }
 
 #[test]
-fn stale_candidates_and_continuous_layout_are_refused_without_replacing_the_frame() {
+fn stale_candidates_are_refused_without_replacing_the_frame() {
     let bytes = harbour_pdf();
     let mut reading = open_pdf(&bytes, View::default());
     let stale = reading
@@ -393,18 +405,168 @@ fn stale_candidates_and_continuous_layout_are_refused_without_replacing_the_fram
     assert!(reading.commit_viewport(foreign).is_err());
     assert_eq!(reading.frame.pixels, original);
 
-    let continuous = open_pdf(
-        &bytes,
-        View {
-            width_fit: true,
-            continuous: true,
-            ..View::default()
-        },
+    let previous_view = reading.view;
+    let previous_page = reading.page();
+    let stale = reading
+        .prepare_viewport(ReadingViewport::LANDSCAPE)
+        .unwrap();
+    reading.present(previous_page, previous_view).unwrap();
+    assert_eq!(reading.view, previous_view);
+    assert_eq!(reading.page(), previous_page);
+    assert!(reading.commit_viewport(stale).is_err());
+    assert_eq!(reading.frame.pixels, original);
+}
+
+#[test]
+fn continuous_viewport_keeps_its_leading_gap_crops_source_and_pdf_hits() {
+    let bytes = harbour_pdf();
+    let pdf = Pdf::open(bytes.clone()).unwrap();
+    let first_crop = PdfTextRect {
+        x0: 0.10,
+        x1: 0.90,
+        y0: 0.20,
+        y1: 0.50,
+    };
+    let chart_crop = PdfTextRect {
+        y0: 0.30,
+        y1: 0.74,
+        ..CROP
+    };
+    let mut seeds = Seeds::default();
+    seeds.record(
+        0,
+        Seed::from_normalized(first_crop, pdf.page_size(0).unwrap()),
     );
-    assert!(continuous.is_continuous());
-    assert!(
-        continuous
-            .prepare_viewport(ReadingViewport::LANDSCAPE)
-            .is_err()
+    seeds.record(
+        1,
+        Seed::from_normalized(chart_crop, pdf.page_size(1).unwrap()),
     );
+    let tail_crop = PdfTextRect {
+        y0: 0.35,
+        y1: 0.60,
+        ..FULL_PAGE
+    };
+    seeds.record(
+        2,
+        Seed::from_normalized(tail_crop, pdf.page_size(2).unwrap()),
+    );
+    let view = View {
+        width_fit: true,
+        continuous: true,
+        continuous_gap: 48,
+        continuous_crop: Some(ContinuousCrop::Manual),
+        ..View::default()
+    };
+    let mut reading = FixedReading::with_source_height(
+        FixedDocument::Pdf(pdf.into()),
+        0,
+        view,
+        PAGE_HEIGHT,
+        seeds,
+    )
+    .unwrap();
+    let first_bottom = reading.visible[0].rows.end;
+    reading
+        .present(
+            0,
+            View {
+                offset_y: -((first_bottom + 12) as f32),
+                ..view
+            },
+        )
+        .unwrap();
+    assert_eq!((reading.page(), reading.visible[0].index), (0, 1));
+    assert_eq!(reading.visible[0].rows.start, 36);
+    assert_eq!(reading.page_at(30.0), None);
+    assert_eq!(reading.visible[0].crop, Some(chart_crop));
+    let link = reading.visible_links().into_iter().next().unwrap();
+    let text = reading.page_text(1).unwrap();
+    let annotation = text
+        .words
+        .iter()
+        .find(|word| &text.text[word.bytes.clone()] == "NORTH")
+        .unwrap()
+        .bounds;
+    let original_hits = verify_pdf_interactions(&reading, &link, annotation);
+    let anchor = reading.continuous_viewport_anchor().unwrap();
+    assert_eq!(anchor.page, 1);
+    let original_frame = reading.frame.pixels.clone();
+    let original_crop_cache = reading.detected_crops.borrow().clone();
+    let portrait = render(&reading, annotation);
+
+    let wide = reading
+        .prepare_viewport(ReadingViewport::LANDSCAPE)
+        .unwrap();
+    assert_eq!(wide.anchor, Some(ViewportAnchor::Continuous(anchor)));
+    assert_eq!(reading.frame.pixels, original_frame);
+    assert!(*reading.detected_crops.borrow() == original_crop_cache);
+    reading.commit_viewport(wide).unwrap();
+    assert!(reading.is_continuous());
+    assert_eq!((reading.page(), reading.visible[0].index), (0, 1));
+    assert_eq!(reading.visible[0].rows.start, 36);
+    assert_eq!(reading.visible[0].crop, Some(chart_crop));
+    assert_eq!(reading.page_at(30.0), None);
+    assert_eq!(reading.page_at(36.0), Some(1));
+    assert_eq!(reading.continuous_viewport_anchor().unwrap(), anchor);
+    assert_ne!(
+        verify_pdf_interactions(&reading, &link, annotation),
+        original_hits
+    );
+    let landscape = render(&reading, annotation);
+
+    let back = reading.prepare_viewport(ReadingViewport::PORTRAIT).unwrap();
+    reading.commit_viewport(back).unwrap();
+    let returned = render(&reading, annotation);
+    assert_eq!(returned, portrait);
+    assert_eq!(reading.continuous_viewport_anchor().unwrap(), anchor);
+
+    // Near EOF the preceding visible page can shift to fill the viewport.
+    // The actual source point must still stay visible after that policy runs.
+    reading
+        .present(
+            2,
+            View {
+                offset_y: -8000.0,
+                ..reading.view
+            },
+        )
+        .unwrap();
+    let tail = reading.continuous_viewport_anchor().unwrap();
+    let wide = reading
+        .prepare_viewport(ReadingViewport::LANDSCAPE)
+        .unwrap();
+    reading.commit_viewport(wide).unwrap();
+    let tail_page = reading
+        .visible
+        .iter()
+        .find(|page| page.index == tail.page)
+        .unwrap();
+    assert!(tail_page.contains_source(tail.point, 1680));
+    assert_eq!(reading.visible.last().unwrap().rows.end, 1190);
+
+    if let Some(dir) = std::env::var_os("READER_FIXED_VIEWPORT_CAPTURE_DIR") {
+        let dir = PathBuf::from(dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("harbour-continuous.pdf"), bytes).unwrap();
+        for (file, viewport, pixels) in [
+            (
+                "continuous-portrait.png",
+                ReadingViewport::PORTRAIT,
+                portrait,
+            ),
+            (
+                "continuous-landscape.png",
+                ReadingViewport::LANDSCAPE,
+                landscape,
+            ),
+            (
+                "continuous-returned.png",
+                ReadingViewport::PORTRAIT,
+                returned,
+            ),
+        ] {
+            let (width, height) = viewport.dimensions();
+            primitive_app::write_png(&dir.join(file), width, height, &pixels).unwrap();
+        }
+    }
 }

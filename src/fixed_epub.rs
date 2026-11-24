@@ -2,6 +2,7 @@
 use std::cell::{Ref, RefCell};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use parley::FontContext;
 use roxmltree::{Document, ParsingOptions};
@@ -23,7 +24,7 @@ pub struct FixedEpub {
     fonts: FontContext,
     outline: Vec<PdfOutlineItem>,
     printed_pages: Vec<(usize, String)>,
-    cache: RefCell<Option<(usize, ImagePage)>>,
+    cache: RefCell<Option<(usize, Arc<ImagePage>)>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -323,6 +324,21 @@ impl FixedEpub {
         matches.all(|other| other == page).then_some(page)
     }
 
+    /// Keep the displayed page's decoded pixels while composing a candidate frame.
+    pub(crate) fn with_preserved_page_cache<T>(
+        &self,
+        compose: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        let saved = self
+            .cache
+            .try_borrow_mut()
+            .map_err(|_| "The current fixed-layout EPUB page is still in use")?
+            .clone();
+        let frame = compose();
+        self.cache.replace(saved);
+        frame
+    }
+
     /// Load just the requested page and cache its source-size pixels for zoom and pan.
     pub fn decode_page(&self, page: usize) -> Result<Ref<'_, ImagePage>> {
         if page >= self.page_count() {
@@ -361,10 +377,10 @@ impl FixedEpub {
                     blitz::fixed_page(book, &href, &xhtml, self.fonts.clone(), (width, height))?;
                 ImagePage::from_grayscale(width, height, gray)?
             };
-            *cache = Some((page, image));
+            *cache = Some((page, Arc::new(image)));
         }
         Ok(Ref::map(self.cache.borrow(), |cache| {
-            &cache.as_ref().unwrap().1
+            cache.as_ref().unwrap().1.as_ref()
         }))
     }
 }

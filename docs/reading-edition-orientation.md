@@ -43,37 +43,35 @@ and checks its hit region before and after changing viewport.
 
 ## Fixed-page viewport preparation
 
-`FixedReading::prepare_viewport` stages a fully rendered frame for paged
-PDF, still images and single comic pages. It records the current source
-point in the document's upright coordinates. The target viewport recomputes
-the existing fit or tile policy from its own dimensions. It then positions
-the source point as close to the center as the current crop and pan limits
-allow. A later resize uses the same point until the reader moves the page
-or changes the document view. Document rotation or crop stays part of the
-source projection. Screen rotation belongs to the runtime.
+`FixedReading::prepare_viewport` stages a fully rendered frame for paged and
+continuous PDF, still images, comics and fixed-layout EPUB. Paged views keep
+the source point in the document's upright coordinates. The target viewport
+recomputes the existing fit or tile policy and keeps the point as close to the
+center as the crop and pan limits allow. Document rotation and crop remain part
+of the source projection. Screen rotation belongs to the runtime.
 
-Rendering, hit testing, annotation clipping and footer control bounds use
-the prepared viewport. The stage carries its own frame, projected PDF
-regions and scratch deskew cache. `commit_viewport` accepts it only for
-the same reading session and starting view. A failed stage or stale
-candidate leaves the active view in place. The future runtime can present
-the candidate frame, then commit the page geometry and input generation
-together.
+Continuous PDF keeps the first visible cropped source point and any leading
+inter-page gap. It applies per-page crops, hidden flows and the existing
+end-of-document clamp, then checks that the source point is visible before
+accepting the new frame. Comic spreads keep their selected leaf and physical
+slots, including right-to-left spreads and empty slots for hidden pages.
+Fixed-layout EPUB recalculates its publisher and reader spread rules for the
+new dimensions and keeps the selected spine page.
 
-Continuous PDF, fixed EPUB, DjVu and facing comic spreads still use
-their existing session policies. Each needs an explicit viewport transition
-for its page or spread anchor before the app can offer landscape there.
-The full Reader canvas, overlays and device runtime still need the
-negotiated viewport handoff before enabling screen rotation.
+Rendering, hit testing, annotation clipping and footer bounds use the prepared
+viewport. The stage carries its frame and scratch rendering caches.
+`commit_viewport` checks the reading session and the presentation generation
+before replacing the active view. DjVu does not have a staged transition yet.
+The landscape control remains disabled while the Reader canvas, input and
+Launcher overlay handoff are integrated.
 
-Run `cargo test --locked --lib fixed_session::viewport_tests` for the
-fixed-page viewport proofs. Set `READER_FIXED_VIEWPORT_CAPTURE_DIR` to
-save the same authored PDF page in portrait, landscape and returned
-portrait. The tests exercise a link beyond the previous portrait width,
-an exact source annotation, width fitting, rotated row zoom and the
-shared image and comic path.
-
-The Mac renderer produced the same portrait PNG before and after resizing.
-The landscape frame shows the same selected word and the authored PDF link.
-[Portrait](screenshots/fixed-viewport-portrait.png) ·
-[Landscape](screenshots/fixed-viewport-landscape.png)
+Run `cargo test --locked --lib fixed_session::` for the fixed-page transition
+tests. Set `READER_FIXED_VIEWPORT_CAPTURE_DIR` to capture the authored PDF in
+portrait, landscape and returned portrait in both paged and continuous layouts.
+The tests verify projected links and annotations, manual crop and gap retention,
+end-of-document clamping, rotated tile zoom, and the comic and EPUB spread rules.
+The Mac renderer reproduced the original portrait frame after both transitions.
+[Paged portrait](screenshots/fixed-viewport-portrait.png) ·
+[Paged landscape](screenshots/fixed-viewport-landscape.png) ·
+[Continuous portrait](screenshots/fixed-continuous-portrait.png) ·
+[Continuous landscape](screenshots/fixed-continuous-landscape.png)

@@ -86,7 +86,8 @@ impl FrameSize {
 pub(crate) struct FixedReading {
     viewport: ReadingViewport,
     viewport_owner: Rc<()>,
-    retained_viewport_point: Option<Point>,
+    retained_viewport_anchor: Option<ViewportAnchor>,
+    presentation_generation: u64,
     hidden_flows: Option<PageFlows>,
     crop_seeds: Seeds,
     detected_crops: CropCache,
@@ -106,13 +107,27 @@ pub(crate) struct FixedReading {
     pub(crate) ocr_language: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum ViewportAnchor {
+    PageCenter(Point),
+    Continuous(ContinuousAnchor),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ContinuousAnchor {
+    page: usize,
+    point: Point,
+    row: f64,
+}
+
 #[derive(Clone, Copy, PartialEq)]
 struct ViewportBasis {
+    generation: u64,
     viewport: ReadingViewport,
     frame_size: FrameSize,
     page: usize,
     view: View,
-    source_point: Option<Point>,
+    anchor: Option<ViewportAnchor>,
 }
 
 /// A rendered resize waiting for the runtime's frame and input handoff.
@@ -124,8 +139,11 @@ pub(crate) struct PreparedFixedViewport {
     view: View,
     frame: GrayImage,
     visible: Vec<VisiblePage>,
-    source_point: Point,
+    page: usize,
+    anchor: Option<ViewportAnchor>,
     deskew_cache: DeskewCache,
+    epub_spreads: Option<EpubSpreads>,
+    detected_crops: Option<CropCache>,
 }
 
 impl PreparedFixedViewport {
@@ -148,6 +166,28 @@ struct VisiblePage {
     rows: Range<u32>,
     request: RenderRequest,
     correction: Affine,
+}
+
+impl VisiblePage {
+    fn transform(&self) -> Result<Affine> {
+        Ok(self.request.page_to_viewport(self.size)? * self.correction)
+    }
+
+    fn viewport_rect(&self, width: u32) -> hayro::kurbo::Rect {
+        hayro::kurbo::Rect::new(
+            0.0,
+            f64::from(self.rows.start),
+            f64::from(width),
+            f64::from(self.rows.end),
+        )
+    }
+
+    fn contains_source(&self, source: Point, width: u32) -> bool {
+        source_rect(self.size, self.crop.unwrap_or(FULL_PAGE)).contains(source)
+            && self
+                .transform()
+                .is_ok_and(|transform| self.viewport_rect(width).contains(transform * source))
+    }
 }
 
 pub(crate) enum CropEdit {
@@ -639,7 +679,8 @@ impl FixedReading {
         Ok(Self {
             viewport: ReadingViewport::PORTRAIT,
             viewport_owner: Rc::new(()),
-            retained_viewport_point: None,
+            retained_viewport_anchor: None,
+            presentation_generation: 0,
             hidden_flows: None,
             crop_seeds,
             detected_crops,
@@ -1728,7 +1769,7 @@ impl FixedReading {
             return None;
         }
         let page = self.visible.iter().find(|p| p.index == index)?;
-        let transform = page.request.page_to_viewport(page.size).ok()? * page.correction;
+        let transform = page.transform().ok()?;
         let source = transform.inverse() * Point::new(f64::from(x), f64::from(y));
         let normalized = Point::new(
             source.x / f64::from(page.size.0),
@@ -1759,19 +1800,14 @@ impl FixedReading {
         bounds: PdfTextRect,
     ) -> Option<(Quad, hayro::kurbo::Rect)> {
         let page = self.visible.iter().find(|p| p.index == index)?;
-        let transform = page.request.page_to_viewport(page.size).ok()? * page.correction;
+        let transform = page.transform().ok()?;
         let cropped = source_rect(page.size, bounds)
             .intersect(source_rect(page.size, page.crop.unwrap_or(FULL_PAGE)));
         if cropped.is_zero_area() {
             return None;
         }
         let quad = Quad::project(cropped, transform);
-        let clip = hayro::kurbo::Rect::new(
-            0.0,
-            f64::from(page.rows.start),
-            f64::from(self.frame.width),
-            f64::from(page.rows.end),
-        );
+        let clip = page.viewport_rect(self.frame.width);
         let rect = quad.bounds().intersect(clip);
         (!rect.is_zero_area()).then_some((quad, rect))
     }
@@ -2388,11 +2424,12 @@ impl FixedReading {
 
     fn viewport_basis(&self) -> ViewportBasis {
         ViewportBasis {
+            generation: self.presentation_generation,
             viewport: self.viewport,
             frame_size: self.frame_size(),
             page: self.page,
             view: self.view,
-            source_point: self.retained_viewport_point,
+            anchor: self.retained_viewport_anchor,
         }
     }
 
@@ -2409,37 +2446,24 @@ impl FixedReading {
         Ok((size, request.page_to_viewport(size)?))
     }
 
-    /// Keep the current source point visible while reevaluating the existing
-    /// fit and zoom policy against the new logical canvas.
+    /// Prepare the same document location in another logical screen size.
     #[allow(dead_code)] // The live viewport runner is gated on the shared handoff.
     pub(crate) fn prepare_viewport(
         &self,
         target: ReadingViewport,
     ) -> Result<PreparedFixedViewport> {
-        if self.is_continuous()
-            || self.is_spread()
-            || !matches!(
-                self.source,
-                FixedDocument::Pdf(_) | FixedDocument::Image(_) | FixedDocument::Comic(_)
-            )
-        {
-            return Err("This fixed-page layout does not support resizing yet".into());
+        match &self.source {
+            FixedDocument::Epub(book) => {
+                book.with_preserved_page_cache(|| self.prepare_viewport_frame(target))
+            }
+            FixedDocument::Djvu(_) => {
+                Err("This fixed-page layout does not support resizing yet".into())
+            }
+            _ => self.prepare_viewport_frame(target),
         }
-        let basis = self.viewport_basis();
-        let (size, previous) = self.single_page_projection()?;
-        let source_point = self.retained_viewport_point.unwrap_or_else(|| {
-            previous.inverse()
-                * Point::new(
-                    f64::from(basis.frame_size.width) * 0.5,
-                    f64::from(basis.frame_size.height) * 0.5,
-                )
-        });
-        if !source_point.is_finite()
-            || !source_rect(size, self.view.crop.unwrap_or(FULL_PAGE)).contains(source_point)
-        {
-            return Err("The current source point is unavailable".into());
-        }
+    }
 
+    fn prepare_viewport_frame(&self, target: ReadingViewport) -> Result<PreparedFixedViewport> {
         let (width, height) = target.dimensions();
         let viewport_size = FrameSize {
             width,
@@ -2449,63 +2473,220 @@ impl FixedReading {
                 target.page_height()
             },
         };
+        let epub_spreads = self.source.epub_spreads(self.view, viewport_size);
+        let flows = self
+            .hidden_flows
+            .as_ref()
+            .filter(|flows| flows.has_hidden());
+        let mut deskew_cache = DeskewCache::default();
+        let mut detected_crops = None;
+        let (page, view, frame, visible, anchor) = if self.is_continuous() {
+            let FixedDocument::Pdf(pdf) = &self.source else {
+                return Err("Continuous viewport resizing requires PDF".into());
+            };
+            let anchor = self.continuous_viewport_anchor()?;
+            let cache = RefCell::new(self.detected_crops.borrow().clone());
+            let crops = PageCrops::for_view(self.view, &self.crop_seeds, &cache);
+            let view = self.continuous_viewport_view(
+                pdf,
+                anchor,
+                viewport_size,
+                crops,
+                &mut deskew_cache,
+            )?;
+            let (page, view, frame, visible) = continuous_frame(
+                pdf,
+                anchor.page,
+                view,
+                &mut deskew_cache,
+                viewport_size,
+                flows,
+                crops,
+            )?;
+            let resolved = visible.iter().find(|entry| entry.index == anchor.page);
+            if !resolved
+                .is_some_and(|entry| entry.contains_source(anchor.point, viewport_size.width))
+            {
+                return Err(
+                    "The resized page could not keep the current source point visible".into(),
+                );
+            }
+            detected_crops = Some(cache);
+            (
+                page,
+                view,
+                frame,
+                visible,
+                Some(ViewportAnchor::Continuous(anchor)),
+            )
+        } else if self.is_spread()
+            || epub_spreads
+                .as_ref()
+                .is_some_and(|epub| epub.plan.has_facing())
+        {
+            let (page, view, frame, visible) = self.source.presentation(
+                self.page,
+                self.view,
+                epub_spreads.as_ref(),
+                &mut deskew_cache,
+                viewport_size,
+                flows,
+                None,
+            )?;
+            if page != self.page {
+                return Err("The resized spread could not keep the selected page".into());
+            }
+            (page, view, frame, visible, None)
+        } else {
+            let (size, previous) = self.single_page_projection()?;
+            let source_point = match self.retained_viewport_anchor {
+                Some(ViewportAnchor::PageCenter(point)) => point,
+                _ => {
+                    previous.inverse()
+                        * Point::new(
+                            f64::from(self.frame.width) * 0.5,
+                            f64::from(self.frame.height) * 0.5,
+                        )
+                }
+            };
+            if !source_point.is_finite()
+                || !source_rect(size, self.view.crop.unwrap_or(FULL_PAGE)).contains(source_point)
+            {
+                return Err("The current source point is unavailable".into());
+            }
+            let mut view = View {
+                offset_x: 0.0,
+                offset_y: 0.0,
+                ..self.view
+            };
+            if let Some(tile) = view.tile_zoom {
+                view.tile_zoom = Some(tile_zoom(
+                    size,
+                    &view,
+                    viewport_size,
+                    tile.axis,
+                    tile.count_tenths,
+                ));
+            }
+            let correction = match ScanPage::from_document(&self.source) {
+                Some(scan) => scan.correction(self.page, size, &view, &mut deskew_cache)?,
+                None => Affine::IDENTITY,
+            };
+            let request = viewport(size, &mut view, viewport_size);
+            let projected = (request.page_to_viewport(size)? * correction) * source_point;
+            view.offset_x = (f64::from(width) * 0.5 - projected.x) as f32;
+            view.offset_y = (f64::from(viewport_size.height) * 0.5 - projected.y) as f32;
+            let (page, view, frame, visible) = self.source.presentation(
+                self.page,
+                view,
+                epub_spreads.as_ref(),
+                &mut deskew_cache,
+                viewport_size,
+                flows,
+                None,
+            )?;
+            let visible_point = match visible.first() {
+                Some(scan) => scan.contains_source(source_point, frame.width),
+                None => {
+                    let mut view = view;
+                    let request = viewport(size, &mut view, viewport_size);
+                    let point = request.page_to_viewport(size)? * source_point;
+                    (0.0..f64::from(frame.width)).contains(&point.x)
+                        && (0.0..f64::from(frame.height)).contains(&point.y)
+                }
+            };
+            if page != self.page || !visible_point {
+                return Err(
+                    "The resized page could not keep the current source point visible".into(),
+                );
+            }
+            (
+                page,
+                view,
+                frame,
+                visible,
+                Some(ViewportAnchor::PageCenter(source_point)),
+            )
+        };
+        Ok(PreparedFixedViewport {
+            owner: self.viewport_owner.clone(),
+            basis: self.viewport_basis(),
+            viewport: target,
+            view,
+            frame,
+            visible,
+            page,
+            anchor,
+            deskew_cache,
+            epub_spreads,
+            detected_crops,
+        })
+    }
+
+    fn continuous_viewport_anchor(&self) -> Result<ContinuousAnchor> {
+        if let Some(ViewportAnchor::Continuous(anchor)) = self.retained_viewport_anchor {
+            return Ok(anchor);
+        }
+        for page in &self.visible {
+            let transform = page.transform()?;
+            let crop = source_rect(page.size, page.crop.unwrap_or(FULL_PAGE));
+            let bounds = transform
+                .transform_rect_bbox(crop)
+                .intersect(page.viewport_rect(self.frame.width));
+            if bounds.is_zero_area() {
+                continue;
+            }
+            let x = bounds.center().x;
+            let inverse = transform.inverse();
+            // Deskew can leave blank corners on the top row. Pick the first
+            // real point on the visible crop's center line.
+            let mut y = bounds.y0 + 0.75;
+            while y < bounds.y1 {
+                let point = inverse * Point::new(x, y);
+                if crop.contains(point) {
+                    return Ok(ContinuousAnchor {
+                        page: page.index,
+                        point,
+                        row: y,
+                    });
+                }
+                y += 1.0;
+            }
+        }
+        Err("The current PDF scroll position is unavailable".into())
+    }
+
+    fn continuous_viewport_view(
+        &self,
+        pdf: &Pdf,
+        anchor: ContinuousAnchor,
+        viewport_size: FrameSize,
+        crops: Option<PageCrops<'_>>,
+        cache: &mut DeskewCache,
+    ) -> Result<View> {
         let mut view = View {
             offset_x: 0.0,
             offset_y: 0.0,
             ..self.view
         };
-        if let Some(tile) = view.tile_zoom {
-            view.tile_zoom = Some(tile_zoom(
-                size,
-                &view,
-                viewport_size,
-                tile.axis,
-                tile.count_tenths,
-            ));
-        }
-        let mut deskew_cache = DeskewCache::default();
-        let correction = match ScanPage::from_document(&self.source) {
-            Some(scan) => scan.correction(self.page, size, &view, &mut deskew_cache)?,
-            None => Affine::IDENTITY,
-        };
-        let request = viewport(size, &mut view, viewport_size);
-        let projected = (request.page_to_viewport(size)? * correction) * source_point;
-        view.offset_x = (f64::from(width) * 0.5 - projected.x) as f32;
-        view.offset_y = (f64::from(viewport_size.height) * 0.5 - projected.y) as f32;
-        let (page, view, frame, visible) = self.source.presentation(
-            self.page,
-            view,
-            None,
-            &mut deskew_cache,
-            viewport_size,
-            None,
-            None,
+        let metrics = continuous_metrics(pdf, anchor.page, &view, viewport_size, crops)?;
+        let request = continuous_request(&metrics.metrics, &view, viewport_size, 0);
+        let correction = ScanPage::Pdf(pdf).correction(
+            anchor.page,
+            metrics.size,
+            &View {
+                crop: metrics.crop,
+                ..view
+            },
+            cache,
         )?;
-        let (request, correction) = match visible.first() {
-            Some(scan) => (scan.request, scan.correction),
-            None => {
-                let mut view = view;
-                (viewport(size, &mut view, viewport_size), Affine::IDENTITY)
-            }
-        };
-        let target_point = (request.page_to_viewport(size)? * correction) * source_point;
-        if page != self.page
-            || !target_point.is_finite()
-            || !(0.0..f64::from(frame.width)).contains(&target_point.x)
-            || !(0.0..f64::from(frame.height)).contains(&target_point.y)
-        {
-            return Err("The resized page could not keep the current source point visible".into());
-        }
-        Ok(PreparedFixedViewport {
-            owner: self.viewport_owner.clone(),
-            basis,
-            viewport: target,
-            view,
-            frame,
-            visible,
-            source_point,
-            deskew_cache,
-        })
+        let projected = (request.page_to_viewport(metrics.size)? * correction) * anchor.point;
+        view.offset_x = (f64::from(viewport_size.width) * 0.5 - projected.x) as f32;
+        let row = anchor.row.min(f64::from(viewport_size.height) - 1.0);
+        // A positive offset preserves an inter-page gap. Normal continuous
+        // positioning backs up through the previous page to keep the gap.
+        view.offset_y = (row - projected.y) as f32;
+        Ok(view)
     }
 
     /// Commit only after the new frame has been accepted and while its source is still current.
@@ -2515,11 +2696,17 @@ impl FixedReading {
             return Err("The fixed reading view changed before the resize was committed".into());
         }
         self.viewport = next.viewport;
+        self.page = next.page;
         self.view = next.view;
         self.frame = next.frame;
         self.visible = next.visible;
         self.deskew_cache = next.deskew_cache;
-        self.retained_viewport_point = Some(next.source_point);
+        self.retained_viewport_anchor = next.anchor;
+        self.presentation_generation = self.presentation_generation.wrapping_add(1);
+        self.epub_spreads = next.epub_spreads;
+        if let Some(crops) = next.detected_crops {
+            self.detected_crops = crops;
+        }
         self.pause();
         Ok(())
     }
@@ -2644,7 +2831,8 @@ impl FixedReading {
         }
         self.frame = frame;
         self.visible = visible;
-        self.retained_viewport_point = None;
+        self.retained_viewport_anchor = None;
+        self.presentation_generation = self.presentation_generation.wrapping_add(1);
         if self.page != page
             && let FixedDocument::Djvu(book) = &mut self.source
         {
@@ -3261,15 +3449,7 @@ fn continuous_frame(
             continue;
         }
         let rows = top.max(0) as u32..bottom.min(viewport_size.height as i32) as u32;
-        let offset = clamp_offset(view.offset_x, metrics.width, viewport_size.width as f32);
-        let request = RenderRequest {
-            width: viewport_size.width,
-            height: viewport_size.height,
-            scale: metrics.scale,
-            x: (viewport_size.width as f32 - metrics.width) / 2.0 - metrics.left + offset,
-            y: top as f32 - metrics.top,
-            turns: view.turns,
-        };
+        let request = continuous_request(&metrics, &view, viewport_size, top);
         let slice = RenderRequest {
             height: rows.end - rows.start,
             y: request.y - rows.start as f32,
@@ -3303,6 +3483,23 @@ fn continuous_frame(
         pixels,
     };
     Ok((page, view, image, visible))
+}
+
+fn continuous_request(
+    metrics: &ViewMetrics,
+    view: &View,
+    viewport_size: FrameSize,
+    top: i32,
+) -> RenderRequest {
+    let offset = clamp_offset(view.offset_x, metrics.width, viewport_size.width as f32);
+    RenderRequest {
+        width: viewport_size.width,
+        height: viewport_size.height,
+        scale: metrics.scale,
+        x: (viewport_size.width as f32 - metrics.width) / 2.0 - metrics.left + offset,
+        y: top as f32 - metrics.top,
+        turns: view.turns,
+    }
 }
 
 fn continuous_position(
@@ -3714,6 +3911,10 @@ pub(crate) mod tests {
 
     impl EpubFixture {
         fn striped(spread: &str) -> Self {
+            Self::striped_with_invalid_leaf(spread, None)
+        }
+
+        fn striped_with_invalid_leaf(spread: &str, invalid_leaf: Option<usize>) -> Self {
             static NEXT: AtomicUsize = AtomicUsize::new(0);
             let path = std::env::temp_dir().join(format!(
                 "reader-fixed-spread-{}-{}.epub",
@@ -3763,11 +3964,12 @@ pub(crate) mod tests {
                 spine.push_str(&format!(
                     r#"<itemref idref="p{index}" properties="{properties}"/>"#
                 ));
+                let width = if invalid_leaf == Some(index) { 0 } else { 80 };
                 add(
                     &format!("p{index}.xhtml"),
                     &format!(
                         r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Page</title>
-                        <meta name="viewport" content="width=80,height=120"/></head><body>
+                        <meta name="viewport" content="width={width},height=120"/></head><body>
                         <div style="position:absolute;left:0;top:0;width:80px;height:120px;background:rgb({tone},{tone},{tone})"/>
                         </body></html>"#,
                     ),
@@ -5183,6 +5385,120 @@ pub(crate) mod tests {
         reader.jump(1).unwrap();
         assert_eq!(reader.page(), 1);
         assert_eq!(reader.visible_pages().collect::<Vec<_>>(), [1, 2]);
+    }
+
+    #[test]
+    fn spread_viewports_keep_selected_leaves_and_physical_order() {
+        fn center(reader: &FixedReading, x: u32) -> u8 {
+            reader.frame.pixels[(reader.frame.height / 2 * reader.frame.width + x) as usize]
+        }
+
+        let comic = ComicFixture::striped();
+        let mut book = FixedReading::with_source(
+            FixedDocument::Comic(Comic::open(&comic.0).unwrap()),
+            2,
+            View {
+                spread: true,
+                right_to_left: true,
+                turns: 2,
+                ..View::default()
+            },
+        )
+        .unwrap();
+        let page = book.page();
+        assert_eq!(book.visible_pages().collect::<Vec<_>>(), [1, 2]);
+        let original = book.frame.pixels.clone();
+        let wide = book.prepare_viewport(ReadingViewport::LANDSCAPE).unwrap();
+        assert_eq!(book.frame.pixels, original);
+        book.commit_viewport(wide).unwrap();
+        assert_eq!(book.page(), page);
+        assert_eq!(book.visible_pages().collect::<Vec<_>>(), [1, 2]);
+        assert_eq!(book.frame.width, 1680);
+        assert_eq!((center(&book, 420), center(&book, 1260)), (128, 64));
+        assert_eq!(book.view.turns, 2);
+        let back = book.prepare_viewport(ReadingViewport::PORTRAIT).unwrap();
+        book.commit_viewport(back).unwrap();
+        assert_eq!(book.frame.pixels, original);
+
+        // A hidden comic partner leaves the original physical slot blank
+        // even when the selected page is the second leaf of the pair.
+        let mut hidden = HiddenFlows::default();
+        hidden.enabled = true;
+        for (page, is_hidden) in [(1, true), (2, false)] {
+            hidden
+                .insert(crate::library::hidden_flows::FlowPoint {
+                    position: crate::library::ReadingPosition {
+                        chapter: 0,
+                        page,
+                        anchor: None,
+                    },
+                    hidden: is_hidden,
+                })
+                .unwrap();
+        }
+        book.set_hidden_flows(&hidden).unwrap();
+        book.jump(2).unwrap();
+        let wide = book.prepare_viewport(ReadingViewport::LANDSCAPE).unwrap();
+        book.commit_viewport(wide).unwrap();
+        assert_eq!(book.page(), 2);
+        assert_eq!(book.visible_pages().collect::<Vec<_>>(), [2]);
+        assert_eq!((center(&book, 420), center(&book, 1260)), (128, 255));
+
+        let epub = EpubFixture::striped("landscape");
+        let mut book = epub.open(2, View::default());
+        assert!(!book.is_spread());
+        assert_eq!(book.visible_pages().collect::<Vec<_>>(), [2]);
+        let original = book.frame.pixels.clone();
+        let wide = book.prepare_viewport(ReadingViewport::LANDSCAPE).unwrap();
+        book.commit_viewport(wide).unwrap();
+        assert!(book.is_spread());
+        assert_eq!(book.page(), 2);
+        assert_eq!(book.visible_pages().collect::<Vec<_>>(), [1, 2]);
+        assert_eq!((center(&book, 839), center(&book, 840)), (128, 64));
+        let back = book.prepare_viewport(ReadingViewport::PORTRAIT).unwrap();
+        book.commit_viewport(back).unwrap();
+        assert!(!book.is_spread());
+        assert_eq!(book.page(), 2);
+        assert_eq!(book.frame.pixels, original);
+
+        let mut book = epub.open(
+            2,
+            View {
+                epub_spread: Some(false),
+                ..View::default()
+            },
+        );
+        let wide = book.prepare_viewport(ReadingViewport::LANDSCAPE).unwrap();
+        book.commit_viewport(wide).unwrap();
+        assert!(!book.is_spread());
+        assert_eq!(book.visible_pages().collect::<Vec<_>>(), [2]);
+        assert_eq!(center(&book, 840), 128);
+    }
+
+    #[test]
+    fn invalid_epub_spread_leaves_the_page_and_its_cached_decode_available() {
+        let epub = EpubFixture::striped_with_invalid_leaf("landscape", Some(1));
+        let book = epub.open(2, View::default());
+        let original = book.frame.pixels.clone();
+        let failed = book
+            .prepare_viewport(ReadingViewport::LANDSCAPE)
+            .err()
+            .unwrap();
+        assert!(
+            failed
+                .to_string()
+                .contains("viewport exceeds Reader's size limits")
+        );
+        assert_eq!(book.page(), 2);
+        assert_eq!(book.viewport, ReadingViewport::PORTRAIT);
+        assert_eq!(book.frame.pixels, original);
+
+        // Without the archive only the previously decoded source leaf is available.
+        fs::remove_file(&epub.0).unwrap();
+        let FixedDocument::Epub(source) = &book.source else {
+            unreachable!()
+        };
+        assert_eq!(source.decode_page(2).unwrap().page_size(), (80.0, 120.0));
     }
 
     #[test]
