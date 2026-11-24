@@ -55,8 +55,18 @@ local menu = pinned("return function(self, menu_items)\n" .. segment(
 ) .. "end")
 pinned(segment("function ReaderToc:fillToc()", "function ReaderToc:validateAndFixToc()"))
 pinned(segment("function ReaderToc:cleanUpTocTitle(", "function ReaderToc:onSetDimensions("))
-pinned(segment("function ReaderToc:getTocTicks(", "function ReaderToc:getNextChapter("))
+pinned(segment("function ReaderToc:getTocIndexByPage(", "function ReaderToc:getFullTocTitleByPage("))
+pinned(segment("function ReaderToc:getTocTicks(", "function ReaderToc:getPagePagemapIndex("))
+pinned(segment("function ReaderToc:getChapterPageCount(", "function ReaderToc:getChapterPagesDone("))
 local modules = assert(source:match("^(.*/)readertoc%.lua$"))
+local footer_chapter = pinned("return {" .. segment(
+    "    book_chapter = function(footer)", "    custom_text = function(footer)",
+    script_at(modules .. "readerfooter.lua")) .. "}").book_chapter
+local function footer_title(reader, page)
+    return footer_chapter({ui = {toc = reader}, pageno = page,
+        settings = {book_chapter_max_width_pct = 99},
+        getFittedText = function(_, title, _) return title end})
+end
 pinned(segment("function ReaderFooter:setTocMarkers(", "function ReaderFooter:onUpdateFooter(",
     script_at(modules .. "readerfooter.lua")))
 pinned(segment("function ReaderRolling:onUpdateTopStatusBarMarkers(", "function ReaderRolling:updateBatteryState(",
@@ -123,7 +133,21 @@ local function comparison(path, expected)
         print(index, entry.depth, title, entry.xpointer)
         assert(entry.depth == expected[index][1] and title == expected[index][2])
     end
-    if #expected == 4 then assert(reader.toc[2].xpointer == reader.toc[3].xpointer) end
+    if #expected == 4 then
+        local page = reader.toc[1].page
+        assert(page > 1 and reader.toc[2].xpointer == reader.toc[3].xpointer)
+        assert(reader.toc[2].title == "" and reader.toc[4].page == page)
+        assert(footer_title(reader, 1) == "" and footer_title(reader, page) == "Harbor Survey")
+        assert(footer_title(reader, page + 1) == "West quay")
+        reader.toc_ticks_ignored_levels = {[1] = true}
+        reader.toc_chapter_title_bind_to_ticks = true
+        assert(footer_title(reader, page) == "")
+        reader.toc_ticks_ignored_levels[2] = true
+        assert(footer_title(reader, page) == "East softhyphen quay")
+        reader.toc_chapter_title_bind_to_ticks = nil
+    else
+        assert(footer_title(reader, reader.toc[1].page) == "")
+    end
     local function check_markers(ignored)
         reader.toc_ticks_ignored_levels = ignored
         reader.ticks_flattened_filtered = nil
@@ -177,5 +201,20 @@ end
 
 comparison(headings, {{1, "Harbor Survey"}, {2, "–"}, {3, "East softhyphen quay"}, {2, "West quay"}})
 comparison(fragments, {{1, "–"}, {1, "–"}, {1, "–"}})
-print("Pinned KOReader: per-book toggle, custom gate, heading depth, fragment fallback restore, and shared header/footer/Skim ticks passed")
+local chapter = setmetatable({
+    toc = {{title = "Harbor", depth = 1, page = 3}, {title = "", depth = 2, page = 6},
+        {title = "East", depth = 3, page = 6}, {title = "West", depth = 2, page = 9}},
+    toc_ticks_ignored_levels = {[2] = true},
+    ui = {document = {getPageCount = function() return 12 end,
+        hasHiddenFlows = function() return false end}},
+}, {__index = env.ReaderToc})
+assert(footer_title(chapter, 6) == "" and footer_title(chapter, 7) == "East")
+assert(chapter:getChapterPageCount(1) == 2 and chapter:getChapterPageCount(6) == 3)
+assert(chapter:getChapterPagesLeft(6) == 2 and chapter:getNextChapter(6) == 9)
+chapter.toc_chapter_title_bind_to_ticks = true
+assert(footer_title(chapter, 6) == "East" and chapter:getNextChapter(6) == 9)
+chapter.toc_chapter_navigation_bind_to_ticks = true
+assert(chapter:getNextChapter(6) == nil and chapter:getChapterPagesLeft(6) == nil)
+assert(chapter:getPreviousChapter(10) == 6 and chapter:getChapterPageCount(6) == 7)
+print("Pinned KOReader: alternative Contents, title order, independent depth choices, chapter spans, and shared header/footer/Skim ticks passed")
 Device:exit()

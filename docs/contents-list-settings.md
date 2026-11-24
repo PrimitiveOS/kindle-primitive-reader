@@ -67,14 +67,15 @@ merge into a single marker. For supported paged EPUBs, the existing
 background index resolves remote headings against their exact source
 anchors. The header uses whole-book rendered page numbers. Footer and
 Skim place those same headings on their existing source-weighted tracks.
-The footer label, bar, Exit position, and Skim seek behavior stay the same.
+The reading footer places the chapter and page caption above the bar, with
+Exit at the right. Skim uses the same position scale as its seek control.
 
 Before indexing is ready, the header uses the currently laid-out section.
 Footer and Skim also show known fragment starts for books without headings.
 Remote heading positions in facing-page, scrolling, vertical or oversized
 books depend on the bounded index's availability. Custom hidden flows lack
 whole-book alternative track markers. Enabling custom contents or restoring
-the publisher outline restores their prior marker paths.
+the publisher outline restores their prior marker and chapter paths.
 
 The native comparison checks that pinned KOReader flattens, sorts and
 deduplicates the active headings after depth filtering, then supplies the
@@ -85,6 +86,36 @@ and history intact.
 [Skim](screenshots/alternative-progress-skim-landscape.png) ·
 [Stock depth filtering](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readertoc.lua#L502-L595) ·
 [Native comparison](../scripts/koreader-alternative-contents-check.lua)
+
+### Chapter titles and page ranges in alternative mode
+
+With exact screen pages, Reader uses the active outline's section spans for
+the default **Chapter x of y - Page m of n** footer and for chapter pages and
+time remaining. Opening pages before the first heading form an untitled
+span. Multiple headings on one screen page share a single span. **Use
+levels for chapter jumps** applies the selected depth limits to these ranges.
+
+The optional chapter title in the footer, its custom text token, and the
+Skim label use the first title on the current page or the last title from
+a preceding page. **Footer chapter title** independently applies the
+selected depths to these titles. An unnamed outline level is blank in
+these reading labels and appears as **–** in Contents. Whole-book indexing
+resolves titles in a preceding EPUB spine item. When the layout is outside
+that index, Reader uses the titles it can resolve on the current spine and
+the existing chapter-local page numbers.
+
+The native comparison executes the stock footer's title callback, including
+a page with multiple headings and unnamed levels. A separate callback case
+checks which depths define chapter starts, page counts and pages left.
+The Mac replay visits nested headings with Next chapter, selects the two
+depth preferences separately, and verifies the same title and range where
+a chapter spans two spine items. The navigation history remains tied to the
+actual jumps.
+[Chapter and page footer](screenshots/alternative-section-count-landscape.png) ·
+[Chapter title footer](screenshots/alternative-section-title-landscape.png) ·
+[Skim with dark controls](screenshots/alternative-section-skim-landscape.png) ·
+[Stock title selection](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readertoc.lua#L378-L449) ·
+[Stock chapter spans](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readertoc.lua#L598-L739)
 
 ## Edit a PDF chapter from Page browser
 
