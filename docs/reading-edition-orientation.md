@@ -24,9 +24,31 @@ the anchor is visible before accepting the candidate. The current frame and
 queued page turns survive a refusal, as does the old geometry's page-count
 cache.
 
-The staged transition covers 1264×1680 and 1680×1264 for single-page and
-continuous horizontal reflow. Facing pages and vertical writing defer the
-transition until their column and writing geometry can be updated safely.
+The staged transition covers single-page, facing-page and continuous
+horizontal reflow at 1264×1680 and 1680×1264. A spread uses two 616-pixel
+leaves in portrait and two 824-pixel leaves in landscape, separated by the
+same 32-pixel gutter. Reader lays out each leaf with its own margins and
+uses those same physical origins for words, links, annotations and note
+markers. EPUB spine direction controls which side contains the first leaf.
+Page turns still advance two logical leaves. The final unpaired leaf keeps
+its normal side and the empty pane stays blank.
+
+Vertical writing uses the full current viewport and keeps the saved facing
+preference for later horizontal chapters. Resizing while a vertical
+chapter is active remains deferred until its writing-axis placement can
+preserve the source anchor across a size change.
+
+### Pinned KOReader facing-page behavior
+
+CREngine has optional checks for minimum usable width and a 6:5 aspect
+ratio. KOReader explicitly disables those checks when setting its visible
+page count, so both portrait and landscape can use two leaves. Scroll mode
+always uses one. During a dimension change the rolling reader enables native
+history, resizes and updates the source pointer before drawing again. The
+Mac comparison ran the pinned wrapper and native CREngine against *Field
+Notes* and the right-to-left *Harbor notebook*. Both kept two leaves on
+resize, one while scrolling and the same source pointer on return to portrait.
+[KOReader visible-page wrapper](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/credocument.lua#L1382-L1389) · [CREngine pane-count policy](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvdocview.cpp#L3760-L3789) · [KOReader resize callback](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerrolling.lua#L1098-L1118) · [Mac comparison script](../scripts/koreader-facing-viewport-check.lua)
 
 The app runtime still has to prepare its chrome and canvas, publish an
 accepted frame through the shared handoff, and change the input generation
@@ -39,7 +61,12 @@ Run the authored EPUB transition tests with
 `READER_REFLOW_VIEWPORT_CAPTURE_DIR` to save the portrait, landscape and
 returned frames. The fixture repeats the same sentence in two distinct
 source blocks, so the test identifies the selected word by its exact anchor
-and checks its hit region before and after changing viewport.
+and checks its hit region before and after changing viewport. The two
+spread fixtures also verify independent leaf rasters, gutter hit rejection,
+right-to-left links, Arabic word selection, note-marker offsets, and tap and
+physical page-button events. Both returned portrait frames match their
+original pixels. The Arabic test loads the original Noto Sans Arabic 2.013
+font from the test fixtures. [Authored EPUB fixtures](../tests/fixtures) · [Font release](https://github.com/notofonts/arabic/releases/tag/NotoSansArabic-v2.013) · [Font license](../tests/fixtures/fonts/OFL-NotoSansArabic.txt)
 
 ## Fixed-page viewport preparation
 

@@ -77,7 +77,6 @@ pub(crate) const PAGE_HEIGHT: u32 = ReadingViewport::PORTRAIT.page_height();
 pub(crate) const SHOW_STATUS: Rect = ReadingViewport::PORTRAIT.show_status();
 pub(crate) const DONE: Rect = ReadingViewport::PORTRAIT.done();
 const FACING_GUTTER: u32 = 32;
-const FACING_PAGE_WIDTH: u32 = (WIDTH - FACING_GUTTER) / 2;
 const PREFETCH_DELAY: Duration = Duration::from_millis(480);
 // Give a partial E Ink update time to settle before submitting another.
 pub(crate) const PAGE_REFRESH_GAP: Duration = Duration::from_millis(450);
@@ -202,7 +201,34 @@ pub(crate) struct BookConfig {
     pub(crate) screen_pages: screen_pages::ScreenPages,
 }
 
+#[derive(Clone, Copy)]
+struct FacingGeometry {
+    width: u32,
+}
+
+impl FacingGeometry {
+    const fn leaf_width(self) -> u32 {
+        (self.width - FACING_GUTTER) / 2
+    }
+
+    fn right_origin(self) -> u32 {
+        self.width - self.leaf_width()
+    }
+}
+
 impl BookConfig {
+    fn requested_facing_geometry(&self) -> Option<FacingGeometry> {
+        let width = self.settings.width;
+        (self.facing_pages && !self.scroll && width >= FACING_GUTTER + 2)
+            .then_some(FacingGeometry { width })
+    }
+
+    fn facing_geometry(&self, probe: &Probe) -> Option<FacingGeometry> {
+        self.requested_facing_geometry().filter(|geometry| {
+            !probe.is_vertical() && probe.settings.width == geometry.leaf_width()
+        })
+    }
+
     pub(crate) fn chapter(&self, index: usize) -> Result<Probe> {
         let start = Instant::now();
         let probe = with_storage(|| {
@@ -234,10 +260,12 @@ impl BookConfig {
         let eligible = sources.is_some() && book.supports_screen_page_count();
         self.chapter_offsets
             .get_or_init(|| book.chapter_offsets().unwrap_or_default());
-        let settings = if self.facing_pages && !self.scroll {
-            let margin_limit = FACING_PAGE_WIDTH / 4;
+        let facing = self.requested_facing_geometry();
+        let settings = if let Some(geometry) = facing {
+            let width = geometry.leaf_width();
+            let margin_limit = width / 4;
             Settings {
-                width: FACING_PAGE_WIDTH,
+                width,
                 margin: self.settings.margin.min(margin_limit),
                 margin_sides: None,
                 margin_left: Some(self.settings.left_margin().min(margin_limit)),
@@ -250,7 +278,7 @@ impl BookConfig {
             self.settings
         };
         settings.validate()?;
-        let narrow = settings.width == FACING_PAGE_WIDTH;
+        let narrow = facing.is_some();
         let mut probe = match Probe::from_book_with_rules(
             book,
             self.engine,
@@ -401,7 +429,7 @@ impl Reading {
             }
         });
         let page = scroll_top.map_or(page, |top| probe.page_at(top));
-        let frame = capture(&mut probe, chapter, page, scroll_top)?;
+        let frame = capture(&config, &mut probe, chapter, page, scroll_top)?;
         eprintln!(
             "reader first_frame_ready_us={}",
             start.elapsed().as_micros()
@@ -438,8 +466,8 @@ impl Reading {
         let start = Instant::now();
         let mut crossed_chapter = false;
         let mut cache_hit = false;
-        let span = frame_span(&self.probe);
-        let frame_page = first_frame_page(&self.probe, self.page);
+        let span = frame_span(&self.config, &self.probe);
+        let frame_page = first_frame_page(&self.config, &self.probe, self.page);
         if let Some(page) = frame_page
             .checked_add_signed(direction * span as isize)
             .filter(|page| *page < self.probe.page_count())
@@ -449,7 +477,7 @@ impl Reading {
                     cache_hit = true;
                     self.adjacent.swap_remove(index).1
                 } else {
-                    capture(&mut self.probe, self.chapter, page, None)?
+                    capture(&self.config, &mut self.probe, self.chapter, page, None)?
                 };
             let prior = std::mem::replace(&mut self.frame, next);
             self.adjacent
@@ -736,18 +764,6 @@ impl Reading {
             page_overlap_enabled: settings.page_overlap_enabled,
             page_overlap_lines: settings.page_overlap_lines,
             page_overlap_style: settings.page_overlap_style,
-            ..self.config.settings
-        }) == settings
-            && settings != self.config.settings
-        {
-            self.config.settings = settings;
-            self.probe.settings = settings;
-            self.frame = capture(&mut self.probe, self.chapter, self.page, self.scroll_top)?;
-            self.adjacent.clear();
-            self.schedule_prefetch();
-            return Ok(());
-        }
-        if (Settings {
             font_gamma_index: settings.font_gamma_index,
             text_contrast: settings.text_contrast,
             ..self.config.settings
@@ -756,11 +772,20 @@ impl Reading {
         {
             let previous = self.probe.settings;
             self.probe.settings = Settings {
+                page_overlap_enabled: settings.page_overlap_enabled,
+                page_overlap_lines: settings.page_overlap_lines,
+                page_overlap_style: settings.page_overlap_style,
                 font_gamma_index: settings.font_gamma_index,
                 text_contrast: settings.text_contrast,
                 ..previous
             };
-            let frame = match capture(&mut self.probe, self.chapter, self.page, self.scroll_top) {
+            let frame = match capture(
+                &self.config,
+                &mut self.probe,
+                self.chapter,
+                self.page,
+                self.scroll_top,
+            ) {
                 Ok(frame) => frame,
                 Err(error) => {
                     self.probe.settings = previous;
@@ -796,8 +821,8 @@ impl Reading {
     /// The runtime can commit it after its new canvas and the panel both accept it.
     #[allow(dead_code)] // The first caller will be the negotiated viewport runtime.
     pub(crate) fn prepare_viewport(&self, viewport: ReadingViewport) -> Result<Self> {
-        if self.config.facing_pages || self.probe.is_vertical() {
-            return Err("This reading layout does not support resizing yet".into());
+        if self.probe.is_vertical() {
+            return Err("Vertical EPUB layout does not support resizing yet".into());
         }
         let anchor = self
             .anchor()
@@ -816,7 +841,7 @@ impl Reading {
         config.screen_pages = Default::default();
         let candidate = Self::restore(config, self.chapter, self.page, Some(&anchor))?;
         if candidate.probe.is_vertical() {
-            return Err("This reading layout does not support resizing yet".into());
+            return Err("Vertical EPUB layout does not support resizing yet".into());
         }
         let preserved = candidate.probe.anchor_top(&anchor).is_some_and(|top| {
             candidate
@@ -893,18 +918,18 @@ impl Reading {
     }
 
     pub(crate) fn first_visible_page(&self) -> usize {
-        first_frame_page(&self.probe, self.page)
+        first_frame_page(&self.config, &self.probe, self.page)
     }
 
     pub(crate) fn last_visible_page(&self) -> usize {
-        frame_columns(&self.probe, self.page)
+        frame_columns(&self.config, &self.probe, self.page)
             .map(|(page, _)| page)
             .max()
             .unwrap_or(self.page)
     }
 
     pub(crate) fn uses_facing_pages(&self) -> bool {
-        frame_span(&self.probe) == 2
+        frame_span(&self.config, &self.probe) == 2
     }
 
     pub(crate) fn go_to_page(&mut self, chapter: usize, page: usize) -> Result<()> {
@@ -934,7 +959,7 @@ impl Reading {
         {
             return hidden_flows::scroll_parts(&self.probe, top);
         }
-        frame_columns(&self.probe, self.page)
+        frame_columns(&self.config, &self.probe, self.page)
             .map(|(page, x)| {
                 let range = self.scroll_top.map_or_else(
                     || self.probe.page_range(page),
@@ -1200,7 +1225,13 @@ impl Reading {
         let next = (top + distance).clamp(0.0, top.max(self.probe.scroll_end()));
         if next != top {
             let page = self.probe.page_at(next);
-            self.frame = capture(&mut self.probe, self.chapter, page, Some(next))?;
+            self.frame = capture(
+                &self.config,
+                &mut self.probe,
+                self.chapter,
+                page,
+                Some(next),
+            )?;
             self.page = page;
             self.scroll_top = Some(next);
         } else {
@@ -1227,7 +1258,7 @@ impl Reading {
         direction: isize,
     ) -> Result<()> {
         let page = if direction < 0 {
-            first_frame_page(&probe, probe.page_count() - 1)
+            first_frame_page(&self.config, &probe, probe.page_count() - 1)
         } else {
             0
         };
@@ -1239,7 +1270,7 @@ impl Reading {
             }
         });
         let page = top.map_or(page, |top| probe.page_at(top));
-        self.frame = capture(&mut probe, chapter, page, top)?;
+        self.frame = capture(&self.config, &mut probe, chapter, page, top)?;
         self.config
             .screen_pages
             .observe(&self.config, &probe, chapter);
@@ -1353,7 +1384,7 @@ impl Reading {
                 top.clamp(0.0, probe.scroll_end())
             }
         });
-        let frame = capture(probe, chapter, page, top)?;
+        let frame = capture(&self.config, probe, chapter, page, top)?;
         if let Some(candidate) = candidate {
             self.config
                 .screen_pages
@@ -1377,8 +1408,8 @@ impl Reading {
         if self.config.hidden_flows.enabled {
             return None;
         }
-        let span = frame_span(&self.probe);
-        let page = first_frame_page(&self.probe, self.page);
+        let span = frame_span(&self.config, &self.probe);
+        let page = first_frame_page(&self.config, &self.probe, self.page);
         [Some(page + span), page.checked_sub(span)]
             .into_iter()
             .flatten()
@@ -1420,7 +1451,7 @@ impl Reading {
     }
 
     pub(crate) fn page_status(&self) -> String {
-        let first = first_frame_page(&self.probe, self.page) + 1;
+        let first = first_frame_page(&self.config, &self.probe, self.page) + 1;
         let count = self.probe.page_count();
         let last = self.last_visible_page() + 1;
         let pages = if first == last {
@@ -1511,6 +1542,26 @@ impl Reading {
         }
     }
 
+    pub(crate) fn note_marker_margin(
+        &self,
+        rect: HighlightRect,
+        marker: crate::highlight_style::NoteMarker,
+    ) -> i32 {
+        let leaf_x = self
+            .config
+            .facing_geometry(&self.probe)
+            .map(FacingGeometry::right_origin)
+            .filter(|&right| rect.x >= right as i32)
+            .unwrap_or(0);
+        crate::note_marker::margin(
+            self.probe.settings.width,
+            self.probe.settings.right_margin(),
+            leaf_x,
+            marker,
+            false,
+        )
+    }
+
     fn marked_frame(
         &self,
         highlights: &[(HighlightRect, crate::highlight_style::Paint)],
@@ -1553,18 +1604,7 @@ impl Reading {
         }
         for &(rect, ink) in highlights {
             draw_highlight_rect(&mut page, rect, ink, paint.highlight_appearance);
-            let leaf_x = if self.uses_facing_pages() && rect.x >= (WIDTH / 2) as i32 {
-                FACING_PAGE_WIDTH + FACING_GUTTER
-            } else {
-                0
-            };
-            let margin = crate::note_marker::margin(
-                self.probe.settings.width,
-                self.probe.settings.right_margin(),
-                leaf_x,
-                paint.note_marker,
-                false,
-            );
+            let margin = self.note_marker_margin(rect, paint.note_marker);
             crate::note_marker::paint(
                 &mut page,
                 rect,
@@ -1918,7 +1958,7 @@ impl App for Reading {
         if self.prefetch.is_some_and(|deadline| now >= deadline) {
             self.prefetch = None;
             if let Some(page) = self.prefetch_page()
-                && let Ok(frame) = capture(&mut self.probe, self.chapter, page, None)
+                && let Ok(frame) = capture(&self.config, &mut self.probe, self.chapter, page, None)
             {
                 self.adjacent.push((page, frame));
                 self.schedule_prefetch();
@@ -2037,48 +2077,59 @@ pub(crate) fn page_thumbnail(probe: &mut Probe, page: usize) -> Result<PageThumb
     Ok(thumbnail)
 }
 
-fn frame_span(probe: &Probe) -> usize {
-    if probe.settings.width == FACING_PAGE_WIDTH {
+fn frame_span(config: &BookConfig, probe: &Probe) -> usize {
+    if config.facing_geometry(probe).is_some() {
         2
     } else {
         1
     }
 }
 
-fn first_frame_page(probe: &Probe, page: usize) -> usize {
+fn first_frame_page(config: &BookConfig, probe: &Probe, page: usize) -> usize {
     if probe.flow_pages.is_some() {
         return page;
     }
-    let span = frame_span(probe);
+    let span = frame_span(config, probe);
     page / span * span
 }
 
-fn frame_columns(probe: &Probe, page: usize) -> impl Iterator<Item = (usize, u32)> + use<> {
-    let first = first_frame_page(probe, page);
-    let span = frame_span(probe);
-    let mut pages = vec![first];
-    if span == 2 {
-        let second = probe.flow_pages.as_ref().map_or_else(
+fn frame_columns(
+    config: &BookConfig,
+    probe: &Probe,
+    page: usize,
+) -> impl Iterator<Item = (usize, u32)> + use<> {
+    let first = first_frame_page(config, probe, page);
+    let geometry = config.facing_geometry(probe);
+    let second = geometry.and_then(|_| {
+        probe.flow_pages.as_ref().map_or_else(
             || (first + 1 < probe.page_count()).then_some(first + 1),
             |flows| flows.next(first, 1),
-        );
-        pages.extend(second);
-    }
-    let rtl = probe.pages_right_to_left();
+        )
+    });
+    let right = geometry.map_or(0, FacingGeometry::right_origin);
+    let (lead, tail) = if probe.pages_right_to_left() {
+        (right, 0)
+    } else {
+        (0, right)
+    };
     // Keep logical leaf order for text ranges and links. Only the physical origin changes.
-    pages.into_iter().enumerate().map(move |(index, page)| {
-        let slot = if rtl { span - 1 - index } else { index };
-        (page, slot as u32 * (FACING_PAGE_WIDTH + FACING_GUTTER))
-    })
+    std::iter::once((first, lead)).chain(second.map(|page| (page, tail)))
 }
 
-fn capture(probe: &mut Probe, chapter: usize, page: usize, top: Option<f32>) -> Result<GrayImage> {
+fn capture(
+    config: &BookConfig,
+    probe: &mut Probe,
+    chapter: usize,
+    page: usize,
+    top: Option<f32>,
+) -> Result<GrayImage> {
     let start = Instant::now();
-    let pixels = match top {
-        Some(top) if probe.flow_pages.is_some() => hidden_flows::capture_scroll(probe, top)?,
-        Some(top) => probe.capture_range(probe.scroll_range(top))?,
-        None if frame_span(probe) == 2 => capture_facing_pages(probe, page)?,
-        None => probe.capture(page)?,
+    let facing = config.facing_geometry(probe);
+    let pixels = match (top, facing) {
+        (Some(top), _) if probe.flow_pages.is_some() => hidden_flows::capture_scroll(probe, top)?,
+        (Some(top), _) => probe.capture_range(probe.scroll_range(top))?,
+        (None, Some(geometry)) => capture_facing_pages(config, probe, page, geometry)?,
+        (None, None) => probe.capture(page)?,
     };
     eprintln!(
         "reader chapter={} page={} paint_us={}",
@@ -2087,11 +2138,7 @@ fn capture(probe: &mut Probe, chapter: usize, page: usize, top: Option<f32>) -> 
         start.elapsed().as_micros(),
     );
     let height = probe.settings.height;
-    let width = if frame_span(probe) == 2 {
-        WIDTH
-    } else {
-        probe.settings.width
-    };
+    let width = facing.map_or(probe.settings.width, |geometry| geometry.width);
     if pixels.len() != (width * height) as usize {
         return Err("The page has incorrect dimensions".into());
     }
@@ -2102,20 +2149,26 @@ fn capture(probe: &mut Probe, chapter: usize, page: usize, top: Option<f32>) -> 
     })
 }
 
-fn capture_facing_pages(probe: &mut Probe, page: usize) -> Result<Vec<u8>> {
+fn capture_facing_pages(
+    config: &BookConfig,
+    probe: &mut Probe,
+    page: usize,
+    geometry: FacingGeometry,
+) -> Result<Vec<u8>> {
     if page >= probe.page_count() {
         return Err("That page is unavailable".into());
     }
-    let width = FACING_PAGE_WIDTH as usize;
+    let width = geometry.leaf_width() as usize;
+    let stride = geometry.width as usize;
     let height = probe.settings.height as usize;
-    let mut frame = vec![255; WIDTH as usize * height];
-    for (column, x) in frame_columns(probe, page) {
+    let mut frame = vec![255; stride * height];
+    for (column, x) in frame_columns(config, probe, page) {
         let pixels = probe.capture(column)?;
         if pixels.len() != width * height {
             return Err("A facing page has incorrect dimensions".into());
         }
         for (row, source) in frame
-            .chunks_exact_mut(WIDTH as usize)
+            .chunks_exact_mut(stride)
             .zip(pixels.chunks_exact(width))
         {
             row[x as usize..x as usize + width].copy_from_slice(source);
@@ -2127,6 +2180,8 @@ fn capture_facing_pages(probe: &mut Probe, page: usize) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const FACING_PAGE_WIDTH: u32 = FacingGeometry { width: WIDTH }.leaf_width();
 
     fn example(book: &str, font_size: f32, facing_pages: bool) -> Reading {
         Reading::open(BookConfig {
@@ -2428,6 +2483,7 @@ mod tests {
         assert!((reading.scroll_top.unwrap() - (start + viewport - overlap)).abs() < 1.0);
 
         let plain = capture(
+            &reading.config,
             &mut reading.probe,
             reading.chapter,
             reading.page,
@@ -2476,6 +2532,7 @@ mod tests {
         let middle = reading.scroll_top.unwrap();
         assert!((middle - (start + viewport * 0.5 - overlap)).abs() < 1.0);
         let plain = capture(
+            &reading.config,
             &mut reading.probe,
             reading.chapter,
             reading.page,
@@ -2492,6 +2549,7 @@ mod tests {
         assert_eq!(reading.automatic_turn(10), Change::Partial);
         assert!((reading.scroll_top.unwrap() - (start + viewport - overlap)).abs() < 1.0);
         let plain = capture(
+            &reading.config,
             &mut reading.probe,
             reading.chapter,
             reading.page,
@@ -2521,6 +2579,7 @@ mod tests {
         assert_eq!(reading.input(Input::PageForward), Change::Partial);
         assert_eq!(reading.scroll_top, Some(end));
         let plain = capture(
+            &reading.config,
             &mut reading.probe,
             reading.chapter,
             reading.page,
@@ -2665,7 +2724,7 @@ mod tests {
             reading.set_facing_pages(facing).unwrap();
             let (page, cols, rows) = find_image(&reading);
             reading.go_to_page(0, page).unwrap();
-            let (_, origin) = frame_columns(&reading.probe, page)
+            let (_, origin) = frame_columns(&reading.config, &reading.probe, page)
                 .find(|(index, _)| *index == page)
                 .unwrap();
             let frame = render_night(&reading);

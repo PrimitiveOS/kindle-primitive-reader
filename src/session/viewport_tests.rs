@@ -1,7 +1,7 @@
 use super::*;
 
-fn authored_book(scroll: bool, overlap_footer: bool) -> Reading {
-    let config = BookConfig {
+fn authored_config(scroll: bool, overlap_footer: bool) -> BookConfig {
+    BookConfig {
         viewport: ReadingViewport::PORTRAIT,
         user_styles: Default::default(),
         user_hyphenation: Default::default(),
@@ -23,8 +23,11 @@ fn authored_book(scroll: bool, overlap_footer: bool) -> Reading {
         hidden_flows: Default::default(),
         chapter_offsets: Default::default(),
         screen_pages: Default::default(),
-    };
-    Reading::open(config).unwrap()
+    }
+}
+
+fn authored_book(scroll: bool, overlap_footer: bool) -> Reading {
+    Reading::open(authored_config(scroll, overlap_footer)).unwrap()
 }
 
 fn find_repeated_source(reading: &mut Reading) -> TextSelection {
@@ -106,7 +109,9 @@ fn render_frame(reading: &Reading, selection: &TextSelection, name: &str) -> Vec
 #[test]
 fn reflow_viewport_round_trip_keeps_exact_repeated_source_and_reprojects_selection() {
     for (scroll, overlap_footer) in [(false, false), (true, true)] {
-        let mut reading = authored_book(scroll, overlap_footer);
+        let mut config = authored_config(scroll, overlap_footer);
+        config.facing_pages = scroll;
+        let mut reading = Reading::open(config).unwrap();
         let selected = find_repeated_source(&mut reading);
         let anchor = reading.anchor().unwrap();
         assert_eq!(anchor, selected.start);
@@ -128,6 +133,8 @@ fn reflow_viewport_round_trip_keeps_exact_repeated_source_and_reprojects_selecti
         assert_eq!(landscape.anchor(), Some(anchor.clone()));
         assert_eq!(landscape.chapter, reading.chapter);
         assert_eq!(landscape.is_continuous(), scroll);
+        assert_eq!(landscape.config.facing_pages, scroll);
+        assert!(!landscape.uses_facing_pages());
         let visible = 110..290;
         let (area, clipped) = PagePaint {
             visible: visible.clone(),
@@ -204,17 +211,253 @@ fn a_refused_viewport_does_not_change_current_pixels_position_or_input_queue() {
     assert_eq!(reading.turns.pending.len(), 2);
 }
 
-#[test]
-fn facing_pages_refuse_to_transition_until_the_spread_uses_explicit_geometry() {
-    let mut reading = authored_book(false, false);
-    reading.set_facing_pages(true).unwrap();
-    let frame = reading.frame.pixels.clone();
+fn first_pane_hit<T>(
+    width: u32,
+    height: u32,
+    hit: impl Fn(f32, f32) -> Option<T>,
+) -> Option<(f32, f32, T)> {
+    for y in (0..height).step_by(8) {
+        for x in (0..width).step_by(8) {
+            if let Some(item) = hit(x as f32, y as f32) {
+                return Some((x as f32, y as f32, item));
+            }
+        }
+    }
+    None
+}
+
+fn verify_spread(reading: &mut Reading, rtl: bool) -> Vec<TextSelection> {
+    use crate::highlight_style::{HighlightColor, HighlightStyle, NoteMarker, Paint};
+
+    assert!(reading.uses_facing_pages());
+    assert_eq!(reading.probe.pages_right_to_left(), rtl);
+    let (width, height) = reading.config.viewport.dimensions();
+    let leaf_width = (width - 32) / 2;
+    let right = leaf_width + 32;
+    let first = reading.first_visible_page();
+    assert_eq!(reading.last_visible_page(), first + 1);
+    assert_eq!(reading.probe.settings.width, leaf_width);
+    assert_eq!(
+        (reading.frame.width, reading.frame.height),
+        (width, height - 74)
+    );
+    assert_eq!(reading.frame.pixels.len(), (width * (height - 74)) as usize);
     assert!(
         reading
+            .frame
+            .pixels
+            .chunks_exact(width as usize)
+            .all(|row| row[leaf_width as usize..right as usize]
+                .iter()
+                .all(|&pixel| pixel == 255))
+    );
+    let mid = width as f32 / 2.0;
+    assert!(reading.word_at(mid, 160.0).is_none());
+    assert!(reading.link_at(mid, 160.0).is_none());
+
+    let origins = if rtl { [right, 0] } else { [0, right] };
+    let mut words = Vec::new();
+    let mut link_hits = 0;
+    let mut arabic_hits = 0;
+    for (logical, x) in origins.into_iter().enumerate() {
+        let page = first + logical;
+        let expected = reading.probe.capture(page).unwrap();
+        for (row, leaf) in reading
+            .frame
+            .pixels
+            .chunks_exact(width as usize)
+            .zip(expected.chunks_exact(leaf_width as usize))
+        {
+            assert_eq!(&row[x as usize..(x + leaf_width) as usize], leaf);
+        }
+        let (wx, wy, word) = first_pane_hit(leaf_width, height, |px, py| {
+            reading.probe.word_at(page, px, py)
+        })
+        .unwrap();
+        assert_eq!(reading.word_at(wx + x as f32, wy), Some(word.clone()));
+        let rect = verify_hit(reading, &word);
+        assert!(rect.x >= x as i32 && rect.x + rect.width <= (x + leaf_width) as i32);
+        let marker = NoteMarker::Sideline;
+        let margin = reading.note_marker_margin(rect, marker);
+        assert_eq!(
+            margin,
+            (x + leaf_width - reading.probe.settings.right_margin()) as i32 + 11
+        );
+        let marked = reading.marked_frame(
+            &[(
+                rect,
+                Paint::Annotation {
+                    style: HighlightStyle::Underline,
+                    color: HighlightColor::default(),
+                    note: true,
+                    first: true,
+                    night: false,
+                },
+            )],
+            &[],
+            &PagePaint {
+                note_marker: marker,
+                visible: 0..reading.frame.height,
+                ..PagePaint::full(false)
+            },
+        );
+        assert_ne!(
+            marked.pixels[rect.y as usize * width as usize + margin as usize],
+            255
+        );
+        words.push(word);
+        if rtl
+            && let Some((wx, wy, arabic)) = first_pane_hit(leaf_width, height, |px, py| {
+                reading.probe.word_at(page, px, py).filter(|word| {
+                    word.text
+                        .chars()
+                        .any(|ch| ('\u{0600}'..='\u{06ff}').contains(&ch) && ch.is_alphabetic())
+                })
+            })
+        {
+            assert_eq!(reading.word_at(wx + x as f32, wy), Some(arabic));
+            arabic_hits += 1;
+        }
+        if !reading
+            .probe
+            .links_in(reading.probe.page_range(page))
+            .is_empty()
+        {
+            let (lx, ly, target) = first_pane_hit(leaf_width, height, |px, py| {
+                reading.probe.link_at(page, px, py)
+            })
+            .unwrap();
+            assert_eq!(reading.link_at(lx + x as f32, ly), Some(target));
+            link_hits += 1;
+        }
+    }
+    assert!(
+        !rtl || link_hits > 0,
+        "The authored RTL spread includes a translation link"
+    );
+    assert!(
+        !rtl || arabic_hits > 0,
+        "The authored RTL spread includes selectable Arabic"
+    );
+    words
+}
+
+#[test]
+fn facing_viewports_reflow_both_leaves_and_keep_the_selected_source_in_each_direction() {
+    for (file, rtl) in [
+        ("field-notes-epub3.epub", false),
+        ("rtl-notebook.epub", true),
+    ] {
+        let mut config = authored_config(false, false);
+        config.book = crate::test_fixture(file);
+        config.facing_pages = true;
+        config.settings.font_size = if rtl { 46.0 } else { 76.0 };
+        if rtl {
+            config
+                .fonts
+                .push(crate::test_fixture("fonts/NotoSansArabic-Regular.ttf"));
+        }
+        let mut portrait = Reading::open(config).unwrap();
+        let first_pair = verify_spread(&mut portrait, rtl);
+        let selected = &first_pair[1];
+        let anchor = selected.start.clone();
+        portrait.jump_to_anchor(0, &anchor).unwrap();
+        assert_eq!(portrait.page, 1);
+        let original_hit = verify_hit(&portrait, selected);
+        let name = if rtl { "rtl-facing" } else { "ltr-facing" };
+        let original = render_frame(&portrait, selected, &format!("{name}-portrait.png"));
+
+        let mut landscape = portrait
             .prepare_viewport(ReadingViewport::LANDSCAPE)
+            .unwrap();
+        assert_eq!(landscape.anchor(), Some(anchor.clone()));
+        assert_eq!(
+            landscape
+                .anchored_quote(&selected.start, &selected.end)
+                .unwrap(),
+            *selected
+        );
+        assert_eq!(portrait.anchor(), Some(anchor.clone()));
+        verify_spread(&mut landscape, rtl);
+        let wide_hit = verify_hit(&landscape, selected);
+        assert_ne!(wide_hit, original_hit);
+        let frame = landscape.frame.pixels.clone();
+        landscape
+            .reflow(Settings {
+                page_overlap_enabled: !landscape.config.settings.page_overlap_enabled,
+                ..landscape.config.settings
+            })
+            .unwrap();
+        assert_eq!(landscape.probe.settings.width, 824);
+        assert_eq!(landscape.frame.pixels, frame);
+        assert_eq!(verify_hit(&landscape, selected), wide_hit);
+        render_frame(&landscape, selected, &format!("{name}-landscape.png"));
+
+        let returned = landscape
+            .prepare_viewport(ReadingViewport::PORTRAIT)
+            .unwrap();
+        assert_eq!(returned.anchor(), Some(anchor));
+        assert_eq!(returned.page, 1);
+        assert_eq!(verify_hit(&returned, selected), original_hit);
+        assert_eq!(
+            render_frame(&returned, selected, &format!("{name}-returned.png")),
+            original
+        );
+
+        let start = landscape.first_visible_page();
+        assert!(landscape.probe.page_count() > start + 2);
+        let y = landscape.frame.height as f32 / 2.0;
+        let (forward, back) = if rtl { (16.0, 1664.0) } else { (1664.0, 16.0) };
+        for (input, page, change) in [
+            (Input::Tap(1060.0, y), start, Change::None),
+            (Input::Tap(forward, y), start + 2, Change::Partial),
+            (Input::Tap(back, y), start, Change::Partial),
+            (Input::PageForward, start + 2, Change::Partial),
+            (Input::PageBack, start, Change::Partial),
+        ] {
+            landscape.turns.next_refresh = Instant::now();
+            assert_eq!(landscape.input(input), change);
+            assert_eq!(landscape.first_visible_page(), page);
+        }
+    }
+}
+
+#[test]
+fn vertical_chapters_use_the_existing_full_width_leaf_and_defer_resizing() {
+    let mut config = authored_config(false, false);
+    config.book = crate::test_fixture("vertical-chapters.epub");
+    config.facing_pages = true;
+    let portrait = Reading::open(config).unwrap();
+    let mut landscape = portrait
+        .prepare_viewport(ReadingViewport::LANDSCAPE)
+        .unwrap();
+    assert!(landscape.uses_facing_pages());
+    assert_eq!(landscape.visible_parts().len(), 1);
+    assert!(
+        landscape
+            .frame
+            .pixels
+            .chunks_exact(1680)
+            .all(|row| row[856..].iter().all(|&pixel| pixel == 255))
+    );
+    assert_eq!(landscape.turn(1).unwrap(), Change::Partial);
+    assert_eq!(landscape.chapter, 1);
+    assert!(landscape.probe.is_vertical());
+    assert!(landscape.config.facing_pages);
+    assert!(!landscape.uses_facing_pages());
+    assert_eq!(landscape.frame.width, 1680);
+    assert_eq!(landscape.probe.settings.width, 1680);
+    let anchor = landscape.anchor();
+    let frame = landscape.frame.pixels.clone();
+    assert!(
+        landscape
+            .prepare_viewport(ReadingViewport::PORTRAIT)
             .is_err()
     );
-    assert_eq!(reading.config.viewport, ReadingViewport::PORTRAIT);
-    assert!(reading.uses_facing_pages());
-    assert_eq!(reading.frame.pixels, frame);
+    assert_eq!(landscape.anchor(), anchor);
+    assert_eq!(landscape.frame.pixels, frame);
+    assert_eq!(landscape.turn(-1).unwrap(), Change::Partial);
+    assert_eq!(landscape.chapter, 0);
+    assert!(landscape.uses_facing_pages());
+    assert_eq!(landscape.probe.settings.width, 824);
 }

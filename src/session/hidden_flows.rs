@@ -226,7 +226,7 @@ impl Reading {
         });
         let page = top.map_or(self.page, |top| self.probe.page_at(top));
         let previous = std::mem::replace(&mut self.probe.flow_pages, next);
-        let frame = match capture(&mut self.probe, self.chapter, page, top) {
+        let frame = match capture(&config, &mut self.probe, self.chapter, page, top) {
             Ok(frame) => frame,
             Err(error) => {
                 self.probe.flow_pages = previous;
@@ -299,7 +299,7 @@ impl Reading {
     pub(super) fn turn_in_custom_flow(&mut self, direction: isize) -> Result<Change> {
         let map = self.custom_flow_map().ok_or("Custom flows are disabled")?;
         let current_flow = map.flow(self.page);
-        let span = frame_span(&self.probe);
+        let span = frame_span(&self.config, &self.probe);
         let candidate = if direction > 0 {
             self.last_visible_page()
                 .checked_add(1)
@@ -319,7 +319,7 @@ impl Reading {
             }
         };
         if let Some(page) = candidate {
-            let frame = capture(&mut self.probe, self.chapter, page, None)?;
+            let frame = capture(&self.config, &mut self.probe, self.chapter, page, None)?;
             self.frame = frame;
             self.page = page;
             self.scroll_top = None;
@@ -343,7 +343,7 @@ impl Reading {
                 0
             };
             if let Some(mut page) = map.allowed_page(first, direction, current_flow) {
-                if direction < 0 && frame_span(&probe) == 2 {
+                if direction < 0 && frame_span(&self.config, &probe) == 2 {
                     page = page
                         .checked_sub(1)
                         .and_then(|previous| map.allowed_page(previous, direction, current_flow))
@@ -377,7 +377,13 @@ impl Reading {
         };
         if advances {
             let page = self.probe.page_at(next);
-            self.frame = capture(&mut self.probe, self.chapter, page, Some(next))?;
+            self.frame = capture(
+                &self.config,
+                &mut self.probe,
+                self.chapter,
+                page,
+                Some(next),
+            )?;
             self.page = page;
             self.scroll_top = Some(next);
             self.focus_anchor = None;
@@ -416,7 +422,7 @@ impl Reading {
                     source_position(&ranges, offset).ok_or("That flow has no visible content")?;
                 self.use_chapter(probe, chapter, None, page)?;
                 self.page = self.probe.page_at(top);
-                self.frame = capture(&mut self.probe, chapter, self.page, Some(top))?;
+                self.frame = capture(&self.config, &mut self.probe, chapter, self.page, Some(top))?;
                 self.scroll_top = Some(top);
                 self.refresh_flow_weights();
             }
