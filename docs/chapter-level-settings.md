@@ -23,6 +23,14 @@ book, backup round trips, custom outlines, and same-page headings. The footer
 regression compares the original and filtered frame and verifies that the
 caption, Exit, and track geometry remain identical while selected ticks change.
 
+Reader 0.1.30 passed 1,015 library tests, one Kindle binary test, 14 EPUB
+package tests and four layout checks on the Mac. The native Oasis 3 suite
+passed 1,019 library tests, 14 EPUB package tests and four layout checks.
+Both skipped 62 optional tests. The chapter settings, PDF footer, Skim and
+bookmark list each rendered identical pixels on the Mac and the Oasis.
+The header activation tests also passed natively. Foreground physical input
+and E Ink refresh remain separate checks.
+
 [Chapter settings](screenshots/chapter-levels.png) · [Selected PDF markers](screenshots/progress-markers-filtered.png) · [Selected markers in Skim](screenshots/progress-markers-skim.png)
 
 [KOReader depth and jump rules](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readertoc.lua#L548-L619) · [Stock settings](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readertoc.lua#L1257-L1325) · [Reader jump tests](../src/app/chapter_navigation/tests.rs) · [Reader marker tests](../src/app/progress_markers/tests.rs)
