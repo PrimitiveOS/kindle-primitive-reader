@@ -1,5 +1,8 @@
 # Reader release notices
 
+The staged package includes the project software terms in `LICENSE` and
+the project documentation and artwork terms in `LICENSE-DOCS`.
+
 [THIRD-PARTY.txt](THIRD-PARTY.txt) records the locked Kindle dependency versions,
 licences, and exact source links. The source of each MPL 2.0 component is
 available from its listed crate archive. PrimitiveOS Tools is used under its
