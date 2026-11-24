@@ -799,8 +799,18 @@ impl Reader {
     }
     fn select_definition(&mut self, index: usize) {
         self.list_page = index;
-        self.dictionary_navigation.view = View::default();
+        self.dictionary_navigation.view = View {
+            save_highlight: self.dictionary_navigation.view.save_highlight,
+            ..View::default()
+        };
         self.notice = None;
+    }
+    fn jump_to_definition(&mut self, index: usize) -> Change {
+        if index == self.list_page || index >= self.definitions.len() {
+            return Change::None;
+        }
+        self.select_definition(index);
+        Change::Partial
     }
     fn result_step(&mut self, step: isize, wrap: bool) -> Change {
         let count = self.definitions.len();
@@ -811,8 +821,7 @@ impl Reader {
         if !wrap && !(0..count as isize).contains(&index) {
             return Change::None;
         }
-        self.select_definition(index.rem_euclid(count as isize) as usize);
-        Change::Partial
+        self.jump_to_definition(index.rem_euclid(count as isize) as usize)
     }
     fn scroll_definition(&mut self, step: isize, across_results: bool) -> Change {
         let rows = self.definition_layout().2;
@@ -1045,13 +1054,23 @@ impl Reader {
             }
             return self.definition_results_input(input, popup, page);
         }
-        if let Input::LongTap(x, y) = input
-            && let Some(word) = self.dictionary_word_at(popup, x, y)
-        {
-            return match self.look_up(&word) {
-                Ok(()) => Change::Partial,
-                Err(e) => self.report(e),
-            };
+        let [prev, expand, next] = definition_actions(popup);
+        let found = self.dictionary_navigation.view.find.is_some();
+        if let Input::LongTap(x, y) = input {
+            if !found {
+                if prev.contains(x, y) {
+                    return self.jump_to_definition(0);
+                }
+                if next.contains(x, y) {
+                    return self.jump_to_definition(self.definitions.len().saturating_sub(1));
+                }
+            }
+            if let Some(word) = self.dictionary_word_at(popup, x, y) {
+                return match self.look_up(&word) {
+                    Ok(()) => Change::Partial,
+                    Err(e) => self.report(e),
+                };
+            }
         }
         if let Input::Swipe { dx, dy, .. } = input {
             if dy.abs() > dx.abs() {
@@ -1059,8 +1078,6 @@ impl Reader {
             }
             return self.result_step(if dx < 0.0 { 1 } else { -1 }, true);
         }
-        let [prev, expand, next] = definition_actions(popup);
-        let found = self.dictionary_navigation.view.find.is_some();
         match input {
             Input::PageForward if found => self.find_step(1),
             Input::PageBack if found => self.find_step(-1),

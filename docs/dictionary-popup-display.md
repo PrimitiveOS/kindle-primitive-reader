@@ -45,3 +45,24 @@ cargo test --locked --lib dictionary_hold_close
 ```
 
 [Numbered senses and bilingual examples in HTML dictionary articles](dictionary-html-articles.md)
+
+
+## First and last results
+
+Tap **Previous** or **Next** to move one definition. Hold either button
+to jump to the first or last result in the lookup. At the edge, Reader
+hides the unavailable direction. When Find is active, the same tap
+controls move between matches in the current definition.
+
+An armed highlight stays attached to the book's selected passage when
+switching definitions, including when choosing an entry from Results.
+Closing the lookup saves that highlight once. The test uses three
+authored definitions, rotates an open popup, and checks the saved
+selection, original reading position and landscape button feedback.
+
+The comparison runs the pinned KOReader button callbacks and
+`changeDictionary` in Lua 5.1. It exercises a single step, both held jumps,
+the disabled boundaries and the armed highlight across the result changes.
+[KOReader buttons](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/dictquicklookup.lua#L799-L838) ·
+[Comparison script](../scripts/compare-dictionary-result-navigation.py) ·
+[Last result with the highlight armed](screenshots/landscape-dictionary-last-result.png)

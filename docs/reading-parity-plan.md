@@ -85,7 +85,11 @@ input, E Ink refresh, and sleep and USB resume checks remain open. [Exact-value 
 [Oasis test sequence](reading-orientation-contract.md#foreground-acceptance-on-oasis-3)
 
 Reader now edits saved line spacing for reflowable profiles and page overlap
-for fixed profiles. The initial publisher-width implementation matches the
+for fixed profiles, plus saved font size and content zoom. Dictionary result
+arrows now support held jumps to the first and last definition and preserve
+an armed highlight while switching sources. [Dictionary result navigation](dictionary-popup-display.md#first-and-last-results)
+
+The initial publisher-width implementation matches the
 pinned KOReader Web mode's box width and horizontal placement for two authored
 paragraph cases. Full Render Mode behavior and its user-facing choices remain
 open. [Saved reading profiles](reading-profiles.md) · [Publisher widths](render-modes.md)

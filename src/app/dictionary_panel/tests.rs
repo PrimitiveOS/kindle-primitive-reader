@@ -160,15 +160,95 @@ impl Simulation {
     }
 
     fn hold_back(&mut self) {
-        let back = self.app.definition_layout().1;
-        assert_eq!(
-            self.app.input(Input::LongTap(
-                (back.x + back.w / 2) as f32,
-                (back.y + back.h / 2) as f32
-            )),
-            Change::Partial
-        );
+        assert_eq!(self.hold(self.app.definition_layout().1), Change::Partial);
     }
+
+    fn hold(&mut self, rect: Rect) -> Change {
+        self.app.input(Input::LongTap(
+            (rect.x + rect.w / 2) as f32,
+            (rect.y + rect.h / 2) as f32,
+        ))
+    }
+}
+
+#[test]
+fn dictionary_result_holds_jump_to_the_edges_and_keep_the_armed_highlight() {
+    use crate::app::selection_viewport_tests::{adopt, capture, press};
+    use crate::session::ReadingViewport;
+
+    let mut s = Simulation::new();
+    s.open_epub_selection();
+    let source = s.app.current_history_location();
+    let selection = s.app.selection.clone();
+    s.tap(s.app.selection_button(SelectionAction::Dictionary));
+    assert_eq!(s.app.definitions.len(), 3);
+    let popup = s.app.definition_layout().0;
+    s.tap(action_row(popup)[4]);
+    assert_eq!(s.hold(definition_actions(popup)[0]), Change::None);
+    s.tap(definition_actions(popup)[2]);
+    assert_eq!(s.app.list_page, 1);
+    assert!(s.app.dictionary_navigation.view.save_highlight);
+    s.draw(None);
+    assert_eq!(s.app.scroll_definition(1, false), Change::Partial);
+    assert!(s.app.dictionary_navigation.view.line > 0);
+
+    let mut wide = adopt(&mut s.app, ReadingViewport::LANDSCAPE, 2);
+    let popup = s.app.definition_layout().0;
+    let [_, _, next] = definition_actions(popup);
+    press(&s.app, &mut wide, next, false);
+    assert_eq!(s.hold(next), Change::Partial);
+    assert_eq!(s.app.list_page, 2);
+    assert_eq!(s.app.dictionary_navigation.view.line, 0);
+    assert!(s.app.dictionary_navigation.view.save_highlight);
+    capture(
+        &s.app,
+        &mut wide,
+        "landscape-dictionary-last-result.png",
+        false,
+    );
+    let popup = s.app.definition_layout().0;
+    let [previous, _, next] = definition_actions(popup);
+    assert_eq!(s.hold(next), Change::None);
+    assert_eq!(s.hold(previous), Change::Partial);
+    assert_eq!(s.app.list_page, 0);
+
+    let popup = s.app.definition_layout().0;
+    s.tap(definition_results_button(popup));
+    s.tap(definition_result_row(popup, 1));
+    primitive_app::frame(&s.app, &mut wide, false);
+    assert_eq!(s.app.finish_find("light"), Change::Partial);
+    let index = s
+        .app
+        .dictionary_navigation
+        .view
+        .find
+        .as_ref()
+        .unwrap()
+        .index;
+    assert_eq!(
+        s.hold(definition_actions(s.app.definition_layout().0)[2]),
+        Change::None
+    );
+    assert_eq!(s.app.list_page, 1);
+    assert_eq!(
+        s.app
+            .dictionary_navigation
+            .view
+            .find
+            .as_ref()
+            .unwrap()
+            .index,
+        index
+    );
+    assert_eq!(s.app.current_history_location(), source);
+    assert_eq!(s.app.selection, selection);
+
+    s.back();
+    let id = s.app.active.as_ref().unwrap().id;
+    let highlights = &s.app.library.state(id).unwrap().highlights;
+    assert_eq!(highlights.len(), 1);
+    assert_eq!(highlights[0].selection.text, "the");
+    assert_eq!(s.app.current_history_location(), source);
 }
 
 #[test]
