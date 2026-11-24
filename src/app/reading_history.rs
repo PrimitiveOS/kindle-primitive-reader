@@ -7,6 +7,7 @@ mod progress;
 mod ranges;
 mod report;
 mod reset;
+mod sqlite_import;
 use super::{Action, Canvas, Change, HEIGHT, Input, Item, Reader, Rect, Result, Screen, WIDTH};
 use crate::reading_stats::history::{
     History, Options,
@@ -46,6 +47,7 @@ pub(super) enum Page {
     ResetBooks,
     ConfirmReset(Scope),
     ConfirmPeriodReset,
+    ImportKoReader,
 }
 impl Page {
     pub(super) fn title(self) -> &'static str {
@@ -69,6 +71,7 @@ impl Page {
             Self::Resets => "Reset reading statistics",
             Self::ResetBooks => "Choose a book",
             Self::ConfirmReset(_) | Self::ConfirmPeriodReset => "Confirm statistics reset",
+            Self::ImportKoReader => "Import KOReader statistics",
         }
     }
 }
@@ -87,6 +90,9 @@ pub(super) enum Command {
     ConfirmReset,
     ConfirmPeriodReset,
     CancelReset,
+    BeginKoReaderImport,
+    PreviewKoReaderImport,
+    ApplyKoReaderImport,
 }
 pub(super) struct View {
     back: Screen,
@@ -102,6 +108,8 @@ pub(super) struct View {
     duration_limits_draft: Option<duration_options::Draft>,
     reset_list_page: usize,
     period_reset: Option<period_reset::Pending>,
+    koreader_import: Option<sqlite_import::Pending>,
+    import_summary_page: usize,
 }
 impl Default for View {
     fn default() -> Self {
@@ -119,6 +127,8 @@ impl Default for View {
             duration_limits_draft: None,
             reset_list_page: 0,
             period_reset: None,
+            koreader_import: None,
+            import_summary_page: 0,
         }
     }
 }
@@ -284,6 +294,9 @@ impl Reader {
             ConfirmReset => self.confirm_history_reset()?,
             ConfirmPeriodReset => self.confirm_period_reset()?,
             CancelReset => self.history_back(),
+            BeginKoReaderImport => self.begin_koreader_statistics_import()?,
+            PreviewKoReaderImport => self.preview_koreader_statistics_import()?,
+            ApplyKoReaderImport => self.apply_koreader_statistics_import()?,
         }
         Ok(())
     }
@@ -318,6 +331,13 @@ impl Reader {
                 Screen::ReadingHistory(Page::Summary),
                 Some(self.history_view.progress.summary_page),
             ),
+            Page::ImportKoReader => {
+                self.history_view.koreader_import = None;
+                (
+                    Screen::ReadingHistory(Page::Summary),
+                    Some(self.history_view.import_summary_page),
+                )
+            }
             Page::Day(_) => (Screen::ReadingHistory(self.history_view.day_back), None),
             Page::BookDay(day, _) => (Screen::ReadingHistory(Page::Day(day)), None),
             Page::Range(page) => self.history_view.ranges.back(page),
@@ -404,6 +424,12 @@ impl Reader {
                     Item::new("Today's timeline", Action::ReadingHistory(Command::Today)),
                     show("Statistics settings", Page::Options),
                 ]);
+                if self.koreader_statistics_pdf().is_some() {
+                    rows.push(Item::new(
+                        "Import KOReader statistics",
+                        Action::ReadingHistory(Command::BeginKoReaderImport),
+                    ));
+                }
                 if let Some(warning) = history.warning() {
                     rows.push(Item::new(warning, Action::Heading));
                 }
@@ -527,6 +553,7 @@ impl Reader {
                 );
             }
             Page::CalendarChoice(choice) => return self.calendar_choice_items(choice),
+            Page::ImportKoReader => return self.koreader_statistics_import_items(),
             Page::TimeRange
             | Page::Range(_)
             | Page::Periods(_)

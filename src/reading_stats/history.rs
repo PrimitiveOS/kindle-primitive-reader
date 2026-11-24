@@ -2,13 +2,15 @@
 pub(crate) mod date;
 pub(crate) mod report;
 pub(crate) mod reset;
+pub(crate) mod sqlite_import;
 use date::{Date, Zone};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    io::{self, Read},
-    path::PathBuf,
+    io::{self, Read, Write},
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -199,6 +201,7 @@ impl Active {
 pub(crate) struct History {
     path: PathBuf,
     data: Data,
+    saved_digest: Option<ring::digest::Digest>,
     active: Option<Active>,
     next_id: u64,
     dirty: bool,
@@ -215,17 +218,7 @@ pub(crate) struct Summary {
 impl History {
     pub(crate) fn load(path: PathBuf, prior: BTreeMap<u64, u64>) -> Self {
         let loaded = primitive_app::with_storage(|| {
-            let meta = fs::symlink_metadata(&path)?;
-            if !meta.is_file() || meta.len() > MAX_BYTES {
-                return Err(invalid());
-            }
-            let mut bytes = Vec::new();
-            fs::File::open(&path)?
-                .take(MAX_BYTES + 1)
-                .read_to_end(&mut bytes)?;
-            if bytes.len() as u64 > MAX_BYTES {
-                return Err(invalid());
-            }
+            let bytes = read_journal(&path)?;
             let data: Data = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
             if data.version != 1
                 || !data.options.valid()
@@ -238,18 +231,24 @@ impl History {
             {
                 return Err(invalid());
             }
-            Ok(data)
+            Ok((data, ring::digest::digest(&ring::digest::SHA256, &bytes)))
         });
         let missing = loaded
             .as_ref()
             .is_err_and(|e| e.kind() == io::ErrorKind::NotFound);
         let read_only = loaded.is_err() && !missing;
-        let data = loaded.unwrap_or_else(|_| Data {
-            version: 1,
-            prior,
-            options: Options::default(),
-            ..Default::default()
-        });
+        let (data, saved_digest) = match loaded {
+            Ok((data, digest)) => (data, Some(digest)),
+            Err(_) => (
+                Data {
+                    version: 1,
+                    prior,
+                    options: Options::default(),
+                    ..Default::default()
+                },
+                None,
+            ),
+        };
         let next_id = data
             .visits
             .iter()
@@ -260,6 +259,7 @@ impl History {
         Self {
             path,
             data,
+            saved_digest,
             active: None,
             next_id,
             dirty: missing,
@@ -465,12 +465,31 @@ impl History {
         }
         result
     }
-    fn persist(&self) -> io::Result<()> {
+    fn persist(&mut self) -> io::Result<()> {
         let bytes = serde_json::to_vec(&self.data).map_err(io::Error::other)?;
         if bytes.len() as u64 > MAX_BYTES {
             return Err(invalid());
         }
-        primitive_app::save(&self.path, &bytes)
+        primitive_app::with_storage(|| {
+            let lock = journal_lock(&self.path)?;
+            let on_disk = match read_journal(&self.path) {
+                Ok(current) => Some(ring::digest::digest(&ring::digest::SHA256, &current)),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+                Err(error) => return Err(error),
+            };
+            if on_disk.as_ref().map(AsRef::<[u8]>::as_ref)
+                != self.saved_digest.as_ref().map(AsRef::<[u8]>::as_ref)
+            {
+                return Err(io::Error::other(
+                    "Reading statistics changed on disk. Reopen Reader before saving.",
+                ));
+            }
+            let result = write_journal(&self.path, &bytes);
+            drop(lock);
+            result
+        })?;
+        self.saved_digest = Some(ring::digest::digest(&ring::digest::SHA256, &bytes));
+        Ok(())
     }
     pub(crate) fn visits(&self) -> &[Visit] {
         &self.data.visits
@@ -659,6 +678,84 @@ impl History {
         }
         bins
     }
+}
+
+fn read_journal(path: &Path) -> io::Result<Vec<u8>> {
+    let meta = fs::symlink_metadata(path)?;
+    if !meta.is_file() || meta.len() > MAX_BYTES {
+        return Err(invalid());
+    }
+    let mut bytes = Vec::new();
+    fs::File::open(path)?
+        .take(MAX_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_BYTES {
+        return Err(invalid());
+    }
+    Ok(bytes)
+}
+
+fn journal_lock(path: &Path) -> io::Result<fs::File> {
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path.with_extension("lock"))?;
+    let info = lock.metadata()?;
+    if !info.is_file() || info.nlink() != 1 {
+        return Err(invalid());
+    }
+    lock.lock()?;
+    Ok(lock)
+}
+
+fn write_journal(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    use ring::rand::{SecureRandom, SystemRandom};
+
+    let random = SystemRandom::new();
+    for _ in 0..4 {
+        let mut nonce = [0; 16];
+        random
+            .fill(&mut nonce)
+            .map_err(|_| io::Error::other("Could not reserve a journal file"))?;
+        let temp = path.with_file_name(format!(
+            ".reading-history-{:032x}.tmp",
+            u128::from_ne_bytes(nonce)
+        ));
+        let mut file = match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&temp)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        };
+        let node = file.metadata()?;
+        let owns_path = || {
+            fs::symlink_metadata(&temp).is_ok_and(|info| {
+                info.is_file() && info.dev() == node.dev() && info.ino() == node.ino()
+            })
+        };
+        let result = (|| {
+            file.write_all(bytes)?;
+            file.sync_all()?;
+            if !owns_path() {
+                return Err(io::Error::other("The temporary journal changed"));
+            }
+            fs::rename(&temp, path)
+        })();
+        if result.is_err() && owns_path() {
+            let _ = fs::remove_file(&temp);
+        }
+        return result;
+    }
+    Err(io::Error::other("Could not reserve a unique journal file"))
 }
 fn add_hourly_time(
     calendar: &date::Calendar,

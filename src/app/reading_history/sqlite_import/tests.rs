@@ -1,0 +1,310 @@
+use super::*;
+use crate::app::{
+    Change, Input,
+    tests::{Fixture, capture_test_screen},
+};
+use crate::reading_stats::history::History;
+use primitive_app::App;
+use std::time::{Duration, Instant};
+
+const STOCK: &[u8] = include_bytes!("../../../../tests/fixtures/koreader-statistics/pdf.sqlite3");
+const PDF: &[u8] = include_bytes!("../../../../tests/fixtures/scan-reflow/vector.pdf");
+const FIRST: i64 = 1_769_990_394;
+
+fn setup() -> (Fixture, Reader, u64) {
+    let fixture = Fixture::new();
+    let path = fixture.root.join("Survey.pdf");
+    fs::write(&path, PDF).unwrap();
+    fs::write(fixture.root.join(DATABASE), STOCK).unwrap();
+    let fonts = vec![
+        crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+        crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+    ];
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+    app.open_path(&path).unwrap();
+    app.jump_fixed(1, None).unwrap();
+    let id = app.open_book_id().unwrap();
+    (fixture, app, id)
+}
+
+fn tap_row(app: &mut Reader, title: &str) {
+    let (pages, rows) = app.list_window();
+    let row = match rows.iter().position(|row| row.title == title) {
+        Some(row) => row,
+        None => {
+            assert!(pages > 1);
+            app.input(Input::PageForward);
+            app.list_window()
+                .1
+                .iter()
+                .position(|row| row.title == title)
+                .unwrap()
+        }
+    };
+    let rect = app.list_geometry().row(row);
+    assert_eq!(
+        app.input(Input::Tap(
+            (rect.x + rect.w / 2) as f32,
+            (rect.y + rect.h / 2) as f32
+        )),
+        Change::Partial
+    );
+}
+
+fn preview(app: &mut Reader, id: u64) {
+    app.activate_reading_history(Command::Open(Some(id)))
+        .unwrap();
+    tap_row(app, "Import KOReader statistics");
+    assert_eq!(app.screen, Screen::ReadingHistory(Page::ImportKoReader));
+    tap_row(app, "Preview database");
+    assert!(
+        app.history_view.koreader_import.is_some(),
+        "{:?}",
+        app.notice
+    );
+}
+
+#[test]
+fn stock_pdf_sqlite_import_previews_cancels_preserves_position_and_persists_once() {
+    let (fixture, mut app, id) = setup();
+    let position = app.current_position();
+    let now = Instant::now();
+    let existing = FIRST - 3600;
+    app.reading_history.discard_active();
+    app.reading_history
+        .set_page_at(Some((id, 1)), now, Some(existing));
+    app.reading_history
+        .set_page_at(None, now + Duration::from_secs(8), Some(existing + 8));
+    app.reading_history.discard_active();
+    preview(&mut app, id);
+    let pending = app.history_view.koreader_import.as_ref().unwrap();
+    assert_eq!(pending.preview.new_visits, 3);
+    assert_eq!(pending.preview.seconds, 60);
+    assert!(pending.preview.can_store);
+    assert!(
+        app.items()
+            .iter()
+            .any(|item| item.title == "Matched KOReader book"
+                && item.detail.as_deref() == Some("Survey"))
+    );
+    assert_eq!(pending.preview.first_start, Some(FIRST));
+    assert_eq!(pending.preview.last_start, Some(FIRST + 30));
+    assert_eq!(app.reading_history.summary(Some(id), None).seconds, 8);
+    capture_test_screen(&app, &app.fonts, "READER_STATS_IMPORT_SCREEN", false);
+    app.history_back();
+    assert!(app.history_view.koreader_import.is_none());
+    assert_eq!(app.reading_history.summary(Some(id), None).seconds, 8);
+
+    preview(&mut app, id);
+    tap_row(&mut app, "Import records");
+    assert_eq!(app.screen, Screen::ReadingHistory(Page::Summary));
+    let visits: Vec<_> = app
+        .reading_history
+        .visits()
+        .iter()
+        .map(|row| (row.page, row.start, row.seconds))
+        .collect();
+    assert_eq!(
+        visits,
+        [
+            (1, Some(existing), 8),
+            (0, Some(FIRST), 12),
+            (0, Some(FIRST + 30), 30),
+            (1, Some(FIRST + 12), 18)
+        ]
+    );
+    assert_eq!(app.reading_history.summary(Some(id), None).seconds, 68);
+    assert_eq!(app.reading_history.summary(Some(id), None).screens, 2);
+    assert_eq!(app.current_position(), position);
+    assert_eq!(fs::read(fixture.root.join("Survey.pdf")).unwrap(), PDF);
+    assert_eq!(fs::read(fixture.root.join(DATABASE)).unwrap(), STOCK);
+    assert!(!fixture.root.join("statistics.sqlite3-shm").exists());
+
+    let mut reopened = Reader::open(&fixture.root, &fixture.state, app.fonts.clone()).unwrap();
+    reopened
+        .open_path(&fixture.root.join("Survey.pdf"))
+        .unwrap();
+    preview(&mut reopened, id);
+    let imported = reopened
+        .history_view
+        .koreader_import
+        .as_ref()
+        .unwrap()
+        .preview;
+    assert_eq!(
+        (
+            imported.new_visits,
+            imported.duplicate,
+            imported.conflicting
+        ),
+        (0, 3, 0)
+    );
+    assert!(
+        !reopened
+            .items()
+            .iter()
+            .any(|row| row.title == "Import records")
+    );
+}
+
+#[test]
+fn stock_pdf_sqlite_import_rejects_mismatched_editions_hot_journals_and_changed_sources() {
+    let (fixture, mut app, id) = setup();
+    preview(&mut app, id);
+    let database = fixture.root.join(DATABASE);
+    let mut changed = STOCK.to_vec();
+    changed.push(0);
+    fs::write(&database, changed).unwrap();
+    assert!(
+        app.apply_koreader_statistics_import()
+            .unwrap_err()
+            .to_string()
+            .contains("database changed")
+    );
+    assert!(app.reading_history.visits().is_empty());
+    fs::write(&database, STOCK).unwrap();
+    let journal = fixture.root.join("statistics.sqlite3-wal");
+    fs::write(&journal, b"pending frames").unwrap();
+    assert!(
+        app.preview_koreader_statistics_import()
+            .unwrap_err()
+            .to_string()
+            .contains("pending journal")
+    );
+    assert!(app.history_view.koreader_import.is_none());
+    fs::remove_file(journal).unwrap();
+
+    let same_title = fixture.root.join("Alternate").join("Survey.pdf");
+    fs::create_dir(same_title.parent().unwrap()).unwrap();
+    fs::write(
+        &same_title,
+        crate::fixed_session::tests::striped_pdf_sized_bytes(2, 600, 800),
+    )
+    .unwrap();
+    app.open_path(&same_title).unwrap();
+    app.activate_reading_history(Command::Open(app.open_book_id()))
+        .unwrap();
+    app.begin_koreader_statistics_import().unwrap();
+    assert!(
+        app.preview_koreader_statistics_import()
+            .unwrap_err()
+            .to_string()
+            .contains("no match")
+    );
+    app.open_path(&fixture.book).unwrap();
+    app.activate_reading_history(Command::Open(app.open_book_id()))
+        .unwrap();
+    assert!(
+        !app.items()
+            .iter()
+            .any(|row| row.title == "Import KOReader statistics")
+    );
+}
+
+#[test]
+fn stock_pdf_sqlite_import_protects_the_journal_and_keeps_failed_draft_for_retry() {
+    let (fixture, mut app, id) = setup();
+    preview(&mut app, id);
+    let path = fixture.state.with_file_name("reading-history.json");
+    let baseline = fs::read(&path).ok();
+    // Foreign valid history is still a conflict and is not overwritten.
+    let now = Instant::now();
+    let mut other = History::load(path.clone(), Default::default());
+    other
+        .configure(
+            crate::reading_stats::history::Options {
+                min_seconds: 6,
+                ..Default::default()
+            },
+            now,
+            Some(FIRST),
+        )
+        .unwrap();
+    let saved = fs::read(&path).unwrap();
+    assert!(
+        app.apply_koreader_statistics_import()
+            .unwrap_err()
+            .to_string()
+            .contains("changed on disk")
+    );
+    assert_eq!(fs::read(&path).unwrap(), saved);
+    assert!(app.reading_history.visits().is_empty());
+    if let Some(baseline) = baseline {
+        fs::write(&path, baseline).unwrap();
+    } else {
+        fs::remove_file(&path).unwrap();
+    }
+
+    // Block the normal atomic write, then retry the same reviewed records.
+    let lock = path.with_extension("lock");
+    fs::remove_file(&lock).unwrap();
+    fs::create_dir(&lock).unwrap();
+    assert!(app.apply_koreader_statistics_import().is_err());
+    assert!(app.reading_history.visits().is_empty());
+    assert!(app.history_view.koreader_import.is_some());
+    fs::remove_dir(&lock).unwrap();
+    let target = path.with_file_name("reading-history.json.tmp");
+    std::os::unix::fs::symlink(fixture.root.join("Survey.pdf"), &target).unwrap();
+    app.apply_koreader_statistics_import().unwrap();
+    assert!(fs::symlink_metadata(&target).unwrap().is_symlink());
+    assert_eq!(fs::read(&target).unwrap(), PDF);
+    assert_eq!(app.reading_history.summary(Some(id), None).seconds, 60);
+}
+
+#[test]
+fn stock_pdf_sqlite_import_does_not_write_the_old_temporary_hardlink() {
+    let (fixture, mut app, id) = setup();
+    let database = fixture.root.join(DATABASE);
+    let old_temp = fixture.state.with_file_name("reading-history.json.tmp");
+    fs::hard_link(database, &old_temp).unwrap();
+    preview(&mut app, id);
+    app.apply_koreader_statistics_import().unwrap();
+    assert_eq!(fs::read(&old_temp).unwrap(), STOCK);
+}
+
+#[test]
+fn stock_pdf_sqlite_import_separates_conflicts_mixed_pagination_and_invalid_rows() {
+    let (fixture, mut app, id) = setup();
+    let database = fixture.root.join(DATABASE);
+    let edit_stock = |sql: &str| {
+        let db = rusqlite::Connection::open(&database).unwrap();
+        db.execute_batch(sql).unwrap();
+        db.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").unwrap();
+    };
+    edit_stock("INSERT INTO page_stat_data VALUES((SELECT id FROM book), 3, 1769990435, 45, 3)");
+    let now = Instant::now();
+    app.reading_history.discard_active();
+    app.reading_history
+        .set_page_at(Some((id, 0)), now, Some(FIRST));
+    app.reading_history
+        .set_page_at(None, now + Duration::from_secs(8), Some(FIRST + 8));
+    app.reading_history.discard_active();
+    preview(&mut app, id);
+    let pending = app.history_view.koreader_import.as_ref().unwrap();
+    assert_eq!(pending.records.other_page_counts, 1);
+    assert_eq!(
+        (
+            pending.preview.new_visits,
+            pending.preview.conflicting,
+            pending.preview.seconds
+        ),
+        (2, 1, 48)
+    );
+    app.apply_koreader_statistics_import().unwrap();
+    assert_eq!(app.reading_history.summary(Some(id), None).seconds, 56);
+
+    edit_stock("UPDATE page_stat_data SET duration = 0 WHERE start_time = 1769990394");
+    app.begin_koreader_statistics_import().unwrap();
+    assert!(app.preview_koreader_statistics_import().is_err());
+    assert!(app.history_view.koreader_import.is_none());
+    edit_stock(
+        "INSERT INTO book (title, authors, md5, pages) SELECT 'Other', authors, md5, pages FROM book",
+    );
+    assert!(
+        app.preview_koreader_statistics_import()
+            .unwrap_err()
+            .to_string()
+            .contains("Several")
+    );
+    assert_eq!(app.reading_history.summary(Some(id), None).seconds, 56);
+}

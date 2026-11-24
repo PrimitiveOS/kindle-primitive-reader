@@ -12,11 +12,50 @@ fn temp(name: &str) -> PathBuf {
 fn stamp(value: &str) -> i64 {
     crate::mark_time::parse(value.as_bytes()).unwrap()
 }
-fn fixture(name: &str) -> (History, Instant, i64, PathBuf) {
+pub(super) fn fixture(name: &str) -> (History, Instant, i64, PathBuf) {
     let dir = temp(name);
     fs::create_dir_all(&dir).unwrap();
     let history = History::load(dir.join("history.json"), BTreeMap::from([(99, 1234)]));
     (history, Instant::now(), stamp("2026-01-31T23:59:30Z"), dir)
+}
+
+#[test]
+fn concurrent_history_saves_conflict_without_replacing_the_first_commit() {
+    let (first, now, wall, dir) = fixture("concurrent-journal");
+    let path = dir.join("history.json");
+    let second = History::load(path.clone(), BTreeMap::from([(99, 1234)]));
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let save = |mut history: History, min_seconds| {
+        let barrier = barrier.clone();
+        std::thread::spawn(move || {
+            barrier.wait();
+            history.configure(
+                Options {
+                    min_seconds,
+                    ..Options::default()
+                },
+                now,
+                Some(wall),
+            )
+        })
+    };
+    let first = save(first, 7);
+    let second = save(second, 9);
+    let results = [first.join().unwrap(), second.join().unwrap()];
+    assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+    assert!(
+        results
+            .into_iter()
+            .find_map(Result::err)
+            .unwrap()
+            .to_string()
+            .contains("changed on disk")
+    );
+    assert!(matches!(
+        History::load(path, BTreeMap::new()).options().min_seconds,
+        7 | 9
+    ));
+    fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
