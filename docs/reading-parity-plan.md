@@ -44,7 +44,7 @@ only to find and compare relevant controls.
 
 ### Execution checklist
 
-**Milestone status:** 50 of the 56 checklist items have desktop, scope, or
+**Milestone status:** 53 of the 59 checklist items have desktop, scope, or
 device evidence. The control inventory and foreground Kindle acceptance
 checks below track the remaining feature and device work.
 

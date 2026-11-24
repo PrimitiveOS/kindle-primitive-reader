@@ -20,6 +20,13 @@ Book mode uses the natural height. The pinned comparison covers both modes
 at 96 DPI and measures physical-unit sizing at 144 DPI.
 [Fitted height comparison and captures](render-modes.md#height-constraints-on-fitted-paragraphs)
 
+Font size edits in bounded text EPUBs can prepare the whole book before
+applying the new size. Reader keeps the current layout available during
+preparation. It applies the edited layout at the latest passage and can
+reuse the prepared chapters for subsequent turns. Other typography controls
+still prepare the active chapter first.
+[Font size rendering and captures](whole-book-screen-pages.md#choose-how-to-render-font-size-changes)
+
 ## Dictionary layouts, alternative contents, partial typography and EPUB padding checkpoint
 
 Dictionary popup actions can be reordered, hidden and arranged one to four
