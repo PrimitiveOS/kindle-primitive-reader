@@ -337,6 +337,11 @@ impl Reader {
                 .detail("Settings for new books; existing books stay unchanged"),
             Item::new("Reading gestures", Action::Show(Screen::Gestures))
                 .detail("Assign taps, holds and swipes"),
+            Item::new(
+                "Navigation settings",
+                Action::Show(Screen::NavigationSettings),
+            )
+            .detail("Opening location and Skim position"),
             Item::new("Links", Action::Show(Screen::LinkSettings))
                 .detail("Link taps and return gesture"),
             Item::new(

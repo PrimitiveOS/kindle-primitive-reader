@@ -107,11 +107,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path, help="New output directory for the Kindle test bundle")
     parser.add_argument("--offline", action="store_true")
+    parser.add_argument(
+        "--fixtures-only",
+        action="store_true",
+        help="Stage the files and runner for matching prebuilt test suites without compiling",
+    )
     args = parser.parse_args()
     output = args.output.resolve()
     if output.exists():
         parser.error("Output already exists. Select a new directory.")
-    executables = build(args.offline)
+    executables = {} if args.fixtures_only else build(args.offline)
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=output.parent, prefix="reader-test-stage-") as temp:
         stage = Path(temp) / "bundle"
@@ -123,7 +128,10 @@ def main():
         )
         for name, executable in executables.items():
             shutil.copy2(executable, stage / name)
-        for filename, contents in (("run.sh", RUN), ("profile.sh", PROFILE)):
+        runners = [("run.sh", RUN)]
+        if not args.fixtures_only:
+            runners.append(("profile.sh", PROFILE))
+        for filename, contents in runners:
             runner = stage / filename
             runner.write_text(contents, encoding="utf-8")
             runner.chmod(0o755)

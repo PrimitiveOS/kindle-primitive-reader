@@ -58,6 +58,7 @@ mod library_view;
 mod link_taps;
 mod lookup_history;
 mod metadata_save;
+mod navigation_preferences;
 mod nearby_search;
 #[cfg(test)]
 mod nonlinear_tests;
@@ -192,6 +193,7 @@ enum Screen {
     CollectionName,
     RemoveCollection,
     ReadingControls,
+    NavigationSettings,
     ReadingGuides,
     ReadingGuidesAbout,
     BookmarkListSettings,
@@ -326,6 +328,7 @@ impl Screen {
             Self::CollectionName => "Collection name",
             Self::RemoveCollection => "Remove collection?",
             Self::ReadingControls => "Reading controls",
+            Self::NavigationSettings => "Navigation settings",
             Self::ReadingGuides => "Reading guides",
             Self::ReadingGuidesAbout => "About reading guides",
             Self::BookmarkListSettings => "Bookmarks and notes",
@@ -1300,6 +1303,7 @@ impl Reader {
             self.restore_reading_menus(id);
             self.show(Screen::Fixed);
             self.reset_footer_initial_position();
+            self.remember_opening_location();
             self.record_position();
             if let Some(fixed) = &self.fixed {
                 self.library.cache_author(id, fixed.entry.author.as_deref());
@@ -1446,6 +1450,7 @@ impl Reader {
             Screen::Book
         });
         self.reset_footer_initial_position();
+        self.remember_opening_location();
         self.record_position();
         if default_font_missing {
             self.notice = Some("Default reading font unavailable; using device fonts".into());
@@ -1980,6 +1985,9 @@ impl Reader {
     }
 
     fn items(&self) -> Vec<Item> {
+        if self.screen == Screen::NavigationSettings {
+            return self.navigation_preference_items();
+        }
         if self.screen == Screen::ReadingGuides {
             return self.reading_guide_items();
         }
@@ -5701,8 +5709,10 @@ impl Reader {
 
     fn reading_update(&mut self, page_changed: bool) -> Change {
         if page_changed {
-            self.reading_guide_progress
-                .update(self.controls.reading_guides);
+            if self.screen != Screen::Skim {
+                self.reading_guide_progress
+                    .update(self.controls.reading_guides);
+            }
             self.controls
                 .page_refresh
                 .after_page(&mut self.pages_since_refresh)
@@ -7791,6 +7801,17 @@ impl Reader {
                         Action::SetReadingControls(_) if self.screen == Screen::ReadingGuides => {
                             RowAccessory::Toggle(self.controls.reading_guides.enabled)
                         }
+                        Action::SetReadingControls(next)
+                            if self.screen == Screen::NavigationSettings =>
+                        {
+                            if next.remember_opening_location
+                                != self.controls.remember_opening_location
+                            {
+                                RowAccessory::Toggle(self.controls.remember_opening_location)
+                            } else {
+                                RowAccessory::None
+                            }
+                        }
                         Action::SetReadingControls(controls)
                             if self.screen == Screen::FooterSettings
                                 && controls.footer_item_cycle.is_some()
@@ -8730,6 +8751,7 @@ impl App for Reader {
                     Screen::Dictionaries => self.show(self.dictionary_origin),
                     Screen::FooterSettings
                     | Screen::BookmarkListSettings
+                    | Screen::NavigationSettings
                     | Screen::EndActionSettings
                     | Screen::MetadataSaveSettings
                     | Screen::SelectionPosition
@@ -10620,6 +10642,10 @@ mod tests {
         assert_eq!(app.active.as_ref().unwrap().reading.page, 0);
     }
 
+    fn skim_control(rect: Rect) -> Input {
+        Input::Tap((rect.x + rect.w / 2) as f32, (rect.y + rect.h / 2) as f32)
+    }
+
     #[test]
     fn skim_previews_epub_and_cancel_restores_origin_without_history() {
         let fixture = Fixture::new();
@@ -10644,7 +10670,7 @@ mod tests {
         assert!(!app.active.as_ref().unwrap().reading.is_turning());
         assert_ne!(app.current_history_location().as_ref(), Some(&origin));
 
-        let cancel = Input::Tap(410.0, 1568.0);
+        let cancel = skim_control(app.skim_layout().cancel);
         assert_eq!(app.input(cancel), Change::Partial);
         assert_eq!(app.screen, Screen::Book);
         assert_eq!(app.current_history_location().as_ref(), Some(&origin));
@@ -10667,7 +10693,10 @@ mod tests {
         }
         assert!(app.active.as_ref().unwrap().reading.is_turning());
 
-        assert_eq!(app.input(Input::Tap(410.0, 1568.0)), Change::Partial);
+        assert_eq!(
+            app.input(skim_control(app.skim_layout().cancel)),
+            Change::Partial
+        );
         assert_eq!(app.screen, Screen::Book);
         assert_eq!(app.current_history_location().as_ref(), Some(&origin));
         assert_eq!(app.back, history);
@@ -10686,7 +10715,7 @@ mod tests {
 
         app.activate(Action::Skim).unwrap();
         assert_eq!(app.input(Input::PageForward), Change::Partial);
-        let read_here = Input::Tap(854.0, 1568.0);
+        let read_here = skim_control(app.skim_layout().commit);
         assert_eq!(app.input(read_here), Change::Partial);
         assert_eq!(app.screen, Screen::Skim);
         for _ in 0..8 {
@@ -10725,7 +10754,8 @@ mod tests {
         let origin = app.current_history_location().unwrap();
 
         app.activate(Action::Skim).unwrap();
-        let track_y = HEIGHT as f32 - 297.0;
+        let track = app.skim_layout().track;
+        let track_y = (track.y + track.h / 2) as f32;
         assert_eq!(app.input(Input::Tap(300.0, track_y)), Change::Partial);
         let swipe = Input::Swipe {
             dx: 600.0,
@@ -10736,7 +10766,10 @@ mod tests {
         let preview = app.current_history_location().unwrap();
         assert!(preview.position.chapter > origin.position.chapter);
 
-        assert_eq!(app.input(Input::Tap(854.0, 1568.0)), Change::Partial);
+        assert_eq!(
+            app.input(skim_control(app.skim_layout().commit)),
+            Change::Partial
+        );
         assert_eq!(app.screen, Screen::Book);
         assert_eq!(app.current_history_location().as_ref(), Some(&preview));
         assert_eq!(app.back.last(), Some(&origin));
@@ -10761,10 +10794,11 @@ mod tests {
             "READER_SKIM_FIXED_SCREENSHOT",
             false,
         );
-        let scrub = Input::Tap(1100.0, 1383.0);
+        let track = app.skim_layout().track;
+        let scrub = Input::Tap(1100.0, (track.y + track.h / 2) as f32);
         assert_eq!(app.input(scrub), Change::Partial);
         assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 1);
-        let cancel = Input::Tap(410.0, 1568.0);
+        let cancel = skim_control(app.skim_layout().cancel);
         assert_eq!(app.input(cancel), Change::Partial);
         assert_eq!(app.screen, Screen::Fixed);
         assert_eq!(app.current_history_location().as_ref(), Some(&origin));
