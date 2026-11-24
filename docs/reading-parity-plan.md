@@ -49,8 +49,8 @@ device-system evidence. This count tracks plan milestones, not overall feature
 parity; many reading requirements and the foreground Kindle acceptance gates
 remain open.
 
-**Control evidence snapshot:** 215 of 536 in-scope reading-control rows have
-an implemented workflow, 239 are partial, 58 are gaps, and 24 need audit. The
+**Control evidence snapshot:** 216 of 536 in-scope reading-control rows have
+an implemented workflow, 238 are partial, 58 are gaps, and 24 need audit. The
 [statistics reset comparison](reading-statistics.md#reset-statistics) updates
 seven rows with an executable stock check and Mac verification.
 Reader 0.1.32 adds [search from selection](selection-search.md),
@@ -69,8 +69,10 @@ separate gates.
 - [x] Keep general extension/plugin systems, Terminal/shell, unrelated utilities, book acquisition, and remote services out of implementation, parity counts, test requirements, and release gates. Reading-specific capabilities remain eligible when implemented as native Reader features.
 - [x] Remove OPDS acquisition and WebDAV progress-sync modules, screens, and worker commands from the current source. Keep local progress, backup, restore, and migration workflows.
 - [x] Apply saved overlap and axis-order preferences to manual fixed-page turns. Physical buttons and page-turn tap zones pan through the zoomed page before advancing, matching KOReader's reading order. Fixed-page and app-level regressions pass on the Mac; the device comparison remains open.
+- [x] Save Small, Medium and Large line spacing per fixed document for embedded-text and original-pixel scan reflow. Desktop checks compare KOReader’s pitch ratios and preserve the source passage through Apply, Cancel and reopen. [Evidence](fixed-reflow-spacing.md)
 - [x] Add overlap-aware **Columns** and **Rows** zoom for PDF and DjVu scans. Presets, custom tenths, rotated-page scale, page traversal, and saved viewport position have desktop coverage. Kindle comparison remains open. [Workflow and simulator capture](fixed-tile-zoom.md)
 - [x] Add **Semi-auto crop** for paged PDFs, with original-coordinate seed priority, saved adjustments, preserved links and annotation geometry, and exact Cancel restoration. The authored four-page crop comparison runs against the pinned Mac provider. [Workflow and oracle](semi-auto-pdf-crop.md)
+- [x] Save detected PDF crop margins per book. Desktop checks compare the stock range, independently scaled scroll strips and original annotation coordinates. [Margin evidence](continuous-semi-auto-crop.md#detected-crop-margins)
 - [x] Filter isolated margin specks from semi-auto PDF crops. Authored stock comparisons cover rotated pages, faint strokes, shaded paper and sparse notes. [Scan evidence](scan-margin-specks.md)
 - [x] Apply page-specific semi-auto crops in width-fit continuous PDF reading. Desktop checks cover a split scroll frame, original note and link coordinates, Cancel, Apply and reopen. [Scroll evidence](continuous-semi-auto-crop.md)
 - [x] Resolve manual and automatic crop per page while scrolling continuous width-fit PDFs. Desktop checks cover crop precedence, switching modes, native link geometry and page-specific scaling. [Scroll evidence](continuous-semi-auto-crop.md)

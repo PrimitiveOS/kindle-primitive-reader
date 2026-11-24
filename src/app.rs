@@ -36,6 +36,7 @@ mod backup_defaults_integration_tests;
 mod end_of_book;
 #[cfg(test)]
 mod epub_gif_tests;
+mod export_settings;
 mod extend_highlight;
 mod external_link;
 mod fixed_book_map;
@@ -69,6 +70,7 @@ mod reader_timer;
 mod reading_backup;
 mod reading_bars;
 mod reading_footer;
+mod reading_orientation;
 mod result_context;
 mod saved_highlight_popup;
 mod search_chapter_scope;
@@ -216,6 +218,7 @@ enum Screen {
     ImportPosition,
     ImportPdfAnnotations,
     ExportAnnotations,
+    ExportSettings(export_settings::Origin, export_settings::Page),
     Book,
     Illustration,
     Fixed,
@@ -346,6 +349,10 @@ impl Screen {
             Self::ImportPosition => "KOReader reading position",
             Self::ImportPdfAnnotations => "PDF annotations",
             Self::ExportAnnotations => "Export annotations",
+            Self::ExportSettings(_, export_settings::Page::Settings) => "Export settings",
+            Self::ExportSettings(_, export_settings::Page::Folders) => "Export folder",
+            Self::ExportSettings(_, export_settings::Page::Template(scope)) => scope.title(),
+            Self::ExportSettings(_, export_settings::Page::Tokens) => "Filename tokens",
             Self::Book
             | Self::Fixed
             | Self::BookTools
@@ -361,6 +368,7 @@ impl Screen {
             Self::NumberingValue(NumberField::AutoTurn) => "Automatic page turns",
             Self::NumberingValue(NumberField::AutoTurnOverlapHorizontal) => "Horizontal overlap",
             Self::NumberingValue(NumberField::FixedTileZoom(axis)) => axis.label(),
+            Self::NumberingValue(NumberField::CropMargin) => "Crop margin",
             Self::NumberingValue(NumberField::AutoTurnOverlapVertical) => "Vertical overlap",
             Self::NumberingValue(NumberField::FooterTrackMinimumWidth) => "Progress bar width",
             Self::NumberingValue(NumberField::FooterTrackMarginWidth) => "Progress bar margins",
@@ -468,6 +476,9 @@ enum Action {
     NameCollection(Option<String>),
     RemoveCollection,
     SetReadingControls(ReadingControls),
+    SetReadingOrientation(ReadingOrientation),
+    KeepReadingOrientation(bool),
+    ConfirmReadingOrientationDefault(ReadingOrientation),
     EditListDensity(list_density::Scope, list_density::Field),
     EditSearchPresentation(search_presentation::Field),
     BindGesture(Gesture, Binding),
@@ -563,6 +574,7 @@ enum Action {
     ExportHighlights(annotation_export::Format),
     ExportBookClippings,
     LibraryExport(library_export::Command),
+    ExportSettings(export_settings::Origin, export_settings::Command),
     FitPage(bool),
     FitHeight,
     SetFixedZoom(usize),
@@ -586,6 +598,7 @@ enum Action {
     ReversePageDirection,
     CropPage,
     SemiAutoCrop,
+    SetCropMargin(u8),
     RecognizeText,
     RecognizeLanguage(String),
     ReadFixedText,
@@ -817,10 +830,12 @@ pub struct Reader {
     quick_display: QuickDisplay,
     /// Opened from Primitive Launcher: the launcher's theme, which the whole Reader follows. `None` standalone.
     system_theme: Option<SystemTheme>,
+    launcher_orientation_handoff: bool,
     refresh_display: bool,
     auto_turn: AutoTurn,
     read_alarm: read_alarm::ReadAlarm,
     top_header_default_prompt: Option<bool>,
+    orientation_default_prompt: Option<reading_orientation::DefaultPrompt>,
     top_header_about: bool,
     top_header_font_picker: Option<top_header_font::Picker>,
     list_page: usize,
@@ -872,6 +887,7 @@ pub struct Reader {
     clipboard_text: Option<String>,
     saved_popup: Option<saved_highlight_popup::SavedPopup>,
     exports: PathBuf,
+    export_settings: export_settings::Settings,
     library_export: library_export::Export,
     dictionaries: DictionarySources,
     dictionary_preference: PathBuf,
@@ -1030,10 +1046,12 @@ impl Reader {
             gestures: GestureBindings::load(data),
             quick_display: QuickDisplay::read(),
             system_theme: SystemTheme::from_env(),
+            launcher_orientation_handoff: false,
             refresh_display: false,
             auto_turn: AutoTurn::default(),
             read_alarm: read_alarm::ReadAlarm::open(data.join("read-timer.json")),
             top_header_default_prompt: None,
+            orientation_default_prompt: None,
             top_header_about: false,
             top_header_font_picker: None,
             list_page: 0,
@@ -1085,6 +1103,9 @@ impl Reader {
             clipboard_text: None,
             saved_popup: None,
             exports: state.parent().unwrap_or(documents).join("exports"),
+            export_settings: export_settings::Settings::load(
+                data.join("annotation-export-files.json"),
+            ),
             library_export: library_export::Export::load(data.join("highlight-export.json")),
             dictionaries: DictionarySources::for_reader(documents, data),
             dictionary_preference,
@@ -1424,6 +1445,12 @@ impl Reader {
 
     fn show(&mut self, screen: Screen) {
         self.archive.close_surfaces(screen);
+        if !matches!(
+            screen,
+            Screen::ExportSettings(_, export_settings::Page::Folders)
+        ) {
+            self.export_settings.close_picker();
+        }
         if screen != Screen::PdfPassword {
             self.folder_password_return = None;
         }
@@ -1433,6 +1460,7 @@ impl Reader {
         self.search_results_navigation.menu_open = false;
         self.top_header_about = false;
         self.top_header_font_picker = None;
+        self.orientation_default_prompt = None;
         let previous = self.screen;
         let fit_error = if screen != Screen::Fixed && screen != previous {
             self.close_fixed_search_fit().err()
@@ -1660,6 +1688,13 @@ impl Reader {
             self.editor.text = format!("{count:.1}").chars().collect();
             self.editor.caret = self.editor.text.len();
         }
+        if screen == Screen::NumberingValue(NumberField::CropMargin)
+            && let Some(fixed) = &self.fixed
+        {
+            let margin = f32::from(fixed.reading.preferences().crop_margin()) / 100.0;
+            self.editor.text = format!("{margin:.2}").chars().collect();
+            self.editor.caret = self.editor.text.len();
+        }
         if screen == Screen::GoToPage {
             self.editor = Editor::new(96);
         }
@@ -1750,6 +1785,7 @@ impl Reader {
         }
         self.update_stats_activity(now);
         let reading_percent = self.folder_reading_percent();
+        let default_orientation = self.default_reading_orientation();
         let position_changed = if let Some(fixed) = &self.fixed {
             let saved = self
                 .library
@@ -1757,6 +1793,7 @@ impl Reader {
             saved
                 .highlight_color
                 .get_or_insert(self.controls.highlight_color);
+            saved.screen_orientation.get_or_insert(default_orientation);
             let position = fixed_position(&fixed.reading);
             let changed = saved.position.as_ref() != Some(&position)
                 || saved.reading_percent != reading_percent;
@@ -1771,6 +1808,7 @@ impl Reader {
             saved
                 .highlight_color
                 .get_or_insert(self.controls.highlight_color);
+            saved.screen_orientation.get_or_insert(default_orientation);
             let position = position(&active.reading);
             let changed = saved.position.as_ref() != Some(&position)
                 || saved.reading_percent != reading_percent;
@@ -2606,14 +2644,23 @@ impl Reader {
             }));
             return rows;
         }
+        if let Screen::ExportSettings(origin, page) = self.screen {
+            return self.export_settings_items(origin, page);
+        }
         if self.screen == Screen::ExportAnnotations {
             return annotation_export::Format::ALL
                 .into_iter()
                 .map(|format| Item::new(format.label(), Action::ExportHighlights(format)))
-                .chain([Item::new(
-                    "Kindle clippings text",
-                    Action::ExportBookClippings,
-                )])
+                .chain([
+                    Item::new("Kindle clippings text", Action::ExportBookClippings),
+                    Item::new(
+                        "Export settings",
+                        Action::ExportSettings(
+                            export_settings::Origin::Book,
+                            export_settings::Command::Open,
+                        ),
+                    ),
+                ])
                 .collect();
         }
         if self.screen == Screen::ImportAnnotations
@@ -3292,6 +3339,9 @@ impl Reader {
                 self.mark_book_changed();
             }
             Action::LibraryExport(command) => self.activate_library_export(command)?,
+            Action::ExportSettings(origin, command) => {
+                self.export_settings_command(origin, command)?
+            }
             Action::Open(entry) => self.open_book(entry)?,
             Action::Browse(directory) => self.browse_to(directory)?,
             Action::BookArchive(command) => self.archive_command(command)?,
@@ -3371,6 +3421,13 @@ impl Reader {
                 self.show(Screen::OrganizeLibrary);
             }
             Action::SetFolderOrder(order) => self.set_folder_order(order)?,
+            Action::SetReadingOrientation(orientation) => {
+                self.set_reading_orientation(orientation)?
+            }
+            Action::KeepReadingOrientation(keep) => self.keep_reading_orientation(keep)?,
+            Action::ConfirmReadingOrientationDefault(orientation) => {
+                self.confirm_reading_orientation_default(orientation);
+            }
             Action::SetReadingControls(mut controls) => {
                 if controls.status_bar == crate::reading_controls::StatusBar::Custom
                     && self.controls.status_bar != crate::reading_controls::StatusBar::Custom
@@ -3740,6 +3797,12 @@ impl Reader {
                 }
             }
             Action::SemiAutoCrop => self.start_native_pdf_crop(false)?,
+            Action::SetCropMargin(hundredths) => {
+                let fixed = self.fixed.as_mut().ok_or("Open a PDF first")?;
+                fixed.reading.set_crop_margin(hundredths)?;
+                self.show(Screen::Fixed);
+                self.record_position();
+            }
             Action::RecognizeText => self.start_ocr(None)?,
             Action::RecognizeLanguage(language) => self.start_ocr(Some(&language))?,
             Action::ReadFixedText => self.read_fixed_text(false)?,
@@ -6752,10 +6815,19 @@ impl Reader {
         extension: &str,
         contents: &str,
     ) -> Result<()> {
-        with_storage(|| fs::create_dir_all(&self.exports))?;
-        let filename = format!("{id:016x}.{extension}");
-        primitive_app::save(&self.exports.join(&filename), contents.as_bytes())?;
-        self.notice = Some(format!("Exported to Reader data/exports/{filename}"));
+        let state = self.library.state(id).ok_or("No reading history")?;
+        let path = self.write_annotation_export(
+            &self.export_settings.preferences,
+            export_settings::FilenameContext {
+                source: Some(state.into()),
+                bundled: false,
+                started_at: crate::mark_time::now(),
+                last_opened: None,
+            },
+            extension,
+            contents.as_bytes(),
+        )?;
+        self.notice = Some(format!("Exported to {path}"));
         Ok(())
     }
 
@@ -7417,6 +7489,10 @@ impl Reader {
             title
         };
         header(canvas, title, "Back");
+        if let Screen::ExportSettings(_, export_settings::Page::Template(scope)) = self.screen {
+            self.draw_export_template(canvas, scope);
+            return;
+        }
         self.draw_search_results_options(canvas);
         if self.screen == Screen::Matches && self.draw_flexible_results(canvas) {
             return;
@@ -7508,6 +7584,9 @@ impl Reader {
                 ) => ("Zoom overlap: 0 to 90%", "Set"),
                 Screen::NumberingValue(NumberField::FixedTileZoom(_)) => {
                     ("Choose 0.1 to 8.0, in steps of 0.1", "Set")
+                }
+                Screen::NumberingValue(NumberField::CropMargin) => {
+                    ("Choose 0.00 to 1.50 inches", "Set")
                 }
                 Screen::NumberingValue(NumberField::FooterTrackMinimumWidth) => {
                     ("Minimum progress bar width: 5 to 90%, in 5% steps", "Set")
@@ -7653,6 +7732,12 @@ impl Reader {
                         }
                         Action::ToggleLinkPreference(setting) => {
                             RowAccessory::Toggle(setting.checked(self.controls))
+                        }
+                        Action::ExportSettings(_, export_settings::Command::ToggleBookFolder) => {
+                            RowAccessory::Toggle(self.export_settings.preferences.book_folder)
+                        }
+                        Action::ExportSettings(_, export_settings::Command::ToggleBookName) => {
+                            RowAccessory::Toggle(self.export_settings.preferences.book_title)
                         }
                         Action::LibraryExport(library_export::Command::ToggleKindleClippings) => {
                             RowAccessory::Toggle(self.library_export.kindle_clippings_enabled())
@@ -8080,6 +8165,7 @@ impl App for Reader {
         self.draw_list_density_picker(canvas);
         self.draw_search_results_navigation(canvas);
         self.draw_top_header_default_prompt(canvas);
+        self.draw_orientation_default_prompt(canvas);
         self.draw_top_header_about(canvas);
         self.draw_header_font_picker(canvas);
         self.read_alarm.draw(canvas, self.screen == Screen::Book);
@@ -8124,6 +8210,9 @@ impl App for Reader {
             return self.read_alarm_input(input);
         }
         if let Some(change) = self.top_header_default_input(input) {
+            return change;
+        }
+        if let Some(change) = self.orientation_default_input(input) {
             return change;
         }
         if let Some(change) = self.top_header_about_input(input) {
@@ -8180,7 +8269,7 @@ impl App for Reader {
     fn preferred_rotation(&self) -> Option<primitive_app::Rotation> {
         use primitive_app::Rotation;
 
-        match self.controls.orientation {
+        match self.reading_orientation() {
             ReadingOrientation::FollowLauncher => None,
             ReadingOrientation::Upright => Some(Rotation::Upright),
             ReadingOrientation::UpsideDown => Some(Rotation::UpsideDown),
@@ -8279,6 +8368,9 @@ impl App for Reader {
         if let Some(change) = self.top_header_default_input(input) {
             return change;
         }
+        if let Some(change) = self.orientation_default_input(input) {
+            return change;
+        }
         if let Some(change) = self.top_header_about_input(input) {
             return change;
         }
@@ -8373,11 +8465,16 @@ impl App for Reader {
                 self.show(Screen::Fixed);
                 return Change::Partial;
             }
-            if let (Some(flow), Some(fixed)) = (&mut self.text_flow, &self.fixed) {
+            if let (Some(flow), Some(fixed)) = (&mut self.text_flow, &mut self.fixed) {
                 let Some(input) = self.controls.page_input(input) else {
                     return Change::None;
                 };
+                let spacing = flow.line_spacing();
                 let result = flow.input(input, &fixed.reading);
+                if result.is_ok() && flow.line_spacing() != spacing {
+                    fixed.reading.set_fixed_reflow_spacing(flow.line_spacing());
+                    self.record_position();
+                }
                 return self.finish_text_flow_update(result);
             }
         }
@@ -8429,6 +8526,10 @@ impl App for Reader {
         }
         if self.screen == Screen::OnlineEdit {
             return self.online_editor_input(input);
+        }
+        if let Screen::ExportSettings(origin, export_settings::Page::Template(scope)) = self.screen
+        {
+            return self.export_template_input(origin, scope, input);
         }
         if self.screen == Screen::Definition {
             return self.definition_input(input);
@@ -8548,6 +8649,9 @@ impl App for Reader {
             Input::Tap(x, y) if primitive_ui::back_button(WIDTH as i32).contains(x, y) => {
                 match self.screen {
                     Screen::LibraryExport(page) => self.back_from_library_export(page),
+                    Screen::ExportSettings(origin, page) => {
+                        self.back_from_export_settings(origin, page)
+                    }
                     Screen::OrganizeLibrary | Screen::FolderOrder => self.show(Screen::Library),
                     Screen::BookArchive => self.show(self.surface_screen()),
                     Screen::ArchiveFolder => self.show(Screen::BookArchive),
@@ -9163,6 +9267,7 @@ fn column_view(original: FixedPreferences, bounds: PdfTextRect) -> FixedPreferen
         crop: Some(bounds),
         scan_contrast: original.scan_contrast,
         scan_gamma_tenths: original.scan_gamma_tenths,
+        fixed_reflow_spacing: original.fixed_reflow_spacing,
         dither: original.dither,
         straighten_limit: original.straighten_limit,
         force_ocr: original.force_ocr,
@@ -9474,12 +9579,37 @@ pub fn run_reader(
     let data = home.join("data");
     with_storage(|| fs::create_dir_all(&data))?;
     let mut app = Reader::open(documents, &data.join("library.json"), fonts)?;
+    let run =
+        std::env::var_os("KL_RUN").map_or_else(|| PathBuf::from("/var/tmp/kl"), PathBuf::from);
+    let turn_file = std::env::var_os("KL_APP_TURN_FILE").map(PathBuf::from);
+    app.launcher_orientation_handoff = has_launcher_orientation_handoff(&run, turn_file.as_deref());
     if let Some(file) = file
         && let Err(error) = app.open_path(file)
     {
         app.report(error);
     }
     primitive_app::run(ReaderRuntime(app), home).map_err(Into::into)
+}
+
+fn has_launcher_orientation_handoff(run: &Path, offered: Option<&Path>) -> bool {
+    let Some(path) = offered.filter(|path| path.file_name().is_some_and(|name| name == "turn"))
+    else {
+        return false;
+    };
+    // The supervisor creates the directory before launch. The turn file appears after the first draw.
+    let Some(parent) = path
+        .parent()
+        .filter(|parent| parent.parent() == Some(run) && parent.is_dir())
+    else {
+        return false;
+    };
+    parent
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_prefix("app-turn."))
+        .is_some_and(|token| {
+            token.len() == 6 && token.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        })
 }
 
 /// The device runtime receives physical page keys as `PageForward`/`PageBack`.
@@ -9498,6 +9628,17 @@ impl App for ReaderRuntime {
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
         self.0.swipe(input, start_x)
+    }
+
+    fn preferred_rotation(&self) -> Option<primitive_app::Rotation> {
+        if self.0.under_launcher() && !self.0.launcher_orientation_handoff {
+            return None;
+        }
+        self.0.preferred_rotation()
+    }
+
+    fn preferred_dark_mode(&self) -> Option<bool> {
+        self.0.preferred_dark_mode()
     }
 
     fn press_point(&self, input: Input) -> Option<(f32, f32)> {
@@ -9577,7 +9718,7 @@ mod tests {
             Self { root, book, state }
         }
 
-        fn app(&self) -> Reader {
+        pub(super) fn app(&self) -> Reader {
             let fonts = [crate::test_fixture("fonts/Silkscreen-Regular.ttf")];
             let mut app = Reader::open(&self.root, &self.state, fonts.to_vec()).unwrap();
             // Most interaction fixtures exercise the action popup explicitly;
@@ -9802,7 +9943,7 @@ mod tests {
         assert_eq!(app.page_paint().apply(page.clone()).1.pixels[0], 0);
         assert!(!titles(&app).iter().any(|t| t == "Interface palette"));
         assert!(!titles(&app).iter().any(|t| t == "Night pages"));
-        assert_eq!(rows(&app), ["Screen orientation"]);
+        assert_eq!(rows(&app), ["Screen orientation", "Keep orientation"]);
 
         fs::write(&settings, "dark_mode=off\n").unwrap();
         app.system_theme.as_ref().unwrap().refresh();
@@ -14614,6 +14755,65 @@ mod tests {
     }
 
     #[test]
+    fn runtime_forwards_reading_orientation_and_defers_to_the_launcher_theme() {
+        use crate::reading_controls::ScreenPalette;
+        use primitive_app::Rotation;
+
+        let fixture = Fixture::new();
+        let mut runtime = ReaderRuntime(fixture.app());
+        runtime.0.system_theme = None;
+        runtime.0.open_path(&fixture.book).unwrap();
+        let before = runtime.0.current_position().unwrap();
+        runtime
+            .0
+            .activate(Action::SetReadingControls(ReadingControls {
+                palette: ScreenPalette::Dark,
+                ..runtime.0.controls
+            }))
+            .unwrap();
+
+        for (orientation, expected) in [
+            (ReadingOrientation::FollowLauncher, None),
+            (ReadingOrientation::Upright, Some(Rotation::Upright)),
+            (ReadingOrientation::UpsideDown, Some(Rotation::UpsideDown)),
+        ] {
+            runtime
+                .0
+                .activate(Action::SetReadingOrientation(orientation))
+                .unwrap();
+            assert_eq!(runtime.preferred_rotation(), expected);
+        }
+        assert_eq!(runtime.preferred_dark_mode(), Some(true));
+        let settings = fixture.root.join("launcher-settings.txt");
+        fs::write(&settings, "dark_mode=off\n").unwrap();
+        runtime.0.system_theme = Some(SystemTheme::new(settings));
+        let run = fixture.root.join("run");
+        let scoped_dir = run.join("app-turn.ABC123");
+        fs::create_dir_all(&scoped_dir).unwrap();
+        let scoped = scoped_dir.join("turn");
+        let legacy = run.join("orientation");
+        fs::write(&legacy, "U").unwrap();
+        let lost = run.join("app-turn.DEF456/turn");
+        for (offered, expected) in [
+            (None, None),
+            (Some(legacy.as_path()), None),
+            (Some(lost.as_path()), None),
+            (Some(scoped.as_path()), Some(Rotation::UpsideDown)),
+        ] {
+            runtime.0.launcher_orientation_handoff =
+                has_launcher_orientation_handoff(&run, offered);
+            assert_eq!(runtime.preferred_rotation(), expected);
+            assert_eq!(runtime.preferred_dark_mode(), None);
+            assert!(!runtime.0.uses_night_pages());
+            assert_eq!(
+                runtime.0.reading_orientation(),
+                ReadingOrientation::UpsideDown
+            );
+            assert_eq!(runtime.0.current_position().unwrap(), before);
+        }
+    }
+
+    #[test]
     fn runtime_inverts_hardware_page_buttons_without_touching_reader_generated_turns() {
         let fixture = Fixture::new();
         let long = fixture.root.join("Long Chapter.epub");
@@ -19023,6 +19223,90 @@ mod tests {
             .activate(Action::ExportHighlights(annotation_export::Format::Text))
             .unwrap();
         assert!(fs::read_dir(&reopened.exports).unwrap().next().is_some());
+    }
+
+    #[test]
+    fn fixed_reflow_spacing_persists_per_book_and_is_shared_across_the_two_views() {
+        use crate::library::FixedReflowSpacing;
+        let paths = Fixture::new();
+        let source = paths.root.join("Harbor scan.pdf");
+        let vector = paths.root.join("Harbor text.pdf");
+        fs::copy(crate::test_fixture("scan-reflow/raster.pdf"), &source).unwrap();
+        fs::copy(crate::test_fixture("scan-reflow/vector.pdf"), &vector).unwrap();
+        let mut app = paths.app();
+        app.open_path(&source).unwrap();
+        app.activate(Action::FixedPage(1)).unwrap();
+        let ocr = crate::ocr::parse_tsv(
+            include_bytes!("../tests/fixtures/scan-reflow/page-2-ocr.tsv"),
+            1350,
+            1800,
+        )
+        .unwrap();
+        app.fixed
+            .as_mut()
+            .unwrap()
+            .reading
+            .remember_ocr(1, "eng", ocr.text)
+            .unwrap();
+        let fixed_position = app.current_history_location();
+        app.activate(Action::ReflowScan).unwrap();
+        let toolbar = Input::Tap(718.0, PAGE_HEIGHT as f32 + 30.0);
+        let large = Input::Tap(506.0, PAGE_HEIGHT as f32 - 48.0);
+        let cancel = Input::Tap(929.0, PAGE_HEIGHT as f32 - 48.0);
+        let apply = Input::Tap(1129.0, PAGE_HEIGHT as f32 - 48.0);
+        assert_eq!(app.input(toolbar), Change::Partial);
+        assert_eq!(app.input(large), Change::Partial);
+        assert_eq!(app.input(cancel), Change::Partial);
+        assert_eq!(
+            app.text_flow.as_ref().unwrap().line_spacing(),
+            FixedReflowSpacing::Medium
+        );
+        assert_eq!(
+            app.fixed
+                .as_ref()
+                .unwrap()
+                .reading
+                .preferences()
+                .fixed_reflow_spacing,
+            None
+        );
+
+        app.input(toolbar);
+        app.input(large);
+        let fonts = [
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        capture_test_screen(&app, &fonts, "READER_FIXED_REFLOW_SPACING", false);
+        assert_eq!(app.input(apply), Change::Partial);
+        assert_eq!(
+            app.text_flow.as_ref().unwrap().line_spacing(),
+            FixedReflowSpacing::Large
+        );
+        assert_eq!(app.current_history_location(), fixed_position);
+        app.save().unwrap();
+        drop(app);
+
+        let mut reopened = paths.app();
+        reopened.open_path(&source).unwrap();
+        reopened.activate(Action::ReflowScan).unwrap();
+        assert_eq!(
+            reopened.text_flow.as_ref().unwrap().line_spacing(),
+            FixedReflowSpacing::Large
+        );
+        reopened.activate(Action::ReadFixedText).unwrap();
+        assert_eq!(
+            reopened.text_flow.as_ref().unwrap().line_spacing(),
+            FixedReflowSpacing::Large
+        );
+        assert_eq!(reopened.current_history_location(), fixed_position);
+
+        reopened.open_path(&vector).unwrap();
+        reopened.activate(Action::ReadFixedText).unwrap();
+        assert_eq!(
+            reopened.text_flow.as_ref().unwrap().line_spacing(),
+            FixedReflowSpacing::Medium
+        );
     }
 
     #[test]

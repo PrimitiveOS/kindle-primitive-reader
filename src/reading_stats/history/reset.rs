@@ -20,7 +20,56 @@ pub(crate) struct BookStatistics {
     pub last_visit: Option<i64>,
 }
 
+fn visit_in_period(visit: &Visit, book: u64, from: i64, until: i64) -> bool {
+    visit.book == book
+        && visit
+            .start
+            .is_some_and(|start| (from..until).contains(&start))
+}
+
 impl History {
+    pub(crate) fn count_period_visits(&self, book: u64, from: i64, until: i64) -> usize {
+        self.data
+            .visits
+            .iter()
+            .filter(|visit| visit_in_period(visit, book, from, until))
+            .count()
+    }
+
+    pub(crate) fn reset_period(
+        &mut self,
+        book: u64,
+        from: i64,
+        until: i64,
+        now: Instant,
+        wall: Option<i64>,
+    ) -> io::Result<usize> {
+        if self.read_only || from >= until {
+            return Err(invalid());
+        }
+        let before = self.data.visits.clone();
+        let active = self.active.clone();
+        let dirty = self.dirty;
+        self.accrue(now, wall);
+        let count = self.count_period_visits(book, from, until);
+        if count == 0 {
+            return Ok(0);
+        }
+        self.data
+            .visits
+            .retain(|visit| !visit_in_period(visit, book, from, until));
+        if let Err(error) = self.persist() {
+            self.data.visits = before;
+            self.active = active;
+            self.dirty = dirty;
+            return Err(error);
+        }
+        // The current visit keeps its existing credit and limit. Future
+        // elapsed time can be recorded without restoring deleted intervals.
+        self.dirty = false;
+        Ok(count)
+    }
+
     pub(crate) fn reset_books(&self) -> BTreeMap<u64, BookStatistics> {
         let mut books: BTreeMap<_, _> = self
             .data

@@ -1,5 +1,7 @@
 //! Reading statistics, reports, a month calendar and clipped day timelines.
 mod calendar;
+mod period_reset;
+mod ranges;
 mod report;
 mod reset;
 use super::{Action, Canvas, Change, HEIGHT, Input, Item, Reader, Rect, Result, Screen, WIDTH};
@@ -26,6 +28,7 @@ pub(super) enum Page {
     Summary,
     Daily,
     TimeRange,
+    Range(ranges::Page),
     Periods(Period),
     PeriodBooks(Period, Date),
     PeriodBook(Period, Date, u64),
@@ -37,6 +40,7 @@ pub(super) enum Page {
     Resets,
     ResetBooks,
     ConfirmReset(Scope),
+    ConfirmPeriodReset,
 }
 impl Page {
     pub(super) fn title(self) -> &'static str {
@@ -44,6 +48,8 @@ impl Page {
             Self::Summary => "Reading statistics",
             Self::Daily => "Daily reading history",
             Self::TimeRange => "Time range",
+            Self::Range(page) => page.title(),
+            Self::Periods(Period::Day) => "Books by day",
             Self::Periods(Period::Week) => "Books by week",
             Self::Periods(Period::Month) => "Books by month",
             Self::PeriodBooks(_, _) => "Books read",
@@ -55,7 +61,7 @@ impl Page {
             Self::Options => "Statistics settings",
             Self::Resets => "Reset reading statistics",
             Self::ResetBooks => "Choose a book",
-            Self::ConfirmReset(_) => "Confirm statistics reset",
+            Self::ConfirmReset(_) | Self::ConfirmPeriodReset => "Confirm statistics reset",
         }
     }
 }
@@ -70,6 +76,7 @@ pub(super) enum Command {
     RunPage(i32),
     Configure(Options),
     ConfirmReset,
+    ConfirmPeriodReset,
     CancelReset,
 }
 pub(super) struct View {
@@ -79,7 +86,9 @@ pub(super) struct View {
     day_back: Page,
     run_page: usize,
     report: report::ReportView,
+    ranges: ranges::View,
     reset_list_page: usize,
+    period_reset: Option<period_reset::Pending>,
 }
 impl Default for View {
     fn default() -> Self {
@@ -90,7 +99,9 @@ impl Default for View {
             day_back: Page::Calendar,
             run_page: 0,
             report: Default::default(),
+            ranges: Default::default(),
             reset_list_page: 0,
+            period_reset: None,
         }
     }
 }
@@ -237,6 +248,7 @@ impl Reader {
                 self.show(Screen::ReadingHistory(Page::Options));
             }
             ConfirmReset => self.confirm_history_reset()?,
+            ConfirmPeriodReset => self.confirm_period_reset()?,
             CancelReset => self.history_back(),
         }
         Ok(())
@@ -258,10 +270,15 @@ impl Reader {
         let Screen::ReadingHistory(page) = self.screen else {
             return;
         };
+        if page == Page::ConfirmPeriodReset {
+            self.close_period_reset();
+            return;
+        }
         let (back, list_page) = match page {
             Page::Summary => (self.history_view.back, None),
             Page::Day(_) => (Screen::ReadingHistory(self.history_view.day_back), None),
             Page::BookDay(day, _) => (Screen::ReadingHistory(Page::Day(day)), None),
+            Page::Range(page) => self.history_view.ranges.back(page),
             Page::Periods(_) => (Screen::ReadingHistory(Page::TimeRange), None),
             Page::Resets => (Screen::ReadingHistory(Page::Options), None),
             Page::ResetBooks => (Screen::ReadingHistory(Page::Resets), None),
@@ -405,6 +422,7 @@ impl Reader {
                     );
                 }
             }
+            Page::ConfirmPeriodReset => return self.period_reset_items(),
             Page::Resets | Page::ResetBooks | Page::ConfirmReset(_) => {
                 return self.history_reset_items(page);
             }
@@ -519,6 +537,7 @@ impl Reader {
                 );
             }
             Page::TimeRange
+            | Page::Range(_)
             | Page::Periods(_)
             | Page::PeriodBooks(_, _)
             | Page::PeriodBook(_, _, _) => {
@@ -535,6 +554,9 @@ impl Reader {
         if matches!(input,Input::Tap(x,y) if back_button(WIDTH as i32).contains(x,y)) {
             self.history_back();
             return Some(Change::Partial);
+        }
+        if let Some(change) = self.period_reset_input(page, input) {
+            return Some(change);
         }
         let day_step = |delta| {
             if let Page::Day(day) = page {

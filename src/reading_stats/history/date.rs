@@ -63,6 +63,16 @@ impl Date {
     pub(crate) fn weekday(self) -> u8 {
         (self.ordinal() + 4).rem_euclid(7) as u8
     }
+    pub(super) fn monday_week(self) -> u8 {
+        let first = Self {
+            year: self.year,
+            month: 1,
+            day: 1,
+        };
+        let first_monday = first.ordinal() + i64::from((8 - first.weekday()) % 7);
+        let days = self.ordinal() - first_monday;
+        if days < 0 { 0 } else { 1 + (days / 7) as u8 }
+    }
     pub(crate) fn label(self) -> String {
         format!("{:04}-{:02}-{:02}", self.year, self.month, self.day)
     }
@@ -179,6 +189,29 @@ impl Calendar {
         // empty or reversed interval, even if it crosses that instant.
         (start < end).then_some((start, end))
     }
+    pub(super) fn midnight_boundary(&self, date: Date) -> Option<i64> {
+        let start = self.start(date, 0)?;
+        if self.date(start)? >= date {
+            return Some(start);
+        }
+        // libc can normalize a skipped midnight back into the previous date.
+        // Find the first instant belonging to this civil date or a later one.
+        let mut earlier = start;
+        let mut later = self.start(date.add_days(1)?, 0)?;
+        if earlier >= later || self.date(later)? < date {
+            return None;
+        }
+        while later - earlier > 1 {
+            let middle = earlier + (later - earlier) / 2;
+            if self.date(middle)? < date {
+                earlier = middle;
+            } else {
+                later = middle;
+            }
+        }
+        Some(later)
+    }
+
     fn start(&self, date: Date, minutes: u16) -> Option<i64> {
         #[cfg(all(target_os = "linux", target_arch = "arm", target_env = "musl"))]
         if let Some(device) = &self.device {

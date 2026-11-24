@@ -99,6 +99,12 @@ pub(crate) struct ReadingControls {
     pub auto_turn_distance_tenths: i16,
     pub both_toolbars: bool,
     pub orientation: ReadingOrientation,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reflow_orientation_default: Option<ReadingOrientation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fixed_orientation_default: Option<ReadingOrientation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sticky_orientation: Option<ReadingOrientation>,
     pub palette: ScreenPalette,
     pub status_bar: StatusBar,
     /// Sort in-book bookmark rows by creation time instead of document location.
@@ -1117,6 +1123,8 @@ pub(crate) enum ReadingOrientation {
 }
 
 impl ReadingOrientation {
+    pub const ALL: [Self; 3] = [Self::FollowLauncher, Self::Upright, Self::UpsideDown];
+
     pub fn label(self) -> &'static str {
         match self {
             Self::FollowLauncher => "Follow Launcher",

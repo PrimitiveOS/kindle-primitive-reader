@@ -86,5 +86,61 @@ assert(box(0, 4) == revised_odd)
 doc.bbox = {}
 local used = box(0, 2)
 assert(used.x0 == 120 and used.x1 == 590)
+-- The viewport widens only when KOPT adds padding to detected bounds.
+doc.bbox = { [1] = odd, [2] = even, odd = odd, even = even }
+local native = {
+    [1] = { {14, 108, 409, 649}, {120, 120, 589, 685} },
+    [2] = { {170, 150, 409, 649}, {120, 120, 439, 539} },
+}
+local function assert_near(actual, expected)
+    assert(math.abs(actual - expected) < 0.002,
+        string.format("%.5f != %.5f", actual, expected))
+end
+
+for _, mode in ipairs{ 3, 0, 1, 2 } do
+    doc.configurable.trim_page = mode
+    for _, margin in ipairs{ 0, 0.05, 0.10, 0.25, 0.40, 0.55, 0.70, 0.85, 1.00, 1.50, 0.10 } do
+        doc.configurable.page_margin = margin
+        for page = 1, 2 do
+            paging:_gotoPage(page)
+            local width = 600
+            if mode == 0 then
+                local b = doc.bbox[page]
+                width = b.x1 - b.x0
+            elseif mode ~= 3 then
+                local x0, y0, x1, y1 = unpack(native[mode][page])
+                local screen_padding = margin * 300
+                local pad = (x1 - x0) * screen_padding / (1264 - screen_padding) / 2
+                x0, y0, x1, y1 = x0 - pad, y0 - pad, x1 + pad, y1 + pad
+                if mode == 1 then
+                    x0, y0, x1, y1 = math.max(0, x0), math.max(0, y0), math.min(599, x1), math.min(799, y1)
+                end
+                local b = doc:getPageBBox(page)
+                assert_near(b.x0, x0)
+                assert_near(b.y0, y0)
+                assert_near(b.x1, x1)
+                assert_near(b.y1, y1)
+                width = x1 - x0
+            end
+            assert_near(view.state.zoom, 1264 / width)
+        end
+        print(string.format("MARGIN mode=%d inches=%.2f | both pages matched", mode, margin))
+    end
+end
+
+-- Seeded bounds may extend beyond their editable seed. An oversized box
+-- is rejected by fixed-page zoom and falls back to the native page.
+doc.configurable.trim_page = 2
+doc.configurable.page_margin = 1.50
+doc.bbox[1] = { x0 = 165, y0 = 145, x1 = 412, y1 = 655 }
+paging:_gotoPage(1)
+local tight = doc:getPageBBox(1)
+assert_near(tight.x0, 103.93735)
+assert_near(tight.x1, 475.06265)
+doc.bbox[2] = { x0 = 0, y0 = 0, x1 = 600, y1 = 800 }
+paging:_gotoPage(2)
+assert(not view.use_bbox)
+assert_near(view.state.zoom, 1264 / 600)
+print("MARGIN tight seed can expand, oversized seed fit uses page dimensions")
 doc:close()
 Device:exit()

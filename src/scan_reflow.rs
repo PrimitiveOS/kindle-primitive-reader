@@ -8,6 +8,7 @@ use primitive_ui::GrayImage;
 use unicode_bidi::{BidiClass, bidi_class};
 
 use crate::fixed_text::{PdfPageText, PdfTextRect};
+use crate::library::FixedReflowSpacing;
 use crate::ocr::{MAX_OCR_PIXELS, MAX_OCR_SIDE};
 
 const MAX_WORDS: usize = 8192;
@@ -94,6 +95,7 @@ impl ScanReflow {
         width: u32,
         height: u32,
         text_height: u32,
+        spacing: FixedReflowSpacing,
     ) -> Result<Self> {
         let pixels = raster.width.checked_mul(raster.height);
         if raster.width.min(raster.height) == 0
@@ -106,7 +108,7 @@ impl ScanReflow {
         let viewport = Viewport::new(width, height, text_height)?;
         let mut words = word_crops(text, raster.width, raster.height)?;
         viewport.size_words(&mut words);
-        let (placements, pages) = viewport.wrap(&words)?;
+        let (placements, pages) = viewport.wrap(&words, spacing)?;
         Ok(Self {
             raster,
             width,
@@ -277,7 +279,11 @@ impl Viewport {
         }
     }
 
-    fn wrap(self, words: &[Word]) -> Result<(Vec<Placement>, Vec<Range<usize>>)> {
+    fn wrap(
+        self,
+        words: &[Word],
+        spacing: FixedReflowSpacing,
+    ) -> Result<(Vec<Placement>, Vec<Range<usize>>)> {
         let mut placements = Vec::with_capacity(words.len());
         let mut pages = Vec::new();
         let mut page_start = 0;
@@ -326,7 +332,9 @@ impl Viewport {
                 });
                 x += word.width + word_space;
             }
-            y += line_height + line_space;
+            y += spacing
+                .scaled_pitch(line_height + line_space)
+                .max(line_height);
             line_start = line_end;
         }
         pages.push(page_start..placements.len());
@@ -396,7 +404,14 @@ mod tests {
         }
 
         fn finish(self, width: u32, height: u32, text_height: u32) -> Result<ScanReflow> {
-            ScanReflow::new(self.raster, &self.text, width, height, text_height)
+            ScanReflow::new(
+                self.raster,
+                &self.text,
+                width,
+                height,
+                text_height,
+                FixedReflowSpacing::Medium,
+            )
         }
     }
 
@@ -454,6 +469,49 @@ mod tests {
         assert_eq!(pixel(&second, 4, 4), 128);
         assert_eq!(pixel(&second, 30, 4), 144);
         assert!(matches!(reflow.render(2), Err(ScanReflowError::Page)));
+    }
+
+    #[test]
+    fn fixed_reflow_spacing_changes_vertical_pitch_without_changing_word_sizes_or_order() {
+        let mut fixture = Fixture::new();
+        for index in 0..6 {
+            let separator = match index {
+                0 => "",
+                3 => "\n",
+                _ => " ",
+            };
+            fixture.word(
+                separator,
+                "Ink",
+                crop(4 + index % 3 * 27, 4 + index / 3 * 15),
+                40 + index as u8 * 20,
+            );
+        }
+        let mut reference = None;
+        for (spacing, expected) in [
+            (FixedReflowSpacing::Small, 44),
+            (FixedReflowSpacing::Medium, 53),
+            (FixedReflowSpacing::Large, 62),
+        ] {
+            let reflow =
+                ScanReflow::new(fixture.raster.clone(), &fixture.text, 230, 260, 40, spacing)
+                    .unwrap();
+            assert_eq!(reflow.placements[2].y - reflow.placements[0].y, expected);
+            let geometry = reflow
+                .placements
+                .iter()
+                .map(|word| (word.x, word.width, word.height))
+                .collect::<Vec<_>>();
+            if let Some(reference) = &reference {
+                assert_eq!(&geometry, reference);
+            } else {
+                reference = Some(geometry);
+            }
+            let frame = reflow.render(0).unwrap();
+            for (index, word) in reflow.placements.iter().enumerate() {
+                assert_eq!(pixel(&frame, word.x, word.y), 40 + index as u8 * 20);
+            }
+        }
     }
 
     #[test]

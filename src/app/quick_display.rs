@@ -102,15 +102,13 @@ impl Reader {
                 .detail(current.palette.label()),
             );
         }
+        let orientation = self.reading_orientation();
         items.extend([
             Item::new(
                 "Screen orientation",
-                Action::SetReadingControls(crate::reading_controls::ReadingControls {
-                    orientation: current.orientation.next(),
-                    ..current
-                }),
+                Action::SetReadingOrientation(orientation.next()),
             )
-            .detail(current.orientation.label()),
+            .detail(orientation.label()),
             Item::new("Refresh screen now", Action::RefreshDisplay),
             Item::new(
                 "Reading status bar",

@@ -291,6 +291,21 @@ fn local_midnight_boundaries_respect_dst_day_lengths() {
 }
 
 #[test]
+#[ignore = "Run isolated with TZ=Pacific/Apia and READER_STATS_ZONE_TEST=1"]
+fn period_reset_respects_a_skipped_civil_date() {
+    use super::report::Period;
+
+    assert_eq!(std::env::var("READER_STATS_ZONE_TEST").as_deref(), Ok("1"));
+    let dec29 = Date::new(2011, 12, 29).unwrap();
+    let dec30 = Date::new(2011, 12, 30).unwrap();
+    let dec31 = Date::new(2011, 12, 31).unwrap();
+    let (start, end) = Period::Day.bounds(dec29, Zone::Local, 0).unwrap();
+    assert_eq!(end - start, 24 * 3600);
+    assert_eq!(Zone::Local.calendar().date(end), Some(dec31));
+    assert_eq!(Period::Day.bounds(dec30, Zone::Local, 0), None);
+}
+
+#[test]
 fn short_intervals_across_sleep_combine_without_charging_the_gap_or_resetting_the_cap() {
     let (mut h, t, w, dir) = fixture("paused-min");
     let at = |s| t + Duration::from_secs(s);
@@ -401,5 +416,67 @@ fn reset_statistics_respects_strict_thresholds_and_rolls_back_a_failed_write() {
     assert_eq!(reopened.elapsed_since_reset(2, 78), 6);
     assert_eq!(reopened.pace_generation(2), 1);
     assert_eq!(reopened.books(), BTreeSet::from([1, 3, 4]));
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn period_statistics_reset_keeps_other_books_and_boundary_visits() {
+    use super::report::Period;
+    let (mut history, start, wall, directory) = fixture("period-reset");
+    let zone = Zone::Fixed(0);
+    let jan = Date::new(2026, 1, 1).unwrap();
+    let (from, until) = Period::Week.bounds(jan, zone, 0).unwrap();
+    assert_eq!(from, zone.range(jan, 0).unwrap().0);
+    assert_eq!(
+        until,
+        zone.range(Date::new(2026, 1, 5).unwrap(), 0).unwrap().0
+    );
+    let add = |history: &mut History, book, page, wall: Option<i64>| {
+        history.discard_active();
+        history.set_page_at(Some((book, page)), start, wall);
+        history.set_page_at(None, start + Duration::from_secs(10), wall.map(|w| w + 10));
+    };
+    add(&mut history, 1, 0, Some(from - 1));
+    add(&mut history, 1, 1, Some(from));
+    add(&mut history, 1, 2, Some(until - 1));
+    add(&mut history, 1, 3, Some(until));
+    add(&mut history, 2, 4, Some(from));
+    add(&mut history, 1, 5, None);
+    assert_eq!(history.count_period_visits(1, from, until), 2);
+    history
+        .save(start + Duration::from_secs(10), Some(wall), true)
+        .unwrap();
+    let path = directory.join("history.json");
+    let original = fs::read(&path).unwrap();
+    let backup = directory.join("backed-up.json");
+    fs::rename(&path, &backup).unwrap();
+    fs::create_dir(&path).unwrap();
+    assert!(
+        history
+            .reset_period(1, from, until, start + Duration::from_secs(10), Some(wall))
+            .is_err()
+    );
+    assert_eq!(history.count_period_visits(1, from, until), 2);
+    assert_eq!(fs::read(&backup).unwrap(), original);
+    fs::remove_dir(&path).unwrap();
+    fs::rename(&backup, &path).unwrap();
+
+    let at = |seconds| start + Duration::from_secs(seconds);
+    history.set_page_at(Some((1, 6)), at(20), Some(until + 30));
+    history.set_page_at(None, at(22), Some(until + 32));
+    assert_eq!(
+        history
+            .reset_period(1, from, until, at(22), Some(until + 32))
+            .unwrap(),
+        2
+    );
+    history.set_page_at(Some((1, 6)), at(27), Some(until + 37));
+    history.set_page_at(None, at(30), Some(until + 40));
+    history.save(at(30), Some(until + 40), true).unwrap();
+    let reopened = History::load(path, BTreeMap::new());
+    assert_eq!(reopened.count_period_visits(1, from, until), 0);
+    assert_eq!(reopened.count_period_visits(2, from, until), 1);
+    assert_eq!(reopened.summary(Some(1), None).seconds, 35);
+    assert_eq!(reopened.prior(Some(99)), 1234);
     fs::remove_dir_all(directory).unwrap();
 }

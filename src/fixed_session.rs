@@ -21,9 +21,10 @@ use crate::fixed_epub::{FixedEpub, FixedSpread, SpreadPlan};
 use crate::fixed_text::{PdfPageText, PdfTextRect};
 use crate::library::hidden_flows::{HiddenFlows, PageFlows, ResolvedPoint};
 use crate::library::{
-    ContinuousCrop, DocumentFormat, FixedPreferences as View, FixedTileAxis, FixedTileZoom,
-    HighlightPage, MAX_CONTINUOUS_GAP, MAX_HIGHLIGHT_TEXT_BYTES, MAX_SCAN_WHITE_LEVEL,
-    MIN_SCAN_WHITE_LEVEL, PdfHighlight, SCAN_GAMMA_DEFAULT, valid_scan_gamma,
+    ContinuousCrop, DEFAULT_CROP_MARGIN, DocumentFormat, FixedPreferences as View,
+    FixedReflowSpacing, FixedTileAxis, FixedTileZoom, HighlightPage, MAX_CONTINUOUS_GAP,
+    MAX_CROP_MARGIN, MAX_HIGHLIGHT_TEXT_BYTES, MAX_SCAN_WHITE_LEVEL, MIN_SCAN_WHITE_LEVEL,
+    PdfHighlight, SCAN_GAMMA_DEFAULT, valid_scan_gamma,
 };
 use crate::pdf_crop::{self, Seed, Seeds};
 use crate::session::{
@@ -116,33 +117,50 @@ impl CropMode {
             None
         }
     }
+
+    fn uses_margin(self) -> bool {
+        matches!(
+            self,
+            Self::SemiAuto | Self::Continuous(ContinuousCrop::Auto)
+        )
+    }
 }
 
-type CropCache = RefCell<BTreeMap<(usize, CropMode), PdfTextRect>>;
+type CropCache = RefCell<BTreeMap<(usize, CropMode, u8), PdfTextRect>>;
 
 #[derive(Clone, Copy)]
 struct PageCrops<'a> {
     mode: CropMode,
+    margin: u8,
     seeds: &'a Seeds,
     cache: &'a CropCache,
 }
 
 impl<'a> PageCrops<'a> {
     fn for_view(view: View, seeds: &'a Seeds, cache: &'a CropCache) -> Option<Self> {
-        CropMode::for_view(view).map(|mode| Self { mode, seeds, cache })
+        CropMode::for_view(view).map(|mode| Self {
+            mode,
+            margin: if mode.uses_margin() {
+                view.crop_margin()
+            } else {
+                DEFAULT_CROP_MARGIN
+            },
+            seeds,
+            cache,
+        })
     }
 
     fn resolve(self, pdf: &Pdf, page: usize) -> Result<PdfTextRect> {
-        let key = (page, self.mode);
+        let key = (page, self.mode, self.margin);
         if let Some(crop) = self.cache.borrow().get(&key).copied() {
             return Ok(crop);
         }
         let seed = self.seeds.get(page);
         let crop = match self.mode {
-            CropMode::SemiAuto => pdf_crop::detect(pdf, page, seed, WIDTH),
+            CropMode::SemiAuto => pdf_crop::detect(pdf, page, seed, WIDTH, self.margin),
             CropMode::Continuous(ContinuousCrop::Manual) => pdf_crop::manual(pdf, page, seed),
             CropMode::Continuous(ContinuousCrop::Auto) => {
-                pdf_crop::full_auto(pdf, page, seed, WIDTH)
+                pdf_crop::full_auto(pdf, page, seed, WIDTH, self.margin)
             }
         }?;
         let mut cache = self.cache.borrow_mut();
@@ -943,6 +961,10 @@ impl FixedReading {
         Ok(())
     }
 
+    pub(crate) fn set_fixed_reflow_spacing(&mut self, spacing: FixedReflowSpacing) {
+        self.view.fixed_reflow_spacing = (spacing != FixedReflowSpacing::Medium).then_some(spacing);
+    }
+
     pub(crate) fn set_force_ocr(&mut self, enabled: bool) -> Result<()> {
         if !self.supports_text() {
             return Err("OCR selection is available for PDF and DjVu".into());
@@ -1097,6 +1119,31 @@ impl FixedReading {
         Ok(())
     }
 
+    pub(crate) fn crop_margin_applies(&self) -> bool {
+        CropMode::for_view(self.view).is_some_and(CropMode::uses_margin)
+    }
+
+    pub(crate) fn set_crop_margin(&mut self, margin: u8) -> Result<()> {
+        if !self.supports_semi_auto_crop() || margin > MAX_CROP_MARGIN {
+            return Err("PDF crop margin must be from 0.00 to 1.50 inches".into());
+        }
+        if margin == self.view.crop_margin() {
+            return Ok(());
+        }
+        let view = View {
+            crop_margin_hundredths: (margin != DEFAULT_CROP_MARGIN).then_some(margin),
+            ..self.view
+        };
+        if self.crop_margin_applies() {
+            let target = self.history_point().map(FixedJump::LinkPoint);
+            self.jump_to_view(self.page, target.as_ref(), view)?;
+            self.pause();
+        } else {
+            self.view = view;
+        }
+        Ok(())
+    }
+
     pub(crate) fn initial_crop_seed(&self, manual: bool) -> Result<(Seed, (f32, f32))> {
         let FixedDocument::Pdf(pdf) = &self.source else {
             return Err("Semi-auto crop is available for PDF".into());
@@ -1114,7 +1161,9 @@ impl FixedReading {
         let area = match (manual, found.or(legacy_crop)) {
             (_, Some(area)) => area,
             (true, None) => pdf_crop::manual(pdf, self.page, None)?,
-            (false, None) => pdf_crop::detect(pdf, self.page, None, WIDTH)?,
+            (false, None) => {
+                pdf_crop::detect(pdf, self.page, None, WIDTH, self.view.crop_margin())?
+            }
         };
         Ok((Seed::from_normalized(area, size), size))
     }
@@ -1242,6 +1291,7 @@ impl FixedReading {
                 turns: original.turns,
                 scan_contrast: original.scan_contrast,
                 scan_gamma_tenths: original.scan_gamma_tenths,
+                fixed_reflow_spacing: original.fixed_reflow_spacing,
                 dither: original.dither,
                 continuous_gap: original.continuous_gap,
                 scan_white_level: original.scan_white_level,
@@ -1697,12 +1747,21 @@ impl FixedReading {
         {
             return Ok(());
         }
+        self.jump_to_view(page, target, self.view)
+    }
+
+    fn jump_to_view(
+        &mut self,
+        page: usize,
+        target: Option<&FixedJump>,
+        original: View,
+    ) -> Result<()> {
         let mut view = self.resolve_crop(
             page,
             View {
                 offset_x: 0.0,
                 offset_y: 0.0,
-                ..self.view
+                ..original
             },
         )?;
         if let (Some(target), Some(scan)) = (target, ScanPage::from_document(&self.source)) {
