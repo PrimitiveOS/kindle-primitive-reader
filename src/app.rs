@@ -3958,14 +3958,16 @@ impl Reader {
                     }
                 }
                 if let Some(cycle) = &mut controls.footer_item_cycle
-                    && cycle
-                        .selected
-                        .is_some_and(|item| controls.footer_items & item.bit() == 0)
+                    && cycle.selected.is_some_and(|item| {
+                        !item.can_cycle() || controls.footer_items & item.bit() == 0
+                    })
                 {
                     cycle.selected =
                         crate::reading_controls::FooterItem::ordered(controls.footer_order)
                             .into_iter()
-                            .find(|item| controls.footer_items & item.bit() != 0);
+                            .find(|item| {
+                                item.can_cycle() && controls.footer_items & item.bit() != 0
+                            });
                 }
                 let footer_overlap_changed =
                     controls.overlap_footer != self.controls.overlap_footer;
@@ -7570,40 +7572,55 @@ impl Reader {
             let footer_font_px = self.footer_caption_font_px();
             let footer_style = self.footer_caption_style();
             let footer_font_file = self.footer_font_render_file();
-            let draw_footer_icons = self.custom_footer_icons_enabled()
-                && self.notice.is_none()
+            let allow_custom_footer = self.notice.is_none()
                 && search_caption.is_none()
                 && self.pdf_selection.is_none()
                 && self.selection.is_none();
-            let status_text_width = (if let Some(font_file) = footer_font_file.as_deref() {
-                canvas.measure_with_font_file(
-                    &footer_caption,
-                    footer_font_px,
-                    self.controls.footer_item_bold,
-                    font_file,
-                )
+            let footer_slot_width = fixed.reading.zoom_buttons().0.x.saturating_sub(60) as u32;
+            let filler = allow_custom_footer
+                .then(|| {
+                    self.custom_footer_filler_line(
+                        canvas,
+                        footer_slot_width,
+                        footer_font_file.as_deref(),
+                    )
+                })
+                .flatten();
+            let draw_footer_icons =
+                filler.is_none() && allow_custom_footer && self.custom_footer_icons_enabled();
+            let status_text_width = if let Some(line) = &filler {
+                line.width() as i32
             } else {
-                canvas.measure_with_weight(
-                    &footer_caption,
-                    footer_font_px,
-                    self.controls.footer_item_bold,
-                )
-            }) + if draw_footer_icons {
-                self.custom_footer_icon_width()
-            } else {
-                0
+                (if let Some(font_file) = footer_font_file.as_deref() {
+                    canvas.measure_with_font_file(
+                        &footer_caption,
+                        footer_font_px,
+                        self.controls.footer_item_bold,
+                        font_file,
+                    )
+                } else {
+                    canvas.measure_with_weight(
+                        &footer_caption,
+                        footer_font_px,
+                        self.controls.footer_item_bold,
+                    )
+                }) + if draw_footer_icons {
+                    self.custom_footer_icon_width()
+                } else {
+                    0
+                }
             };
             let status_rect = self.footer_caption_rect(
-                self.footer_caption_width(
-                    fixed.reading.zoom_buttons().0.x.saturating_sub(60) as u32,
-                    status_text_width,
+                filler.as_ref().map_or_else(
+                    || self.footer_caption_width(footer_slot_width, status_text_width),
+                    |line| line.width(),
                 ),
                 status_text_width,
                 footer_font_px,
             );
             fixed.reading.draw_with_footer_cover(
                 canvas,
-                if draw_footer_icons {
+                if draw_footer_icons || filler.is_some() {
                     Some("")
                 } else {
                     display_notice
@@ -7618,7 +7635,14 @@ impl Reader {
                 footer_font_file.as_deref(),
                 self.footer_cover_top(status_rect, status_text_width),
             );
-            if draw_footer_icons {
+            if let Some(line) = filler {
+                line.draw(
+                    canvas,
+                    status_rect,
+                    footer_style,
+                    footer_font_file.as_deref(),
+                );
+            } else if draw_footer_icons {
                 self.draw_custom_footer_icons(canvas, status_rect, footer_style, footer_font_px);
             }
             self.draw_footer_track(canvas, status_text_width);
@@ -7753,34 +7777,49 @@ impl Reader {
             let footer_style = self.footer_caption_style();
             let footer_font_file = self.footer_font_render_file();
             let note_covers_footer = self.footnote.is_some();
-            let draw_footer_icons = !note_covers_footer
-                && self.custom_footer_icons_enabled()
+            let allow_custom_footer = !note_covers_footer
                 && self.notice.is_none()
                 && search_caption.is_none()
                 && self.selection.is_none()
                 && self.pdf_selection.is_none();
-            let status_text_width = (if let Some(font_file) = footer_font_file.as_deref() {
-                canvas.measure_with_font_file(
-                    &footer_caption,
-                    footer_font_px,
-                    self.controls.footer_item_bold,
-                    font_file,
-                )
+            let footer_slot_width = self.reading_viewport().done().x.saturating_sub(60) as u32;
+            let filler = allow_custom_footer
+                .then(|| {
+                    self.custom_footer_filler_line(
+                        canvas,
+                        footer_slot_width,
+                        footer_font_file.as_deref(),
+                    )
+                })
+                .flatten();
+            let draw_footer_icons =
+                filler.is_none() && allow_custom_footer && self.custom_footer_icons_enabled();
+            let status_text_width = if let Some(line) = &filler {
+                line.width() as i32
             } else {
-                canvas.measure_with_weight(
-                    &footer_caption,
-                    footer_font_px,
-                    self.controls.footer_item_bold,
-                )
-            }) + if draw_footer_icons {
-                self.custom_footer_icon_width()
-            } else {
-                0
+                (if let Some(font_file) = footer_font_file.as_deref() {
+                    canvas.measure_with_font_file(
+                        &footer_caption,
+                        footer_font_px,
+                        self.controls.footer_item_bold,
+                        font_file,
+                    )
+                } else {
+                    canvas.measure_with_weight(
+                        &footer_caption,
+                        footer_font_px,
+                        self.controls.footer_item_bold,
+                    )
+                }) + if draw_footer_icons {
+                    self.custom_footer_icon_width()
+                } else {
+                    0
+                }
             };
             let status_rect = self.footer_caption_rect(
-                self.footer_caption_width(
-                    self.reading_viewport().done().x.saturating_sub(60) as u32,
-                    status_text_width,
+                filler.as_ref().map_or_else(
+                    || self.footer_caption_width(footer_slot_width, status_text_width),
+                    |line| line.width(),
                 ),
                 status_text_width,
                 footer_font_px,
@@ -7789,7 +7828,7 @@ impl Reader {
                 canvas,
                 (self.selection.is_none() && !note_covers_footer).then_some("Exit"),
                 self.hidden_overlap_footer(),
-                if draw_footer_icons {
+                if draw_footer_icons || filler.is_some() {
                     Some("")
                 } else {
                     display_notice
@@ -7803,7 +7842,14 @@ impl Reader {
                 footer_font_file.as_deref(),
                 self.footer_cover_top(status_rect, status_text_width),
             );
-            if draw_footer_icons {
+            if let Some(line) = filler {
+                line.draw(
+                    canvas,
+                    status_rect,
+                    footer_style,
+                    footer_font_file.as_deref(),
+                );
+            } else if draw_footer_icons {
                 self.draw_custom_footer_icons(canvas, status_rect, footer_style, footer_font_px);
             }
             self.draw_publisher_margins(canvas);

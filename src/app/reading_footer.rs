@@ -1,4 +1,6 @@
 //! Reading status shares the existing compact page footer with document controls.
+mod filler;
+
 use super::character_page_settings::NumberField;
 use super::progress_markers::MarkerPages;
 use super::{Action, ActiveFixed, Item, Reader, Screen};
@@ -70,7 +72,9 @@ fn footer_item_icon(item: FooterItem, inverted: bool) -> Option<Icon> {
                 PAGE_TURN_REGULAR_ICON
             }
         }
-        FooterItem::CustomText => return None,
+        FooterItem::CustomText | FooterItem::ChapterProgress | FooterItem::DynamicFiller => {
+            return None;
+        }
     })
 }
 
@@ -950,7 +954,7 @@ impl Reader {
         }
     }
 
-    pub(super) fn status_caption(&self) -> Option<String> {
+    fn status_flow_label(&self) -> Option<String> {
         let flow = self
             .active
             .as_ref()
@@ -968,21 +972,24 @@ impl Reader {
                         .map(|map| map.flow_ordinal(map.flow(book.reading.page())).unwrap_or(0))
                 })
             });
+        flow.map(|flow| {
+            if flow == 0 {
+                "Custom".into()
+            } else {
+                format!("Hidden {flow}")
+            }
+        })
+    }
+
+    pub(super) fn status_caption(&self) -> Option<String> {
         let base = self.progress_caption().map(|caption| {
             if caption.is_empty() {
                 return caption;
             }
-            flow.map_or(caption.clone(), |flow| {
-                if flow == 0 {
-                    format!("Custom{}{}", self.controls.footer_separator.text(), caption)
-                } else {
-                    format!(
-                        "Hidden {flow}{}{}",
-                        self.controls.footer_separator.text(),
-                        caption
-                    )
-                }
-            })
+            match self.status_flow_label() {
+                Some(flow) => format!("{flow}{}{caption}", self.controls.footer_separator.text()),
+                None => caption,
+            }
         });
         if self.status_footer_hidden() {
             return base;
@@ -1323,6 +1330,56 @@ impl Reader {
         }
     }
 
+    fn chapter_item_progress(&self, progress: &Progress<'_>) -> (usize, usize) {
+        let fallback = (progress.section_page, progress.section_len);
+        if progress.alternative_sections {
+            return fallback;
+        }
+        let page = if let Some(book) = &self.fixed {
+            if book.reading.is_spread() {
+                book.reading
+                    .visible_pages()
+                    .max()
+                    .unwrap_or_else(|| book.reading.page())
+            } else {
+                book.reading.page()
+            }
+        } else if let Some(book) = &self.active {
+            book.reading.last_visible_page()
+        } else {
+            return fallback;
+        };
+        let span = self
+            .open_book_id()
+            .and_then(|id| self.library.state(id))
+            .filter(|state| {
+                state.contents_depths.bind_navigation && state.contents_depths.has_ignored()
+            })
+            .and_then(|_| self.whole_book_marker_pages(true))
+            .map_or_else(
+                || progress.section_range.clone(),
+                |markers| {
+                    let next = markers.starts.partition_point(|&start| start <= page);
+                    let start = next.checked_sub(1).map_or(0, |index| markers.starts[index]);
+                    let end = markers.starts.get(next).copied().unwrap_or(markers.count);
+                    start..end
+                },
+            );
+        if !span.contains(&page) {
+            return fallback;
+        }
+        if let Some(counts) = self.publisher_chapter_progress(span.clone()) {
+            return counts;
+        }
+        if let Ticks::FlowPages(_, flows, 0) = &progress.book_ticks {
+            return (
+                flows.count_in(0, span.start..page + 1).max(1),
+                flows.count_in(0, span).max(1),
+            );
+        }
+        (page - span.start + 1, span.len())
+    }
+
     fn custom_footer_parts(
         &self,
         progress: &Progress<'_>,
@@ -1486,6 +1543,7 @@ impl Reader {
         let mut items = Vec::new();
         for item in FooterItem::ordered(self.controls.footer_order) {
             if self.controls.footer_items & item.bit() == 0
+                || !item.can_cycle()
                 || cycle.is_some_and(|cycle| cycle.selected != Some(item))
             {
                 continue;
@@ -1553,6 +1611,11 @@ impl Reader {
                     }),
                 },
                 FooterItem::CustomText => Some(custom_text()),
+                FooterItem::ChapterProgress => {
+                    let (page, count) = self.chapter_item_progress(progress);
+                    Some(format!("{page} ⁄⁄ {count}"))
+                }
+                FooterItem::DynamicFiller => None,
             };
             if let Some(text) = text {
                 items.push((
@@ -1580,7 +1643,9 @@ impl Reader {
     fn custom_footer_caption(&self, progress: &Progress<'_>) -> String {
         let items = self.custom_footer_parts(progress, self.controls.footer_item_cycle);
         if items.is_empty() {
-            if self.controls.footer_item_cycle.is_some() {
+            if self.controls.footer_item_cycle.is_some()
+                || self.controls.footer_items & FooterItem::DynamicFiller.bit() != 0
+            {
                 String::new()
             } else {
                 "No items selected".to_owned()
@@ -1642,10 +1707,14 @@ impl Reader {
         let items = self.custom_footer_parts(&progress, self.controls.footer_item_cycle);
         let separator = self.controls.footer_separator.text();
         let mut x = status_rect.x;
+        let right = status_rect.right();
         for (index, (item, text, merge)) in items.iter().enumerate() {
+            if x >= right {
+                break;
+            }
             let prior_merge = index > 0 && items[index - 1].2;
             if index != 0 && !prior_merge && !merge {
-                let width = canvas.measure(separator, font_size);
+                let width = canvas.measure(separator, font_size).min(right - x);
                 canvas.text(
                     Rect::new(x, status_rect.y, width, status_rect.h),
                     separator,
@@ -1654,6 +1723,9 @@ impl Reader {
                 x += width;
             }
             if let Some(icon) = footer_item_icon(*item, self.page_turning_inverted()) {
+                if right - x < FOOTER_ICON_SIZE + FOOTER_ICON_GAP {
+                    break;
+                }
                 let top = status_rect.y + (status_rect.h - FOOTER_ICON_SIZE) / 2;
                 canvas.icon(
                     Rect::new(x, top, FOOTER_ICON_SIZE, FOOTER_ICON_SIZE),
@@ -1662,9 +1734,9 @@ impl Reader {
                 );
                 x += FOOTER_ICON_SIZE + FOOTER_ICON_GAP;
             }
-            let width = canvas.measure(text, font_size);
+            let width = canvas.measure(text, font_size).max(1).min(right - x);
             canvas.text(
-                Rect::new(x, status_rect.y, width.max(1), status_rect.h),
+                Rect::new(x, status_rect.y, width, status_rect.h),
                 text,
                 status_style,
             );
@@ -1889,7 +1961,7 @@ impl Reader {
                 .collect(),
             None => FooterItem::ordered(self.controls.footer_order)
                 .into_iter()
-                .filter(|item| self.controls.footer_items & item.bit() != 0)
+                .filter(|item| item.can_cycle() && self.controls.footer_items & item.bit() != 0)
                 .collect(),
         }
     }
@@ -2331,14 +2403,22 @@ impl Reader {
             ));
             for item in FooterItem::ordered(c.footer_order) {
                 let enabled = c.footer_items & item.bit() != 0;
-                items.push(setting(
+                let mut row = setting(
                     item.label(),
                     on_off(enabled),
                     ReadingControls {
                         footer_items: c.footer_items ^ item.bit(),
                         ..c
                     },
-                ));
+                );
+                if item == FooterItem::DynamicFiller {
+                    row = row.detail(if enabled {
+                        "On · When items share one line with no alongside track"
+                    } else {
+                        "Off · Fill the space between arranged items"
+                    });
+                }
+                items.push(row);
             }
             if c.footer_items & FooterItem::BatteryPercentage.bit() != 0 {
                 items.push(
@@ -2634,3 +2714,6 @@ mod header_page_labels_tests;
 #[cfg(test)]
 #[path = "reading_footer/item_cycle_tests.rs"]
 mod item_cycle_tests;
+
+#[cfg(test)]
+mod composition_tests;

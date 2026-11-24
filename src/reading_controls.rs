@@ -750,10 +750,12 @@ pub(crate) enum FooterItem {
     BatteryPercentage,
     PageTurningInverted,
     CustomText,
+    ChapterProgress,
+    DynamicFiller,
 }
 
 impl FooterItem {
-    pub(crate) const ALL: [Self; 14] = [
+    pub(crate) const ALL: [Self; 16] = [
         Self::CurrentPage,
         Self::ChapterTitle,
         Self::BookProgress,
@@ -768,6 +770,8 @@ impl FooterItem {
         Self::BatteryPercentage,
         Self::PageTurningInverted,
         Self::CustomText,
+        Self::ChapterProgress,
+        Self::DynamicFiller,
     ];
 
     pub(crate) const DEFAULT_MASK: u16 =
@@ -819,6 +823,10 @@ impl FooterItem {
             })
     }
 
+    pub(crate) fn can_cycle(self) -> bool {
+        self != Self::DynamicFiller
+    }
+
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::CurrentPage => "Current page",
@@ -835,6 +843,8 @@ impl FooterItem {
             Self::BatteryPercentage => "Battery percentage",
             Self::PageTurningInverted => "Page turning inverted",
             Self::CustomText => "Custom text",
+            Self::ChapterProgress => "Current page in chapter",
+            Self::DynamicFiller => "Dynamic filler",
         }
     }
 }
@@ -911,7 +921,9 @@ impl FooterSymbolStyle {
                 | FooterItem::CurrentTime
                 | FooterItem::BatteryPercentage
                 | FooterItem::PageTurningInverted
-                | FooterItem::CustomText => "",
+                | FooterItem::CustomText
+                | FooterItem::ChapterProgress
+                | FooterItem::DynamicFiller => "",
             },
             Self::Letters => match item {
                 FooterItem::CurrentPage => "P: ",
@@ -928,6 +940,7 @@ impl FooterSymbolStyle {
                 FooterItem::BatteryPercentage => "B: ",
                 FooterItem::PageTurningInverted => "Pg: ",
                 FooterItem::CustomText => "CT: ",
+                FooterItem::ChapterProgress | FooterItem::DynamicFiller => "",
             },
             Self::Compact => match item {
                 FooterItem::CurrentPage => "P ",
@@ -941,7 +954,9 @@ impl FooterSymbolStyle {
                 FooterItem::BookmarkCount => "BM ",
                 FooterItem::BatteryPercentage => "B ",
                 FooterItem::PageTurningInverted => "⇄ ",
-                FooterItem::CustomText => "",
+                FooterItem::CustomText
+                | FooterItem::ChapterProgress
+                | FooterItem::DynamicFiller => "",
             },
         }
     }

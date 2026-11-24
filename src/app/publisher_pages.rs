@@ -140,6 +140,39 @@ impl Reader {
             .or_else(|| (self.active.as_ref()?.page_labels() > 0).then_some(0))
     }
 
+    /// Count resolved reference pages spanned by a section in the current layout.
+    pub(super) fn publisher_chapter_progress(
+        &self,
+        span: std::ops::Range<usize>,
+    ) -> Option<(usize, usize)> {
+        if !self.publisher_footer_enabled() {
+            return None;
+        }
+        let book = self.active.as_ref()?;
+        let reading = &book.reading;
+        let probe = &reading.probe;
+        let positions = probe.publisher_positions(book.numbering.as_ref());
+        if reading.has_page_error() || !positions.ordered_and_resolved || span.is_empty() {
+            return None;
+        }
+        let first_offset = probe.page_range(span.start).start;
+        let next_offset = probe.page_range(span.end - 1).end;
+        let row_before = |boundary, include_boundary| {
+            let next = positions.visible.partition_point(|(top, _)| {
+                *top < boundary || include_boundary && *top == boundary
+            });
+            next.checked_sub(1)
+                .map(|index| positions.visible[index].1)
+                .or(positions.preceding)
+        };
+        // An exact boundary belongs to the section after it. A print page
+        // that spans the boundary is counted in both sections.
+        let first = row_before(first_offset, true).unwrap_or(0);
+        let last = row_before(next_offset, false)?;
+        let current = self.current_publisher_page()?.clamp(first, last.max(first));
+        Some((current - first + 1, last.checked_sub(first)? + 1))
+    }
+
     pub(super) fn top_header_page_labels(&self) -> Option<(String, String)> {
         let book = self.active.as_ref()?;
         if book.numbering.is_none() && !self.publisher_footer_enabled() {
