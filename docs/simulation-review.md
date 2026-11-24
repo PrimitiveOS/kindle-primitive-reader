@@ -23,6 +23,33 @@ selection and links through the grid and across page breaks. The repair
 is an internal policy. The four-mode selector remains open.
 [CSS table comparison and captures](render-modes.md#repairing-missing-css-table-rows-and-roots)
 
+Classic, Turbo, and On-release scrolling are available in eligible
+continuous EPUB and PDF views. The pinned rolling and fixed-page callbacks
+verify activation delay, incremental and cumulative movement, and release
+behavior. Reader tests cover the same patterns, menu and gesture routing,
+PDF zoom, and position restoration. The SDK opt-in input channel passed
+367 Mac tests, with five opt-in tests skipped.
+[Continuous scrolling comparison and captures](reading-scrolling.md)
+
+The full Mac suite passed 1,474 library tests, one Kindle entry test,
+14 EPUB package tests, and four layout tests. The standard run skipped
+67 opt-in tests.
+
+The screenshot replay passed 11 Mac workflow tests. Seventeen Reader
+frames and four pinned KOReader reference frames matched the reviewed
+PNG files byte for byte. The ordinary file picker reopened original EPUB,
+PDF, AZW3 and MOBI files at matching positions after a page turn. Their
+source bytes matched, and the separate reading statistics and EPUB
+margin checks passed on original files.
+
+The local ARMHF stage verified a stripped, statically linked 37,894,892-byte
+executable with SHA-256
+`dd2207c137163312af3075ab7d864b40fd961c3aca7298c5431a5d01100beec0`.
+The package assembled 30 files totaling 47,494,392 bytes uncompressed.
+The stage verified both project licenses, SQLite notices, embedded Launcher
+icon, and OCR model. The source graph and third-party notices use the same
+verified Tools commit. Physical Kindle checks and Store publication remain open.
+
 ## Corner holds, alternative progress markers, fitted heights, and font rendering checkpoint
 
 Corner holds now run their assigned action before text selection. The Mac
