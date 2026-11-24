@@ -277,6 +277,7 @@ enum Screen {
     StyleClear,
     ProfileName(profile_panel::Name),
     ReadingProfile(usize),
+    ReadingProfileFields(usize),
     ConfirmProfile(usize, profile_panel::Confirm),
     Find,
     Matches,
@@ -437,6 +438,7 @@ impl Screen {
             Self::StyleClear => "Clear book CSS?",
             Self::ProfileName(_) => "Name reading profile",
             Self::ReadingProfile(_) | Self::ConfirmProfile(_, _) => "Reading profile",
+            Self::ReadingProfileFields(_) => "Included settings",
             Self::Find => "Find in book",
             Self::Matches => "Search results",
             Self::SearchSettings => "Search settings",
@@ -571,6 +573,9 @@ enum Action {
     ApplyProfile(usize),
     RemoveProfile(usize),
     UpdateReadingProfile(usize),
+    EditReadingProfileFields(usize),
+    ToggleReadingProfileField(reading_profiles::Field),
+    SetReadingProfileFields(bool),
     UpdateFooterPreset(usize),
     ApplyFooterPreset(usize),
     RenameFooterPreset(usize),
@@ -821,6 +826,7 @@ pub struct Reader {
     fonts_directory: PathBuf,
     available_fonts: Vec<String>,
     profiles: Vec<Profile>,
+    profile_fields: Vec<reading_profiles::Field>,
     profiles_path: PathBuf,
     footer_presets: Vec<FooterPreset>,
     footer_presets_path: PathBuf,
@@ -1035,6 +1041,7 @@ impl Reader {
             fonts_directory,
             available_fonts: Vec::new(),
             profiles,
+            profile_fields: Vec::new(),
             profiles_path,
             footer_presets,
             footer_presets_path,
@@ -1471,6 +1478,9 @@ impl Reader {
 
     fn show(&mut self, screen: Screen) {
         self.archive.close_surfaces(screen);
+        if !matches!(screen, Screen::ReadingProfileFields(_)) {
+            self.profile_fields.clear();
+        }
         if screen != Screen::SelectionHtml {
             self.selection_html = None;
         }
@@ -2006,7 +2016,10 @@ impl Reader {
         }
         if matches!(
             self.screen,
-            Screen::ReadingProfiles | Screen::ReadingProfile(_) | Screen::ConfirmProfile(_, _)
+            Screen::ReadingProfiles
+                | Screen::ReadingProfile(_)
+                | Screen::ReadingProfileFields(_)
+                | Screen::ConfirmProfile(_, _)
         ) {
             return self.reading_profile_items();
         }
@@ -3968,6 +3981,9 @@ impl Reader {
             Action::ApplyProfile(index) => self.apply_reading_profile(index)?,
             Action::RemoveProfile(index) => self.remove_reading_profile(index)?,
             Action::UpdateReadingProfile(index) => self.update_reading_profile(index)?,
+            Action::EditReadingProfileFields(index) => self.edit_profile_fields(index)?,
+            Action::ToggleReadingProfileField(field) => self.toggle_profile_field(field)?,
+            Action::SetReadingProfileFields(all) => self.set_profile_fields(all)?,
             Action::UpdateFooterPreset(index) => {
                 let mut presets = self.footer_presets.clone();
                 footer_presets::update(
@@ -7764,6 +7780,10 @@ impl Reader {
                         Action::ToggleRomanizations => RowAccessory::Toggle(
                             self.lookup_history.online_languages.show_romanizations,
                         ),
+                        Action::ToggleReadingProfileField(field) => {
+                            RowAccessory::Toggle(self.profile_fields.contains(field))
+                        }
+                        Action::SetReadingProfileFields(_) => RowAccessory::None,
                         Action::ToggleWikipediaImage => RowAccessory::Toggle(
                             self.lookup_history.online_languages.show_wiki_image,
                         ),
@@ -8226,6 +8246,7 @@ impl App for Reader {
         self.draw_flow_popup(canvas);
         self.draw_archive_confirmation(canvas);
         self.draw_profile_confirmation(canvas);
+        self.draw_profile_field_controls(canvas);
         self.draw_list_density_picker(canvas);
         self.draw_search_results_navigation(canvas);
         self.draw_top_header_default_prompt(canvas);
@@ -8450,6 +8471,9 @@ impl App for Reader {
             return change;
         }
         self.sync_auto_turn(Instant::now());
+        if let Some(change) = self.profile_field_controls_input(input) {
+            return change;
+        }
         if let Some(change) = self.profile_confirmation_input(input) {
             return change;
         }

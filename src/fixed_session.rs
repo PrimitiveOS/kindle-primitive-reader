@@ -2769,19 +2769,36 @@ impl FixedReading {
         self.present_in_saved(self.page, view.normalized(), self.frame.height, save)
     }
 
-    pub(crate) fn restore_pdf_profile_with(
+    pub(crate) fn profile_provider(&self) -> Option<crate::reading_profiles::FixedProvider> {
+        use crate::reading_profiles::FixedProvider;
+        match self.source {
+            FixedDocument::Pdf(_) => Some(FixedProvider::Pdf),
+            FixedDocument::Djvu(_) => Some(FixedProvider::Djvu),
+            FixedDocument::Comic(_) => Some(FixedProvider::Comic),
+            FixedDocument::Epub(_) | FixedDocument::Image(_) => None,
+        }
+    }
+
+    pub(crate) fn restore_fixed_profile_with(
         &mut self,
-        profile: crate::reading_profiles::PdfProfile,
+        profile: crate::reading_profiles::FixedProfile,
+        fields: &[crate::reading_profiles::Field],
         save: impl FnOnce(usize, View) -> io::Result<()>,
     ) -> Result<()> {
-        if !matches!(self.source, FixedDocument::Pdf(_)) {
-            return Err("Open a PDF to use this profile".into());
+        if self.profile_provider() != Some(profile.provider) {
+            return Err("Open a book that matches this profile's format".into());
         }
-        let mut view = profile.apply(self.view);
+        let (mut view, tile) = profile.project(fields, self.view);
         if view.continuous_crop.is_some() && !(view.continuous && view.width_fit) {
             return Err("This viewing mode conflicts with the PDF's continuous crop".into());
         }
-        if let Some(tile) = profile.tile {
+        if let Some(tile) = tile.filter(|_| {
+            view.tile_zoom.is_none()
+                || view.turns != self.view.turns
+                || view.zoom_overlap_h() != self.view.zoom_overlap_h()
+                || view.zoom_overlap_v() != self.view.zoom_overlap_v()
+                || view.crop_margin() != self.view.crop_margin()
+        }) {
             view = self.resolve_crop(self.page, view)?;
             let size = self.source.page_size(self.page)?;
             view.tile_zoom = Some(tile_zoom(

@@ -2,7 +2,7 @@
 use primitive_ui::{Sheet, SheetAction};
 
 use super::*;
-use crate::reading_profiles::PdfProfile;
+use crate::reading_profiles::{Field, FixedProfile};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Name {
@@ -27,33 +27,40 @@ impl Name {
 }
 
 impl Reader {
-    pub(super) fn pdf_profiles_available(&self) -> bool {
+    pub(super) fn fixed_profiles_available(&self) -> bool {
         self.fixed
             .as_ref()
-            .is_some_and(|book| book.entry.format == DocumentFormat::Pdf)
+            .and_then(|book| book.reading.profile_provider())
+            .is_some()
     }
 
     fn profile_supported(&self, profile: &Profile) -> bool {
         match profile {
             Profile::Text { .. } => self.active.is_some(),
-            Profile::Pdf { .. } => self.pdf_profiles_available(),
+            Profile::Fixed { fixed, .. } => {
+                self.fixed
+                    .as_ref()
+                    .and_then(|book| book.reading.profile_provider())
+                    == Some(fixed.provider)
+            }
         }
     }
 
     pub(super) fn reading_profile_items(&self) -> Vec<Item> {
         if self.screen == Screen::ReadingProfiles {
             let mut items = Vec::new();
-            if self.pdf_profiles_available() || self.active.is_some() {
+            if self.fixed_profiles_available() || self.active.is_some() {
                 items.push(
                     Item::new(
                         "Save current settings",
                         Action::Show(Screen::ProfileName(Name::Create)),
                     )
-                    .detail(if self.pdf_profiles_available() {
-                        "PDF page settings"
-                    } else {
-                        "Reflowable book settings"
-                    }),
+                    .detail(
+                        self.fixed
+                            .as_ref()
+                            .and_then(|book| book.reading.profile_provider())
+                            .map_or("Reflowable books", |provider| provider.label()),
+                    ),
                 );
             }
             let mut ordered: Vec<_> = self.profiles.iter().enumerate().collect();
@@ -63,6 +70,9 @@ impl Reader {
                     .detail(profile_format(profile))
             }));
             return items;
+        }
+        if let Screen::ReadingProfileFields(index) = self.screen {
+            return self.profile_field_items(index);
         }
         let (Screen::ReadingProfile(index) | Screen::ConfirmProfile(index, _)) = self.screen else {
             return Vec::new();
@@ -84,11 +94,18 @@ impl Reader {
             items.push(
                 Item::new("Apply to this book", Action::Heading).detail(match profile {
                     Profile::Text { .. } => "Open a reflowable book to use this profile",
-                    Profile::Pdf { .. } => "Open a PDF to use this profile",
+                    Profile::Fixed { .. } => "Open a matching document to use this profile",
                 }),
             );
         }
         items.extend([
+            Item::new("Included settings", Action::EditReadingProfileFields(index)).detail(
+                format!(
+                    "{} of {}",
+                    profile.selection().len(),
+                    profile.available().len()
+                ),
+            ),
             Item::new(
                 "Rename",
                 Action::Show(Screen::ProfileName(Name::Rename(index))),
@@ -105,20 +122,115 @@ impl Reader {
         items
     }
 
+    fn profile_field_items(&self, index: usize) -> Vec<Item> {
+        let Some(profile) = self.profiles.get(index) else {
+            return Vec::new();
+        };
+        let mut items = vec![
+            Item::new("Select all", Action::SetReadingProfileFields(true)),
+            Item::new("Clear all", Action::SetReadingProfileFields(false)),
+        ];
+        items.extend(
+            profile
+                .available()
+                .into_iter()
+                .map(|field| Item::new(field.label(), Action::ToggleReadingProfileField(field))),
+        );
+        items
+    }
+
+    pub(super) fn edit_profile_fields(&mut self, index: usize) -> Result<()> {
+        let selection = self
+            .profiles
+            .get(index)
+            .ok_or("That profile is unavailable")?
+            .selection();
+        self.show(Screen::ReadingProfileFields(index));
+        self.profile_fields = selection;
+        Ok(())
+    }
+
+    fn fields_profile(&self) -> Result<&Profile> {
+        let Screen::ReadingProfileFields(index) = self.screen else {
+            return Err("Open included settings first".into());
+        };
+        self.profiles
+            .get(index)
+            .ok_or_else(|| "That profile is unavailable".into())
+    }
+
+    pub(super) fn toggle_profile_field(&mut self, field: Field) -> Result<()> {
+        if !self.fields_profile()?.available().contains(&field) {
+            return Err("That setting is unavailable".into());
+        }
+        if let Some(index) = self.profile_fields.iter().position(|&entry| entry == field) {
+            self.profile_fields.remove(index);
+        } else {
+            self.profile_fields.push(field);
+        }
+        self.notice = None;
+        Ok(())
+    }
+
+    pub(super) fn set_profile_fields(&mut self, all: bool) -> Result<()> {
+        let profile = self.fields_profile()?;
+        self.profile_fields = if all { profile.available() } else { Vec::new() };
+        self.notice = None;
+        Ok(())
+    }
+
+    pub(super) fn draw_profile_field_controls(&self, canvas: &mut Canvas) {
+        if matches!(self.screen, Screen::ReadingProfileFields(_)) {
+            let (save, cancel) = field_buttons();
+            canvas.button(cancel, "Cancel", false, false);
+            canvas.button(save, "Save", true, false);
+        }
+    }
+
+    pub(super) fn profile_field_controls_input(&mut self, input: Input) -> Option<Change> {
+        let Screen::ReadingProfileFields(index) = self.screen else {
+            return None;
+        };
+        let Input::Tap(x, y) = input else { return None };
+        let (save, cancel) = field_buttons();
+        if cancel.contains(x, y) {
+            self.show(Screen::ReadingProfile(index));
+            return Some(Change::Partial);
+        }
+        if save.contains(x, y) {
+            return Some(match self.save_profile_fields(index) {
+                Ok(()) => Change::Partial,
+                Err(error) => self.report(error),
+            });
+        }
+        None
+    }
+
+    fn save_profile_fields(&mut self, index: usize) -> Result<()> {
+        let mut profiles = self.profiles.clone();
+        profiles
+            .get_mut(index)
+            .ok_or("That profile is unavailable")?
+            .set_fields(self.profile_fields.clone())?;
+        self.commit_profiles(profiles)?;
+        self.show(Screen::ReadingProfile(index));
+        Ok(())
+    }
+
     fn capture_profile(&self, name: &str) -> Result<Profile> {
-        if let Some(fixed) = self
-            .fixed
-            .as_ref()
-            .filter(|_| self.pdf_profiles_available())
+        if let Some(book) = &self.fixed
+            && let Some(provider) = book.reading.profile_provider()
         {
-            return Ok(Profile::Pdf {
+            return Ok(Profile::Fixed {
                 name: name.into(),
-                fixed: PdfProfile::from_view(fixed.reading.preferences()),
+                fixed: FixedProfile::from_view(provider, book.reading.preferences()),
+                fields: None,
             });
         }
         Ok(Profile::Text {
             name: name.into(),
             preferences: self.current_text_preferences()?,
+            fields: None,
         })
     }
 
@@ -171,9 +283,9 @@ impl Reader {
         if !self.profile_supported(previous) {
             return Err("Open a book that matches this profile's format".into());
         }
-        let profile = self.capture_profile(previous.name())?;
+        let snapshot = self.capture_profile(previous.name())?;
         let mut profiles = self.profiles.clone();
-        profiles[index] = profile;
+        profiles[index].update_from(snapshot)?;
         self.commit_profiles(profiles)?;
         self.show(Screen::ReadingProfile(index));
         self.notice = Some("Reading profile updated".into());
@@ -200,13 +312,27 @@ impl Reader {
             return Err("Open a book that matches this profile's format".into());
         }
         match profile {
-            Profile::Text { preferences, .. } => self.apply_text_profile(preferences.clone()),
-            Profile::Pdf { fixed, .. } => self.apply_pdf_profile(*fixed),
+            Profile::Text { .. } => {
+                let active = self.active.as_ref().ok_or("Open a book first")?;
+                let current = &self
+                    .library
+                    .state(active.id)
+                    .ok_or("Reading state unavailable")?
+                    .preferences;
+                let preferences = profile
+                    .apply_text(current)
+                    .ok_or("That profile is unavailable")?;
+                self.apply_text_profile(preferences)
+            }
+            Profile::Fixed { fixed, .. } => self.apply_fixed_profile(*fixed, &profile.selection()),
         }
     }
 
-    fn apply_pdf_profile(&mut self, profile: PdfProfile) -> Result<()> {
-        let fixed = self.fixed.as_mut().ok_or("Open a PDF first")?;
+    fn apply_fixed_profile(&mut self, profile: FixedProfile, fields: &[Field]) -> Result<()> {
+        let fixed = self
+            .fixed
+            .as_mut()
+            .ok_or("Open a fixed-page document first")?;
         let library = &mut self.library;
         let entry = &fixed.entry;
         let id = fixed.id;
@@ -215,30 +341,31 @@ impl Reader {
             .state(id)
             .cloned()
             .ok_or("Reading state unavailable")?;
-        let result = fixed
-            .reading
-            .restore_pdf_profile_with(profile, |page, effective| {
-                if page != original_page {
-                    return Err(io::Error::other(
-                        "This profile would move to a different page",
-                    ));
-                }
-                with_storage(|| {
-                    if library.identify(entry)? != id {
+        let result =
+            fixed
+                .reading
+                .restore_fixed_profile_with(profile, fields, |page, effective| {
+                    if page != original_page {
                         return Err(io::Error::other(
-                            "The PDF changed. Reopen it before applying the profile.",
+                            "This profile would move to a different page",
                         ));
                     }
-                    let state = library.state_mut(id).unwrap();
-                    state.fixed_preferences = effective;
-                    state.position = Some(ReadingPosition {
-                        chapter: 0,
-                        page,
-                        anchor: None,
-                    });
-                    library.persist()
-                })
-            });
+                    with_storage(|| {
+                        if library.identify(entry)? != id {
+                            return Err(io::Error::other(
+                                "The document changed. Reopen it before applying the profile.",
+                            ));
+                        }
+                        let state = library.state_mut(id).unwrap();
+                        state.fixed_preferences = effective;
+                        state.position = Some(ReadingPosition {
+                            chapter: 0,
+                            page,
+                            anchor: None,
+                        });
+                        library.persist()
+                    })
+                });
         if let Err(error) = result {
             *library.state_mut(id).unwrap() = prior;
             return Err(error);
@@ -292,6 +419,17 @@ impl Reader {
     }
 }
 
+fn field_buttons() -> (Rect, Rect) {
+    let save = primitive_ui::back_button(WIDTH as i32);
+    (
+        save,
+        Rect {
+            x: save.x - save.w - 12,
+            ..save
+        },
+    )
+}
+
 fn profile_confirmation_sheet(name: &str, confirm: Confirm) -> Sheet<'_> {
     let view = Rect::new(0, 0, WIDTH as i32, HEIGHT as i32);
     match confirm {
@@ -303,7 +441,7 @@ fn profile_confirmation_sheet(name: &str, confirm: Confirm) -> Sheet<'_> {
 fn profile_format(profile: &Profile) -> &'static str {
     match profile {
         Profile::Text { .. } => "Reflowable books",
-        Profile::Pdf { .. } => "PDF documents",
+        Profile::Fixed { fixed, .. } => fixed.provider.label(),
     }
 }
 

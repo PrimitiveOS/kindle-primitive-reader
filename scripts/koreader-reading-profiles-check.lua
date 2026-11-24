@@ -49,6 +49,14 @@ mock("util", {
         return n
     end,
     tableDeepCopy = clone,
+    tableRemoveValue = function(values, ...)
+        local keys = {...}
+        for i = 1, #keys - 1 do
+            values = values[keys[i]]
+            if not values then return end
+        end
+        values[keys[#keys]] = nil
+    end,
 })
 local screen = setmetatable({DEVICE_ROTATED_UPRIGHT = 0, DEVICE_ROTATED_CLOCKWISE = 1,
     DEVICE_ROTATED_UPSIDE_DOWN = 2}, {__index = function() return function() return 0 end end})
@@ -171,6 +179,10 @@ assert(pdf.kopt_zoom_overlap_h == 45)
 choose(commands, "Duplicate").callback(menu)
 stock_name("PDF", "PDF copy")
 assert(profiles.data["PDF copy"].kopt_zoom_overlap_h == 45)
+-- Holding an action in the stock editor removes both its value and ordered step.
+overlap.hold_callback(menu)
+assert(pdf.kopt_zoom_overlap_h == nil)
+for _, key in ipairs(pdf.settings.order) do assert(key ~= "kopt_zoom_overlap_h") end
 choose(commands, "Rename: PDF").callback(menu)
 stock_name("PDF", "Scanned pages")
 assert(not profiles.data.PDF and profiles.data["Scanned pages"].settings.name == "Scanned pages")
@@ -182,9 +194,12 @@ local function sent_setting(name)
 end
 profile_ui.instance = {paging = true}
 events = {}
-profiles:onProfileExecute("Scanned pages", {qm_show = false})
+profiles:onProfileExecute("PDF copy", {qm_show = false})
 assert(events[1].name == "BatchedUpdate" and events[#events].name == "BatchedUpdateDone")
 assert(sent_setting("zoom_overlap_h") == 45 and sent_setting("embedded_css") == nil)
+events = {}
+profiles:onProfileExecute("Scanned pages", {qm_show = false})
+assert(sent_setting("zoom_overlap_h") == nil)
 events = {}
 profiles:onProfileExecute("Text", {qm_show = false})
 assert(sent_setting("embedded_css") == nil)

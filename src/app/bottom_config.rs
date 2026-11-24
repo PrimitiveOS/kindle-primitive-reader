@@ -961,7 +961,7 @@ impl Reader {
                         );
                         rows.push(ConfigRow::new("Reading direction", [ltr, rtl]));
                     }
-                    if self.pdf_profiles_available() {
+                    if self.fixed_profiles_available() {
                         rows.push(ConfigRow::new(
                             "Reading profiles",
                             [Choice::link(

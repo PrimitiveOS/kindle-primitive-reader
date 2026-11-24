@@ -262,3 +262,142 @@ fn reading_profiles_keep_saved_files_frames_and_positions_when_storage_changes()
         Some(20)
     );
 }
+
+#[test]
+fn reading_profile_fields_are_drafts_and_apply_only_selected_text_settings() {
+    let f = Fixture::new();
+    let fonts = vec![
+        crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+        crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+    ];
+    let mut app = Reader::open(&f.root, &f.state, fonts.clone()).unwrap();
+    app.open_path(&f.book).unwrap();
+    let settings = app.active.as_ref().unwrap().reading.config.settings;
+    app.activate(Action::Text(Settings {
+        font_size: 65.,
+        logical_font_size: None,
+        margin: 44,
+        ..settings
+    }))
+    .unwrap();
+    app.save_reading_profile("Large text").unwrap();
+    let legacy = fs::read(&app.profiles_path).unwrap();
+    assert!(!String::from_utf8_lossy(&legacy).contains("\"fields\""));
+    app.show(Screen::ReadingProfile(0));
+    assert_eq!(row(&mut app, "Included settings"), Change::Partial);
+    assert_eq!(row(&mut app, "Clear all"), Change::Partial);
+    let (save, cancel) = field_buttons();
+    screen_tap(&mut app, save);
+    assert_eq!(app.screen, Screen::ReadingProfileFields(0));
+    assert_eq!(fs::read(&app.profiles_path).unwrap(), legacy);
+    assert_eq!(row(&mut app, "Font size"), Change::Partial);
+    assert!(app.notice.is_none());
+    capture_test_screen(&app, &fonts, "READER_PROFILE_FIELDS_TEXT", false);
+    assert_eq!(screen_tap(&mut app, cancel), Change::Partial);
+    assert_eq!(fs::read(&app.profiles_path).unwrap(), legacy);
+    assert_eq!(row(&mut app, "Included settings"), Change::Partial);
+    assert_eq!(row(&mut app, "Clear all"), Change::Partial);
+    assert_eq!(row(&mut app, "Font size"), Change::Partial);
+    assert_eq!(app.input(Input::PageForward), Change::Partial);
+    assert_eq!(screen_tap(&mut app, save), Change::Partial);
+    assert_eq!(app.profiles[0].selection(), [Field::FontSize]);
+    assert!(app.profile_fields.is_empty());
+
+    let settings = app.active.as_ref().unwrap().reading.config.settings;
+    app.activate(Action::Text(Settings {
+        font_size: 49.,
+        logical_font_size: None,
+        margin: 93,
+        ..settings
+    }))
+    .unwrap();
+    app.activate(Action::ReadingMode(true)).unwrap();
+    let active = app.active.as_ref().unwrap();
+    let anchor = active.reading.anchor();
+    let id = active.id;
+    let mut before = app.library.state(id).unwrap().preferences.clone();
+    app.activate(Action::ApplyProfile(0)).unwrap();
+    before.font_size = Some(65.);
+    assert_eq!(app.library.state(id).unwrap().preferences, before);
+    let active = app.active.as_ref().unwrap();
+    assert_eq!(active.reading.anchor(), anchor);
+    assert!(active.reading.config.scroll);
+
+    let settings = active.reading.config.settings;
+    app.activate(Action::Text(Settings {
+        font_size: 48.,
+        ..settings
+    }))
+    .unwrap();
+    app.activate(Action::UpdateReadingProfile(0)).unwrap();
+    let saved = app.profiles[0].text_preferences();
+    assert_eq!(saved.font_size, Some(48.));
+    assert_eq!(saved.margin, Some(44));
+    let bytes = app.reading_backup_bytes().unwrap();
+    assert!(app.prepare_reading_backup(&bytes).is_ok());
+    let reopened = Reader::open(&f.root, &f.state, fonts).unwrap();
+    assert_eq!(reopened.profiles[0].selection(), [Field::FontSize]);
+}
+
+#[test]
+fn reading_profile_fields_apply_provider_specific_comic_and_djvu_settings() {
+    let f = Fixture::new();
+    let fonts = vec![
+        crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+        crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+    ];
+    let djvu = f.root.join("Beacon atlas.djvu");
+    let comic = f.root.join("Signals.cbz");
+    fs::copy(crate::test_fixture("beacon-atlas.djvu"), &djvu).unwrap();
+    fs::copy(crate::test_fixture("harbor-signals.cbz"), &comic).unwrap();
+    let mut app = Reader::open(&f.root, &f.state, fonts.clone()).unwrap();
+    app.open_path(&djvu).unwrap();
+    app.activate(Action::ScanContrast(true)).unwrap();
+    app.save_reading_profile("Atlas contrast").unwrap();
+    let original = serde_json::to_value(&app.profiles).unwrap();
+    let mut invalid = original.clone();
+    invalid[0]["fixed"]["settings"]["scan_gamma_tenths"] = 20.into();
+    assert!(reading_profiles::decode(invalid).is_err());
+    let mut invalid = original;
+    invalid[0]["fields"] = serde_json::json!(["scan_contrast", "crop_margin"]);
+    assert!(reading_profiles::decode(invalid).is_err());
+    app.edit_profile_fields(0).unwrap();
+    app.set_profile_fields(false).unwrap();
+    app.toggle_profile_field(Field::ScanContrast).unwrap();
+    assert!(app.toggle_profile_field(Field::CropMargin).is_err());
+    capture_test_screen(&app, &fonts, "READER_PROFILE_FIELDS_DJVU", true);
+    assert_eq!(screen_tap(&mut app, field_buttons().0), Change::Partial);
+    app.activate(Action::ScanContrast(false)).unwrap();
+    app.activate(Action::SetFixedTileZoom(FixedTileAxis::Columns, 21))
+        .unwrap();
+    let current = app.fixed.as_ref().unwrap();
+    let page = current.reading.page();
+    let mut before = current.reading.preferences();
+    app.activate(Action::ApplyProfile(0)).unwrap();
+    before.scan_contrast = true;
+    let current = app.fixed.as_ref().unwrap();
+    assert_eq!(current.reading.page(), page);
+    assert_eq!(current.reading.preferences(), before);
+
+    app.open_path(&comic).unwrap();
+    assert!(app.activate(Action::ApplyProfile(0)).is_err());
+    app.activate(Action::ReversePageDirection).unwrap();
+    app.save_reading_profile("Comic direction").unwrap();
+    app.edit_profile_fields(1).unwrap();
+    app.set_profile_fields(false).unwrap();
+    app.toggle_profile_field(Field::ReadingDirection).unwrap();
+    assert!(app.toggle_profile_field(Field::Straighten).is_err());
+    assert_eq!(screen_tap(&mut app, field_buttons().0), Change::Partial);
+    app.activate(Action::ReversePageDirection).unwrap();
+    app.activate(Action::SetFixedRotation(1)).unwrap();
+    let current = app.fixed.as_ref().unwrap();
+    let page = current.reading.page();
+    let mut before = current.reading.preferences();
+    app.activate(Action::ApplyProfile(1)).unwrap();
+    before.right_to_left = true;
+    let current = app.fixed.as_ref().unwrap();
+    assert_eq!(current.reading.page(), page);
+    assert_eq!(current.reading.preferences(), before);
+    let reopened = Reader::open(&f.root, &f.state, fonts).unwrap();
+    assert_eq!(reopened.profiles, app.profiles);
+}
