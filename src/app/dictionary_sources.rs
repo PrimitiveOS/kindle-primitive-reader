@@ -23,6 +23,7 @@ pub(super) struct SourcePreferences {
     pub(super) presets: dictionary_presets::Settings,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) preset_cycle_after: Option<String>,
+    pub(super) disable_dictionary_history: bool,
     disable_word_forms: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     enable_fuzzy_search: Option<bool>,
@@ -37,6 +38,7 @@ impl Default for SourcePreferences {
             disabled: Vec::new(),
             presets: dictionary_presets::Settings::default(),
             preset_cycle_after: None,
+            disable_dictionary_history: false,
             disable_word_forms: false,
             enable_fuzzy_search: None,
             large_window: false,
@@ -138,6 +140,7 @@ pub(super) enum SourceAction {
     ResetBookFuzzySearch,
     LargeWindow,
     JustifyText,
+    DictionaryHistory,
 }
 
 fn toggle(paths: &mut Vec<PathBuf>, key: &Path) {
@@ -345,6 +348,16 @@ impl Reader {
             "Dictionary presets",
             Action::DictionaryPreset(dictionary_presets::Command::Open),
         ));
+        rows.push(Item::new(
+            "Record dictionary lookups",
+            Action::DictionarySource(SourceAction::DictionaryHistory),
+        ));
+        if !self.lookup_history.dictionary.is_empty() {
+            rows.push(Item::new(
+                "Clear dictionary history",
+                Action::Show(Screen::ClearDictionaryHistory),
+            ));
+        }
         if !self.book_dictionaries().is_empty() || !self.book_dictionary_exclusions().is_empty() {
             rows.push(Item::new(
                 "Reset book dictionary choices",
@@ -569,6 +582,8 @@ impl Reader {
             next.large_window = !next.large_window;
         } else if matches!(action, SourceAction::JustifyText) {
             next.justify_text = !next.justify_text;
+        } else if matches!(action, SourceAction::DictionaryHistory) {
+            next.disable_dictionary_history = !next.disable_dictionary_history;
         } else {
             let Screen::DictionaryOptions(i) = self.screen else {
                 return Err("Choose a dictionary first".into());
@@ -659,7 +674,8 @@ impl Reader {
                 | SourceAction::BookFuzzySearch
                 | SourceAction::ResetBookFuzzySearch
                 | SourceAction::LargeWindow
-                | SourceAction::JustifyText => unreachable!(),
+                | SourceAction::JustifyText
+                | SourceAction::DictionaryHistory => unreachable!(),
             }
             selected_key = Some(key);
         }

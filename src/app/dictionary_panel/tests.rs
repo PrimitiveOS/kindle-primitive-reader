@@ -1211,7 +1211,8 @@ fn fuzzy_retry_exhaustion_and_cancel_restore_the_typed_editor() {
     s.back();
     assert_eq!(s.app.screen, Screen::DictionaryEntry);
     assert_eq!(s.app.editor, original);
-    assert_eq!(s.app.lookup_history.dictionary, [original.string()]);
+    assert_eq!(s.app.lookup_history.dictionary.len(), 1);
+    assert_eq!(s.app.lookup_history.dictionary[0].word(), original.string());
 
     s.tap_keyboard_key(Key::Go, "Look up");
     assert_eq!(s.app.input(Input::PageBack), Change::Partial);

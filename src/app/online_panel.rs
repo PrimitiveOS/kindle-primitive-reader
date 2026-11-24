@@ -531,17 +531,28 @@ impl Reader {
         ]
     }
 
-    pub(super) fn draw_clear_online_history(&self, canvas: &mut Canvas) {
+    pub(super) fn draw_clear_lookup_history(&self, canvas: &mut Canvas) {
         let layout = self.navigation_layout();
+        let (title, description) = if self.screen == Screen::ClearDictionaryHistory {
+            (
+                "Clear dictionary history?",
+                "This removes recorded dictionary lookups from this Kindle.",
+            )
+        } else {
+            (
+                "Clear online lookup history?",
+                "This removes the saved Wikipedia searches and translations from this Kindle.",
+            )
+        };
         canvas.popup(layout.centered(CLEAR_HISTORY_PANEL));
         canvas.text(
             layout.centered(Rect::new(214, 655, 840, 85)),
-            "Clear online lookup history?",
+            title,
             BODY.bold(),
         );
         canvas.text(
             layout.centered(Rect::new(214, 755, 830, 126)),
-            "This removes the saved Wikipedia searches and translations from this Kindle.",
+            description,
             BODY.lines(3),
         );
         canvas.button(
@@ -558,24 +569,29 @@ impl Reader {
         );
     }
 
-    pub(super) fn clear_online_history_input(&mut self, input: Input) -> Change {
+    pub(super) fn clear_lookup_history_input(&mut self, input: Input) -> Change {
         let layout = self.navigation_layout();
+        let (clear, back) = if self.screen == Screen::ClearDictionaryHistory {
+            (Action::ClearDictionaryHistory, Screen::Dictionaries)
+        } else {
+            (Action::ClearOnlineHistory, Screen::OnlineHistory)
+        };
         match input {
             Input::Tap(x, y) if layout.centered(CLEAR_HISTORY_ACCEPT).contains(x, y) => {
-                match self.activate(Action::ClearOnlineHistory) {
+                match self.activate(clear) {
                     Ok(()) => Change::Partial,
                     Err(e) => self.report(e),
                 }
             }
             Input::PageBack => {
-                self.show(Screen::OnlineHistory);
+                self.show(back);
                 Change::Partial
             }
             Input::Tap(x, y)
                 if layout.centered(CLEAR_HISTORY_CANCEL).contains(x, y)
                     || !layout.centered(CLEAR_HISTORY_PANEL).contains(x, y) =>
             {
-                self.show(Screen::OnlineHistory);
+                self.show(back);
                 Change::Partial
             }
             _ => Change::None,

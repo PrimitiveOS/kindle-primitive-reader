@@ -61,7 +61,7 @@ fn source(fixture: &Fixture) -> (Reader, u64) {
         "lookup-history.json",
         json!({
         "searches":[{"text":"harbor","match_case":false,"ignore_accents":true,"regular_expression":false}],
-        "dictionary":["harbor"],"vocabulary":["harbor"],
+        "dictionary":[{"word":"quay","book_title":"Field notes","time":1700000000},"harbor"],"vocabulary":["harbor"],
         "review":{"automatic":true,"with_context":true,"due_only":true,"excluded_books":["Other book"],"words":{
             "harbor":{"book":"Field notes","created_at":1700000000u64,"reviewed_at":1700000100u64,
                 "due_at":1700086500u64,"reviews":7,"streak":3,"before":"The quiet","after":"was calm","highlight":"harbor"}}},
@@ -245,6 +245,12 @@ fn complete_backup_round_trip_fresh_profile_repeated_replace_and_legacy_merge_pr
     restored.activate(Action::MergeBackup).unwrap();
     assert_eq!(restored.reading_history.visits().len(), 1);
     assert_eq!(restored.lookup_history.review.words["harbor"].reviews, 7);
+    let history = &restored.lookup_history.dictionary;
+    assert_eq!(history[0].word(), "quay");
+    assert_eq!(history[0].book_title(), Some("Field notes"));
+    assert_eq!(history[0].time(), Some(1_700_000_000));
+    assert_eq!(history[1].word(), "harbor");
+    assert_eq!(history[1].time(), None);
     assert_eq!(restored.library.state(id).unwrap().highlights.len(), 1);
     // A v1 library-only backup still uses the additive merge and touches no global component.
     let legacy = source.library.backup_bytes().unwrap();

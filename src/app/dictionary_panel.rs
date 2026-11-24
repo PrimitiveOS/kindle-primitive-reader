@@ -733,17 +733,23 @@ impl Reader {
             let repeated = self.lookup_history.review.automatic
                 && !reviewing
                 && self.lookup_history.review.words.contains_key(word);
-            self.update_lookup_history(|history| {
-                history.lookup(word);
-                if history.review.automatic && !reviewing && !repeated {
-                    if !history.vocabulary.iter().any(|saved| saved == word) {
-                        history.vocabulary.insert(0, word.to_owned());
+            let record = !self.dictionary_settings.disable_dictionary_history;
+            let remember = self.lookup_history.review.automatic && !reviewing && !repeated;
+            if record || remember {
+                self.update_lookup_history(|history| {
+                    if record {
+                        history.lookup(word, &entry.book, crate::mark_time::now());
                     }
-                    history
-                        .review
-                        .remember(word, entry.clone(), super::vocabulary::now());
-                }
-            })?;
+                    if remember {
+                        if !history.vocabulary.iter().any(|saved| saved == word) {
+                            history.vocabulary.insert(0, word.to_owned());
+                        }
+                        history
+                            .review
+                            .remember(word, entry.clone(), super::vocabulary::now());
+                    }
+                })?;
+            }
             if repeated {
                 review = Some((word.to_owned(), entry));
             }

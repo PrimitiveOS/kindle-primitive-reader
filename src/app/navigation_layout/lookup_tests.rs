@@ -26,6 +26,11 @@ fn turn(app: &mut Reader, viewport: ReadingViewport, generation: u64) -> Canvas 
     adopt(app, viewport, generation)
 }
 
+fn close_definition(app: &mut Reader) {
+    let done = app.definition_layout().1;
+    tap(app, done);
+}
+
 fn tap_visible(app: &mut Reader, title: &str) {
     let (_, rows) = app.list_window();
     let index = rows.iter().position(|row| row.title == title).unwrap();
@@ -83,9 +88,12 @@ fn lookup_settings_viewport_keeps_dictionary_preferences_and_the_history_window(
 
     app.update_lookup_history(|h| {
         h.dictionary = (1..=25)
-            .map(|index| format!("Harbor term {index:02}"))
+            .map(|index| {
+                lookup_history::DictionaryLookup::Legacy(format!("Harbor term {index:02}"))
+            })
             .collect();
-        h.dictionary.insert(15, "tide".into());
+        h.dictionary
+            .insert(15, lookup_history::DictionaryLookup::Legacy("tide".into()));
     })
     .unwrap();
     app.activate(Action::Show(Screen::DictionaryHistory))
@@ -210,4 +218,172 @@ fn lookup_settings_viewport_online_history_preview_and_confirmation_restore_thei
     assert!(reopened.lookup_history.online_languages.show_romanizations);
     assert!(!reopened.lookup_history.online_languages.show_wiki_image);
     assert_eq!(reopened.current_position(), position);
+}
+
+#[test]
+fn dictionary_history_groups_consecutive_titles_and_repeats_on_the_current_page() {
+    let fixture = Fixture::new();
+    let dictionaries = fixture.root.join("dictionaries");
+    fs::create_dir(&dictionaries).unwrap();
+    crate::dictionary::tests::write_dictionary(
+        &dictionaries,
+        "Coastal terms",
+        "sametypesequence=m\n",
+        &[
+            ("tide", b"The rise and fall of the sea."),
+            ("ferry", b"A boat that makes regular crossings."),
+            ("quay", b"A platform beside the water."),
+        ],
+    );
+    fs::write(
+        fixture.root.join("lookup-history.json"),
+        br#"{"dictionary":["legacy term"]}"#,
+    )
+    .unwrap();
+    let pdf = fixture.root.join("Coast.pdf");
+    fs::write(&pdf, crate::fixed::tests::document()).unwrap();
+    let mut app = open(&fixture);
+    let epub_title = app.vocabulary_entry("").book;
+    for word in ["tide", "tide"] {
+        app.look_up(word).unwrap();
+        close_definition(&mut app);
+    }
+    app.open_path(&pdf).unwrap();
+    let pdf_title = app.vocabulary_entry("").book;
+    assert_ne!(epub_title, pdf_title);
+    app.look_up("ferry").unwrap();
+    close_definition(&mut app);
+    app.open_path(&fixture.book).unwrap();
+    app.look_up("quay").unwrap();
+    close_definition(&mut app);
+    let original = app.current_position();
+    app.save().unwrap();
+    drop(app);
+
+    let mut app = open(&fixture);
+    app.show(Screen::DictionaryHistory);
+    let rows = app.items();
+    let labels = rows
+        .iter()
+        .map(|row| row.title.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        labels,
+        [
+            epub_title.as_str(),
+            "quay",
+            pdf_title.as_str(),
+            "ferry",
+            epub_title.as_str(),
+            "tide",
+            "tide",
+            "legacy term",
+        ]
+    );
+    assert!(matches!(rows[0].action, Action::Heading));
+    assert!(matches!(rows[2].action, Action::Heading));
+    assert!(matches!(rows[4].action, Action::Heading));
+    assert!(rows[7].detail.is_none());
+    for index in [1, 3, 5, 6] {
+        let stamp = rows[index].detail.as_deref().unwrap();
+        assert_eq!(stamp.len(), 19);
+        assert!(crate::mark_time::parse(stamp.as_bytes()).is_some());
+    }
+    // Keep the authored screenshot reproducible while exercising real lookup
+    // timestamps above. Separate clock values also make the ordering visible.
+    let screenshot_time = crate::mark_time::parse(b"2025-10-18 17:45:00").unwrap();
+    app.update_lookup_history(|history| {
+        for (offset, row) in history.dictionary.iter_mut().take(4).enumerate() {
+            let lookup_history::DictionaryLookup::Recorded { time, .. } = row else {
+                panic!("Expected a recorded lookup");
+            };
+            *time = Some(screenshot_time - offset as i64 * 1_120);
+        }
+    })
+    .unwrap();
+    let mut upright = adopt(&mut app, ReadingViewport::PORTRAIT, 1);
+    capture(
+        &app,
+        &mut upright,
+        "dictionary-history-grouped-portrait.png",
+        false,
+    );
+    let mut wide = turn(&mut app, ReadingViewport::LANDSCAPE, 2);
+    capture(
+        &app,
+        &mut wide,
+        "dictionary-history-grouped-landscape.png",
+        false,
+    );
+    tap_visible(&mut app, "ferry");
+    assert_eq!(app.definition_word, "ferry");
+    assert_eq!(app.screen, Screen::Definition);
+    assert_eq!(app.current_position(), original);
+    close_definition(&mut app);
+    assert_eq!(app.screen, Screen::DictionaryHistory);
+    assert_eq!(app.current_position(), original);
+    let latest = &app.lookup_history.dictionary[0];
+    assert_eq!(latest.word(), "ferry");
+    assert_eq!(latest.book_title(), Some(epub_title.as_str()));
+}
+
+#[test]
+fn dictionary_history_opt_out_and_clear_preserve_vocabulary_and_online_history() {
+    let fixture = Fixture::new();
+    let mut app = open(&fixture);
+    app.look_up("first word").unwrap();
+    close_definition(&mut app);
+    app.update_lookup_history(|history| {
+        history.vocabulary.push("saved word".into());
+        history.online(Request {
+            service: Service::Google,
+            from: "en".into(),
+            to: "fr".into(),
+            text: "remote request".into(),
+            full_article: false,
+            with_romanization: false,
+        });
+        history.online_languages.forget_queries = true;
+        history.review.automatic = true;
+    })
+    .unwrap();
+    app.open_sources().unwrap();
+    tap_visible(&mut app, "Record dictionary lookups");
+    assert!(app.dictionary_settings.disable_dictionary_history);
+    app.show(Screen::DictionaryEntry);
+    app.look_up("second word").unwrap();
+    assert_eq!(app.lookup_history.dictionary.len(), 1);
+    assert!(
+        app.lookup_history
+            .vocabulary
+            .contains(&"second word".into())
+    );
+    assert_eq!(app.lookup_history.online.len(), 1);
+    let selection_position = app.current_position();
+    adopt(&mut app, ReadingViewport::PORTRAIT, 1);
+    app.show(Screen::ClearDictionaryHistory);
+    let mut wide = turn(&mut app, ReadingViewport::LANDSCAPE, 2);
+    capture(
+        &app,
+        &mut wide,
+        "dictionary-history-clear-landscape.png",
+        false,
+    );
+    assert_eq!(app.input(Input::PageBack), Change::Partial);
+    assert_eq!(app.lookup_history.dictionary.len(), 1);
+    app.show(Screen::ClearDictionaryHistory);
+    assert_eq!(app.input(Input::Tap(1068.0, 755.0)), Change::Partial);
+    assert_eq!(app.screen, Screen::Dictionaries);
+    assert!(app.lookup_history.dictionary.is_empty());
+    assert_eq!(app.current_position(), selection_position);
+    drop(app);
+    let reopened = open(&fixture);
+    assert!(reopened.dictionary_settings.disable_dictionary_history);
+    assert!(reopened.lookup_history.dictionary.is_empty());
+    assert_eq!(
+        reopened.lookup_history.vocabulary,
+        ["second word", "saved word"]
+    );
+    assert_eq!(reopened.lookup_history.online.len(), 1);
+    assert!(reopened.lookup_history.online_languages.forget_queries);
 }

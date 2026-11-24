@@ -318,6 +318,7 @@ enum Screen {
     TranslationSettings,
     WikipediaSettings,
     ClearOnlineHistory,
+    ClearDictionaryHistory,
     DictionaryHistory,
     Vocabulary,
     VocabularyWord,
@@ -493,6 +494,7 @@ impl Screen {
             Self::TranslationSettings => "Translation settings",
             Self::WikipediaSettings => "Wikipedia settings",
             Self::ClearOnlineHistory => "Online lookup history",
+            Self::ClearDictionaryHistory => "Dictionaries",
             Self::DictionaryHistory => "Dictionary history",
             Self::Vocabulary => "Vocabulary",
             Self::VocabularyWord => "Word review",
@@ -605,6 +607,7 @@ enum Action {
     ToggleWikipediaImage,
     ToggleWikipediaMoreImages,
     ClearOnlineHistory,
+    ClearDictionaryHistory,
     RepeatSearch(SearchQuery),
     StepNearby(crate::search::SearchDirection),
     SetFont(Option<String>),
@@ -2690,11 +2693,24 @@ impl Reader {
                     .collect();
             }
             Screen::DictionaryHistory => {
-                let words = &self.lookup_history.dictionary;
-                return words
-                    .iter()
-                    .map(|word| Item::new(word, Action::LookUp(word.clone())))
-                    .collect();
+                let mut items = Vec::new();
+                let mut preceding_title = None;
+                for lookup in &self.lookup_history.dictionary {
+                    let title = lookup.book_title();
+                    if let Some(title) = title.filter(|_| title != preceding_title) {
+                        items.push(Item::new(title, Action::Heading));
+                    }
+                    preceding_title = title;
+                    let word = lookup.word();
+                    let row = Item::new(word, Action::LookUp(word.to_owned()));
+                    items.push(
+                        match lookup.time().and_then(crate::mark_time::local_datetime) {
+                            Some(time) => row.detail(time),
+                            None => row,
+                        },
+                    );
+                }
+                return items;
             }
             Screen::BookmarkMatches => return self.annotation_results(),
             _ => {}
@@ -2760,7 +2776,10 @@ impl Reader {
         if self.screen == Screen::MetadataSaveSettings {
             return self.metadata_save_items();
         }
-        if self.screen == Screen::Dictionaries {
+        if matches!(
+            self.screen,
+            Screen::Dictionaries | Screen::ClearDictionaryHistory
+        ) {
             return self.source_rows();
         }
         if let Screen::DictionaryOptions(i) = self.screen {
@@ -3830,6 +3849,10 @@ impl Reader {
             Action::ClearOnlineHistory => {
                 self.update_lookup_history(|h| h.online.clear())?;
                 self.show(Screen::OnlineHistory);
+            }
+            Action::ClearDictionaryHistory => {
+                self.update_lookup_history(|h| h.dictionary.clear())?;
+                self.show(Screen::Dictionaries);
             }
             Action::LookUp(word) => self.look_up(&word)?,
             Action::Vocabulary(command) => self.vocabulary_command(command)?,
@@ -7716,6 +7739,11 @@ impl Reader {
                         Action::DictionarySource(SourceAction::JustifyText) => {
                             RowAccessory::Toggle(self.dictionary_settings.justify_text)
                         }
+                        Action::DictionarySource(SourceAction::DictionaryHistory) => {
+                            RowAccessory::Toggle(
+                                !self.dictionary_settings.disable_dictionary_history,
+                            )
+                        }
                         Action::DictionarySource(SourceAction::DefaultWordForms) => {
                             RowAccessory::Toggle(self.dictionary_settings.word_forms_default())
                         }
@@ -7918,8 +7946,11 @@ impl Reader {
         if let Some(popup) = &self.result_context {
             popup.draw(canvas);
         }
-        if self.screen == Screen::ClearOnlineHistory {
-            self.draw_clear_online_history(canvas);
+        if matches!(
+            self.screen,
+            Screen::ClearOnlineHistory | Screen::ClearDictionaryHistory
+        ) {
+            self.draw_clear_lookup_history(canvas);
         }
     }
 }
@@ -8655,8 +8686,11 @@ impl App for Reader {
         if self.screen == Screen::CustomTitle {
             return self.chapter_editor_input(input);
         }
-        if self.screen == Screen::ClearOnlineHistory {
-            return self.clear_online_history_input(input);
+        if matches!(
+            self.screen,
+            Screen::ClearOnlineHistory | Screen::ClearDictionaryHistory
+        ) {
+            return self.clear_lookup_history_input(input);
         }
         if self.screen == Screen::Footnote {
             return self.footnote_input(input);
@@ -13673,7 +13707,8 @@ mod tests {
         );
         let mut reopened = fixture.app();
         assert_eq!(reopened.lookup_history.searches[0].text, "shore");
-        assert_eq!(reopened.lookup_history.dictionary, ["tide"]);
+        assert_eq!(reopened.lookup_history.dictionary.len(), 1);
+        assert_eq!(reopened.lookup_history.dictionary[0].word(), "tide");
         assert_eq!(reopened.lookup_history.vocabulary, ["tide"]);
         reopened.open_path(&fixture.book).unwrap();
         reopened.show(Screen::Vocabulary);

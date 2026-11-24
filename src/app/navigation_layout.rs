@@ -120,6 +120,7 @@ impl Screen {
                         | super::dictionary_presets::Page::Unavailable(..)
                 )
                 | Self::DictionaryHistory
+                | Self::ClearDictionaryHistory
                 | Self::OnlineHistory
                 | Self::ClearOnlineHistory
                 | Self::TranslationSettings

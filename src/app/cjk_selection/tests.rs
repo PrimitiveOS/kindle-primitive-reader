@@ -105,7 +105,7 @@ fn japanese_lookup_expands_only_the_automatic_source_selection_and_restores_it()
         app.lookup_history
             .dictionary
             .iter()
-            .any(|entry| entry == "読み込みました")
+            .any(|entry| entry.word() == "読み込みました")
     );
     draw(&app, "japanese-dictionary.png");
     // The popup back control returns to the original source, never a fabricated

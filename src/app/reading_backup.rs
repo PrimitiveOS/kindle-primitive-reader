@@ -21,7 +21,7 @@ struct Choice {
 #[serde(default, deny_unknown_fields)]
 struct LocalLookup {
     searches: Vec<lookup_history::SearchQuery>,
-    dictionary: Vec<String>,
+    dictionary: Vec<lookup_history::DictionaryLookup>,
     vocabulary: Vec<String>,
     review: vocabulary::Vocabulary,
 }
@@ -44,11 +44,8 @@ fn local_lookup(value: Value) -> io::Result<Value> {
             .searches
             .iter()
             .any(|q| q.text.is_empty() || q.text.len() > crate::search::MAX_QUERY_BYTES)
-        || local
-            .dictionary
-            .iter()
-            .chain(&local.vocabulary)
-            .any(|w| !lookup_history::valid(w))
+        || local.dictionary.iter().any(|lookup| !lookup.valid())
+        || local.vocabulary.iter().any(|w| !lookup_history::valid(w))
         || local
             .review
             .excluded_books
