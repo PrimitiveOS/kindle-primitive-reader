@@ -174,6 +174,14 @@ committed dimensions. Scenes awaiting their viewport updates follow Launcher
 and retain the edition preference for later reading.
 [Selection and lookups in landscape](landscape-selection.md)
 
+The combined workflow passed 1,252 Mac tests with 66 opt-in cases skipped.
+It included cross-book Bookmark Browser, full-document search and live
+results rotation, Book Map, Page Overview, Footnote, View HTML, and the
+personal hyphenation editor.
+[Search screenshots](landscape-document-search.md) ·
+[Reading tools](landscape-reading-tools.md) ·
+[Visual navigation](reading-orientation-contract.md#book-map-and-page-overview)
+
 [Negotiated portrait options](screenshots/negotiated-orientation-portrait.png) ·
 [Negotiated landscape options](screenshots/negotiated-orientation-landscape.png) ·
 [Navigation in landscape](landscape-navigation.md)
