@@ -1,5 +1,6 @@
 //! Local document discovery and reading state. Paths stored in state are relative to the library.
 
+pub(crate) mod contents_depths;
 pub(crate) mod custom_contents;
 pub(crate) mod hidden_flows;
 
@@ -835,6 +836,11 @@ pub struct BookState {
         skip_serializing_if = "custom_contents::CustomContents::is_default"
     )]
     pub(crate) custom_contents: custom_contents::CustomContents,
+    #[serde(
+        default,
+        skip_serializing_if = "contents_depths::ContentsDepths::is_default"
+    )]
+    pub(crate) contents_depths: contents_depths::ContentsDepths,
     #[serde(default)]
     pub highlights: Vec<Highlight>,
     #[serde(default)]
@@ -878,6 +884,7 @@ impl BookState {
             menus: Default::default(),
             bookmarks: Vec::new(),
             custom_contents: Default::default(),
+            contents_depths: Default::default(),
             highlights: Vec::new(),
             pdf_highlights: Vec::new(),
         }

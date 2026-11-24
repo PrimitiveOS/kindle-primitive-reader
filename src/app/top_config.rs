@@ -76,6 +76,11 @@ impl Reader {
             Item::new("Custom hidden flows", Action::Show(Screen::HiddenFlows)),
             Item::new("Page browser", Action::Overview).detail("Browse page thumbnails"),
             Item::new("Skim", Action::Skim).detail("Preview a position, then keep it or return"),
+            Item::new(
+                "Chapter navigation",
+                Action::Show(Screen::ChapterNavigation),
+            )
+            .detail("Choose Contents levels for chapter jumps"),
             Item::new("Auto turn", Action::Show(Screen::AutoTurn)).detail(
                 self.auto_turn.interval().map_or_else(
                     || "Off".to_owned(),

@@ -33,7 +33,7 @@ pub(super) enum Target {
 #[derive(Eq, PartialEq)]
 pub(super) struct ContentsEntry {
     title: String,
-    depth: usize,
+    pub(super) depth: usize,
     pub(super) target: Target,
 }
 
