@@ -88,8 +88,11 @@ fixtures and private test state.
 | Rollback and exit | Reject the oversized vertical EPUB draft viewport and check that the prior page remains available. Exit Reader to the portrait Launcher, then to Amazon’s Library. Verify removal of the scratch session records and compare the installed startup files with their baseline checksums. |
 
 The capture helper checks the live fixture process around each awake
-framebuffer read. The hardware evidence additionally records visible panel
-refresh, physical touch and keys, the power cycle, and the USB data session.
+framebuffer read. Use `capture-overlay` with the same fixture home to read the Quick Settings
+frame while the app is stopped. It requires the live scoped offer, the ready
+frame and matching geometry, the occlusion marker, and a held page-key fence.
+Visible panel refresh, the physical controls, a power cycle, and a USB data
+session require complementary hardware evidence.
 
 
 ### Staged ARMHF build
@@ -131,8 +134,7 @@ and returned to its original framebuffer bytes with the other key.
 
 The device screenshots are framebuffer readbacks. The input exercised the
 Kindle’s evdev path by injection. Mechanical key timing, panel refresh appearance,
-the Quick Settings overlay, sleep and USB data resume still require their
-foreground acceptance checks.
+sleep and USB data resume still require their foreground acceptance checks.
 
 The first landscape frame exposed a stale Screen selection until the next
 redraw. Reader now renders the matching pending orientation in the staged frame
@@ -159,3 +161,26 @@ in separate scratch profiles, one each in EPUB, PDF, AZW3 and MOBI. Each
 original matched its starting SHA-256 digest.
 
 [First live Landscape Right frame](screenshots/oasis-viewport-first-right-frame.png)
+
+
+### Live Quick Settings handoff
+
+The scratch Launcher `65e47b5` and Reader `f3215a3` exercised Quick Settings
+on the Oasis in both landscape directions. A top-edge swipe stopped the
+same Reader process and set the scoped page-key fence to held. A handle tap
+arrived in Launcher at logical (840, 942) in both directions. The 286 rows
+below the overlay remained byte-identical to the reading frame.
+
+An injected Page Forward reached Launcher while Quick Settings was open.
+An upward swipe dismissed the overlay, resumed Reader, and restored all
+2,123,520 visible framebuffer bytes without a page turn. A fresh Page
+Forward in Landscape Right advanced once from page 2 to 3, then Page Back
+restored the same page 2 framebuffer. The capture helper rejected a
+normal read while Reader was stopped and an overlay read while it ran.
+
+The inputs used the device's touchscreen and gpio-keys evdev nodes. The
+checks cover routing, ownership, and restore at firmware framebuffer
+rotation 0. Digitizer response, physical key timing, panel waveform
+appearance and the sleep and USB cycles remain separate.
+
+[Quick Settings over Reader on Oasis](screenshots/oasis-viewport-quick-settings.png)

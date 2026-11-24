@@ -53,7 +53,32 @@ if [ "$operation" = preflight ] && [ "$#" -le 1 ]; then
     exit 0
 fi
 
-if [ "$operation" = capture ] && [ "$#" -eq 2 ]; then
+check_overlay() {
+    viewport=$(tr '\000' '\n' < "/proc/$pid/environ" | sed -n 's/^KL_APP_VIEWPORT_FILE=//p')
+    case "$viewport" in "$run"/app-turn.*/viewport) ;; *) return 1 ;; esac
+    directory=${viewport%/viewport}
+    scope=${directory#"$run"/}
+    case "$scope" in */*) return 1 ;; esac
+    start=$(awk '{ print $22 }' "/proc/$pid/stat") || return 1
+    offer=$(cat "$run/app-viewport-offer") || return 1
+    [ "$offer" = "v1 $pid $start $scope" ] || return 1
+    IFS=' ' read -r version phase owner ticks token generation logical logical_w logical_h \
+        panel_w panel_h rotation offset pitch extra < "$viewport" || return 1
+    case "$logical" in
+        U|D) expected="$width $height" ;;
+        CW|CCW) expected="$height $width" ;;
+        *) return 1 ;;
+    esac
+    [ "$version $phase $owner $ticks $token" = "v2 ready $pid $start $scope" ] &&
+        [ "$logical_w $logical_h" = "$expected" ] &&
+        [ "$panel_w $panel_h $rotation $offset $pitch" = "$width $height $turn $yoffset $stride" ] &&
+        [ -z "$extra" ] || return 1
+    case "$generation" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$(cat "$directory/launcher-page-key-cutoff")" = held ] &&
+        [ "$(cat "$directory/launcher-occluded")" = "$((generation + 1))" ]
+}
+
+if { [ "$operation" = capture ] || [ "$operation" = capture-overlay ]; } && [ "$#" -eq 2 ]; then
     [ -d "$2" ] || exit 2
     scratch=$(cd "$2" && pwd -P)
     case "$scratch" in /mnt/us/reader/tests/*/foreground) ;; *) exit 2;; esac
@@ -64,8 +89,14 @@ if [ "$operation" = capture ] && [ "$#" -eq 2 ]; then
             [ "$(cat "$screen/rotate")" = "$turn" ] &&
             [ "$(cat "$screen/pan")" = "$pan" ] &&
             [ "$(readlink "/proc/$pid/exe")" = "$run/native-app/run" ] &&
-            awk '/^State:/ { exit $2 == "T" || $2 == "t" }' "/proc/$pid/status" &&
-            tr '\000' '\n' < "/proc/$pid/environ" | grep -Fqx "PRIMITIVE_READER_HOME=$scratch"
+            tr '\000' '\n' < "/proc/$pid/environ" | grep -Fqx "PRIMITIVE_READER_HOME=$scratch" || return 1
+        state=$(awk '/^State:/ { print $2 }' "/proc/$pid/status") || return 1
+        case "$operation:$state" in
+            capture:T|capture:t) return 1 ;;
+            capture:?) return 0 ;;
+            capture-overlay:T|capture-overlay:t) check_overlay ;;
+            *) return 1 ;;
+        esac
     }
     check_fixture || exit 2
     frame=$(mktemp "$scratch/foreground-frame.XXXXXX")
@@ -76,5 +107,5 @@ if [ "$operation" = capture ] && [ "$#" -eq 2 ]; then
     cat "$frame"
     exit 0
 fi
-printf 'Usage: sh verify-oasis-foreground.sh [preflight | capture <fixture-home>]\n' >&2
+printf 'Usage: sh verify-oasis-foreground.sh [preflight | capture <fixture-home> | capture-overlay <fixture-home>]\n' >&2
 exit 1
