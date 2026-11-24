@@ -34,5 +34,8 @@ EPUB and PDF documents, and verify settings persistence, exact same-page return,
 folder navigation, the exit confirmation, and direct footer Exit. On changed
 layouts, recent-view restores use the saved source anchor or scan point where
 available and otherwise use the saved page. The stock Backspace mapping
-`T3-6.4` needs a distinct keyboard Back event in the app kit. Gesture and
-refresh acceptance on a Kindle remains pending. [Stock callback oracle](../scripts/compare-back-navigation.py) · [Reader input and tests](../src/app/back_navigation.rs)
+`T3-6.4` is shown by KOReader only on keyboards without a Sym key.
+The pinned Kindle app kit delivers touch, physical page buttons and
+lifecycle events. A distinct hardware Backspace event would need an
+app-kit input change. Gesture and refresh acceptance on a Kindle remains
+pending. [Stock Backspace capability gate](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/elements/common_settings_menu_table.lua#L489-L501) · [Pinned app input contract](https://github.com/PrimitiveOS/kindle-primtitive-tools/blob/c8ee49b764c96c013d0fa8e9d79dfdeddbdaaecc/crates/kl-core/src/ui.rs#L54-L77) · [Stock callback oracle](../scripts/compare-back-navigation.py) · [Reader input and tests](../src/app/back_navigation.rs)
