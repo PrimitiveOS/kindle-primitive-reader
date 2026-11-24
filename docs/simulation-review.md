@@ -2,7 +2,28 @@
 
 ## Current Mac simulator checkpoint
 
-The current pass adds the Reader Back gesture, independent fuzzy dictionary
+This pass exercises calendar book spans, a minute-based timeline start and a
+separate month shift. The reviewed calendar and time editor use original
+fixtures. The stock callback harness also executes the ranking query and week
+span calculation. An offline dictionary miss offers a one-shot fuzzy retry
+when fuzzy search is disabled. Saved profiles accept word spacing and expansion
+before Apply, and the internal EPUB keep policy uses available space for an
+oversized text group. [Calendar controls](reading-statistics.md#calendar-and-timeline-settings) ·
+[Dictionary word forms](dictionary-word-forms.md) ·
+[Saved profile values](reading-profiles.md#editing-saved-values) ·
+[Publisher keep comparison](render-modes.md)
+
+The latest original-file verifier opened one cached EPUB, PDF, and AZW3 through
+the file picker, turned a page, and resumed at identical page pixels. The
+source SHA-256 values matched before and after. The reviewed dictionary retry
+and time editor frames were reproduced byte for byte. The exact combined Mac
+run passed 1,318 library tests, one Kindle entry test, 14 EPUB package tests,
+and four layout checks. Sixty-six opt-in tests were skipped. Kindle foreground
+acceptance and the Store release remain open.
+
+## Previous Mac simulator checkpoint
+
+This pass added the Reader Back gesture, independent fuzzy dictionary
 search, saved profile margin editing, and nested publisher margin collapse. In
 the simulator, Back restores exact within-page EPUB scroll positions and PDF pan
 offsets. The real-file picker opened one cached original EPUB, PDF, and AZW3,
@@ -17,7 +38,7 @@ skipped. The Skim placement workflow retained its existing options and order,
 and the exit confirmation matched the reviewed frame byte for byte. Physical
 Kindle acceptance for this candidate remains open. [Back settings capture](screenshots/back-navigation-settings.png)
 
-## Previous Mac simulator checkpoint
+## Earlier Mac simulator checkpoint
 
 The desktop example opened an authored EPUB and PDF in separate simulator
 profiles. It rendered the ordinary Reader surfaces, top and bottom toolbars,

@@ -9,7 +9,7 @@ Open **Tools › Reading statistics**, **Reading data › Reading statistics**, 
 | Time range | Compare reading time and distinct screens by week or month, then open a period for its individual books |
 | Calendar | A month grid with reading time, book titles that span consecutive days, and an optional hourly histogram. Tap a day, swipe, or use page buttons to change months. |
 | Day timeline | An hourly histogram and book intervals clipped to the selected day; tap an interval for its book sessions and **Continue reading** |
-| Settings | Enable statistics, set visit limits, freeze finished books, choose any starting weekday, edit the timeline start, apply the shift to the calendar, limit book spans, show the histogram, and browse future months. |
+| Settings | Enable statistics, set visit limits, freeze finished books, choose the starting weekday, edit the timeline start, apply the shift to the calendar, limit book spans, show the histogram, and browse future months. |
 
 <img src="screenshots/reading-calendar-book-spans.png" width="350" alt="Reader's monthly calendar with two ranked book titles per day and titles spanning adjacent dates">
 <img src="screenshots/reading-timeline.png" width="350" alt="Reader's day timeline with hourly reading bars and book sessions">
@@ -25,7 +25,10 @@ calendar view** applies the shift to month cells independently. Older journals
 with a shifted calendar keep that preference. Today in the timeline opens the
 previous date until the configured start time arrives. [Time editor](screenshots/reading-calendar-start-time.png)
 
-**Books per calendar day** accepts one through five and defaults to three. The
+The week can start on Friday, Saturday, Sunday, or Monday, the choices in the
+pinned stock menu. An existing weekday from an older Reader journal remains
+active until you choose a new start. **Books per calendar day** accepts one
+through five and defaults to three. The
 calendar sorts titles by time read, breaking ties by stable book ID. A title
 that also ranks on the next day keeps its row through that week. The `+n` count
 shows additional titles. Tap the day for its full timeline. The optional
@@ -120,7 +123,8 @@ The pinned Lua/SQLite check exercises the save and shift callbacks, picker
 wrapping, book duration ranking, and spans across adjacent days. Rust tests
 cover the 04:20 boundary in a fractional-offset zone, both shift choices,
 failed saves, book filtering, and the saved reading position. The separate
-seven-day progress report and local statistics database import remain open.
+seven-day progress report, exact visit-duration editor, and local statistics
+database import remain open.
 Reader records the actual pre- and
 post-pause portions of each visit.
 [Stock calendar comparison](../scripts/compare-calendar-options.py) · [Stock layout rescaling](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L439-L441) · [Stock pause and resume timestamps](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L2694-L2732)

@@ -12,6 +12,7 @@ const WEEKDAYS: [&str; 7] = [
     "Friday",
     "Saturday",
 ];
+const WEEK_START_CHOICES: [u8; 4] = [5, 6, 0, 1];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::app) enum Choice {
@@ -121,14 +122,13 @@ impl Reader {
             }
         };
         match choice {
-            Choice::WeekStart => WEEKDAYS
+            Choice::WeekStart => WEEK_START_CHOICES
                 .iter()
-                .enumerate()
-                .map(|(day, title)| {
+                .map(|&day| {
                     item(
-                        (*title).into(),
+                        WEEKDAYS[usize::from(day)].into(),
                         Options {
-                            week_start: day as u8,
+                            week_start: day,
                             ..options
                         },
                     )
@@ -304,21 +304,28 @@ mod tests {
         select(&mut app, "Also use in calendar view");
         assert!(app.reading_history.options().calendar_uses_shift());
         select(&mut app, "Calendar week starts");
-        assert_eq!(app.list_window().0, 7);
-        select(&mut app, "Thursday");
+        let weekdays: Vec<_> = app
+            .list_window()
+            .1
+            .into_iter()
+            .map(|item| item.title)
+            .collect();
+        assert_eq!(weekdays, ["Friday", "Saturday", "Sunday", "Monday"]);
+        select(&mut app, "Friday");
         select(&mut app, "Books per calendar day");
         select(&mut app, "2");
         let options = app.reading_history.options();
         assert!(options.calendar_uses_shift());
-        assert_eq!(options.week_start, 4);
+        assert_eq!(options.week_start, 5);
         assert_eq!(options.calendar_book_spans, 2);
 
         let month = Date::today().add_months(-1).unwrap();
+        let friday = 8 + (5 + 7 - month.weekday()) % 7;
         let mut index = 0;
         for (day, visits) in [
-            (8, vec![(1, 100), (2, 80), (3, 65)]),
-            (9, vec![(2, 110), (1, 75), (4, 36)]),
-            (10, vec![(1, 110), (4, 78), (3, 45)]),
+            (friday, vec![(1, 100), (2, 80), (3, 65)]),
+            (friday + 1, vec![(2, 110), (1, 75), (4, 36)]),
+            (friday + 2, vec![(1, 110), (4, 78), (3, 45)]),
         ] {
             let day = Date { day, ..month };
             for (book, seconds) in visits {
@@ -344,7 +351,10 @@ mod tests {
         assert_eq!(app.history_view.month, month);
         capture_test_screen(&app, &fonts, "READER_STATS_SPANS_SCREEN", false);
         let offset = (month.weekday() + 7 - options.week_start) % 7;
-        let day = Date { day: 8, ..month };
+        let day = Date {
+            day: friday,
+            ..month
+        };
         assert_eq!(
             app.input(tap(super::super::cell(usize::from(offset + day.day - 1)))),
             Change::Partial

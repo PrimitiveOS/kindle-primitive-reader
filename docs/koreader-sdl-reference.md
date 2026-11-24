@@ -4,7 +4,7 @@ This is a fresh comparison against genuine pinned KOReader UI running on this Ma
 
 Current evidence for `T3-6.1` through `T3-6.3` covers Back in Reader and the file browser, exit policies, and independent jump and recent-view history. `T3-6.4` remains a keyboard-input gap. [Back navigation](back-navigation.md)
 
-Current evidence for `T4-4.2.3` through `T4-4.2.8` includes all seven starting weekdays, ranked book spans, hourly calendar bins, a minute-based timeline start and a separate calendar shift. The earlier matrix retains the captured baseline. [Calendar and timeline settings](reading-statistics.md#calendar-and-timeline-settings)
+Current evidence for `T4-4.2.3` through `T4-4.2.8` includes the four stock starting weekdays, ranked book spans, hourly calendar bins, a minute-based timeline start and a separate calendar shift. The earlier matrix retains the captured baseline. [Calendar and timeline settings](reading-statistics.md#calendar-and-timeline-settings)
 
 ## Scope and reproducibility
 

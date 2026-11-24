@@ -36,10 +36,15 @@ lua.execute("""
     DEFAULT_CALENDAR_NB_BOOK_SPANS = 3
     CalendarWeek = {}
     NumberPickerWidget = {}
+    local names = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"}
+    datetime = {weekDays = names, shortDayOfWeekToLongTranslation = {}}
+    for _, name in ipairs(names) do datetime.shortDayOfWeekToLongTranslation[name] = name end
 """)
 start = stats.rfind("\n                    {", 0, stats.index('return T(_("Books per calendar day:'))
 end = stats.rfind("\n                    {", 0, stats.index('return T(_("Cloud sync:'))
 lua.globals().controls = lua.eval("function(self) return {" + stats[start:end] + "} end")
+week = stats.rfind("\n                    {", 0, stats.index('return T(_("Calendar weeks start on'))
+lua.globals().week_control = lua.eval("function(self) return ({" + stats[week:start] + "})[1] end")
 start = calendar.index("function CalendarWeek:addDay(")
 end = calendar.index("\n-- Set of", start)
 lua.execute(calendar[start:end])
@@ -52,10 +57,23 @@ lua.execute("""
     local menu = controls(stats)
     local updated = 0
     local context = {updateItems = function() updated = updated + 1 end}
+    local starts = week_control(stats).sub_item_table
+    local weekdays = {"Friday", "Saturday", "Sunday", "Monday"}
+    local values = {6, 7, 1, 2}
+    assert(#starts == #weekdays)
+    for i, item in ipairs(starts) do
+        assert(item.text == weekdays[i])
+        item.callback()
+        assert(item.checked_func() and stats.settings.calendar_start_day_of_week == values[i])
+    end
     menu[1].callback(context)
     assert(shown.value == 3 and shown.value_min == 1 and shown.value_max == 5 and shown.default_value == 3)
     shown.callback({value = 2})
     assert(stats.settings.calendar_nb_book_spans == 2 and updated == 1)
+    menu[2].callback()
+    assert(menu[2].checked_func())
+    menu[3].callback()
+    assert(menu[3].checked_func())
     menu[4].callback(context)
     assert(shown.hour == 0 and shown.min == 0 and shown.min_step == 10 and shown.min_hold_step == 30 and shown.min_max == 50)
     shown.callback({hour = 4, min = 20})
