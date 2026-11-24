@@ -55,6 +55,12 @@ latest-bookmark swipe with stock link precedence and EPUB/PDF destinations.
 Exercise touch lock, the return gesture and saved preferences.
 [Scan controls](scan-controls.md) · [Archive workflow](document-end.md#move-a-book-to-archive) · [Latest bookmark](link-taps.md#swipe-to-the-latest-saved-bookmark)
 
+The Mac suite passed 1,168 checks. The Oasis passed 1,153 Reader library
+tests, 14 EPUB package tests and four layout probes. Both skipped 65 opt-in
+cases. Five of six Oasis captures matched their Mac simulator frames exactly.
+The post-archive Library label differed by two pixels. Foreground touch and
+panel refresh have separate acceptance checks.
+
 ## Reader 0.1.41 verification plan
 
 Scroll width-fit PDFs across pages with different crops in both directions.
