@@ -157,6 +157,8 @@ fn search_results_navigation_pdf_selection_restores_its_rotated_view_and_replace
         Some(&origin)
     );
     app.activate(Action::PdfSearchHit(1)).unwrap();
+    assert!(app.fixed_search_fit_active());
+    app.close_fixed_search_fit().unwrap();
     app.activate(Action::SetFixedZoom(1)).unwrap();
     app.activate(Action::SetFixedRotation(2)).unwrap();
     let on_match = app.current_history_location();

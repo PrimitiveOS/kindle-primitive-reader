@@ -9580,14 +9580,21 @@ mod tests {
         app.open_path(&long).unwrap();
 
         let deadline = |app: &Reader| app.active.as_ref().unwrap().reading.deadline().unwrap();
-        assert_eq!(app.input(Input::PageForward), Change::None);
-        assert_eq!(app.input(Input::PageBack), Change::None);
+        // Deliver a batch at the refresh boundary without depending on how
+        // long the scheduler waits between two test input calls.
+        let queue = |app: &mut Reader, directions| {
+            app.active
+                .as_mut()
+                .unwrap()
+                .reading
+                .queue_page_turns(directions);
+        };
+        queue(&mut app, [1, -1]);
         assert_eq!(app.tick(deadline(&app)), Change::None);
         assert_eq!(app.pages_since_refresh, 0);
 
         for frame in 1..=5 {
-            assert_eq!(app.input(Input::PageForward), Change::None);
-            assert_eq!(app.input(Input::PageForward), Change::None);
+            queue(&mut app, [1, 1]);
             let expected = if frame == 5 {
                 Change::Full
             } else {
