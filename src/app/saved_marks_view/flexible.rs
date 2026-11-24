@@ -3,7 +3,7 @@ use primitive_ui::{BLACK, HAIRLINE, PAPER, SECONDARY, chevron};
 
 use crate::highlight_style::HighlightColor;
 
-use super::super::list_density::{LIST_HEIGHT, font_pixels};
+use super::super::list_density::{LIST_HEIGHT, font_pixels, measure_rows};
 use super::super::{
     Action, BODY, CAPTION, Canvas, Change, HEIGHT, Input, Item, LIST_X, LIST_Y, NEXT, PREV, Reader,
     Rect, WIDTH,
@@ -177,21 +177,14 @@ impl FlexibleMarks {
             return false;
         };
         let first = self.pages.last().map_or(0, MarkPage::end);
-        let mut y = LIST_Y;
-        let mut rows = Vec::new();
-        for item in &self.items[first..] {
-            let mut row = self
-                .spill
-                .take()
-                .unwrap_or_else(|| MarkRow::measure(canvas, item, self.font, self.max_lines));
-            if y + row.rect.h > LIST_Y + LIST_HEIGHT {
-                self.spill = Some(row);
-                break;
-            }
-            row.rect.y = y;
-            y = row.rect.bottom();
-            rows.push(row);
-        }
+        let (rows, spill) = measure_rows(
+            first,
+            self.items.len(),
+            self.spill.take(),
+            |index| MarkRow::measure(canvas, &self.items[index], self.font, self.max_lines),
+            |row| &mut row.rect,
+        );
+        self.spill = spill;
         if rows.is_empty() {
             return false;
         }
