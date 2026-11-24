@@ -223,6 +223,24 @@ file hashes matched before and after. The first frames took 1,504 ms,
 12,955 ms, 1,296 ms and 1,954 ms respectively. [Bookmark and header
 verification](bookmark-max-lines.md) records native and simulator evidence.
 
+## Reader 0.1.36 native reading workflows
+
+The Mac run passed 1,080 Reader library tests, one Kindle binary test,
+14 EPUB package tests and four layout checks. The ARMHF candidate passed
+1,084 Reader library tests, 14 EPUB package tests and four layout checks on
+the Oasis 3. Both runs skipped 63 optional tests.
+
+A separate native test opened an original EPUB and PDF, browsed dated
+statistics, returned to each saved reading position and verified both input
+files byte for byte. Weekly and monthly report screens and the book totals
+screen matched the desktop captures. The authored dictionary article also
+passed with the firmware Arabic fallback and produced a readable bilingual
+frame. [Reading reports](reading-statistics.md) · [Dictionary article](screenshots/dictionary-structured-article.png) · [Link settings](link-taps.md)
+
+These are software-rendered frames from the Kindle and scratch-profile
+workflow checks. Foreground touch and E Ink refresh have separate
+acceptance checks.
+
 ## Reader 0.1.34 release on the Oasis
 
 The first GitHub runner failed during setup. The retry passed all release
