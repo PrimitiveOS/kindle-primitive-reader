@@ -4,7 +4,7 @@ use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use reader::{Anchor, Engine, Probe, Result, Settings};
+use reader::{Anchor, Engine, Probe, PublisherRenderMode, Result, Settings};
 
 const USAGE: &str = "+Usage: reader-probe <blitz|parley> <book.epub> --font <font.ttf> [options]
   --font <path>          Add a reading font or fallback. Repeat as needed.
@@ -19,6 +19,7 @@ const USAGE: &str = "+Usage: reader-probe <blitz|parley> <book.epub> --font <fon
   --margin <pixels>      Set the page margin.
   --line-height <ratio>  Set the line-height multiplier.
   --hyphenation <mode>   Choose automatic, authored, or off.
+  --render-mode <mode>   Preview legacy, flat, book, or web policies in Parley.
   --output <path>        Write a grayscale PNG.
   --turns <count>        Time additional rasterizations within the chapter.
 ";
@@ -67,6 +68,16 @@ fn run() -> Result<()> {
             "--size" => settings.font_size = string()?.parse()?,
             "--margin" => settings.margin = string()?.parse()?,
             "--line-height" => settings.line_height = string()?.parse()?,
+            "--render-mode" => {
+                let mode = match string()? {
+                    "legacy" => PublisherRenderMode::Legacy,
+                    "flat" => PublisherRenderMode::Flat,
+                    "book" => PublisherRenderMode::Book,
+                    "web" => PublisherRenderMode::Web,
+                    _ => return Err("Choose legacy, flat, book, or web for rendering".into()),
+                };
+                settings = mode.apply(settings);
+            }
             "--hyphenation" => {
                 let mode = string()?;
                 if !matches!(mode, "automatic" | "authored" | "off") {

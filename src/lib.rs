@@ -73,6 +73,8 @@ mod pdf_annotations;
 mod publication_metadata;
 mod publisher_breaks;
 mod publisher_padding;
+mod publisher_render_mode;
+pub use publisher_render_mode::PublisherRenderMode;
 #[cfg(feature = "kindle")]
 mod reading_backup;
 #[cfg(feature = "kindle")]
@@ -1201,6 +1203,9 @@ impl Probe {
     ) -> Result<Self> {
         if book.is_fixed_layout() {
             return Err("Open this fixed-layout EPUB in Reader".into());
+        }
+        if engine == Engine::Blitz && settings.block_margins != BlockMarginMode::Ignore {
+            return Err("Publisher block rendering policies require Parley".into());
         }
         if engine == Engine::Blitz
             && (!user_styles.is_empty()

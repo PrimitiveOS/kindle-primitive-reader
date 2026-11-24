@@ -234,11 +234,9 @@ pub(crate) fn layout_with_flow(
     mut measure: impl FnMut(&crate::source::Block) -> (u32, u32),
 ) -> Option<Vec<BoxArea>> {
     let block_width = settings.block_width;
-    let constrained = block_width == BlockWidthMode::PublisherWithConstraints
-        && (settings.float_mode == crate::FloatMode::Ignore
-            || !styles
-                .iter()
-                .any(|style| style.float_side.is_some() && !style.flow.suppressed));
+    // Text-box candidates already exclude floats. During line layout, a sized
+    // box clears active footprints before using its own column geometry.
+    let constrained = block_width == BlockWidthMode::PublisherWithConstraints;
     let width_candidates = match block_width {
         BlockWidthMode::Ignore => Vec::new(),
         BlockWidthMode::PublisherWithConstraints if constrained => {

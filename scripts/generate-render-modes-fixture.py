@@ -1,11 +1,15 @@
 """Build the authored block-rendering comparison EPUB."""
 
+import argparse
 from pathlib import Path
-import sys
 import zipfile
 
-fixture = Path(__file__).resolve().parents[1] / "tests/fixtures/render-modes.epub"
-epub = Path(sys.argv[1]) if len(sys.argv) > 1 else fixture
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("output", nargs="?", type=Path)
+parser.add_argument("--composition", action="store_true", help="Use the capped box and linked marker")
+args = parser.parse_args()
+fixture = "render-mode-composition.epub" if args.composition else "render-modes.epub"
+epub = args.output or Path(__file__).resolve().parents[1] / "tests/fixtures" / fixture
 container = """<?xml version="1.0" encoding="UTF-8"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
 <rootfiles><rootfile full-path="content.opf" media-type="application/oebps-package+xml"/></rootfiles>
@@ -65,6 +69,13 @@ breaks = chapter("Empty break specimen", """
 <p>After empty breaks</p>
 <p class="nonempty-break">After nonempty break</p>
 <p>End of breaks</p>""")
+if args.composition:
+    main = main.replace(".explicit { width:260px;", ".explicit { width:400px; max-width:260px;")
+    main = main.replace(
+        '<p class="leftward">After pixel box marker</p>',
+        '<p class="leftward"><a href="#source-target">After pixel box marker</a></p>',
+    )
+    main = main.replace("<p>End of specimen</p>", '<p id="source-target">End of specimen</p>')
 with zipfile.ZipFile(epub, "w") as book:
     for name, contents in [
         ("mimetype", "application/epub+zip"),

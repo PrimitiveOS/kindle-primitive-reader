@@ -85,8 +85,66 @@ source-selection rectangles use the Parley or vertical engines.
 | Web | Extend signed margins and float geometry, implement full publisher box sizing and automatic placement, and extend physical break-page painting to complex boxes |
 
 The four options depend on independent box geometry, pagination and
-source mappings. A Reader renderer choice would currently change several
-of these behaviors together. The **Render Mode** matrix item remains open.
+source mappings. Reader’s diagnostic policies combine the measured cases
+below. The Kindle **Render Mode** control remains open.
+
+## Composed policies in Reader
+
+The Parley probe can apply the four publisher rendering policies together.
+The same typed selection also prepares a live reading session for reflow.
+The choices apply the measured combinations to horizontal Parley pages.
+
+| Policy | Legacy | Flat | Book | Web |
+| --- | --- | --- | --- | --- |
+| Vertical margins | Separate | Collapse | Collapse | Signed collapse |
+| Incoming margin at eligible forced openings | Ordinary | Preserve | Preserve | Preserve |
+| Inline blocks | Flowing | Declared box | Content-box sizing | Content-box sizing |
+| Incomplete CSS table boxes | Source order | Repaired | Repaired | Repaired with supported width |
+| Ordinary defined or constrained width and height | Natural | Natural | Natural | Publisher |
+| Text-sized boxes | Natural | Natural | Bounded fit-content | Signed fit-content |
+| Float footprints | Source order | Source order | Content height | Publisher height |
+| Empty forced breaks | Separate edges | Coalesce | Coalesce | Keep supported sized boxes |
+
+The authored [composition EPUB](../tests/fixtures/render-mode-composition.epub)
+includes margins, floats, a repaired table, an inline block, a signed-margin
+link and empty forced breaks. It also includes a 400-pixel box capped at
+260 pixels in the spine item with a float. The pinned Web replay and Reader
+paint that box 260 pixels wide. In Reader an eligible ordinary width limit
+now stays active throughout the same chapter as floats. A box with its own
+column clears active float footprints, so the separately sized line uses
+its own text and hit area.
+
+The native replay switches from Web through the other policies and returns
+to Web at the same XPointer. The Mac reading session preserves the same
+serialized anchor and restores its original Web coordinates and frame.
+Tests also check a tappable link extending into the reading margin, the
+repaired row, and painted empty pages. Broader box composition, the
+older-DOM compatibility path, the Kindle selector and its saved defaults
+remain open. Legacy keeps orphan table cell text readable in source order;
+KOReader’s Legacy layout omits those cells on this specimen. Full-width
+wrapper backgrounds outside the supported Web sizing path remain open.
+
+[Reader combined checks](../src/publisher_render_mode/tests.rs) ·
+[Native KOReader replay](../scripts/koreader-render-modes-check.lua) ·
+[Stock Web](screenshots/render-composition-stock-web.png) ·
+[Reader Legacy](screenshots/render-composition-reader-legacy-main.png) ·
+[Reader Flat](screenshots/render-composition-reader-flat-main.png) ·
+[Reader Book](screenshots/render-composition-reader-book-main.png) ·
+[Reader Web](screenshots/render-composition-reader-web-main.png) ·
+[Reader Web forced page](screenshots/render-composition-reader-web-break.png)
+
+Run the same composed policies with the Reader diagnostic CLI.
+
+```sh
+cargo run --locked --bin reader-probe -- parley tests/fixtures/render-mode-composition.epub \
+  --font tests/fixtures/fonts/NotoSans-Regular.ttf --render-mode web \
+  --height 1606 --size 40 --line-height 1.2 --output web.png
+```
+
+Run the focused test set with `cargo test --locked --features kindle --lib publisher_render_mode`.
+Set `READER_RENDER_MODE_CAPTURES` to an existing directory to reproduce the
+Mac frames. Generate the same EPUB with `python3 scripts/generate-render-modes-fixture.py /tmp/composition.epub --composition` and pass
+it to the native Render Mode probe documented below.
 
 ## Text-only inline blocks
 
