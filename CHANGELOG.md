@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.28
+
+- Expand and search nested Contents in reflow and fixed-page books. Opening Contents reveals headings on the current page.
+- Confirm the local time and remaining delay when setting a reading alarm, including times shifted by daylight saving.
+
 ## 0.1.27
 
 - Use the Kindle system time zone for reading clocks, alarms, saved marks, vocabulary review dates, and the reading calendar.
