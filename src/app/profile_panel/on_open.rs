@@ -64,19 +64,7 @@ impl Reader {
             Profile::Text { .. } => fixed.is_none(),
             Profile::Fixed { fixed: profile, .. } => Some(profile.provider) == fixed,
         };
-        if !self.negotiated_opening_profiles
-            || !self.profiles.iter().any(|p| {
-                fits(p)
-                    && p.opening_time_matches(local_minute)
-                    && p.opening_conditions().is_some_and(|rule| {
-                        (!rule.new_only || is_new)
-                            && rule
-                                .orientations
-                                .iter()
-                                .any(|mode| *mode != ReadingOrientation::FollowLauncher)
-                    })
-            })
-        {
+        if !self.negotiated_opening_profiles {
             return None;
         }
         let preferred = self.opening_orientation(id, fixed.is_some());
@@ -110,6 +98,16 @@ impl Reader {
                 (mask != 0).then(|| (mask, profile.clone()))
             })
             .collect();
+        if !matching.iter().any(|(_, profile)| {
+            profile.needs_opening_queue()
+                || profile.opening_conditions().is_some_and(|rule| {
+                    rule.orientations
+                        .iter()
+                        .any(|mode| *mode != ReadingOrientation::FollowLauncher)
+                })
+        }) {
+            return None;
+        }
         matching.sort_by_cached_key(|(_, profile)| profile.name().to_lowercase());
         Some(OpeningPlan {
             epoch: 0,
@@ -117,6 +115,38 @@ impl Reader {
             matching,
             text: None,
         })
+    }
+
+    pub(in crate::app) fn legacy_opening_queue(
+        &self,
+        id: u64,
+        path: &Path,
+        is_new: bool,
+        fixed: Option<FixedProvider>,
+        metadata: Option<&Metadata>,
+        local_minute: Option<u16>,
+    ) -> Vec<Profile> {
+        let book = Book {
+            id,
+            path,
+            library: &self.library,
+            orientation: self.opening_orientation(id, fixed.is_some()),
+            is_new,
+            metadata,
+            local_minute,
+            download_folder: self.browser.directory(),
+        };
+        self.opening_profiles(&book)
+            .into_iter()
+            .filter(|profile| profile.needs_opening_queue())
+            .filter(|profile| match profile {
+                Profile::Text { .. } => fixed.is_none(),
+                Profile::Fixed {
+                    fixed: settings, ..
+                } => Some(settings.provider) == fixed,
+            })
+            .cloned()
+            .collect()
     }
 
     pub(in crate::app) fn install_opening_profile_plan(&mut self, mut plan: Option<OpeningPlan>) {
@@ -166,7 +196,10 @@ impl Reader {
             return Ok(None);
         };
         let mut adjusted = preferences.clone();
-        for profile in plan.profiles(turn) {
+        for profile in plan
+            .profiles(turn)
+            .filter(|profile| !profile.needs_opening_queue())
+        {
             if let Some(projected) = profile.apply_text(&adjusted) {
                 adjusted = projected;
             }
@@ -226,7 +259,11 @@ impl Reader {
             download_folder: self.browser.directory(),
         };
         let mut adjusted = preferences.clone();
-        for profile in self.opening_profiles(&book) {
+        for profile in self
+            .opening_profiles(&book)
+            .into_iter()
+            .filter(|profile| !profile.needs_opening_queue())
+        {
             if let Some(projected) = profile.apply_text(&adjusted) {
                 adjusted = projected;
             }
@@ -289,6 +326,7 @@ impl Reader {
         let profiles: Vec<_> = self
             .opening_profiles(&book)
             .into_iter()
+            .filter(|profile| !profile.needs_opening_queue())
             .filter_map(|profile| match profile {
                 Profile::Fixed { fixed, .. } if fixed.provider == provider => {
                     Some((*fixed, profile.selection()))

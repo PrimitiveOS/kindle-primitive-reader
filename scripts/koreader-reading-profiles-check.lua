@@ -98,6 +98,7 @@ local profile_ui = {instance = {rolling = true}}
 mock("apps/reader/readerui", profile_ui)
 local events = {}
 local next_tick = {}
+local scheduled = {}
 local visible
 mock("ui/uimanager", {
     sendEvent = function(_, event) events[#events + 1] = event end,
@@ -106,6 +107,7 @@ mock("ui/uimanager", {
     show = function(_, widget) visible = widget end,
     close = function() visible = nil end,
     nextTick = function(_, callback) table.insert(next_tick, callback) end,
+    scheduleIn = function(_, seconds, callback) table.insert(scheduled, {seconds, callback}) end,
 })
 for _, name in ipairs{"confirmbox", "inputdialog", "infomessage", "datetimewidget", "spinwidget"} do
     mock("ui/widget/" .. name, {new = function(_, widget)
@@ -668,6 +670,53 @@ interval.hold_callback(menu)
 assert(not interval.checked_func() and endpoints[1].text_func() == "start: --:--")
 os.date = real_date
 
+local execution = profiles:genAutoExecMenu("Text", profiles.data.Text)
+local ask, delay = execution[1], execution[2]
+local delays = delay.sub_item_table_func()
+assert(not ask.checked_func() and delays[2].checked_func())
+assert(ask.text == "Ask to execute" and delay.text_func() == "Executing delay: default")
+ask.callback()
+always_text.callback()
+local function open_with_confirmation()
+    events, next_tick, scheduled, visible = {}, {}, {}, nil
+    profiles:onReaderReady()
+    assert(visible and visible.ok_text == "Execute" and visible.text:find("Text", 1, true))
+    assert(#events == 0 and #next_tick == 0 and #scheduled == 0)
+end
+open_with_confirmation()
+visible = nil -- Dismiss without calling Execute.
+assert(#events == 0 and #next_tick == 0 and #scheduled == 0)
+open_with_confirmation()
+visible.ok_callback()
+assert(#next_tick == 1 and #events == 0 and #scheduled == 0)
+next_tick[1]()
+assert(sent_setting("font_size") == 31.5)
+
+delays[1].callback()
+open_with_confirmation()
+visible.ok_callback()
+assert(sent_setting("font_size") == 31.5 and #next_tick == 0 and #scheduled == 0)
+delays[3].callback(menu)
+assert(visible.value == 3 and visible.value_min == 1 and visible.value_max == 10)
+assert(visible.value_hold_step == 0.1 and visible.precision == "%0.1f")
+visible.callback({value = 3.4})
+assert(delays[3].checked_func() and not delays[1].checked_func())
+profiles.data.Text.settings.auto_exec_time_interval = {"06:00", "06:01"}
+os.date = function(format, ...) return format == "%H:%M" and now or real_date(format, ...) end
+now = "06:00"
+open_with_confirmation()
+now = "06:02"
+visible.ok_callback()
+assert(#events == 0 and #next_tick == 0 and #scheduled == 1 and scheduled[1][1] == 3.4)
+scheduled[1][2]()
+assert(sent_setting("font_size") == 31.5)
+os.date = real_date
+profiles.data.Text.settings.auto_exec_time_interval = nil
+delay.hold_callback(menu)
+assert(delays[2].checked_func())
+ask.callback()
+always_text.callback()
+
 for _, item in ipairs(profiles:getSubMenuItems()) do
     if item.name == "PDF copy" then commands = item.sub_item_table; break end
 end
@@ -689,3 +738,4 @@ print("Stock conditional opening: orientation/path/collection alternatives, a se
 print("Stock path shortcuts: %H%/%D%/%S%/%W%, preview, single-pass expansion, literal quotes, and splitting after expansion.")
 print("Stock metadata opening: seven fields, effective title, Current book, OR/only-new, and save/clear.")
 print("Stock opening time: endpoint editor, every minute of daytime, overnight and equal-endpoint windows, conditional gating and clearing.")
+print("Stock opening execution: confirmation before scheduling, Cancel, Prompt, next-tick Default and 1–10 second Custom.")

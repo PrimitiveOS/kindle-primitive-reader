@@ -48,6 +48,7 @@ struct Opening {
     epoch: u64,
     text: Option<BookPreferences>,
     warning: Option<String>,
+    queued: Vec<Profile>,
 }
 
 impl Reader {
@@ -67,6 +68,11 @@ impl Reader {
             epoch: plan.epoch,
             text: None,
             warning: None,
+            queued: plan
+                .profiles(turn)
+                .filter(|profile| profile.needs_opening_queue())
+                .cloned()
+                .collect(),
         };
         let candidate = if plan.text.is_some() {
             self.prepare_opening_profile_text_for_turn(target, turn)
@@ -79,6 +85,7 @@ impl Reader {
         } else {
             let profiles: Vec<_> = plan
                 .profiles(turn)
+                .filter(|profile| !profile.needs_opening_queue())
                 .filter_map(|profile| match profile {
                     Profile::Fixed { fixed, .. } => Some((*fixed, profile.selection())),
                     Profile::Text { .. } => None,
@@ -333,6 +340,7 @@ impl Reader {
                 state.preferences = preferences;
             }
             self.settle_opening_location();
+            self.arm_opening_execution(opening.queued, std::time::Instant::now());
             if let Some(warning) = opening.warning {
                 self.notice = Some(warning);
             }

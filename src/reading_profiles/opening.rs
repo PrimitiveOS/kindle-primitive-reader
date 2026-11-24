@@ -11,6 +11,37 @@ use std::{
 pub(crate) mod path;
 
 pub(crate) const PATH_LIMIT: usize = 160;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case", tag = "mode", deny_unknown_fields)]
+pub(crate) enum Timing {
+    #[default]
+    Default,
+    Prompt,
+    Custom {
+        tenths: u8,
+    },
+}
+
+impl Timing {
+    pub(crate) const MIN_TENTHS: u8 = 10;
+    pub(crate) const MAX_TENTHS: u8 = 100;
+    pub(crate) const INITIAL_TENTHS: u8 = 30;
+
+    pub(crate) fn valid(self) -> bool {
+        match self {
+            Self::Custom { tenths } => (Self::MIN_TENTHS..=Self::MAX_TENTHS).contains(&tenths),
+            _ => true,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Execution {
+    pub ask: bool,
+    pub timing: Timing,
+}
 pub(crate) const METADATA_LIMIT: usize = 160;
 const MAX_METADATA_VALUE_BYTES: usize = 16 * 1024;
 const MAX_METADATA_VALUES: usize = 32;

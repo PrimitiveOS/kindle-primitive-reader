@@ -6,6 +6,7 @@ use crate::reading_profiles::opening::MetadataField;
 use crate::reading_profiles::{Field, FixedProfile};
 
 pub(super) mod on_open;
+pub(super) mod opening_execution;
 mod opening_metadata;
 pub(super) mod opening_rules;
 pub(super) mod opening_shortcuts;
@@ -270,6 +271,7 @@ impl Reader {
                 apply_on_open: false,
                 opening: None,
                 opening_time: None,
+                opening_execution: None,
             });
         }
         Ok(Profile::Text {
@@ -279,6 +281,7 @@ impl Reader {
             apply_on_open: false,
             opening: None,
             opening_time: None,
+            opening_execution: None,
         })
     }
 
@@ -381,11 +384,16 @@ impl Reader {
                     .ok_or("That profile is unavailable")?;
                 self.apply_text_profile(preferences)
             }
-            Profile::Fixed { fixed, .. } => self.apply_fixed_profile(*fixed, &profile.selection()),
+            Profile::Fixed { fixed, .. } => {
+                self.apply_fixed_profiles([(*fixed, profile.selection().as_slice())])
+            }
         }
     }
 
-    fn apply_fixed_profile(&mut self, profile: FixedProfile, fields: &[Field]) -> Result<()> {
+    fn apply_fixed_profiles<'a>(
+        &mut self,
+        profiles: impl IntoIterator<Item = (FixedProfile, &'a [Field])>,
+    ) -> Result<()> {
         let fixed = self
             .fixed
             .as_mut()
@@ -398,31 +406,30 @@ impl Reader {
             .state(id)
             .cloned()
             .ok_or("Reading state unavailable")?;
-        let result =
-            fixed
-                .reading
-                .restore_fixed_profiles_with([(profile, fields)], |page, effective| {
-                    if page != original_page {
+        let result = fixed
+            .reading
+            .restore_fixed_profiles_with(profiles, |page, effective| {
+                if page != original_page {
+                    return Err(io::Error::other(
+                        "This profile would move to a different page",
+                    ));
+                }
+                with_storage(|| {
+                    if library.identify(entry)? != id {
                         return Err(io::Error::other(
-                            "This profile would move to a different page",
+                            "The document changed. Reopen it before applying the profile.",
                         ));
                     }
-                    with_storage(|| {
-                        if library.identify(entry)? != id {
-                            return Err(io::Error::other(
-                                "The document changed. Reopen it before applying the profile.",
-                            ));
-                        }
-                        let state = library.state_mut(id).unwrap();
-                        state.fixed_preferences = effective;
-                        state.position = Some(ReadingPosition {
-                            chapter: 0,
-                            page,
-                            anchor: None,
-                        });
-                        library.persist()
-                    })
-                });
+                    let state = library.state_mut(id).unwrap();
+                    state.fixed_preferences = effective;
+                    state.position = Some(ReadingPosition {
+                        chapter: 0,
+                        page,
+                        anchor: None,
+                    });
+                    library.persist()
+                })
+            });
         if let Err(error) = result {
             *library.state_mut(id).unwrap() = prior;
             return Err(error);

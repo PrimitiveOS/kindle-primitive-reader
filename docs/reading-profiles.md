@@ -127,8 +127,8 @@ rules, byte-identical staged and accepted frames, and a PDF's position
 through a rejected turn. The legacy display path still uses the preferred
 orientation. The native comparison exercises the stock shortcut guide,
 preview, path expansion and reader-ready matching against Reader's own
-folder locations. Importing KOReader's custom folder settings, centralized
-metadata lookup, execution confirmation, and dispatch delay remain open.
+folder locations. Importing KOReader's custom folder settings and looking
+up its centralized metadata stores remain open.
 [Landscape simulator capture](screenshots/landscape-profile-apply-on-opening.png) ·
 [Opening conditions in the legacy display path](screenshots/landscape-profile-opening-conditions.png) ·
 [Current book path shortcut](screenshots/landscape-profile-current-book-path.png) ·
@@ -178,6 +178,36 @@ of a display turn keep the rules matched for that opening event.
 [Typed minute](screenshots/landscape-profile-opening-minute-entry.png) ·
 [Pinned editor](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/profiles.koplugin/main.lua#L645-L696) ·
 [Pinned clock gate](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/profiles.koplugin/main.lua#L1237-L1252)
+
+### Confirm or delay an opening profile
+
+Turn on **Ask to execute** to review the matched profile over the current
+page. **Apply** accepts that profile. **Cancel**, Back, or a tap outside
+skips it for the current opening. Choose **Execution delay** to set its timing.
+
+- **Prompt** applies during opening or immediately after confirmation.
+- **Default** applies on the next app tick after opening or confirmation.
+- **Custom** applies 1.0–10.0 seconds later. A new draft starts at 3.0 seconds.
+  Tap the step buttons to move by one second or hold to move by a tenth.
+  **Set delay** saves the draft.
+
+Existing profiles without a saved timing choice use **At opening**. Manual
+**Apply to this book** runs immediately. Reader checks the accepted opening
+turn and local time once. It queues one confirmation at a time, runs due
+profiles by scheduled time and then profile name, and applies their settings
+at the currently selected passage or page. Sleep pauses execution until
+wake. Reopening, closing, or returning from USB discards old requests.
+
+The pinned stock tests verify the three dispatch paths and that the custom
+delay starts at confirmation, even when the time window has since closed.
+The Mac tests exercise the controls and the opening transaction on EPUB and
+PDF, including rejected turns, cancellation, due-time ordering, and resume.
+[Portrait confirmation](screenshots/profile-opening-ask-portrait.png) ·
+[Landscape confirmation](screenshots/profile-opening-ask-landscape.png) ·
+[Portrait delay editor](screenshots/profile-opening-delay-portrait.png) ·
+[Landscape delay editor](screenshots/profile-opening-delay-landscape.png) ·
+[Pinned execution controls](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/profiles.koplugin/main.lua#L545-L642) ·
+[Pinned dispatch](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/profiles.koplugin/main.lua#L1252-L1284)
 
 ## Editing saved values
 

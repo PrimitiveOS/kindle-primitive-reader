@@ -836,6 +836,7 @@ pub struct Reader {
     negotiated_opening_profiles: bool,
     opening_profile_epoch: u64,
     pending_opening_profiles: Option<profile_panel::on_open::OpeningPlan>,
+    opening_execution: Option<profile_panel::opening_execution::OpeningExecution>,
     pending_orientation: Option<reading_orientation::PendingOrientation>,
     staged_frame_orientation: Option<ReadingOrientation>,
     flow_popup: Option<hidden_flows::FlowPopup>,
@@ -879,6 +880,7 @@ pub struct Reader {
     profiles: Vec<Profile>,
     profile_fields: Vec<reading_profiles::Field>,
     profile_opening_time_draft: u16,
+    opening_delay_draft: u8,
     profiles_path: PathBuf,
     footer_presets: Vec<FooterPreset>,
     footer_presets_path: PathBuf,
@@ -1066,6 +1068,7 @@ impl Reader {
             negotiated_opening_profiles: false,
             opening_profile_epoch: 0,
             pending_opening_profiles: None,
+            opening_execution: None,
             pending_orientation: None,
             staged_frame_orientation: None,
             flow_popup: None,
@@ -1111,6 +1114,7 @@ impl Reader {
             profiles,
             profile_fields: Vec::new(),
             profile_opening_time_draft: 0,
+            opening_delay_draft: 0,
             profiles_path,
             footer_presets,
             footer_presets_path,
@@ -1254,6 +1258,7 @@ impl Reader {
     }
 
     fn open_with_password(&mut self, mut entry: LibraryBook, password: Option<&str>) -> Result<()> {
+        self.opening_execution = None;
         self.screen_page_worker.cancel();
         self.close_fixed_search_fit()?;
         self.logical_recovery = None;
@@ -1377,6 +1382,22 @@ impl Reader {
                     local_minute,
                 )
             });
+            let queued = if opening.is_none() {
+                reading
+                    .profile_provider()
+                    .map_or_else(Vec::new, |provider| {
+                        self.legacy_opening_queue(
+                            id,
+                            &absolute,
+                            is_new,
+                            Some(provider),
+                            metadata.as_ref(),
+                            local_minute,
+                        )
+                    })
+            } else {
+                Vec::new()
+            };
             let profile_warning = if opening.is_some() {
                 let target = self.opening_display_viewport();
                 if target != reading.viewport() {
@@ -1435,6 +1456,7 @@ impl Reader {
             self.show(Screen::Fixed);
             if self.pending_opening_profiles.is_none() {
                 self.settle_opening_location();
+                self.arm_opening_execution(queued, Instant::now());
             }
             if let Some(error) = profile_warning {
                 self.notice = Some(format!("Opening profile could not be applied: {error}"));
@@ -1520,6 +1542,18 @@ impl Reader {
                 Ok(prepared) => (prepared, None),
                 Err(error) => (None, Some(error)),
             }
+        };
+        let queued = if opening.is_none() {
+            self.legacy_opening_queue(
+                id,
+                &config.book,
+                is_new,
+                None,
+                metadata.as_ref(),
+                local_minute,
+            )
+        } else {
+            Vec::new()
         };
         if automatic.is_none()
             && config.settings.logical_font_size.is_some()
@@ -1633,6 +1667,7 @@ impl Reader {
         });
         if self.pending_opening_profiles.is_none() {
             self.settle_opening_location();
+            self.arm_opening_execution(queued, Instant::now());
         }
         if let Some(error) = profile_warning {
             self.notice = Some(format!("Opening profile could not be applied: {error}"));
@@ -1952,6 +1987,13 @@ impl Reader {
         ) = screen
         {
             self.prepare_opening_time(index, endpoint);
+        }
+        if let Screen::ReadingProfileOpening(
+            index,
+            profile_panel::opening_rules::Page::CustomDelay,
+        ) = screen
+        {
+            self.prepare_opening_delay(index);
         }
         if let Screen::DictionaryPresets(dictionary_presets::Page::Name(mode)) = screen {
             self.prepare_dictionary_preset_name(mode);
@@ -4434,9 +4476,18 @@ impl Reader {
 
     fn apply_text_profile(&mut self, preferences: BookPreferences) -> Result<()> {
         crate::document_defaults::validate_preferences(&preferences)?;
-        let fonts = self.fonts_for(preferences.font_file.as_deref())?;
         let active = self.active.as_ref().ok_or("Open a book first")?;
         let id = active.id;
+        let current = &self
+            .library
+            .state(id)
+            .ok_or("Reading state unavailable")?
+            .preferences;
+        let fonts = if current.font_file == preferences.font_file {
+            active.reading.config.fonts.clone()
+        } else {
+            self.fonts_for(preferences.font_file.as_deref())?
+        };
         if with_storage(|| self.library.identify(&active.entry))? != id {
             return Err("The document edition changed; reopen it before applying a profile".into());
         }
@@ -4449,11 +4500,12 @@ impl Reader {
         config.scroll = preferences.scroll;
         config.facing_pages = preferences.facing_pages;
         config.fonts = fonts;
-        let mut candidate = Reading::restore(
+        let mut candidate = Reading::restore_with_scroll_top(
             config,
             location.chapter,
             location.page,
             location.anchor.as_ref(),
+            active.reading.scroll_history_top(),
         )?;
         candidate.set_status_header_height(crate::reading_controls::TopHeader::height(
             top_status_header,
@@ -4463,6 +4515,9 @@ impl Reader {
             || with_storage(|| self.library.identify(&active.entry))? != id
         {
             return Err("The document edition changed during profile application".into());
+        }
+        if location.anchor.is_some() && candidate.anchor() != location.anchor {
+            return Err("This profile could not keep the saved passage".into());
         }
         let prior = self
             .library
@@ -4939,6 +4994,7 @@ impl Reader {
     }
 
     fn close_book_to_library(&mut self) {
+        self.opening_execution = None;
         self.settle_pending_opening();
         self.pending_orientation = None;
         self.active = None;
@@ -5035,6 +5091,7 @@ impl Reader {
 
     fn auto_turn_eligible(&self) -> bool {
         self.stats_awake
+            && !self.opening_ask_visible()
             && self.pending_opening_profiles.is_none()
             && !self.fixed_search_fit_active()
             && !self.touch_locked
@@ -5682,6 +5739,7 @@ impl Reader {
     }
 
     fn exit(&mut self) -> Change {
+        self.opening_execution = None;
         if let Err(error) = self.close_fixed_search_fit() {
             return self.report(error);
         }
@@ -8340,9 +8398,14 @@ impl App for Reader {
         self.draw_history_duration_limits(canvas);
         self.draw_dictionary_preset_picker(canvas);
         self.draw_logical_recovery(canvas);
+        self.draw_opening_delay(canvas);
+        self.draw_opening_ask(canvas);
     }
 
     fn press_point(&self, input: Input) -> Option<(f32, f32)> {
+        if let Some(point) = self.opening_modal_press(input) {
+            return point;
+        }
         match input {
             Input::Tap(x, y)
                 if !self.touch_locked
@@ -8360,6 +8423,12 @@ impl App for Reader {
     }
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
+        if let Some(change) = self
+            .opening_delay_input(input)
+            .or_else(|| self.opening_ask_input(input, Instant::now()))
+        {
+            return change;
+        }
         if let Some(change) = self.opening_time_input(input) {
             return change;
         }
@@ -8569,6 +8638,12 @@ impl App for Reader {
     }
 
     fn input(&mut self, input: Input) -> Change {
+        if let Some(change) = self
+            .opening_delay_input(input)
+            .or_else(|| self.opening_ask_input(input, Instant::now()))
+        {
+            return change;
+        }
         if let Some(change) = self.opening_time_input(input) {
             return change;
         }
@@ -9233,6 +9308,7 @@ impl App for Reader {
             )
             .chain(self.save_at)
             .chain(self.metadata_checkpoint.deadline())
+            .chain(self.opening_execution_deadline())
             .chain(
                 self.stats_awake
                     .then(|| self.read_alarm.deadline())
@@ -9269,6 +9345,9 @@ impl App for Reader {
     }
 
     fn tick(&mut self, now: Instant) -> Change {
+        if let Some(change) = self.opening_execution_tick(now) {
+            return change;
+        }
         let needs_screen_page_count = self.needs_screen_page_count();
         let screen_pages = self
             .active
@@ -9494,6 +9573,7 @@ impl App for Reader {
     }
 
     fn storage_returned(&mut self) -> io::Result<()> {
+        self.opening_execution = None;
         self.install_opening_profile_plan(None);
         self.screen_page_worker.cancel();
         self.cancel_screen_page_jump();

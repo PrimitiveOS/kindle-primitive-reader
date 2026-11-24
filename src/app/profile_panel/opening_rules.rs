@@ -15,6 +15,8 @@ pub(in crate::app) enum Page {
     Collections,
     TimeWindow,
     TimeEdit(Endpoint),
+    Delay,
+    CustomDelay,
 }
 
 impl Page {
@@ -25,6 +27,7 @@ impl Page {
             Self::Metadata => "Opening book metadata",
             Self::Collections => "Opening collections",
             Self::TimeWindow | Self::TimeEdit(_) => "Opening time window",
+            Self::Delay | Self::CustomDelay => "Execution delay",
         }
     }
 
@@ -32,6 +35,7 @@ impl Page {
         match self {
             Self::Overview => Screen::ReadingProfile(index),
             Self::TimeEdit(_) => Screen::ReadingProfileOpening(index, Self::TimeWindow),
+            Self::CustomDelay => Screen::ReadingProfileOpening(index, Self::Delay),
             _ => Screen::ReadingProfileOpening(index, Self::Overview),
         }
     }
@@ -45,6 +49,8 @@ pub(in crate::app) enum Command {
     NewOnly,
     Clear,
     ClearTimeWindow,
+    Ask,
+    SetTiming(Timing),
 }
 
 const CURRENT_BOOK: Rect = Rect::new(LIST_X, LIST_Y + 248, 340, 100);
@@ -192,6 +198,17 @@ impl Reader {
                             .map_or_else(|| "Any time".into(), super::opening_time::window_label),
                     ),
                 );
+                items.push(action("Ask to execute", Command::Ask));
+                items.push(
+                    Item::new(
+                        "Execution delay",
+                        Action::Show(Screen::ReadingProfileOpening(index, Page::Delay)),
+                    )
+                    .detail(profile.opening_execution().map_or_else(
+                        || "At opening".into(),
+                        |options| super::opening_execution::timing_label(options.timing),
+                    )),
+                );
                 items
             }
             Page::Orientation => ORIENTATIONS
@@ -236,6 +253,7 @@ impl Reader {
                     .collect()
             }
             Page::TimeWindow | Page::TimeEdit(_) => self.opening_time_items(index),
+            Page::Delay | Page::CustomDelay => self.opening_delay_items(index),
         }
     }
 
@@ -255,7 +273,10 @@ impl Reader {
                 rules.is_some_and(|rules| collection_index(rules, name).is_some())
             }
             Command::NewOnly => rules.is_some_and(|rules| rules.new_only),
-            Command::Clear | Command::ClearTimeWindow => return None,
+            Command::Ask => profile
+                .opening_execution()
+                .is_some_and(|options| options.ask),
+            Command::Clear | Command::ClearTimeWindow | Command::SetTiming(_) => return None,
         })
     }
 
@@ -271,7 +292,15 @@ impl Reader {
         let profile = candidate
             .get_mut(index)
             .ok_or("That profile is unavailable")?;
-        if matches!(command, Command::Always) {
+        if matches!(command, Command::Ask | Command::SetTiming(_)) {
+            let mut options = profile.opening_execution().unwrap_or_default();
+            match command {
+                Command::Ask => options.ask = !options.ask,
+                Command::SetTiming(timing) => options.timing = timing,
+                _ => unreachable!(),
+            }
+            profile.set_opening_execution(options);
+        } else if matches!(command, Command::Always) {
             profile.set_apply_on_open(!profile.applies_on_open());
         } else {
             let mut rules = profile.opening_conditions().cloned().unwrap_or_default();
@@ -298,7 +327,10 @@ impl Reader {
                 }
                 Command::NewOnly => rules.new_only = !rules.new_only,
                 Command::Clear => rules = Conditions::default(),
-                Command::Always | Command::ClearTimeWindow => unreachable!(),
+                Command::Always
+                | Command::ClearTimeWindow
+                | Command::Ask
+                | Command::SetTiming(_) => unreachable!(),
             }
             profile.set_opening_conditions(rules);
         }

@@ -35,6 +35,8 @@ pub(crate) enum Profile {
         opening: Option<opening::Conditions>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         opening_time: Option<opening::TimeWindow>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        opening_execution: Option<opening::Execution>,
     },
     Fixed {
         name: String,
@@ -47,10 +49,39 @@ pub(crate) enum Profile {
         opening: Option<opening::Conditions>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         opening_time: Option<opening::TimeWindow>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        opening_execution: Option<opening::Execution>,
     },
 }
 
 impl Profile {
+    pub(crate) fn opening_execution(&self) -> Option<opening::Execution> {
+        match self {
+            Self::Text {
+                opening_execution, ..
+            }
+            | Self::Fixed {
+                opening_execution, ..
+            } => *opening_execution,
+        }
+    }
+
+    pub(crate) fn set_opening_execution(&mut self, options: opening::Execution) {
+        match self {
+            Self::Text {
+                opening_execution, ..
+            }
+            | Self::Fixed {
+                opening_execution, ..
+            } => *opening_execution = Some(options),
+        }
+    }
+
+    pub(crate) fn needs_opening_queue(&self) -> bool {
+        self.opening_execution()
+            .is_some_and(|options| options.ask || options.timing != opening::Timing::Prompt)
+    }
+
     pub(crate) fn opening_time(&self) -> Option<opening::TimeWindow> {
         match self {
             Self::Text { opening_time, .. } | Self::Fixed { opening_time, .. } => *opening_time,
@@ -421,6 +452,9 @@ fn validate(profiles: &[Profile]) -> io::Result<()> {
             .opening_conditions()
             .is_some_and(|conditions| profile.applies_on_open() || !conditions.valid())
             || profile.opening_time().is_some_and(|time| !time.valid())
+            || profile
+                .opening_execution()
+                .is_some_and(|options| !options.timing.valid())
         {
             return Err(invalid());
         }
