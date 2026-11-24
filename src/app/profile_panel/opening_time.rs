@@ -1,6 +1,6 @@
 //! Local-time gate and clock editor for automatic opening profiles.
 use super::opening_rules::{Command, Page};
-use super::{Action, CAPTION, Canvas, Change, Input, Item, Reader, Rect, Result, Screen};
+use super::{Action, CAPTION, Canvas, Change, Input, Item, Name, Reader, Rect, Result, Screen};
 use crate::reading_profiles::opening::TimeWindow;
 use primitive_ui::TextStyle;
 
@@ -50,13 +50,34 @@ fn current_minute() -> Option<u16> {
     (time.hour * 60 + time.minute).try_into().ok()
 }
 
-#[derive(Clone, Copy)]
-enum Part {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::app) enum Part {
     Hour,
     Minute,
 }
 
 impl Part {
+    pub(in crate::app) fn title(self) -> &'static str {
+        match self {
+            Self::Hour => "Enter hour",
+            Self::Minute => "Enter minute",
+        }
+    }
+
+    pub(in crate::app) fn range_label(self) -> &'static str {
+        match self {
+            Self::Hour => "0 to 23",
+            Self::Minute => "0 to 59",
+        }
+    }
+
+    fn max(self) -> u16 {
+        match self {
+            Self::Hour => 23,
+            Self::Minute => 59,
+        }
+    }
+
     fn value(self, minute: u16) -> u16 {
         match self {
             Self::Hour => minute / 60,
@@ -65,16 +86,20 @@ impl Part {
     }
 
     fn step(self, minute: u16, direction: i32, held: bool) -> u16 {
-        let (max, hold_step) = match self {
-            Self::Hour => (23, 4),
-            Self::Minute => (59, 10),
+        let hold_step = match self {
+            Self::Hour => 4,
+            Self::Minute => 10,
         };
         let value = i32::from(self.value(minute)) + direction * if held { hold_step } else { 1 };
         let value = match value {
-            value if value < 0 => max,
-            value if value > max => 0,
-            value => value,
-        } as u16;
+            value if value < 0 => self.max(),
+            value if value > i32::from(self.max()) => 0,
+            value => value as u16,
+        };
+        self.replace(minute, value)
+    }
+
+    fn replace(self, minute: u16, value: u16) -> u16 {
         match self {
             Self::Hour => value * 60 + minute % 60,
             Self::Minute => minute / 60 * 60 + value,
@@ -85,6 +110,7 @@ impl Part {
 const PANEL: Rect = Rect::new(86, 566, 1092, 548);
 const CANCEL: Rect = Rect::new(130, 970, 472, 100);
 const SAVE: Rect = Rect::new(662, 970, 472, 100);
+const VALUES: [(Part, &str, i32); 2] = [(Part::Hour, "Hour", 130), (Part::Minute, "Minute", 662)];
 const STEPS: [(Part, i32, Rect); 4] = [
     (Part::Hour, -1, Rect::new(130, 786, 126, 100)),
     (Part::Hour, 1, Rect::new(476, 786, 126, 100)),
@@ -102,6 +128,10 @@ impl Reader {
     }
 
     pub(in crate::app) fn prepare_opening_time(&mut self, index: usize, endpoint: Endpoint) {
+        if matches!(self.screen, Screen::ProfileName(Name::OpeningTime(i, bound, _)) if i == index && bound == endpoint)
+        {
+            return;
+        }
         self.profile_opening_time_draft = self
             .profiles
             .get(index)
@@ -153,6 +183,22 @@ impl Reader {
         Ok(())
     }
 
+    pub(super) fn set_opening_time_value(
+        &mut self,
+        mode: Name,
+        part: Part,
+        value: &str,
+    ) -> Result<()> {
+        let value = value
+            .parse::<u16>()
+            .ok()
+            .filter(|&value| value <= part.max())
+            .ok_or_else(|| format!("Enter a whole number from {}", part.range_label()))?;
+        self.profile_opening_time_draft = part.replace(self.profile_opening_time_draft, value);
+        self.show(mode.back());
+        Ok(())
+    }
+
     pub(in crate::app) fn draw_opening_time(&self, canvas: &mut Canvas) {
         let Screen::ReadingProfileOpening(_, Page::TimeEdit(endpoint)) = self.screen else {
             return;
@@ -166,16 +212,17 @@ impl Reader {
             TextStyle::new(48).bold(),
         );
         let minute = self.profile_opening_time_draft;
-        for (part, title, left) in [(Part::Hour, "Hour", 130), (Part::Minute, "Minute", 662)] {
+        for (part, title, left) in VALUES {
             canvas.text(
                 place(Rect::new(left, 725, 472, 52)),
                 title,
                 CAPTION.center(),
             );
-            canvas.text(
+            canvas.button(
                 place(Rect::new(left + 142, 786, 188, 100)),
                 &format!("{:02}", part.value(minute)),
-                TextStyle::new(56).bold().center(),
+                false,
+                false,
             );
         }
         for (_, direction, rect) in STEPS {
@@ -234,6 +281,16 @@ impl Reader {
                 return Some(self.report(error));
             }
             self.show(back);
+        } else if !held
+            && let Some((part, _, _)) = VALUES.iter().find(|(_, _, left)| {
+                layout
+                    .centered(Rect::new(left + 142, 786, 188, 100))
+                    .contains(x, y)
+            })
+        {
+            self.show(Screen::ProfileName(Name::OpeningTime(
+                index, endpoint, *part,
+            )));
         } else if let Some((part, direction, _)) = STEPS
             .iter()
             .find(|(_, _, rect)| layout.centered(*rect).contains(x, y))

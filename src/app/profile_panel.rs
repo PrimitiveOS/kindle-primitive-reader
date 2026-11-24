@@ -19,6 +19,7 @@ pub(super) enum Name {
     Duplicate(usize),
     OpeningPath(usize),
     OpeningMetadata(usize, MetadataField),
+    OpeningTime(usize, opening_time::Endpoint, opening_time::Part),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,6 +38,9 @@ impl Name {
             }
             Self::OpeningMetadata(index, _) => {
                 Screen::ReadingProfileOpening(index, opening_rules::Page::Metadata)
+            }
+            Self::OpeningTime(index, endpoint, _) => {
+                Screen::ReadingProfileOpening(index, opening_rules::Page::TimeEdit(endpoint))
             }
         }
     }
@@ -300,6 +304,7 @@ impl Reader {
             Name::OpeningMetadata(index, field) => {
                 return self.save_opening_metadata(index, field, name);
             }
+            Name::OpeningTime(.., part) => return self.set_opening_time_value(mode, part, name),
             Name::Rename(index) | Name::Duplicate(index) => index,
         };
         let mut profiles = self.profiles.clone();
@@ -314,7 +319,10 @@ impl Reader {
                 copy.set_opening_conditions(Default::default());
                 profiles.push(copy);
             }
-            Name::Create | Name::OpeningPath(_) | Name::OpeningMetadata(..) => unreachable!(),
+            Name::Create
+            | Name::OpeningPath(_)
+            | Name::OpeningMetadata(..)
+            | Name::OpeningTime(..) => unreachable!(),
         }
         self.commit_profiles(profiles)?;
         self.show(match mode {

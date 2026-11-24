@@ -124,6 +124,7 @@ impl Reader {
                     .and_then(|rules| rules.metadata.get(&field))
                     .map(String::as_str),
             ),
+            Name::OpeningTime(..) => (2, None),
             Name::Rename(index) => (MAX_NAME, self.profiles.get(index).map(Profile::name)),
             _ => (MAX_NAME, None),
         };

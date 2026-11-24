@@ -139,7 +139,8 @@ sets both endpoints until the second is edited.
 
 The clock editor moves either field by one on tap. Hold an hour or minute
 button to move by four hours or ten minutes. **Set time** saves
-the endpoint, and **Cancel** discards the draft. **Clear time window**
+the endpoint, and **Cancel** discards the draft. Tap either number to type
+a whole hour or minute value. **Clear time window**
 restores unrestricted time. The time gate works with **Always apply**
 or with matching opening conditions. **Apply to this book** remains
 available outside the window.
@@ -150,6 +151,7 @@ tests use the same bounds, validate stored windows and show that retries
 of a display turn keep the rules matched for that opening event.
 [Time window](screenshots/landscape-profile-opening-time-window.png) ·
 [Start time editor](screenshots/landscape-profile-opening-start-time.png) ·
+[Typed minute](screenshots/landscape-profile-opening-minute-entry.png) ·
 [Pinned editor](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/profiles.koplugin/main.lua#L645-L696) ·
 [Pinned clock gate](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/profiles.koplugin/main.lua#L1237-L1252)
 

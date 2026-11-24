@@ -1,10 +1,11 @@
 use super::*;
-use crate::app::selection_viewport_tests::{adopt, capture, tap};
+use crate::app::selection_viewport_tests::{adopt, capture, key, tap};
 use crate::app::tests::{Fixture, tap_contents_item};
 use crate::app::{BookPreferences, ReadingOrientation};
 use crate::reading_profiles::opening::Conditions;
 use crate::session::ReadingViewport;
 use primitive_app::{App, viewport::LogicalTurn};
+use primitive_ui::Key;
 use serde_json::json;
 
 fn app(fixture: &Fixture) -> Reader {
@@ -67,7 +68,36 @@ fn opening_time_editor_uses_stock_steps_and_keeps_drafts_and_triggers_independen
     );
     tap_contents_item(&mut app, "End time");
     assert_eq!(app.profile_opening_time_draft, 1320);
-    app.profile_opening_time_draft = 6 * 60 + 30;
+    app.profile_opening_time_draft = 6 * 60;
+    let minute = app
+        .navigation_layout()
+        .centered(Rect::new(804, 786, 188, 100));
+    tap(&mut app, minute);
+    let entry = Name::OpeningTime(0, Endpoint::End, Part::Minute);
+    assert_eq!(app.screen, Screen::ProfileName(entry));
+    let press = |app: &mut Reader, value| {
+        let button = key(app, value, "Set");
+        tap(app, button);
+    };
+    press(&mut app, Key::Char('9'));
+    press(&mut app, Key::Char('9'));
+    press(&mut app, Key::Go);
+    assert_eq!(app.screen, Screen::ProfileName(entry));
+    assert!(app.notice.as_deref().unwrap().contains("0 to 59"));
+    press(&mut app, Key::Delete);
+    press(&mut app, Key::Delete);
+    press(&mut app, Key::Char('3'));
+    press(&mut app, Key::Char('0'));
+    capture(
+        &app,
+        &mut canvas,
+        "landscape-profile-opening-minute-entry.png",
+        false,
+    );
+    press(&mut app, Key::Go);
+    assert_eq!(app.screen, entry.back());
+    assert_eq!(app.profile_opening_time_draft, 390);
+    assert_eq!(app.profiles[0].opening_time().unwrap().end, 1320);
     tap(&mut app, save);
     let time = TimeWindow {
         start: 1320,

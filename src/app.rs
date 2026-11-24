@@ -468,6 +468,7 @@ impl Screen {
             Self::StyleClear => "Clear book CSS?",
             Self::ProfileName(profile_panel::Name::OpeningPath(_)) => "Opening file path",
             Self::ProfileName(profile_panel::Name::OpeningMetadata(_, field)) => field.label(),
+            Self::ProfileName(profile_panel::Name::OpeningTime(.., part)) => part.title(),
             Self::ProfileName(_) => "Name reading profile",
             Self::ReadingProfile(_) | Self::ConfirmProfile(_, _) => "Reading profile",
             Self::ReadingProfileFields(_) => "Included settings",
@@ -4588,7 +4589,9 @@ impl Reader {
             return change;
         }
         let layout = navigation.keyboard();
-        let Some(key) = keyboard_key(&layout, &self.editor, "Save", x, y) else {
+        let setting_time = matches!(profile, Some(profile_panel::Name::OpeningTime(..)));
+        let action = if setting_time { "Set" } else { "Save" };
+        let Some(key) = keyboard_key(&layout, &self.editor, action, x, y) else {
             return Change::None;
         };
         if matches!(self.editor.press(key), Press::Go) {
@@ -4605,6 +4608,8 @@ impl Reader {
             if let Err(error) = result {
                 return self.report(error);
             }
+        } else if setting_time {
+            self.notice = None;
         }
         Change::Partial
     }
@@ -7587,6 +7592,9 @@ impl Reader {
                 }
                 Screen::ProfileName(profile_panel::Name::OpeningMetadata(..)) => {
                     ("Phrases separated by commas", "Save")
+                }
+                Screen::ProfileName(profile_panel::Name::OpeningTime(.., part)) => {
+                    (part.range_label(), "Set")
                 }
                 Screen::ProfileName(_) => ("Profile name", "Save"),
                 Screen::FooterPresetName(_) => ("Status bar preset name", "Save"),
