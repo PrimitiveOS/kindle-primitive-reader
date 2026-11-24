@@ -35,9 +35,11 @@ with commas. Matching is case-insensitive. **Only for new books** also
 requires a book with no saved reading position. Choosing Always clears
 the conditions, as in KOReader.
 
-Orientation uses the book's saved opening setting or the current default.
+**Preferred opening orientation** uses the book's saved setting or the current default.
 Choose **Follow Launcher** to match that setting. A saved reference to an
 unavailable collection can be removed from the collections list.
+Choose **Current book** in the path editor to insert its path under Documents,
+including characters the Kindle keyboard cannot type.
 Reader combines matching profiles in the
 alphabetical order shown in the profile list. If two profiles include the
 same setting, the later profile supplies that value. Renaming a profile
@@ -52,10 +54,12 @@ passage after restart. The PDF test checks the exact physical page,
 tiled zoom and overlap after combining two profiles.
 
 The pinned comparison exercises Always, orientation, path and collection
-routing, and the separate new-book gate. Stock metadata filters, folder
-shortcut expansion, confirmation and scheduling remain open.
+routing, and the separate new-book gate. Using the final accepted display
+turn for orientation matching remains open, along with stock metadata
+filters, folder shortcut expansion, confirmation and scheduling.
 [Landscape simulator capture](screenshots/landscape-profile-apply-on-opening.png) ·
 [Opening conditions in landscape](screenshots/landscape-profile-opening-conditions.png) ·
+[Current book path shortcut](screenshots/landscape-profile-current-book-path.png) ·
 [Pinned opening menu](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/profiles.koplugin/main.lua#L879-L928) ·
 [Pinned ReaderReady callback](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/profiles.koplugin/main.lua#L1217-L1287) ·
 [Executable stock comparison](../scripts/koreader-reading-profiles-check.lua)

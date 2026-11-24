@@ -4500,6 +4500,9 @@ impl Reader {
         let Input::Tap(x, y) = input else {
             return Change::None;
         };
+        if let Some(change) = self.choose_current_opening_path(x, y) {
+            return change;
+        }
         let layout = navigation.keyboard();
         let Some(key) = keyboard_key(&layout, &self.editor, "Save", x, y) else {
             return Change::None;
@@ -7596,6 +7599,9 @@ impl Reader {
             if self.screen == Screen::DictionaryEntry {
                 self.draw_lookup_preset_button(canvas);
             }
+            if let Some(button) = self.current_opening_path_button() {
+                canvas.button(button, "Current book", false, false);
+            }
             self.draw_content_dpi(canvas);
             self.draw_logical_font(canvas);
             self.draw_line_spacing(canvas);
@@ -7719,7 +7725,7 @@ impl Reader {
                         Action::SetReadingProfileFields(_) => RowAccessory::None,
                         Action::OpeningProfileRule(index, command) => self
                             .opening_rule_checked(*index, command)
-                            .map_or(RowAccessory::Disclosure, RowAccessory::Toggle),
+                            .map_or(RowAccessory::None, RowAccessory::Toggle),
                         Action::SetProfileRendering(_, _) => RowAccessory::None,
                         Action::ToggleProfileMarginLink(index) => RowAccessory::Toggle(
                             self.profiles

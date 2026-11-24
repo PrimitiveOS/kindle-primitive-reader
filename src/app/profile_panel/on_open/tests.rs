@@ -84,7 +84,7 @@ fn opening_conditions_use_orientation_paths_and_collections_as_alternatives() {
     app.activate(Action::Text(normal)).unwrap();
 
     open_rules(&mut app, 0);
-    tap_contents_item(&mut app, "Opening orientation");
+    tap_contents_item(&mut app, "Preferred opening orientation");
     tap_contents_item(&mut app, "Upside down");
     let back = app.navigation_layout().back();
     tap(&mut app, back);
@@ -202,6 +202,40 @@ fn opening_path_rules_apply_to_fixed_profiles_and_validate_backups() {
     let mut contradictory = value;
     contradictory[0]["apply_on_open"] = json!(true);
     assert!(crate::reading_profiles::decode(contradictory).is_err());
+}
+
+#[test]
+fn current_book_inserts_a_path_the_keyboard_cannot_type() {
+    let f = Fixture::new();
+    let title = "Sổ tay bờ biển.txt";
+    let book = f.root.join(title);
+    fs::write(&book, "The tide rose beyond the last marker.").unwrap();
+    let mut app = Reader::open(&f.root, &f.state, fonts()).unwrap();
+    app.open_path(&book).unwrap();
+    app.save_reading_profile("Coastal notes").unwrap();
+    open_rules(&mut app, 0);
+    tap_contents_item(&mut app, "File path contains");
+    let mut canvas = adopt(&mut app, ReadingViewport::LANDSCAPE, 1);
+    let button = app.current_opening_path_button().unwrap();
+    tap(&mut app, button);
+    assert_eq!(app.editor.string(), title);
+    assert!(app.profiles[0].opening_conditions().is_none());
+    capture(
+        &app,
+        &mut canvas,
+        "landscape-profile-current-book-path.png",
+        false,
+    );
+    let save = key(&app, Key::Go, "Save");
+    tap(&mut app, save);
+    assert_eq!(
+        app.profiles[0]
+            .opening_conditions()
+            .unwrap()
+            .path
+            .as_deref(),
+        Some(title)
+    );
 }
 
 #[test]

@@ -1,5 +1,8 @@
 //! Editing the conditions for applying a profile when a book opens.
-use super::{Action, Editor, Item, Name, Profile, Reader, ReadingOrientation, Result, Screen};
+use super::{
+    Action, Change, Editor, Item, LIST_X, LIST_Y, Name, Profile, Reader, ReadingOrientation, Rect,
+    Result, Screen,
+};
 use crate::library::fold_search;
 use crate::reading_profiles::{MAX_NAME, opening::*};
 
@@ -36,6 +39,8 @@ pub(in crate::app) enum Command {
     Clear,
 }
 
+const CURRENT_BOOK: Rect = Rect::new(LIST_X, LIST_Y + 248, 340, 100);
+
 pub(super) fn summary(profile: &Profile) -> &'static str {
     if profile.applies_on_open() {
         "Always"
@@ -50,6 +55,33 @@ pub(super) fn summary(profile: &Profile) -> &'static str {
 }
 
 impl Reader {
+    pub(in crate::app) fn current_opening_path_button(&self) -> Option<Rect> {
+        (matches!(self.screen, Screen::ProfileName(Name::OpeningPath(_)))
+            && self.open_book_id().is_some())
+        .then_some(CURRENT_BOOK)
+    }
+
+    pub(in crate::app) fn choose_current_opening_path(&mut self, x: f32, y: f32) -> Option<Change> {
+        if !self.current_opening_path_button()?.contains(x, y) {
+            return None;
+        }
+        let path = self
+            .active
+            .as_ref()
+            .map(|book| book.entry.library_path())
+            .or_else(|| self.fixed.as_ref().map(|book| book.entry.library_path()));
+        let Some(path) = path
+            .and_then(std::path::Path::to_str)
+            .filter(|value| !value.contains(',') && valid_path(value))
+        else {
+            return Some(self.report("Use a distinctive part of the current book's path"));
+        };
+        self.editor.text = path.chars().collect();
+        self.editor.caret = self.editor.text.len();
+        self.notice = None;
+        Some(Change::Partial)
+    }
+
     pub(in crate::app) fn prepare_profile_name(&mut self, mode: Name) {
         let (limit, text) = match mode {
             Name::OpeningPath(index) => (
@@ -83,7 +115,7 @@ impl Reader {
                 if !profile.applies_on_open() {
                     items.extend([
                         Item::new(
-                            "Opening orientation",
+                            "Preferred opening orientation",
                             Action::Show(Screen::ReadingProfileOpening(index, Page::Orientation)),
                         )
                         .detail(selected(rules.orientations.len())),
