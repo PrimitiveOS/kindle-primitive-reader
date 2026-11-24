@@ -89,6 +89,9 @@ pub(crate) struct SourceScope<'a> {
     pub(crate) excluded: &'a [PathBuf],
     pub(crate) order: &'a [PathBuf],
     pub(crate) disabled: &'a [PathBuf],
+    // A temporary preset supplies membership in place of the library default.
+    // A book's own preference, exclusion and result order still apply.
+    pub(crate) preset: Option<&'a [PathBuf]>,
 }
 
 /// Search a Reader installation and the two standard KOReader dictionary directories.
@@ -194,9 +197,12 @@ impl DictionarySources {
         let mut first_error = None;
         let mut sources = Vec::new();
         for file in self.files()? {
-            if scope.excluded.contains(&file.key)
-                || scope.disabled.contains(&file.key) && !scope.preferred.contains(&file.key)
-            {
+            let preferred = scope.preferred.contains(&file.key);
+            let enabled = scope.preset.map_or_else(
+                || !scope.disabled.contains(&file.key),
+                |members| members.contains(&file.key),
+            );
+            if scope.excluded.contains(&file.key) || !preferred && !enabled {
                 continue;
             }
             match open_dictionary_file(&file.root, &file.path).and_then(Info::load) {

@@ -1299,3 +1299,170 @@ fn selection_viewport_epub_dictionary_uses_real_lookup_edit_and_held_return() {
     let mut restored = adopt(&mut s.app, ReadingViewport::PORTRAIT, 4);
     assert!(primitive_app::frame(&s.app, &mut restored, false) == portrait);
 }
+
+#[test]
+fn one_query_preset_typed_landscape_keeps_defaults_and_nested_result_scope() {
+    use crate::app::selection_viewport_tests::{adopt, capture, key};
+    use crate::session::ReadingViewport;
+    use primitive_ui::Key;
+
+    let mut s = Simulation::new();
+    s.open_epub_selection();
+    s.app.refresh_installed_dictionaries().unwrap();
+    let coastal = s.app.installed_dictionaries[0].path.clone();
+    let field = s.app.installed_dictionaries[1].path.clone();
+    let mut settings = s.app.dictionary_settings.clone();
+    settings.disabled = vec![field.clone()];
+    settings.presets = serde_json::from_value(serde_json::json!({
+        "Coastal vocabulary": [coastal],
+        "English usage": [coastal, field],
+        "Field glossary": [field],
+        "Harbour reading": [field],
+        "Navigation history": [coastal],
+        "Shore notes": [field],
+    }))
+    .unwrap();
+    s.app.save_source_preferences(settings).unwrap();
+    let stored = fs::read(&s.app.dictionary_preference).unwrap();
+    let origin = s.app.current_history_location();
+    let selection = s.app.selection.clone();
+    s.app.show(Screen::DictionaryEntry);
+    let mut landscape = adopt(&mut s.app, ReadingViewport::LANDSCAPE, 1);
+    s.app.editor.text = "the".chars().collect();
+    s.app.editor.caret = 1;
+    let typed = s.app.editor.clone();
+
+    s.tap(s.app.lookup_preset_button().unwrap());
+    capture(
+        &s.app,
+        &mut landscape,
+        "landscape-one-query-dictionary-preset.png",
+        false,
+    );
+    capture(
+        &s.app,
+        &mut landscape,
+        "landscape-one-query-dictionary-preset-dark.png",
+        true,
+    );
+    s.tap(s.app.preset_picker_layout(0).close());
+    assert_eq!(s.app.screen, Screen::DictionaryEntry);
+    assert_eq!(s.app.editor, typed);
+    assert_eq!(s.app.lookup_sources("the").unwrap()[0].source, coastal);
+    s.tap(s.app.lookup_preset_button().unwrap());
+    assert_eq!(s.app.input(Input::PageForward), Change::Partial);
+    s.tap(s.app.preset_picker_layout(1).row(0));
+    assert_eq!(s.app.screen, Screen::Definition);
+    assert_eq!(s.app.definitions.len(), 2);
+    assert!(s.app.definitions.iter().all(|entry| entry.source == field));
+    s.tap(definition_results_button(s.app.definition_layout().0));
+    s.tap(definition_result_row(s.app.definition_layout().0, 1));
+    let popup = s.app.definition_layout().0;
+    s.tap(definition_edit_button(popup, true));
+    s.app.editor.text = "beacon".chars().collect();
+    s.tap(key(&s.app, Key::Go, "Look up"));
+    assert_eq!(s.app.definitions.len(), 1);
+    assert_eq!(s.app.definitions[0].source, field);
+    s.back();
+    assert_eq!(s.app.list_page, 1);
+    s.back();
+    assert_eq!(s.app.screen, Screen::DictionaryEntry);
+    assert_eq!(s.app.editor, typed);
+    assert_eq!(s.app.current_history_location(), origin);
+    assert_eq!(s.app.selection, selection);
+    assert_eq!(fs::read(&s.app.dictionary_preference).unwrap(), stored);
+    s.tap(key(&s.app, Key::Go, "Look up"));
+    assert_eq!(s.app.definitions.len(), 1);
+    assert_eq!(s.app.definitions[0].source, coastal);
+}
+
+#[test]
+fn one_query_preset_pdf_retry_filters_worker_and_preserves_book_choices() {
+    use crate::library::DictionaryFuzzySearch;
+    use primitive_ui::Key;
+
+    let mut s = Simulation::new();
+    let path = s.fixture.root.join("Coast.pdf");
+    fs::write(&path, crate::fixed::tests::document()).unwrap();
+    s.app.open_path(&path).unwrap();
+    s.app.refresh_installed_dictionaries().unwrap();
+    let coastal = s.app.installed_dictionaries[0].path.clone();
+    let field = s.app.installed_dictionaries[1].path.clone();
+    let mut settings = s.app.dictionary_settings.clone();
+    settings.disabled = vec![coastal.clone()];
+    settings.presets = serde_json::from_value(serde_json::json!({
+        "Coastal only": [coastal, "missing.ifo"],
+        "Field only": [field],
+    }))
+    .unwrap();
+    s.app.save_source_preferences(settings).unwrap();
+    s.app.change_source(SourceAction::BookFuzzySearch).unwrap();
+    assert!(!s.app.fuzzy_search_enabled());
+    let stored = fs::read(&s.app.dictionary_preference).unwrap();
+    let origin = s.app.current_history_location();
+    let reading = &s.app.fixed.as_ref().unwrap().reading;
+    let words = reading.page_text(0).unwrap();
+    let (size, viewport) = reading.page_viewport().unwrap();
+    let point = words.words[0]
+        .bounds
+        .in_viewport(size, viewport)
+        .unwrap()
+        .center();
+    s.app.input(Input::LongTap(point.x as f32, point.y as f32));
+    let original = s.app.pdf_selection.as_ref().unwrap();
+    assert_eq!(original.text(), "PDF");
+    let saved = (original.page(), original.bounds().collect::<Vec<_>>());
+
+    s.tap(s.app.selection_button(SelectionAction::Dictionary));
+    assert_eq!(
+        s.app.dictionary_navigation.view.query_editing,
+        Some(QueryEdit::FuzzyRetry)
+    );
+    s.tap(s.app.lookup_preset_button().unwrap());
+    s.tap(s.app.preset_picker_layout(0).row(0));
+    assert_eq!(s.app.definitions[0].source, coastal);
+    s.back();
+    assert_eq!(s.app.screen, Screen::Fixed);
+    let restored = s.app.pdf_selection.as_ref().unwrap();
+    assert_eq!(
+        (restored.page(), restored.bounds().collect::<Vec<_>>()),
+        saved
+    );
+    assert_eq!(s.app.current_history_location(), origin);
+
+    s.app.show(Screen::DictionaryEntry);
+    s.app.editor.text = "beacno".chars().collect();
+    s.tap(s.app.lookup_preset_button().unwrap());
+    s.tap(s.app.preset_picker_layout(0).row(0));
+    assert_eq!(
+        s.app.dictionary_navigation.view.query_editing,
+        Some(QueryEdit::FuzzyRetry)
+    );
+    s.tap_keyboard_key(Key::Go, "Fuzzy search");
+    finish_fuzzy_retry(&mut s.app);
+    assert_eq!(s.app.definitions.len(), 1);
+    assert_eq!(s.app.definitions[0].source, coastal);
+    s.back();
+
+    s.tap(s.app.lookup_preset_button().unwrap());
+    s.tap(s.app.preset_picker_layout(0).row(0));
+    s.tap_keyboard_key(Key::Go, "Fuzzy search");
+    assert!(s.app.spelling_lookup.is_some());
+    s.back();
+    assert!(s.app.spelling_lookup.is_none());
+    s.app.editor.text = "beacon".chars().collect();
+    s.tap_keyboard_key(Key::Go, "Look up");
+    assert_eq!(s.app.definitions[0].source, field);
+    assert_eq!(
+        s.app
+            .poll_spelling_lookup(Instant::now() + Duration::from_secs(1)),
+        None
+    );
+    assert_eq!(s.app.definitions[0].source, field);
+    assert_eq!(fs::read(&s.app.dictionary_preference).unwrap(), stored);
+    let book = s.app.library.state(s.app.open_book_id().unwrap()).unwrap();
+    assert_eq!(
+        book.dictionary_fuzzy_search,
+        DictionaryFuzzySearch::Disabled
+    );
+}

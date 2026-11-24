@@ -74,7 +74,11 @@ impl Settings {
             })
     }
 
-    fn get(&self, index: usize) -> io::Result<(&str, &[PathBuf])> {
+    pub(super) fn names(&self) -> impl ExactSizeIterator<Item = &str> {
+        self.0.keys().map(String::as_str)
+    }
+
+    pub(super) fn get(&self, index: usize) -> io::Result<(&str, &[PathBuf])> {
         self.0
             .iter()
             .nth(index)

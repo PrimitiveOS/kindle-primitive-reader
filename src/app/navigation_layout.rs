@@ -156,6 +156,7 @@ impl Screen {
                     | Self::ContentsSearch
                     | Self::CustomTitle
                     | Self::LibraryFind
+                    | Self::DictionaryEntry
                     | Self::ProfileName(_)
                     | Self::DictionaryPresets(super::dictionary_presets::Page::Name(_))
                     | Self::PdfPassword

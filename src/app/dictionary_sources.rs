@@ -176,6 +176,14 @@ impl Reader {
     }
 
     pub(super) fn lookup_source_report(&self, word: &str) -> io::Result<dictionary::LookupReport> {
+        self.lookup_with_dictionary_preset(word, None)
+    }
+
+    pub(super) fn lookup_with_dictionary_preset(
+        &self,
+        word: &str,
+        preset: Option<&[PathBuf]>,
+    ) -> io::Result<dictionary::LookupReport> {
         let prefs = &self.dictionary_settings;
         self.dictionaries.lookup_report(
             word,
@@ -184,12 +192,13 @@ impl Reader {
                 excluded: self.book_dictionary_exclusions(),
                 order: &prefs.order,
                 disabled: &prefs.disabled,
+                preset,
             },
             self.word_forms_enabled(),
         )
     }
 
-    pub(super) fn start_spelling_lookup(&mut self, word: &str) {
+    pub(super) fn start_spelling_lookup(&mut self, word: &str, preset: Option<Vec<PathBuf>>) {
         self.spelling_lookup = None;
         if !self.definitions.is_empty() || !dictionary::spelling_eligible(word) {
             return;
@@ -208,6 +217,7 @@ impl Reader {
                     excluded: &excluded,
                     order: &order,
                     disabled: &disabled,
+                    preset: preset.as_deref(),
                 },
                 cancel,
             )

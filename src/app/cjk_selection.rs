@@ -51,6 +51,7 @@ impl Reader {
                         excluded: &excluded,
                         order: &order,
                         disabled: &disabled,
+                        ..dictionary::SourceScope::default()
                     },
                     forms,
                     &flag,

@@ -1594,6 +1594,7 @@ impl Reader {
         }
         self.flow_popup = None;
         self.end_dialog = None;
+        self.close_dictionary_preset_picker();
         if screen != Screen::Definition {
             self.spelling_lookup = None;
         }
@@ -5099,6 +5100,11 @@ impl Reader {
             self.find_ignore_accents = !self.find_ignore_accents;
             return Change::Partial;
         }
+        if self.screen == Screen::DictionaryEntry
+            && let Some(change) = self.open_dictionary_preset_picker(x, y)
+        {
+            return change;
+        }
         let layout = navigation.keyboard();
         let action = match self.screen {
             Screen::DictionaryEntry => "Look up",
@@ -7527,7 +7533,12 @@ impl Reader {
                     canvas.text(numeric.hint(), hint, CAPTION);
                 }
             }
-            canvas.keyboard(self.editor.layer, action, None);
+            if !self.dictionary_preset_picker_open() {
+                canvas.keyboard(self.editor.layer, action, None);
+            }
+            if self.screen == Screen::DictionaryEntry {
+                self.draw_lookup_preset_button(canvas);
+            }
             self.draw_content_dpi(canvas);
             self.draw_logical_font(canvas);
             self.draw_line_spacing(canvas);
@@ -8152,6 +8163,7 @@ impl App for Reader {
         self.draw_back_exit_confirmation(canvas);
         self.draw_history_timeline_start(canvas);
         self.draw_history_duration_limits(canvas);
+        self.draw_dictionary_preset_picker(canvas);
         self.draw_logical_recovery(canvas);
     }
 
@@ -8173,6 +8185,9 @@ impl App for Reader {
     }
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
+        if let Some(change) = self.dictionary_preset_picker_input(input) {
+            return change;
+        }
         if self.screen == Screen::Fixed && self.fixed_search_fit_active() {
             return match self.cancel_directional_search() {
                 Ok(()) => match self.swipe(input, start_x) {
@@ -8449,6 +8464,9 @@ impl App for Reader {
             } else {
                 Change::None
             };
+        }
+        if let Some(change) = self.dictionary_preset_picker_input(input) {
+            return change;
         }
         if self.read_alarm.modal() {
             return self.read_alarm_input(input);
