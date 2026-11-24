@@ -119,6 +119,28 @@ pub(crate) struct Totals {
     pub(crate) books: usize,
 }
 
+pub(crate) const PROGRESS_DAYS: usize = 7;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ProgressDay {
+    pub(crate) date: Date,
+    pub(crate) totals: Totals,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Progress {
+    pub(crate) days: [ProgressDay; PROGRESS_DAYS],
+    pub(crate) session: Totals,
+}
+
+impl Progress {
+    pub(crate) fn week_totals(&self) -> (u64, usize) {
+        self.days.iter().fold((0, 0), |(seconds, screens), day| {
+            (seconds + day.totals.seconds, screens + day.totals.screens)
+        })
+    }
+}
+
 #[derive(Default)]
 struct Group {
     seconds: u64,
@@ -145,6 +167,45 @@ impl Group {
 }
 
 impl History {
+    /// Recent progress spans seven civil dates and counts each screen once per date.
+    pub(crate) fn progress(&self, now: Option<i64>, zone: Zone) -> Option<Progress> {
+        let now = now?;
+        let calendar = zone.calendar();
+        let today = calendar.date(now)?;
+        let first = today.add_days(1 - PROGRESS_DAYS as i32)?;
+        let cutoff = calendar.midnight_boundary(first)?;
+        let dates: [Date; PROGRESS_DAYS] = std::array::from_fn(|i| {
+            // `first` and `today` already bound the whole date range.
+            today.add_days(-(i as i32)).unwrap()
+        });
+        let mut groups = std::array::from_fn::<_, PROGRESS_DAYS, _>(|_| Group::default());
+        let mut session = Group::default();
+        for visit in self.visits() {
+            let Some(start) = visit.start.filter(|&start| start <= now) else {
+                continue;
+            };
+            if self.session_since.is_some_and(|since| start >= since) {
+                session.add(visit);
+            }
+            if start >= cutoff
+                && let Some(date) = calendar.date(start)
+                && let Some(index) = dates.iter().position(|&day| day == date)
+            {
+                groups[index].add(visit);
+            }
+        }
+        let days = std::array::from_fn(|index| ProgressDay {
+            date: dates[index],
+            totals: std::mem::take(&mut groups[index]).totals(),
+        });
+        days.iter()
+            .any(|day| day.totals.screens > 0)
+            .then(|| Progress {
+                days,
+                session: session.totals(),
+            })
+    }
+
     pub(crate) fn by_period(
         &self,
         period: Period,

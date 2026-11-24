@@ -57,6 +57,10 @@ impl Reader {
         let Screen::ReadingHistory(page) = self.screen else {
             return false;
         };
+        if page == Page::Progress {
+            self.draw_reading_progress(canvas);
+            return true;
+        }
         if !matches!(page, Page::Calendar | Page::Day(_)) {
             return false;
         }

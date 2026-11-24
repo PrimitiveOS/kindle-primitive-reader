@@ -1366,6 +1366,7 @@ impl Reader {
             self.selection = None;
             self.annotation_search = annotation_search::AnnotationSearch::default();
             self.restore_reading_menus(id);
+            self.reading_history.begin_session(crate::mark_time::now());
             self.show(Screen::Fixed);
             self.reset_footer_initial_position();
             self.remember_opening_location();
@@ -1510,6 +1511,7 @@ impl Reader {
         self.pdf_selection = None;
         self.annotation_search = annotation_search::AnnotationSearch::default();
         self.restore_reading_menus(id);
+        self.reading_history.begin_session(crate::mark_time::now());
         self.show(if offer_publisher {
             Screen::PublisherOffer
         } else {
@@ -8361,6 +8363,7 @@ impl App for Reader {
             self.stats_awake = input == Input::Wake;
             if input == Input::Wake {
                 self.metadata_checkpoint = metadata_save::Checkpoint::new(Instant::now());
+                self.reading_history.begin_session(crate::mark_time::now());
             }
             self.sync_auto_turn(Instant::now());
             self.pages_since_refresh = 0;
@@ -8386,12 +8389,19 @@ impl App for Reader {
             if let Some(flow) = &mut self.text_flow {
                 flow.pause();
             }
-            if input == Input::Wake {
+            let progress_changed = if input == Input::Wake {
                 self.reset_footer_initial_position();
-            }
+                self.screen == Screen::ReadingHistory(reading_history::Page::Progress)
+                    && self.refresh_reading_progress()
+            } else {
+                false
+            };
             self.update_footer_clock(Instant::now());
             return if input == Input::Wake {
-                self.poll_read_alarm(Instant::now(), true)
+                match self.poll_read_alarm(Instant::now(), true) {
+                    Change::None if progress_changed => Change::Partial,
+                    change => change,
+                }
             } else {
                 Change::None
             };

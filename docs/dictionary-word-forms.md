@@ -20,7 +20,7 @@ without another prompt. [Pinned miss and retry callbacks](https://github.com/kor
 The Mac tests exercise the visible landscape keyboard, an edited query from
 an EPUB selection, and cancelling or exhausting a retry from typed lookup.
 The definition close returns to the original selection and reading position.
-[Simulator capture](screenshots/landscape-dictionary-fuzzy-retry.png)
+[Simulator capture](screenshots/landscape-dictionary-fuzzy-retry.png) · [Pinned callback check](../scripts/compare-dictionary-fuzzy-retry.py)
 
 ## Reference behavior
 

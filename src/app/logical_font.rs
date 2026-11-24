@@ -283,6 +283,7 @@ impl Reader {
         self.auto_turn.configure(None, Instant::now());
         self.annotation_search = annotation_search::AnnotationSearch::default();
         self.restore_reading_menus(recovery.id);
+        self.reading_history.begin_session(crate::mark_time::now());
         self.show(Screen::Book);
         self.reset_footer_initial_position();
         self.remember_opening_location();

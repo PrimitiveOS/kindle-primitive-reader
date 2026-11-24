@@ -26,6 +26,11 @@ impl Reader {
     pub(super) fn show_history_page(&mut self, page: Page) {
         let previous = self.list_page;
         self.show(Screen::ReadingHistory(page));
+        if page == Page::Progress {
+            self.history_view.progress.summary_page = previous;
+            self.refresh_reading_progress();
+            return;
+        }
         if let Page::Range(range) = page {
             self.prepare_range_report(range, previous);
             return;

@@ -2,6 +2,7 @@
 mod calendar;
 mod calendar_options;
 mod period_reset;
+mod progress;
 mod ranges;
 mod report;
 mod reset;
@@ -27,6 +28,7 @@ const RUN_ROWS: usize = 8;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Page {
     Summary,
+    Progress,
     Daily,
     TimeRange,
     Range(ranges::Page),
@@ -48,6 +50,7 @@ impl Page {
     pub(super) fn title(self) -> &'static str {
         match self {
             Self::Summary => "Reading statistics",
+            Self::Progress => "Reading progress",
             Self::Daily => "Daily reading history",
             Self::TimeRange => "Time range",
             Self::Range(page) => page.title(),
@@ -90,6 +93,7 @@ pub(super) struct View {
     day_back: Page,
     run_page: usize,
     report: report::ReportView,
+    progress: progress::View,
     ranges: ranges::View,
     calendar_settings_page: usize,
     timeline_start_draft: Option<u16>,
@@ -105,6 +109,7 @@ impl Default for View {
             day_back: Page::Calendar,
             run_page: 0,
             report: Default::default(),
+            progress: Default::default(),
             ranges: Default::default(),
             calendar_settings_page: 0,
             timeline_start_draft: None,
@@ -304,6 +309,10 @@ impl Reader {
         }
         let (back, list_page) = match page {
             Page::Summary => (self.history_view.back, None),
+            Page::Progress => (
+                Screen::ReadingHistory(Page::Summary),
+                Some(self.history_view.progress.summary_page),
+            ),
             Page::Day(_) => (Screen::ReadingHistory(self.history_view.day_back), None),
             Page::BookDay(day, _) => (Screen::ReadingHistory(Page::Day(day)), None),
             Page::Range(page) => self.history_view.ranges.back(page),
@@ -385,6 +394,7 @@ impl Reader {
                 rows.extend([
                     show("Daily history", Page::Daily),
                     show("Time range", Page::TimeRange),
+                    show("Reading progress", Page::Progress),
                     show("Calendar", Page::Calendar),
                     Item::new("Today's timeline", Action::ReadingHistory(Command::Today)),
                     show("Statistics settings", Page::Options),
@@ -538,7 +548,7 @@ impl Reader {
             | Page::PeriodBook(_, _, _) => {
                 return self.history_report_window(page, 0, usize::MAX).unwrap().1;
             }
-            Page::Calendar | Page::Day(_) => {}
+            Page::Calendar | Page::Day(_) | Page::Progress => {}
         }
         rows
     }
@@ -546,6 +556,9 @@ impl Reader {
         let Screen::ReadingHistory(page) = self.screen else {
             return None;
         };
+        if page == Page::Progress {
+            return self.reading_progress_input(input);
+        }
         if let Some(change) = self.timeline_start_input(input) {
             return Some(change);
         }

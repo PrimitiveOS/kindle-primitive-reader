@@ -190,6 +190,7 @@ pub(crate) struct History {
     next_id: u64,
     dirty: bool,
     read_only: bool,
+    session_since: Option<i64>,
 }
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub(crate) struct Summary {
@@ -252,10 +253,14 @@ impl History {
             next_id,
             dirty: missing,
             read_only,
+            session_since: crate::mark_time::now(),
         }
     }
     pub(crate) fn options(&self) -> Options {
         self.data.options
+    }
+    pub(crate) fn begin_session(&mut self, wall: Option<i64>) {
+        self.session_since = wall.filter(|&time| valid_wall(time));
     }
     pub(crate) fn configure(
         &mut self,
@@ -273,9 +278,14 @@ impl History {
         }
         let previous = std::mem::replace(&mut self.data.options, options);
         self.dirty = true;
-        self.save(now, wall, true).map(|_| ()).inspect_err(|_| {
+        if let Err(error) = self.save(now, wall, true) {
             self.data.options = previous;
-        })
+            return Err(error);
+        }
+        if !previous.enabled && options.enabled {
+            self.begin_session(wall);
+        }
+        Ok(())
     }
     pub(crate) fn remember_title(&mut self, book: u64, title: &str) {
         if !self.read_only

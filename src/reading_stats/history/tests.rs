@@ -190,6 +190,72 @@ fn timeline_minutes_month_shift_and_ranked_books_use_independent_saved_choices()
     fs::remove_dir_all(dir).unwrap();
 }
 
+#[test]
+fn progress_preserves_seven_civil_dates_and_deduplicates_each_totals_scope() {
+    let (mut history, _, _, dir) = fixture("weekly-progress");
+    let now = stamp("2026-02-02T12:00:00Z");
+    let since = stamp("2026-02-01T23:59:50Z");
+    let zone = Zone::Fixed(0);
+    history.begin_session(Some(since));
+    history.data.options.day_start = 260;
+    history.data.options.shift_calendar = Some(true);
+    for (index, (book, page, start, seconds)) in [
+        (1, 5, Some("2026-01-26T23:59:59Z"), 99), // one second before the week
+        (1, 5, Some("2026-01-27T00:00:00Z"), 20),
+        (1, 5, Some("2026-01-29T19:00:00Z"), 40),
+        (1, 5, Some("2026-01-29T20:00:00Z"), 15),
+        (1, 8, Some("2026-02-01T23:59:55Z"), 10), // midnight crossing follows start date
+        (1, 8, Some("2026-02-02T00:00:15Z"), 60),
+        (2, 8, Some("2026-02-02T11:55:00Z"), 35), // same screen key in another book
+        (1, 8, Some("2026-02-02T11:59:39Z"), 15),
+        (2, 9, Some("2026-02-02T12:01:40Z"), 99), // imported future visit
+        (3, 3, None, 99),                         // uncertain clock
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        history.data.visits.push(Visit {
+            book,
+            page,
+            start: start.map(stamp),
+            seconds,
+            id: index as u64 + 1,
+        });
+    }
+    let report = history.progress(Some(now), zone).unwrap();
+    assert_eq!(
+        report.days.map(|day| day.date.label()),
+        [
+            "2026-02-02",
+            "2026-02-01",
+            "2026-01-31",
+            "2026-01-30",
+            "2026-01-29",
+            "2026-01-28",
+            "2026-01-27",
+        ]
+    );
+    assert_eq!(
+        report
+            .days
+            .map(|day| (day.totals.seconds, day.totals.screens)),
+        [(110, 2), (10, 1), (0, 0), (0, 0), (55, 1), (0, 0), (20, 1),]
+    );
+    assert_eq!(report.week_totals(), (195, 5));
+    assert_eq!((report.session.seconds, report.session.screens), (120, 2));
+    history.begin_session(Some(now - 30));
+    let next = history.progress(Some(now), zone).unwrap();
+    assert_eq!(next.days, report.days);
+    assert_eq!((next.session.seconds, next.session.screens), (15, 1));
+    assert!(history.progress(None, zone).is_none());
+    assert!(
+        history
+            .progress(Some(stamp("2026-02-10T12:00:00Z")), zone)
+            .is_none()
+    );
+    fs::remove_dir_all(dir).unwrap();
+}
+
 #[cfg(all(target_os = "linux", target_arch = "arm", target_env = "musl"))]
 #[test]
 fn kindle_calendar_groups_a_visit_by_the_system_clock_date() {

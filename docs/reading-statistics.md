@@ -5,6 +5,7 @@ Open **Tools › Reading statistics**, **Reading data › Reading statistics**, 
 | View | Controls and information |
 | --- | --- |
 | Summary | Recorded reading time, distinct reading screens, capped page time, earlier undated screen time, daily history and calendar |
+| Reading progress | Seven dated bars, weekly totals and averages, and separate Session and Today cards |
 | Daily history | Dates in reverse order, reading time, distinct screens and books; tap a date for its timeline |
 | Time range | Compare reading time and distinct screens by week or month, then open a period for its individual books |
 | Calendar | A month grid with reading time, book titles that span consecutive days, and an optional hourly histogram. Tap a day, swipe, or use page buttons to change months. |
@@ -61,6 +62,34 @@ and exactly at the cutoff, rereads, and the New Year weekly split. Mac tests
 exercise nested reports, saved positions, screenshots and the unchanged
 history journal. Kindle verification is pending.
 [Stock comparison](../scripts/koreader-statistics-time-ranges-check.lua) · [History aggregation tests](../src/reading_stats/history/report.rs) · [Reader interaction tests](../src/app/reading_history/tests.rs)
+
+## Seven-day reading progress
+
+Open **Reading statistics → Reading progress**. The report covers today's
+local date and the preceding six dates, including days with zero reading.
+Each date counts a screen once per book. Rereads add time to the same date, and
+weekly page totals add the seven daily counts. Average time and page count use
+all seven days. The bars scale to the longest day. The separate **Today** and
+**Session** cards show their own page counts and time. The report uses the
+whole library when opened from a single book's statistics. [Portrait capture](screenshots/reading-progress.png) · [Landscape capture](screenshots/landscape-reading-progress.png)
+
+Session time starts when a document opens, when Reader wakes, or when statistics
+are enabled again. A report left open through wake refreshes the session card.
+Daily totals follow a visit's start date, independent of the calendar's optional
+timeline shift. Reader measures page counts with its stored reading-screen IDs
+and displays elapsed time to the second. Civil dates stay consecutive across
+clock changes. A visit dated after the report or without a trusted date stays
+outside its bars and totals. **Close**, either page button, or a downward swipe
+returns to the statistics list. [Stock SQL](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/main.lua#L2144-L2185) · [Stock widget](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/readerprogress.lua)
+
+The isolated pinned SDL runtime opened the actual progress widget and ran its
+SQLite queries over authored visits. The Rust history test used the same dated
+visits and checked the weekly result of 195 seconds and five pages, today's 110
+seconds and two pages, and the current session's 120 seconds and two pages. The
+fixture includes a cutoff visit, rereads, inactive dates, and a visit spanning
+midnight. Mac app tests exercise the empty report, both orientations, returning
+to the same passage, the preserved journal, and refreshing on wake. Kindle
+acceptance remains open. [Stock capture](screenshots/koreader-reading-progress.png) · [Native comparison runner](../scripts/koreader-reading-progress-check.py)
 
 ## Reset statistics
 
@@ -123,8 +152,7 @@ The pinned Lua/SQLite check exercises the save and shift callbacks, picker
 wrapping, book duration ranking, and spans across adjacent days. Rust tests
 cover the 04:20 boundary in a fractional-offset zone, both shift choices,
 failed saves, book filtering, and the saved reading position. The separate
-seven-day progress report, exact visit-duration editor, and local statistics
-database import remain open.
+exact visit-duration editor and local statistics database import remain open.
 Reader records the actual pre- and
 post-pause portions of each visit.
 [Stock calendar comparison](../scripts/compare-calendar-options.py) · [Stock layout rescaling](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L439-L441) · [Stock pause and resume timestamps](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L2694-L2732)

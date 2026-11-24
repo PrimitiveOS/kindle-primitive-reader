@@ -158,6 +158,7 @@ impl Screen {
                     | Self::PageOverview
                     | Self::StyleEditor
                     | Self::BookmarkBrowser(_)
+                    | Self::ReadingHistory(super::reading_history::Page::Progress)
             )
     }
 }
