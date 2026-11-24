@@ -53,6 +53,9 @@ preserve the visible paragraph and that failed requests leave the article
 readable. Check optional Parley margin collapse and float placement against
 the pinned CREngine fixtures. Verify that preparing new reflow geometry
 preserves the source passage, selection, and portrait rendering on return.
+The combined Mac build passed 1,219 checks. Repeat the Wikimedia fixtures
+and compare the seven captured frames on Oasis. Both paged and scrolling
+reflow returned to pixel-identical portrait frames in simulation.
 Landscape support still requires the coordinated Launcher handoff and
 foreground Kindle verification.
 [Wikipedia lookups](online-lookups.md) · [Render modes](render-modes.md)
