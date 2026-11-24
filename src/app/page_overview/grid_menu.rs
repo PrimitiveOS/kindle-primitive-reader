@@ -104,13 +104,38 @@ impl Reader {
             self.notice = None;
             return Some(Change::Partial);
         }
-        let (columns, rows) = layout.dimensions();
-        let Some((axis, delta)) = Axis::ALL
+        let step = Axis::ALL
             .into_iter()
-            .find_map(|axis| axis.steps(nav).delta(input, 2).map(|delta| (axis, delta)))
-        else {
-            return Some(Change::None);
+            .find_map(|axis| axis.steps(nav).delta(input, 2).map(|delta| (axis, delta)));
+        Some(step.map_or(Change::None, |(axis, delta)| {
+            self.step_overview_grid(layout, axis, delta)
+        }))
+    }
+
+    pub(super) fn overview_grid_swipe(
+        &mut self,
+        layout: OverviewLayout,
+        (start_x, start_y): (f32, f32),
+        (dx, dy): (f32, f32),
+    ) -> Option<Change> {
+        let top = 0.0..layout.navigation.height as f32 / 8.0;
+        let left = 0.0..layout.navigation.width as f32 / 8.0;
+        // Match the stock cardinal sectors before treating motion as an edge shortcut.
+        let (axis, delta) = if dx != 0.0 && dy.abs() <= 0.577 * dx.abs() && top.contains(&start_y) {
+            (Axis::Columns, if dx < 0.0 { 1 } else { -1 })
+        } else if dy != 0.0 && dy.abs() >= 1.732 * dx.abs() && left.contains(&start_x) {
+            (Axis::Rows, if dy < 0.0 { 1 } else { -1 })
+        } else {
+            return None;
         };
+        Some(self.step_overview_grid(layout, axis, delta))
+    }
+
+    fn step_overview_grid(&mut self, layout: OverviewLayout, axis: Axis, delta: i16) -> Change {
+        let Some(overview) = &self.overview else {
+            return Change::None;
+        };
+        let (columns, rows) = layout.dimensions();
         let mut next = (columns as u8, rows as u8);
         let affected = match axis {
             Axis::Columns => &mut next.0,
@@ -119,7 +144,7 @@ impl Reader {
         *affected = affected.saturating_add_signed(delta as i8);
         let grid = PageBrowserGrid::new(next.0, next.1);
         if grid.dimensions() == (columns as u8, rows as u8) {
-            return Some(Change::None);
+            return Change::None;
         }
         let chapter = overview.chapter;
         let focus = overview.focus.clone();
@@ -130,14 +155,14 @@ impl Reader {
                 self.library.save_page_browser_grid(id, grid)?;
                 Ok(candidate)
             });
-        Some(match result {
+        match result {
             Ok(candidate) => {
                 self.overview = Some(candidate);
                 self.notice = None;
                 Change::Partial
             }
             Err(error) => self.report(error),
-        })
+        }
     }
 }
 

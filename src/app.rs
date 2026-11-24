@@ -8501,7 +8501,7 @@ impl App for Reader {
                 .unwrap_or_else(|| self.input(input));
         }
         if self.screen == Screen::PageOverview
-            && let Some(change) = self.overview_scrub_swipe(input, start_x)
+            && let Some(change) = self.overview_swipe(input, start_x)
         {
             return change;
         }

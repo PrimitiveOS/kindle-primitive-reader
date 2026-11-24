@@ -242,3 +242,172 @@ fn page_browser_grid_bounds_fit_the_viewport() {
         assert!(layout.label(last).bottom() < last.bottom());
     }
 }
+
+fn swipe(reader: &mut Reader, (x, y): (f32, f32), (dx, dy): (f32, f32)) -> Change {
+    reader.swipe(Input::Swipe { dx, dy, start_y: y }, x)
+}
+
+#[test]
+fn page_browser_grid_edge_swipes_resize_from_contact_in_both_viewports() {
+    let fixture = Fixture::new();
+    let path = fixture.root.join("Harbor Atlas.pdf");
+    pdf(&path, 46);
+    let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+    let mut reader = Reader::open(&fixture.root, &fixture.state, vec![font]).unwrap();
+    reader.open_path(&path).unwrap();
+    reader.follow_fixed(10, None).unwrap();
+    let history = reader.back.clone();
+    reader.show(Screen::BookMap);
+    let map_window = reader.map_window;
+    let cell = crate::app::fixed_book_map::projected_cell(reader.navigation_layout(), 14);
+    tap(&mut reader, cell);
+    let mut portrait = adopt(&mut reader, ReadingViewport::PORTRAIT, 1);
+    let origin = reader.current_history_location().unwrap().position.page;
+
+    // Starts inside the top eighth and ends below it.
+    assert_eq!(
+        swipe(&mut reader, (950.0, 209.0), (-230.0, 28.0)),
+        Change::Partial
+    );
+    assert_eq!(
+        reader.overview.as_ref().unwrap().grid,
+        Some(PageBrowserGrid::new(3, 2))
+    );
+    assert_eq!(reader.overview.as_ref().unwrap().focus.page, 14);
+    capture(
+        &reader,
+        &mut portrait,
+        "page-browser-edge-swipes-portrait.png",
+        false,
+    );
+
+    let mut landscape = adopt(&mut reader, ReadingViewport::LANDSCAPE, 2);
+    assert_eq!(
+        swipe(&mut reader, (660.0, 157.0), (230.0, 26.0)),
+        Change::Partial
+    );
+    assert_eq!(
+        reader.overview.as_ref().unwrap().grid,
+        Some(PageBrowserGrid::new(2, 2))
+    );
+    assert_eq!(
+        swipe(&mut reader, (900.0, 157.0), (-220.0, 0.0)),
+        Change::Partial
+    );
+    // Starts inside the physical left eighth and ends to its right.
+    assert_eq!(
+        swipe(&mut reader, (209.0, 660.0), (65.0, -240.0)),
+        Change::Partial
+    );
+    let view = reader.overview.as_ref().unwrap();
+    let grid = Some(PageBrowserGrid::new(3, 3));
+    assert_eq!(view.grid, grid);
+    assert_eq!(view.focus.page, 14);
+    assert_eq!(view.map_origin, Some(MapOrigin::Fixed(map_window)));
+    assert_eq!(view.tiles.len(), 9);
+    capture(
+        &reader,
+        &mut landscape,
+        "page-browser-edge-swipes-landscape.png",
+        false,
+    );
+
+    let first = reader.overview.as_ref().unwrap().first;
+    // Exact eighth is outside the edge. A diagonal does not resize the grid.
+    assert_eq!(
+        swipe(&mut reader, (210.0, 660.0), (-40.0, -240.0)),
+        Change::Partial
+    );
+    assert_eq!(reader.overview.as_ref().unwrap().first, first + 3);
+    assert_eq!(
+        swipe(&mut reader, (900.0, 158.0), (-230.0, 0.0)),
+        Change::Partial
+    );
+    assert_eq!(reader.overview.as_ref().unwrap().first, first + 12);
+    assert_eq!(
+        swipe(&mut reader, (900.0, 80.0), (-220.0, 180.0)),
+        Change::Partial
+    );
+    assert_eq!(reader.overview.as_ref().unwrap().first, first + 21);
+    assert_eq!(reader.overview.as_ref().unwrap().grid, grid);
+
+    open_menu(&mut reader);
+    assert_eq!(
+        swipe(&mut reader, (900.0, 120.0), (-230.0, 0.0)),
+        Change::None
+    );
+    assert_eq!(reader.overview.as_ref().unwrap().grid, grid);
+    close_menu(&mut reader);
+    assert_eq!(reader.input(Input::PageBack), Change::Partial);
+    assert_eq!(reader.overview.as_ref().unwrap().first, first + 12);
+    assert_eq!(reader.input(Input::PageForward), Change::Partial);
+    assert_eq!(reader.overview.as_ref().unwrap().first, first + 21);
+    assert_eq!(
+        reader.current_history_location().unwrap().position.page,
+        origin
+    );
+    assert_eq!(reader.back, history);
+    let back = reader.navigation_layout().back();
+    tap(&mut reader, back);
+    assert_eq!(reader.screen, Screen::BookMap);
+    assert_eq!(reader.map_window, map_window);
+
+    let id = reader.open_book_id().unwrap();
+    let reopened = Reader::open(&fixture.root, &fixture.state, Vec::new()).unwrap();
+    assert_eq!(reopened.library.page_browser_grid(id), grid);
+}
+
+#[test]
+fn page_browser_grid_edge_swipes_keep_rtl_book_focus_and_obey_bounds() {
+    let fixture = Fixture::new();
+    let path = fixture.root.join("Harbor Notebook.epub");
+    fs::copy(crate::test_fixture("rtl-notebook.epub"), &path).unwrap();
+    let fonts = [
+        "fonts/NotoSans-Regular.ttf",
+        "fonts/NotoSansArabic-Regular.ttf",
+    ]
+    .into_iter()
+    .map(crate::test_fixture)
+    .collect();
+    let mut reader = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+    reader.open_path(&path).unwrap();
+    assert!(
+        reader
+            .active
+            .as_ref()
+            .unwrap()
+            .reading
+            .probe
+            .pages_right_to_left()
+    );
+    reader.open_overview().unwrap();
+    let focus = reader.overview.as_ref().unwrap().focus.anchor.clone();
+    let origin = reader.current_history_location().unwrap().position.anchor;
+    assert!(focus.is_some());
+    assert_eq!(
+        swipe(&mut reader, (900.0, 130.0), (-230.0, 0.0)),
+        Change::Partial
+    );
+    assert_eq!(
+        reader.overview.as_ref().unwrap().grid,
+        Some(PageBrowserGrid::new(3, 2))
+    );
+    adopt(&mut reader, ReadingViewport::LANDSCAPE, 1);
+    assert_eq!(
+        swipe(&mut reader, (130.0, 670.0), (0.0, 230.0)),
+        Change::Partial
+    );
+    assert_eq!(
+        swipe(&mut reader, (130.0, 670.0), (0.0, 230.0)),
+        Change::None
+    );
+    let view = reader.overview.as_ref().unwrap();
+    assert_eq!(view.grid, Some(PageBrowserGrid::new(3, 1)));
+    assert_eq!(view.focus.anchor, focus);
+    adopt(&mut reader, ReadingViewport::PORTRAIT, 2);
+    assert_eq!(reader.overview.as_ref().unwrap().focus.anchor, focus);
+    assert_eq!(
+        reader.current_history_location().unwrap().position.anchor,
+        origin
+    );
+}

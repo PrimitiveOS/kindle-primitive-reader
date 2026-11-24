@@ -494,14 +494,18 @@ impl Reader {
         canvas.fill(Rect::new(x, center - 15, 20, 30), 0);
     }
 
-    pub(super) fn overview_scrub_swipe(&mut self, input: Input, start_x: f32) -> Option<Change> {
-        if self.overview.as_ref().is_some_and(|view| view.grid_menu) {
+    pub(super) fn overview_swipe(&mut self, input: Input, start_x: f32) -> Option<Change> {
+        let view = self.overview.as_ref()?;
+        if view.grid_menu {
             return Some(Change::None);
         }
-        let layout = OverviewLayout::new(self.navigation_layout());
+        let layout = OverviewLayout::with_grid(self.navigation_layout(), view.grid);
         let Input::Swipe { dx, dy, start_y } = input else {
             return None;
         };
+        if let Some(change) = self.overview_grid_swipe(layout, (start_x, start_y), (dx, dy)) {
+            return Some(change);
+        }
         (dx.abs() > dy.abs() && layout.track().contains(start_x, start_y))
             .then(|| self.scrub_overview(start_x + dx))
     }
