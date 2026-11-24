@@ -80,9 +80,9 @@ source-selection rectangles use the Parley or vertical engines.
 | Mechanism | Reader work required for the observed mode behavior |
 | --- | --- |
 | Legacy | Match the legacy inline model and the old handling of incomplete CSS tables. Separate publisher margins are measured below. |
-| Flat | Extend source-owned margin collapse to parent and empty boxes, and add prepared inline float boxes, anonymous box repair, and page-break coalescing through empty boxes. |
+| Flat | Extend source-owned margin collapse to parent and empty boxes, add prepared inline float boxes and anonymous box repair, and reproduce the physical spacing around coalesced page breaks. |
 | Book | Extend the horizontal float model below to complex boxes and inline floats, and implement the remaining style-width and auto-margin behavior |
-| Web | Extend signed margins and float geometry, implement full publisher box sizing and automatic placement, and handle overflow and consecutive forced breaks through empty content |
+| Web | Extend signed margins and float geometry, implement full publisher box sizing and automatic placement, and draw the physical extent of empty forced-break pages |
 
 The four options depend on independent box geometry, pagination and
 source mappings. A Reader renderer choice would currently change several
@@ -182,6 +182,60 @@ The fixture checks link destinations, caret and quote positions, restored
 coordinates, and an authored overflow that forces this rollback.
 [Provider and tests](../src/float_layout.rs)
 
+## Forced breaks through empty boxes
+
+The horizontal paginator projects empty-block edges from the source tree
+onto the boundary before following content. It groups adjoining siblings
+and attaches an empty wrapper’s leading and trailing rules to its first
+and last leaf. `display:none` removes the empty box and its break rules.
+Breaks around actual text still use the existing line and keep rules.
+
+Reader's `Current` default and `Coalesce` policy use a single forced page
+at the following text when empty blocks contribute adjacent directives.
+`PreserveStructure` retains distinct leading and trailing breaks on a
+zero-size leaf. `PreserveSized` retains both edges on a leaf with padding,
+vertical borders, or a definite positive height. It folds two edges of a
+zero-size leaf into one. An adjoining sibling can share an outgoing edge
+as measured below. These are internal Parley policies.
+
+| Authored case | Legacy / `PreserveStructure` | Flat and Book / `Coalesce` | Web / `PreserveSized` |
+| --- | ---: | ---: | ---: |
+| Two bare empty boxes with forced breaks on both edges | 3 | 1 | 2 |
+| Two padded or bordered empty boxes | 3 | 1 | 3 |
+| Two boxes with only margins or only backgrounds | 3 | 1 | 2 |
+| Bare box followed by padded box | 3 | 1 | 3 |
+| Padded box followed by bare box | 3 | 1 | 2 |
+| Two branches of nested, padded empty boxes | 4 | 1 | 4 |
+| A padded `after` box, a bare unforced sibling, a padded `before` box | 1 | 1 | 1 |
+| Two suppressed boxes | 0 | 0 | 0 |
+| Real paragraph with forced breaks on both edges | 2 | 2 | 2 |
+
+Values are page advances between text markers. The pinned SDL runner
+checks 25 authored structures in each of the four modes. On the original
+Render Mode specimen, the next text advances three pages in Legacy and
+Web and one in Flat and Book. The subsequent nonempty forced break
+advances one page in all four modes. [Stock comparison](../scripts/koreader-empty-breaks-check.lua) ·
+[Source topology and tests](../src/publisher_breaks/empty.rs)
+
+The additional slots in Reader are blank physical pages in paged mode.
+They have no fabricated text anchor. Reopening a blank slot uses the
+stored page index, and reopening the following text uses its original
+source anchor after a policy change. Page intervals use the same document
+coordinate for adjacent blank slots. Continuous reading follows source
+coordinates, so it does not stop on these slots. Reader bounds the number
+of additional slots per chapter.
+
+Empty-box painting and vertical position are separate from this topology.
+For example, the pinned Flat and Book specimen keeps 104 pixels of empty
+space above the next paragraph. Reader places that paragraph at its
+ordinary top margin. Native decorated empty pages can draw borders or
+backgrounds. Reader currently shows white in the added slots. Leading and
+trailing empty runs, boxes inside tables, floats and lists, and more complex
+forced, keep and collapsed-margin interactions are outside this slice.
+[Stock decorated intermediate page](screenshots/empty-break-stock-web-intermediate.png) ·
+[Reader intermediate page](screenshots/empty-break-reader-intermediate.png) ·
+[Reader following text](screenshots/empty-break-reader-following.png)
+
 ## Reproduce
 
 The EPUB uses authored CSS and text. Generate it with
@@ -214,3 +268,11 @@ same cache, font and capture arguments. Run
 `cargo test --locked --lib float_layout -- --nocapture` for the Reader
 comparison. Set `READER_FLOAT_CAPTURE_DIR` to an existing directory to
 write the simulated reading pages.
+
+Generate the empty-box comparison with
+`python3 scripts/generate-render-empty-breaks-fixture.py`. Pass
+`tests/fixtures/render-empty-breaks.epub` to the empty-break stock probe
+with the same cache, font and capture arguments. Run
+`cargo test --locked --lib publisher_breaks -- --nocapture` for the Reader
+page assignments and resume checks. Set `READER_EMPTY_BREAK_CAPTURE_DIR`
+to an existing directory to save the original specimen’s page sequence.

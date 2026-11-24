@@ -135,8 +135,11 @@ for _, mode in ipairs{flat, book, web} do
 end
 assert(web["Pixel box marker"].band_width == 260)
 assert(book["Pixel box marker"].band_width == 1156)
-assert(web["After empty breaks"].page - web["Before empty breaks"].page == 3)
-assert(book["After empty breaks"].page - book["Before empty breaks"].page == 1)
+for _, check in ipairs{{legacy,3},{flat,1},{book,1},{web,3}} do
+    local mode, expected = unpack(check)
+    assert(mode["After empty breaks"].page - mode["Before empty breaks"].page == expected)
+    assert(mode["After nonempty break"].page - mode["After empty breaks"].page == 1)
+end
 
 -- Change flags on the same document view and follow an existing source passage.
 local live = Cre.newDocView(width, height, 1)

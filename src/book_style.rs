@@ -560,6 +560,7 @@ impl BookStyle {
         elements: &[Element],
         settings: Option<crate::Settings>,
     ) -> Vec<Style> {
+        let structural_borders = settings.is_some_and(|config| config.empty_break_mode.expands());
         let logical = settings.filter(|settings| settings.logical_font_size.is_some());
         let relative_font = |scale: f32| {
             logical.map_or_else(
@@ -749,7 +750,8 @@ impl BookStyle {
                         if matches!(
                             element.tag.as_str(),
                             "td" | "th" | "tr" | "thead" | "tbody" | "tfoot" | "table"
-                        ) =>
+                        ) || (structural_borders
+                            && crate::source::is_block_tag(&element.tag)) =>
                     {
                         let target = style
                             .borders

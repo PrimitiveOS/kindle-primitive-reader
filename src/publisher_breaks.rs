@@ -1,6 +1,8 @@
 //! Publisher page breaks in horizontal reflow, expressed in document coordinates.
-use super::{Line, book_style::Style, source::Source};
+use super::{Line, Settings, book_style::Style, source::Source};
 use std::ops::Range;
+
+mod empty;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Edge {
@@ -21,6 +23,7 @@ pub(crate) struct Rules {
 pub(crate) struct BoxRules {
     extent: Range<f32>,
     rules: Rules,
+    extra_splits: u16,
 }
 
 /// Protect only the opening and closing lines of each formatted paragraph. Taking
@@ -66,6 +69,7 @@ fn protect_paragraph_end<'a>(
                     keep_together: true,
                     ..Default::default()
                 },
+                extra_splits: 0,
             });
         }
     }
@@ -73,7 +77,17 @@ fn protect_paragraph_end<'a>(
 
 /// Find the first and last painted lines of each styled block, including wrappers
 /// around other blocks. An empty separator shares the next visible block's edge.
+#[cfg(test)]
 pub(crate) fn geometry(source: &Source, styles: &[Style], lines: &[Line]) -> Vec<BoxRules> {
+    layout(source, styles, lines, Settings::default())
+}
+
+pub(crate) fn layout(
+    source: &Source,
+    styles: &[Style],
+    lines: &[Line],
+    settings: Settings,
+) -> Vec<BoxRules> {
     let mut result = Vec::new();
     protect_paragraph_end(
         source,
@@ -109,6 +123,7 @@ pub(crate) fn geometry(source: &Source, styles: &[Style], lines: &[Line]) -> Vec
             extend(&mut boxes, source.blocks[i].element, line.top, line.bottom);
         }
     }
+    let direct = settings.empty_break_mode.expands().then(|| boxes.clone());
     for (i, element) in source.elements.iter().enumerate().rev() {
         if let (Some(p), Some(extent)) = (element.parent, boxes[i].clone()) {
             extend(&mut boxes, p, extent.start, extent.end);
@@ -127,12 +142,19 @@ pub(crate) fn geometry(source: &Source, styles: &[Style], lines: &[Line]) -> Vec
         let extent = boxes[i].clone();
         if rules != Rules::default() {
             if let Some(extent) = extent.clone().or_else(|| following.map(|y| y..y)) {
-                result.push(BoxRules { extent, rules });
+                result.push(BoxRules {
+                    extent,
+                    rules,
+                    extra_splits: 0,
+                });
             }
         }
         if let Some(extent) = extent {
             following = Some(extent.start);
         }
+    }
+    if let Some(direct) = &direct {
+        empty::propagate(source, styles, direct, &boxes, settings, &mut result);
     }
     result
 }
@@ -169,10 +191,46 @@ pub(crate) fn boundaries(lines: &[Range<f32>], boxes: &[BoxRules]) -> Vec<Edge> 
     edges
 }
 
+pub(crate) fn structural_splits(lines: &[Range<f32>], boxes: &[BoxRules]) -> Vec<u16> {
+    if !boxes.iter().any(|item| item.extra_splits > 0) {
+        return Vec::new();
+    }
+    let mut extra = vec![0; lines.len()];
+    for item in boxes.iter().filter(|item| item.extra_splits > 0) {
+        let first = lines.partition_point(|line| line.end <= item.extent.start);
+        // A float or table row can connect the target line to an earlier
+        // interval. Only add blank pages at an actual boundary of that flow.
+        if lines
+            .get(first)
+            .is_some_and(|line| line.start == item.extent.start)
+        {
+            extra[first] = extra[first].max(item.extra_splits);
+        }
+    }
+    extra
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{Book, Engine, Pagination, Probe, Settings};
+
+    #[test]
+    fn structural_splits_do_not_move_to_the_start_of_an_overlapping_line_group() {
+        let marker = |at| BoxRules {
+            extent: at..at,
+            rules: Rules::default(),
+            extra_splits: 2,
+        };
+        assert_eq!(
+            structural_splits(&[0.0..20.0, 30.0..80.0], &[marker(30.0)]),
+            [0, 2]
+        );
+        assert_eq!(
+            structural_splits(&[0.0..20.0, 30.0..80.0], &[marker(45.0)]),
+            [0, 0]
+        );
+    }
 
     #[test]
     fn suppressed_rules_cannot_force_or_protect_a_page_but_visibility_keeps_geometry() {
@@ -285,6 +343,7 @@ mod tests {
                 keep_together: true,
                 ..Rules::default()
             },
+            extra_splits: 0,
         };
         let pages = Pagination::with_breaks(&lines, 100., 218., &[keep(60., 138.)]).unwrap();
         assert_eq!(pages.bounds, [0., 60., 160., 218.]);
@@ -300,6 +359,7 @@ mod tests {
                 before: Edge::Force,
                 ..Default::default()
             },
+            extra_splits: 0,
         };
         let pages =
             Pagination::with_breaks(&lines, 100., 218., &[keep(60., 138.), explicit]).unwrap();

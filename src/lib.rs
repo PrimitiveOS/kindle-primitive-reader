@@ -302,6 +302,23 @@ pub enum FloatMode {
     PublisherHeight,
 }
 
+/// Experimental forced-page topology for empty publisher blocks.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum EmptyBreakMode {
+    #[default]
+    Current,
+    Coalesce,
+    PreserveStructure,
+    PreserveSized,
+}
+
+impl EmptyBreakMode {
+    pub(crate) fn expands(self) -> bool {
+        matches!(self, Self::PreserveStructure | Self::PreserveSized)
+    }
+}
+
 const LEGACY_DEFAULT_LINE_HEIGHT: f32 = 1.35;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -328,6 +345,8 @@ pub struct Settings {
     pub block_margins: BlockMarginMode,
     #[doc(hidden)]
     pub float_mode: FloatMode,
+    #[doc(hidden)]
+    pub empty_break_mode: EmptyBreakMode,
     pub line_height: f32,
     /// None preserves legacy multiplier-based line spacing for existing profiles.
     pub line_spacing_percent: Option<u16>,
@@ -388,6 +407,7 @@ impl Default for Settings {
             margin_bottom: None,
             block_margins: BlockMarginMode::Ignore,
             float_mode: FloatMode::Ignore,
+            empty_break_mode: EmptyBreakMode::Current,
             line_height: 1.35,
             line_spacing_percent: None,
             word_spacing: 0.0,
@@ -719,6 +739,7 @@ impl Pagination {
             return Err("The chapter exceeds the layout height limit".into());
         }
         let boundaries = publisher_breaks::boundaries(&intervals, breaks);
+        let extra_splits = publisher_breaks::structural_splits(&intervals, breaks);
         let mut bounds = vec![0.0];
         let mut allowed_start = 0.0;
         for (index, interval) in intervals.iter().enumerate() {
@@ -744,6 +765,10 @@ impl Pagination {
                 }
                 if next > *bounds.last().unwrap() {
                     bounds.push(next);
+                    if forced {
+                        let count = extra_splits.get(index).copied().unwrap_or_default();
+                        bounds.extend(std::iter::repeat_n(next, usize::from(count)));
+                    }
                 }
             }
         }
@@ -1087,7 +1112,8 @@ impl Probe {
                         } else {
                             lay_out(&source, fonts)?
                         };
-                        publisher_edges = publisher_breaks::geometry(&source, &styles, &lines);
+                        publisher_edges =
+                            publisher_breaks::layout(&source, &styles, &lines, settings);
                         (Renderer::Parley(layout), lines, extent)
                     }
                 }
@@ -1837,6 +1863,15 @@ impl Probe {
     }
 
     pub(crate) fn capture_range(&mut self, range: Range<f32>) -> Result<Vec<u8>> {
+        if range.start == range.end
+            && self.settings.empty_break_mode.expands()
+            && matches!(self.renderer, Renderer::Parley(_))
+        {
+            return Ok(vec![
+                255;
+                (self.settings.width * self.settings.height) as usize
+            ]);
+        }
         match &mut self.renderer {
             Renderer::Blitz(layout) => layout.capture(range, self.settings),
             Renderer::Parley(layout) => layout.capture(range, self.settings),
