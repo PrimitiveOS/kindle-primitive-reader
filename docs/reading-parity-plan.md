@@ -44,12 +44,12 @@ only to find and compare relevant controls.
 
 ### Execution checklist
 
-**Milestone status:** 68 of the 74 checklist items have desktop, scope, or
+**Milestone status:** 72 of the 78 checklist items have desktop, scope, or
 device evidence. The control inventory and foreground Kindle acceptance
 checks below track the remaining feature and device work.
 
-**Pinned control inventory:** 266 of 537 in-scope reading-control rows have
-an implemented workflow, 218 are partial, 44 are gaps, and 9 need audit. The
+**Pinned control inventory:** 290 of 537 in-scope reading-control rows have
+an implemented workflow, 195 are partial, 44 are gaps, and 8 need audit. The
 [statistics reset comparison](reading-statistics.md#reset-statistics) updates
 seven rows with an executable stock check and Mac verification. The
 [corner hold comparison](corner-hold-gestures.md) covers the ignore toggle,
@@ -194,6 +194,10 @@ other typography controls and broader publication types remains open.
 - [x] Add independent tap and swipe page-turn controls, stock zone shapes and bounds, a touch-lock exception, and per-edition direction and dialog mirroring. [Page-turn controls](page-turn-controls.md)
 - [x] Export local KOReader-format annotation transfers on book closing, choose an existing folder, and preview merges with the Keep all policy. Stock automatic import and unsupported locations remain open. [Local exchange](annotation-exchange.md)
 - [x] Show optional reading notices from seven independently saved sources and keep a 20-message session history. Compare the mapped defaults, timeout, control feedback, and scheduled profile behavior. [Reading notifications](reading-notifications.md)
+- [x] Show linked classic EPUB note classes with inherited source IDs, both extension boundaries, and scoped alignment, spacing and text fixes. [Classic note comparison](in-page-footnotes.md#classic-markers-and-note-formatting)
+- [x] Search live reading controls by name, preview the breadcrumb, open the result without activating it, and preserve the book position. [Menu search comparison](menu-search.md)
+- [x] Verify the shared exit, file-browser and reading Back policies. Skip the current jump marker and restore the prior same-page PDF zoom, rotation and pan. [Back comparison](back-navigation.md)
+- [x] Expose Select in the EPUB and PDF action grid and match dictionary title, count, result arrows, and dismissal. [Selection workflow](long-press-behavior.md) · [Dictionary comparison](dictionary-popup-display.md#source-and-result-count)
 - [x] Implement horizontal, text-only inline-block geometry for the supported Flat, Book and Web policies. Check native width, atomic page carry, links and selections. Complex inline content remains open. [Inline-block comparison](render-modes.md#text-only-inline-blocks)
 - [x] Audit all four native CREngine Render Mode masks against authored CSS and compare Reader’s existing Parley and Blitz paths. The merged policies now have per-edition and new-book settings with device verification pending. [Reference and captures](render-modes.md#composed-policies-in-reader)
 - [x] Recount exact screen pages after committed typography edits for supported EPUBs. Check canonical position, ordinary opens, paint-only edits, rollback, sleep, USB and immediate Go to page after completion. [Native comparison and Mac captures](whole-book-screen-pages.md#partial-typography-rendering-comparison)

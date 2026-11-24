@@ -52,6 +52,8 @@ Replay the Reader tests with `cargo test --locked --lib app::back_navigation::te
 Set `READER_BACK_READER_CHOICES`, `READER_BACK_FIXED_VIEW` and
 `READER_BACK_CONFIRMATION` to PNG paths to capture Reader's frames. Run the Lua
 replay in the pinned Mac runtime, passing a scratch directory for its frame.
+Use `EMULATE_READER_W=1264`, `EMULATE_READER_H=1680`, and
+`EMULATE_READER_DPI=300` to reproduce the reference frame at Oasis size.
 
 Stock `T3-6.4` applies to keyboards with a Backspace key, shown only when the
 device has a keyboard without a Sym key. The Kindle app kit currently delivers
