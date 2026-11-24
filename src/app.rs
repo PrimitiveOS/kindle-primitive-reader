@@ -105,7 +105,7 @@ use crate::koreader_import::{self, ExportEntry, QuoteMatch, QuoteResolver};
 use crate::koreader_sidecar::{self, SidecarProgress};
 use crate::library::{
     BookMetadata, BookPreferences, BookState, Bookmark, DocumentFormat, FixedPreferences,
-    Highlight, Library, LibraryBook, PdfHighlight, ReadingPosition, ReadingStatus,
+    FixedTileAxis, Highlight, Library, LibraryBook, PdfHighlight, ReadingPosition, ReadingStatus,
 };
 use crate::ocr_job::{OcrAssets, OcrJob};
 use crate::pdf_annotations;
@@ -348,6 +348,7 @@ impl Screen {
             Self::NumberingValue(NumberField::WordSpacing(_)) => "Word spacing",
             Self::NumberingValue(NumberField::AutoTurn) => "Automatic page turns",
             Self::NumberingValue(NumberField::AutoTurnOverlapHorizontal) => "Horizontal overlap",
+            Self::NumberingValue(NumberField::FixedTileZoom(axis)) => axis.label(),
             Self::NumberingValue(NumberField::AutoTurnOverlapVertical) => "Vertical overlap",
             Self::NumberingValue(NumberField::FooterTrackMinimumWidth) => "Progress bar width",
             Self::NumberingValue(NumberField::FooterTrackMarginWidth) => "Progress bar margins",
@@ -549,6 +550,7 @@ enum Action {
     FitPage(bool),
     FitHeight,
     SetFixedZoom(usize),
+    SetFixedTileZoom(FixedTileAxis, u8),
     SetFixedRotation(u8),
     FixedScroll(bool),
     ComicSpread(bool),
@@ -1609,6 +1611,18 @@ impl Reader {
                 self.editor.text = value.to_string().chars().collect();
                 self.editor.caret = self.editor.text.len();
             }
+        }
+        if let Screen::NumberingValue(NumberField::FixedTileZoom(axis)) = screen
+            && let Some(fixed) = &self.fixed
+        {
+            let count = fixed
+                .reading
+                .preferences()
+                .tile_zoom
+                .filter(|tile| tile.axis == axis)
+                .map_or(1.0, |tile| f32::from(tile.count_tenths) / 10.0);
+            self.editor.text = format!("{count:.1}").chars().collect();
+            self.editor.caret = self.editor.text.len();
         }
         if screen == Screen::GoToPage {
             self.editor = Editor::new(96);
@@ -3539,6 +3553,15 @@ impl Reader {
                     .as_mut()
                     .ok_or("Open a fixed-page document first")?;
                 fixed.reading.set_zoom(level)?;
+                self.show(Screen::Fixed);
+                self.record_position();
+            }
+            Action::SetFixedTileZoom(axis, count) => {
+                let fixed = self
+                    .fixed
+                    .as_mut()
+                    .ok_or("Open a fixed-page document first")?;
+                fixed.reading.set_tile_zoom(axis, count)?;
                 self.show(Screen::Fixed);
                 self.record_position();
             }
@@ -7380,6 +7403,9 @@ impl Reader {
                 Screen::NumberingValue(
                     NumberField::AutoTurnOverlapHorizontal | NumberField::AutoTurnOverlapVertical,
                 ) => ("Zoom overlap: 0 to 90%", "Set"),
+                Screen::NumberingValue(NumberField::FixedTileZoom(_)) => {
+                    ("Choose 0.1 to 8.0, in steps of 0.1", "Set")
+                }
                 Screen::NumberingValue(NumberField::FooterTrackMinimumWidth) => {
                     ("Minimum progress bar width: 5 to 90%, in 5% steps", "Set")
                 }
@@ -12820,6 +12846,137 @@ mod tests {
             (rect.x + rect.w / 2) as f32,
             (rect.y + rect.h / 2) as f32,
         ))
+    }
+
+    #[test]
+    fn fixed_tile_zoom_controls_render_apply_custom_count_and_resume_a_scan() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Harbor Survey.pdf");
+        let mut page = String::from(
+            "BT /F1 36 Tf 42 532 Td (Harbor Survey) Tj ET\n+             BT /F1 14 Tf 43 501 Td (Approach notes for the eastern basin) Tj ET\n",
+        );
+        for (x, heading, notes) in [
+            (
+                43,
+                "Approach",
+                [
+                    "Enter between the shore markers.",
+                    "Keep the outer beacon in view.",
+                    "The western channel is narrow.",
+                ],
+            ),
+            (
+                332,
+                "Soundings",
+                [
+                    "Check the tide before crossing.",
+                    "Read depths at the north jetty.",
+                    "The rocks are exposed at low tide.",
+                ],
+            ),
+            (
+                621,
+                "Landing",
+                [
+                    "Wait beside the sheltered pier.",
+                    "Expect a strong ebb near the slip.",
+                    "Use the lower steps at low tide.",
+                ],
+            ),
+        ] {
+            page.push_str(&format!("BT /F1 22 Tf {x} 434 Td ({heading}) Tj ET\n"));
+            for (i, note) in notes.into_iter().enumerate() {
+                let y = 391 - i * 29;
+                page.push_str(&format!("BT /F1 13 Tf {x} {y} Td ({note}) Tj ET\n"));
+            }
+        }
+        fs::write(
+            &path,
+            crate::fixed::tests::pdf_objects(&[
+                "<< /Type /Catalog /Pages 2 0 R >>".into(),
+                "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 900 600] >>".into(),
+                "<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 6 0 R >> >> /Contents 5 0 R >>".into(),
+                "<< /Type /Page /Parent 2 0 R >>".into(),
+                format!("<< /Length {} >>\nstream\n{page}endstream", page.len()),
+                "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".into(),
+            ]),
+        )
+        .unwrap();
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        app.open_path(&path).unwrap();
+        assert!(
+            app.fixed
+                .as_ref()
+                .unwrap()
+                .reading
+                .preferences()
+                .tile_zoom
+                .is_none()
+        );
+
+        fn view_controls(app: &mut Reader) {
+            app.open_reading_edge(false, WIDTH as f32 / 2.0);
+            if app.reading_panel != Some(BarPanel::View) {
+                assert_eq!(tap_reading_control(app, "View"), Change::Partial);
+            }
+        }
+        view_controls(&mut app);
+        assert_eq!(
+            tap_reading_config_choice(&mut app, "Columns", "2"),
+            Change::Partial
+        );
+        let reading = &app.fixed.as_ref().unwrap().reading;
+        assert_eq!(
+            reading.preferences().tile_zoom.unwrap().axis,
+            FixedTileAxis::Columns
+        );
+        assert!(reading.page_status().contains("2.0 columns"));
+
+        view_controls(&mut app);
+        capture_test_screen(&app, &fonts, "READER_FIXED_TILE_ZOOM_FRAME", false);
+        assert_eq!(
+            tap_reading_config_choice(&mut app, "Rows", "Custom"),
+            Change::Partial
+        );
+        assert_eq!(
+            app.screen,
+            Screen::NumberingValue(NumberField::FixedTileZoom(FixedTileAxis::Rows))
+        );
+        let layout = Layout::new(WIDTH, HEIGHT, 4, 5);
+        let (_, submit) = layout
+            .keyboard_keys_with(app.editor.layer, "Set")
+            .into_iter()
+            .find(|(key, _)| key.key == primitive_ui::Key::Go)
+            .unwrap();
+        let set = Input::Tap(
+            (submit.x + submit.w / 2) as f32,
+            (submit.y + submit.h / 2) as f32,
+        );
+        app.editor.text = "8.1".chars().collect();
+        assert_eq!(app.input(set), Change::Partial);
+        assert!(app.notice.as_deref().unwrap().contains("0.1 to 8.0"));
+        app.editor.text = "2.5".chars().collect();
+        assert_eq!(app.input(set), Change::Partial);
+        assert_eq!(app.screen, Screen::Fixed);
+        let reading = &app.fixed.as_ref().unwrap().reading;
+        assert_eq!(reading.preferences().tile_zoom.unwrap().count_tenths, 25);
+        assert!(reading.page_status().contains("2.5 rows"));
+        app.input(Input::PageForward);
+        app.tick(Instant::now() + Duration::from_secs(1));
+        let saved = app.fixed.as_ref().unwrap().reading.preferences();
+        let origin = app.fixed.as_ref().unwrap().reading.history_point().unwrap();
+        assert_eq!(app.current_position().unwrap().page, 0);
+        app.save().unwrap();
+
+        let mut reopened = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+        reopened.open_path(&path).unwrap();
+        let reading = &reopened.fixed.as_ref().unwrap().reading;
+        assert_eq!(reading.preferences(), saved);
+        assert!((reading.history_point().unwrap() - origin).hypot() < 0.01);
     }
 
     #[test]

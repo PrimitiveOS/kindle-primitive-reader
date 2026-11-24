@@ -458,9 +458,42 @@ impl BookPreferences {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FixedTileAxis {
+    Columns,
+    Rows,
+}
+
+impl FixedTileAxis {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Columns => "Columns",
+            Self::Rows => "Rows",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
+pub struct FixedTileZoom {
+    pub axis: FixedTileAxis,
+    pub count_tenths: u8,
+    pub width_factor: f32,
+}
+
+impl FixedTileZoom {
+    fn is_valid(&self) -> bool {
+        (1..=80).contains(&self.count_tenths)
+            && self.width_factor.is_finite()
+            && self.width_factor > 0.0
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
 pub struct FixedPreferences {
     pub zoom: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tile_zoom: Option<FixedTileZoom>,
     pub turns: u8,
     pub width_fit: bool,
     pub height_fit: bool,
@@ -517,10 +550,20 @@ impl FixedPreferences {
     }
 
     pub fn normalized(self) -> Self {
+        let tile_zoom = self.tile_zoom.filter(FixedTileZoom::is_valid);
+        let width_fit = self.width_fit && tile_zoom.is_none();
         Self {
-            zoom: self.zoom.min(MAX_FIXED_ZOOM),
+            zoom: if tile_zoom.is_some() {
+                0
+            } else {
+                self.zoom.min(MAX_FIXED_ZOOM)
+            },
+            tile_zoom,
             turns: self.turns % 4,
-            height_fit: self.height_fit && !self.width_fit,
+            width_fit,
+            height_fit: self.height_fit && !width_fit && tile_zoom.is_none(),
+            continuous: self.continuous && tile_zoom.is_none(),
+            spread: self.spread && tile_zoom.is_none(),
             continuous_gap: self.continuous_gap.min(MAX_CONTINUOUS_GAP),
             straighten_limit: self.straighten_limit.min(MAX_STRAIGHTEN_DEGREES),
             scan_white_level: self.scan_white_level.filter(valid_white_level),
@@ -564,6 +607,9 @@ impl<'de> Deserialize<'de> for FixedPreferences {
         let width_fit = switch("width_fit");
         Ok(Self {
             zoom: integer("zoom").min(MAX_FIXED_ZOOM as u64) as usize,
+            tile_zoom: values
+                .get("tile_zoom")
+                .and_then(|value| serde_json::from_value(value.clone()).ok()),
             turns: (integer("turns") % 4) as u8,
             width_fit,
             height_fit: !width_fit && switch("height_fit"),
@@ -591,7 +637,8 @@ impl<'de> Deserialize<'de> for FixedPreferences {
                 .get("crop")
                 .and_then(|value| serde_json::from_value(value.clone()).ok())
                 .filter(valid_crop),
-        })
+        }
+        .normalized())
     }
 }
 
@@ -3156,6 +3203,28 @@ mod tests {
     }
 
     #[test]
+    fn fixed_tile_zoom_round_trips_and_an_invalid_value_keeps_legacy_zoom() {
+        let view: FixedPreferences = serde_json::from_str(
+            r#"{"zoom":2,"width_fit":true,"continuous":true,"tile_zoom":{"axis":"columns","count_tenths":20,"width_factor":1.6}}"#,
+        ).unwrap();
+        assert_eq!(view.tile_zoom.unwrap().axis, FixedTileAxis::Columns);
+        assert_eq!(view.zoom, 0);
+        assert!(!view.width_fit && !view.continuous);
+        let saved = serde_json::to_vec(&view).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<FixedPreferences>(&saved).unwrap(),
+            view
+        );
+
+        let old: FixedPreferences = serde_json::from_str(
+            r#"{"zoom":2,"width_fit":true,"tile_zoom":{"axis":"rows","count_tenths":81,"width_factor":0.0}}"#,
+        ).unwrap();
+        assert!(old.tile_zoom.is_none());
+        assert!(old.width_fit);
+        assert_eq!(old.zoom, 2);
+    }
+
+    #[test]
     fn fixed_view_recovers_unusable_fields_and_preserves_progress() {
         let state: BookState = serde_json::from_str(
             r#"{
@@ -3171,6 +3240,7 @@ mod tests {
             state.fixed_preferences,
             FixedPreferences {
                 zoom: 4,
+                tile_zoom: None,
                 turns: 3,
                 width_fit: true,
                 height_fit: false,

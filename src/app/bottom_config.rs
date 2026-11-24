@@ -1,6 +1,7 @@
 //! Reading adjustments that can be applied without leaving the visible page.
 use super::{Action, BarPanel, Reader, Screen};
 use crate::app::NumberField;
+use crate::library::FixedTileAxis;
 use crate::reading_controls::{ReadingOrientation, ScreenPalette};
 use crate::{BaseStylesheet, FontHinting, Settings, TextAlignment};
 
@@ -849,7 +850,10 @@ impl Reader {
                                 Choice::option(
                                     "Fit page",
                                     Action::FitPage(false),
-                                    prefs.zoom == 0 && !prefs.width_fit && !prefs.height_fit,
+                                    prefs.zoom == 0
+                                        && prefs.tile_zoom.is_none()
+                                        && !prefs.width_fit
+                                        && !prefs.height_fit,
                                 ),
                                 Choice::option("Fit width", Action::FitPage(true), prefs.width_fit),
                                 Choice::option("Fit height", Action::FitHeight, prefs.height_fit),
@@ -864,10 +868,33 @@ impl Reader {
                                     Choice::option(
                                         title,
                                         Action::SetFixedZoom(index),
-                                        prefs.zoom == index,
+                                        prefs.zoom == index && prefs.tile_zoom.is_none(),
                                     )
                                 }),
                         ));
+                    }
+                    if reading.supports_tile_zoom() {
+                        for axis in [FixedTileAxis::Columns, FixedTileAxis::Rows] {
+                            let selected = prefs
+                                .tile_zoom
+                                .filter(|tile| tile.axis == axis)
+                                .map(|tile| tile.count_tenths);
+                            let presets = (1_u8..=8).map(|count| {
+                                let count_tenths = count * 10;
+                                Choice::option(
+                                    count.to_string(),
+                                    Action::SetFixedTileZoom(axis, count_tenths),
+                                    selected == Some(count_tenths),
+                                )
+                            });
+                            let custom = Choice::link(
+                                "Custom",
+                                Action::Show(Screen::NumberingValue(NumberField::FixedTileZoom(
+                                    axis,
+                                ))),
+                            );
+                            rows.push(ConfigRow::new(axis.label(), presets.chain([custom])));
+                        }
                     }
                     rows.push(ConfigRow::new(
                         "Rotation",
