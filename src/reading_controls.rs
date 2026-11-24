@@ -131,6 +131,8 @@ pub(crate) struct ReadingControls {
     pub footer_items: u16,
     #[serde(default, skip_serializing_if = "is_zero_u64")]
     pub footer_order: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub footer_item_cycle: Option<FooterItemCycle>,
     #[serde(skip_serializing_if = "FooterSeparator::is_default")]
     pub footer_separator: FooterSeparator,
     /// Show KOReader's optional hairline above the status footer.
@@ -653,7 +655,15 @@ impl StatusBar {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default)]
+pub(crate) struct FooterItemCycle {
+    /// The unselected step hides the status until the next tap.
+    pub selected: Option<FooterItem>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
 #[repr(u8)]
 pub(crate) enum FooterItem {
     CurrentPage,

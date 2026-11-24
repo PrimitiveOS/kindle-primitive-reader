@@ -3340,6 +3340,16 @@ impl Reader {
                         controls.footer_items = crate::reading_controls::FooterItem::DEFAULT_MASK;
                     }
                 }
+                if let Some(cycle) = &mut controls.footer_item_cycle
+                    && cycle
+                        .selected
+                        .is_some_and(|item| controls.footer_items & item.bit() == 0)
+                {
+                    cycle.selected =
+                        crate::reading_controls::FooterItem::ordered(controls.footer_order)
+                            .into_iter()
+                            .find(|item| controls.footer_items & item.bit() != 0);
+                }
                 let reflow_layout_changed = controls.overlap_footer != self.controls.overlap_footer;
                 let resized = if reflow_layout_changed {
                     self.active
@@ -7577,6 +7587,13 @@ impl Reader {
                         }
                         Action::LibraryExport(library_export::Command::ToggleKindleClippings) => {
                             RowAccessory::Toggle(self.library_export.kindle_clippings_enabled())
+                        }
+                        Action::SetReadingControls(controls)
+                            if self.screen == Screen::FooterSettings
+                                && controls.footer_item_cycle.is_some()
+                                    != self.controls.footer_item_cycle.is_some() =>
+                        {
+                            RowAccessory::Toggle(self.controls.footer_item_cycle.is_some())
                         }
                         Action::SetReadingControls(controls)
                             if self.screen == Screen::SearchSettings
