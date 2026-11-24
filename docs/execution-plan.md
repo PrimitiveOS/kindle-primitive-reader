@@ -55,7 +55,9 @@ settings and the reading position in reflow, PDF, DjVu and comics. Compare
 the publisher-box position and raster bands against the pinned native
 rendering. Verify source anchors, gap retention and the returned portrait
 pixels for continuous PDF, comics and fixed-layout EPUB staging. Device
-landscape remains gated on the runtime and Launcher handoff.
+landscape remains gated on the runtime and Launcher handoff. The integrated
+Mac build passed 1,239 checks. The focused captures cover three Skim placements,
+selective profiles in light and dark, and the continuous PDF round trip.
 [Skim controls](navigation-preferences.md#skim-position) · [Reading profiles](reading-profiles.md) · [Publisher geometry](render-modes.md#physical-space-and-paint) · [Fixed-page viewports](reading-edition-orientation.md#fixed-page-viewport-preparation)
 
 ## Reader 0.1.48 verification plan
