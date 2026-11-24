@@ -48,13 +48,21 @@ impl Choice {
 pub(super) struct ConfigRow {
     pub(super) label: String,
     pub(super) choices: Vec<Choice>,
+    pub(super) information: Option<&'static str>,
 }
 
 impl ConfigRow {
+    fn unavailable(label: &str, message: &'static str) -> Self {
+        let mut row = Self::new(label, []);
+        row.information = Some(message);
+        row
+    }
+
     fn new(label: impl Into<String>, choices: impl IntoIterator<Item = Choice>) -> Self {
         Self {
             label: label.into(),
             choices: choices.into_iter().collect(),
+            information: None,
         }
     }
 }
@@ -615,6 +623,25 @@ impl Reader {
                                 )
                             }),
                         ),
+                        if !settings.publisher_styles {
+                            ConfigRow::unavailable("Embedded fonts", "Turn on Publisher CSS")
+                        } else if !active.has_embedded_fonts() {
+                            ConfigRow::unavailable("Embedded fonts", "No embedded fonts found")
+                        } else {
+                            ConfigRow::new(
+                                "Embedded fonts",
+                                [("Off", false), ("On", true)].map(|(title, embedded_fonts)| {
+                                    Choice::option(
+                                        title,
+                                        Action::Text(Settings {
+                                            embedded_fonts,
+                                            ..settings
+                                        }),
+                                        settings.embedded_fonts == embedded_fonts,
+                                    )
+                                }),
+                            )
+                        },
                         ConfigRow::new(
                             "Zoom (dpi)",
                             crate::RENDER_DPI_PRESETS.map(|render_dpi| {

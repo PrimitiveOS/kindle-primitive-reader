@@ -4,6 +4,45 @@ An EPUB can give regular, bold, italic and bold italic separate font files under
 
 The comparison uses KOReader v2026.07.1. Its EPUB parser passes each resource, family, bold flag and italic flag to the document font list. KOReader’s Lua font control toggles embedded faces and its native interface distinguishes registered and instantiated document families. Reader uses Parley’s font matcher, including numeric CSS weights. [CREngine EPUB parser at the pinned revision](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/epubfmt.cpp#L1043) · [KOReader font control](https://github.com/koreader/koreader/blob/v2026.07.1/frontend/document/credocument.lua#L1341) · [KOReader native face inventory](https://github.com/koreader/koreader-base/blob/6e4bc81af4e04f78d81677a323a780a71b29702a/cre.cpp#L1095)
 
+## Embedded fonts control
+
+Open the bottom toolbar and choose **Text › Rendering › Embedded fonts**.
+It defaults to **On** and is saved for the book. **Off** skips registration
+of the book's font files. Publisher CSS can still select an installed
+family or specify sizes and other appearance. The existing **Use selected
+font** action overrides publisher family choices.
+
+Reader checks for a supported declared font before showing the On and Off
+choices. The choice is unavailable while Publisher CSS is off. Turning CSS
+back on restores the book's previous embedded-font choice.
+
+A positive registration in the current chapter is enough to enable the
+control. Reader can also check up to 64 stylesheets and the first 96 spine
+items within a 2 MiB chapter-markup budget when the Rendering panel opens.
+It uses the normal CSS parser and bounded font loader to distinguish a
+usable declaration from an unused font asset or a missing source URL. The
+result is cached for the open book. The control can become available later
+if a newly loaded chapter registers a face beyond these discovery limits.
+KOReader can inspect a broader book-wide registry and show which families
+its engine used.
+
+The pinned KOReader replay executes the actual control availability and
+change callbacks against the authored Harbor lettering EPUB. Changing
+the bundled face preserves the installed Silkscreen sample and publisher
+inset, and switching back restores the original pixels. The equivalent
+Reader tests exercise a later spine item, no usable faces, independent
+CSS/font choices, reopen, and source selection geometry.
+
+[Available control](screenshots/embedded-fonts-available.png) ·
+[Saved Off in landscape](screenshots/embedded-fonts-off-landscape.png) ·
+[Unavailable control](screenshots/embedded-fonts-unavailable.png) ·
+[KOReader On](screenshots/embedded-fonts-stock-on.png) ·
+[KOReader Off](screenshots/embedded-fonts-stock-off.png) ·
+[Reader On](screenshots/embedded-fonts-reader-on.png) ·
+[Reader Off](screenshots/embedded-fonts-reader-off.png) ·
+[Native KOReader replay](../scripts/koreader-embedded-font-toggle-check.lua) ·
+[Pinned control](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/creoptions.lua#L693-L717)
+
 ## Reading checks
 
 The authored letterpress EPUB assigns the two bundled OFL fonts to four faces and another display family. The normal text has round forms and the printer’s headings and imprint have square forms. A second source for the normal face and a missing final URL exercise CSS precedence and fallback. The test checks the actual font bytes used by each glyph run, toggles publisher styles and reopens the original source anchor. Each font’s original license travels inside the fixture. [Simulator page](screenshots/publisher-faces.png) · [Fixture](../tests/fixtures/publisher-faces.epub)

@@ -43,6 +43,11 @@ const MAX_RULES: usize = 256;
 const MAX_SELECTOR_BYTES: usize = 128;
 const MAX_SELECTORS_PER_RULE: usize = 24;
 const MAX_SELECTOR_STEPS: usize = 8;
+#[cfg(feature = "kindle")]
+mod embedded_inventory;
+#[cfg(feature = "kindle")]
+pub(crate) use embedded_inventory::MAX_INVENTORY_SHEETS;
+
 const MAX_FACE_RULES: usize = 64;
 const MAX_FONT_READS: usize = 6;
 const MAX_FONT_BYTES: usize = 2 * 1024 * 1024;
@@ -431,7 +436,18 @@ impl BookStyle {
         Ok(self)
     }
 
+    #[cfg(test)]
     pub fn load(book: &mut Book, chapter: &str, source: &Source, fonts: &mut FontContext) -> Self {
+        Self::load_author(book, chapter, source, fonts, true)
+    }
+
+    fn load_author(
+        book: &mut Book,
+        chapter: &str,
+        source: &Source,
+        fonts: &mut FontContext,
+        embedded_fonts: bool,
+    ) -> Self {
         let (mut styled, faces) = Self::load_sheets(book, chapter, source);
         styled.families.extend(
             fonts
@@ -439,7 +455,7 @@ impl BookStyle {
                 .family_names()
                 .map(|name| (name.to_ascii_lowercase(), Arc::from(name))),
         );
-        if !faces.is_empty() {
+        if embedded_fonts && !faces.is_empty() {
             styled.register_fonts(book, &faces, fonts);
         }
         styled
@@ -450,21 +466,30 @@ impl BookStyle {
         chapter: &str,
         source: &Source,
         fonts: &mut FontContext,
-        publisher_styles: bool,
-        selection: crate::BaseStylesheet,
+        settings: crate::Settings,
     ) -> Self {
-        let mut styled = if publisher_styles {
-            Self::load(book, chapter, source, fonts)
+        let mut styled = if settings.publisher_styles {
+            Self::load_author(book, chapter, source, fonts, settings.embedded_fonts)
         } else {
             Self::default()
         };
-        let selection = if selection == crate::BaseStylesheet::Auto {
+        let selection = if settings.base_stylesheet == crate::BaseStylesheet::Auto {
             book.automatic_stylesheet()
         } else {
-            selection
+            settings.base_stylesheet
         };
         styled.read_base_stylesheet(source, selection);
         styled
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn publication_has_embedded_fonts(book: &mut Book) -> bool {
+        embedded_inventory::has_fonts(book)
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn has_registered_fonts(&self) -> bool {
+        !self.font_weights.is_empty()
     }
 
     /// The exact same stylesheet selection, caps, cascade and inline handling as

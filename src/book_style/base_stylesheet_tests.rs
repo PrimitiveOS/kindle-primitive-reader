@@ -6,9 +6,17 @@ fn styled(markup: &str, selection: crate::BaseStylesheet) -> (Source, Vec<Style>
     let chapter = book.chapters[0].href.clone();
     let mut fonts =
         crate::font_context(&[crate::test_fixture("fonts/NotoSans-Regular.ttf")]).unwrap();
-    let styles =
-        BookStyle::load_with_base(&mut book, &chapter, &source, &mut fonts, true, selection)
-            .compute(&source.elements);
+    let styles = BookStyle::load_with_base(
+        &mut book,
+        &chapter,
+        &source,
+        &mut fonts,
+        crate::Settings {
+            base_stylesheet: selection,
+            ..Default::default()
+        },
+    )
+    .compute(&source.elements);
     (source, styles)
 }
 

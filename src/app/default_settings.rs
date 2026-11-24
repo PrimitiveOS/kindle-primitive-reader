@@ -54,6 +54,7 @@ impl Reader {
             font_gamma_index: Some(settings.font_gamma_index),
             font_weight_delta: Some(settings.font_weight_delta),
             publisher_styles: Some(settings.publisher_styles),
+            embedded_fonts: Some(settings.embedded_fonts),
             base_stylesheet: Some(settings.base_stylesheet),
             font_kerning: Some(settings.font_kerning),
             font_kerning_mode: Some(settings.effective_font_kerning_mode()),

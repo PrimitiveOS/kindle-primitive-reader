@@ -416,6 +416,8 @@ pub struct Settings {
     /// Delta from regular weight, in 100-weight-class units. Range -3 to +5.5.
     pub font_weight_delta: f32,
     pub override_fonts: bool,
+    /// Register font assets supplied by the publication's own CSS.
+    pub embedded_fonts: bool,
     pub disable_soft_hyphens: bool,
     pub automatic_hyphenation: bool,
     /// Load author stylesheets and apply inline CSS during native reflow.
@@ -480,6 +482,7 @@ impl Default for Settings {
             font_gamma_index: font_render::NORMAL_GAMMA,
             font_weight_delta: 0.0,
             override_fonts: false,
+            embedded_fonts: true,
             disable_soft_hyphens: false,
             automatic_hyphenation: true,
             publisher_styles: true,
@@ -996,6 +999,8 @@ chapter_probe! {
     pub author: Option<String>,
     pub chapter: String,
     pub chapter_label: String,
+    #[cfg(feature = "kindle")]
+    pub(crate) registered_embedded_fonts: bool,
     book: u64,
     chapters: Vec<Chapter>,
     pub toc: Vec<TocEntry>,
@@ -1125,6 +1130,7 @@ impl Probe {
         if engine == Engine::Blitz
             && (!user_styles.is_empty()
                 || !settings.publisher_styles
+                || !settings.embedded_fonts
                 || settings.effective_font_kerning_mode() != FontKerningMode::Best
                 || settings.font_hinting != FontHinting::Off
                 || settings.font_gamma_index != font_render::NORMAL_GAMMA
@@ -1174,6 +1180,8 @@ impl Probe {
         let mut reading_flow = flow_view::ChapterFlow::default();
         #[cfg(feature = "kindle")]
         let mut requests_vertical = false;
+        #[cfg(feature = "kindle")]
+        let mut registered_embedded_fonts = false;
         let (renderer, mut lines, content_height) = match engine {
             Engine::Blitz => {
                 let (layout, lines, extent) =
@@ -1182,14 +1190,13 @@ impl Probe {
             }
             Engine::Parley => {
                 let author = book_style::BookStyle::load_with_base(
-                    &mut book,
-                    &href,
-                    &source,
-                    &mut fonts,
-                    settings.publisher_styles,
-                    settings.base_stylesheet,
+                    &mut book, &href, &source, &mut fonts, settings,
                 )
                 .with_user_css(user_styles)?;
+                #[cfg(feature = "kindle")]
+                {
+                    registered_embedded_fonts = author.has_registered_fonts();
+                }
                 let styles = author.compute_for_settings(&source.elements, settings);
                 reading_flow = flow_view::ChapterFlow::from_styles(&source, &styles)?;
                 #[cfg(feature = "kindle")]
@@ -1346,6 +1353,8 @@ impl Probe {
             first_series,
             chapter: href,
             chapter_label,
+            #[cfg(feature = "kindle")]
+            registered_embedded_fonts,
             book: publication,
             spine_rtl,
             #[cfg(feature = "kindle")]

@@ -287,6 +287,7 @@ impl Reader {
             id: recovery.id,
             reading: candidate,
             numbering: None,
+            embedded_font_inventory: None,
         });
         self.logical_recovery = None;
         self.pages_since_refresh = 0;

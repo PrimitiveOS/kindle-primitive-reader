@@ -488,6 +488,8 @@ pub struct BookPreferences {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub publisher_styles: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub embedded_fonts: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub base_stylesheet: Option<crate::BaseStylesheet>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub font_kerning: Option<bool>,
@@ -620,6 +622,7 @@ impl BookPreferences {
                 .filter(|delta| (-3.0..=5.5).contains(delta))
                 .unwrap_or(settings.font_weight_delta),
             publisher_styles: self.publisher_styles.unwrap_or(settings.publisher_styles),
+            embedded_fonts: self.embedded_fonts.unwrap_or(settings.embedded_fonts),
             base_stylesheet: self.base_stylesheet.unwrap_or(settings.base_stylesheet),
             font_kerning,
             font_kerning_mode: kerning_mode,

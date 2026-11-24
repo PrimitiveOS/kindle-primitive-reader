@@ -38,6 +38,7 @@ pub(crate) mod back_navigation;
 #[cfg(test)]
 mod backup_defaults_integration_tests;
 pub(crate) mod eager_typography;
+mod embedded_fonts;
 mod end_of_book;
 #[cfg(test)]
 mod epub_gif_tests;
@@ -771,6 +772,7 @@ struct ActiveBook {
     id: u64,
     reading: Reading,
     numbering: Option<crate::synthetic_pages::CharacterPages>,
+    embedded_font_inventory: Option<bool>,
 }
 
 struct SavedMarkRow {
@@ -1690,6 +1692,7 @@ impl Reader {
             id,
             reading,
             numbering: None,
+            embedded_font_inventory: None,
         });
         self.style_view = Default::default();
         let active = self.active.as_ref().unwrap();
@@ -4334,6 +4337,7 @@ impl Reader {
                 preferences.font_gamma_index = Some(settings.font_gamma_index);
                 preferences.font_weight_delta = Some(settings.font_weight_delta);
                 preferences.publisher_styles = Some(settings.publisher_styles);
+                preferences.embedded_fonts = Some(settings.embedded_fonts);
                 preferences.base_stylesheet = Some(settings.base_stylesheet);
                 preferences.font_kerning = Some(settings.font_kerning);
                 preferences.font_kerning_mode = Some(settings.effective_font_kerning_mode());
@@ -9835,6 +9839,9 @@ impl App for Reader {
 
     fn storage_returned(&mut self) -> io::Result<()> {
         self.gestures.clear_assigned_corner_hold();
+        if let Some(book) = &mut self.active {
+            book.embedded_font_inventory = None;
+        }
         self.eager_typography.cancel();
         self.alternative_contents = Default::default();
         self.sync_alternative_contents();

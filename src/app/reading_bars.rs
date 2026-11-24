@@ -171,6 +171,7 @@ struct Bars {
     bottom: Vec<Rect>,
     title: Option<Rect>,
     row_labels: Vec<(Rect, String)>,
+    row_information: Vec<(Rect, &'static str)>,
     buttons: Vec<Button>,
 }
 
@@ -282,6 +283,9 @@ impl Bars {
                     .push((Rect::new(34, y, label_width - 18, row_height), row.label));
             }
             let options = Rect::new(16 + label_width, y, width - 32 - label_width, row_height);
+            if let Some(information) = row.information {
+                self.row_information.push((options, information));
+            }
             let count = row.choices.len();
             for (index, choice) in row.choices.into_iter().enumerate() {
                 let target = if choice.selected {
@@ -511,6 +515,16 @@ impl Reader {
             .rect
     }
 
+    #[cfg(test)]
+    pub(super) fn reading_information_in_row(&self, label: &str) -> Option<&'static str> {
+        let bars = self.reading_bars();
+        let (row, _) = bars.row_labels.iter().find(|(_, entry)| entry == label)?;
+        bars.row_information
+            .into_iter()
+            .find(|(rect, _)| rect.y == row.y)
+            .map(|(_, information)| information)
+    }
+
     fn page_actions(&self) -> Vec<Item> {
         let mut items = vec![
             Item::new("Thumbnails", Action::Overview),
@@ -555,6 +569,13 @@ impl Reader {
                 Rect::new(rect.x, rect.y + (rect.h - 62) / 2, rect.w, 62),
                 &label,
                 CAPTION.lines(2),
+            );
+        }
+        for (rect, information) in bars.row_information {
+            canvas.text(
+                Rect::new(rect.x + 12, rect.y + (rect.h - 62) / 2, rect.w - 24, 62),
+                information,
+                CAPTION.lines(2).ink(85),
             );
         }
         for button in bars.buttons {
@@ -674,6 +695,13 @@ impl Reader {
         self.remember_menu(|menu| menu.top = Some(group));
     }
 
+    fn set_bottom_panel(&mut self, panel: Option<BarPanel>) {
+        self.reading_panel = panel;
+        if panel == Some(BarPanel::TextRendering) {
+            self.prepare_embedded_font_inventory();
+        }
+    }
+
     fn remember_bottom_panel(&mut self, panel: BarPanel) {
         match panel.tab() {
             BarPanel::Text => self.last_text_panel = panel,
@@ -700,7 +728,7 @@ impl Reader {
             self.remember_group(group);
         }
         if self.reading_bottom {
-            self.reading_panel = Some(self.last_bottom_panel());
+            self.set_bottom_panel(Some(self.last_bottom_panel()));
         }
         Change::Partial
     }
@@ -715,7 +743,7 @@ impl Reader {
         if (x - width / 2.0).abs() <= 150.0 && (height * 0.8..height * 12.0 / 13.0).contains(&y) {
             // The lower menu strip stops where the status footer takes over.
             self.show(screen);
-            self.reading_panel = Some(self.last_bottom_panel());
+            self.set_bottom_panel(Some(self.last_bottom_panel()));
             true
         } else if (width / 3.0..=width * 2.0 / 3.0).contains(&x)
             && (0.0..viewport.page_height() as f32 * 0.55).contains(&y)
@@ -741,7 +769,7 @@ impl Reader {
                     self.screen = screen;
                     self.reading_top = top;
                     self.reading_bottom = bottom;
-                    self.reading_panel = panel;
+                    self.set_bottom_panel(panel);
                     self.top_group = group;
                     let now = Instant::now();
                     self.update_stats_activity(now);
@@ -776,8 +804,9 @@ impl Reader {
                     Some(Target::Exit) => self.exit(),
                     Some(Target::Toggle(panel)) => {
                         self.top_group = None;
-                        self.reading_panel =
-                            (self.reading_panel.map(BarPanel::tab) != Some(panel)).then_some(panel);
+                        self.set_bottom_panel(
+                            (self.reading_panel.map(BarPanel::tab) != Some(panel)).then_some(panel),
+                        );
                         if let Some(panel) = self.reading_panel {
                             self.remember_bottom_panel(panel);
                         }
@@ -790,7 +819,7 @@ impl Reader {
                         Change::Partial
                     }
                     Some(Target::BottomSection(panel)) => {
-                        self.reading_panel = Some(panel);
+                        self.set_bottom_panel(Some(panel));
                         self.remember_bottom_panel(panel);
                         Change::Partial
                     }

@@ -99,6 +99,8 @@ enum Content {
         archive: Archive,
         package_path: String,
         fonts: Option<crate::epub_font::EmbeddedFonts>,
+        #[cfg(feature = "kindle")]
+        stylesheets: Vec<String>,
     },
     Loose {
         metadata: crate::publication_metadata::Metadata,
@@ -430,6 +432,13 @@ impl Book {
                 archive,
                 package_path,
                 fonts,
+                #[cfg(feature = "kindle")]
+                stylesheets: manifest
+                    .values()
+                    .filter(|item| item.media.eq_ignore_ascii_case("text/css"))
+                    .take(crate::book_style::MAX_INVENTORY_SHEETS)
+                    .map(|item| item.path.clone())
+                    .collect(),
             },
         })
     }
@@ -457,6 +466,42 @@ impl Book {
                     !extension.eq_ignore_ascii_case("ttf") && !extension.eq_ignore_ascii_case("otf")
                 })
             }))
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn may_have_embedded_fonts(&self) -> bool {
+        let has_font_extension = |path: &str| {
+            path.rsplit_once('.').is_some_and(|(_, extension)| {
+                extension.eq_ignore_ascii_case("ttf") || extension.eq_ignore_ascii_case("otf")
+            })
+        };
+        match &self.content {
+            Content::Archive {
+                archive: Archive::Zip(archive),
+                ..
+            } => archive.zip.file_names().any(has_font_extension),
+            Content::Archive {
+                archive: Archive::Folder(_),
+                ..
+            } => true,
+            Content::Loose {
+                fonts, resources, ..
+            } => {
+                fonts
+                    .as_ref()
+                    .is_some_and(|source| !source.records.is_empty())
+                    || resources.keys().any(|path| has_font_extension(path))
+            }
+            Content::Chm(_) => false,
+        }
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn publisher_stylesheets(&self) -> &[String] {
+        match &self.content {
+            Content::Archive { stylesheets, .. } => stylesheets,
+            _ => &[],
+        }
     }
 
     pub(crate) fn package_xml(&mut self) -> Result<String> {
