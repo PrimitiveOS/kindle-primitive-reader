@@ -143,6 +143,9 @@ impl Reader {
     }
 
     fn supports_landscape_scene(&self) -> bool {
+        if matches!(self.screen, Screen::Library | Screen::LibraryFind) {
+            return true;
+        }
         (matches!(
             self.screen,
             Screen::Book | Screen::BookTools | Screen::Fixed | Screen::FixedTools | Screen::Skim

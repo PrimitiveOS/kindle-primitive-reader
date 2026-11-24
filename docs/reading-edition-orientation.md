@@ -146,9 +146,10 @@ A session with a negotiated Launcher display shows Landscape Left and
 Landscape Right in the lower Screen panel and Quick Display. Selecting
 a direction saves the edition preference after the runtime confirms the
 prepared frame and the applied direction. Behind older Launchers the
-existing portrait controls remain available. Library, vertical chapters
-and other scenes awaiting their viewport updates follow Launcher and
-retain the edition preference for later reading.
+existing portrait controls remain available. Documents and its Find screen use the active orientation when
+Keep orientation is enabled. Vertical chapters and other scenes awaiting
+their viewport updates follow Launcher and retain the edition preference
+for later reading.
 
 [Negotiated portrait options](screenshots/negotiated-orientation-portrait.png) ·
 [Negotiated landscape options](screenshots/negotiated-orientation-landscape.png) ·

@@ -786,6 +786,7 @@ pub struct Reader {
     user_hyphenation_path: PathBuf,
     hyphenation_edit: Option<user_hyphenation::Draft>,
     browser: FileBrowser,
+    library_viewport: crate::session::ReadingViewport,
     archive: book_archive::Archive,
     bookmark_browser: bookmark_browser::Browser,
     library_query: String,
@@ -1013,6 +1014,7 @@ impl Reader {
             book_details: None,
             overview: None,
             skim: None,
+            library_viewport: crate::session::ReadingViewport::PORTRAIT,
             staged_viewport: None,
             accepted_viewport: None,
             pending_orientation: None,
@@ -4472,7 +4474,7 @@ impl Reader {
         } else if let Some(book) = &self.fixed {
             book.reading.viewport()
         } else {
-            crate::session::ReadingViewport::PORTRAIT
+            self.library_viewport
         }
     }
 
@@ -4958,7 +4960,7 @@ impl Reader {
     fn handle_find(&mut self, input: Input) -> Change {
         let edit = self.screen == Screen::EditNote;
         let note = self.screen == Screen::Note || edit;
-        let navigation = if self.screen == Screen::BookmarkFind {
+        let navigation = if matches!(self.screen, Screen::BookmarkFind | Screen::LibraryFind) {
             self.navigation_layout()
         } else {
             navigation_layout::NavigationLayout::PORTRAIT

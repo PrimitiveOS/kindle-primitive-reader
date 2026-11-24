@@ -1,18 +1,18 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use primitive_ui::{BLACK, HAIRLINE, Icon, PAPER, SECONDARY, back_button, chevron, header};
+use primitive_ui::{BLACK, HAIRLINE, Icon, PAPER, SECONDARY, chevron};
 
 use super::{
-    Action, BODY, CAPTION, Canvas, Change, HEIGHT, Input, Item, LIST_X, NEXT, PREV, ROW_HEIGHT,
-    Reader, Rect, Result, Screen, WIDTH, library_book_item, with_storage,
+    Action, BODY, CAPTION, Canvas, Change, Input, Item, LIST_X, ROW_HEIGHT, Reader, Rect, Result,
+    Screen, library_book_item, navigation_layout::NavigationLayout, with_storage,
 };
 use crate::library::{
     BrowseEntry, BrowseKind, BrowseList, FolderDirection, FolderOrder, FolderProgress, FolderSort,
 };
 
 pub(super) const LIBRARY_LIST_Y: i32 = 306;
-const FILE_ROWS: usize = 10;
+const MAX_FILE_ROWS: usize = 10;
 const UP: Rect = Rect::new(LIST_X, 150, 148, 54);
 const TOOLBAR: [(&str, Screen, i32); 5] = [
     ("Find", Screen::LibraryFind, 20),
@@ -33,7 +33,7 @@ const FILE: Icon = Icon {
 pub(super) struct FileBrowser {
     directory: PathBuf,
     listing: BrowseList,
-    page: usize,
+    first_item: usize,
 }
 
 impl FileBrowser {
@@ -41,12 +41,16 @@ impl FileBrowser {
         Self {
             directory: PathBuf::new(),
             listing,
-            page: 0,
+            first_item: 0,
         }
     }
 
+    fn page(&self, layout: NavigationLayout) -> usize {
+        self.first_item / file_rows(layout)
+    }
+
     pub(super) fn first_page(&mut self) {
-        self.page = 0;
+        self.first_item = 0;
     }
 }
 
@@ -59,7 +63,7 @@ impl Reader {
         Ok(FileBrowser {
             directory,
             listing,
-            page: 0,
+            first_item: 0,
         })
     }
 
@@ -125,7 +129,7 @@ impl Reader {
         {
             let continue_row =
                 self.show_continue() && self.library.recently_read().next().is_some();
-            self.browser.page = (index + usize::from(continue_row)) / FILE_ROWS;
+            self.browser.first_item = index + usize::from(continue_row);
         }
     }
 
@@ -148,10 +152,10 @@ impl Reader {
         }
         self.browser.directory = directory;
         self.browser.listing = listing;
-        self.browser.page = self
+        self.browser.first_item = self
             .browser
-            .page
-            .min(self.library_item_count().saturating_sub(1) / FILE_ROWS);
+            .first_item
+            .min(self.library_item_count().saturating_sub(1));
         Ok(())
     }
 
@@ -309,7 +313,8 @@ impl Reader {
     }
 
     pub(super) fn draw_library(&self, canvas: &mut Canvas) {
-        header(canvas, "Reader", "Exit");
+        let layout = self.navigation_layout();
+        layout.header_action(canvas, "Reader", "Exit");
         let path = if !self.library_query.is_empty() {
             format!("Search results · {}", self.library_query)
         } else {
@@ -326,19 +331,21 @@ impl Reader {
             path_x = UP.right() + 22;
         }
         canvas.text(
-            Rect::new(path_x, UP.y, WIDTH as i32 - LIST_X - path_x, UP.h),
+            Rect::new(path_x, UP.y, layout.width - LIST_X - path_x, UP.h),
             &path,
             BODY.bold(),
         );
-        for (label, _, rect) in toolbar_controls() {
+        for (label, _, rect) in toolbar_controls(layout) {
             canvas.button(rect, label, false, false);
         }
 
-        let first = self.browser.page * FILE_ROWS;
-        let rows: Vec<_> = self.library_items().skip(first).take(FILE_ROWS).collect();
+        let page = self.browser.page(layout);
+        let page_size = file_rows(layout);
+        let first = page * page_size;
+        let rows: Vec<_> = self.library_items().skip(first).take(page_size).collect();
         if rows.is_empty() {
             canvas.text(
-                Rect::new(LIST_X, LIBRARY_LIST_Y + 38, WIDTH as i32 - 2 * LIST_X, 82),
+                layout.body(LIBRARY_LIST_Y + 38, 82),
                 if self.library_query.is_empty() {
                     "This folder is empty."
                 } else {
@@ -347,11 +354,11 @@ impl Reader {
                 CAPTION.center(),
             );
         } else {
-            let mut card = file_row(0);
+            let mut card = file_row(layout, 0);
             card.h *= rows.len() as i32;
             canvas.card(card);
             for (index, item) in rows.iter().enumerate() {
-                let row = file_row(index);
+                let row = file_row(layout, index);
                 draw_file(canvas, row, item);
                 if index + 1 < rows.len() {
                     canvas.fill(
@@ -363,14 +370,14 @@ impl Reader {
         }
 
         let count = self.library_item_count();
-        if self.browser.page > 0 {
-            canvas.button(PREV, "Previous", false, false);
+        if page > 0 {
+            canvas.button(layout.previous(), "Previous", false, false);
         }
         if first + rows.len() < count {
-            canvas.button(NEXT, "Next", false, false);
+            canvas.button(layout.next(), "Next", false, false);
         }
-        let page_label = (count > FILE_ROWS)
-            .then(|| format!("{} / {}", self.browser.page + 1, count.div_ceil(FILE_ROWS)));
+        let page_label =
+            (count > page_size).then(|| format!("{} / {}", page + 1, count.div_ceil(page_size)));
         let limit_notice = (self.library_query.is_empty() && self.browser.listing.truncated)
             .then_some("Showing part of this folder");
         if let Some(text) = self
@@ -380,7 +387,7 @@ impl Reader {
             .or(page_label.as_deref())
         {
             canvas.text(
-                Rect::new(310, HEIGHT as i32 - 104, WIDTH as i32 - 620, 80),
+                layout.footer_text(310, 104, 80),
                 text,
                 CAPTION.center().lines(2),
             );
@@ -388,18 +395,21 @@ impl Reader {
     }
 
     pub(super) fn library_input(&mut self, input: Input) -> Change {
+        let layout = self.navigation_layout();
+        let page = self.browser.page(layout);
+        let page_size = file_rows(layout);
         let apply = |reader: &mut Reader, action| match reader.activate(action) {
             Ok(()) => Change::Partial,
             Err(error) => reader.report(error),
         };
         let direction = match input {
-            Input::Tap(x, y) if back_button(WIDTH as i32).contains(x, y) => return self.exit(),
+            Input::Tap(x, y) if layout.back().contains(x, y) => return self.exit(),
             Input::Tap(x, y) if UP.contains(x, y) => {
                 return self
                     .up_action()
                     .map_or(Change::None, |(action, _)| apply(self, action));
             }
-            Input::PageBack if self.browser.page == 0 => {
+            Input::PageBack if page == 0 => {
                 return self
                     .up_action()
                     .map_or(Change::None, |(action, _)| apply(self, action));
@@ -413,21 +423,18 @@ impl Reader {
                     -1
                 }
             }
-            Input::Tap(x, y) if PREV.contains(x, y) => -1,
-            Input::Tap(x, y) if NEXT.contains(x, y) => 1,
+            Input::Tap(x, y) if layout.previous().contains(x, y) => -1,
+            Input::Tap(x, y) if layout.next().contains(x, y) => 1,
             Input::Tap(x, y) | Input::LongTap(x, y) => {
                 if matches!(input, Input::Tap(..))
                     && let Some((_, screen, _)) =
-                        toolbar_controls().find(|(_, _, rect)| rect.contains(x, y))
+                        toolbar_controls(layout).find(|(_, _, rect)| rect.contains(x, y))
                 {
                     return apply(self, Action::Show(screen));
                 }
-                let action = (0..FILE_ROWS)
-                    .find(|&slot| file_row(slot).contains(x, y))
-                    .and_then(|slot| {
-                        self.library_items()
-                            .nth(self.browser.page * FILE_ROWS + slot)
-                    })
+                let action = (0..page_size)
+                    .find(|&slot| file_row(layout, slot).contains(x, y))
+                    .and_then(|slot| self.library_items().nth(page * page_size + slot))
                     .map(|item| item.action);
                 if matches!(input, Input::LongTap(..)) {
                     return match action {
@@ -446,23 +453,23 @@ impl Reader {
             }
             _ => return Change::None,
         };
-        let Some(page) = self
-            .browser
-            .page
+        let Some(page) = page
             .checked_add_signed(direction)
-            .filter(|page| page * FILE_ROWS < self.library_item_count())
+            .filter(|page| page * page_size < self.library_item_count())
         else {
             return Change::None;
         };
-        self.browser.page = page;
+        self.browser.first_item = page * page_size;
         self.notice = None;
         Change::Partial
     }
 }
 
-fn toolbar_controls() -> impl Iterator<Item = (&'static str, Screen, Rect)> {
+fn toolbar_controls(
+    layout: NavigationLayout,
+) -> impl Iterator<Item = (&'static str, Screen, Rect)> {
     let gap = 18;
-    let width = WIDTH as i32 - 2 * LIST_X - (TOOLBAR.len() as i32 - 1) * gap;
+    let width = layout.width - 2 * LIST_X - (TOOLBAR.len() as i32 - 1) * gap;
     let mut left = LIST_X;
     TOOLBAR.into_iter().map(move |(label, screen, percent)| {
         let button_width = width * percent / 100;
@@ -472,13 +479,13 @@ fn toolbar_controls() -> impl Iterator<Item = (&'static str, Screen, Rect)> {
     })
 }
 
-fn file_row(slot: usize) -> Rect {
-    Rect::new(
-        LIST_X,
-        LIBRARY_LIST_Y + slot as i32 * ROW_HEIGHT,
-        WIDTH as i32 - 2 * LIST_X,
-        ROW_HEIGHT,
-    )
+fn file_rows(layout: NavigationLayout) -> usize {
+    let body_height = layout.previous().y - LIBRARY_LIST_Y - 16;
+    ((body_height / ROW_HEIGHT).max(1) as usize).min(MAX_FILE_ROWS)
+}
+
+fn file_row(layout: NavigationLayout, slot: usize) -> Rect {
+    layout.body(LIBRARY_LIST_Y + slot as i32 * ROW_HEIGHT, ROW_HEIGHT)
 }
 
 fn file_item(entry: &BrowseEntry, sort: FolderSort) -> Item {
@@ -620,10 +627,12 @@ fn draw_file(canvas: &mut Canvas, row: Rect, item: &Item) {
 
 #[cfg(test)]
 mod tests {
+    use super::super::{HEIGHT, WIDTH};
     use super::*;
     use crate::app::tests::{Fixture, capture_test_screen, tap_reading_control};
     use crate::library::ReadingStatus;
     use primitive_app::{App, Lifecycle};
+    use primitive_ui::back_button;
     use std::fs;
 
     fn tap(rect: Rect) -> Input {
@@ -640,9 +649,11 @@ mod tests {
     }
 
     fn visible_file(app: &Reader, path: &Path) -> bool {
+        let layout = app.navigation_layout();
+        let rows = file_rows(layout);
         app.library_items()
-            .skip(app.browser.page * FILE_ROWS)
-            .take(FILE_ROWS)
+            .skip(app.browser.page(layout) * rows)
+            .take(rows)
             .any(|item| match item.action {
                 Action::Open(book) => book.library_path() == path,
                 Action::Browse(folder) => folder == path,
@@ -686,7 +697,7 @@ mod tests {
     }
 
     fn tool_button(screen: Screen) -> Rect {
-        toolbar_controls()
+        toolbar_controls(NavigationLayout::PORTRAIT)
             .find(|(_, target, _)| *target == screen)
             .unwrap()
             .2
@@ -694,6 +705,121 @@ mod tests {
 
     fn sort_button() -> Rect {
         tool_button(Screen::FolderOrder)
+    }
+
+    #[test]
+    fn document_browser_keeps_the_same_file_visible_through_negotiated_rotation() {
+        use crate::session::ReadingViewport;
+        use primitive_app::viewport::{LogicalTurn, Viewport, ViewportDecision, ViewportRequest};
+        use primitive_ui::Key;
+
+        let fixture = Fixture::new();
+        let folder = fixture.root.join("Field library");
+        fs::create_dir(&folder).unwrap();
+        fs::create_dir(folder.join("Reference")).unwrap();
+        for i in 1..=19 {
+            fs::write(
+                folder.join(format!("Survey {i:02}.txt")),
+                "Keep a record of the tides.",
+            )
+            .unwrap();
+        }
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        let mut reader = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+        reader.browse_to(PathBuf::from("Field library")).unwrap();
+        let portrait = NavigationLayout::PORTRAIT;
+        assert_eq!(file_rows(portrait), 10);
+        assert_eq!(reader.input(Input::PageForward), Change::Partial);
+        let retained = Path::new("Field library/Survey 10.txt");
+        assert!(visible_file(&reader, retained));
+
+        reader.controls.sticky_orientation = Some(super::super::ReadingOrientation::LandscapeRight);
+        let candidate = Viewport {
+            generation: 1,
+            turn: LogicalTurn::Clockwise,
+            logical_size: (1680, 1264),
+        };
+        assert_eq!(
+            reader.viewport_request(),
+            Some(ViewportRequest::Fixed(candidate.turn))
+        );
+        let font_paths: Vec<_> = reader
+            .fonts
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect();
+        let mut canvas = Canvas::new_viewport(1680, 1264, 1264, &font_paths).unwrap();
+        reader.stage_viewport(candidate).unwrap();
+        canvas.begin();
+        reader.draw_staged_viewport(&mut canvas).unwrap();
+        let staged = canvas.finish(false);
+        assert_eq!(reader.reading_viewport(), ReadingViewport::PORTRAIT);
+        reader.finish_viewport(candidate, ViewportDecision::Abort);
+        assert_eq!(reader.reading_viewport(), ReadingViewport::PORTRAIT);
+        assert!(visible_file(&reader, retained));
+
+        reader.stage_viewport(candidate).unwrap();
+        canvas.begin();
+        reader.draw_staged_viewport(&mut canvas).unwrap();
+        assert_eq!(canvas.finish(false), staged);
+        reader.finish_viewport(candidate, ViewportDecision::Commit);
+        let landscape = reader.navigation_layout();
+        assert_eq!(file_rows(landscape), 7);
+        assert_eq!(reader.browser.page(landscape), 1);
+        assert!(visible_file(&reader, retained));
+        assert_eq!(primitive_app::frame(&reader, &mut canvas, false), staged);
+        if let Some(path) = std::env::var_os("READER_LANDSCAPE_DOCUMENTS") {
+            primitive_app::write_png(Path::new(&path), 1680, 1264, &staged).unwrap();
+        }
+
+        assert!(landscape.next().x > WIDTH as i32);
+        assert_eq!(reader.input(tap(landscape.next())), Change::Partial);
+        assert!(!visible_file(&reader, retained));
+        assert_eq!(reader.input(Input::PageBack), Change::Partial);
+        assert!(visible_file(&reader, retained));
+        let find = toolbar_controls(landscape)
+            .find(|(_, screen, _)| *screen == Screen::LibraryFind)
+            .unwrap()
+            .2;
+        assert_eq!(reader.input(tap(find)), Change::Partial);
+        assert_eq!(
+            reader.viewport_request(),
+            Some(ViewportRequest::Fixed(candidate.turn))
+        );
+        reader.editor.text = "Survey 19".chars().collect();
+        reader.editor.caret = reader.editor.text.len();
+        let (_, go) = landscape
+            .keyboard()
+            .keyboard_keys_with(reader.editor.layer, "Find")
+            .into_iter()
+            .find(|(key, _)| key.key == Key::Go)
+            .unwrap();
+        assert!(go.x + go.w / 2 > WIDTH as i32);
+        if let Some(path) = std::env::var_os("READER_LANDSCAPE_DOCUMENT_FIND") {
+            let frame = primitive_app::frame(&reader, &mut canvas, false);
+            primitive_app::write_png(Path::new(&path), 1680, 1264, &frame).unwrap();
+        }
+        assert_eq!(reader.input(tap(go)), Change::Partial);
+        assert_eq!(reader.screen, Screen::Library);
+        assert_eq!(library_titles(&reader), ["Survey 19"]);
+        let clear = reader.up_action().unwrap();
+        assert_eq!(clear.1, "Clear");
+        assert_eq!(reader.input(tap(UP)), Change::Partial);
+        assert!(visible_file(&reader, Path::new("Field library/Reference")));
+
+        let portrait_candidate = Viewport {
+            generation: 2,
+            turn: LogicalTurn::Upright,
+            logical_size: (WIDTH, HEIGHT),
+        };
+        reader.stage_viewport(portrait_candidate).unwrap();
+        reader.finish_viewport(portrait_candidate, ViewportDecision::Commit);
+        assert_eq!(reader.reading_viewport(), ReadingViewport::PORTRAIT);
+        assert_eq!(reader.browser.page(portrait), 0);
+        assert!(visible_file(&reader, Path::new("Field library/Reference")));
     }
 
     #[test]
@@ -802,7 +928,7 @@ mod tests {
             Change::Partial
         );
         assert_eq!(reader.input(back), Change::Partial);
-        assert_eq!(reader.browser.page, 1);
+        assert_eq!(reader.browser.page(reader.navigation_layout()), 1);
         assert_eq!(library_titles(&reader), search);
         assert_eq!(reader.input(Input::PageBack), Change::Partial);
         assert_eq!(reader.input(Input::PageBack), Change::Partial);
@@ -1078,7 +1204,10 @@ mod tests {
             "C Appendix.xyz",
         ];
         assert_eq!(library_titles(&reader), expected);
-        assert_eq!(reader.input(tap(file_row(0))), Change::Partial);
+        assert_eq!(
+            reader.input(tap(file_row(NavigationLayout::PORTRAIT, 0))),
+            Change::Partial
+        );
         reader.follow_reflow_page(1, 0).unwrap();
         let epub_position = reader.current_position().unwrap();
         reader.activate(Action::ToggleBookmark).unwrap();
@@ -1175,7 +1304,7 @@ mod tests {
         assert_eq!(reader.screen, Screen::Library);
         assert!(reader.open_book_id().is_none());
         assert_eq!(reader.browser.directory, shelf);
-        assert_eq!(reader.browser.page, 1);
+        assert_eq!(reader.browser.page(reader.navigation_layout()), 1);
         assert!(reader.library_query.is_empty());
         assert!(visible_file(&reader, &relative));
         capture_test_screen(

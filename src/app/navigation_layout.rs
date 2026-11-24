@@ -22,12 +22,16 @@ impl NavigationLayout {
     }
 
     pub(super) fn header(self, canvas: &mut Canvas, title: &str) {
+        self.header_action(canvas, title, "Back");
+    }
+
+    pub(super) fn header_action(self, canvas: &mut Canvas, title: &str, action: &str) {
         canvas.text(
             Rect::new(40, 47, self.width - 354, 110),
             title,
             primitive_ui::TITLE,
         );
-        canvas.button(self.back(), "Back", true, false);
+        canvas.button(self.back(), action, true, false);
     }
 
     pub(super) fn body(self, y: i32, height: i32) -> Rect {
@@ -71,7 +75,11 @@ impl Screen {
             || self.is_bookmark_list()
             || matches!(
                 self,
-                Self::GoToPage | Self::ContentsSearch | Self::BookmarkFind | Self::BookmarkMatches
+                Self::GoToPage
+                    | Self::ContentsSearch
+                    | Self::LibraryFind
+                    | Self::BookmarkFind
+                    | Self::BookmarkMatches
             )
     }
 }

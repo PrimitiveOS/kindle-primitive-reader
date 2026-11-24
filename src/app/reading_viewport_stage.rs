@@ -9,12 +9,14 @@ use primitive_ui::Canvas;
 
 enum Candidate {
     Current,
+    Library(ReadingViewport),
     Reflow(Box<Reading>),
     Fixed(Box<PreparedFixedViewport>),
 }
 
 pub(super) struct Stage {
     book: Option<u64>,
+    screen: super::Screen,
     position: Option<ReadingPosition>,
     from: ReadingViewport,
     target: ReadingViewport,
@@ -32,10 +34,11 @@ impl Reader {
         } else if let Some(book) = &self.fixed {
             Candidate::Fixed(Box::new(book.reading.prepare_viewport(target)?))
         } else {
-            return Err("Open a document before changing its viewport".into());
+            Candidate::Library(target)
         };
         Ok(Stage {
             book: self.open_book_id(),
+            screen: self.screen,
             position: self.current_position(),
             from,
             target,
@@ -80,6 +83,10 @@ impl Reader {
         staged.check_origin(self)?;
         match staged.candidate {
             Candidate::Current => return Ok(()),
+            Candidate::Library(viewport) => {
+                self.library_viewport = viewport;
+                return Ok(());
+            }
             Candidate::Reflow(reading) => {
                 self.active.as_mut().ok_or("The book closed")?.reading = *reading;
             }
@@ -104,6 +111,10 @@ impl Reader {
     fn exchange_staged_reading(&mut self, candidate: &mut Candidate) -> Result<()> {
         match candidate {
             Candidate::Current => Ok(()),
+            Candidate::Library(viewport) => {
+                std::mem::swap(&mut self.library_viewport, viewport);
+                Ok(())
+            }
             Candidate::Reflow(reading) => {
                 let active = self.active.as_mut().ok_or("The book closed")?;
                 std::mem::swap(&mut active.reading, reading.as_mut());
@@ -122,6 +133,7 @@ impl Reader {
 impl Stage {
     fn check_origin(&self, reader: &Reader) -> Result<()> {
         if reader.open_book_id() != self.book
+            || reader.screen != self.screen
             || reader.current_position() != self.position
             || reader.reading_viewport() != self.from
         {
