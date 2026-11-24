@@ -152,6 +152,38 @@ Reader keeps already recorded visits when the limits change.
 [Pinned settings](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/main.lua#L1065-L1104) ·
 [Stock simulator check](../scripts/koreader-reading-progress-check.py)
 
+### Import a PDF's KOReader statistics
+
+Close KOReader and copy `statistics.sqlite3` from its settings directory to
+the top level of Kindle Documents. In Reader, open the PDF, open its **Book
+details › Reading statistics**, then choose **Import KOReader statistics**.
+**Preview database** shows the book matched in KOReader, along with the
+number of new records, reading time and dates. Check the matched title before
+importing.
+Choose **Import records** to add them to Reader's history. Back closes the
+preview. The statistics database and PDF stay in place.
+
+Reader checks KOReader's sampled PDF fingerprint and physical page count.
+PDFs with differences outside the sample can share a fingerprint. Reader
+accepts schema 20221111 snapshots up to 8 MiB and 20,000 rows for the matched
+PDF. Use a closed copy with all commits applied. Reader rejects a copy with
+an accompanying nonempty WAL or rollback journal. A main file copied without
+its active WAL can be incomplete even when no journal is present. Duplicate or conflicting
+page-time records and rows saved under a different page count are shown in the
+preview and skipped. A changed PDF, database, or Reader journal requires a new
+preview or a restart before saving. Import adds the dated visits without
+changing the reading position, notes, or the pace estimator.
+
+The pinned Mac KOReader runtime recorded two page turns and a reread in the
+authored PDF, using its normal statistics write path. SQLite and Reader both
+reported 60 seconds over two distinct pages. Each visit's start time and
+duration survive the import. Reflowable books use layout-dependent source
+positions in Reader, so this import covers physical PDF pages. [Reader import
+preview](screenshots/reading-statistics-import.png) · [Stock database
+generator](../scripts/koreader-pdf-statistics-import-check.py) · [Pinned schema
+and rescaling](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/main.lua#L403-L493)
+· [Pinned stock write path](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/main.lua#L909-L964)
+
 Daily history groups visits by their civil start date. Reader clips the elapsed intervals used by the calendar and timeline to the chosen day's boundaries. A visit that crosses a boundary can contribute time to both calendar days while its daily-history total remains on the start date. KOReader's monthly SQL assigns each visit to a date using its start timestamp, with the optional offset. Day boundaries follow the current device time zone, including daylight-saving transitions. [Stock daily totals](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L1453-L1479) · [Stock calendar query](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/main.lua#L2822-L2861) · [Stock day timeline](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L2862-L2934)
 
 Disabling statistics or freezing a finished book pauses all three time trackers, including the existing screen-time and pace counters. Sleep, USB storage and non-reading screens pause recording. Short intervals on the same page can combine across sleep toward the minimum, without counting the pause or resetting the visit's maximum. Returning to Library finishes that visit. Timeline rows merge adjacent intervals for the same book when their gap is no more than the larger of 30 seconds and the minimum visit time. Gaps contribute no reading time to totals or the histogram.
@@ -175,7 +207,6 @@ The pinned Lua/SQLite check exercises the save and shift callbacks, picker
 wrapping, book duration ranking, and spans across adjacent days. Rust tests
 cover the 04:20 boundary in a fractional-offset zone, both shift choices,
 failed saves, book filtering, and the saved reading position.
-Local statistics database import remains open.
 Reader records the actual pre- and
 post-pause portions of each visit.
 [Stock calendar comparison](../scripts/compare-calendar-options.py) · [Stock layout rescaling](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L439-L441) · [Stock pause and resume timestamps](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L2694-L2732)
