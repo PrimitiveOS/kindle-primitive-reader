@@ -72,3 +72,8 @@ save the same authored PDF page in portrait, landscape and returned
 portrait. The tests exercise a link beyond the previous portrait width,
 an exact source annotation, width fitting, rotated row zoom and the
 shared image and comic path.
+
+The Mac renderer produced the same portrait PNG before and after resizing.
+The landscape frame shows the same selected word and the authored PDF link.
+[Portrait](screenshots/fixed-viewport-portrait.png) ·
+[Landscape](screenshots/fixed-viewport-landscape.png)
