@@ -108,6 +108,8 @@ impl Screen {
             self,
             Self::Links
                 | Self::NavigationSettings
+                | Self::Gestures
+                | Self::GestureBinding(_)
                 | Self::BackOptions(_)
                 | Self::LocationHistory
                 | Self::PublisherPages

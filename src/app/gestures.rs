@@ -1,14 +1,23 @@
 //! Assign single-contact gestures to existing Reader actions. The SDK owns system gestures.
 use super::{Action, DisplayLevel, Item, Reader, Screen, read_import_file};
-use crate::{Result, session::ReadingViewport};
+use crate::{Result, reading_controls::ReadingControls, session::ReadingViewport};
 use primitive_app::{App, Change};
 use primitive_ui::Input;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
-    time::Instant,
+    time::{Duration, Instant},
 };
+
+pub(super) const CORNER_PAUSE_RANGE: std::ops::RangeInclusive<u8> = 5..=30;
+
+pub(super) fn corner_pause_seconds(controls: &ReadingControls) -> u8 {
+    controls
+        .corner_hold_pause_seconds
+        .filter(|value| CORNER_PAUSE_RANGE.contains(value))
+        .unwrap_or(10)
+}
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -62,15 +71,16 @@ impl Gesture {
             Input::LongTap(x, y) => (x, y, true),
             _ => return None,
         };
-        let width = viewport.dimensions().0 as f32;
+        let (width, height) = viewport.dimensions();
+        let (width, height) = (width as f32, height as f32);
         let page_height = viewport.page_height() as f32;
         // Leave the visible footer, including Exit, available even if a corner is reassigned.
         if !(0.0..page_height).contains(&y) || !(0.0..width).contains(&x) {
             return None;
         }
-        let right = x >= width - 100.0;
-        let bottom = y >= page_height - 100.0;
-        if (!right && x >= 100.0) || (!bottom && y >= 100.0) {
+        let right = x >= width * 0.875;
+        let bottom = y >= height * 0.875;
+        if (!right && x >= width / 8.0) || (!bottom && y >= height / 8.0) {
             return None;
         }
         Some(match (hold, bottom, right) {
@@ -166,10 +176,11 @@ pub(super) enum Binding {
     NavigationBack,
     Refresh,
     Controls,
+    PauseCornerHolds,
 }
 
 impl Binding {
-    const ALL: [(Self, &'static str); 18] = [
+    const ALL: [(Self, &'static str); 19] = [
         (Self::Default, "Default behavior"),
         (Self::Ignore, "Do nothing"),
         (Self::Next, "Next page"),
@@ -191,6 +202,7 @@ impl Binding {
         (Self::NavigationBack, "Back (navigation settings)"),
         (Self::Refresh, "Refresh screen"),
         (Self::Controls, "Reading controls"),
+        (Self::PauseCornerHolds, "Pause corner holds"),
     ];
     fn label(self) -> &'static str {
         Self::ALL.iter().find(|entry| entry.0 == self).unwrap().1
@@ -200,6 +212,9 @@ impl Binding {
 pub(super) struct GestureBindings {
     path: PathBuf,
     bindings: BTreeMap<Gesture, Binding>,
+    corner_pause_until: Option<Instant>,
+    claimed_corner_hold: bool,
+    replaying_hold_release: bool,
 }
 
 impl GestureBindings {
@@ -209,7 +224,13 @@ impl GestureBindings {
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_default();
-        Self { path, bindings }
+        Self {
+            path,
+            bindings,
+            corner_pause_until: None,
+            claimed_corner_hold: false,
+            replaying_hold_release: false,
+        }
     }
     fn get(&self, gesture: Gesture) -> Binding {
         self.bindings
@@ -251,9 +272,88 @@ impl GestureBindings {
             })
             .collect()
     }
+
+    fn corner_holds_paused(&self, controls: &ReadingControls, now: Instant) -> bool {
+        controls.ignore_corner_holds || self.corner_pause_until.is_some_and(|until| now < until)
+    }
+
+    fn pause_corner_holds(&mut self, controls: &ReadingControls, now: Instant) -> bool {
+        if self.corner_holds_paused(controls, now) {
+            return false;
+        }
+        self.corner_pause_until =
+            Some(now + Duration::from_secs(u64::from(corner_pause_seconds(controls))));
+        true
+    }
+
+    pub(super) fn consume_assigned_corner_hold(&mut self, input: Input) -> bool {
+        if !self.claimed_corner_hold {
+            return false;
+        }
+        match input {
+            Input::HoldPan(..) => true,
+            Input::HoldRelease { .. } => {
+                self.claimed_corner_hold = false;
+                true
+            }
+            Input::Sleep
+            | Input::Wake
+            | Input::HoldStart(..)
+            | Input::Tap(..)
+            | Input::LongTap(..) => {
+                self.claimed_corner_hold = false;
+                false
+            }
+            _ => false,
+        }
+    }
+
+    pub(super) fn clear_assigned_corner_hold(&mut self) {
+        self.claimed_corner_hold = false;
+    }
 }
 
 impl Reader {
+    pub(super) fn reading_gesture_items(&self) -> Vec<Item> {
+        let mut items = self.gestures.gestures();
+        items.extend([
+            Item::new(
+                "Ignore long-press on corners",
+                Action::SetReadingControls(ReadingControls {
+                    ignore_corner_holds: !self.controls.ignore_corner_holds,
+                    ..self.controls
+                }),
+            )
+            .detail(if self.controls.ignore_corner_holds {
+                "On"
+            } else {
+                "Off"
+            }),
+            Item::new(
+                "Corner hold pause",
+                Action::Show(Screen::NumberingValue(super::NumberField::CornerHoldPause)),
+            )
+            .detail(format!("{} seconds", corner_pause_seconds(&self.controls))),
+        ]);
+        items
+    }
+
+    pub(super) fn start_assigned_corner_hold(&mut self, x: f32, y: f32) -> Option<Change> {
+        let change = self.assigned_gesture(Input::LongTap(x, y), None)?;
+        self.touch_hold = None;
+        self.gestures.claimed_corner_hold = true;
+        Some(change)
+    }
+
+    pub(super) fn unassigned_hold_release(&mut self, x: f32, y: f32) -> Change {
+        // A physical hold was already routed at its contact origin. In
+        // particular, an expired timed pause must not claim its release.
+        self.gestures.replaying_hold_release = true;
+        let change = self.input(Input::LongTap(x, y));
+        self.gestures.replaying_hold_release = false;
+        change
+    }
+
     pub(super) fn assigned_gesture(
         &mut self,
         input: Input,
@@ -263,6 +363,15 @@ impl Reader {
             || !matches!(self.screen, Screen::Book | Screen::Fixed | Screen::Library)
             || self.selection.is_some()
             || self.pdf_selection.is_some()
+        {
+            return None;
+        }
+        if matches!(input, Input::LongTap(..))
+            && (self.gestures.replaying_hold_release
+                || self
+                    .gestures
+                    .corner_holds_paused(&self.controls, Instant::now())
+                || (self.screen != Screen::Library && !self.touch_selection_enabled()))
         {
             return None;
         }
@@ -320,6 +429,19 @@ impl Reader {
             Binding::Controls => {
                 return Some(self.open_reading_edge(true, viewport.dimensions().0 as f32 / 2.0));
             }
+            Binding::PauseCornerHolds => {
+                if !self
+                    .gestures
+                    .pause_corner_holds(&self.controls, Instant::now())
+                {
+                    return Some(Change::None);
+                }
+                self.notice = Some(format!(
+                    "Corner holds paused for {} seconds",
+                    corner_pause_seconds(&self.controls)
+                ));
+                return Some(Change::Partial);
+            }
             Binding::Contents => Action::Show(if fixed {
                 Screen::FixedContents
             } else {
@@ -350,3 +472,6 @@ impl Reader {
         })
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -3,6 +3,7 @@ use super::{
     Action, ActiveBook, Change, Item, Reader, SEARCH_DELAY, SEARCH_REFRESH, Screen, position,
 };
 use crate::library::{FixedTileAxis, MAX_CROP_MARGIN};
+use crate::reading_controls::ReadingControls;
 use crate::{Result, epub::Book, library::DocumentFormat, synthetic_pages::CharacterPages};
 use primitive_app::with_storage;
 use std::{borrow::Cow, io, path::PathBuf, time::Instant};
@@ -17,6 +18,7 @@ pub(super) enum NumberField {
     LineSpacing(u64),
     ProfileValue(usize, crate::reading_profiles::ValueField),
     WordSpacing(super::word_spacing::Draft),
+    CornerHoldPause,
     AutoTurn,
     AutoTurnOverlapHorizontal,
     AutoTurnOverlapVertical,
@@ -69,6 +71,7 @@ impl NumberField {
             ) => Screen::ReadingProfileFontRendering(index),
             Self::ProfileValue(index, _) => Screen::ReadingProfileValues(index),
             Self::AutoTurn => Screen::AutoTurn,
+            Self::CornerHoldPause => Screen::Gestures,
             Self::AutoTurnOverlapHorizontal | Self::AutoTurnOverlapVertical => Screen::AutoTurnPan,
             Self::FixedTileZoom(_) | Self::CropMargin => Screen::Fixed,
             Self::ReadingGuide(_) => Screen::ReadingGuides,
@@ -261,6 +264,20 @@ impl Reader {
             self.show(field.parent());
             return Ok(());
         }
+        if field == NumberField::CornerHoldPause {
+            let seconds = value
+                .trim()
+                .parse::<u8>()
+                .ok()
+                .filter(|seconds| super::gestures::CORNER_PAUSE_RANGE.contains(seconds))
+                .ok_or("Enter a corner hold pause from 5 to 30 seconds")?;
+            self.activate(Action::SetReadingControls(ReadingControls {
+                corner_hold_pause_seconds: Some(seconds),
+                ..self.controls
+            }))?;
+            self.show(field.parent());
+            return Ok(());
+        }
         if field == NumberField::FooterBatteryHideThreshold {
             let threshold = value
                 .trim()
@@ -380,7 +397,7 @@ impl Reader {
             }
             NumberField::WordSpacing(draft) => return self.apply_word_spacing_input(draft),
             NumberField::ReadingGuide(field) => return self.set_reading_guide(field, &value),
-            NumberField::AutoTurn => unreachable!("handled above"),
+            NumberField::AutoTurn | NumberField::CornerHoldPause => unreachable!("handled above"),
             NumberField::FixedTileZoom(_) | NumberField::CropMargin => {
                 unreachable!("handled above")
             }

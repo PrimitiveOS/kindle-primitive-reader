@@ -48,10 +48,12 @@ only to find and compare relevant controls.
 device evidence. The control inventory and foreground Kindle acceptance
 checks below track the remaining feature and device work.
 
-**Pinned control inventory:** 232 of 536 in-scope reading-control rows have
-an implemented workflow, 238 are partial, 45 are gaps, and 21 need audit. The
+**Pinned control inventory:** 233 of 536 in-scope reading-control rows have
+an implemented workflow, 237 are partial, 45 are gaps, and 21 need audit. The
 [statistics reset comparison](reading-statistics.md#reset-statistics) updates
-seven rows with an executable stock check and Mac verification.
+seven rows with an executable stock check and Mac verification. The
+[corner hold comparison](corner-hold-gestures.md) covers the ignore toggle,
+a timed pause, and the fallback to text selection.
 Reader 0.1.32 adds [search from selection](selection-search.md),
 [results density and context](search-result-presentation.md),
 [temporary PDF fit](fixed-search-fit.md),

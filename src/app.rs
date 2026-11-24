@@ -416,6 +416,7 @@ impl Screen {
                 }
             }
             Self::NumberingValue(NumberField::AutoTurn) => "Automatic page turns",
+            Self::NumberingValue(NumberField::CornerHoldPause) => "Corner hold pause",
             Self::NumberingValue(NumberField::AutoTurnOverlapHorizontal) => "Horizontal overlap",
             Self::NumberingValue(NumberField::FixedTileZoom(axis)) => axis.label(),
             Self::NumberingValue(NumberField::CropMargin) => "Crop margin",
@@ -1911,6 +1912,7 @@ impl Reader {
                     Screen::NumberingValue(
                         NumberField::AutoTurnOverlapHorizontal
                             | NumberField::AutoTurnOverlapVertical
+                            | NumberField::CornerHoldPause
                     )
                 ) {
                     2
@@ -1953,6 +1955,13 @@ impl Reader {
                 self.editor.caret = self.editor.text.len();
             }
             match screen {
+                Screen::NumberingValue(NumberField::CornerHoldPause) => {
+                    self.editor.text = gestures::corner_pause_seconds(&self.controls)
+                        .to_string()
+                        .chars()
+                        .collect();
+                    self.editor.caret = self.editor.text.len();
+                }
                 Screen::NumberingValue(NumberField::ReadingGuide(field)) => {
                     self.editor.text = field.value(self.controls.reading_guides).chars().collect();
                     self.editor.caret = self.editor.text.len();
@@ -2748,7 +2757,7 @@ impl Reader {
                     })
                     .collect();
             }
-            Screen::Gestures => return self.gestures.gestures(),
+            Screen::Gestures => return self.reading_gesture_items(),
             Screen::GestureBinding(gesture) => return self.gestures.choices(gesture),
             Screen::BookMap => return self.book_map_items(),
             Screen::AutoTurn => {
@@ -3937,7 +3946,7 @@ impl Reader {
                     .iter()
                     .position(|entry| entry.0 == gesture)
                     .unwrap()
-                    / ROWS_PER_PAGE;
+                    / self.list_geometry().rows;
             }
             Action::SetDisplayLevel(control, level) => self.quick_display.set(control, level)?,
             Action::RefreshDisplay => {
@@ -7824,6 +7833,7 @@ impl Reader {
                 Screen::NumberingValue(NumberField::AutoTurn) => {
                     ("Page-turn interval: 1 to 86,400 seconds", "Set")
                 }
+                Screen::NumberingValue(NumberField::CornerHoldPause) => ("5 to 30 seconds", "Set"),
                 Screen::NumberingValue(
                     NumberField::AutoTurnOverlapHorizontal | NumberField::AutoTurnOverlapVertical,
                 ) => ("Zoom overlap: 0 to 90%", "Set"),
@@ -8287,7 +8297,10 @@ impl Reader {
 
     fn touch_hold_input(&mut self, input: Input) -> Option<Change> {
         match input {
-            Input::HoldStart(x, y) => Some(self.start_touch_hold(x, y)),
+            Input::HoldStart(x, y) => Some(
+                self.start_assigned_corner_hold(x, y)
+                    .unwrap_or_else(|| self.start_touch_hold(x, y)),
+            ),
             Input::HoldPan(x, y) => Some(self.pan_touch_hold(x, y)),
             Input::HoldRelease {
                 start_x,
@@ -8316,7 +8329,7 @@ impl Reader {
                         held_ms >= self.controls.very_long_press_millis(),
                     ));
                 }
-                Some(self.input(Input::LongTap(start_x, start_y)))
+                Some(self.unassigned_hold_release(start_x, start_y))
             }
             _ => None,
         }
@@ -8804,6 +8817,9 @@ impl App for Reader {
     }
 
     fn input(&mut self, input: Input) -> Change {
+        if self.gestures.consume_assigned_corner_hold(input) {
+            return Change::None;
+        }
         if let Some(change) = self.closing_profile_input(input) {
             return change;
         }
@@ -9253,7 +9269,7 @@ impl App for Reader {
                             .iter()
                             .position(|entry| entry.0 == gesture)
                             .unwrap()
-                            / ROWS_PER_PAGE;
+                            / self.list_geometry().rows;
                     }
                     Screen::Gestures | Screen::LinkSettings => self.show(Screen::ReadingControls),
                     Screen::BackOptions(_) => self.show(Screen::NavigationSettings),
@@ -9757,6 +9773,7 @@ impl App for Reader {
     }
 
     fn storage_returned(&mut self) -> io::Result<()> {
+        self.gestures.clear_assigned_corner_hold();
         self.alternative_contents = Default::default();
         self.sync_alternative_contents();
         if self.screen.is_contents() {

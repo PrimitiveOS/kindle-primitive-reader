@@ -63,6 +63,10 @@ pub(crate) struct ReadingControls {
     /// `None` follows KOReader's default: auto-scroll selections at reading corners.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selection_corner_scroll: Option<bool>,
+    #[serde(skip_serializing_if = "is_false")]
+    pub ignore_corner_holds: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub corner_hold_pause_seconds: Option<u8>,
     /// Seconds in tenths. `None` retains KOReader's three-second default in legacy settings.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub very_long_press_tenths: Option<u16>,
