@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.34
+
+- Show only matches in the current chapter, or return to all results. Paging, previews and result navigation use the selected scope as matches arrive.
+
 ## 0.1.33
 
 - Show up to 1–10 lines per search result with measured row heights.

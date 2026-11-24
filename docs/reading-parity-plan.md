@@ -123,16 +123,18 @@ per-book switch, an About panel, and its own font and display settings.
 The native renderer has been exercised. Foreground appearance, E Ink updates,
 and battery refresh on the panel remain open. [Behavior and screenshots](top-status-header.md)
 
-## Search result navigation still to compare
+## Search result navigation
 
-The result list can focus the current reading page or return to the original
-search position. The fixed-page preview uses the same result list and restores
-the earlier zoom, rotation, and pan when closed. **All results** and **Results
-in current chapter** are the remaining menu actions. Filter the displayed hit
-sequence while preserving its provider indices. Test nested headings, headings
-sharing a page, front matter, duplicate titles, and empty result sets. Verify
-that the list, physical paging, Previous/Next, first/last shortcuts, and counts
-all refer to that sequence, even when new results arrive. [Pinned KOReader result menu](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readersearch.lua#L781-L982)
+Reader 0.1.34 adds **All results** and **Results in current chapter** to the
+search result options. The selected result sequence drives the list, physical
+paging, previews, first/last shortcuts, and counts while batches arrive.
+Authored desktop EPUB and rotated PDF tests cover stable anchors, empty
+results, history and viewport restoration. The native and release checks
+remain open. [Search result navigation and screenshots](search-result-navigation.md)
+
+Whole-book screen page counts remain a separate layout task. Keep the
+current section caption and allow exact global numbering only when the layout
+can supply a complete count.
 
 ## Implementation checkpoint
 
