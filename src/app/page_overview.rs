@@ -121,7 +121,7 @@ impl Reader {
     }
 
     pub(super) fn book_map_tap_option(&self) -> Rect {
-        Rect::new(self.navigation_layout().width - 662, 40, 362, 100)
+        Rect::new(self.navigation_layout().width - 744, 40, 444, 100)
     }
 
     pub(super) fn draw_book_map_tap_option(&self, canvas: &mut Canvas) {
@@ -178,7 +178,11 @@ impl Reader {
     ) -> Result<()> {
         self.update_overview(chapter, Some(page / OVERVIEW_PAGES * OVERVIEW_PAGES))?;
         if let Some(overview) = &mut self.overview {
-            let anchor = anchor.or_else(|| overview.focus.anchor.take());
+            let anchor = if anchor.is_none() && overview.focus.page == page {
+                overview.focus.anchor.take()
+            } else {
+                anchor
+            };
             overview.focus = OverviewFocus {
                 page,
                 slot: page - overview.first,
@@ -365,9 +369,14 @@ impl Reader {
         chapters: usize,
         track: Rect,
     ) {
+        let page = if overview.map_origin.is_some() {
+            overview.focus.page
+        } else {
+            overview.first
+        };
         let (selected, count, title) = overview
             .chapter
-            .map_or((overview.first, overview.count, "Skim pages"), |chapter| {
+            .map_or((page, overview.count, "Skim pages"), |chapter| {
                 (chapter, chapters, "Skim chapters")
             });
         let detail = format!("{title} · {} of {count}", selected + 1);

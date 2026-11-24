@@ -387,11 +387,28 @@ mod tests {
         let fixture = Fixture::new();
         let mut reader = app(&fixture);
         let pdf = fixture.root.join("Harbor Atlas.pdf");
-        fs::write(
-            &pdf,
-            crate::fixed_session::tests::striped_pdf_sized_bytes(96, 300, 400),
+        let mut atlas = lopdf::Document::load_mem(
+            &crate::fixed_session::tests::striped_pdf_sized_bytes(96, 300, 400),
         )
         .unwrap();
+        for (ordinal, id) in atlas.get_pages() {
+            let content = format!(
+                "0 g BT /F1 20 Tf 25 350 Td (Harbor atlas) Tj 0 -32 Td /F1 13 Tf (Survey sheet {ordinal}) Tj ET\n\
+                 0.25 G 2 w 25 200 m 85 205 l 130 251 l 175 214 l 220 230 l 266 219 l S\n\
+                 0.65 G 0.7 w 25 126 m 265 126 l 25 150 m 265 150 l 25 174 m 265 174 l S\n"
+            );
+            let stream = atlas.add_object(lopdf::Stream::new(
+                lopdf::Dictionary::new(),
+                content.into_bytes(),
+            ));
+            atlas
+                .get_object_mut(id)
+                .unwrap()
+                .as_dict_mut()
+                .unwrap()
+                .set("Contents", lopdf::Object::Reference(stream));
+        }
+        atlas.save(&pdf).unwrap();
         reader.open_path(&pdf).unwrap();
         reader.follow_fixed(26, None).unwrap();
         reader.activate(Action::ToggleBookmark).unwrap();
