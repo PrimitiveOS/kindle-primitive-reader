@@ -1,10 +1,11 @@
 //! Page slots for the fixed-layout book map. Browsing the map leaves document history alone.
 use std::ops::Range;
 
-use primitive_app::{Change, HEIGHT, WIDTH};
+use primitive_app::Change;
 use primitive_ui::{CAPTION, Canvas, Input, Rect, TextStyle};
 
-use super::{LIST_X, NEXT, PREV, Reader, Screen, bar_icons};
+use super::navigation_layout::NavigationLayout;
+use super::{LIST_X, Reader, Screen, bar_icons};
 
 const COLUMNS: usize = 6;
 const ROWS: usize = 8;
@@ -12,7 +13,7 @@ const CAPACITY: usize = ROWS * COLUMNS;
 const TOP: i32 = 214;
 const GAP: i32 = 10;
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct MapWindow {
     start: usize,
     // A span of zero denotes the whole document.
@@ -82,15 +83,25 @@ impl MapWindow {
     }
 }
 
-pub(super) fn cell(index: usize) -> Rect {
-    let width = (WIDTH as i32 - 2 * LIST_X - (COLUMNS as i32 - 1) * GAP) / COLUMNS as i32;
-    let height = (HEIGHT as i32 - 140 - TOP - (ROWS as i32 - 1) * GAP) / ROWS as i32;
+pub(super) fn projected_cell(layout: NavigationLayout, index: usize) -> Rect {
+    let (columns, rows) = if layout.width > layout.height {
+        (ROWS, COLUMNS)
+    } else {
+        (COLUMNS, ROWS)
+    };
+    let width = (layout.width - 2 * LIST_X - (columns as i32 - 1) * GAP) / columns as i32;
+    let height = (layout.height - 140 - TOP - (rows as i32 - 1) * GAP) / rows as i32;
     Rect::new(
-        LIST_X + (index % COLUMNS) as i32 * (width + GAP),
-        TOP + (index / COLUMNS) as i32 * (height + GAP),
+        LIST_X + (index % columns) as i32 * (width + GAP),
+        TOP + (index / columns) as i32 * (height + GAP),
         width,
         height,
     )
+}
+
+#[cfg(test)]
+pub(super) fn cell(index: usize) -> Rect {
+    projected_cell(NavigationLayout::PORTRAIT, index)
 }
 
 fn range_label(range: &Range<usize>) -> String {
@@ -105,6 +116,7 @@ impl Reader {
     pub(super) fn draw_fixed_book_map(&self, canvas: &mut Canvas) {
         let Some(fixed) = &self.fixed else { return };
         let reading = &fixed.reading;
+        let layout = self.navigation_layout();
         let count = reading.count();
         let focus = reading.page();
         let state = self.library.state(fixed.id);
@@ -116,13 +128,9 @@ impl Reader {
             range_label(&pages),
             focus + 1
         );
-        canvas.text(
-            Rect::new(LIST_X, 137, WIDTH as i32 - 2 * LIST_X, 65),
-            &summary,
-            CAPTION,
-        );
+        canvas.text(layout.body(137, 65), &summary, CAPTION);
         for (index, slot) in window.slots(count).enumerate() {
-            let rect = cell(index);
+            let rect = projected_cell(layout, index);
             let selected = slot.contains(&focus);
             let hidden = reading
                 .hidden_flow_map()
@@ -224,10 +232,10 @@ impl Reader {
             }
         }
         if window.adjacent(false, count).is_some() {
-            canvas.button(PREV, "Previous", false, false);
+            canvas.button(layout.previous(), "Previous", false, false);
         }
         if window.adjacent(true, count).is_some() {
-            canvas.button(NEXT, "Next", false, false);
+            canvas.button(layout.next(), "Next", false, false);
         }
     }
 
@@ -235,10 +243,11 @@ impl Reader {
         let Some(fixed) = &self.fixed else {
             return Change::None;
         };
+        let layout = self.navigation_layout();
         let count = fixed.reading.count();
         let window = self.map_window;
         let forward = match input {
-            Input::Tap(x, y) if primitive_ui::back_button(WIDTH as i32).contains(x, y) => {
+            Input::Tap(x, y) if layout.back().contains(x, y) => {
                 if window.span == 0 {
                     self.show(Screen::Fixed);
                 } else {
@@ -246,14 +255,12 @@ impl Reader {
                 }
                 return Change::Partial;
             }
-            Input::Tap(x, y) if NEXT.contains(x, y) => true,
-            Input::Tap(x, y) if PREV.contains(x, y) => false,
+            Input::Tap(x, y) if layout.next().contains(x, y) => true,
+            Input::Tap(x, y) if layout.previous().contains(x, y) => false,
             Input::Tap(x, y) => {
-                let Some(slot) = window
-                    .slots(count)
-                    .enumerate()
-                    .find_map(|(i, pages)| cell(i).contains(x, y).then_some(pages))
-                else {
+                let Some(slot) = window.slots(count).enumerate().find_map(|(i, pages)| {
+                    projected_cell(layout, i).contains(x, y).then_some(pages)
+                }) else {
                     return Change::None;
                 };
                 if slot.len() == 1 {

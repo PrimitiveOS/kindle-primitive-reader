@@ -66,6 +66,8 @@ mod nearby_search;
 mod nonlinear_tests;
 mod online_panel;
 mod overview_bookmarks;
+mod page_overview;
+mod visual_navigation;
 mod profile_panel;
 mod progress_markers;
 mod quick_display;
@@ -137,8 +139,7 @@ use crate::reading_stats::ReadingStats;
 use crate::search::{MAX_FIXED_SEARCH_HITS, PdfSearch, PdfSearchHit, Search, SearchHit};
 use crate::selection::TextSelection;
 use crate::session::{
-    BookConfig, DONE, PAGE_HEIGHT, PAGE_REFRESH_GAP, PageThumbnail, PageTurns, Reading,
-    page_thumbnail,
+    BookConfig, DONE, PAGE_HEIGHT, PAGE_REFRESH_GAP, PageTurns, Reading,
 };
 use crate::text_flow::TextFlow;
 use crate::{Engine, Probe, Result, Settings, TextAlignment};
@@ -148,6 +149,7 @@ use self::footer_presets::Preset as FooterPreset;
 use self::gestures::{Binding, Gesture, GestureBindings};
 use self::library_view::{FileBrowser, file_type};
 use self::lookup_history::{LookupHistory, SearchQuery};
+use self::page_overview::PageOverview;
 use self::quick_display::{DisplayLevel, QuickDisplay};
 use self::reader_timer::AutoTurn;
 use self::reading_bars::BarPanel;
@@ -179,7 +181,6 @@ const FIND_ACCENTS: Rect = Rect::new(LIST_X + 355, LIST_Y + 260, 420, 70);
 const MATCH_PREV: Rect = Rect::new(420, PAGE_HEIGHT as i32 + 5, 196, 60);
 const MATCH_NEXT: Rect = Rect::new(628, PAGE_HEIGHT as i32 + 5, 196, 60);
 const OCR_POLL: Duration = Duration::from_millis(120);
-const OVERVIEW_TRACK: Rect = Rect::new(80, 1310, WIDTH as i32 - 160, 75);
 const AUTO_CROP: Rect = Rect::new(674, PAGE_HEIGHT as i32 + 5, 182, 60);
 const RESET_CROP: Rect = Rect::new(868, PAGE_HEIGHT as i32 + 5, 172, 60);
 const CANCEL_CROP: Rect = Rect::new(1052, PAGE_HEIGHT as i32 + 5, 192, 60);
@@ -659,13 +660,6 @@ struct BookDetails {
     metadata: Option<BookMetadata>,
 }
 
-struct PageOverview {
-    first: usize,
-    count: usize,
-    chapter: Option<usize>,
-    preview: Option<Box<Probe>>,
-    tiles: Vec<Option<PageThumbnail>>,
-}
 
 struct OutlineScan {
     contents: GeneratedContents,
@@ -890,6 +884,7 @@ pub struct Reader {
     flexible_marks: Option<saved_marks_view::FlexibleMarks>,
     publisher_label_canvas: std::cell::RefCell<Option<Canvas>>,
     map_window: fixed_book_map::MapWindow,
+    book_map_focus: Option<usize>,
     back: Vec<HistoryLocation>,
     forward: Vec<HistoryLocation>,
     swipe_back_notice_pending: bool,
@@ -1114,6 +1109,7 @@ impl Reader {
             flexible_marks: None,
             publisher_label_canvas: Default::default(),
             map_window: fixed_book_map::MapWindow::default(),
+            book_map_focus: None,
             back: Vec::new(),
             forward: Vec::new(),
             swipe_back_notice_pending: false,
@@ -1814,6 +1810,11 @@ impl Reader {
         self.prepare_word_spacing_editor();
         self.prepare_footnote_font_editor();
         self.map_window = fixed_book_map::MapWindow::default();
+        self.book_map_focus = if screen == Screen::BookMap {
+            self.active.as_ref().map(|book| book.reading.chapter)
+        } else {
+            None
+        };
         self.sync_auto_turn(Instant::now());
         self.update_stats_activity(Instant::now());
         if screen == Screen::Library {
@@ -1828,6 +1829,8 @@ impl Reader {
         }
         self.list_page = if screen == Screen::Matches {
             self.matches_page
+        } else if let Some(chapter) = self.book_map_focus {
+            chapter / self.list_geometry().rows
         } else {
             let page_rows = if screen.is_contents() {
                 self.contents_rows()
@@ -3848,16 +3851,7 @@ impl Reader {
                 self.record_position();
             }
             Action::ScanColumns => self.open_scan_columns()?,
-            Action::Overview => {
-                let (chapter, current) = if let Some(fixed) = &self.fixed {
-                    (None, fixed.reading.page())
-                } else {
-                    let reading = &self.active.as_ref().ok_or("Open a book first")?.reading;
-                    (Some(reading.chapter), reading.page)
-                };
-                self.update_overview(chapter, Some(current / OVERVIEW_PAGES * OVERVIEW_PAGES))?;
-                self.show(Screen::PageOverview);
-            }
+            Action::Overview => self.open_overview()?,
             Action::Skim => self.start_skim()?,
             Action::RotatePage => {
                 let fixed = self.fixed.as_mut().ok_or("No open document")?;
@@ -5293,264 +5287,6 @@ impl Reader {
         self.search_result = None;
         self.show(Screen::Book);
         self.record_position();
-    }
-
-    fn update_overview(&mut self, chapter: Option<usize>, first: Option<usize>) -> Result<()> {
-        let mut preview = None;
-        let (first, count, tiles) = if let Some(fixed) = &self.fixed {
-            let count = fixed.reading.count();
-            let first = overview_start(first, count);
-            let tiles = (first..(first + OVERVIEW_PAGES).min(count))
-                .map(|page| fixed.reading.thumbnail(page).ok().map(PageThumbnail::plain))
-                .collect();
-            (first, count, tiles)
-        } else {
-            let reading = &mut self.active.as_mut().ok_or("Open a book first")?.reading;
-            let chapter = chapter.ok_or("Choose a chapter first")?;
-            if chapter != reading.chapter {
-                preview = if let Some(previous) = self.overview.as_mut()
-                    && previous.chapter == Some(chapter)
-                {
-                    previous.preview.take()
-                } else {
-                    Some(Box::new(reading.config.chapter(chapter)?))
-                };
-            }
-            let probe = preview.as_deref_mut().unwrap_or(&mut reading.probe);
-            let count = probe.page_count();
-            let first = overview_start(first, count);
-            let tiles = (first..(first + OVERVIEW_PAGES).min(count))
-                .map(|page| page_thumbnail(probe, page).ok())
-                .collect();
-            (first, count, tiles)
-        };
-        self.overview = Some(PageOverview {
-            first,
-            count,
-            chapter,
-            preview,
-            tiles,
-        });
-        self.notice = None;
-        Ok(())
-    }
-
-    fn draw_overview(&self, canvas: &mut Canvas) {
-        let Some(overview) = &self.overview else {
-            return;
-        };
-        let count = overview.count;
-        let (section, current, chapters) = if let Some(active) = &self.active {
-            let reading = &active.reading;
-            let probe = overview.preview.as_deref().unwrap_or(&reading.probe);
-            (
-                format!("{}  ·  {count} pages", probe.chapter_label),
-                (overview.chapter == Some(reading.chapter)).then_some(reading.page),
-                probe.chapter_count(),
-            )
-        } else {
-            (
-                format!("{count} pages"),
-                self.fixed.as_ref().map(|fixed| fixed.reading.page()),
-                0,
-            )
-        };
-        canvas.text(
-            Rect::new(LIST_X, LIST_Y, WIDTH as i32 - 2 * LIST_X, 66),
-            self.notice.as_deref().unwrap_or(&section),
-            CAPTION,
-        );
-        for (index, tile) in overview.tiles.iter().enumerate() {
-            let rect = overview_tile(index);
-            canvas.card(rect);
-            let page = overview.first + index;
-            let hidden = self
-                .active
-                .as_ref()
-                .and_then(|active| {
-                    overview.chapter.and_then(|chapter| {
-                        active
-                            .reading
-                            .custom_flow_for_page(chapter, page, overview.count)
-                    })
-                })
-                .or_else(|| {
-                    self.fixed.as_ref().and_then(|fixed| {
-                        fixed
-                            .reading
-                            .hidden_flow_map()
-                            .map(|flows| flows.flow(page))
-                    })
-                })
-                .is_some_and(|flow| flow != 0);
-            if hidden {
-                canvas.panel(rect, 22, 2, 235);
-            }
-            let mut label = self.fixed.as_ref().map_or_else(
-                || format!("Page {}", page + 1),
-                |fixed| fixed_page_label(&fixed.reading, page),
-            );
-            if hidden {
-                label.push_str(" · Hidden");
-            }
-            if let Some(tile) = tile {
-                let thumbnail = tile.for_theme(self.uses_night_pages());
-                let width = thumbnail.width as i32;
-                let height = thumbnail.height as i32;
-                let frame = Rect::new(rect.x + (rect.w - width) / 2, rect.y + 21, width, height);
-                canvas.fill(frame.inset(-1), 170);
-                canvas.picture(frame, thumbnail);
-            } else {
-                canvas.text(
-                    Rect::new(rect.x + 10, rect.y + 120, rect.w - 20, 64),
-                    "Preview unavailable",
-                    CAPTION.center(),
-                );
-            }
-            self.draw_overview_bookmark(canvas, rect, overview.chapter, page);
-            canvas.button(
-                Rect::new(rect.x + 18, rect.y + rect.h - 84, rect.w - 36, 68),
-                &label,
-                Some(page) == current,
-                false,
-            );
-        }
-        if overview.first != 0 {
-            canvas.button(PREV, "Previous", false, false);
-        } else if overview.chapter.is_some_and(|chapter| chapter > 0) {
-            canvas.button(PREV, "Prev chapter", false, false);
-        }
-        if overview.first + OVERVIEW_PAGES < count {
-            canvas.button(NEXT, "Next", false, false);
-        } else if overview
-            .chapter
-            .is_some_and(|chapter| chapter + 1 < chapters)
-        {
-            canvas.button(NEXT, "Next chapter", false, false);
-        }
-        self.draw_overview_track(canvas, overview, chapters);
-    }
-
-    fn draw_overview_track(&self, canvas: &mut Canvas, overview: &PageOverview, chapters: usize) {
-        let (selected, count, title) = overview
-            .chapter
-            .map_or((overview.first, overview.count, "Skim pages"), |chapter| {
-                (chapter, chapters, "Skim chapters")
-            });
-        let detail = format!("{title} · {} of {count}", selected + 1);
-        canvas.text(
-            Rect::new(80, OVERVIEW_TRACK.y - 55, OVERVIEW_TRACK.w, 45),
-            &detail,
-            CAPTION,
-        );
-        let center = OVERVIEW_TRACK.y + OVERVIEW_TRACK.h / 2;
-        canvas.fill(
-            Rect::new(OVERVIEW_TRACK.x, center - 3, OVERVIEW_TRACK.w, 6),
-            151,
-        );
-        let portion = selected as f64 / count.saturating_sub(1).max(1) as f64;
-        let x = OVERVIEW_TRACK.x + (portion * (OVERVIEW_TRACK.w - 20) as f64).round() as i32;
-        canvas.fill(Rect::new(x, center - 15, 20, 30), 0);
-    }
-
-    fn scrub_overview(&mut self, x: f32) -> Change {
-        let Some(overview) = &self.overview else {
-            return Change::None;
-        };
-        let fraction = ((x - OVERVIEW_TRACK.x as f32) / OVERVIEW_TRACK.w as f32).clamp(0.0, 1.0);
-        let result = if let Some(active) = &self.active {
-            let count = active.reading.probe.chapter_count();
-            let chapter = (fraction * count.saturating_sub(1) as f32).round() as usize;
-            if overview.chapter == Some(chapter) {
-                return Change::None;
-            }
-            self.update_overview(Some(chapter), Some(0))
-        } else {
-            let page = (fraction * overview.count.saturating_sub(1) as f32).round() as usize;
-            self.update_overview(None, Some(page))
-        };
-        match result {
-            Ok(()) => Change::Partial,
-            Err(error) => self.report(error),
-        }
-    }
-
-    fn overview_input(&mut self, input: Input) -> Change {
-        let Some(overview) = &self.overview else {
-            return Change::None;
-        };
-        let direction = match input {
-            Input::LongTap(x, y) => {
-                let Some(index) =
-                    (0..overview.tiles.len()).find(|&index| overview_tile(index).contains(x, y))
-                else {
-                    return Change::None;
-                };
-                let result = self.hold_overview_page(overview.chapter, overview.first + index);
-                return match result {
-                    Ok(()) => Change::Partial,
-                    Err(error) => self.report(error),
-                };
-            }
-            Input::PageForward => 1,
-            Input::PageBack => -1,
-            Input::Swipe { dx, dy, .. } if dy.abs() > dx.abs() => {
-                if dy < 0.0 {
-                    1
-                } else {
-                    -1
-                }
-            }
-            Input::Tap(x, y) if PREV.contains(x, y) => -1,
-            Input::Tap(x, y) if NEXT.contains(x, y) => 1,
-            Input::Tap(x, y) if OVERVIEW_TRACK.contains(x, y) => return self.scrub_overview(x),
-            Input::Tap(x, y) if primitive_ui::back_button(WIDTH as i32).contains(x, y) => {
-                self.show(if self.fixed.is_some() {
-                    Screen::FixedTools
-                } else {
-                    Screen::BookTools
-                });
-                return Change::Partial;
-            }
-            Input::Tap(x, y) => {
-                let Some(index) =
-                    (0..overview.tiles.len()).find(|&index| overview_tile(index).contains(x, y))
-                else {
-                    return Change::None;
-                };
-                let page = overview.first + index;
-                let result = if let Some(chapter) = overview.chapter {
-                    self.follow_reflow_page(chapter, page)
-                } else {
-                    self.follow_fixed(page, None)
-                };
-                return match result {
-                    Ok(()) => Change::Partial,
-                    Err(error) => self.report(error),
-                };
-            }
-            _ => return Change::None,
-        };
-        let chapter = overview.chapter;
-        let (chapter, first) = if let Some(first) = overview
-            .first
-            .checked_add_signed(direction * OVERVIEW_PAGES as isize)
-            .filter(|&first| first < overview.count)
-        {
-            (chapter, Some(first))
-        } else if let Some(chapter) = chapter
-            && let Some(active) = &self.active
-            && let Some(next) = chapter.checked_add_signed(direction)
-            && next < active.reading.probe.chapter_count()
-        {
-            (Some(next), (direction > 0).then_some(0))
-        } else {
-            return Change::None;
-        };
-        match self.update_overview(chapter, first) {
-            Ok(()) => Change::Partial,
-            Err(error) => self.report(error),
-        }
     }
 
     fn step_pdf_search(&mut self, now: Instant) -> Result<Change> {
@@ -8326,10 +8062,9 @@ impl App for Reader {
                 .unwrap_or_else(|| self.input(input));
         }
         if self.screen == Screen::PageOverview
-            && let Input::Swipe { dx, start_y, .. } = input
-            && OVERVIEW_TRACK.contains(start_x, start_y)
+            && let Some(change) = self.overview_scrub_swipe(input, start_x)
         {
-            return self.scrub_overview(start_x + dx);
+            return change;
         }
         if self.screen == Screen::Skim {
             return self.skim_swipe(input, start_x);
@@ -9477,19 +9212,9 @@ fn list_rect(rows: usize) -> Rect {
     list_density::Geometry::STANDARD.bounds(rows)
 }
 
-fn overview_start(first: Option<usize>, count: usize) -> usize {
-    let last = count.saturating_sub(1) / OVERVIEW_PAGES * OVERVIEW_PAGES;
-    first.map_or(last, |first| first.min(last))
-}
-
+#[cfg(test)]
 fn overview_tile(index: usize) -> Rect {
-    let width = (WIDTH as i32 - 2 * LIST_X - 26) / 2;
-    Rect::new(
-        LIST_X + index as i32 % 2 * (width + 26),
-        LIST_Y + 90 + index as i32 / 2 * 452,
-        width,
-        420,
-    )
+    page_overview::OverviewLayout::new(navigation_layout::NavigationLayout::PORTRAIT).tile(index)
 }
 
 fn map_detail(current: bool, bookmarks: usize, highlights: usize) -> String {

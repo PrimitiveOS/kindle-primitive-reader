@@ -58,7 +58,7 @@ impl Reader {
             self.match_geometry()
         } else if self.screen.is_bookmark_list() {
             Geometry::dense(self.controls.bookmark_density).in_navigation(self.navigation_layout())
-        } else if self.screen == Screen::BookmarkMatches {
+        } else if matches!(self.screen, Screen::BookmarkMatches | Screen::BookMap) {
             Geometry::STANDARD.in_navigation(self.navigation_layout())
         } else {
             Geometry::STANDARD

@@ -2,6 +2,8 @@
 use super::*;
 use primitive_ui::BLACK;
 
+use super::navigation_layout::NavigationLayout;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PageAction {
     Bookmark,
@@ -19,14 +21,23 @@ pub(super) struct PageActions {
 }
 
 impl PageActions {
-    fn panel(&self) -> Rect {
+    fn panel(&self, layout: NavigationLayout) -> Rect {
         let height =
             325 + 109 * (i32::from(self.chapter_edit.is_some()) + i32::from(self.flow_edit));
-        Rect::new(192, (HEIGHT as i32 - height) / 2, 880, height)
+        const WIDTH: i32 = 880;
+        Rect::new(
+            (layout.width - WIDTH) / 2,
+            (layout.height - height) / 2,
+            WIDTH,
+            height,
+        )
     }
 
-    fn buttons(&self) -> impl Iterator<Item = (PageAction, &'static str, Rect)> {
-        let panel = self.panel();
+    fn buttons(
+        &self,
+        layout: NavigationLayout,
+    ) -> impl Iterator<Item = (PageAction, &'static str, Rect)> {
+        let panel = self.panel(layout);
         [
             Some((
                 PageAction::Bookmark,
@@ -66,30 +77,36 @@ impl PageActions {
 
     #[cfg(test)]
     pub(super) fn button(&self, action: PageAction) -> Option<Rect> {
-        self.buttons()
+        self.button_in(NavigationLayout::PORTRAIT, action)
+    }
+
+    #[cfg(test)]
+    pub(super) fn button_in(&self, layout: NavigationLayout, action: PageAction) -> Option<Rect> {
+        self.buttons(layout)
             .find(|(candidate, _, _)| *candidate == action)
             .map(|(_, _, rect)| rect)
     }
 
-    pub(super) fn draw(&self, canvas: &mut Canvas) {
-        let panel = self.panel();
+    pub(super) fn draw(&self, canvas: &mut Canvas, layout: NavigationLayout) {
+        let panel = self.panel(layout);
         canvas.popup(panel);
         canvas.text(
             Rect::new(panel.x + 36, panel.y + 20, panel.w - 72, 66),
             &format!("Page {} actions", self.page + 1),
             BODY.bold(),
         );
-        for (_, label, rect) in self.buttons() {
+        for (_, label, rect) in self.buttons(layout) {
             canvas.button(rect, label, false, false);
         }
     }
 
     pub(super) fn input(self, reader: &mut Reader, input: Input) -> Change {
+        let layout = reader.navigation_layout();
         let action = match input {
             Input::PageBack => Some(PageAction::Cancel),
-            Input::Tap(x, y) if !self.panel().contains(x, y) => Some(PageAction::Cancel),
+            Input::Tap(x, y) if !self.panel(layout).contains(x, y) => Some(PageAction::Cancel),
             Input::Tap(x, y) => self
-                .buttons()
+                .buttons(layout)
                 .find(|(_, _, rect)| rect.contains(x, y))
                 .map(|(action, _, _)| action),
             _ => None,

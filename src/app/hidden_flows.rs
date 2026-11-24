@@ -278,7 +278,7 @@ impl Reader {
             return;
         };
         let (title, detail, action) = match popup {
-            FlowPopup::Overview(actions) => return actions.draw(canvas),
+            FlowPopup::Overview(actions) => return actions.draw(canvas, self.navigation_layout()),
             FlowPopup::ClearInactive => (
                 "Clear inactive markers?",
                 "Remove boundaries that currently have no effect. Other boundaries and your source book stay intact.",

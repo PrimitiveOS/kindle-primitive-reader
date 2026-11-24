@@ -22,6 +22,7 @@ pub(super) struct Stage {
     target: ReadingViewport,
     candidate: Candidate,
     marks: Option<(super::saved_marks_view::FlexibleMarks, usize)>,
+    visual_navigation: super::visual_navigation::VisualNavigation,
 }
 
 impl Reader {
@@ -44,6 +45,7 @@ impl Reader {
             target,
             candidate,
             marks: None,
+            visual_navigation: super::visual_navigation::VisualNavigation::capture(self),
         })
     }
 
@@ -64,6 +66,9 @@ impl Reader {
     }
 
     fn draw_staged_content(&mut self, staged: &mut Stage, canvas: &mut Canvas) -> Result<()> {
+        if staged.from != staged.target && staged.visual_navigation.draw(self, canvas)? {
+            return Ok(());
+        }
         if staged.from != staged.target
             && let Some((marks, page)) = self.resize_flexible_marks()?
         {
@@ -102,6 +107,7 @@ impl Reader {
             self.flexible_marks = Some(marks);
             self.list_page = page;
         }
+        staged.visual_navigation.commit(self);
         self.screen_page_worker.cancel();
         self.pages_since_refresh = 0;
         self.record_position();
@@ -136,6 +142,7 @@ impl Stage {
             || reader.screen != self.screen
             || reader.current_position() != self.position
             || reader.reading_viewport() != self.from
+            || !self.visual_navigation.matches(reader)
         {
             return Err("The document changed before the viewport was presented".into());
         }

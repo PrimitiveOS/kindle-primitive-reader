@@ -81,6 +81,8 @@ impl Screen {
                     | Self::LibraryFind
                     | Self::BookmarkFind
                     | Self::BookmarkMatches
+                    | Self::BookMap
+                    | Self::PageOverview
             )
     }
 }
