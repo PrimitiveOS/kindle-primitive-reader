@@ -1,0 +1,17 @@
+# Navigation at the reading viewport size
+
+Reader uses the open document’s viewport for Go to page, Contents, and the in-book bookmarks and highlights lists. The right edge anchors Back and Next. The shorter landscape height determines how many rows fit above the footer. Contents search and bookmark search use the same active viewport for keyboard drawing and key hit testing. Flexible bookmark rows measure their text at the active width before paginating.
+
+The same destination resolution and return history apply in either orientation. On the 1264 × 1680 portrait viewport, the shared Back and pager positions are identical. The host tests also compare the Contents and Go to page frames before and after a portrait–landscape–portrait round trip.
+
+## Mac simulation
+
+The fixture covers fourteen source-anchored EPUB passages and a fourteen-page PDF with a text layer, an embedded outline, and saved page bookmarks. Its 1680 × 1264 frames exercise the controls beyond the portrait right edge and the keyboard above the portrait footer. The tests cover the EPUB Contents search and return location, PDF page and outline navigation, dense and flexible bookmark rows, bookmark search, and physical page-button input.
+
+Run `cargo test --locked --lib navigation_viewport` on the host. Set the corresponding variables to PNG paths to render the three captures.
+
+- `READER_NAV_LANDSCAPE_CONTENTS` captures the EPUB outline and its pager. [Contents screenshot](screenshots/landscape-contents.png)
+- `READER_NAV_LANDSCAPE_GOTO` captures the PDF destination editor and its keyboard. [Go to page screenshot](screenshots/landscape-go-to-page.png)
+- `READER_NAV_LANDSCAPE_MARKS_DARK` captures flexible PDF bookmarks in dark mode. [Bookmarks screenshot](screenshots/landscape-saved-marks-dark.png)
+
+The simulation prepares the document’s landscape viewport directly. The physical display rotation and its touch transformation need separate device validation. The cross-book Bookmark Browser, whole-document search and match views, Contents custom-outline/settings screens, annotation action and note editors, Book Map and Page Overview still have portrait geometry. The saved-marks measurement canvas and its rendered counterpart need to use the same scale when the shared Canvas rotation support is connected.

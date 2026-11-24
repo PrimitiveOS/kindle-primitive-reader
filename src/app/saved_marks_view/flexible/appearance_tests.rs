@@ -2,6 +2,7 @@ use super::super::super::tests::{Fixture, capture_test_screen, tap_contents_item
 use super::super::tests::{bookmark_settings, hold, open};
 use super::*;
 use crate::app::Screen;
+use crate::app::{HEIGHT, WIDTH};
 use crate::fixed_text::PdfTextRect;
 use crate::highlight_style::HighlightStyle;
 use crate::library::{Bookmark, Highlight, PdfHighlight};

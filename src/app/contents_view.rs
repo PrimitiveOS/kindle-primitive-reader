@@ -3,10 +3,10 @@ use primitive_ui::{BLACK, HAIRLINE, Icon, PAPER, SECONDARY, TextStyle};
 
 use super::contents_position::ContentsPositions;
 use super::contents_tree::{Branch, ContentsTree, SearchOutcome, VisibleRow};
-use super::list_density::{Geometry, list_text_pixels};
+use super::list_density::{Geometry, list_text_pixels, nominal_height, text_line_height};
 use super::{
     Action, CAPTION, Canvas, Change, CustomAction, DocumentFormat, Editor, HEIGHT, Input, Item,
-    LIST_X, Layout, NEXT, PREV, Press, Reader, Rect, Screen, WIDTH, keyboard_key,
+    LIST_X, Press, Reader, Rect, Screen, keyboard_key,
 };
 use crate::epub::Destination;
 
@@ -63,7 +63,7 @@ impl Screen {
 
 impl Reader {
     fn contents_geometry(&self) -> Geometry {
-        Geometry::dense(self.controls.contents_density)
+        Geometry::dense(self.controls.contents_density).in_navigation(self.navigation_layout())
     }
 
     pub(super) fn contents_rows(&self) -> usize {
@@ -279,12 +279,13 @@ impl Reader {
         }
         let row_height = self.contents_row_rect(0).h;
         let font = self.controls.contents_density.font();
-        let title_size = list_text_pixels(font, row_height);
-        let title_height = (title_size * 13 + 5) / 10;
-        let detail_size = list_text_pixels(font.saturating_sub(4), row_height)
-            .min((row_height - title_height - 4) * 10 / 13)
+        let nominal_row = nominal_height(canvas, row_height);
+        let title_size = list_text_pixels(font, nominal_row);
+        let title_height = text_line_height(canvas, title_size);
+        let detail_size = list_text_pixels(font.saturating_sub(4), nominal_row)
+            .min(nominal_height(canvas, row_height - title_height - 4) * 10 / 13)
             .min(28);
-        let detail_height = (detail_size * 13 + 5) / 10;
+        let detail_height = text_line_height(canvas, detail_size);
         let branch_column = self
             .contents_view
             .as_ref()
@@ -332,7 +333,7 @@ impl Reader {
                 row_metadata::RowTypography {
                     title_size,
                     title_bold: current || line.heading.is_none(),
-                    info_size: list_text_pixels(font.saturating_sub(4), row_height),
+                    info_size: list_text_pixels(font.saturating_sub(4), nominal_row),
                     ink,
                     info_ink: detail_ink,
                 },
@@ -381,11 +382,12 @@ impl Reader {
             }
         }
 
+        let navigation = self.navigation_layout();
         if self.list_page > 0 {
-            footer_button(canvas, PREV, "Previous");
+            footer_button(canvas, navigation.previous(), "Previous");
         }
         if (self.list_page + 1) * rows < count {
-            footer_button(canvas, NEXT, "Next");
+            footer_button(canvas, navigation.next(), "Next");
         }
         let query = self
             .contents_view
@@ -396,15 +398,15 @@ impl Reader {
             .as_ref()
             .is_some_and(|view| !view.entries.is_empty())
         {
-            footer_button(canvas, SEARCH, "Search");
+            footer_button(canvas, navigation.centered_footer(SEARCH), "Search");
         }
         if query.is_some() {
-            footer_button(canvas, CLEAR, "Clear");
+            footer_button(canvas, navigation.centered_footer(CLEAR), "Clear");
         }
         let pages = count.div_ceil(rows);
         if pages > 1 {
             canvas.text(
-                Rect::new(LIST_X, HEIGHT as i32 - 230, WIDTH as i32 - 2 * LIST_X, 46),
+                navigation.footer_text(LIST_X, 230, 46),
                 &format!("{} / {pages}", self.list_page + 1),
                 CAPTION.center(),
             );
@@ -415,7 +417,7 @@ impl Reader {
             .or_else(|| query.map(|query| format!("Query: {query}")));
         if let Some(info) = info {
             canvas.text(
-                Rect::new(LIST_X, HEIGHT as i32 - 173, WIDTH as i32 - 2 * LIST_X, 52),
+                navigation.footer_text(LIST_X, 173, 52),
                 &info,
                 CAPTION.center(),
             );
@@ -435,11 +437,12 @@ impl Reader {
     }
 
     fn contents_tap(&mut self, x: f32, y: f32) -> Change {
-        if primitive_ui::back_button(WIDTH as i32).contains(x, y) {
+        let navigation = self.navigation_layout();
+        if navigation.back().contains(x, y) {
             self.show(self.tools_screen());
             return Change::Partial;
         }
-        if footer_hit(SEARCH).contains(x, y)
+        if footer_hit(navigation.centered_footer(SEARCH)).contains(x, y)
             && let Some(view) = &mut self.contents_view
             && !view.entries.is_empty()
         {
@@ -452,7 +455,7 @@ impl Reader {
             self.show(Screen::ContentsSearch);
             return Change::Partial;
         }
-        if footer_hit(CLEAR).contains(x, y)
+        if footer_hit(navigation.centered_footer(CLEAR)).contains(x, y)
             && self
                 .contents_view
                 .as_mut()
@@ -461,10 +464,10 @@ impl Reader {
             self.show(self.contents_screen());
             return Change::Partial;
         }
-        if footer_hit(PREV).contains(x, y) {
+        if footer_hit(navigation.previous()).contains(x, y) {
             return self.turn_contents_page(-1);
         }
-        if footer_hit(NEXT).contains(x, y) {
+        if footer_hit(navigation.next()).contains(x, y) {
             return self.turn_contents_page(1);
         }
         let geometry = self.contents_geometry();
@@ -518,8 +521,9 @@ impl Reader {
     }
 
     pub(super) fn contents_search_input(&mut self, input: Input) -> Change {
+        let navigation = self.navigation_layout();
         if matches!(input, Input::PageBack)
-            || matches!(input, Input::Tap(x, y) if primitive_ui::back_button(WIDTH as i32).contains(x, y))
+            || matches!(input, Input::Tap(x, y) if navigation.back().contains(x, y))
         {
             self.return_from_contents_search(None);
             return Change::Partial;
@@ -527,7 +531,7 @@ impl Reader {
         let Input::Tap(x, y) = input else {
             return Change::None;
         };
-        let layout = Layout::new(WIDTH, HEIGHT, 4, 5);
+        let layout = navigation.keyboard();
         let Some(key) = keyboard_key(&layout, &self.editor, "Find", x, y) else {
             return Change::None;
         };

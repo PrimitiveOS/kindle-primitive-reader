@@ -1,7 +1,7 @@
 //! Search page marks, unannotated highlights and notes from either reading bar.
 use std::collections::HashMap;
 
-use super::{Action, Canvas, Item, LIST_X, LIST_Y, Reader, Rect, Screen, WIDTH};
+use super::{Action, Canvas, Item, LIST_X, LIST_Y, Reader, Rect, Screen};
 use crate::Result;
 use crate::search::Query;
 
@@ -38,8 +38,8 @@ enum Filter {
 }
 
 impl AnnotationSearch {
-    fn controls(&self) -> [(Filter, &'static str, bool, Rect); 4] {
-        let width = (WIDTH as i32 - 2 * LIST_X - 36) / 3;
+    fn controls(&self, width: i32) -> [(Filter, &'static str, bool, Rect); 4] {
+        let width = (width - 2 * LIST_X - 36) / 3;
         let category = |col| Rect::new(LIST_X + col * (width + 18), LIST_Y + 232, width, 84);
         [
             (
@@ -59,15 +59,15 @@ impl AnnotationSearch {
         ]
     }
 
-    pub(super) fn draw_filters(&self, canvas: &mut Canvas) {
-        for (_, label, selected, rect) in self.controls() {
+    pub(super) fn draw_filters(&self, canvas: &mut Canvas, width: i32) {
+        for (_, label, selected, rect) in self.controls(width) {
             canvas.button(rect, label, selected, false);
         }
     }
 
-    pub(super) fn toggle_at(&mut self, x: f32, y: f32) -> bool {
+    pub(super) fn toggle_at(&mut self, width: i32, x: f32, y: f32) -> bool {
         let Some((filter, _, _, _)) = self
-            .controls()
+            .controls(width)
             .into_iter()
             .find(|(_, _, _, rect)| rect.contains(x, y))
         else {

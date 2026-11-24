@@ -3,7 +3,7 @@ use std::{borrow::Cow, ops::Range};
 
 use primitive_ui::{HAIRLINE, SECONDARY, TextStyle, chevron};
 
-use super::list_density::measure_rows;
+use super::list_density::{LIST_HEIGHT, measure_rows};
 use super::result_context::row_excerpt;
 use super::*;
 
@@ -223,6 +223,7 @@ impl FlexibleResults {
         let (rows, spill) = measure_rows(
             first,
             count,
+            LIST_Y + LIST_HEIGHT,
             self.spill.take(),
             |index| {
                 ResultRow::measure(

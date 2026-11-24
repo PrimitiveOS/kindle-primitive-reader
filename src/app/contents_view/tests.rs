@@ -1,5 +1,6 @@
 use super::*;
 use crate::app::tests::{Fixture, capture_test_screen, write_outline_fixture};
+use crate::app::{Layout, NEXT, WIDTH};
 use primitive_app::App;
 use primitive_ui::Key;
 use std::{fmt::Write, fs};

@@ -3,7 +3,9 @@ use std::borrow::Cow;
 
 use primitive_ui::{BLACK, HAIRLINE, PAPER, RowAccessory, Rows, SECONDARY, TextStyle, chevron};
 
-use super::list_density::{Geometry, fit_logical_font, list_text_pixels};
+use super::list_density::{
+    Geometry, fit_logical_font, list_text_pixels, nominal_height, text_line_height,
+};
 use super::{Action, Canvas, Item, Reader, Rect, Screen};
 
 mod appearance;
@@ -21,12 +23,13 @@ struct RowTypography {
 }
 
 impl RowTypography {
-    fn fit(logical_font: u8, row_height: i32) -> Self {
-        let title_size = list_text_pixels(logical_font, row_height);
-        let title_height = (title_size * 13 + 5) / 10;
-        let stacked_limit = (row_height - title_height - 4) * 10 / 13;
+    fn fit(canvas: &Canvas, logical_font: u8, row_height: i32) -> Self {
+        let nominal_row = nominal_height(canvas, row_height);
+        let title_size = list_text_pixels(logical_font, nominal_row);
+        let title_height = text_line_height(canvas, title_size);
+        let stacked_limit = nominal_height(canvas, row_height - title_height - 4) * 10 / 13;
         let stacked = stacked_limit >= 20;
-        let mut detail_size = list_text_pixels(logical_font.saturating_sub(4), row_height).min(28);
+        let mut detail_size = list_text_pixels(logical_font.saturating_sub(4), nominal_row).min(28);
         if stacked {
             detail_size = detail_size.min(stacked_limit);
         }
@@ -34,7 +37,7 @@ impl RowTypography {
             title_size,
             title_height,
             detail_size,
-            detail_height: (detail_size * 13 + 5) / 10,
+            detail_height: text_line_height(canvas, detail_size),
             stacked,
         }
     }
@@ -54,7 +57,9 @@ impl Reader {
         if self.screen == Screen::Matches {
             self.match_geometry()
         } else if self.screen.is_bookmark_list() {
-            Geometry::dense(self.controls.bookmark_density)
+            Geometry::dense(self.controls.bookmark_density).in_navigation(self.navigation_layout())
+        } else if self.screen == Screen::BookmarkMatches {
+            Geometry::STANDARD.in_navigation(self.navigation_layout())
         } else {
             Geometry::STANDARD
         }
@@ -72,10 +77,10 @@ impl Reader {
         canvas.card(group.bounds);
         let row_height = self.list_geometry().row_height;
         let logical_font = self.controls.bookmark_density.font();
-        let mark_typography = RowTypography::fit(logical_font, row_height);
-        let preferred_font = fit_logical_font(logical_font, row_height);
+        let mark_typography = RowTypography::fit(canvas, logical_font, row_height);
+        let preferred_font = fit_logical_font(logical_font, nominal_height(canvas, row_height));
         // Search and import actions use the standard card text size (38px).
-        let action_typography = RowTypography::fit(18, row_height);
+        let action_typography = RowTypography::fit(canvas, 18, row_height);
         let pad = 32;
         let disclosure_size = 40;
         for (index, (item, action)) in group.rows.iter().zip(items).enumerate() {

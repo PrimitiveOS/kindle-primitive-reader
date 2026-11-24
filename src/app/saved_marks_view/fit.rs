@@ -3,7 +3,7 @@ use std::borrow::Cow;
 
 use primitive_ui::{Canvas, Rect, TextStyle};
 
-use super::super::list_density::font_pixels;
+use super::super::list_density::{font_pixels, text_line_height};
 
 pub(super) struct TitleFit {
     pub(super) logical_font: u8,
@@ -26,7 +26,7 @@ impl TitleFit {
         max_lines: usize,
     ) -> Self {
         let pixels = font_pixels(logical_font);
-        let line_height = (pixels * 13 + 5) / 10;
+        let line_height = text_line_height(canvas, pixels);
         let capacity = ((area.h / line_height).max(1) as usize).min(max_lines);
         let ranges = canvas.text_pages(area, title, title_style(pixels));
         let lines = ranges.len().min(capacity).max(1);

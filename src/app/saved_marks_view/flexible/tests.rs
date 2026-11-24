@@ -3,6 +3,7 @@ use super::super::super::tests::{Fixture, capture_test_screen, tap_contents_item
 use super::super::tests::{bookmark_settings, hold, open, tap};
 use super::*;
 use crate::app::Screen;
+use crate::app::{HEIGHT, LIST_X, NEXT, WIDTH};
 use crate::fixed_text::PdfTextRect;
 use crate::library::{Bookmark, PdfHighlight, ReadingPosition};
 use crate::reading_controls::ListDensity;
@@ -25,7 +26,7 @@ fn flexible_bookmark_pages_measure_lazily_and_pack_every_item_once() {
             Item::new(text, Action::Bookmark(index)).detail("Page 3")
         })
         .collect();
-    let mut view = FlexibleMarks::new(items, &fonts, 28, 4).unwrap();
+    let mut view = FlexibleMarks::new(items, &fonts, 28, 4, NavigationLayout::PORTRAIT).unwrap();
     assert_eq!(view.pages.len(), 1);
     assert!(view.pages[0].end() < view.items.len());
     assert!(view.measuring.is_some());

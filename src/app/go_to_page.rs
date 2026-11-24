@@ -27,7 +27,7 @@ impl PageJump {
 
 impl Reader {
     pub(super) fn draw_page_jump_context(&self, canvas: &mut Canvas) {
-        let bounds = Rect::new(LIST_X, LIST_Y + 218, WIDTH as i32 - 2 * LIST_X, 145);
+        let bounds = self.navigation_layout().body(LIST_Y + 218, 145);
         let help = if let Some(fixed) = &self.fixed {
             let reading = &fixed.reading;
             let mut text = format!(

@@ -59,6 +59,7 @@ mod library_view;
 mod link_taps;
 mod lookup_history;
 mod metadata_save;
+mod navigation_layout;
 mod navigation_preferences;
 mod nearby_search;
 #[cfg(test)]
@@ -4950,8 +4951,13 @@ impl Reader {
     fn handle_find(&mut self, input: Input) -> Change {
         let edit = self.screen == Screen::EditNote;
         let note = self.screen == Screen::Note || edit;
+        let navigation = if self.screen == Screen::BookmarkFind {
+            self.navigation_layout()
+        } else {
+            navigation_layout::NavigationLayout::PORTRAIT
+        };
         if matches!(input, Input::PageBack)
-            || matches!(input, Input::Tap(x, y) if primitive_ui::back_button(WIDTH as i32).contains(x, y))
+            || matches!(input, Input::Tap(x, y) if navigation.back().contains(x, y))
         {
             self.show(match self.screen {
                 Screen::LibraryFind => Screen::Library,
@@ -4977,7 +4983,9 @@ impl Reader {
         let Input::Tap(x, y) = input else {
             return Change::None;
         };
-        if self.screen == Screen::BookmarkFind && self.annotation_search.toggle_at(x, y) {
+        if self.screen == Screen::BookmarkFind
+            && self.annotation_search.toggle_at(navigation.width, x, y)
+        {
             return Change::Partial;
         }
         if self.screen == Screen::Find {
@@ -5007,7 +5015,7 @@ impl Reader {
             self.find_ignore_accents = !self.find_ignore_accents;
             return Change::Partial;
         }
-        let layout = Layout::new(WIDTH, HEIGHT, 4, 5);
+        let layout = navigation.keyboard();
         let action = match self.screen {
             Screen::DictionaryEntry => "Look up",
             _ if note => "Save",
@@ -5139,8 +5147,13 @@ impl Reader {
         if let Some(change) = self.word_spacing_input(input) {
             return change;
         }
+        let navigation = if self.screen == Screen::GoToPage {
+            self.navigation_layout()
+        } else {
+            navigation_layout::NavigationLayout::PORTRAIT
+        };
         if matches!(input, Input::PageBack)
-            || matches!(input, Input::Tap(x, y) if primitive_ui::back_button(WIDTH as i32).contains(x, y))
+            || matches!(input, Input::Tap(x, y) if navigation.back().contains(x, y))
         {
             self.show(match self.screen {
                 Screen::NumberingValue(field) => field.parent(),
@@ -5154,7 +5167,7 @@ impl Reader {
         let Input::Tap(x, y) = input else {
             return Change::None;
         };
-        let layout = Layout::new(WIDTH, HEIGHT, 4, 5);
+        let layout = navigation.keyboard();
         let action = if matches!(
             self.screen,
             Screen::NumberingValue(_) | Screen::FootnoteFontSize(_)
@@ -7514,7 +7527,14 @@ impl Reader {
         } else {
             title
         };
-        header(canvas, title, "Back");
+        let navigation = if self.screen.uses_navigation_viewport() {
+            let layout = self.navigation_layout();
+            layout.header(canvas, title);
+            layout
+        } else {
+            header(canvas, title, "Back");
+            navigation_layout::NavigationLayout::PORTRAIT
+        };
         if self.screen == Screen::SelectionHtml {
             self.draw_selection_html(canvas);
             return;
@@ -7655,7 +7675,7 @@ impl Reader {
                 _ => ("Search text", "Find"),
             };
             canvas.single_line_field(
-                Rect::new(LIST_X, LIST_Y, WIDTH as i32 - 2 * LIST_X, 130),
+                navigation.body(LIST_Y, 130),
                 &self.editor,
                 hint,
                 self.screen == Screen::PdfPassword,
@@ -7675,7 +7695,7 @@ impl Reader {
                 external_link::draw_paste(canvas);
             }
             if self.screen == Screen::BookmarkFind {
-                self.annotation_search.draw_filters(canvas);
+                self.annotation_search.draw_filters(canvas, navigation.width);
             }
             if self.screen == Screen::Find {
                 let label = if self.find_match_case {
@@ -7696,11 +7716,7 @@ impl Reader {
                 self.draw_nearby(canvas);
             }
             if let Some(notice) = &self.notice {
-                canvas.text(
-                    Rect::new(LIST_X, LIST_Y + 158, WIDTH as i32 - 2 * LIST_X, 75),
-                    notice,
-                    CAPTION,
-                );
+                canvas.text(navigation.body(LIST_Y + 158, 75), notice, CAPTION);
             }
             return;
         }
@@ -7869,11 +7885,7 @@ impl Reader {
                 Screen::GeneratedContents => "No readable chapters found",
                 _ => "No entries",
             };
-            canvas.text(
-                Rect::new(LIST_X, LIST_Y, WIDTH as i32 - 2 * LIST_X, 110),
-                empty,
-                BODY,
-            );
+            canvas.text(navigation.body(LIST_Y, 110), empty, BODY);
         }
         if self.has_list_shortcuts(count) {
             let page_rows = self.list_geometry().rows;
@@ -7923,21 +7935,17 @@ impl Reader {
             }
         } else {
             if self.list_page > 0 {
-                canvas.button(PREV, "Previous", false, false);
+                canvas.button(navigation.previous(), "Previous", false, false);
             }
             let rows = self.list_geometry().rows;
             if (self.list_page + 1) * rows < count {
-                canvas.button(NEXT, "Next", false, false);
+                canvas.button(navigation.next(), "Next", false, false);
             }
             if let Some(notice) = &self.notice {
-                canvas.text(
-                    Rect::new(310, HEIGHT as i32 - 104, WIDTH as i32 - 620, 80),
-                    notice,
-                    CAPTION,
-                );
+                canvas.text(navigation.footer_text(310, 104, 80), notice, CAPTION);
             } else if self.screen.is_bookmark_list() && count > rows {
                 canvas.text(
-                    Rect::new(310, HEIGHT as i32 - 93, WIDTH as i32 - 620, 50),
+                    navigation.footer_text(310, 93, 50),
                     &format!("{} / {}", self.list_page + 1, count.div_ceil(rows)),
                     CAPTION.center(),
                 );
@@ -8752,8 +8760,18 @@ impl App for Reader {
         let (count, mut items) = self.list_window();
         let geometry = self.list_geometry();
         let broad = self.has_list_shortcuts(count);
+        let navigation = self
+            .screen
+            .uses_navigation_viewport()
+            .then(|| self.navigation_layout());
+        let back = navigation.map_or_else(
+            || primitive_ui::back_button(WIDTH as i32),
+            |layout| layout.back(),
+        );
         let (prev, next) = if broad {
             (PREV_MATCH_PAGE, NEXT_MATCH_PAGE)
+        } else if let Some(layout) = navigation {
+            (layout.previous(), layout.next())
         } else {
             (PREV, NEXT)
         };
@@ -8779,7 +8797,7 @@ impl App for Reader {
                     -1
                 }
             }
-            Input::Tap(x, y) if primitive_ui::back_button(WIDTH as i32).contains(x, y) => {
+            Input::Tap(x, y) if back.contains(x, y) => {
                 match self.screen {
                     Screen::LibraryExport(page) => self.back_from_library_export(page),
                     Screen::ExportSettings(origin, page) => {

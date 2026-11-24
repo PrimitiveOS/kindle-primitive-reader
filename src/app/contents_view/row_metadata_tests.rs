@@ -4,6 +4,7 @@ use std::time::Instant;
 use primitive_app::{App, frame};
 
 use super::*;
+use crate::app::WIDTH;
 use crate::app::contents_position::ContentsNumbers;
 use crate::app::tests::{Fixture, capture_test_screen, tap_contents_item, write_outline_fixture};
 use crate::reading_controls::{ListDensity, ReadingControls};

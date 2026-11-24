@@ -18,11 +18,13 @@ pub(super) const LINE_DEFAULT: Rect = Rect::new(244, 817, 376, 108);
 pub(super) const DISABLE_LINES: Rect = Rect::new(644, 817, 376, 108);
 pub(super) const CANCEL: Rect = Rect::new(244, 1025, 376, 112);
 pub(super) const APPLY: Rect = Rect::new(644, 1025, 376, 112);
-pub(super) const LIST_HEIGHT: i32 = HEIGHT as i32 - LIST_Y - 250;
+pub(super) const LIST_FOOTER_SPACE: i32 = 250;
+pub(super) const LIST_HEIGHT: i32 = HEIGHT as i32 - LIST_Y - LIST_FOOTER_SPACE;
 
 pub(super) fn measure_rows<R>(
     first: usize,
     count: usize,
+    bottom: i32,
     mut spill: Option<R>,
     mut measure: impl FnMut(usize) -> R,
     bounds: impl Fn(&mut R) -> &mut Rect,
@@ -32,7 +34,7 @@ pub(super) fn measure_rows<R>(
     for index in first..count {
         let mut row = spill.take().unwrap_or_else(|| measure(index));
         let rect = bounds(&mut row);
-        if y + rect.h > LIST_Y + LIST_HEIGHT {
+        if y + rect.h > bottom {
             return (rows, Some(row));
         }
         rect.y = y;
@@ -68,12 +70,14 @@ impl Scope {
 pub(super) struct Geometry {
     pub(super) rows: usize,
     pub(super) row_height: i32,
+    width: i32,
 }
 
 impl Geometry {
     pub(super) const STANDARD: Self = Self {
         rows: ROWS_PER_PAGE,
         row_height: ROW_HEIGHT,
+        width: WIDTH as i32,
     };
 
     pub(super) fn dense(density: ListDensity) -> Self {
@@ -84,6 +88,23 @@ impl Geometry {
         Self {
             rows: usize::from(rows),
             row_height: LIST_HEIGHT / i32::from(rows),
+            width: WIDTH as i32,
+        }
+    }
+
+    pub(super) fn in_navigation(self, layout: super::navigation_layout::NavigationLayout) -> Self {
+        if layout.height == HEIGHT as i32 {
+            return Self {
+                width: layout.width,
+                ..self
+            };
+        }
+        let available = layout.height - LIST_Y - LIST_FOOTER_SPACE;
+        let rows = (available / self.row_height).max(1) as usize;
+        Self {
+            width: layout.width,
+            rows: rows.min(self.rows),
+            ..self
         }
     }
 
@@ -91,7 +112,7 @@ impl Geometry {
         Rect::new(
             LIST_X,
             LIST_Y + offset as i32 * self.row_height,
-            WIDTH as i32 - 2 * LIST_X,
+            self.width - 2 * LIST_X,
             self.row_height,
         )
     }
@@ -392,6 +413,14 @@ impl Reader {
 /// The app kit renders into a fixed portrait canvas before device scaling.
 pub(super) fn reference_scale() -> ScaleContext {
     ScaleContext::new(WIDTH, super::HEIGHT)
+}
+
+pub(super) fn nominal_height(canvas: &Canvas, rendered: i32) -> i32 {
+    rendered * 1000 / canvas.px(1000).max(1)
+}
+
+pub(super) fn text_line_height(canvas: &Canvas, size: i32) -> i32 {
+    (canvas.px(size) * 13 + 5) / 10
 }
 
 pub(super) fn list_text_pixels(logical: u8, row_height: i32) -> i32 {
