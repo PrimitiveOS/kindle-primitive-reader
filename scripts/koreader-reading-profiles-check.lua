@@ -161,12 +161,13 @@ local function value_action(commands, category, label)
     end
     error("Missing editable value " .. label)
 end
-local function set_number(action, menu_instance, initial, minimum, maximum, default, value)
+local function set_number(action, menu_instance, initial, minimum, maximum, default, value, step)
     assert(action.checked_func())
     action.callback(menu_instance)
     assert(visible.value == initial and visible.default_value == default)
     assert(visible.value_min == minimum and visible.value_max == maximum)
     assert(visible.value_hold_step == 5)
+    if step then assert(visible.value_step == step) end
     visible.callback({value = value})
 end
 local root_menu = profiles:getSubMenuItems()
@@ -181,11 +182,29 @@ assert(text.settings.order[1] == "rotation_mode" and text.set_font == "Harbor Se
 assert(text.font_size == value("ui/data/creoptions", "font_size") and text.kopt_text_wrap == nil)
 assert(text.view_mode ~= nil and text.nightmode_images ~= nil)
 
-local text_live_spacing = profiles.document.configurable.line_spacing
-local line_spacing = value_action(commands_for("Text"), "Reflowable documents (epub, fb2, txt…)", "line spacing")
-set_number(line_spacing, menu, text_live_spacing, 50, 200, 100, 137)
-assert(text.line_spacing == 137)
-assert(profiles.document.configurable.line_spacing == text_live_spacing)
+local text_live = profiles.document.configurable
+local text_commands = commands_for("Text")
+local section = "Reflowable documents (epub, fb2, txt…)"
+local live_spacing = text_live.line_spacing
+local live_font = text_live.font_size
+local live_dpi = text_live.render_dpi
+set_number(value_action(text_commands, section, "line spacing"), menu, live_spacing, 50, 200, 100, 137)
+set_number(value_action(text_commands, section, "font size"), menu, live_font, 12, 44, 22, 31.5, 0.5)
+assert(text.line_spacing == 137 and text.font_size == 31.5)
+assert(text_live.line_spacing == live_spacing and text_live.font_size == live_font)
+
+local zoom = value_action(text_commands, section, "zoom")
+local zoom_choices = zoom.sub_item_table_func()
+local expected_dpi = {0, 48, 96, 167, 212, 300}
+assert(#zoom_choices == #expected_dpi)
+assert(zoom_choices[3].checked_func())
+for index, dpi in ipairs(expected_dpi) do
+    zoom_choices[index].callback()
+    assert(text.render_dpi == dpi and zoom_choices[index].checked_func())
+    assert(text_live.render_dpi == live_dpi)
+end
+zoom_choices[4].callback()
+assert(text.render_dpi == 167)
 
 profiles.ui.rolling = nil
 profiles.document = document("ui/data/koptoptions")
@@ -234,11 +253,13 @@ assert(sent_setting("zoom_overlap_h") == nil and sent_setting("zoom_overlap_v") 
 events = {}
 profiles:onProfileExecute("Text", {qm_show = false})
 assert(sent_setting("embedded_css") == nil and sent_setting("line_spacing") == nil)
+assert(sent_setting("font_size") == nil and sent_setting("render_dpi") == nil)
 profile_ui.instance = {rolling = true}
 events = {}
 profiles:onProfileExecute("Text", {qm_show = false})
 assert(sent_setting("embedded_css") ~= nil and sent_setting("zoom_overlap_h") == nil)
 assert(sent_setting("line_spacing") == 137 and sent_setting("zoom_overlap_v") == nil)
+assert(sent_setting("font_size") == 31.5 and sent_setting("render_dpi") == 167)
 for _, item in ipairs(profiles:getSubMenuItems()) do
     if item.name == "PDF copy" then commands = item.sub_item_table; break end
 end
@@ -246,6 +267,7 @@ choose(commands, "Delete").callback(menu)
 assert(profiles.data["PDF copy"] and visible.ok_text == "Delete")
 visible.ok_callback()
 assert(profiles.data["PDF copy"] == nil)
+print("Stock saved font size: 12–44, default 22, step 0.5, held step 5; content zoom presets 0/48/96/167/212/300 dpi.")
 print("Stock saved line spacing: 50–200%, default 100%, held step 5; profile-only change dispatches 137%.")
 print("Stock saved horizontal and vertical overlap: 0–84%, default 36%, held step 5; profile-only values dispatch independently.")
 print("Stock factory, action removal, rename/duplicate/delete, format gate and batched execution verified.")

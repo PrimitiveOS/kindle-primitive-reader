@@ -206,7 +206,9 @@ fn applying_a_reflow_profile_preserves_the_landscape_body_footer_and_source() {
     app.save_reading_profile("Wide layout").unwrap();
     let mut profiles = app.profiles.clone();
     profiles[0].set_fields(vec![Field::LineSpacing]).unwrap();
-    profiles[0].set_value(ValueField::LineSpacing, 122).unwrap();
+    profiles[0]
+        .set_value(ValueField::LineSpacing, 122.0)
+        .unwrap();
     reading_profiles::save(&app.profiles_path, &app.profiles, &profiles).unwrap();
     app.profiles = profiles;
     app.show(Screen::ReadingProfile(0));

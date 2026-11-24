@@ -20,11 +20,17 @@ impl Reader {
             .iter()
             .filter_map(|&field| {
                 let value = profile.value(field)?;
-                let detail = if field.included_in(&selection) {
-                    format!("{value}%")
+                let mut detail = if field == ValueField::FontSize {
+                    profile.legacy_font_size().map_or_else(
+                        || field.display(value),
+                        |size| format!("{size} px (legacy)"),
+                    )
                 } else {
-                    format!("{value}% · Excluded")
+                    field.display(value)
                 };
+                if !field.included_in(&selection) {
+                    detail.push_str(" · Excluded");
+                }
                 Some(
                     Item::new(
                         field.label(),
@@ -69,37 +75,36 @@ impl Reader {
         let Screen::NumberingValue(NumberField::ProfileValue(index, field)) = self.screen else {
             return;
         };
-        if let Some(value) = self
-            .profiles
-            .get(index)
-            .and_then(|profile| profile.value(field))
+        let Some(profile) = self.profiles.get(index) else {
+            return;
+        };
+        let Some(value) = profile.value(field) else {
+            return;
+        };
+        let value = if field == ValueField::FontSize
+            && let Some(pixels) = profile.legacy_font_size()
         {
-            self.set_profile_value_draft(value);
-        }
+            let scale = self.device_reading_settings().font_scale;
+            // Match the nearest half-unit to the old physical size. The
+            // renderer rounds logical sizes up to whole device pixels.
+            let logical = (f64::from(pixels) - 0.5) / f64::from(scale.physical_delta(1.0));
+            ((logical * 2.0).round() * 0.5).clamp(12.0, 255.0)
+        } else {
+            value
+        };
+        self.set_profile_value_draft(value);
     }
 
-    fn set_profile_value_draft(&mut self, value: u16) {
+    fn set_profile_value_draft(&mut self, value: f64) {
         self.editor.text = value.to_string().chars().collect();
         self.editor.caret = self.editor.text.len();
         self.notice = None;
     }
 
-    fn parse_profile_value_draft(&self, field: ValueField) -> Result<u16> {
-        let limits = field.limits();
-        self.editor
-            .string()
-            .trim()
-            .parse::<u16>()
-            .ok()
-            .filter(|value| limits.contains(value))
-            .ok_or_else(|| {
-                format!(
-                    "Enter a value from {}% to {}%",
-                    limits.start(),
-                    limits.end()
-                )
-                .into()
-            })
+    fn parse_profile_value_draft(&self, field: ValueField) -> Result<f64> {
+        field
+            .parse(&self.editor.string())
+            .ok_or_else(|| format!("Enter a value from {}", field.range_label()).into())
     }
 
     pub(in crate::app) fn profile_value_input(&mut self, input: Input) -> Option<Change> {
@@ -109,12 +114,12 @@ impl Reader {
         let [decrease, default, increase] = self.numeric_layout().steps(STEPS, false);
         let value = if matches!(input, Input::Tap(x, y) if default.contains(x, y)) {
             Ok(field.default())
-        } else if let Some(delta) = StepButtons::new(decrease, increase).delta(input, 5) {
+        } else if let Some(delta) =
+            StepButtons::new(decrease, increase).delta(input, field.held_steps())
+        {
             let limits = field.limits();
             self.parse_profile_value_draft(field).map(|value| {
-                value
-                    .saturating_add_signed(delta)
-                    .clamp(*limits.start(), *limits.end())
+                (value + f64::from(delta) * field.step()).clamp(*limits.start(), *limits.end())
             })
         } else {
             return None;
@@ -145,7 +150,7 @@ impl Reader {
     }
 
     pub(in crate::app) fn draw_profile_value_editor(&self, canvas: &mut Canvas) {
-        let Screen::NumberingValue(NumberField::ProfileValue(_, field)) = self.screen else {
+        let Screen::NumberingValue(NumberField::ProfileValue(index, field)) = self.screen else {
             return;
         };
         let layout = self.numeric_layout();
@@ -153,19 +158,29 @@ impl Reader {
         StepButtons::new(decrease, increase).draw(canvas);
         canvas.button(
             default,
-            &format!("Default: {}%", field.default()),
+            &format!("Default: {}", field.display(field.default())),
             false,
             false,
         );
-        let limits = field.limits();
+        let legacy = field == ValueField::FontSize
+            && self
+                .profiles
+                .get(index)
+                .and_then(Profile::legacy_font_size)
+                .is_some();
+        let mut details = format!(
+            "{}\nTap -/+ for {}. Hold for {}.",
+            field.range_label(),
+            field.display(field.step()),
+            field.display(f64::from(field.held_steps()) * field.step()),
+        );
+        if legacy {
+            details.push_str("\nSet converts the saved pixel size to a logical size.");
+        }
         canvas.text(
             layout.detail(Rect::new(48, LIST_Y + 428, 1168, 150), false),
-            &format!(
-                "{}% to {}%\nTap -/+ for 1%. Hold for 5%.",
-                limits.start(),
-                limits.end()
-            ),
-            CAPTION.lines(2),
+            &details,
+            CAPTION.lines(3),
         );
     }
 }

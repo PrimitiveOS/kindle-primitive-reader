@@ -64,7 +64,7 @@ fn reflow_profile_edits_storage_and_keeps_selection_and_book_until_explicit_appl
     app.save_profile_fields(0).unwrap();
     let field = ValueField::LineSpacing;
     let before = app.profiles[0].clone();
-    assert_eq!(before.value(field), Some(120));
+    assert_eq!(before.value(field), Some(120.0));
     let bytes = fs::read(&app.profiles_path).unwrap();
     let location = app.current_position();
     let settings = app.active.as_ref().unwrap().reading.config.settings;
@@ -97,9 +97,17 @@ fn reflow_profile_edits_storage_and_keeps_selection_and_book_until_explicit_appl
 
     press_key(&mut app, Key::Go);
     assert_eq!(app.screen, Screen::ReadingProfileValues(0));
-    assert_eq!(app.profiles[0].value(field), Some(137));
+    assert_eq!(app.profiles[0].value(field), Some(137.0));
     assert_eq!(app.profiles[0].selection(), [Field::FontSize]);
-    assert_eq!(app.items()[0].detail.as_deref(), Some("137% · Excluded"));
+    assert_eq!(
+        app.items()
+            .iter()
+            .find(|item| item.title == field.label())
+            .unwrap()
+            .detail
+            .as_deref(),
+        Some("137% · Excluded")
+    );
     let mut expected = before;
     let Profile::Text { preferences, .. } = &mut expected else {
         panic!("Expected a reflow profile");
@@ -142,7 +150,7 @@ fn reflow_profile_edits_storage_and_keeps_selection_and_book_until_explicit_appl
         137
     );
     let reopened = open(&fixture, &fixture.book);
-    assert_eq!(reopened.profiles[0].value(field), Some(137));
+    assert_eq!(reopened.profiles[0].value(field), Some(137.0));
 }
 
 #[test]
@@ -197,8 +205,8 @@ fn fixed_profile_edits_each_overlap_in_landscape_and_keeps_older_values_above_84
     app.finish_viewport(shown, ViewportDecision::Commit);
     press_key(&mut app, Key::Go);
     assert_eq!(app.screen, Screen::ReadingProfileValues(0));
-    assert_eq!(app.profiles[0].value(horizontal), Some(45));
-    assert_eq!(app.profiles[0].value(vertical), Some(87));
+    assert_eq!(app.profiles[0].value(horizontal), Some(45.0));
+    assert_eq!(app.profiles[0].value(vertical), Some(87.0));
 
     tap_contents_item(&mut app, vertical.label());
     assert_eq!(app.editor.string(), "87");
@@ -208,12 +216,12 @@ fn fixed_profile_edits_each_overlap_in_landscape_and_keeps_older_values_above_84
     type_value(&mut app, "88");
     let back = app.navigation_layout().back();
     tap(&mut app, back);
-    assert_eq!(app.profiles[0].value(vertical), Some(87));
+    assert_eq!(app.profiles[0].value(vertical), Some(87.0));
     tap_contents_item(&mut app, vertical.label());
     type_value(&mut app, "88");
     press_key(&mut app, Key::Go);
     assert_eq!(app.viewport_request(), Some(ViewportRequest::Fixed(turn)));
-    assert_eq!(app.profiles[0].value(vertical), Some(88));
+    assert_eq!(app.profiles[0].value(vertical), Some(88.0));
     assert_eq!(app.profiles[0].selection(), fields);
     assert!(
         app.items()
@@ -239,4 +247,111 @@ fn fixed_profile_edits_each_overlap_in_landscape_and_keeps_older_values_above_84
     assert_eq!(view.scan_gamma_tenths, Some(20));
     let persisted = open(&fixture, &path);
     assert_eq!(persisted.profiles[0], app.profiles[0]);
+}
+
+#[test]
+fn saved_font_size_and_content_zoom_keep_legacy_values_and_mask_until_explicit_apply() {
+    let fixture = Fixture::new();
+    let mut app = open(&fixture, &fixture.book);
+    let settings = app.active.as_ref().unwrap().reading.config.settings;
+    app.activate(Action::Text(Settings {
+        font_size: 65.0,
+        logical_font_size: None,
+        render_dpi: 167,
+        ..settings
+    }))
+    .unwrap();
+    app.save_reading_profile("Harbor typography").unwrap();
+    app.edit_profile_fields(0).unwrap();
+    app.set_profile_fields(false).unwrap();
+    app.toggle_profile_field(Field::LineSpacing).unwrap();
+    app.save_profile_fields(0).unwrap();
+    let profile_before = app.profiles[0].clone();
+    app.activate(Action::Text(settings)).unwrap();
+    let accepted = draw_test_candidate(&mut app, 1, LogicalTurn::Upright, "", false);
+    app.finish_viewport(accepted, ViewportDecision::Commit);
+    app.set_reading_orientation(ReadingOrientation::LandscapeRight)
+        .unwrap();
+    let turn = LogicalTurn::Clockwise;
+    let accepted = draw_test_candidate(&mut app, 2, turn, "", false);
+    app.finish_viewport(accepted, ViewportDecision::Commit);
+    let book_before = app.active.as_ref().unwrap().reading.config.settings;
+    let location = app.current_position().unwrap();
+
+    let font = ValueField::FontSize;
+    let zoom = ValueField::ContentZoom;
+    show_editor(&mut app, font);
+    assert_eq!(app.editor.string(), "30.5");
+    let [minus, default, plus] = app.numeric_layout().steps(STEPS, false);
+    tap(&mut app, default);
+    assert_eq!(app.editor.string(), "22");
+    tap(&mut app, plus);
+    assert_eq!(app.editor.string(), "22.5");
+    assert_eq!(
+        app.input(Input::LongTap(
+            (minus.x + minus.w / 2) as f32,
+            (minus.y + minus.h / 2) as f32
+        )),
+        Change::Partial
+    );
+    assert_eq!(app.editor.string(), "17.5");
+    type_value(&mut app, "11.5");
+    press_key(&mut app, Key::Go);
+    assert!(app.notice.as_deref().unwrap().contains("12 to 255"));
+    assert_eq!(app.input(Input::PageBack), Change::Partial);
+    assert_eq!(
+        app.items()[0].detail.as_deref(),
+        Some("65 px (legacy) · Excluded")
+    );
+    assert_eq!(app.profiles[0], profile_before);
+
+    tap_contents_item(&mut app, font.label());
+    type_value(&mut app, "44.5");
+    let drawn = draw_test_candidate(&mut app, 3, turn, "landscape-profile-font-size", false);
+    app.finish_viewport(drawn, ViewportDecision::Commit);
+    press_key(&mut app, Key::Go);
+    assert_eq!(app.profiles[0].value(font), Some(44.5));
+    assert_eq!(app.items()[0].detail.as_deref(), Some("44.5 · Excluded"));
+
+    tap_contents_item(&mut app, zoom.label());
+    assert_eq!(app.editor.string(), "167");
+    tap(&mut app, default);
+    assert_eq!(app.editor.string(), "96");
+    type_value(&mut app, "125.5");
+    press_key(&mut app, Key::Go);
+    assert!(app.notice.as_deref().unwrap().contains("0 dpi to 300 dpi"));
+    type_value(&mut app, "125");
+    press_key(&mut app, Key::Go);
+    assert_eq!(app.profiles[0].value(zoom), Some(125.0));
+    assert_eq!(app.items()[1].detail.as_deref(), Some("125 dpi · Excluded"));
+    assert_eq!(app.profiles[0].selection(), [Field::LineSpacing]);
+    let mut wanted = profile_before;
+    let Profile::Text { preferences, .. } = &mut wanted else {
+        panic!("Expected a reflow profile");
+    };
+    preferences.logical_font_size = Some(44.5);
+    preferences.render_dpi = Some(125);
+    assert_eq!(app.profiles[0], wanted);
+    assert_eq!(app.current_position(), Some(location.clone()));
+    assert_eq!(
+        app.active.as_ref().unwrap().reading.config.settings,
+        book_before
+    );
+
+    app.apply_reading_profile(0).unwrap();
+    let book = app.active.as_ref().unwrap().reading.config.settings;
+    assert_eq!(
+        (book.logical_font_size, book.render_dpi),
+        (book_before.logical_font_size, book_before.render_dpi)
+    );
+    app.edit_profile_fields(0).unwrap();
+    app.toggle_profile_field(Field::FontSize).unwrap();
+    app.toggle_profile_field(Field::ContentZoom).unwrap();
+    app.save_profile_fields(0).unwrap();
+    app.apply_reading_profile(0).unwrap();
+    let book = app.active.as_ref().unwrap().reading.config.settings;
+    assert_eq!((book.logical_font_size, book.render_dpi), (Some(44.5), 125));
+    assert_eq!(app.current_position().unwrap().anchor, location.anchor);
+    assert_eq!(app.viewport_request(), Some(ViewportRequest::Fixed(turn)));
+    assert_eq!(open(&fixture, &fixture.book).profiles[0], app.profiles[0]);
 }

@@ -1657,7 +1657,13 @@ impl Reader {
         }
         if matches!(screen, Screen::NumberingValue(_)) {
             self.editor = Editor::new(
-                if matches!(screen, Screen::NumberingValue(NumberField::LogicalFont(_))) {
+                if matches!(
+                    screen,
+                    Screen::NumberingValue(
+                        NumberField::LogicalFont(_)
+                            | NumberField::ProfileValue(_, reading_profiles::ValueField::FontSize)
+                    )
+                ) {
                     24
                 } else if matches!(screen, Screen::NumberingValue(NumberField::AutoTurn)) {
                     5
