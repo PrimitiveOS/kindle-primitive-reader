@@ -74,6 +74,12 @@ KOReader file chooser. Test the saved choice after reopen, physical pagination,
 retained search result ranking and page, traversal between EPUB and PDF, and
 the existing next-file end action. [Folder order controls](document-end.md#choose-folder-order)
 
+The exact Mac candidate passed 1,134 checks. The ARMHF bundle passed
+1,119 Reader library tests, 14 EPUB package tests and four layout probes
+on Oasis 3. Both skipped 65 opt-in tests. Eight native test frames match
+the Mac simulator pixel for pixel. The folder picker differs by two label
+pixels. These captures exercise the Reader software path on Kindle.
+
 ## Reader 0.1.38 verification plan
 
 Compare the optional top header’s published chapter marks across an entire
