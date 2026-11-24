@@ -52,11 +52,10 @@ impl Reader {
     }
 
     fn effective_opening_metadata(&self, path: &Path, mut publisher: Metadata) -> Metadata {
-        let custom =
-            primitive_app::with_storage(|| self.library.nearby_koreader_custom_metadata(path))
-                .ok()
-                .flatten()
-                .and_then(|bytes| custom_metadata::parse(&bytes).ok());
+        let custom = primitive_app::with_storage(|| self.library.koreader_custom_metadata(path))
+            .ok()
+            .flatten()
+            .and_then(|bytes| custom_metadata::parse(&bytes).ok());
         if let Some(custom) = custom {
             for (field, value) in [
                 (Title, custom.title),

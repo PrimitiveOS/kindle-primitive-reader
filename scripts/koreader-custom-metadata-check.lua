@@ -1,6 +1,7 @@
 -- Run with ./luajit from the pinned native stock runtime. All test files are
 -- authored here under a fresh scratch directory supplied as the first argument.
 local scratch = assert(arg[1], "Pass an empty, absolute scratch directory")
+local central = arg[2] == "central"
 assert(scratch:match("^/[^\n]+$") and not scratch:find("/../", 1, true))
 require("setupkoenv")
 local util = require("util")
@@ -9,11 +10,15 @@ for name in lfs.dir(scratch) do
     assert(name == "." or name == "..", "Use an empty scratch directory")
 end
 
-package.loaded.datastorage = {
-    getHistoryDir = function() return scratch .. "/history" end,
-    getDocSettingsDir = function() return scratch .. "/settings" end,
-    getDocSettingsHashDir = function() return scratch .. "/hash" end,
-}
+if central then
+    assert(os.getenv("KO_HOME") == scratch .. "/koreader", "Point KO_HOME at the authored scratch mount")
+else
+    package.loaded.datastorage = {
+        getHistoryDir = function() return scratch .. "/history" end,
+        getDocSettingsDir = function() return scratch .. "/settings" end,
+        getDocSettingsHashDir = function() return scratch .. "/hash" end,
+    }
+end
 for _, dep in ipairs({"ui/bidi", "ui/geometry", "ui/widget/booklist", "ui/widget/buttondialog",
     "ui/widget/checkbutton", "ui/widget/confirmbox", "ui/widget/infomessage", "ui/widget/inputdialog",
     "ui/widget/notification", "ui/widget/textviewer", "ui/uimanager", "document/document",
@@ -22,15 +27,26 @@ for _, dep in ipairs({"ui/bidi", "ui/geometry", "ui/widget/booklist", "ui/widget
 end
 package.loaded.device = { screen = {} }
 package.loaded["ui/widget/container/widgetcontainer"] = {extend = function(_, fields) return fields end}
-G_reader_settings = require("luasettings"):wrap({ document_metadata_folder = "doc" })
+local Settings = require("luasettings")
+local DataStorage = require("datastorage")
+local settings_path = central and DataStorage:getDataDir() .. "/settings.reader.lua"
+G_reader_settings = central and Settings:open(settings_path) or Settings:wrap({})
+G_reader_settings:saveSetting("document_metadata_folder", "doc")
+G_reader_settings:flush()
 local DocSettings = require("docsettings")
 local BookInfo = require("apps/filemanager/filemanagerbookinfo")
 local dump = require("dump")
-local doc = scratch .. "/shelf/Field Notes.epub"
-local same_stem = scratch .. "/shelf/Field Notes.pdf"
-assert(util.makePath(scratch .. "/shelf"))
-assert(util.makePath(scratch .. "/hash"))
-assert(util.writeToFile("Authored document used only for its path and hash", doc))
+local parent = scratch .. (central and "/documents/shelf" or "/shelf")
+assert(util.makePath(parent))
+assert(util.makePath(DataStorage:getDocSettingsHashDir()))
+parent = assert(require("ffi/util").realpath(parent .. "/../shelf"))
+local doc = parent .. "/Field Notes.epub"
+local same_stem = parent .. "/Field Notes.pdf"
+local input = central and assert(arg[3], "Pass an authored EPUB fixture")
+assert(util.writeToFile(input and assert(util.readFromFile(input, "rb")) or "Authored document used only for its path and hash", doc))
+if central then
+    assert(util.writeToFile(assert(util.readFromFile(assert(arg[4], "Pass an authored PDF fixture"), "rb")), same_stem))
+end
 local original = { title = "Publisher title", authors = "Publisher author", language = "en", pages = 3 }
 local custom = DocSettings.openSettingsFile()
 custom:saveSetting("doc_props", { title = "Stale title", description = "Stale text", language = "ca", pages = 2 })
@@ -39,7 +55,7 @@ custom:saveSetting("custom_props", {
     keywords = "Tide gauge\nWaves", description = 'Notebook from "the coast"',
 })
 assert(custom:flushCustomMetadata(doc))
-local nearby = scratch .. "/shelf/Field Notes.sdr/custom_metadata.lua"
+local nearby = parent .. "/Field Notes.sdr/custom_metadata.lua"
 assert(DocSettings:findCustomMetadataFile(doc) == nearby)
 assert(DocSettings:findCustomMetadataFile(same_stem) == nearby)
 local view = BookInfo.extendProps(original, doc)
@@ -47,7 +63,7 @@ assert(view.display_title == "Coastal Ledger" and view.authors == "Ada Scout\nJu
 assert(view.series_index == 2.5 and view.pages == 3 and view.language == "en")
 assert(view.description == 'Notebook from "the coast"' and original.title == "Publisher title")
 assert(BookInfo.extendProps({ title = "Fresh title" }, same_stem).title == "Coastal Ledger")
-assert(BookInfo.extendProps({}, scratch .. "/shelf/Bare.epub").display_title == "Bare")
+assert(BookInfo.extendProps({}, parent .. "/Bare.epub").display_title == "Bare")
 assert(util.writeToFile(dump(view, nil, true), scratch .. "/effective-props.lua", nil, true))
 
 local fixture = assert(io.open(nearby, "rb"))
@@ -63,6 +79,29 @@ for location, title in pairs({ dir = "Central title", hash = "Hashed title" }) d
 end
 for location, title in pairs({ doc = "Coastal Ledger", dir = "Central title", hash = "Hashed title" }) do
     G_reader_settings:saveSetting("document_metadata_folder", location)
+    if central then
+        G_reader_settings:flush()
+        G_reader_settings = Settings:open(settings_path)
+        assert(G_reader_settings:readSetting("document_metadata_folder") == location)
+    end
     assert(BookInfo.extendProps(original, doc).display_title == title)
+end
+if central then
+    local stem = parent .. "/Field Notes.sdr"
+    assert(settings_path == scratch .. "/koreader/settings.reader.lua")
+    assert(DocSettings:getSidecarDir(doc, "dir") == scratch .. "/koreader/docsettings" .. stem)
+    assert(DocSettings:getSidecarDir(same_stem, "dir") == scratch .. "/koreader/docsettings" .. stem)
+    for _, authored in ipairs({doc, same_stem}) do
+        local digest = assert(util.partialMD5(authored))
+        assert(#digest == 32)
+        assert(DocSettings:getSidecarDir(authored, "hash") == scratch .. "/koreader/hashdocsettings/" .. digest:sub(1, 2) .. "/" .. digest .. ".sdr")
+        print("Stock sample fingerprint: " .. digest)
+    end
+    assert(util.writeToFile("return {", settings_path))
+    assert(util.writeToFile("return {document_metadata_folder='hash'}", settings_path .. ".old"))
+    G_reader_settings = Settings:open(settings_path)
+    assert(G_reader_settings:readSetting("document_metadata_folder") == "hash")
+    assert(BookInfo.extendProps(original, same_stem).display_title == "Coastal Ledger") -- its hash is distinct
+    print("Pinned Kindle-style DataStorage: settings.reader.lua, .old fallback, canonical docsettings path and partitioned hashes.")
 end
 print("Pinned DocSettings and BookInfo: stock writer, three location priorities, same-stem sharing and live publisher fallback.")

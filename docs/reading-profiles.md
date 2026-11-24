@@ -85,12 +85,31 @@ same location uses that same sidecar, as in KOReader. The rule uses fresh
 publisher values for fields absent from `custom_props`. Library titles,
 publisher metadata and book files keep their original values.
 
-Reader opens the exact adjacent table from Documents, validates its
-literal data and reads it as a bounded snapshot. A missing, invalid,
-linked or oversized table leaves publisher values in use. The file limit
-is 256 KiB, with 16 KiB per text field. The lookup covers beside-book files
-and leaves KOReader's centralized `docsettings` and `hashdocsettings`
-directories to KOReader.
+For a `documents` library with a sibling `koreader` folder on the same
+mounted device, Reader also checks centralized metadata. It reads
+`document_metadata_folder` from `koreader/settings.reader.lua`, with the
+stock `.old` fallback. The first matching table supplies the custom fields.
+
+| KOReader setting | Search order |
+| --- | --- |
+| `doc` or default | Adjacent, centralized path, sampled fingerprint |
+| `dir` | Centralized path, adjacent, sampled fingerprint |
+| `hash` | Sampled fingerprint, adjacent, centralized path |
+
+The centralized path mirrors the book's canonical absolute path under
+`koreader/docsettings`. A desktop copy of a Kindle mount can also use
+the original `/mnt/us/documents` path. If both centralized paths exist,
+Reader treats the source as ambiguous. The fingerprint location is
+`koreader/hashdocsettings/<first two hex digits>/<fingerprint>.sdr`.
+It uses KOReader's sampled file hash, which can follow a renamed edition
+and does not cover every source byte.
+
+Reader validates the settings and sidecar as bounded literal data. It
+rejects links and changed files during lookup. Missing locations fall
+through in the order above. An ambiguous, invalid or oversized selected
+table leaves publisher values in use. Each custom table is limited to
+256 KiB, with 16 KiB per text field. The lookup leaves the mounted KOReader
+data intact.
 
 [Custom title in the Mac simulator](screenshots/landscape-profile-koreader-custom-title.png)
 
@@ -127,8 +146,7 @@ rules, byte-identical staged and accepted frames, and a PDF's position
 through a rejected turn. The legacy display path still uses the preferred
 orientation. The native comparison exercises the stock shortcut guide,
 preview, path expansion and reader-ready matching against Reader's own
-folder locations. Importing KOReader's custom folder settings and looking
-up its centralized metadata stores remain open.
+folder locations. Importing KOReader's custom folder settings remains open.
 [Landscape simulator capture](screenshots/landscape-profile-apply-on-opening.png) ·
 [Opening conditions in the legacy display path](screenshots/landscape-profile-opening-conditions.png) ·
 [Current book path shortcut](screenshots/landscape-profile-current-book-path.png) ·
@@ -143,6 +161,12 @@ Run `koreader-custom-metadata-check.lua` from the same pinned runtime with
 an empty absolute scratch directory. It produces an authored `custom_metadata.lua`
 and `effective-props.lua`. Pass the latter as the third argument to the native
 profile harness to compare the subsequent reader-ready matching and shortcut.
+For the centralized comparison, set `KO_HOME` to `scratch/koreader` and
+pass `scratch central <authored EPUB> <authored PDF>` to the same script.
+This runs KOReader's real DataStorage and LuaSettings, including backup
+fallback, the canonical path mirror and partitioned hashes. The Mac Reader
+tests use the same authored stock hashes and check EPUB and PDF profile
+application at their saved positions.
 [Native custom metadata comparison](../scripts/koreader-custom-metadata-check.lua)
 
 Run the stock profile harness from the pinned native runtime with

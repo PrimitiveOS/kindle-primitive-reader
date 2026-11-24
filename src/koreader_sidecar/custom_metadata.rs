@@ -4,6 +4,50 @@ use super::{Parser, SidecarError, Value, read_fields};
 pub(crate) const MAX_BYTES: usize = 256 * 1024;
 const MAX_VALUE_BYTES: usize = 16 * 1024;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Location {
+    #[default]
+    Document,
+    Directory,
+    Hash,
+}
+
+impl Location {
+    pub(crate) fn order(self) -> [Self; 3] {
+        match self {
+            Self::Document => [Self::Document, Self::Directory, Self::Hash],
+            Self::Directory => [Self::Directory, Self::Document, Self::Hash],
+            Self::Hash => [Self::Hash, Self::Document, Self::Directory],
+        }
+    }
+}
+
+pub(crate) fn storage_preference(bytes: &[u8]) -> Result<Location, SidecarError> {
+    let key_name = "document_metadata_folder";
+    let mut preference = None;
+    read_fields(bytes, &mut |key, value| {
+        if key.as_deref() != Some(key_name.as_bytes()) {
+            return Ok(());
+        }
+        if preference.is_some() {
+            return Err(SidecarError::DuplicateField(key_name));
+        }
+        let location = match value {
+            Value::Nil => Location::default(),
+            Value::String(value) => match value.as_ref() {
+                b"doc" => Location::Document,
+                b"dir" => Location::Directory,
+                b"hash" => Location::Hash,
+                _ => return Err(SidecarError::InvalidField(key_name)),
+            },
+            _ => return Err(SidecarError::InvalidField(key_name)),
+        };
+        preference = Some(location);
+        Ok(())
+    })?;
+    Ok(preference.unwrap_or_default())
+}
+
 #[derive(Default, Debug, PartialEq, Eq)]
 pub(crate) struct CustomMetadata {
     pub(crate) title: Option<String>,
@@ -94,6 +138,32 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<CustomMetadata, SidecarError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn central_custom_metadata_stock_settings_only_accept_literal_storage_preferences() {
+        for (setting, value) in [
+            (b"return {}".as_slice(), Location::Document),
+            (b"return {document_metadata_folder=nil}", Location::Document),
+            (
+                b"return {document_metadata_folder='doc'}",
+                Location::Document,
+            ),
+            (
+                b"return {['document_metadata_folder']='dir', unknown={flag=true}}",
+                Location::Directory,
+            ),
+            (b"return {document_metadata_folder='hash'}", Location::Hash),
+        ] {
+            assert_eq!(storage_preference(setting), Ok(value));
+        }
+        for invalid in [
+            b"return {document_metadata_folder='elsewhere'}".as_slice(),
+            b"return {document_metadata_folder='doc', document_metadata_folder='hash'}",
+            b"return {document_metadata_folder='doc', unknown=do_work()}",
+        ] {
+            assert!(storage_preference(invalid).is_err());
+        }
+    }
 
     #[test]
     fn custom_metadata_reads_stock_literals_and_ignores_cached_publication_data() {
