@@ -88,7 +88,9 @@ visits and checked the weekly result of 195 seconds and five pages, today's 110
 seconds and two pages, and the current session's 120 seconds and two pages. The
 fixture includes a cutoff visit, rereads, inactive dates, and a visit spanning
 midnight. Mac app tests exercise the empty report, both orientations, returning
-to the same passage, the preserved journal, and refreshing on wake. Kindle
+to the same passage, the preserved journal, and refreshing on wake. The opt-in
+workflow also opened the report from cached original EPUB and PDF documents
+and returned to the same page with identical source bytes. Kindle
 acceptance remains open. [Stock capture](screenshots/koreader-reading-progress.png) · [Native comparison runner](../scripts/koreader-reading-progress-check.py)
 
 ## Reset statistics

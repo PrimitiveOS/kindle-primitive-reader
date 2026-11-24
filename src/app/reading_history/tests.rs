@@ -375,16 +375,29 @@ fn original_documents_keep_their_positions_while_browsing_dated_statistics() {
     assert!(paths.len() >= 2);
     for (i, path) in paths.iter().enumerate() {
         let bytes = fs::read(path).unwrap();
-        let mut app = Reader::open(&root, &state.join(i.to_string()), fonts.clone()).unwrap();
+        let profile = state.join(i.to_string());
+        fs::create_dir_all(&profile).unwrap();
+        let mut app = Reader::open(&root, &profile.join("library.json"), fonts.clone()).unwrap();
         app.open_path(path).unwrap();
         let id = app.open_book_id().unwrap();
         let before = app.library.state(id).unwrap().position.clone();
-        seed(&mut app, id, "Original document", Date::today(), 90);
+        let day = Date::today().add_days(-1).unwrap();
+        seed(&mut app, id, "Original document", day, 90);
         app.activate_reading_history(Command::Open(Some(id)))
             .unwrap();
+        app.activate_reading_history(Command::Show(Page::Progress))
+            .unwrap();
+        assert_eq!(app.screen, Screen::ReadingHistory(Page::Progress));
+        let report = app
+            .reading_history
+            .progress(crate::mark_time::now(), Zone::Local)
+            .unwrap();
+        assert_eq!(report.week_totals(), (90, 1));
+        assert_eq!(app.input(Input::PageForward), Change::Partial);
+        assert_eq!(app.screen, Screen::ReadingHistory(Page::Summary));
         app.activate_reading_history(Command::Show(Page::Calendar))
             .unwrap();
-        app.activate_reading_history(Command::Show(Page::Day(Date::today())))
+        app.activate_reading_history(Command::Show(Page::Day(day)))
             .unwrap();
         app.history_back();
         app.history_back();

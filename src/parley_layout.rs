@@ -823,10 +823,12 @@ impl ParleyChapter {
                     if index == 0
                         && let Some(space) = margin_space.forced_top.filter(|&space| space > 0.0)
                     {
-                        chapter.physical_break_runs.push(crate::publisher_breaks::PositionedRun {
-                            target: block.element,
-                            cuts: Box::new([top - space]),
-                        });
+                        chapter
+                            .physical_break_runs
+                            .push(crate::publisher_breaks::PositionedRun {
+                                target: block.element,
+                                cuts: Box::new([top - space]),
+                            });
                     }
                     let mut source_line = Line {
                         block: block.key,

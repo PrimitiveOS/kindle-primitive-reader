@@ -2,6 +2,22 @@
 
 ## Current Mac simulator checkpoint
 
+The seven-day reading progress report reproduces stock weekly, daily, and
+session totals on the same authored visits. The actual pinned SDL widget
+and Reader's portrait and landscape report have reviewed frame captures.
+Reader restores the statistics menu and the same passage when dismissed.
+The saved profile editor adds font weight and contrast. The internal EPUB
+renderer retains the incoming paragraph margin at ordinary forced breaks.
+[Seven-day report](reading-statistics.md#seven-day-reading-progress) ·
+[Saved profile values](reading-profiles.md#editing-saved-values) ·
+[Forced-break comparison](render-modes.md)
+
+The normal Reader picker opened four cached original files on the Mac in
+EPUB, PDF, AZW3, and MOBI formats. Each turned a page, saved, and resumed with
+the same page pixels. Their source SHA-256 values matched before and after.
+
+## Previous Mac simulator checkpoint
+
 This pass exercises calendar book spans, a minute-based timeline start and a
 separate month shift. The reviewed calendar and time editor use original
 fixtures. The stock callback harness also executes the ranking query and week
@@ -21,7 +37,7 @@ run passed 1,318 library tests, one Kindle entry test, 14 EPUB package tests,
 and four layout checks. Sixty-six opt-in tests were skipped. Kindle foreground
 acceptance and the Store release remain open.
 
-## Previous Mac simulator checkpoint
+## Earlier Mac simulator checkpoint
 
 This pass added the Reader Back gesture, independent fuzzy dictionary
 search, saved profile margin editing, and nested publisher margin collapse. In
@@ -38,7 +54,7 @@ skipped. The Skim placement workflow retained its existing options and order,
 and the exit confirmation matched the reviewed frame byte for byte. Physical
 Kindle acceptance for this candidate remains open. [Back settings capture](screenshots/back-navigation-settings.png)
 
-## Earlier Mac simulator checkpoint
+## Initial viewport simulator checkpoint
 
 The desktop example opened an authored EPUB and PDF in separate simulator
 profiles. It rendered the ordinary Reader surfaces, top and bottom toolbars,
