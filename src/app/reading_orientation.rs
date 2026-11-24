@@ -402,6 +402,11 @@ mod tests {
         app.show(Screen::ReadingControls);
         assert_eq!(
             app.viewport_request(),
+            Some(ViewportRequest::Fixed(LogicalTurn::Clockwise))
+        );
+        app.show(Screen::ReadingData);
+        assert_eq!(
+            app.viewport_request(),
             Some(ViewportRequest::FollowLauncher)
         );
         present(&mut app, 5, LogicalTurn::Upright, ViewportDecision::Commit);
