@@ -72,6 +72,11 @@ Verify all eight Time range choices, cutoff inclusion, New Year week groups,
 day and book drill-down, page restoration, and an unchanged reading journal.
 [Crop margins](continuous-semi-auto-crop.md) · [Time range reports](reading-statistics.md#time-range-reports)
 
+The Mac suite passed 1,172 checks. The Oasis passed 1,157 Reader library
+tests, 14 EPUB package tests and four layout probes. Both skipped 65 opt-in
+cases. All four Oasis captures matched the Mac simulator PNGs byte for byte.
+Foreground touch and panel refresh have separate acceptance checks.
+
 ## Reader 0.1.42 verification plan
 
 Compare scan contrast presets and a fine step against the pinned grayscale
