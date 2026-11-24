@@ -143,6 +143,12 @@ fn corner_gestures_pause_on_pdf_without_rearming_or_claiming_an_old_release() {
     app.show(Screen::Gestures);
     tap_contents_item(&mut app, "Corner hold pause");
     assert_eq!(app.editor.string(), "10");
+    capture(
+        &app,
+        &mut landscape,
+        "landscape-corner-hold-pause.png",
+        false,
+    );
     let apply = key(&app, Key::Go, "Set");
     app.editor.text = "31".chars().collect();
     app.editor.caret = 2;
@@ -154,12 +160,6 @@ fn corner_gestures_pause_on_pdf_without_rearming_or_claiming_an_old_release() {
     assert_eq!(corner_pause_seconds(&app.controls), 10);
     app.editor.text = "5".chars().collect();
     app.editor.caret = 1;
-    capture(
-        &app,
-        &mut landscape,
-        "landscape-corner-hold-pause.png",
-        false,
-    );
     tap(&mut app, apply);
     assert_eq!(app.screen, Screen::Gestures);
     assert_eq!(corner_pause_seconds(&app.controls), 5);

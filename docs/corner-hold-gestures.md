@@ -1,6 +1,6 @@
 # Corner hold gestures
 
-Open Reading controls → Gestures to set **Ignore long-press on corners**.
+Open Reading controls → Reading gestures to set **Ignore long-press on corners**.
 While it is On, holding a corner uses the underlying reader action, including
 text selection when there is a word at the contact. Tap and swipe shortcuts
 keep their assignments. The setting is saved when Reader restarts.
