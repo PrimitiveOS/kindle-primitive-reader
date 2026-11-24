@@ -6833,7 +6833,7 @@ impl Reader {
 
 impl Reader {
     fn draw_content(&self, canvas: &mut Canvas) {
-        if self.dictionary_editor_active() {
+        if self.dictionary_editor_fullscreen() {
             self.draw_definition_popup(canvas);
             return;
         }

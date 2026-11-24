@@ -77,6 +77,12 @@ pub(crate) struct InstalledDictionary {
     pub(crate) title: String,
 }
 
+#[derive(Default)]
+pub(crate) struct LookupReport {
+    pub(crate) entries: Vec<LookupEntry>,
+    pub(crate) searched: bool,
+}
+
 /// Search a Reader installation and the two standard KOReader dictionary directories.
 #[derive(Clone)]
 pub(crate) struct DictionarySources {
@@ -226,14 +232,26 @@ impl DictionarySources {
         disabled: &[PathBuf],
         with_word_forms: bool,
     ) -> io::Result<Vec<LookupEntry>> {
+        self.lookup_report(word, book_order, order, disabled, with_word_forms)
+            .map(|report| report.entries)
+    }
+
+    pub(crate) fn lookup_report(
+        &self,
+        word: &str,
+        book_order: &[PathBuf],
+        order: &[PathBuf],
+        disabled: &[PathBuf],
+        with_word_forms: bool,
+    ) -> io::Result<LookupReport> {
         let word = word.trim();
         if word.len() > MAX_WORD_BYTES {
-            return Ok(Vec::new());
+            return Ok(LookupReport::default());
         }
         let unwrapped = crate::search::without_soft_hyphens(word);
         let term = unwrapped.trim();
         if term.is_empty() {
-            return Ok(Vec::new());
+            return Ok(LookupReport::default());
         }
         let (sources, mut first_error) = self.enabled(book_order, order, disabled)?;
         let folded = CaseMapper::new().fold_string(term);
@@ -273,7 +291,10 @@ impl DictionarySources {
         if !read_any && let Some(error) = first_error {
             return Err(error);
         }
-        Ok(hits.into_best())
+        Ok(LookupReport {
+            entries: hits.into_best(),
+            searched: read_any,
+        })
     }
 
     #[cfg(feature = "kindle")]

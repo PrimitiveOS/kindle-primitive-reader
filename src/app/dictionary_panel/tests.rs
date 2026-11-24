@@ -967,7 +967,10 @@ fn dictionary_edit_query_relooks_up_and_returns_through_the_parent_entry() {
     let popup = s.app.definition_layout().0;
     let edit = definition_edit_button(popup, s.app.definitions.len() > 1);
     s.tap(edit);
-    assert!(s.app.dictionary_navigation.view.query_editing);
+    assert_eq!(
+        s.app.dictionary_navigation.view.query_editing,
+        Some(QueryEdit::Word)
+    );
     assert_eq!(s.app.screen, Screen::Definition);
     assert!(s.app.definition_over_book());
     assert_eq!(s.app.editor.string(), "the");
@@ -984,7 +987,7 @@ fn dictionary_edit_query_relooks_up_and_returns_through_the_parent_entry() {
     assert_eq!(s.app.dictionary_navigation.trail.len(), 1);
     s.back();
     assert_eq!(s.app.definition_word, "the");
-    assert!(!s.app.dictionary_navigation.view.query_editing);
+    assert!(s.app.dictionary_navigation.view.query_editing.is_none());
     s.back();
     assert_eq!(s.app.screen, Screen::Book);
     assert_eq!(s.app.selection.as_ref(), Some(&selection));
@@ -1004,11 +1007,14 @@ fn long_press_dictionary_edit_uses_the_current_result_headword() {
         )),
         Change::Partial
     );
-    assert!(s.app.dictionary_navigation.view.query_editing);
+    assert_eq!(
+        s.app.dictionary_navigation.view.query_editing,
+        Some(QueryEdit::Word)
+    );
     assert_eq!(s.app.editor.string(), "The");
     s.app.input(Input::PageBack);
     assert_eq!(s.app.screen, Screen::Definition);
-    assert!(!s.app.dictionary_navigation.view.query_editing);
+    assert!(s.app.dictionary_navigation.view.query_editing.is_none());
 }
 
 #[test]
@@ -1085,6 +1091,160 @@ fn dictionary_navigation_wraps_through_results_and_restores_the_typed_query() {
 }
 
 #[test]
+fn fuzzy_retry_edits_a_selected_term_in_landscape_and_keeps_the_original_position() {
+    use crate::app::selection_viewport_tests::{adopt, capture, key, tap};
+    use crate::session::ReadingViewport;
+    use primitive_ui::Key;
+
+    let mut s = Simulation::new();
+    s.app
+        .change_source(SourceAction::DefaultFuzzySearch)
+        .unwrap();
+    let source = s.fixture.root.join("Harbour field notes.xhtml");
+    fs::write(&source, r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Harbour field notes</title></head><body>
+        <h1>Harbour field notes</h1><p>The boat turned toward the lighthouse as rain ran down the glass.</p>
+        <p>In the keeper's notebook, the hand-lettered marker read beacnox at dusk. Three flashes lit the water.</p>
+        </body></html>"#).unwrap();
+    s.app.open_path(&source).unwrap();
+    let original = s.app.current_history_location();
+    let reading = &s.app.active.as_ref().unwrap().reading;
+    let block = reading
+        .probe
+        .source
+        .blocks
+        .iter()
+        .find(|block| block.text.contains("beacnox"))
+        .unwrap();
+    let offset = block.text.find("beacnox").unwrap();
+    let selection = reading
+        .probe
+        .select_range(
+            &reading.probe.anchor(block.key, offset),
+            &reading.probe.anchor(block.key, offset + "beacnox".len()),
+        )
+        .unwrap();
+    let bounds = reading.highlight_rects(&selection)[0];
+    s.app.input(Input::LongTap(
+        (bounds.x + bounds.width / 2) as f32,
+        (bounds.y + bounds.height / 2) as f32,
+    ));
+    let selected = s.app.selection.clone();
+    assert_eq!(selected.as_ref().unwrap().text, "beacnox");
+    s.tap(s.app.selection_button(SelectionAction::Dictionary));
+    assert_eq!(
+        s.app.dictionary_navigation.view.query_editing,
+        Some(QueryEdit::FuzzyRetry)
+    );
+    assert_eq!(s.app.editor.string(), "beacnox");
+    assert!(s.app.spelling_lookup.is_none());
+    s.draw(Some("dictionary-fuzzy-retry-portrait.png"));
+    let mut landscape = adopt(&mut s.app, ReadingViewport::LANDSCAPE, 3);
+    let (panel, cancel) = s.app.fuzzy_retry_layout();
+    let keyboard = Layout::new(1680, 1264, 4, 5).keyboard_area();
+    assert!(panel.bottom() < keyboard.y && cancel.right() > WIDTH as i32);
+    assert_eq!(s.app.selection, selected);
+    capture(
+        &s.app,
+        &mut landscape,
+        "landscape-dictionary-fuzzy-retry.png",
+        false,
+    );
+    let go = key(&s.app, Key::Go, "Fuzzy search");
+    let pixels = primitive_app::frame(&s.app, &mut landscape, false);
+    let button_ink = go.inset(12);
+    assert!(
+        (button_ink.y..button_ink.bottom()).any(|y| {
+            let row = (y * 1680) as usize;
+            pixels[row + button_ink.x as usize..row + button_ink.right() as usize]
+                .iter()
+                .any(|&ink| ink < 48)
+        }),
+        "the document bitmap covered the fuzzy search key"
+    );
+    let delete = key(&s.app, Key::Delete, "Fuzzy search");
+    tap(&mut s.app, delete);
+    tap(&mut s.app, go);
+    assert!(s.app.spelling_lookup.is_some());
+    assert_eq!(s.app.definition_word, "beacno");
+    assert!(!s.app.fuzzy_search_enabled());
+    finish_fuzzy_retry(&mut s.app);
+    assert_eq!(s.app.definitions[0].word, "beacon");
+    assert!(s.app.dictionary_navigation.trail.is_empty());
+    s.back();
+    assert_eq!(s.app.screen, Screen::Book);
+    assert_eq!(s.app.current_history_location(), original);
+    assert_eq!(s.app.selection, selected);
+
+    s.app.look_up_selection().unwrap();
+    assert_eq!(
+        s.app.dictionary_navigation.view.query_editing,
+        Some(QueryEdit::FuzzyRetry)
+    );
+    s.tap(s.app.fuzzy_retry_layout().1);
+    assert_eq!(s.app.current_history_location(), original);
+    assert_eq!(s.app.selection, selected);
+}
+
+#[test]
+fn fuzzy_retry_exhaustion_and_cancel_restore_the_typed_editor() {
+    use primitive_ui::Key;
+
+    let mut s = Simulation::new();
+    s.app
+        .change_source(SourceAction::DefaultFuzzySearch)
+        .unwrap();
+    s.app.show(Screen::DictionaryEntry);
+    s.app.editor.text = "zzzzzzzzzzzz".chars().collect();
+    s.app.editor.caret = 2;
+    let original = s.app.editor.clone();
+    s.tap_keyboard_key(Key::Go, "Look up");
+    assert_eq!(
+        s.app.dictionary_navigation.view.query_editing,
+        Some(QueryEdit::FuzzyRetry)
+    );
+    assert_eq!(s.app.editor.string(), original.string());
+    s.tap_keyboard_key(Key::Go, "Fuzzy search");
+    finish_fuzzy_retry(&mut s.app);
+    assert!(s.app.definitions.is_empty());
+    assert!(s.app.dictionary_navigation.view.query_editing.is_none());
+    assert!(s.app.dictionary_navigation.trail.is_empty());
+    s.back();
+    assert_eq!(s.app.screen, Screen::DictionaryEntry);
+    assert_eq!(s.app.editor, original);
+    assert_eq!(s.app.lookup_history.dictionary, [original.string()]);
+
+    s.tap_keyboard_key(Key::Go, "Look up");
+    assert_eq!(s.app.input(Input::PageBack), Change::Partial);
+    assert_eq!(s.app.screen, Screen::DictionaryEntry);
+    assert_eq!(s.app.editor, original);
+    s.app.look_up("読めなかった").unwrap();
+    assert!(s.app.dictionary_navigation.view.query_editing.is_none());
+    assert!(s.app.spelling_lookup.is_none());
+    s.back();
+
+    s.app.open_sources().unwrap();
+    for index in 0..s.app.installed_dictionaries.len() {
+        s.app.change_source(SourceAction::Open(index)).unwrap();
+        s.app.change_source(SourceAction::Toggle).unwrap();
+    }
+    s.app.show(Screen::DictionaryEntry);
+    s.app.look_up("beacno").unwrap();
+    assert!(s.app.dictionary_navigation.view.query_editing.is_none());
+    assert!(s.app.spelling_lookup.is_none());
+    assert!(s.app.definitions.is_empty());
+}
+
+fn finish_fuzzy_retry(app: &mut Reader) {
+    assert!(app.spelling_lookup.is_some());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while app.spelling_lookup.is_some() && Instant::now() < deadline {
+        app.tick(Instant::now());
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(app.spelling_lookup.is_none(), "the spelling retry stalled");
+}
+
+#[test]
 fn selection_viewport_epub_dictionary_uses_real_lookup_edit_and_held_return() {
     use crate::app::selection_viewport_tests::{adopt, capture, key, press, tap};
     use crate::session::ReadingViewport;
@@ -1123,14 +1283,14 @@ fn selection_viewport_epub_dictionary_uses_real_lookup_edit_and_held_return() {
 
     let edit = definition_edit_button(popup, s.app.definitions.len() > 1);
     tap(&mut s.app, edit);
-    assert!(s.app.dictionary_editor_active());
+    assert!(s.app.dictionary_editor_fullscreen());
     let delete = key(&s.app, Key::Delete, "Look up");
     press(&s.app, &mut landscape, delete, false);
     tap(&mut s.app, delete);
     let back = s.app.reading_editor_back();
     assert!(back.x > WIDTH as i32);
     tap(&mut s.app, back);
-    assert!(!s.app.dictionary_editor_active());
+    assert!(!s.app.dictionary_editor_fullscreen());
 
     s.hold_back();
     assert_eq!(s.app.screen, Screen::Book);

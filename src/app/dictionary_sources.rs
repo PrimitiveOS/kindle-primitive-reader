@@ -148,9 +148,14 @@ impl Reader {
             .unwrap_or_else(|| self.dictionary_settings.fuzzy_search_default())
     }
 
+    #[cfg(test)]
     pub(super) fn lookup_sources(&self, word: &str) -> io::Result<Vec<dictionary::LookupEntry>> {
+        self.lookup_source_report(word).map(|report| report.entries)
+    }
+
+    pub(super) fn lookup_source_report(&self, word: &str) -> io::Result<dictionary::LookupReport> {
         let prefs = &self.dictionary_settings;
-        self.dictionaries.lookup_configured(
+        self.dictionaries.lookup_report(
             word,
             self.book_dictionaries(),
             &prefs.order,
@@ -161,10 +166,7 @@ impl Reader {
 
     pub(super) fn start_spelling_lookup(&mut self, word: &str) {
         self.spelling_lookup = None;
-        if !self.definitions.is_empty()
-            || !self.fuzzy_search_enabled()
-            || !dictionary::spelling_eligible(word)
-        {
+        if !self.definitions.is_empty() || !dictionary::spelling_eligible(word) {
             return;
         }
         let sources = self.dictionaries.clone();
@@ -782,7 +784,7 @@ mod tests {
         back(&mut app);
         app.look_up("sotne").unwrap();
         assert!(app.spelling_lookup.is_none() && app.definitions.is_empty());
-        dismiss_definition(&mut app);
+        assert_eq!(app.input(Input::PageBack), Change::Partial);
         assert_eq!(app.current_history_location(), epub_origin);
 
         app.open_path(&pdf).unwrap();
@@ -804,7 +806,7 @@ mod tests {
         app.pdf_selection = Some(selection.clone());
         app.look_up_selection().unwrap();
         assert!(app.spelling_lookup.is_none() && app.definitions.is_empty());
-        dismiss_definition(&mut app);
+        assert_eq!(app.input(Input::PageBack), Change::Partial);
         assert_eq!(app.current_history_location(), pdf_origin);
 
         app.activate(Action::ShowDictionaries).unwrap();

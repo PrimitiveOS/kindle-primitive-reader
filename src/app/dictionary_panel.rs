@@ -73,7 +73,7 @@ struct View {
     layout: OnceCell<Vec<TextLine>>,
     find: Option<Find>,
     editing: bool,
-    query_editing: bool,
+    query_editing: Option<QueryEdit>,
     save_highlight: bool,
 }
 impl View {
@@ -90,6 +90,27 @@ impl View {
         }
     }
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum QueryEdit {
+    Word,
+    FuzzyRetry,
+}
+
+impl QueryEdit {
+    fn action(self) -> &'static str {
+        match self {
+            Self::Word => "Look up",
+            Self::FuzzyRetry => "Fuzzy search",
+        }
+    }
+}
+
+enum LookupMode<'a> {
+    Configured,
+    FuzzyOnce,
+    Reference(&'a Path),
+}
+
 struct Find {
     query: String,
     hits: Vec<Range<usize>>,
@@ -646,46 +667,63 @@ impl Reader {
     }
 
     pub(super) fn look_up(&mut self, word: &str) -> Result<()> {
-        self.look_up_entry(word, None)
+        self.look_up_entry(word, LookupMode::Configured)
     }
 
-    fn look_up_entry(&mut self, word: &str, source: Option<&Path>) -> Result<()> {
+    fn look_up_entry(&mut self, word: &str, mode: LookupMode<'_>) -> Result<()> {
         let nested = self.screen == Screen::Definition;
+        let retry = matches!(mode, LookupMode::FuzzyOnce);
         let word = word.trim();
         if !lookup_history::valid(word) {
             return Err("Enter a word or a short phrase".into());
         }
-        if nested && self.dictionary_navigation.trail.len() >= MAX_DEPTH {
+        if nested && !retry && self.dictionary_navigation.trail.len() >= MAX_DEPTH {
             return Err("Go back one lookup to open another definition".into());
         }
-        let results = with_storage(|| match source {
-            Some(source) => self.dictionaries.lookup_reference(source, word),
-            None => self.lookup_sources(word),
+        let (definitions, searched) = with_storage(|| match mode {
+            LookupMode::Reference(source) => self
+                .dictionaries
+                .lookup_reference(source, word)
+                .map(|entries| (entries, false)),
+            _ => self
+                .lookup_source_report(word)
+                .map(|report| (report.entries, report.searched)),
         })?;
-        if source.is_some() && results.is_empty() {
+        if matches!(mode, LookupMode::Reference(_)) && definitions.is_empty() {
             return Err("Reference not found in this dictionary".into());
         }
-        let entry = self.vocabulary_entry(word);
-        let reviewing = if self.screen == Screen::VocabularyWord {
-            self.vocabulary_view.word.as_deref() == Some(word)
-        } else {
-            nested && self.dictionary_navigation.review_word.as_deref() == Some(word)
-        };
-        let repeated = self.lookup_history.review.automatic
-            && !reviewing
-            && self.lookup_history.review.words.contains_key(word);
-        self.update_lookup_history(|history| {
-            history.lookup(word);
-            if history.review.automatic && !reviewing && !repeated {
-                if !history.vocabulary.iter().any(|saved| saved == word) {
-                    history.vocabulary.insert(0, word.to_owned());
+        let mut review = None;
+        if !retry || self.definition_word != word {
+            let entry = self.vocabulary_entry(word);
+            let reviewing = if self.screen == Screen::VocabularyWord {
+                self.vocabulary_view.word.as_deref() == Some(word)
+            } else {
+                nested && self.dictionary_navigation.review_word.as_deref() == Some(word)
+            };
+            let repeated = self.lookup_history.review.automatic
+                && !reviewing
+                && self.lookup_history.review.words.contains_key(word);
+            self.update_lookup_history(|history| {
+                history.lookup(word);
+                if history.review.automatic && !reviewing && !repeated {
+                    if !history.vocabulary.iter().any(|saved| saved == word) {
+                        history.vocabulary.insert(0, word.to_owned());
+                    }
+                    history
+                        .review
+                        .remember(word, entry.clone(), super::vocabulary::now());
                 }
-                history
-                    .review
-                    .remember(word, entry.clone(), super::vocabulary::now());
+            })?;
+            if repeated {
+                review = Some((word.to_owned(), entry));
             }
-        })?;
-        if nested {
+        }
+        if retry {
+            self.dictionary_navigation.view = View {
+                save_highlight: self.dictionary_navigation.view.save_highlight,
+                ..View::default()
+            };
+        } else if nested {
             self.dictionary_navigation.trail.push(Previous {
                 word: std::mem::take(&mut self.definition_word),
                 definitions: std::mem::take(&mut self.definitions),
@@ -712,16 +750,20 @@ impl Reader {
             self.definition_expanded = self.dictionary_settings.large_window;
         }
         self.definition_word = word.into();
-        self.definitions = results;
+        let try_similar = searched && definitions.is_empty() && dictionary::spelling_eligible(word);
+        self.definitions = definitions;
         self.definition_results_page = None;
+        self.spelling_lookup = None;
         self.show(Screen::Definition);
-        if repeated {
-            self.vocabulary_view.repeated = Some((word.to_owned(), entry));
+        if let Some(review) = review {
+            self.vocabulary_view.repeated = Some(review);
         }
-        if source.is_some() {
-            self.spelling_lookup = None;
-        } else {
-            self.start_spelling_lookup(word);
+        if try_similar {
+            if retry || self.fuzzy_search_enabled() {
+                self.start_spelling_lookup(word);
+            } else {
+                self.set_query_editor(word.to_owned(), QueryEdit::FuzzyRetry);
+            }
         }
         Ok(())
     }
@@ -930,19 +972,54 @@ impl Reader {
         } else {
             &self.definition_word
         };
+        self.set_query_editor(query.to_owned(), QueryEdit::Word);
+    }
+
+    fn set_query_editor(&mut self, query: String, mode: QueryEdit) {
         self.editor = Editor::new(96);
         self.editor.text = query.chars().take(96).collect();
         self.editor.caret = self.editor.text.len();
         self.notice = None;
-        self.dictionary_navigation.view.query_editing = true;
+        self.dictionary_navigation.view.query_editing = Some(mode);
     }
-    fn edit_query_input(&mut self, input: Input) -> Change {
+
+    fn fuzzy_retry_layout(&self) -> (Rect, Rect) {
         let (width, height) = self.reading_viewport().dimensions();
+        let keyboard = Layout::new(width, height, 4, 5).keyboard_area();
+        let panel_width = (width as i32 - 80).min(1024);
+        let panel_height = 288;
+        let top = 24;
+        let bottom = (keyboard.y - panel_height - 24).max(top);
+        let y = match self.selection_bounds() {
+            Some(selection) if selection.y + selection.h / 2 < keyboard.y / 2 => bottom,
+            Some(_) => top,
+            None => (top + bottom) / 2,
+        };
+        let panel = Rect::new(
+            (width as i32 - panel_width) / 2,
+            y,
+            panel_width,
+            panel_height,
+        );
+        let cancel = Rect::new(panel.right() - 194, panel.y + 22, 166, 72);
+        (panel, cancel)
+    }
+
+    fn edit_query_input(&mut self, input: Input, mode: QueryEdit) -> Change {
+        let (width, height) = self.reading_viewport().dimensions();
+        let back = match mode {
+            QueryEdit::Word => self.reading_editor_back(),
+            QueryEdit::FuzzyRetry => self.fuzzy_retry_layout().1,
+        };
         if matches!(input, Input::PageBack)
-            || matches!(input,Input::Tap(x,y) if self.reading_editor_back().contains(x,y))
+            || matches!(input, Input::Tap(x,y) if back.contains(x,y))
         {
-            self.dictionary_navigation.view.query_editing = false;
-            self.notice = None;
+            if mode == QueryEdit::FuzzyRetry {
+                self.return_from_definition(false);
+            } else {
+                self.dictionary_navigation.view.query_editing = None;
+                self.notice = None;
+            }
             return Change::Partial;
         }
         let Input::Tap(x, y) = input else {
@@ -951,7 +1028,7 @@ impl Reader {
         let Some(key) = keyboard_key(
             &Layout::new(width, height, 4, 5),
             &self.editor,
-            "Look up",
+            mode.action(),
             x,
             y,
         ) else {
@@ -959,11 +1036,15 @@ impl Reader {
         };
         if matches!(self.editor.press(key), Press::Go) {
             let query = self.editor.string();
-            self.dictionary_navigation.view.query_editing = false;
-            match self.look_up(&query) {
+            self.dictionary_navigation.view.query_editing = None;
+            let lookup = match mode {
+                QueryEdit::Word => LookupMode::Configured,
+                QueryEdit::FuzzyRetry => LookupMode::FuzzyOnce,
+            };
+            match self.look_up_entry(&query, lookup) {
                 Ok(()) => Change::Partial,
                 Err(error) => {
-                    self.dictionary_navigation.view.query_editing = true;
+                    self.dictionary_navigation.view.query_editing = Some(mode);
                     self.report(error)
                 }
             }
@@ -1021,8 +1102,8 @@ impl Reader {
     }
 
     pub(super) fn definition_input(&mut self, input: Input) -> Change {
-        if self.dictionary_navigation.view.query_editing {
-            return self.edit_query_input(input);
+        if let Some(mode) = self.dictionary_navigation.view.query_editing {
+            return self.edit_query_input(input, mode);
         }
         if self.dictionary_navigation.view.editing {
             return self.edit_find_input(input);
@@ -1178,7 +1259,7 @@ impl Reader {
                             return Change::None;
                         };
                         let source = source.to_owned();
-                        return match self.look_up_entry(&target, Some(&source)) {
+                        return match self.look_up_entry(&target, LookupMode::Reference(&source)) {
                             Ok(()) => Change::Partial,
                             Err(error) => self.report(error),
                         };
@@ -1201,10 +1282,13 @@ impl Reader {
     }
 
     pub(super) fn definition_over_book(&self) -> bool {
-        self.screen == Screen::Definition && !self.definition_expanded
+        self.screen == Screen::Definition
+            && (!self.definition_expanded
+                || self.dictionary_navigation.view.query_editing == Some(QueryEdit::FuzzyRetry))
     }
-    pub(super) fn dictionary_editor_active(&self) -> bool {
-        self.dictionary_navigation.view.query_editing || self.dictionary_navigation.view.editing
+    pub(super) fn dictionary_editor_fullscreen(&self) -> bool {
+        self.dictionary_navigation.view.query_editing == Some(QueryEdit::Word)
+            || self.dictionary_navigation.view.editing
     }
 
     fn back_collapses_definition(&self) -> bool {
@@ -1252,7 +1336,36 @@ impl Reader {
     pub(super) fn draw_definition_popup(&self, canvas: &mut Canvas) {
         let view = &self.dictionary_navigation.view;
         let bounds = canvas.bounds();
-        if view.query_editing {
+        if view.query_editing == Some(QueryEdit::FuzzyRetry) {
+            let (panel, cancel) = self.fuzzy_retry_layout();
+            canvas.popup(panel);
+            canvas.text(
+                Rect::new(panel.x + 30, panel.y + 20, panel.w - 244, 76),
+                "No results found",
+                BODY.bold(),
+            );
+            canvas.button(cancel, "Cancel", false, false);
+            canvas.single_line_field(
+                Rect::new(panel.x + 30, panel.y + 112, panel.w - 60, 92),
+                &self.editor,
+                "Word or phrase",
+                false,
+            );
+            canvas.text(
+                Rect::new(panel.x + 30, panel.y + 216, panel.w - 60, 54),
+                self.notice
+                    .as_deref()
+                    .unwrap_or("Try similar spellings for this lookup"),
+                CAPTION,
+            );
+            // The document bitmap is composited after the vector controls.
+            // Register the keyboard band as an occluder like the retry sheet.
+            let band = Layout::new(bounds.w as u32, bounds.h as u32, 4, 5).keyboard_area();
+            canvas.popup(Rect::new(band.x - 40, band.y, band.w + 80, band.h));
+            canvas.keyboard(self.editor.layer, QueryEdit::FuzzyRetry.action(), None);
+            return;
+        }
+        if view.query_editing == Some(QueryEdit::Word) {
             canvas.fill(bounds, 255);
             self.navigation_layout().header(canvas, "Edit lookup word");
             canvas.single_line_field(
