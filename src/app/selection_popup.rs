@@ -3,7 +3,7 @@
 use primitive_app::{Change, WIDTH};
 use primitive_ui::{CAPTION, Canvas, Editor, HAIRLINE, Rect, TextStyle};
 
-use super::{Reader, Result, Screen};
+use super::{Reader, Result, Screen, SelectionSearchOrigin};
 use crate::highlight_style::{HighlightColor, HighlightStyle};
 use crate::reading_controls::{SelectionLongPressAction, SelectionPopupPosition};
 use crate::session::{DONE, PAGE_HEIGHT};
@@ -499,7 +499,7 @@ impl Reader {
             SelectionLongPressAction::Translate => self.prepare_online(false, false),
             SelectionLongPressAction::Wikipedia => self.prepare_online(true, false),
             SelectionLongPressAction::Dictionary => self.look_up_selection(),
-            SelectionLongPressAction::Search => self.find_selection(),
+            SelectionLongPressAction::Search => self.find_selection(SelectionSearchOrigin::Reading),
         };
         match result {
             Ok(()) => Change::Partial,
@@ -676,7 +676,7 @@ impl Reader {
             Some(SelectionAction::Dictionary) => self.look_up_selection(),
             Some(SelectionAction::Wikipedia) => self.prepare_online(true, false),
             Some(SelectionAction::Translate) => self.prepare_online(false, false),
-            Some(SelectionAction::Find) => self.find_selection(),
+            Some(SelectionAction::Find) => self.find_selection(SelectionSearchOrigin::Reading),
             Some(SelectionAction::Hyphenate) => self.begin_hyphenation(),
             Some(SelectionAction::Chapter) => self.edit_selected_contents_chapter(),
             Some(SelectionAction::Cancel) => {

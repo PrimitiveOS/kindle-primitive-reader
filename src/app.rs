@@ -252,6 +252,7 @@ enum Screen {
     ProfileName,
     RemoveProfiles,
     Find,
+    SearchSettings,
     Matches,
     SearchHistory,
     BookmarkFind,
@@ -393,6 +394,7 @@ impl Screen {
             Self::ProfileName => "Save reading profile",
             Self::RemoveProfiles => "Remove a reading profile",
             Self::Find => "Find in book",
+            Self::SearchSettings => "Search settings",
             Self::Matches => "Search results",
             Self::SearchHistory => "Recent searches",
             Self::BookmarkFind => "Find bookmarks",
@@ -685,6 +687,12 @@ struct PositionImport {
     target: std::result::Result<ReadingPosition, String>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SelectionSearchOrigin {
+    Reading,
+    Dictionary,
+}
+
 #[derive(Clone)]
 enum TouchHoldBase {
     Reflow(TextSelection),
@@ -779,6 +787,7 @@ pub struct Reader {
     top_header_font_picker: Option<top_header_font::Picker>,
     list_page: usize,
     matches_page: usize,
+    matches_from_selection: bool,
     result_context: Option<result_context::ResultContext>,
     focused_result: Option<usize>,
     current_contents_row: Option<usize>,
@@ -981,6 +990,7 @@ impl Reader {
             top_header_font_picker: None,
             list_page: 0,
             matches_page: 0,
+            matches_from_selection: false,
             result_context: None,
             focused_result: None,
             current_contents_row: None,
@@ -1186,6 +1196,7 @@ impl Reader {
             });
             self.pdf_result_regions.clear();
             self.pdf_selection = None;
+            self.matches_from_selection = false;
             self.back.clear();
             self.forward.clear();
             self.auto_turn
@@ -1323,6 +1334,7 @@ impl Reader {
         let offer_publisher = self.apply_new_numbering_defaults();
         self.restore_character_pages();
         self.fixed = None;
+        self.matches_from_selection = false;
         self.back.clear();
         self.forward.clear();
         self.auto_turn
@@ -1812,6 +1824,18 @@ impl Reader {
         }
         if self.screen == Screen::ContentsSettings {
             return self.contents_settings_items();
+        }
+        if self.screen == Screen::SearchSettings {
+            return vec![
+                Item::new(
+                    "Show all results on text selection",
+                    Action::SetReadingControls(ReadingControls {
+                        selection_search_all: !self.controls.selection_search_all,
+                        ..self.controls
+                    }),
+                )
+                .detail("Open the results list when you tap Find on selected text"),
+            ];
         }
         if matches!(
             self.screen,
@@ -4706,12 +4730,15 @@ impl Reader {
         let match_case = self.find_match_case;
         let ignore_accents = self.find_ignore_accents;
         if self.fixed.is_none() {
-            return self.start_all_reflow(query);
+            self.start_all_reflow(query)?;
+            self.matches_from_selection = false;
+            return Ok(());
         }
         let pdf_search = PdfSearch::with_options(query, match_case, ignore_accents)?;
         self.update_lookup_history(|history| {
             history.search(query, match_case, ignore_accents, false)
         })?;
+        self.matches_from_selection = false;
         self.nearby.clear();
         self.search_result = None;
         self.matches_page = 0;
@@ -6334,8 +6361,7 @@ impl Reader {
         self.look_up(&word)
     }
 
-    fn find_selection(&mut self) -> Result<()> {
-        self.find_regex = false;
+    fn find_selection(&mut self, origin: SelectionSearchOrigin) -> Result<()> {
         let query = self
             .selected_passage()?
             .split_whitespace()
@@ -6352,19 +6378,36 @@ impl Reader {
             .collect();
         let shortened =
             query.len() > crate::search::MAX_QUERY_BYTES || query.chars().count() > excerpt.len();
+        // The selection action uses the normal literal search, regardless of
+        // the options last selected in the Find input.
+        let from_reading = origin == SelectionSearchOrigin::Reading;
+        if from_reading {
+            self.find_match_case = false;
+            self.find_ignore_accents = false;
+        }
+        self.find_regex = false;
         if shortened {
             self.show(Screen::Find);
-        } else {
-            self.start_document_search(&query)?;
         }
         self.editor = Editor::new(128);
         self.editor.caret = excerpt.len();
         self.editor.text = excerpt;
         if shortened {
             self.notice = Some("Edit this excerpt to search a shorter passage".into());
+        } else if !from_reading || self.controls.selection_search_all {
+            self.start_document_search(&query)?;
+            self.matches_from_selection = from_reading;
+        } else {
+            self.begin_nearby(crate::search::SearchDirection::Next, false)?;
+            self.matches_from_selection = false;
+            self.hits.clear();
+            self.pdf_hits.clear();
         }
         self.selection = None;
         self.pdf_selection = None;
+        self.selection_mode = false;
+        self.result_selection = None;
+        self.pdf_result_regions.clear();
         Ok(())
     }
 
@@ -7319,6 +7362,13 @@ impl Reader {
                         Action::ChapterLevel(setting) => {
                             RowAccessory::Toggle(self.chapter_level_checked(setting))
                         }
+                        Action::SetReadingControls(controls)
+                            if self.screen == Screen::SearchSettings
+                                && controls.selection_search_all
+                                    != self.controls.selection_search_all =>
+                        {
+                            RowAccessory::Toggle(self.controls.selection_search_all)
+                        }
                         _ => RowAccessory::Disclosure,
                     }
                 },
@@ -8228,7 +8278,14 @@ impl App for Reader {
                     Screen::Highlights | Screen::LocationHistory if self.fixed.is_some() => {
                         self.show(Screen::FixedTools)
                     }
+                    Screen::Matches if self.matches_from_selection => {
+                        self.cancel_search();
+                        self.show(self.surface_screen());
+                    }
                     Screen::Matches => self.show(Screen::Find),
+                    Screen::SearchSettings => {
+                        self.open_reading_edge(true, WIDTH as f32 / 2.0);
+                    }
                     Screen::CustomContents => self.show(self.contents_screen()),
                     Screen::CustomEdits | Screen::CustomBookmarks => {
                         self.show(Screen::CustomContents)
@@ -17153,7 +17210,8 @@ mod tests {
                 }
                 ActionChoice::Dictionary => assert_eq!(app.screen, Screen::Definition),
                 ActionChoice::Search => {
-                    assert!(matches!(app.screen, Screen::Matches | Screen::Find))
+                    assert_eq!(app.screen, Screen::Book);
+                    assert!(app.nearby.searching_direction());
                 }
             }
             assert_eq!(
@@ -17748,6 +17806,7 @@ mod tests {
         let fonts = simulation_fonts();
         let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
         app.controls.dictionary_on_single_word = Some(false);
+        app.controls.selection_search_all = true;
         app.open_path(&fixture.book).unwrap();
         let reading = &app.active.as_ref().unwrap().reading;
         let target = Book::resolve_link(&reading.probe.chapter, "#tide-note").unwrap();
@@ -17800,6 +17859,177 @@ mod tests {
         );
         assert_eq!(app.lookup_history.searches[0].text, expected);
         assert!(app.pdf_selection.is_none());
+    }
+
+    #[test]
+    fn epub_selection_search_uses_current_page_by_default_and_lists_all_when_enabled() {
+        let fixture = Fixture::new();
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        assert!(!app.controls.selection_search_all);
+        app.controls.dictionary_on_single_word = Some(false);
+        app.open_path(&fixture.book).unwrap();
+        let reading = &app.active.as_ref().unwrap().reading;
+        let target = Book::resolve_link(&reading.probe.chapter, "#tide-note").unwrap();
+        app.follow(target).unwrap();
+        let reading = &app.active.as_ref().unwrap().reading;
+        let origin = reading.probe.fragment("tide-note").unwrap();
+        let point = |offset, len| {
+            let mut start = origin.clone();
+            start.offset += offset;
+            let mut end = start.clone();
+            end.offset += len;
+            let selection = reading.probe.select_range(&start, &end).unwrap();
+            let bounds = reading.highlight_rects(&selection)[0];
+            rectangle_center(Rect::new(bounds.x, bounds.y, bounds.width, bounds.height))
+        };
+        let first = point(0, "The".len());
+        let next = point("The ".len(), "first".len());
+        let select = |app: &mut Reader| {
+            assert_eq!(app.input(Input::LongTap(first.0, first.1)), Change::Partial);
+            assert_eq!(app.input(Input::Tap(next.0, next.1)), Change::Partial);
+            assert_eq!(app.selection.as_ref().unwrap().text, "The first");
+            assert_eq!(
+                tap_selection_action(app, selection_popup::SelectionAction::Find),
+                Change::Partial
+            );
+        };
+        let initial = app.current_history_location();
+        let initial_history = app.back.len();
+        app.find_match_case = true;
+        app.find_ignore_accents = true;
+        app.find_regex = true;
+        select(&mut app);
+        assert_eq!(app.screen, Screen::Book);
+        assert!(app.nearby.searching_direction());
+        let cancel = rectangle_center(MATCH_PREV);
+        assert_eq!(app.input(Input::Tap(cancel.0, cancel.1)), Change::Partial);
+        assert!(!app.nearby.searching_direction());
+        assert_eq!(app.current_history_location(), initial);
+        assert_eq!(app.back.len(), initial_history);
+
+        select(&mut app);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while app.nearby.searching_direction() && Instant::now() < deadline {
+            app.poll_nearby(Instant::now()).unwrap();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(!app.nearby.searching_direction());
+        assert_eq!(app.screen, Screen::Book);
+        let result = app.result_selection.as_ref().map(|hit| {
+            hit.text
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_lowercase()
+        });
+        assert_eq!(result.as_deref(), Some("the first"), "{:#?}", app.hits);
+        assert_eq!(
+            app.current_position().unwrap().page,
+            initial.as_ref().unwrap().position.page
+        );
+        assert_eq!(app.lookup_history.searches[0].text, "The first");
+        assert!(!app.lookup_history.searches[0].match_case);
+        assert!(!app.lookup_history.searches[0].ignore_accents);
+        assert!(!app.lookup_history.searches[0].regular_expression);
+        app.activate(Action::ReturnToLocation).unwrap();
+        assert_eq!(app.current_history_location(), initial);
+
+        app.open_reading_edge(true, 100.0);
+        assert_eq!(tap_reading_control(&mut app, "Search"), Change::Partial);
+        assert_eq!(
+            tap_reading_control(&mut app, "Search settings"),
+            Change::Partial
+        );
+        assert_eq!(app.screen, Screen::SearchSettings);
+        assert_eq!(
+            app.input(Input::Tap(100.0, (LIST_Y + 28) as f32)),
+            Change::Partial
+        );
+        assert!(ReadingControls::load(&app.controls_path, true).selection_search_all);
+        let back = rectangle_center(primitive_ui::back_button(WIDTH as i32));
+        assert_eq!(app.input(Input::Tap(back.0, back.1)), Change::Partial);
+        assert_eq!(app.top_group, Some(TopGroup::Search));
+        app.show(Screen::Book);
+
+        select(&mut app);
+        assert_eq!(app.screen, Screen::Matches);
+        wait_for_search(&mut app, usize::MAX);
+        assert!(app.hits.len() >= 2);
+        capture_test_screen(&app, &fonts, "READER_SELECTION_SEARCH_RESULTS_FRAME", false);
+        assert_eq!(app.input(Input::Tap(back.0, back.1)), Change::Partial);
+        assert_eq!(app.screen, Screen::Book);
+        assert_eq!(app.current_history_location(), initial);
+        assert_eq!(app.back.len(), initial_history);
+    }
+
+    #[test]
+    fn zoomed_pdf_selection_search_cancels_with_the_original_view_and_saved_position() {
+        let fixture = Fixture::new();
+        let pdf = fixture.root.join("Search selection.pdf");
+        fs::write(&pdf, crate::fixed::tests::document()).unwrap();
+        let mut app = fixture.app();
+        app.open_path(&pdf).unwrap();
+        app.activate(Action::RotatePage).unwrap();
+        app.activate(Action::SetFixedZoom(1)).unwrap();
+        let reading = &app.fixed.as_ref().unwrap().reading;
+        let text = reading.page_text(0).unwrap();
+        let point = text
+            .words
+            .iter()
+            .find_map(|word| reading.visible_rectangle(0, word.bounds))
+            .unwrap()
+            .center();
+        let select = |app: &mut Reader| {
+            assert_eq!(
+                app.input(Input::LongTap(point.x as f32, point.y as f32)),
+                Change::Partial
+            );
+            assert!(app.pdf_selection.is_some());
+            assert_eq!(
+                tap_selection_action(app, selection_popup::SelectionAction::Find),
+                Change::Partial
+            );
+        };
+        let id = app.open_book_id().unwrap();
+        let origin = app.current_history_location();
+        let prior_view = reading.preferences();
+        let saved = app.library.state(id).unwrap().position.clone();
+        let saved_view = app.library.state(id).unwrap().fixed_preferences;
+        select(&mut app);
+        assert_eq!(app.screen, Screen::Fixed);
+        let cancel = rectangle_center(MATCH_PREV);
+        assert_eq!(app.input(Input::Tap(cancel.0, cancel.1)), Change::Partial);
+        assert!(!app.nearby.searching_direction());
+        assert_eq!(app.current_history_location(), origin);
+        assert_eq!(
+            app.fixed.as_ref().unwrap().reading.preferences(),
+            prior_view
+        );
+
+        app.activate(Action::SetReadingControls(ReadingControls {
+            selection_search_all: true,
+            ..app.controls
+        }))
+        .unwrap();
+        select(&mut app);
+        assert_eq!(app.screen, Screen::Matches);
+        // Close the result view without jumping to one of its matches.
+        let back = rectangle_center(primitive_ui::back_button(WIDTH as i32));
+        assert_eq!(app.input(Input::Tap(back.0, back.1)), Change::Partial);
+        assert_eq!(app.screen, Screen::Fixed);
+        assert!(app.search_at.is_none());
+        assert_eq!(app.current_history_location(), origin);
+        assert_eq!(
+            app.fixed.as_ref().unwrap().reading.preferences(),
+            prior_view
+        );
+        assert_eq!(app.library.state(id).unwrap().position, saved);
+        assert_eq!(app.library.state(id).unwrap().fixed_preferences, saved_view);
+        assert!(app.back.is_empty());
     }
 
     #[test]

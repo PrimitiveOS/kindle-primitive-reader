@@ -758,7 +758,7 @@ impl Reader {
                     };
                 }
                 if search_book.contains(x, y) && self.selected_passage().is_ok() {
-                    return match self.find_selection() {
+                    return match self.find_selection(SelectionSearchOrigin::Dictionary) {
                         Ok(()) => Change::Partial,
                         Err(error) => self.report(error),
                     };
