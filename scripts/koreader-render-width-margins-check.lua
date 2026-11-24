@@ -32,6 +32,7 @@ local function attach(view)
 end
 
 local modes = {"Legacy", "Flat", "Book", "Web"}
+local signed = arg[5] == "signed"
 local cases = {
     {"Fixed marker", 221, {94, 1092}, {94, 320}},
     {"Trailing marker", 204, {54, 1100}, {692, 462}},
@@ -42,6 +43,18 @@ local cases = {
     {"Direction marker", 119, {94, 1092}, {890, 320}},
     {"Natural marker", 102, {106, 1092}, {106, 1092}},
 }
+if signed then
+    cases = {
+        {"Left beacon", 221, {54, 1144}, {30, 400}},
+        {"Right beacon", 204, {54, 1156}, {754, 480}, "right"},
+        {"Reef line", 187, {54, 1156}, {54, 1210}, "right", 1354},
+        {"Low headland", 170, {54, 1116}, {0, 1220}, "left", -20},
+        {"Turning basin", 153, {94, 1116}, {110, 1100}, "right"},
+        {"One small lookout", 136, {54, 1156}, {22, 420}},
+        {"Saltbush", 119, {54, 1148}, {20, 1244}, "right", 1314},
+        {"Ebb gate", 102, {54, 1156}, {92, 1172}, "right", 1294},
+    }
+end
 local function locate(view, phrase)
     local hit = assert((view:findAllText(phrase, false, false, 8, true, 0, 255) or {})[1])
     assert(view:getTextFromXPointers(hit.start, hit["end"]) == phrase)
@@ -74,17 +87,18 @@ for mode = 0, 3 do
             end
         end
         local expected = case[mode == 3 and 4 or 3]
-        assert(left == expected[1] and widest == expected[2])
-        if i == 7 then
-            assert(math.abs(word.x1 - (left + widest)) <= 1)
-        else
-            assert(word.x0 == left)
-        end
-        if i == 1 then
-            assert(view:getLinkFromPosition(word.x0 + 8, math.floor((word.y0 + word.y1) / 2)) ~= "")
-        end
         print(string.format("WIDTH %s|%d|word=%d..%d|x=%d|w=%d", modes[mode+1],
             i, word.x0, word.x1, left, widest))
+        assert(left == expected[1] and widest == expected[2])
+        local edge = (mode == 3 and case[6]) or ((case[5] == "right" or not signed and i == 7) and left + widest or left)
+        if case[5] == "right" or not signed and i == 7 then
+            assert(math.abs(word.x1 - edge) <= 1)
+        else
+            assert(word.x0 == edge)
+        end
+        if i == 1 then
+            assert(view:getLinkFromPosition(math.max(word.x0 + 8, 60), math.floor((word.y0 + word.y1) / 2)) ~= "")
+        end
     end
     view:drawCurrentPage(frame, false, false, false, false)
     frame:writePNG(captures .. "/" .. modes[mode+1] .. ".png", false)

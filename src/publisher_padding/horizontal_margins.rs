@@ -1,7 +1,7 @@
 //! Physical side margins on ordinary auto-width paragraphs.
-use super::{BoxArea, TextBoxCandidate, text_box_candidates_with_parent};
+use super::{BoxArea, TextBoxCandidate, constrained, text_box_candidates_with_parent};
 use crate::{
-    Settings,
+    BlockWidthMode, Settings,
     book_style::{BoxMargin, CssLength, ImageLength, Style, WritingMode, flow::Display},
     source::Source,
 };
@@ -17,13 +17,7 @@ fn ordinary_box(style: &Style, settings: Settings, parent_width: u32) -> bool {
     matches!(style.image_width, None | Some(ImageLength::Auto))
         && matches!(style.image_max_width, None | Some(ImageLength::Auto))
         && style.min_width.is_none()
-        && style.borders.is_none()
-        && style.clear == Default::default()
-        && style
-            .padding
-            .iter()
-            .chain(&style.vertical_padding)
-            .all(|edge| edge.box_pixels(parent_width, settings.font_size) == 0.0)
+        && constrained::plain_edges(style, settings, parent_width)
 }
 
 pub(super) fn inset(area: BoxArea, style: &Style, settings: Settings) -> Option<BoxArea> {
@@ -68,7 +62,8 @@ pub(crate) fn signed_candidates(
         );
     }
     let has_signed_margin = |style: &Style| {
-        ordinary_box(style, settings, parent_width)
+        (ordinary_box(style, settings, parent_width)
+            || constrained_signed_box(style, settings, parent_width))
             && style.horizontal_margin.iter().any(|margin| {
                 resolved_edge(*margin, parent_width, settings).is_some_and(|(_, px)| px < 0.0)
             })
@@ -78,6 +73,12 @@ pub(crate) fn signed_candidates(
     })
 }
 
+fn constrained_signed_box(style: &Style, settings: Settings, parent_width: u32) -> bool {
+    settings.block_width == BlockWidthMode::PublisherWithConstraints
+        && constrained::candidate(style)
+        && constrained::plain_edges(style, settings, parent_width)
+}
+
 /// Keep the full publisher box for line wrapping and source mapping. The
 /// painter clips the portion drawn outside the physical viewport.
 pub(crate) fn signed_inset(
@@ -85,10 +86,8 @@ pub(crate) fn signed_inset(
     width: u32,
     style: &Style,
     settings: Settings,
+    rtl: bool,
 ) -> Option<(i32, u32)> {
-    if !ordinary_box(style, settings, width) {
-        return None;
-    }
     let [left, right] = style
         .horizontal_margin
         .map(|margin| resolved_edge(margin, width, settings));
@@ -97,8 +96,14 @@ pub(crate) fn signed_inset(
     if left >= 0.0 && right >= 0.0 {
         return None;
     }
-    let box_width = width as f32 - left - right;
-    let start = x as f32 + left;
+    let (offset, box_width) = if constrained_signed_box(style, settings, width) {
+        constrained::place(width, style, settings, rtl, [left, right], true)?
+    } else if ordinary_box(style, settings, width) {
+        (left, width as f32 - left - right)
+    } else {
+        return None;
+    };
+    let start = x as f32 + offset;
     let physical_left = settings.left_margin() as f32 + start;
     let physical_right = physical_left + box_width;
     let screen = settings.width as f32;

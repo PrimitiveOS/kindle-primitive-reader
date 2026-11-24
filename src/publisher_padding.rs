@@ -138,11 +138,7 @@ impl BoxArea {
         if indent >= 0.0 || self.width == self.outer_width {
             return (self.x, self.width);
         }
-        let rtl = match direction {
-            parley::BaseDirection::Ltr => false,
-            parley::BaseDirection::Rtl => true,
-            parley::BaseDirection::Auto => first_strong_rtl(text),
-        };
+        let rtl = paragraph_is_rtl(direction, text);
         let inset = self.x - self.outer_x;
         let before = inset.saturating_sub(self.border[0]);
         let after = (self.outer_width - self.width - inset).saturating_sub(self.border[1]);
@@ -183,7 +179,12 @@ impl BoxArea {
 
 // Match the paragraph direction used for shaping when the document specifies auto.
 // Unicode bidi isolates do not contribute to the enclosing paragraph's first strong letter.
-fn first_strong_rtl(text: &str) -> bool {
+pub(crate) fn paragraph_is_rtl(direction: parley::BaseDirection, text: &str) -> bool {
+    match direction {
+        parley::BaseDirection::Ltr => return false,
+        parley::BaseDirection::Rtl => return true,
+        parley::BaseDirection::Auto => {}
+    }
     use icu_properties::{CodePointMapData, props::BidiClass};
     let classes = CodePointMapData::<BidiClass>::new();
     let mut isolates = 0_usize;
@@ -315,11 +316,7 @@ pub(crate) fn layout_with_flow(
         let mut rtl = vec![false; styles.len()];
         for block in &source.blocks {
             if width_candidates[block.element] == TextBoxCandidate::Simple {
-                rtl[block.element] = match block.direction {
-                    parley::BaseDirection::Ltr => false,
-                    parley::BaseDirection::Rtl => true,
-                    parley::BaseDirection::Auto => first_strong_rtl(&block.text),
-                };
+                rtl[block.element] = paragraph_is_rtl(block.direction, &block.text);
             }
         }
         rtl

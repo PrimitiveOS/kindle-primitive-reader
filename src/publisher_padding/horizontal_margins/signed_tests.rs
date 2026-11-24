@@ -1,4 +1,6 @@
-use crate::{Anchor, Book, Engine, Probe, Settings, selection::TextSelection, test_fixture};
+use crate::{
+    Anchor, BlockWidthMode, Book, Engine, Probe, Settings, selection::TextSelection, test_fixture,
+};
 use std::path::PathBuf;
 
 const WIDTH: u32 = 1264;
@@ -173,6 +175,92 @@ fn same_frames(mut regular: Probe, mut inset: Probe) {
     for page in 0..regular.page_count() {
         assert!(regular.capture(page).unwrap() == inset.capture(page).unwrap());
     }
+}
+
+#[test]
+fn publisher_signed_widths_match_native_constraints_and_keep_clipped_source_links() {
+    let ordinary = Settings {
+        width: WIDTH,
+        height: HEIGHT,
+        font_size: 40.0,
+        line_height: 1.20,
+        render_dpi: 96,
+        ..Settings::default()
+    };
+    let widths = Settings {
+        block_width: BlockWidthMode::PublisherWithConstraints,
+        ..ordinary
+    };
+    let signed = Settings {
+        publisher_signed_horizontal_margins: true,
+        ..ordinary
+    };
+    let combined = Settings {
+        publisher_signed_horizontal_margins: true,
+        ..widths
+    };
+    let open = |settings| {
+        Probe::open(
+            &test_fixture("render-signed-widths.epub"),
+            Engine::Parley,
+            &[test_fixture("fonts/NotoSans-Regular.ttf")],
+            settings,
+            0,
+        )
+        .unwrap()
+    };
+    same_frames(open(ordinary), open(widths));
+    same_frames(open(ordinary), open(signed));
+    same_frames(
+        open(Settings {
+            publisher_styles: false,
+            ..ordinary
+        }),
+        open(Settings {
+            publisher_styles: false,
+            ..combined
+        }),
+    );
+
+    let mut regular = open(ordinary);
+    let mut matched = open(combined);
+    let reference = regular.capture(0).unwrap();
+    let rendered = matched.capture(0).unwrap();
+    for (phrase, tone, geometry, edge, link_x) in [
+        ("Left beacon", 221, (30, 400), None, Some(43)),
+        ("Right beacon", 204, (754, 480), None, Some(1223)),
+        ("Reef line", 187, (54, 1210), Some(WIDTH as i32), Some(1240)),
+        ("Low headland", 170, (0, 1220), Some(0), Some(22)),
+        ("Turning basin", 153, (110, 1100), None, None),
+        ("One small lookout", 136, (22, 420), None, None),
+        ("Saltbush", 119, (20, 1244), Some(WIDTH as i32), Some(1240)),
+        ("Ebb gate", 102, (92, 1172), Some(WIDTH as i32), Some(1240)),
+    ] {
+        assert_eq!(widest_band(&rendered, tone), geometry, "{phrase}");
+        let saved = known_quote(&regular, phrase);
+        let page = matched.page_for(&saved.start).unwrap();
+        let rect = matched.selection_rects(page, &saved)[0];
+        if let Some(edge) = edge {
+            assert_eq!(
+                if edge == 0 {
+                    rect.x
+                } else {
+                    rect.x + rect.width
+                },
+                edge,
+                "{phrase}"
+            );
+        }
+        if let Some(x) = link_x {
+            let hit = matched
+                .link_at(page, x as f32, (rect.y + rect.height / 2) as f32)
+                .unwrap();
+            assert_eq!(hit.fragment.as_deref(), Some("channel"));
+        }
+        assert_eq!(matched.select_range(&saved.start, &saved.end), Some(saved));
+    }
+    capture("signed-widths-default.png", &reference);
+    capture("signed-widths-reader.png", &rendered);
 }
 
 #[test]

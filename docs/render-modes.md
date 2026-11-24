@@ -137,9 +137,9 @@ and link taps. Reader keeps its existing default width policy.
 The native probe asserts each band, text edge, and linked word. Saved source
 quotes survive repagination in Reader and mode changes in KOReader. Reader's
 continued text can wrap differently because the engines shape with different
-metrics. This scope covers boxes that fit the containing column with room for
-text. Combined negative sides, complex ancestry, floats, decorated boxes,
-and `fit-content` still require separate work.
+metrics. The nonnegative policy covers boxes that fit the containing column
+with room for text. Complex ancestry, floats, decorated boxes, and
+`fit-content` still require separate work.
 
 Regenerate the authored EPUB with
 `python3 scripts/generate-render-width-margins-fixture.py`. Run the Lua
@@ -152,6 +152,43 @@ oracle with the Render Mode probe arguments. Set
 [KOReader Web](screenshots/render-width-margins-stock-web.png) ·
 [Reader default](screenshots/render-width-margins-reader-default.png) ·
 [Reader with constraints](screenshots/render-width-margins-reader.png)
+
+#### Width constraints with negative side margins
+
+With both experimental policies enabled, Reader resolves explicit and
+constrained widths alongside negative margins. When a definite width and
+its sides exceed the column width, the placement drops the right margin
+for left-to-right text or the left margin for right-to-left text. If the box
+still overflows, auto margins stay unresolved. Reader shapes the full box
+and clips the physical paint, underline and selection to the screen.
+
+| Authored case at 1264 px and 96 DPI | Legacy, Flat and Book paint | Web and Reader paint |
+| --- | ---: | ---: |
+| 400 px width with a negative left side | x = 54, width = 1,144 px | x = 30, width = 400 px |
+| 480 px width, left auto and right −24 px | x = 54, width = 1,156 px | x = 754, width = 480 px |
+| 1,300 px width with overflow after dropping a margin | x = 54, width = 1,156 px | x = 54, width = 1,210 px |
+| 1,240 px width starting off the left edge | x = 54, width = 1,116 px | x = 0, width = 1,220 px |
+| 1,100 px right-to-left box with competing sides | x = 94, width = 1,116 px | x = 110, width = 1,100 px |
+| Auto width capped at 420 px with a negative left side | x = 54, width = 1,156 px | x = 22, width = 420 px |
+| 112% minimum width overriding a 380 px maximum | x = 54, width = 1,148 px | x = 20, width = 1,244 px |
+| 104% width, left auto and right −84 px | x = 54, width = 1,156 px | x = 92, width = 1,172 px |
+
+The native probe checks the unclipped source-word coordinates and the
+visible paint bands. Reader wraps the right-beacon sentence onto two lines
+under its own text metrics. Reader restores the entire source quote and lets the
+reader tap the visible portion of a link, including where it crosses a
+user margin. Either policy on its own leaves these authored frames
+unchanged. The combined policy applies to ordinary horizontal paragraphs
+in the body or width-neutral wrappers and limits extreme geometry to one
+extra viewport per side.
+
+Generate the EPUB with `python3 scripts/generate-render-width-margins-fixture.py --signed`.
+Pass `signed` after the capture directory to the same Lua oracle. Run
+`cargo test --locked --lib publisher_signed_widths` with
+`READER_SIGNED_MARGIN_CAPTURES` pointing to an existing output directory.
+[KOReader Web](screenshots/render-signed-widths-stock-web.png) ·
+[Reader default](screenshots/render-signed-widths-reader-default.png) ·
+[Reader with both policies](screenshots/render-signed-widths-reader.png)
 
 ### Sized wrappers around ordinary paragraphs
 

@@ -804,6 +804,7 @@ impl ParleyChapter {
                         column_width,
                         style,
                         settings,
+                        crate::publisher_padding::paragraph_is_rtl(block.direction, block.text),
                     )
                 } else {
                     None
