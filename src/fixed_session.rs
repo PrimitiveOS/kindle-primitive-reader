@@ -1854,6 +1854,17 @@ impl FixedReading {
         self.jump_to(page, None)
     }
 
+    pub(crate) fn restore_history_offsets(&mut self, page: usize, x: f32, y: f32) -> Result<()> {
+        self.present(
+            page,
+            View {
+                offset_x: x,
+                offset_y: y,
+                ..self.view
+            },
+        )
+    }
+
     pub(crate) fn jump_to(&mut self, page: usize, target: Option<&FixedJump>) -> Result<()> {
         if self.page == page
             && let Some(FixedJump::Regions(regions)) = target

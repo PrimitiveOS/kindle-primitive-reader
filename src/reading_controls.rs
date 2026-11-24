@@ -24,6 +24,8 @@ pub(crate) const MAX_VERY_LONG_PRESS_TENTHS: u16 = 200;
 pub(crate) struct ReadingControls {
     #[serde(skip_serializing_if = "is_false")]
     pub remember_opening_location: bool,
+    #[serde(skip_serializing_if = "crate::app::back_navigation::BackPreferences::is_default")]
+    pub back_navigation: crate::app::back_navigation::BackPreferences,
     #[serde(skip_serializing_if = "SkimPosition::is_default")]
     pub skim_position: SkimPosition,
     #[serde(skip_serializing_if = "crate::app::reading_guides::Settings::is_default")]

@@ -31,6 +31,7 @@ mod default_settings;
 mod dictionary_panel;
 mod dictionary_sources;
 use dictionary_sources::{SourceAction, SourcePreferences};
+pub(crate) mod back_navigation;
 #[cfg(test)]
 mod backup_defaults_integration_tests;
 mod end_of_book;
@@ -206,6 +207,7 @@ enum Screen {
     RemoveCollection,
     ReadingControls,
     NavigationSettings,
+    BackOptions(back_navigation::Options),
     ReadingGuides,
     ReadingGuidesAbout,
     BookmarkListSettings,
@@ -345,6 +347,7 @@ impl Screen {
             Self::RemoveCollection => "Remove collection?",
             Self::ReadingControls => "Reading controls",
             Self::NavigationSettings => "Navigation settings",
+            Self::BackOptions(options) => options.title(),
             Self::ReadingGuides => "Reading guides",
             Self::ReadingGuidesAbout => "About reading guides",
             Self::BookmarkListSettings => "Bookmarks and notes",
@@ -898,6 +901,7 @@ pub struct Reader {
     back: Vec<HistoryLocation>,
     forward: Vec<HistoryLocation>,
     swipe_back_notice_pending: bool,
+    back_navigation: back_navigation::State,
     notice: Option<String>,
     dirty: bool,
     save_at: Option<Instant>,
@@ -1127,6 +1131,7 @@ impl Reader {
             back: Vec::new(),
             forward: Vec::new(),
             swipe_back_notice_pending: false,
+            back_navigation: back_navigation::State::default(),
             notice: None,
             dirty: false,
             save_at: None,
@@ -1899,6 +1904,7 @@ impl Reader {
         {
             return;
         }
+        self.record_read_view();
         self.update_stats_activity(now);
         let reading_percent = self.folder_reading_percent();
         let default_orientation = self.default_reading_orientation();
@@ -2087,6 +2093,9 @@ impl Reader {
     fn items(&self) -> Vec<Item> {
         if self.screen == Screen::NavigationSettings {
             return self.navigation_preference_items();
+        }
+        if let Screen::BackOptions(options) = self.screen {
+            return self.back_option_items(options);
         }
         if self.screen == Screen::ReadingGuides {
             return self.reading_guide_items();
@@ -3622,7 +3631,9 @@ impl Reader {
                 }
                 self.reading_guide_progress
                     .settings_changed(self.controls.reading_guides, controls.reading_guides);
+                let previous_back_settings = self.controls.back_navigation;
                 self.controls = controls;
+                self.back_preferences_changed(previous_back_settings);
                 self.update_footer_clock(Instant::now());
             }
             Action::BindGesture(gesture, binding) => {
@@ -4681,12 +4692,21 @@ impl Reader {
     }
 
     fn restore_position(&mut self, new_position: &ReadingPosition) -> Result<()> {
+        self.restore_reading_position(new_position, None)
+    }
+
+    fn restore_reading_position(
+        &mut self,
+        new_position: &ReadingPosition,
+        scroll_history_top: Option<f32>,
+    ) -> Result<()> {
         let reading = &mut self.active.as_mut().ok_or("No open book")?.reading;
-        *reading = Reading::restore(
+        *reading = Reading::restore_with_scroll_top(
             reading.config.clone(),
             new_position.chapter,
             new_position.page,
             new_position.anchor.as_ref(),
+            scroll_history_top,
         )?;
         self.selection = None;
         self.result_selection = None;
@@ -4708,6 +4728,7 @@ impl Reader {
 
     fn push_history(&mut self, previous: impl Into<HistoryLocation>) {
         self.swipe_back_notice_pending = false;
+        self.reset_back_resistance();
         self.forward.clear();
         Self::remember_location(&mut self.back, previous.into());
     }
@@ -4716,6 +4737,7 @@ impl Reader {
         self.back.clear();
         self.forward.clear();
         self.swipe_back_notice_pending = false;
+        self.back_navigation = back_navigation::State::default();
     }
 
     fn close_book_to_library(&mut self) {
@@ -4817,6 +4839,7 @@ impl Reader {
             && !self.fixed_search_fit_active()
             && !self.touch_locked
             && self.end_dialog.is_none()
+            && !self.back_exit_confirmation_open()
             && self.link_popup.is_none()
             && !self.read_alarm.modal()
             && self.range_edit.is_none()
@@ -5432,6 +5455,7 @@ impl Reader {
                 && (active.reading.chapter, active.reading.page) != previous
         });
         self.notice = None;
+        self.reset_back_resistance();
         self.clear_stale_selection();
         self.record_position();
         let change = self.reading_update(page_changed);
@@ -5602,6 +5626,7 @@ impl Reader {
                     )
                 });
                 self.notice = None;
+                self.reset_back_resistance();
                 self.cancel_ocr_selection();
                 if changed || continuous {
                     self.nearby.clear();
@@ -8042,6 +8067,7 @@ impl App for Reader {
         self.draw_header_font_picker(canvas);
         self.read_alarm.draw(canvas, self.screen == Screen::Book);
         self.draw_vocabulary_dialog(canvas);
+        self.draw_back_exit_confirmation(canvas);
         self.draw_logical_recovery(canvas);
     }
 
@@ -8073,6 +8099,9 @@ impl App for Reader {
             };
         }
         if let Some(change) = self.logical_recovery_input(input) {
+            return change;
+        }
+        if let Some(change) = self.back_exit_confirmation_input(input) {
             return change;
         }
         if let Some(change) = self.vocabulary_dialog_input(input) {
@@ -8249,6 +8278,9 @@ impl App for Reader {
     }
 
     fn input(&mut self, input: Input) -> Change {
+        if let Some(change) = self.back_exit_confirmation_input(input) {
+            return change;
+        }
         if input == Input::Sleep {
             self.screen_page_worker.cancel();
             self.cancel_screen_page_jump();
@@ -8649,6 +8681,7 @@ impl App for Reader {
                             / ROWS_PER_PAGE;
                     }
                     Screen::Gestures | Screen::LinkSettings => self.show(Screen::ReadingControls),
+                    Screen::BackOptions(_) => self.show(Screen::NavigationSettings),
                     Screen::ReadingFonts => self.close_font_chooser(),
                     Screen::DictionaryOptions(i) => {
                         self.show(Screen::Dictionaries);

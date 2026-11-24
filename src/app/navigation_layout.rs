@@ -107,6 +107,8 @@ impl Screen {
         matches!(
             self,
             Self::Links
+                | Self::NavigationSettings
+                | Self::BackOptions(_)
                 | Self::LocationHistory
                 | Self::PublisherPages
                 | Self::Dictionaries

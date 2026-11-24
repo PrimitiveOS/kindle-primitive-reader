@@ -1,5 +1,5 @@
 //! Reader-wide preview and location history settings.
-use super::{Action, Item, Reader};
+use super::{Action, Item, Reader, Screen};
 use crate::reading_controls::SkimPosition;
 
 impl Reader {
@@ -13,8 +13,13 @@ impl Reader {
                 Action::SetReadingControls(opening),
             )
             .detail("Uses your saved place when reopening a book"),
-            Item::new("Skim dialog position", Action::Heading),
         ];
+        items.extend(self.back_preference_entries());
+        items.push(
+            Item::new("Assign a Back gesture", Action::Show(Screen::Gestures))
+                .detail("Choose a gesture, then Back (navigation settings)"),
+        );
+        items.push(Item::new("Skim dialog position", Action::Heading));
         items.extend(SkimPosition::ALL.map(|placement| {
             let mut next = controls;
             next.skim_position = placement;

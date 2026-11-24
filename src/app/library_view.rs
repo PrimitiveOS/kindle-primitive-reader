@@ -312,6 +312,16 @@ impl Reader {
         }
     }
 
+    pub(super) fn back_to_parent_folder(&mut self) -> Change {
+        match self.up_action() {
+            Some((action, _)) => match self.activate(action) {
+                Ok(()) => self.applied_change(),
+                Err(error) => self.report(error),
+            },
+            None => Change::None,
+        }
+    }
+
     pub(super) fn draw_library(&self, canvas: &mut Canvas) {
         let layout = self.navigation_layout();
         layout.header_action(canvas, "Reader", "Exit");

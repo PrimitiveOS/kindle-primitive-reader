@@ -347,7 +347,7 @@ impl Reader {
                 "Navigation settings",
                 Action::Show(Screen::NavigationSettings),
             )
-            .detail("Opening location and Skim position"),
+            .detail("Back action, opening location and Skim position"),
             Item::new("Links", Action::Show(Screen::LinkSettings))
                 .detail("Link taps and return gesture"),
             Item::new(

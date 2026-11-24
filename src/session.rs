@@ -404,6 +404,20 @@ impl Reading {
         fallback_page: usize,
         anchor: Option<&Anchor>,
     ) -> Result<Self> {
+        Self::restore_with_scroll_top(config, chapter, fallback_page, anchor, None)
+    }
+
+    pub(crate) fn scroll_history_top(&self) -> Option<f32> {
+        self.scroll_top
+    }
+
+    pub(crate) fn restore_with_scroll_top(
+        config: BookConfig,
+        chapter: usize,
+        fallback_page: usize,
+        anchor: Option<&Anchor>,
+        scroll_history_top: Option<f32>,
+    ) -> Result<Self> {
         let start = Instant::now();
         let mut probe = config.chapter(chapter)?;
         let custom_flows = hidden_flows::Resolved::new(&config, &probe, chapter)?;
@@ -421,6 +435,20 @@ impl Reading {
         let scroll_top = (config.scroll && !probe.is_vertical()).then(|| {
             let page_start = probe.page_range(page).start;
             let scroll_end = probe.scroll_end();
+            if let Some(top) = scroll_history_top
+                && top.is_finite()
+                && (0.0..=scroll_end.max(page_start)).contains(&top)
+                && probe.page_at(top) == fallback_page
+                && display_anchor.as_ref().is_none_or(|anchor| {
+                    let range = probe.scroll_range(top);
+                    probe.anchor_in(range.clone()).as_ref() == Some(anchor)
+                        || probe
+                            .anchor_top(anchor)
+                            .is_some_and(|at| range.contains(&at))
+                })
+            {
+                return top;
+            }
             // An explicit jump can leave a short final page at the top. Keep
             // that saved page on history return and reopen.
             if page == fallback_page && page_start > scroll_end {

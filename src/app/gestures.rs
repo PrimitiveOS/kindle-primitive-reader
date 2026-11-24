@@ -162,12 +162,13 @@ pub(super) enum Binding {
     GoTo,
     Back,
     Forward,
+    NavigationBack,
     Refresh,
     Controls,
 }
 
 impl Binding {
-    const ALL: [(Self, &'static str); 16] = [
+    const ALL: [(Self, &'static str); 17] = [
         (Self::Default, "Default behavior"),
         (Self::Ignore, "Do nothing"),
         (Self::Next, "Next page"),
@@ -182,6 +183,7 @@ impl Binding {
         (Self::GoTo, "Go to page"),
         (Self::Back, "Previous location"),
         (Self::Forward, "Next location"),
+        (Self::NavigationBack, "Back (navigation settings)"),
         (Self::Refresh, "Refresh screen"),
         (Self::Controls, "Reading controls"),
     ];
@@ -253,9 +255,14 @@ impl Reader {
         swipe_x: Option<f32>,
     ) -> Option<Change> {
         if self.touch_locked
-            || !matches!(self.screen, Screen::Book | Screen::Fixed)
+            || !matches!(self.screen, Screen::Book | Screen::Fixed | Screen::Library)
             || self.selection.is_some()
             || self.pdf_selection.is_some()
+        {
+            return None;
+        }
+        if self.screen == Screen::Library
+            && matches!(input, Input::Tap(x, y) | Input::LongTap(x, y) if self.navigation_layout().back().contains(x, y))
         {
             return None;
         }
@@ -265,6 +272,12 @@ impl Reader {
             None => Gesture::touch(input, viewport)?,
         };
         let binding = self.gestures.get(gesture);
+        if binding == Binding::NavigationBack {
+            return Some(self.navigation_back());
+        }
+        if self.screen == Screen::Library {
+            return None;
+        }
         if let (Binding::Default, Input::Swipe { dy, .. }) = (binding, input) {
             let level = match gesture {
                 Gesture::LeftUp | Gesture::LeftDown => Some(DisplayLevel::FrontLight),
@@ -321,6 +334,7 @@ impl Reader {
             Binding::Back => Action::ReturnToLocation,
             Binding::Forward => Action::NextLocation,
             Binding::Refresh => Action::RefreshDisplay,
+            Binding::NavigationBack => unreachable!("Back is handled before reading-only actions"),
         };
         Some(match self.activate(action) {
             Ok(()) => self.applied_change(),
