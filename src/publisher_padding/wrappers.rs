@@ -8,6 +8,7 @@ use crate::{
 pub(super) fn candidates(source: &Source, styles: &[Style], width: u32, font: f32) -> Vec<bool> {
     let ordinary_geometry = |style: &Style| {
         matches!(style.image_height, None | Some(ImageLength::Auto))
+            && style.min_width.is_none()
             && matches!(style.image_max_height, None | Some(ImageLength::Auto))
             && style.clear == Default::default()
             && style.borders.is_none()

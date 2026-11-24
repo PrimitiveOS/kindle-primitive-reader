@@ -1,4 +1,5 @@
 //! Publisher block boxes, measured against their parent content area.
+mod constrained;
 pub(crate) mod horizontal_margins;
 mod wrappers;
 
@@ -231,17 +232,27 @@ pub(crate) fn layout_with_flow(
     measure: impl FnMut(&crate::source::Block) -> (u32, u32),
 ) -> Option<Vec<BoxArea>> {
     let block_width = settings.block_width;
-    let width_candidates = if block_width != BlockWidthMode::Ignore {
-        text_box_candidates(source, styles, |style| {
+    let constrained = block_width == BlockWidthMode::PublisherWithConstraints
+        && (settings.float_mode == crate::FloatMode::Ignore
+            || !styles
+                .iter()
+                .any(|style| style.float_side.is_some() && !style.flow.suppressed));
+    let width_candidates = match block_width {
+        BlockWidthMode::Ignore => Vec::new(),
+        BlockWidthMode::PublisherWithConstraints if constrained => {
+            text_box_candidates(source, styles, constrained::candidate)
+        }
+        _ => text_box_candidates(source, styles, |style| {
             matches!(
                 style.image_width,
                 Some(ImageLength::Pixels(_) | ImageLength::Fraction(_))
             )
-        })
-    } else {
-        Vec::new()
+        }),
     };
-    let wrapper_candidates = if block_width == BlockWidthMode::PublisherWithWrappers {
+    let wrapper_candidates = if matches!(
+        block_width,
+        BlockWidthMode::PublisherWithConstraints | BlockWidthMode::PublisherWithWrappers
+    ) {
         wrappers::candidates(source, styles, width, font)
     } else {
         Vec::new()
@@ -300,6 +311,21 @@ pub(crate) fn layout_with_flow(
         source, styles, &tables, &owners, &cells, flow, font, width, borders, measure,
     );
     let page = BoxArea::new(0, width, None);
+    let rtl_paragraphs = if constrained {
+        let mut rtl = vec![false; styles.len()];
+        for block in &source.blocks {
+            if width_candidates[block.element] == TextBoxCandidate::Simple {
+                rtl[block.element] = match block.direction {
+                    parley::BaseDirection::Ltr => false,
+                    parley::BaseDirection::Rtl => true,
+                    parley::BaseDirection::Auto => first_strong_rtl(&block.text),
+                };
+            }
+        }
+        rtl
+    } else {
+        Vec::new()
+    };
     let mut boxes: Vec<BoxArea> = Vec::with_capacity(styles.len());
     for (idx, element) in source.elements.iter().enumerate() {
         let table = tables[idx];
@@ -310,12 +336,19 @@ pub(crate) fn layout_with_flow(
         }
         let mut area = BoxArea::new(parent.x, parent.width, parent.cell);
         let wrapper = wrapper_candidates.get(idx) == Some(&true);
-        if (wrapper || width_candidates.get(idx) == Some(&TextBoxCandidate::Simple))
-            && let Some(published) =
-                publisher_width(area, &styles[idx], font * styles[idx].size_scale)
-        {
-            area = published;
-            area.sized_wrapper = wrapper;
+        if wrapper || width_candidates.get(idx) == Some(&TextBoxCandidate::Simple) {
+            let style = &styles[idx];
+            let published = if constrained && !wrapper {
+                constrained::inset(area, style, settings, rtl_paragraphs[idx])
+            } else {
+                None
+            };
+            if let Some(published) =
+                published.or_else(|| publisher_width(area, style, font * style.size_scale))
+            {
+                area = published;
+                area.sized_wrapper = wrapper;
+            }
         }
         if margin_candidates.get(idx) == Some(&TextBoxCandidate::Simple)
             && let Some(inset) = horizontal_margins::inset(area, &styles[idx], settings)

@@ -107,12 +107,51 @@ The native oracle asserts the stock word origin and the width and origin of
 each solid paint band. Reader tests additionally check line wrapping,
 restored source quotes and touch hit testing. Reader wraps the 260-pixel
 sample in two lines under its own text metrics. Remaining box sizing work
-includes complex ancestor boxes, combined fixed widths and margins,
+includes complex ancestor boxes, fixed widths with negative margins,
 overflow beyond the physical screen, and boxes with images, tables, or floats.
 [CREngine width resolution](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L7909-L7982) · [CREngine auto margins](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L8178-L8202) · [Native oracle](../scripts/koreader-render-modes-check.lua) · [Reader capture](screenshots/render-modes-reader-web-width.png)
 
 Run `cargo test --locked --lib publisher_width` for the Reader comparison.
 Set `READER_WEB_WIDTH_CAPTURE` to a PNG path to save a capture.
+
+### Explicit widths, constraints and side placement
+
+The opt-in `PublisherWithConstraints` policy resolves `width`, `max-width`,
+and `min-width` for ordinary paragraphs directly in the document body.
+It applies the maximum first, then the minimum. An automatic width that
+hits a constraint uses the same margin placement as a definite width.
+The resulting box controls text wrapping, background, selection rectangles,
+and link taps. Reader keeps its existing default width policy.
+
+| Authored case, 1264 px viewport at 96 DPI | KOReader Legacy, Flat and Book band | KOReader Web and Reader constrained band |
+| --- | ---: | ---: |
+| 320 px width and physical margins 40 px left, 24 px right | x = 94, width = 1,092 px | x = 94, width = 320 px |
+| 40% width, left auto, right 56 px | x = 54, width = 1,100 px | x = 692, width = 462 px |
+| 520 px width capped at 380 px, centered | x = 54, width = 1,156 px | x = 442, width = 380 px |
+| 36% minimum overrides a 210 px maximum, centered | x = 54, width = 1,156 px | x = 424, width = 416 px |
+| Auto width capped at 420 px, centered | x = 54, width = 1,156 px | x = 422, width = 420 px |
+| 1,000 px width with competing LTR sides | x = 134, width = 956 px | x = 134, width = 1,000 px |
+| 320 px RTL box with two physical sides | x = 94, width = 1,092 px | x = 890, width = 320 px |
+| Auto width with unused maximum | x = 106, width = 1,092 px | x = 106, width = 1,092 px |
+
+The native probe asserts each band, text edge, and linked word. Saved source
+quotes survive repagination in Reader and mode changes in KOReader. Reader's
+continued text can wrap differently because the engines shape with different
+metrics. This scope covers boxes that fit the containing column with room for
+text. Combined negative sides, complex ancestry, floats, decorated boxes,
+and `fit-content` still require separate work.
+
+Regenerate the authored EPUB with
+`python3 scripts/generate-render-width-margins-fixture.py`. Run the Lua
+oracle with the Render Mode probe arguments. Set
+`READER_CONSTRAINED_WIDTH_CAPTURE_DIR` to an existing directory and run
+`cargo test --locked --lib publisher_width_constraints` for the Reader comparison.
+[CREngine width limits](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L7985-L8021) ·
+[Direction and automatic margins](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L8160-L8247) ·
+[Native oracle](../scripts/koreader-render-width-margins-check.lua) ·
+[KOReader Web](screenshots/render-width-margins-stock-web.png) ·
+[Reader default](screenshots/render-width-margins-reader-default.png) ·
+[Reader with constraints](screenshots/render-width-margins-reader.png)
 
 ### Sized wrappers around ordinary paragraphs
 

@@ -83,6 +83,17 @@ pub(crate) enum ImageLength {
 }
 
 impl ImageLength {
+    pub(crate) fn css_length(self) -> Option<CssLength> {
+        match self {
+            Self::Auto => None,
+            Self::Pixels(value) => Some(CssLength::Pixels(value)),
+            Self::Physical(value) => Some(CssLength::Physical(value)),
+            Self::Fraction(value) => Some(CssLength::Fraction(value)),
+            Self::Em(value) => Some(CssLength::Em(value)),
+            Self::RootEm(value) => Some(CssLength::RootEm(value)),
+        }
+    }
+
     fn for_dpi(self, dpi: u16) -> Self {
         match self {
             // CRE ignores physical image constraints when render DPI is off.
@@ -327,6 +338,7 @@ pub(crate) struct Style {
     pub image_height: Option<ImageLength>,
     pub image_max_width: Option<ImageLength>,
     pub image_max_height: Option<ImageLength>,
+    pub min_width: Option<CssLength>,
     pub image_align: parley::VerticalAlign,
     pub alignment: Option<Alignment>,
     pub line_break: Option<LineBreak>,
@@ -370,6 +382,7 @@ impl Default for Style {
             image_height: None,
             image_max_width: None,
             image_max_height: None,
+            min_width: None,
             image_align: parley::VerticalAlign::BASELINE,
             alignment: None,
             line_break: None,
@@ -570,6 +583,7 @@ impl BookStyle {
             style.image_height = style.image_height.map(|value| value.for_dpi(dpi));
             style.image_max_width = style.image_max_width.map(|value| value.for_dpi(dpi));
             style.image_max_height = style.image_max_height.map(|value| value.for_dpi(dpi));
+            style.min_width = style.min_width.map(|value| value.for_dpi(dpi));
         }
         styles
     }
@@ -599,12 +613,16 @@ impl BookStyle {
             settings.is_some_and(|config| config.relax_oversized_publisher_keeps);
         let opening_break_geometry =
             settings.is_some_and(|config| config.prefer_publisher_opening_breaks);
-        let publisher_wrapper_width = settings.is_some_and(|config| {
-            config.block_width == crate::BlockWidthMode::PublisherWithWrappers
+        let constrained_width = settings.is_some_and(|config| {
+            config.block_width == crate::BlockWidthMode::PublisherWithConstraints
         });
+        let publisher_wrapper_width = constrained_width
+            || settings.is_some_and(|config| {
+                config.block_width == crate::BlockWidthMode::PublisherWithWrappers
+            });
         let publisher_horizontal_margins = settings.is_some_and(|config| {
             config.publisher_horizontal_margins || config.publisher_signed_horizontal_margins
-        });
+        }) || constrained_width;
         let forced_margin_geometry = nested_margin_collapse
             && settings.is_some_and(|config| config.preserve_forced_page_margins);
         let logical = settings.filter(|settings| settings.logical_font_size.is_some());
@@ -651,6 +669,7 @@ impl BookStyle {
             style.image_height = None;
             style.image_max_width = None;
             style.image_max_height = None;
+            style.min_width = None;
             style.image_align = parley::VerticalAlign::BASELINE;
             let mut decoration = TextDecoration {
                 underline: matches!(element.tag.as_str(), "u" | "ins")
@@ -682,7 +701,7 @@ impl BookStyle {
                 .as_deref()
                 .filter(|text| self.author_inline && text.len() <= MAX_INLINE_BYTES)
                 .map_or_else(Vec::new, |text| declarations(&mut Parser::new(text)));
-            let mut winners: Winners = [None; 50];
+            let mut winners: Winners = [None; 51];
             for (origin, rules) in [
                 (CascadeOrigin::User, &self.user_rules),
                 (CascadeOrigin::Author, &self.rules),
@@ -869,6 +888,16 @@ impl BookStyle {
                     }
                     Property::Hyphens(mode) => style.hyphens = *mode,
                     Property::WritingMode(mode) => style.writing_mode = *mode,
+                    Property::MinWidth(value) => {
+                        if constrained_width {
+                            let font = relative_font(style.size_scale);
+                            let root = result
+                                .first()
+                                .map_or(font, |root| relative_font(root.size_scale));
+                            style.min_width =
+                                value.css_length().map(|length| length.computed(font, root));
+                        }
+                    }
                     Property::Width(value)
                     | Property::Height(value)
                     | Property::MaxWidth(value)
@@ -1454,7 +1483,7 @@ fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
 }
 
 type Priority = (u8, bool, Specificity);
-type Winners<'a> = [Option<(Priority, &'a Property)>; 50];
+type Winners<'a> = [Option<(Priority, &'a Property)>; 51];
 
 #[derive(Clone, Copy)]
 enum CascadeOrigin {
@@ -1482,6 +1511,7 @@ fn choose<'a>(
             Property::Float(_) => 46,
             Property::Clear(_) => 47,
             Property::HorizontalMargin(side, _) => 48 + side,
+            Property::MinWidth(_) => 50,
             Property::Family(_) => 0,
             Property::Size(_) => 1,
             Property::LineHeight(_) => 2,
@@ -1604,6 +1634,7 @@ enum Property {
     Height(ImageLength),
     MaxWidth(ImageLength),
     MaxHeight(ImageLength),
+    MinWidth(ImageLength),
     VerticalAlign(parley::VerticalAlign),
 }
 
@@ -1788,9 +1819,10 @@ impl<'i> DeclarationParser<'i> for Properties {
                         },
                     )
                 }
-                "width" | "height" | "max-width" | "max-height" => {
+                "width" | "height" | "max-width" | "max-height" | "min-width" => {
                     let maximum = name.eq_ignore_ascii_case("max-width")
                         || name.eq_ignore_ascii_case("max-height");
+                    let minimum = name.eq_ignore_ascii_case("min-width");
                     let length = match input.next()?.clone() {
                         Token::Ident(s)
                             if !maximum && s.eq_ignore_ascii_case("auto")
@@ -1798,13 +1830,17 @@ impl<'i> DeclarationParser<'i> for Properties {
                         {
                             ImageLength::Auto
                         }
+                        Token::Number { value, .. } if minimum && value == 0.0 => {
+                            ImageLength::Pixels(0.0)
+                        }
                         Token::Percentage { unit_value, .. }
-                            if unit_value.is_finite() && unit_value > 0.0 =>
+                            if unit_value.is_finite()
+                                && (unit_value > 0.0 || minimum && unit_value == 0.0) =>
                         {
                             ImageLength::Fraction(unit_value)
                         }
                         Token::Dimension { unit, value, .. }
-                            if value.is_finite() && value > 0.0 =>
+                            if value.is_finite() && (value > 0.0 || minimum && value == 0.0) =>
                         {
                             match unit.to_ascii_lowercase().as_str() {
                                 "px" => ImageLength::Pixels(value),
@@ -1825,6 +1861,7 @@ impl<'i> DeclarationParser<'i> for Properties {
                         "width" => Property::Width(length),
                         "height" => Property::Height(length),
                         "max-width" => Property::MaxWidth(length),
+                        "min-width" => Property::MinWidth(length),
                         _ => Property::MaxHeight(length),
                     }
                 }

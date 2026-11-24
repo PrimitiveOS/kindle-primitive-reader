@@ -16,6 +16,7 @@ pub(super) fn candidate(style: &Style, settings: Settings, parent_width: u32) ->
 fn ordinary_box(style: &Style, settings: Settings, parent_width: u32) -> bool {
     matches!(style.image_width, None | Some(ImageLength::Auto))
         && matches!(style.image_max_width, None | Some(ImageLength::Auto))
+        && style.min_width.is_none()
         && style.borders.is_none()
         && style.clear == Default::default()
         && style
@@ -37,7 +38,7 @@ pub(super) fn inset(area: BoxArea, style: &Style, settings: Settings) -> Option<
     Some(BoxArea::new(area.x + left, width, area.cell))
 }
 
-fn positive_pixels(margin: BoxMargin, width: u32, settings: Settings) -> Option<u32> {
+pub(super) fn positive_pixels(margin: BoxMargin, width: u32, settings: Settings) -> Option<u32> {
     let (negative, pixels) = resolved_edge(margin, width, settings)?;
     (!negative && (0.0..=width as f32).contains(&pixels)).then_some(pixels as u32)
 }
