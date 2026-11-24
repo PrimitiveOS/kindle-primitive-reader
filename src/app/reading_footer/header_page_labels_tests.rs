@@ -109,6 +109,93 @@ fn top_header_labels_follow_enabled_publisher_boundaries_and_keep_footer_pixels(
 }
 
 #[test]
+fn top_header_uses_exact_screen_progress_with_publisher_labels_or_percentage_alone() {
+    use primitive_app::App;
+    use std::time::{Duration, Instant};
+
+    let fixture = Fixture::new();
+    let nav = br#"<html><body><nav type="page-list"><ol>
+      <li><a href="first.xhtml#passage2">iii</a></li>
+      <li><a href="second.xhtml">A-19</a></li>
+    </ol></nav></body></html>"#;
+    write_outline_fixture(&fixture.book, Some(nav), None);
+    let fonts = fonts();
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+    open(&mut app, &fixture);
+    app.activate(Action::TogglePublisherFooter).unwrap();
+    assert_eq!(header(&app), "iii / A-19");
+
+    let labels = app.controls.top_header;
+    app.activate(Action::SetReadingControls(ReadingControls {
+        footer_percentage_digits: 1,
+        top_header: TopHeader {
+            page_number: false,
+            page_count: false,
+            reading_percent: true,
+            ..labels
+        },
+        ..app.controls
+    }))
+    .unwrap();
+    assert!(app.needs_screen_page_count());
+    let active = &app.active.as_ref().unwrap().reading;
+    let first_chapter_pages = active.probe.page_count();
+    let last_chapter_pages = active.config.chapter(1).unwrap().page_count();
+    let expected_percent = 100.0 / (first_chapter_pages + last_chapter_pages) as f64;
+    let position_before = app.current_history_location();
+    let paths: Vec<_> = fonts
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect();
+    let mut canvas = Canvas::new(WIDTH, HEIGHT, &paths).unwrap();
+    let before = primitive_app::frame(&app, &mut canvas, false);
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while app
+        .active
+        .as_ref()
+        .unwrap()
+        .reading
+        .whole_book_screen_pages()
+        .is_none()
+        && Instant::now() < deadline
+    {
+        app.tick(Instant::now());
+        std::thread::sleep(Duration::from_millis(15));
+    }
+
+    assert_eq!(
+        app.active
+            .as_ref()
+            .unwrap()
+            .reading
+            .whole_book_screen_pages(),
+        Some((1, first_chapter_pages + last_chapter_pages))
+    );
+    assert_eq!(header(&app), format!("{expected_percent:.1}%"));
+    assert_eq!(app.current_history_location(), position_before);
+    let after = primitive_app::frame(&app, &mut canvas, false);
+    let header_end = (WIDTH * TopHeader::HEIGHT) as usize;
+    assert_eq!(&before[header_end..], &after[header_end..]);
+
+    app.activate(Action::SetReadingControls(ReadingControls {
+        top_header: TopHeader {
+            reading_percent: true,
+            ..labels
+        },
+        ..app.controls
+    }))
+    .unwrap();
+    assert_eq!(
+        header(&app),
+        format!("iii / A-19  ·  {expected_percent:.1}%")
+    );
+    let ending = app.publisher_page_window(1, 1).1.remove(0);
+    app.activate(ending.action).unwrap();
+    assert_eq!(header(&app), "A-19 / A-19  ·  100.0%");
+}
+
+#[test]
 fn top_header_labels_fall_back_when_the_publisher_map_is_unresolved_or_out_of_order() {
     for nav in [
         br#"<html><body><nav type="page-list"><ol>

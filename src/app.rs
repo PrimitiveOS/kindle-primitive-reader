@@ -4568,11 +4568,13 @@ impl Reader {
     }
 
     fn needs_screen_page_count(&self) -> bool {
+        let header = self.controls.top_header;
         self.stats_awake
             && self.screen == Screen::Book
-            && (self.controls.top_header.page_number || self.controls.top_header.page_count)
             && self.top_header_visible()
-            && self.top_header_page_labels().is_none()
+            && (header.reading_percent
+                || ((header.page_number || header.page_count)
+                    && self.top_header_page_labels().is_none()))
     }
 
     fn sync_auto_turn(&mut self, now: Instant) {
