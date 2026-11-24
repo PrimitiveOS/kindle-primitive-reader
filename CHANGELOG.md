@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.42
+
+- Adjust fixed-page scan contrast with numeric presets and fine steps.
+- Move an open book to a local archive while preserving its reading data.
+- Swipe left to the latest bookmark or annotation when no eligible link takes precedence.
+
 ## 0.1.41
 
 - Apply per-page manual, automatic and semi-automatic crops while scrolling width-fit PDFs.

@@ -45,6 +45,16 @@ separate from Oasis acceptance. Schedule only relevant reading controls from
 this inventory; excluded controls are not implementation tasks, and inventory
 counts do not measure completed parity.
 
+## Reader 0.1.42 verification plan
+
+Compare scan contrast presets and a fine step against the pinned grayscale
+ramp. Verify defaults, old book settings and source text coordinates. Move
+an authored EPUB and PDF into an archive and verify confirmation, collision
+handling, failed writes, exact resume and preserved marks. Compare the
+latest-bookmark swipe with stock link precedence and EPUB/PDF destinations.
+Exercise touch lock, the return gesture and saved preferences.
+[Scan controls](scan-controls.md) · [Archive workflow](document-end.md#move-a-book-to-archive) · [Latest bookmark](link-taps.md#swipe-to-the-latest-saved-bookmark)
+
 ## Reader 0.1.41 verification plan
 
 Scroll width-fit PDFs across pages with different crops in both directions.
