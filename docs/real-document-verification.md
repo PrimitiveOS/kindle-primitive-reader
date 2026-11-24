@@ -223,6 +223,24 @@ file hashes matched before and after. The first frames took 1,504 ms,
 12,955 ms, 1,296 ms and 1,954 ms respectively. [Bookmark and header
 verification](bookmark-max-lines.md) records native and simulator evidence.
 
+## Reader 0.1.37 native reading workflows
+
+The Mac run passed 1,097 Reader library tests, one Kindle binary test,
+14 EPUB package tests and four layout checks. The ARMHF suite passed
+1,101 Reader library tests, 14 EPUB package tests and four layout checks
+on the Oasis 3. Both platforms skipped 64 optional tests.
+
+Reader recognized and exported all 126 records from the original
+`Documents/My Clippings.txt` in an isolated profile. The installed,
+source-verified KOReader parser found 123 highlights and three bookmarks
+in the same file. The original SHA-256 matched before and after both
+checks. [Kindle clippings format and source comparison](library-highlights-export.md)
+
+Five native screenshots matched their Mac renders exactly, including the
+folder action, the dictionary close control, both clippings screens and
+column or row zoom. The folder listing differed by two grayscale pixels.
+[Current book folder](screenshots/current-book-folder.png) · [Dictionary lookup](screenshots/dictionary-close-stack.png) · [Clippings options](screenshots/export-kindle-clippings-options.png) · [Scan zoom](screenshots/fixed-tile-zoom.png)
+
 ## Reader 0.1.36 native reading workflows
 
 The Mac run passed 1,080 Reader library tests, one Kindle binary test,
