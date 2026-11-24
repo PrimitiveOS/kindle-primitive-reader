@@ -1,6 +1,6 @@
 # Read timer
 
-Open the upper reading bar, tap **Tools**, then **Read timer**. The controls open over the current EPUB or fixed-layout page. Choose **Set interval** to count down by up to 17 hours and 59 minutes, or **Set alarm** for the next occurrence of a local clock time. Tap the hour or minute buttons to move by one. A hold changes the value by four hours or ten minutes. Either start action returns to the page. The picker uses the Kindle system time zone for the next local alarm. [Time zone and clock changes](device-local-time.md) **Stop timer** cancels a running timer. Holding the **Read timer** entry in Tools also stops it.
+Open the upper reading bar, tap **Tools**, then **Read timer**. The controls open over the current EPUB or fixed-layout page. Choose **Set interval** to count down by up to 17 hours and 59 minutes, or **Set alarm** for the next occurrence of a local clock time. Tap the hour or minute buttons to move by one. A hold changes the value by four hours or ten minutes. Either start action returns to the page. The picker uses the Kindle system time zone for the next local alarm. [Time zone and clock changes](device-local-time.md) The reading page shows the resolved alarm time and the remaining delay for five seconds. [Alarm confirmation](screenshots/read-alarm-confirmation.png) **Stop timer** cancels a running timer. Holding the **Read timer** entry in Tools also stops it.
 
 ![Read timer controls over an authored reading page](screenshots/read-timer-settings.png)
 

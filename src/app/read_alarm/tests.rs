@@ -26,16 +26,20 @@ fn open_tools(app: &mut Reader) {
     assert!(app.read_alarm.panel == Some(Panel::Settings));
 }
 
+fn authored_reading_page(fixture: &Fixture) -> PathBuf {
+    let specimen = fixture.root.join("Early light.xhtml");
+    fs::write(&specimen, r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Early light</title></head>
+            <body><h1>Early light</h1><p>Just after dawn, the path along the shore was quiet. We stopped beside the boathouse to watch the tide turn.</p>
+            <p>At the end of the pier, someone had left a notebook open on the rail. A page lifted in the breeze and settled again.</p></body></html>"#).unwrap();
+    specimen
+}
+
 #[test]
 fn read_alarm_interval_preserves_page_persists_choices_and_repeats_once() {
     let fixture = Fixture::new();
     let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
     let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
-    let specimen = fixture.root.join("Early light.xhtml");
-    fs::write(&specimen, r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Early light</title></head>
-            <body><h1>Early light</h1><p>Just after dawn, the path along the shore was quiet. We stopped beside the boathouse to watch the tide turn.</p>
-            <p>At the end of the pier, someone had left a notebook open on the rail. A page lifted in the breeze and settled again.</p></body></html>"#).unwrap();
-    app.open_path(&specimen).unwrap();
+    app.open_path(&authored_reading_page(&fixture)).unwrap();
     let original = frame(&app, &fonts);
     let location = app.current_history_location().unwrap();
     open_tools(&mut app);
@@ -133,10 +137,10 @@ fn read_alarm_local_clock_selects_the_next_occurrence_and_preserves_other_settin
     let wall = SystemTime::now();
     let local = local_clock(wall).unwrap();
     let minutes = (local.hour * 60 + local.minute) as u16;
-    let next = clock_delay(wall, minutes).unwrap().as_secs();
+    let next = clock_occurrence(wall, minutes).unwrap();
     // A next-day local occurrence can cross a daylight-saving boundary.
-    assert!((22 * 3600..=26 * 3600).contains(&next));
-    assert!(clock_delay(wall, 24 * 60).is_none());
+    assert!((22 * 3600..=26 * 3600).contains(&next.delay.as_secs()));
+    assert!(clock_occurrence(wall, 24 * 60).is_none());
     timer.panel = Some(Panel::Settings);
     for rect in [MODE, MESSAGE] {
         timer.handle(touch(rect), now, wall).unwrap();
@@ -148,7 +152,11 @@ fn read_alarm_local_clock_selects_the_next_occurrence_and_preserves_other_settin
     }
     let running = timer.running.unwrap();
     assert!(running.repeat_interval.is_none());
-    assert_eq!(running.due, now + Duration::from_secs(next));
+    assert_eq!(running.due, now + next.delay);
+    let confirmation = timer.alert.as_ref().unwrap();
+    assert_eq!(confirmation.text, next.confirmation());
+    assert_eq!(confirmation.hide, Some(now + Duration::from_secs(5)));
+    assert!(!timer.modal());
     assert!(timer.footer().is_some());
     assert!(timer.options.repeat && timer.options.header && timer.options.footer);
     assert!(timer.options.expiry == Expiry::Notification);
@@ -164,20 +172,103 @@ fn read_alarm_local_clock_selects_the_next_occurrence_and_preserves_other_settin
 #[test]
 fn read_alarm_uses_the_local_day_before_resolving_the_requested_minute() {
     const UTC_PLUS_SEVEN: i32 = 7 * 60 * 60;
-    let resolve_after = |civil, after| {
+    let resolve_after = |civil: i64, after| {
         let target = civil - i64::from(UTC_PLUS_SEVEN);
-        (target > after).then_some(target)
+        let minutes = civil.rem_euclid(24 * 60 * 60) as i32 / 60;
+        (target > after).then_some((target, minutes / 60, minutes % 60))
     };
     // It is 00:10 on the Kindle, even though the UTC date has not rolled over.
     let utc = 17 * 3600 + 10 * 60;
     assert_eq!(
-        clock_delay_in_zone(utc, UTC_PLUS_SEVEN, 15, resolve_after),
-        Some(Duration::from_secs(5 * 60))
+        clock_occurrence_in_zone(utc, UTC_PLUS_SEVEN, 15, resolve_after)
+            .unwrap()
+            .delay,
+        Duration::from_secs(5 * 60)
     );
     assert_eq!(
-        clock_delay_in_zone(utc, UTC_PLUS_SEVEN, 5, resolve_after),
-        Some(Duration::from_secs(23 * 3600 + 55 * 60))
+        clock_occurrence_in_zone(utc, UTC_PLUS_SEVEN, 5, resolve_after)
+            .unwrap()
+            .delay,
+        Duration::from_secs(23 * 3600 + 55 * 60)
     );
+}
+
+#[test]
+fn read_alarm_confirmation_displays_the_time_resolved_after_a_skipped_hour() {
+    let now = 3600 + 45 * 60 + 13;
+    let minutes = 2 * 60 + 30;
+    let alarm = clock_occurrence_in_zone(now, 0, minutes, |civil, after| {
+        assert_eq!(civil, 2 * 3600 + 30 * 60);
+        assert_eq!(after, now);
+        // The clock advances from 02:00 to 03:00. The missing 02:30 resolves
+        // to 03:30, at the instant when the pre-transition clock read 02:30.
+        Some((civil, 3, 30))
+    })
+    .unwrap();
+
+    assert_eq!(alarm.delay, Duration::from_secs(44 * 60 + 47));
+    assert_eq!(
+        alarm.confirmation(),
+        "Alarm set for 03:30.\n44 min 47 sec from now."
+    );
+}
+
+#[test]
+fn read_alarm_confirmation_reports_seconds_with_or_without_minutes() {
+    let confirmation = |seconds| {
+        AlarmOccurrence {
+            delay: Duration::from_secs(seconds),
+            hour: 8,
+            minute: 5,
+        }
+        .confirmation()
+    };
+    assert_eq!(confirmation(18), "Alarm set for 08:05.\n18 sec from now.");
+    assert_eq!(
+        confirmation(3600 + 4 * 60),
+        "Alarm set for 08:05.\n1 hr 4 min from now."
+    );
+}
+
+#[test]
+fn read_alarm_confirmation_leaves_the_reading_page_available_and_dismisses() {
+    let fixture = Fixture::new();
+    let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+    app.open_path(&authored_reading_page(&fixture)).unwrap();
+    let original = frame(&app, &fonts);
+    let position = app.current_history_location().unwrap();
+    open_tools(&mut app);
+
+    let now = Instant::now();
+    let wall = SystemTime::now();
+    app.read_alarm.handle(touch(PICK_ALARM), now, wall).unwrap();
+    let Some(Panel::Set(Kind::Alarm, minutes)) = app.read_alarm.panel else {
+        panic!("Expected the local alarm picker");
+    };
+    let minutes = (minutes + 5) % (24 * 60);
+    app.read_alarm.panel = Some(Panel::Set(Kind::Alarm, minutes));
+    let expected = clock_occurrence(wall, minutes).unwrap();
+
+    assert_eq!(
+        app.read_alarm.handle(touch(START), now, wall).unwrap(),
+        Change::Partial
+    );
+    assert!(!app.read_alarm.modal());
+    assert_eq!(
+        app.read_alarm.alert.as_ref().unwrap().text,
+        expected.confirmation()
+    );
+    assert_ne!(frame(&app, &fonts), original);
+    capture_test_screen(&app, &fonts, "READER_ALARM_CONFIRMATION_SCREEN", false);
+
+    assert_eq!(
+        app.poll_read_alarm(now + Duration::from_secs(5), false),
+        Change::Partial
+    );
+    assert_eq!(app.read_alarm.running.unwrap().due, now + expected.delay);
+    assert_eq!(app.current_history_location().unwrap(), position);
+    assert_eq!(frame(&app, &fonts), original);
 }
 
 #[cfg(all(target_os = "linux", target_arch = "arm", target_env = "musl"))]

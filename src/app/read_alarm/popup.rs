@@ -261,25 +261,26 @@ impl ReadAlarm {
                             minute + minute_step
                         }
                 } else if tap(START) {
-                    let delay = match kind {
+                    let (delay, text) = match kind {
                         Kind::Interval if minutes == 0 => return Ok(Change::None),
                         Kind::Interval => {
                             let mut next = self.options.clone();
                             next.minutes = minutes;
                             self.options = self.save(next)?;
-                            Duration::from_secs(u64::from(minutes) * 60)
+                            (
+                                Duration::from_secs(u64::from(minutes) * 60),
+                                format!("Timer started · {:02}:{:02}", minutes / 60, minutes % 60),
+                            )
                         }
-                        Kind::Alarm => clock_delay(wall, minutes).ok_or_else(|| {
-                            io::Error::other("The local alarm could not be scheduled")
-                        })?,
+                        Kind::Alarm => {
+                            let alarm = clock_occurrence(wall, minutes).ok_or_else(|| {
+                                io::Error::other("The local alarm could not be scheduled")
+                            })?;
+                            (alarm.delay, alarm.confirmation())
+                        }
                     };
                     self.panel = None;
                     self.start(now, delay, (kind == Kind::Interval).then_some(delay));
-                    let text = if kind == Kind::Alarm {
-                        format!("Alarm set for {:02}:{:02}", minutes / 60, minutes % 60)
-                    } else {
-                        format!("Timer started · {:02}:{:02}", minutes / 60, minutes % 60)
-                    };
                     self.alert = Some(Alert {
                         expand: false,
                         text,

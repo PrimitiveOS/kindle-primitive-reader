@@ -1,14 +1,41 @@
 //! Open either reading bar's Contents list at the active section.
 use std::collections::HashMap;
 
-use super::custom_contents::CustomAction;
-use super::{Action, Reader, Screen};
+use super::Reader;
+use super::contents_view::{ContentsEntry, Target};
+
+type Position = (usize, usize);
+
+pub(super) struct ContentsPositions {
+    reading: Position,
+    headings: Vec<Option<Position>>,
+}
+
+impl ContentsPositions {
+    pub(super) fn focus(&self, entries: impl Iterator<Item = usize>) -> Option<usize> {
+        current_row(
+            self.reading,
+            entries.enumerate().filter_map(|(row, source)| {
+                Some((row, self.headings.get(source).copied().flatten()?))
+            }),
+        )
+    }
+
+    pub(super) fn reveal(&self) -> impl Iterator<Item = usize> + '_ {
+        self.focus(0..self.headings.len()).into_iter().chain(
+            self.headings
+                .iter()
+                .enumerate()
+                .filter_map(|(index, &position)| (position == Some(self.reading)).then_some(index)),
+        )
+    }
+}
 
 impl Reader {
-    pub(super) fn locate_contents_row(&self) -> Option<usize> {
-        if !matches!(self.screen, Screen::Contents | Screen::FixedContents) {
-            return None;
-        }
+    pub(super) fn contents_positions(
+        &self,
+        entries: &[ContentsEntry],
+    ) -> Option<ContentsPositions> {
         let position = self.current_position()?;
         let active = self.active.as_ref().map(|active| &active.reading);
         let chapters: HashMap<_, _> = active
@@ -17,44 +44,49 @@ impl Reader {
             .map(|(index, chapter)| (chapter.href.as_str(), index))
             .collect();
         let state = self.library.state(self.open_book_id()?);
-        let items = self.items();
-        let destinations = items.iter().enumerate().filter_map(|(row, item)| {
-            let key = match &item.action {
-                Action::FixedPage(page) => (0, *page),
-                Action::Jump(target) => {
-                    let chapter = *chapters.get(target.path.as_str())?;
-                    let reading = active?;
-                    let page = match target.fragment.as_deref() {
-                        Some(fragment) if chapter == reading.chapter => {
-                            reading.probe.page_for(&reading.probe.fragment(fragment)?)?
-                        }
-                        // Only the open spine item needs laying out. Earlier sections
-                        // in another chapter are already in publisher reading order.
-                        _ => 0,
-                    };
-                    (chapter, page)
-                }
-                Action::Custom(CustomAction::Open(index)) => {
-                    let target = &state?.custom_contents.entries().get(*index)?.position;
-                    let page = match (active, target.anchor.as_ref()) {
-                        (Some(reading), Some(anchor)) if target.chapter == reading.chapter => {
-                            reading.probe.page_for(anchor).unwrap_or(target.page)
-                        }
-                        _ => target.page,
-                    };
-                    (target.chapter, page)
-                }
-                _ => return None,
-            };
-            Some((row, key))
-        });
-        current_row((position.chapter, position.page), destinations)
+        let headings = entries
+            .iter()
+            .map(|entry| {
+                let key = match &entry.target {
+                    Target::Fixed(page) => (0, *page),
+                    Target::Reflow(target) => {
+                        let chapter = *chapters.get(target.path.as_str())?;
+                        let reading = active?;
+                        let page = match target.fragment.as_deref() {
+                            Some(fragment) if chapter == reading.chapter => {
+                                reading.probe.page_for(&reading.probe.fragment(fragment)?)?
+                            }
+                            // Only the open spine item needs laying out. Earlier sections
+                            // in another chapter are already in publisher reading order.
+                            _ => 0,
+                        };
+                        (chapter, page)
+                    }
+                    Target::Custom(index) => {
+                        let target = &state?.custom_contents.entries().get(*index)?.position;
+                        let page = match (active, target.anchor.as_ref()) {
+                            (Some(reading), Some(anchor)) if target.chapter == reading.chapter => {
+                                reading.probe.page_for(anchor).unwrap_or(target.page)
+                            }
+                            _ => target.page,
+                        };
+                        (target.chapter, page)
+                    }
+                    Target::None => return None,
+                };
+                Some(key)
+            })
+            .collect();
+        Some(ContentsPositions {
+            reading: (position.chapter, position.page),
+            headings,
+        })
     }
 }
 
 fn current_row(
-    current: (usize, usize),
-    destinations: impl Iterator<Item = (usize, (usize, usize))>,
+    current: Position,
+    destinations: impl Iterator<Item = (usize, Position)>,
 ) -> Option<usize> {
     let mut preceding = None;
     for (row, position) in destinations {

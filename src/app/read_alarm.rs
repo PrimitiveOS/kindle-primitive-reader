@@ -259,7 +259,28 @@ fn local_clock(now: SystemTime) -> Option<primitive_device::LocalTime> {
     }
 }
 
-fn clock_delay(now: SystemTime, minutes: u16) -> Option<Duration> {
+struct AlarmOccurrence {
+    delay: Duration,
+    hour: i32,
+    minute: i32,
+}
+
+impl AlarmOccurrence {
+    fn confirmation(&self) -> String {
+        let seconds = self.delay.as_secs();
+        let duration = match (seconds / 60, seconds % 60) {
+            (0, _) => format!("{seconds} sec"),
+            (_, 0) => super::reading_time(seconds),
+            (_, rest) => format!("{} {rest} sec", super::reading_time(seconds)),
+        };
+        format!(
+            "Alarm set for {:02}:{:02}.\n{duration} from now.",
+            self.hour, self.minute
+        )
+    }
+}
+
+fn clock_occurrence(now: SystemTime, minutes: u16) -> Option<AlarmOccurrence> {
     if minutes >= 24 * 60 {
         return None;
     }
@@ -268,48 +289,59 @@ fn clock_delay(now: SystemTime, minutes: u16) -> Option<Duration> {
     {
         let zone = primitive_device::DeviceTimeZone::load();
         if let Some(offset) = zone.local_time_at(seconds)?.utc_offset {
-            return clock_delay_in_zone(seconds, offset, minutes, |civil, after| {
-                zone.resolve_local_time_after(civil, after)
+            return clock_occurrence_in_zone(seconds, offset, minutes, |civil, after| {
+                let target = zone.resolve_local_time_after(civil, after)?;
+                let local = zone.local_time_at(target)?;
+                Some((target, local.hour, local.minute))
             });
         }
     }
-    libc_clock_delay(seconds, minutes)
+    libc_clock_occurrence(seconds, minutes)
 }
 
 #[cfg(any(
     test,
     all(target_os = "linux", target_arch = "arm", target_env = "musl")
 ))]
-fn clock_delay_in_zone(
+fn clock_occurrence_in_zone(
     seconds: i64,
     offset: i32,
     minutes: u16,
-    resolve_after: impl Fn(i64, i64) -> Option<i64>,
-) -> Option<Duration> {
+    resolve_after: impl Fn(i64, i64) -> Option<(i64, i32, i32)>,
+) -> Option<AlarmOccurrence> {
     const DAY: i64 = 24 * 60 * 60;
     let local_day = seconds.checked_add(i64::from(offset))?.div_euclid(DAY);
     let today = local_day
         .checked_mul(DAY)?
         .checked_add(i64::from(minutes) * 60)?;
-    let target = resolve_after(today, seconds)
+    let (target, hour, minute) = resolve_after(today, seconds)
         .or_else(|| resolve_after(today.checked_add(DAY)?, seconds))?;
-    positive_delay(target.checked_sub(seconds)?)
+    Some(AlarmOccurrence {
+        delay: positive_delay(target.checked_sub(seconds)?)?,
+        hour,
+        minute,
+    })
 }
 
-fn libc_clock_delay(seconds: i64, minutes: u16) -> Option<Duration> {
+fn libc_clock_occurrence(seconds: i64, minutes: u16) -> Option<AlarmOccurrence> {
     let (seconds, mut civil) = libc_local_time(seconds)?;
     civil.tm_hour = i32::from(minutes / 60);
     civil.tm_min = i32::from(minutes % 60);
     civil.tm_sec = 0;
     civil.tm_isdst = -1;
-    let mut next = civil;
+    let mut actual = civil;
     // mktime normalizes the civil date in the host's local time zone.
-    let mut target = unsafe { libc::mktime(&mut next) };
+    let mut target = unsafe { libc::mktime(&mut actual) };
     if target <= seconds {
-        civil.tm_mday += 1;
-        target = unsafe { libc::mktime(&mut civil) };
+        actual = civil;
+        actual.tm_mday += 1;
+        target = unsafe { libc::mktime(&mut actual) };
     }
-    positive_delay(target.checked_sub(seconds)?)
+    Some(AlarmOccurrence {
+        delay: positive_delay(target.checked_sub(seconds)?)?,
+        hour: actual.tm_hour,
+        minute: actual.tm_min,
+    })
 }
 
 fn positive_delay(seconds: impl TryInto<u64>) -> Option<Duration> {
