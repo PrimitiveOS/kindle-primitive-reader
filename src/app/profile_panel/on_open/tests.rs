@@ -2,7 +2,7 @@ use super::*;
 use crate::app::profile_panel::Name;
 use crate::app::selection_viewport_tests::{adopt, capture};
 use crate::app::tests::{Fixture, tap_contents_item};
-use crate::app::{Action, Screen, Settings};
+use crate::app::{Action, ReadingOrientation, Screen, Settings};
 use crate::fixed_session::tests::striped_pdf_sized_bytes;
 use crate::library::FixedTileAxis;
 use crate::reading_profiles::{Field, ValueField};
@@ -196,4 +196,133 @@ fn opening_profile_with_a_missing_font_falls_back_to_the_book_settings() {
             .contains("Opening profile could not be applied")
     );
     assert!(app.profiles[0].applies_on_open());
+}
+
+#[test]
+fn opening_profile_resolves_legacy_screen_numbers_before_changing_the_layout() {
+    let f = Fixture::new();
+    fs::copy(crate::test_fixture("long-chapter.epub"), &f.book).unwrap();
+    let mut app = Reader::open(&f.root, &f.state, fonts()).unwrap();
+    app.open_path(&f.book).unwrap();
+    let basis = app.active.as_ref().unwrap().reading.config.settings;
+    app.activate(Action::Text(Settings {
+        font_size: basis.font_scale.effective(72.0).unwrap(),
+        logical_font_size: Some(72.0),
+        ..basis
+    }))
+    .unwrap();
+    app.save_reading_profile("Large text").unwrap();
+    include(&mut app, 0, vec![Field::FontSize]);
+    app.activate(Action::Text(basis)).unwrap();
+    app.follow_reflow_page(0, 6).unwrap();
+    let original = app.current_position().unwrap();
+    assert_eq!(original.page, 6);
+    assert!(original.anchor.is_some());
+    let id = app.open_book_id().unwrap();
+    app.library.state_mut(id).unwrap().position = Some(ReadingPosition {
+        anchor: None,
+        ..original.clone()
+    });
+    app.library.persist().unwrap();
+    toggle(&mut app, 0);
+    let mut reopened = Reader::open(&f.root, &f.state, fonts()).unwrap();
+    reopened.open_path(&f.book).unwrap();
+    let result = reopened.current_position().unwrap();
+    assert_ne!(result.page, original.page);
+    assert_eq!(result.anchor, original.anchor);
+    assert_eq!(
+        reopened
+            .active
+            .as_ref()
+            .unwrap()
+            .reading
+            .config
+            .settings
+            .logical_font_size,
+        Some(72.0)
+    );
+}
+
+#[test]
+fn opening_profile_uses_the_saved_landscape_viewport_to_check_fit() {
+    let f = Fixture::new();
+    let mut app = Reader::open(&f.root, &f.state, fonts()).unwrap();
+    app.open_path(&f.book).unwrap();
+    let basis = app.current_text_preferences().unwrap();
+    app.apply_text_profile(BookPreferences {
+        logical_font_size: Some(200.0),
+        line_spacing_percent: Some(200),
+        margin_top: Some(310),
+        margin_bottom: Some(310),
+        ..basis.clone()
+    })
+    .unwrap();
+    assert!(
+        app.active
+            .as_ref()
+            .unwrap()
+            .reading
+            .prepare_viewport(ReadingViewport::LANDSCAPE)
+            .is_err()
+    );
+    app.save_reading_profile("Portrait large print").unwrap();
+    include(
+        &mut app,
+        0,
+        vec![Field::FontSize, Field::Margins, Field::LineSpacing],
+    );
+    app.apply_text_profile(basis.clone()).unwrap();
+    app.follow_reflow_page(1, 0).unwrap();
+    let id = app.open_book_id().unwrap();
+    let state = app.library.state_mut(id).unwrap();
+    state.screen_orientation = Some(ReadingOrientation::LandscapeRight);
+    let position = state.position.clone();
+    toggle(&mut app, 0);
+    app.open_path(&f.book).unwrap();
+    assert!(
+        app.notice
+            .as_deref()
+            .unwrap()
+            .contains("Opening profile could not be applied")
+    );
+    assert_eq!(app.library.state(id).unwrap().preferences, basis);
+    assert_eq!(app.current_position(), position);
+    let _ = adopt(&mut app, ReadingViewport::LANDSCAPE, 1);
+    assert_eq!(
+        app.current_position().unwrap().anchor,
+        position.unwrap().anchor
+    );
+}
+
+#[test]
+fn opening_profile_retains_the_existing_font_fallback_when_font_is_excluded() {
+    let f = Fixture::new();
+    let mut app = Reader::open(&f.root, &f.state, fonts()).unwrap();
+    app.open_path(&f.book).unwrap();
+    let initial = app.active.as_ref().unwrap().reading.config.settings;
+    app.activate(Action::Text(Settings {
+        invert_night_images: true,
+        ..initial
+    }))
+    .unwrap();
+    app.save_reading_profile("Invert images").unwrap();
+    include(&mut app, 0, vec![Field::NightImages]);
+    app.activate(Action::Text(initial)).unwrap();
+    let id = app.open_book_id().unwrap();
+    app.library.state_mut(id).unwrap().preferences.font_file = Some("Missing.ttf".into());
+    toggle(&mut app, 0);
+    app.open_path(&f.book).unwrap();
+    let active = &app.active.as_ref().unwrap().reading.config;
+    assert!(active.settings.invert_night_images);
+    assert_eq!(active.fonts, app.fonts);
+    assert!(app.notice.is_none());
+    assert_eq!(
+        app.library
+            .state(id)
+            .unwrap()
+            .preferences
+            .font_file
+            .as_deref(),
+        Some("Missing.ttf")
+    );
 }

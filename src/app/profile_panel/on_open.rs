@@ -2,6 +2,7 @@
 use super::{
     BookConfig, BookPreferences, FixedReading, Profile, Reader, Reading, ReadingPosition, Result,
 };
+use crate::session::ReadingViewport;
 
 impl Reader {
     pub(in crate::app) fn toggle_opening_profile(&mut self, index: usize) -> Result<()> {
@@ -31,6 +32,7 @@ impl Reader {
         preferences: &BookPreferences,
         position: Option<&ReadingPosition>,
         top_status_header: bool,
+        target_viewport: ReadingViewport,
     ) -> Result<Option<(Reading, BookPreferences)>> {
         let mut adjusted = preferences.clone();
         for profile in self.opening_profiles() {
@@ -45,14 +47,29 @@ impl Reader {
         config.settings = adjusted.apply_to(self.device_reading_settings_for(base.viewport));
         config.settings.status_header_height =
             crate::reading_controls::TopHeader::height(top_status_header, adjusted.scroll);
-        config.fonts = self.fonts_for(adjusted.font_file.as_deref())?;
+        if adjusted.font_file != preferences.font_file {
+            config.fonts = self.fonts_for(adjusted.font_file.as_deref())?;
+        }
         config.scroll = adjusted.scroll;
         config.facing_pages = adjusted.facing_pages;
         let reading = if let Some(saved) = position {
-            Reading::restore(config, saved.chapter, saved.page, saved.anchor.as_ref())?
+            let legacy_anchor;
+            let anchor = if let Some(anchor) = saved.anchor.as_ref() {
+                anchor
+            } else {
+                let baseline = Reading::restore(base.clone(), saved.chapter, saved.page, None)?;
+                legacy_anchor = baseline
+                    .anchor()
+                    .ok_or("The saved page could not be resolved to a source position")?;
+                &legacy_anchor
+            };
+            Reading::restore(config, saved.chapter, saved.page, Some(anchor))?
         } else {
             Reading::open(config)?
         };
+        if target_viewport != base.viewport {
+            reading.prepare_viewport(target_viewport)?;
+        }
         Ok(Some((reading, adjusted)))
     }
 

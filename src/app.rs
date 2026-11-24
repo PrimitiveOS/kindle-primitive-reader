@@ -1443,6 +1443,7 @@ impl Reader {
             saved_preferences,
             position.as_ref(),
             top_status_header,
+            self.opening_reflow_viewport(id),
         ) {
             Ok(prepared) => (prepared, None),
             Err(error) => (None, Some(error)),

@@ -34,10 +34,12 @@ alphabetical order shown in the profile list. If two profiles include the
 same setting, the later profile supplies that value. Renaming a profile
 carries its switch with it. A duplicate starts with the switch off.
 
-Reader prepares the combined settings before showing the book. A missing
-profile font or an incompatible fixed-page view falls back to the book's
-saved settings and shows a notice. The EPUB test checks a saved passage
-after restarting Reader. The PDF test checks the exact physical page,
+Reader prepares the combined settings before showing the book. It
+resolves older page-only positions to a source anchor and checks the
+book's requested landscape layout before accepting reflow settings.
+A newly selected missing font or an incompatible view falls back to the
+book's saved settings and shows a notice. The EPUB tests check a saved
+passage after restart. The PDF test checks the exact physical page,
 tiled zoom and overlap after combining two profiles.
 
 This covers KOReader's **on book opening › always**. Its conditional

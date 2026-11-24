@@ -94,13 +94,21 @@ impl Geometry {
     }
 
     pub(super) fn in_navigation(self, layout: super::navigation_layout::NavigationLayout) -> Self {
+        self.in_navigation_reserving(layout, LIST_FOOTER_SPACE)
+    }
+
+    pub(super) fn in_navigation_reserving(
+        self,
+        layout: NavigationLayout,
+        footer_space: i32,
+    ) -> Self {
         if layout.height == HEIGHT as i32 {
             return Self {
                 width: layout.width,
                 ..self
             };
         }
-        let available = layout.height - LIST_Y - LIST_FOOTER_SPACE;
+        let available = layout.height - LIST_Y - footer_space;
         let rows = (available / self.row_height).max(1) as usize;
         Self {
             width: layout.width,

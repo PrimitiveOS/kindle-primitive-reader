@@ -58,6 +58,9 @@ impl Reader {
             self.match_geometry()
         } else if self.screen.is_bookmark_list() {
             Geometry::dense(self.controls.bookmark_density).in_navigation(self.navigation_layout())
+        } else if matches!(self.screen, Screen::ReadingProfile(_)) {
+            // Profile details need only the standard navigation and notice footer.
+            Geometry::STANDARD.in_navigation_reserving(self.navigation_layout(), 160)
         } else if matches!(
             self.screen,
             Screen::BookmarkMatches | Screen::BookmarkBrowser(_) | Screen::BookMap
