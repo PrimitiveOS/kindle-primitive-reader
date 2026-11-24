@@ -10,6 +10,8 @@ use crate::session::{PageThumbnail, page_thumbnail};
 use crate::{Anchor, Probe, Result};
 
 mod grid_menu;
+mod ribbon_map;
+pub(super) use ribbon_map::{RibbonMap, RibbonMapTarget};
 
 fn capacity(grid: Option<PageBrowserGrid>) -> usize {
     grid.map_or(OVERVIEW_PAGES, |grid| {
@@ -519,22 +521,34 @@ impl Reader {
             .then(|| self.scrub_overview(start_x + dx))
     }
 
-    fn scrub_overview(&mut self, x: f32) -> Change {
-        let Some(overview) = &self.overview else {
-            return Change::None;
-        };
+    fn overview_ribbon_target(&self, x: f32) -> Option<RibbonMapTarget> {
+        let overview = self.overview.as_ref()?;
         let track = OverviewLayout::new(self.navigation_layout()).track();
         let fraction = ((x - track.x as f32) / track.w as f32).clamp(0.0, 1.0);
-        let result = if let Some(active) = &self.active {
+        Some(if let Some(active) = &self.active {
             let count = active.reading.probe.chapter_count();
             let chapter = (fraction * count.saturating_sub(1) as f32).round() as usize;
-            if overview.chapter == Some(chapter) {
-                return Change::None;
-            }
-            self.update_overview(Some(chapter), Some(0))
+            RibbonMapTarget::Chapter(chapter)
         } else {
             let page = (fraction * overview.count.saturating_sub(1) as f32).round() as usize;
-            self.update_overview(None, Some(page))
+            RibbonMapTarget::Fixed(page)
+        })
+    }
+
+    fn scrub_overview(&mut self, x: f32) -> Change {
+        let result = match self.overview_ribbon_target(x) {
+            Some(RibbonMapTarget::Chapter(chapter)) => {
+                if self
+                    .overview
+                    .as_ref()
+                    .is_some_and(|view| view.chapter == Some(chapter))
+                {
+                    return Change::None;
+                }
+                self.update_overview(Some(chapter), Some(0))
+            }
+            Some(RibbonMapTarget::Fixed(page)) => self.update_overview(None, Some(page)),
+            None => return Change::None,
         };
         match result {
             Ok(()) => Change::Partial,
@@ -554,6 +568,11 @@ impl Reader {
         let overview = self.overview.as_ref().expect("The overview is still open");
         let batch = capacity(overview.grid);
         let (direction, step) = match input {
+            Input::LongTap(x, y) if layout.track().contains(x, y) => {
+                return self
+                    .overview_ribbon_target(x)
+                    .map_or(Change::None, |target| self.hold_overview_ribbon(target));
+            }
             Input::LongTap(x, y) => {
                 let Some(index) =
                     (0..overview.tiles.len()).find(|&index| layout.tile(index).contains(x, y))
@@ -582,10 +601,7 @@ impl Reader {
                     self.show(Screen::BookMap);
                     match map {
                         MapOrigin::Fixed(window) => self.map_window = window,
-                        MapOrigin::Chapter(chapter) => {
-                            self.book_map_focus = Some(chapter);
-                            self.list_page = chapter / self.list_geometry().rows;
-                        }
+                        MapOrigin::Chapter(chapter) => self.focus_chapter_map(chapter),
                     }
                 } else {
                     self.show(self.tools_screen());

@@ -939,6 +939,7 @@ pub struct Reader {
     publisher_label_canvas: std::cell::RefCell<Option<Canvas>>,
     map_window: fixed_book_map::MapWindow,
     book_map_focus: Option<usize>,
+    ribbon_maps: Vec<page_overview::RibbonMap>,
     back: Vec<HistoryLocation>,
     forward: Vec<HistoryLocation>,
     swipe_back_notice_pending: bool,
@@ -1179,6 +1180,7 @@ impl Reader {
             publisher_label_canvas: Default::default(),
             map_window: fixed_book_map::MapWindow::default(),
             book_map_focus: None,
+            ribbon_maps: Vec::new(),
             back: Vec::new(),
             forward: Vec::new(),
             swipe_back_notice_pending: false,
@@ -1840,6 +1842,9 @@ impl Reader {
         }
         if screen != Screen::PageOverview {
             self.overview = None;
+        }
+        if !matches!(screen, Screen::PageOverview | Screen::BookMap) {
+            self.ribbon_maps.clear();
         }
         if screen != Screen::Skim {
             self.skim = None;
@@ -3469,6 +3474,13 @@ impl Reader {
                 });
                 Item::new(&chapter.label, Action::BookMapChapter(index)).detail({
                     let detail = map_detail(index == reading.chapter, marks, highlights);
+                    let detail = if self.ribbon_map_target()
+                        == Some(page_overview::RibbonMapTarget::Chapter(index))
+                    {
+                        format!("Map focus · {detail}")
+                    } else {
+                        detail
+                    };
                     reading.hidden_chapter(index).map_or(detail.clone(), |all| {
                         format!(
                             "{} · {detail}",
@@ -8980,6 +8992,9 @@ impl App for Reader {
         }
         if self.screen == Screen::BookMap {
             if let Some(change) = self.book_map_tap_option_input(input) {
+                return change;
+            }
+            if let Some(change) = self.ribbon_book_map_back(input) {
                 return change;
             }
             if self.fixed.is_some() {

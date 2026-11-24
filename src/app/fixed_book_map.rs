@@ -21,6 +21,17 @@ pub(super) struct MapWindow {
 }
 
 impl MapWindow {
+    pub(super) fn focused(page: usize, total: usize) -> Self {
+        if total <= CAPACITY {
+            return Self::default();
+        }
+        let page = page.min(total - 1);
+        Self {
+            start: page / CAPACITY * CAPACITY,
+            span: CAPACITY,
+        }
+    }
+
     fn pages(self, total: usize) -> Range<usize> {
         let length = if self.span == 0 { total } else { self.span };
         self.start..self.start.saturating_add(length).min(total)
@@ -118,16 +129,21 @@ impl Reader {
         let reading = &fixed.reading;
         let layout = self.navigation_layout();
         let count = reading.count();
-        let focus = reading.page();
+        let reading_page = reading.page();
+        let ribbon = self.fixed_ribbon_map_focus();
+        let focus = ribbon.map_or(reading_page, |(page, _)| page);
         let state = self.library.state(fixed.id);
         let window = self.map_window;
         let pages = window.pages(count);
         let sections = self.fixed_sections(fixed);
-        let summary = format!(
+        let mut summary = format!(
             "Pages {}   ·   Reading page {}",
             range_label(&pages),
-            focus + 1
+            reading_page + 1
         );
+        if ribbon.is_some() {
+            summary.push_str(&format!("   ·   Map focus {}", focus + 1));
+        }
         canvas.text(layout.body(137, 65), &summary, CAPTION);
         for (index, slot) in window.slots(count).enumerate() {
             let rect = projected_cell(layout, index);
@@ -149,11 +165,21 @@ impl Reader {
                     255
                 },
             );
+            let browser_marker = ribbon.is_some_and(|(_, page)| slot.contains(&page));
+            let label_width = rect.w - if browser_marker { 50 } else { 22 };
             canvas.text(
-                Rect::new(rect.x + 12, rect.y + 10, rect.w - 22, 53),
+                Rect::new(rect.x + 12, rect.y + 10, label_width, 53),
                 &range_label(&slot),
                 TextStyle::new(29).bold().ink(ink),
             );
+            if browser_marker {
+                canvas.panel(
+                    Rect::new(rect.right() - 31, rect.y + 27, 17, 17),
+                    4,
+                    3,
+                    if pressed { 0 } else { 255 },
+                );
+            }
             let chapter = sections
                 .at(sections.before(slot.start))
                 .filter(|(page, _)| *page < slot.end)

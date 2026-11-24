@@ -3,7 +3,7 @@ use primitive_app::App;
 use primitive_ui::Canvas;
 
 use super::fixed_book_map::MapWindow;
-use super::page_overview::{MapOrigin, OverviewFocus, PageOverview};
+use super::page_overview::{MapOrigin, OverviewFocus, PageOverview, RibbonMapTarget};
 use super::{Reader, Screen};
 use crate::Result;
 use crate::library::PageBrowserGrid;
@@ -19,10 +19,11 @@ enum Origin {
         Option<PageBrowserGrid>,
         bool,
     ),
-    FixedMap(MapWindow),
+    FixedMap(MapWindow, Option<(usize, usize)>),
     ChapterMap {
         list_page: usize,
         chapter: usize,
+        ribbon_target: Option<RibbonMapTarget>,
     },
 }
 
@@ -98,7 +99,9 @@ impl Origin {
                 view.grid,
                 view.grid_menu,
             ),
-            Screen::BookMap if reader.fixed.is_some() => Self::FixedMap(reader.map_window),
+            Screen::BookMap if reader.fixed.is_some() => {
+                Self::FixedMap(reader.map_window, reader.fixed_ribbon_map_focus())
+            }
             Screen::BookMap if let Some(book) = &reader.active => {
                 let rows = reader.list_geometry().rows;
                 let count = book.reading.probe.chapter_count();
@@ -111,6 +114,7 @@ impl Origin {
                 Self::ChapterMap {
                     list_page: reader.list_page,
                     chapter,
+                    ribbon_target: reader.ribbon_map_target(),
                 }
             }
             _ => Self::Other,
