@@ -323,12 +323,7 @@ impl Reader {
                     ignore_corner_holds: !self.controls.ignore_corner_holds,
                     ..self.controls
                 }),
-            )
-            .detail(if self.controls.ignore_corner_holds {
-                "On"
-            } else {
-                "Off"
-            }),
+            ),
             Item::new(
                 "Corner hold pause",
                 Action::Show(Screen::NumberingValue(super::NumberField::CornerHoldPause)),

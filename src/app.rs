@@ -8110,6 +8110,13 @@ impl Reader {
                         Action::LibraryExport(library_export::Command::ToggleKindleClippings) => {
                             RowAccessory::Toggle(self.library_export.kindle_clippings_enabled())
                         }
+                        Action::SetReadingControls(next)
+                            if self.screen == Screen::Gestures
+                                && next.ignore_corner_holds
+                                    != self.controls.ignore_corner_holds =>
+                        {
+                            RowAccessory::Toggle(self.controls.ignore_corner_holds)
+                        }
                         Action::SetReadingControls(_) if self.screen == Screen::ReadingGuides => {
                             RowAccessory::Toggle(self.controls.reading_guides.enabled)
                         }
