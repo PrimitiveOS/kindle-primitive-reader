@@ -14,11 +14,13 @@ mod contents_tree;
 mod contents_view;
 mod custom_contents;
 mod line_spacing;
+mod list_density;
 mod logical_font;
 #[cfg(test)]
 mod page_overlap_tests;
 pub(crate) mod publisher_pages;
 mod reading_history;
+mod saved_marks_view;
 mod word_spacing;
 use character_page_settings::NumberField;
 mod cjk_selection;
@@ -435,7 +437,7 @@ enum Action {
     NameCollection(Option<String>),
     RemoveCollection,
     SetReadingControls(ReadingControls),
-    EditContentsDensity(contents_density::Field),
+    EditListDensity(list_density::Scope, list_density::Field),
     BindGesture(Gesture, Binding),
     SetDisplayLevel(DisplayLevel, u32),
     RefreshDisplay,
@@ -772,7 +774,7 @@ pub struct Reader {
     focused_result: Option<usize>,
     current_contents_row: Option<usize>,
     contents_view: Option<contents_view::ContentsView>,
-    contents_density_picker: Option<contents_density::Picker>,
+    list_density_picker: Option<list_density::Picker>,
     publisher_label_canvas: std::cell::RefCell<Option<Canvas>>,
     map_window: fixed_book_map::MapWindow,
     back: Vec<HistoryLocation>,
@@ -971,7 +973,7 @@ impl Reader {
             focused_result: None,
             current_contents_row: None,
             contents_view: None,
-            contents_density_picker: None,
+            list_density_picker: None,
             publisher_label_canvas: Default::default(),
             map_window: fixed_book_map::MapWindow::default(),
             back: Vec::new(),
@@ -1342,8 +1344,8 @@ impl Reader {
 
     fn show(&mut self, screen: Screen) {
         let previous = self.screen;
-        if screen != Screen::ContentsSettings {
-            self.contents_density_picker = None;
+        if screen != previous {
+            self.list_density_picker = None;
         }
         if !matches!(screen, Screen::Book | Screen::Fixed) {
             self.touch_hold = None;
@@ -1751,7 +1753,8 @@ impl Reader {
             let rows = self.contents_rows();
             return self.contents_items(self.list_page * rows, rows);
         }
-        let first = self.list_page * ROWS_PER_PAGE;
+        let rows = self.list_geometry().rows;
+        let first = self.list_page * rows;
         if let Screen::BookmarkBrowser(page) = self.screen {
             return self.bookmark_window(page, first, ROWS_PER_PAGE);
         }
@@ -1786,10 +1789,7 @@ impl Reader {
             return (self.hits.len(), items);
         }
         let all = self.items();
-        (
-            all.len(),
-            all.into_iter().skip(first).take(ROWS_PER_PAGE).collect(),
-        )
+        (all.len(), all.into_iter().skip(first).take(rows).collect())
     }
 
     fn has_list_shortcuts(&self, count: usize) -> bool {
@@ -1961,6 +1961,7 @@ impl Reader {
                     )
                     .detail(self.controls.annotation_list_text.label()),
                 );
+                items.extend(self.list_density_items(list_density::Scope::Bookmarks));
                 return items;
             }
             Screen::AnnotationListSettings => {
@@ -3086,7 +3087,7 @@ impl Reader {
 
     fn activate(&mut self, action: Action) -> Result<()> {
         match action {
-            Action::EditContentsDensity(field) => self.open_contents_density(field),
+            Action::EditListDensity(scope, field) => self.open_list_density(scope, field),
             Action::BookmarkBrowser(command) => self.activate_bookmark_browser(command)?,
             Action::ReadingHistory(command) => self.activate_reading_history(command)?,
             Action::Flow(action) => self.flow_action(action)?,
@@ -7290,10 +7291,14 @@ impl Reader {
             })
             .collect();
         let group = Rows {
-            bounds: list_rect(rows.len()),
+            bounds: self.list_geometry().bounds(rows.len()),
             rows: &rows,
         };
-        group.draw(canvas, None);
+        if self.screen.is_bookmark_list() {
+            self.draw_saved_mark_rows(canvas, &group, &items);
+        } else {
+            group.draw(canvas, None);
+        }
         if self.screen == Screen::BookMap
             && let Some(active) = &self.active
         {
@@ -7397,7 +7402,8 @@ impl Reader {
             if self.list_page > 0 {
                 canvas.button(PREV, "Previous", false, false);
             }
-            if (self.list_page + 1) * ROWS_PER_PAGE < count {
+            let rows = self.list_geometry().rows;
+            if (self.list_page + 1) * rows < count {
                 canvas.button(NEXT, "Next", false, false);
             }
             if let Some(notice) = &self.notice {
@@ -7405,6 +7411,12 @@ impl Reader {
                     Rect::new(310, HEIGHT as i32 - 104, WIDTH as i32 - 620, 80),
                     notice,
                     CAPTION,
+                );
+            } else if self.screen.is_bookmark_list() && count > rows {
+                canvas.text(
+                    Rect::new(310, HEIGHT as i32 - 93, WIDTH as i32 - 620, 50),
+                    &format!("{} / {}", self.list_page + 1, count.div_ceil(rows)),
+                    CAPTION.center(),
                 );
             }
         }
@@ -7677,7 +7689,7 @@ impl App for Reader {
             self.draw_skim(canvas);
         }
         self.draw_flow_popup(canvas);
-        self.draw_contents_density_picker(canvas);
+        self.draw_list_density_picker(canvas);
         self.read_alarm.draw(canvas, self.screen == Screen::Book);
         self.draw_vocabulary_dialog(canvas);
         self.draw_logical_recovery(canvas);
@@ -8003,7 +8015,7 @@ impl App for Reader {
         if self.screen.is_contents() {
             return self.contents_input(input);
         }
-        if let Some(change) = self.contents_density_input(input) {
+        if let Some(change) = self.list_density_input(input) {
             return change;
         }
         if self.screen == Screen::PdfPassword {
@@ -8047,6 +8059,7 @@ impl App for Reader {
             return Change::None;
         }
         let (count, mut items) = self.list_window();
+        let geometry = self.list_geometry();
         let broad = self.has_list_shortcuts(count);
         let (prev, next) = if broad {
             (PREV_MATCH_PAGE, NEXT_MATCH_PAGE)
@@ -8203,16 +8216,11 @@ impl App for Reader {
                     Err(error) => self.report(error),
                 };
             }
-            Input::LongTap(x, y)
-                if matches!(
-                    self.screen,
-                    Screen::Bookmarks | Screen::FixedBookmarks | Screen::Highlights
-                ) =>
-            {
-                let Some(index) = list_item_at(self.list_page, count, x, y) else {
+            Input::LongTap(x, y) if self.screen.is_bookmark_list() => {
+                let Some(index) = geometry.item_at(self.list_page, count, x, y) else {
                     return Change::None;
                 };
-                let action = match items.swap_remove(index % ROWS_PER_PAGE).action {
+                let action = match items.swap_remove(index % geometry.rows).action {
                     Action::Highlight(index) | Action::PdfHighlight(index) => {
                         Action::ManageHighlight(index)
                     }
@@ -8238,8 +8246,8 @@ impl App for Reader {
                 };
             }
             Input::Tap(x, y) => {
-                if let Some(index) = list_item_at(self.list_page, count, x, y) {
-                    let action = items.swap_remove(index % ROWS_PER_PAGE).action;
+                if let Some(index) = geometry.item_at(self.list_page, count, x, y) {
+                    let action = items.swap_remove(index % geometry.rows).action;
                     return match self.activate(action) {
                         Ok(()) => self.applied_change(),
                         Err(error) => self.report(error),
@@ -8252,7 +8260,7 @@ impl App for Reader {
         let Some(page) = self
             .list_page
             .checked_add_signed(direction)
-            .filter(|page| page * ROWS_PER_PAGE < count)
+            .filter(|page| page * geometry.rows < count)
         else {
             return Change::None;
         };
@@ -8676,13 +8684,9 @@ fn column_view(original: FixedPreferences, bounds: PdfTextRect) -> FixedPreferen
     }
 }
 
+#[cfg(test)]
 fn list_rect(rows: usize) -> Rect {
-    Rect::new(
-        LIST_X,
-        LIST_Y,
-        WIDTH as i32 - 2 * LIST_X,
-        rows as i32 * ROW_HEIGHT,
-    )
+    list_density::Geometry::STANDARD.bounds(rows)
 }
 
 fn overview_start(first: Option<usize>, count: usize) -> usize {
@@ -8710,12 +8714,7 @@ fn map_detail(current: bool, bookmarks: usize, highlights: usize) -> String {
 }
 
 fn list_item_at(page: usize, count: usize, x: f32, y: f32) -> Option<usize> {
-    let first = page * ROWS_PER_PAGE;
-    let shown = count.saturating_sub(first).min(ROWS_PER_PAGE);
-    list_rect(shown)
-        .contains(x, y)
-        .then(|| first + ((y as i32 - LIST_Y) / ROW_HEIGHT) as usize)
-        .filter(|&index| index < count)
+    list_density::Geometry::STANDARD.item_at(page, count, x, y)
 }
 
 fn tracked_book_item(book: &BookState) -> Item {
@@ -10784,7 +10783,8 @@ mod tests {
             .iter()
             .position(|item| matches!(item.action, Action::Highlight(1)))
             .unwrap();
-        let y = LIST_Y + (second_mark as i32 * ROW_HEIGHT) + ROW_HEIGHT / 2;
+        let row = app.list_geometry().row(second_mark);
+        let y = row.y + row.h / 2;
         assert_eq!(
             app.input(Input::Tap(LIST_X as f32 + 30.0, y as f32)),
             Change::Partial
@@ -10798,7 +10798,8 @@ mod tests {
             .iter()
             .position(|item| matches!(item.action, Action::Highlight(1)))
             .unwrap();
-        let y = LIST_Y + (second_mark as i32 * ROW_HEIGHT) + ROW_HEIGHT / 2;
+        let row = app.list_geometry().row(second_mark);
+        let y = row.y + row.h / 2;
         assert_eq!(
             app.input(Input::LongTap(LIST_X as f32 + 30.0, y as f32)),
             Change::Partial
@@ -10876,7 +10877,8 @@ mod tests {
             .iter()
             .position(|item| matches!(item.action, Action::PdfHighlight(0)))
             .unwrap();
-        let y = LIST_Y + (highlight_row as i32 * ROW_HEIGHT) + ROW_HEIGHT / 2;
+        let row = app.list_geometry().row(highlight_row);
+        let y = row.y + row.h / 2;
         assert_eq!(
             app.input(Input::LongTap(LIST_X as f32 + 30.0, y as f32)),
             Change::Partial
@@ -12767,7 +12769,7 @@ mod tests {
         let rows = if app.screen.is_contents() {
             app.contents_rows()
         } else {
-            ROWS_PER_PAGE
+            app.list_geometry().rows
         };
         let page = index / rows;
         while app.list_page < page {
@@ -12785,7 +12787,8 @@ mod tests {
             let row = app.contents_row_rect(offset);
             (730.0, row.y + row.h / 2)
         } else {
-            (160.0, LIST_Y + offset as i32 * ROW_HEIGHT + ROW_HEIGHT / 2)
+            let row = app.list_geometry().row(offset);
+            (160.0, row.y + row.h / 2)
         };
         assert_eq!(app.input(Input::Tap(x, y as f32)), Change::Partial);
     }

@@ -72,9 +72,12 @@ pub(crate) struct ReadingControls {
     pub bookmark_reverse: bool,
     /// Text shown for each saved highlight in the in-book annotations list.
     pub annotation_list_text: AnnotationListText,
-    /// Reader-wide appearance for the Contents list.
-    #[serde(skip_serializing_if = "ContentsDensity::is_default")]
-    pub contents_density: ContentsDensity,
+    /// Reader-wide appearance of the in-book saved marks list.
+    #[serde(skip_serializing_if = "ListDensity::is_default")]
+    pub bookmark_density: ListDensity,
+    /// Reader-wide appearance of the Contents list.
+    #[serde(skip_serializing_if = "ListDensity::is_default")]
+    pub contents_density: ListDensity,
     /// Show the known length of each Contents section beside its heading.
     #[serde(skip_serializing_if = "is_false")]
     pub contents_chapter_lengths: bool,
@@ -156,14 +159,14 @@ pub(crate) struct ReadingControls {
 /// KOReader keeps the list density separate from the document's layout.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
-pub(crate) struct ContentsDensity {
+pub(crate) struct ListDensity {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rows_per_page: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub font_size: Option<u8>,
 }
 
-impl ContentsDensity {
+impl ListDensity {
     pub(crate) const MIN_ROWS: u8 = 6;
     pub(crate) const MAX_ROWS: u8 = 24;
     pub(crate) const DEFAULT_ROWS: u8 = 14;
