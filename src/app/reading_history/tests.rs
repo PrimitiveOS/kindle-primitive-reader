@@ -99,6 +99,143 @@ fn calendar_daily_book_filters_and_settings_preserve_the_reading_position() {
     let restored = setup(&fixture);
     assert_eq!(restored.reading_history.summary(None, None).seconds, 180);
 }
+
+#[test]
+fn reading_time_range_drills_into_books_and_returns_to_the_same_report_page() {
+    let fixture = Fixture::new();
+    let mut app = setup(&fixture);
+    app.open_path(&fixture.book).unwrap();
+    let id = app.open_book_id().unwrap();
+    let title = app.active.as_ref().unwrap().entry.title.clone();
+    let original_position = app.current_position().unwrap();
+    let today = Date::today();
+    for week in 0..14 {
+        seed(
+            &mut app,
+            id,
+            &title,
+            today.add_days(-7 * week).unwrap(),
+            70 + week as u64 * 2,
+        );
+    }
+    seed(&mut app, 54, "Harbor Notebook", today, 85);
+    seed(&mut app, 75, "Letters from the Coast", today, 35);
+    app.save().unwrap();
+    let journal = fixture.root.join("reading-history.json");
+    let before = fs::read(&journal).unwrap();
+
+    let tap = |app: &mut Reader, index: usize| {
+        let rect = app.list_geometry().row(index);
+        assert_eq!(
+            app.input(Input::Tap((rect.x + 20) as f32, (rect.y + 20) as f32)),
+            Change::Partial
+        );
+    };
+    let tap_row = |app: &mut Reader, title: &str| {
+        let index = app
+            .list_window()
+            .1
+            .iter()
+            .position(|row| row.title == title)
+            .unwrap();
+        tap(app, index);
+    };
+    app.activate_reading_history(Command::Open(None)).unwrap();
+    tap_row(&mut app, "Time range");
+    capture_test_screen(&app, &app.fonts, "READER_STATS_TIME_RANGE_SCREEN", false);
+    assert_report_feedback(&app, app.list_geometry().row(0));
+    tap_row(&mut app, "Books by week");
+    let week = app.list_window().1[0].title.clone();
+    assert_eq!(app.list_window().0, 14);
+    assert_eq!(
+        app.list_window().1[0].detail.as_deref(),
+        Some("3m 10s · 3 screens · 3 books")
+    );
+    capture_test_screen(&app, &app.fonts, "READER_STATS_WEEKLY_SCREEN", false);
+    let rect = app.list_geometry().row(0);
+    assert_report_feedback(&app, rect);
+    tap(&mut app, 0);
+    assert_eq!(app.list_window().1[0].title, week);
+    assert_eq!(app.list_window().1.len(), 4);
+    capture_test_screen(&app, &app.fonts, "READER_STATS_PERIOD_BOOKS_SCREEN", false);
+    capture_test_screen(
+        &app,
+        &app.fonts,
+        "READER_STATS_PERIOD_BOOKS_DARK_SCREEN",
+        true,
+    );
+    assert_report_feedback(&app, app.list_geometry().row(1));
+    tap_row(&mut app, "Harbor Notebook");
+    let details = app.items();
+    assert_eq!(details[0].title, "Harbor Notebook");
+    assert_eq!(details[1].detail.as_deref(), Some("1m 25s"));
+    assert!(!details.iter().any(|row| row.title == "Continue reading"));
+    app.history_back();
+    tap_row(&mut app, &title);
+    capture_test_screen(&app, &app.fonts, "READER_STATS_PERIOD_BOOK_SCREEN", false);
+    assert!(
+        app.items()
+            .iter()
+            .any(|row| row.title == "Continue reading")
+    );
+    app.history_back();
+    app.history_back();
+    assert_eq!(app.input(Input::PageForward), Change::Partial);
+    let later = app.list_window().1[0].title.clone();
+    tap(&mut app, 0);
+    app.history_back();
+    assert_eq!(app.list_page, 1);
+    assert_eq!(app.list_window().1[0].title, later);
+    app.history_back();
+    tap_row(&mut app, "Books by month");
+    assert!(app.list_window().0 >= 3);
+    capture_test_screen(&app, &app.fonts, "READER_STATS_MONTHLY_SCREEN", false);
+    app.history_back();
+    app.history_back();
+
+    app.activate_reading_history(Command::Filter(Some(id)))
+        .unwrap();
+    tap_row(&mut app, "Time range");
+    assert!(
+        app.items()
+            .iter()
+            .any(|row| row.detail.as_deref() == Some("Book filter"))
+    );
+    tap_row(&mut app, "Books by week");
+    tap(&mut app, 0);
+    assert_eq!(app.items().len(), 2);
+    assert_eq!(app.items()[1].title, title);
+    for _ in 0..4 {
+        app.history_back();
+    }
+    assert_eq!(app.screen, Screen::Book);
+    assert_eq!(app.current_position().unwrap(), original_position);
+    app.save().unwrap();
+    assert_eq!(fs::read(journal).unwrap(), before);
+}
+
+fn assert_report_feedback(app: &Reader, rect: Rect) {
+    let paths: Vec<_> = app.fonts.iter().map(|p| p.display().to_string()).collect();
+    let mut canvas = Canvas::new(WIDTH, HEIGHT, &paths).unwrap();
+    let normal = primitive_app::frame(app, &mut canvas, false);
+    let pressed = Lifecycle::default()
+        .press_feedback(
+            app,
+            &mut canvas,
+            Input::Tap((rect.x + 20) as f32, (rect.y + 20) as f32),
+            false,
+        )
+        .unwrap();
+    assert!(normal != pressed);
+    for (index, (a, b)) in normal.iter().zip(&pressed).enumerate() {
+        if a != b {
+            assert!(rect.contains(
+                (index % WIDTH as usize) as f32,
+                (index / WIDTH as usize) as f32
+            ));
+        }
+    }
+}
 #[test]
 fn calendar_day_and_shared_setting_controls_reverse_only_their_registered_rectangles() {
     let fixture = Fixture::new();

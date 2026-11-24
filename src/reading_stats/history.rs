@@ -1,5 +1,6 @@
 //! Dated, filtered page visits. Earlier aggregate screen time stays explicitly undated.
 pub(crate) mod date;
+pub(crate) mod report;
 use date::{Date, Zone};
 use serde::{Deserialize, Serialize};
 use std::{

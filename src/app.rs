@@ -1822,6 +1822,11 @@ impl Reader {
         if self.screen == Screen::PublisherPages {
             return self.publisher_page_window(first, ROWS_PER_PAGE);
         }
+        if let Screen::ReadingHistory(page) = self.screen
+            && let Some(report) = self.history_report_window(page, first, rows)
+        {
+            return report;
+        }
         if self.screen == Screen::Matches {
             let range = self
                 .flexible_result_range()

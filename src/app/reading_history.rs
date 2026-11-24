@@ -1,9 +1,11 @@
-//! Daily statistics, a month calendar and clipped day timelines.
+//! Reading statistics, reports, a month calendar and clipped day timelines.
 mod calendar;
+mod report;
 use super::{Action, Canvas, Change, HEIGHT, Input, Item, Reader, Rect, Result, Screen, WIDTH};
 use crate::reading_stats::history::{
     History, Options,
     date::{Date, Zone},
+    report::Period,
 };
 use primitive_ui::{BLACK, BODY, CAPTION, HAIRLINE, TextStyle, back_button, header};
 use std::time::Instant;
@@ -21,6 +23,10 @@ const RUN_ROWS: usize = 8;
 pub(super) enum Page {
     Summary,
     Daily,
+    TimeRange,
+    Periods(Period),
+    PeriodBooks(Period, Date),
+    PeriodBook(Period, Date, u64),
     Calendar,
     Day(Date),
     Books,
@@ -32,6 +38,11 @@ impl Page {
         match self {
             Self::Summary => "Reading statistics",
             Self::Daily => "Daily reading history",
+            Self::TimeRange => "Time range",
+            Self::Periods(Period::Week) => "Books by week",
+            Self::Periods(Period::Month) => "Books by month",
+            Self::PeriodBooks(_, _) => "Books read",
+            Self::PeriodBook(_, _, _) => "Book statistics",
             Self::Calendar => "Reading calendar",
             Self::Day(_) => "Reading timeline",
             Self::Books => "Statistics by book",
@@ -57,6 +68,7 @@ pub(super) struct View {
     pub book: Option<u64>,
     day_back: Page,
     run_page: usize,
+    report: report::ReportView,
 }
 impl Default for View {
     fn default() -> Self {
@@ -66,6 +78,7 @@ impl Default for View {
             book: None,
             day_back: Page::Calendar,
             run_page: 0,
+            report: Default::default(),
         }
     }
 }
@@ -149,6 +162,7 @@ impl Reader {
                 }
                 self.history_view.book = book;
                 self.history_view.month = Date::today().first();
+                self.history_view.report = Default::default();
                 self.show(Screen::ReadingHistory(Page::Summary));
             }
             Show(page) => {
@@ -164,11 +178,12 @@ impl Reader {
                     };
                     self.history_view.run_page = 0;
                 }
-                self.show(Screen::ReadingHistory(page));
+                self.show_history_page(page);
             }
             Filter(book) => {
                 self.history_view.book = book;
                 self.history_view.month = Date::today().first();
+                self.history_view.report = Default::default();
                 self.show(Screen::ReadingHistory(Page::Summary));
             }
             Month(delta) => {
@@ -226,13 +241,25 @@ impl Reader {
         let Screen::ReadingHistory(page) = self.screen else {
             return;
         };
-        let back = match page {
-            Page::Summary => self.history_view.back,
-            Page::Day(_) => Screen::ReadingHistory(self.history_view.day_back),
-            Page::BookDay(day, _) => Screen::ReadingHistory(Page::Day(day)),
-            _ => Screen::ReadingHistory(Page::Summary),
+        let (back, list_page) = match page {
+            Page::Summary => (self.history_view.back, None),
+            Page::Day(_) => (Screen::ReadingHistory(self.history_view.day_back), None),
+            Page::BookDay(day, _) => (Screen::ReadingHistory(Page::Day(day)), None),
+            Page::Periods(_) => (Screen::ReadingHistory(Page::TimeRange), None),
+            Page::PeriodBooks(period, _) => (
+                Screen::ReadingHistory(Page::Periods(period)),
+                Some(self.history_view.report.period_list_page),
+            ),
+            Page::PeriodBook(period, start, _) => (
+                Screen::ReadingHistory(Page::PeriodBooks(period, start)),
+                Some(self.history_view.report.book_list_page),
+            ),
+            _ => (Screen::ReadingHistory(Page::Summary), None),
         };
         self.show(back);
+        if let Some(page) = list_page {
+            self.list_page = page;
+        }
     }
     pub(super) fn reading_history_items(&self, page: Page) -> Vec<Item> {
         let history = &self.reading_history;
@@ -285,6 +312,7 @@ impl Reader {
                 }
                 rows.extend([
                     show("Daily history", Page::Daily),
+                    show("Time range", Page::TimeRange),
                     show("Calendar", Page::Calendar),
                     Item::new("Today's timeline", Action::ReadingHistory(Command::Today)),
                     show("Statistics settings", Page::Options),
@@ -462,6 +490,12 @@ impl Reader {
                     Item::new("Visit filters apply to new reading", Action::Heading)
                         .detail("Quick skims are ignored. Rereads retain their own sessions."),
                 );
+            }
+            Page::TimeRange
+            | Page::Periods(_)
+            | Page::PeriodBooks(_, _)
+            | Page::PeriodBook(_, _, _) => {
+                return self.history_report_window(page, 0, usize::MAX).unwrap().1;
             }
             Page::Calendar | Page::Day(_) => {}
         }
