@@ -98,6 +98,24 @@ count runs. Record first-frame latency, page-turn latency and peak RSS on the
 Oasis before and after. Check that the default footer pixels, Exit, reading
 position, and saved annotations stay intact.
 
+## Oasis 3 test results
+
+The 0.1.35 ARMHF candidate passed 1,069 Reader library tests, 14 EPUB package
+tests and four layout checks. It skipped 63 optional tests. The native Harbor
+Notebook frames matched below the 48-row header before and after counting 48
+pages. The Kindle and Mac link and dictionary-settings frames matched. The
+expanded dictionary frame differed in three grayscale pixels.
+
+In an original 30-section EPUB from Documents, Reader painted the first frame
+in 1,555 ms and completed its count in 7,889 ms from opening. The background
+worker and independent foreground layouts agreed on 430 pages. Peak resident
+memory during the background check was 39,880 KiB. The selected reading
+position and all pixels below the header matched. The original EPUB's
+SHA-256 matched before and after the closed-profile check.
+
+These checks use software-rendered Kindle frames and an isolated profile.
+Physical touch, refresh and USB sequences have separate acceptance checks.
+
 ## Native verification recipe
 
 Build the ARMHF test bundle from the candidate commit with
