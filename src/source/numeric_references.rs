@@ -168,11 +168,13 @@ pub(super) fn parse(
     original: &str,
     normalized: String,
     language: Option<Language>,
+    respect_embedded: bool,
     kindle: &BTreeSet<usize>,
 ) -> Result<Source> {
     let tracked = Extraction {
         ruby: true,
         origins: true,
+        ignore_embedded_language: !respect_embedded,
     };
     let old = Source::parse_document(
         original,
@@ -193,6 +195,7 @@ pub(super) fn parse(
     let flat = Extraction {
         ruby: false,
         origins: true,
+        ignore_embedded_language: !respect_embedded,
     };
     let old_flat = old
         .legacy_revision

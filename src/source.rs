@@ -138,6 +138,7 @@ impl LegacyOffsets {
 struct Extraction {
     ruby: bool,
     origins: bool,
+    ignore_embedded_language: bool,
 }
 
 impl Default for Extraction {
@@ -145,6 +146,7 @@ impl Default for Extraction {
         Self {
             ruby: true,
             origins: false,
+            ignore_embedded_language: false,
         }
     }
 }
@@ -356,11 +358,26 @@ impl Source {
         publication_language: Option<Language>,
         kindle_elements: &BTreeSet<usize>,
     ) -> Result<Self> {
+        Self::parse_with_typography(xhtml, publication_language, true, kindle_elements)
+    }
+
+    pub(crate) fn parse_with_typography(
+        xhtml: &str,
+        publication_language: Option<Language>,
+        respect_embedded: bool,
+        kindle_elements: &BTreeSet<usize>,
+    ) -> Result<Self> {
         let input = ring::digest::digest(&ring::digest::SHA256, xhtml.as_bytes());
         let mut fingerprint = [0; 32];
         fingerprint.copy_from_slice(input.as_ref());
         let mut parsed = if let Some(normalized) = numeric_references::normalize(xhtml) {
-            numeric_references::parse(xhtml, normalized, publication_language, kindle_elements)?
+            numeric_references::parse(
+                xhtml,
+                normalized,
+                publication_language,
+                respect_embedded,
+                kindle_elements,
+            )?
         } else {
             Self::parse_document(
                 xhtml,
@@ -368,7 +385,10 @@ impl Source {
                 None,
                 publication_language,
                 kindle_elements,
-                Extraction::default(),
+                Extraction {
+                    ignore_embedded_language: !respect_embedded,
+                    ..Extraction::default()
+                },
             )?
         };
         // Bind the original bytes after all numeric/anonymous transformations;
@@ -523,7 +543,11 @@ impl Source {
             } else {
                 parent.and_then(|id| languages[id])
             };
-            languages.push(content_language(node, inherited));
+            languages.push(if extraction.ignore_embedded_language {
+                publication_language
+            } else {
+                content_language(node, inherited)
+            });
             elements.push(Element {
                 tag: node.tag_name().name().to_owned(),
                 list_kind: crate::list_marker::MarkerKind::html(node),

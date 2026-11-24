@@ -503,6 +503,10 @@ pub struct BookPreferences {
     pub disable_soft_hyphens: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub automatic_hyphenation: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub typography_language: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub respect_embedded_languages: Option<bool>,
     /// Per-book scroll-page overlap switch; `None` follows new-book defaults.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub page_overlap_enabled: Option<bool>,
@@ -525,6 +529,14 @@ impl BookPreferences {
             percent_word_spacing: Some(crate::WordSpacePercent::MEDIUM),
             ..Self::default()
         }
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn record_typography(&mut self, probe: &crate::Probe) {
+        self.typography_language = probe
+            .main_language
+            .map(|language| language.as_str().to_owned());
+        self.respect_embedded_languages = Some(probe.settings.typography.respect_embedded);
     }
 
     pub(crate) fn saved_font_kerning_mode(&self) -> Option<crate::FontKerningMode> {
@@ -634,6 +646,17 @@ impl BookPreferences {
             automatic_hyphenation: self
                 .automatic_hyphenation
                 .unwrap_or(settings.automatic_hyphenation),
+            typography: crate::TypographyLanguages {
+                main: self
+                    .typography_language
+                    .as_deref()
+                    .and_then(crate::TypographyLocale::parse)
+                    .or(settings.typography.main),
+                respect_embedded: self
+                    .respect_embedded_languages
+                    .unwrap_or(settings.typography.respect_embedded),
+                ..settings.typography
+            },
             page_overlap_enabled: self
                 .page_overlap_enabled
                 .unwrap_or(settings.page_overlap_enabled),

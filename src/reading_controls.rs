@@ -24,6 +24,10 @@ pub(crate) const MAX_VERY_LONG_PRESS_TENTHS: u16 = 200;
 pub(crate) struct ReadingControls {
     #[serde(skip_serializing_if = "crate::app::eager_typography::Mode::is_default")]
     pub font_size_rendering: crate::app::eager_typography::Mode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub typography_language_default: Option<crate::app::typography_settings::DefaultLanguage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub respect_embedded_languages_default: Option<bool>,
     #[serde(skip_serializing_if = "is_false")]
     pub remember_opening_location: bool,
     #[serde(skip_serializing_if = "crate::app::back_navigation::BackPreferences::is_default")]

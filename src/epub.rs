@@ -831,8 +831,23 @@ impl Book {
         href: &str,
         xhtml: &str,
     ) -> crate::Result<crate::source::Source> {
+        self.chapter_source_with_language(href, xhtml, self.language, true)
+    }
+
+    pub(crate) fn chapter_source_with_language(
+        &self,
+        href: &str,
+        xhtml: &str,
+        language: Option<parley::Language>,
+        respect_embedded: bool,
+    ) -> crate::Result<crate::source::Source> {
         if !matches!(self.content, Content::Loose { .. }) {
-            return crate::source::Source::parse_with_language(xhtml, self.language);
+            return crate::source::Source::parse_with_typography(
+                xhtml,
+                language,
+                respect_embedded,
+                &Default::default(),
+            );
         }
         let ordinals = self
             .toc
@@ -842,7 +857,7 @@ impl Book {
             .filter_map(|destination| destination.fragment.as_deref())
             .filter_map(crate::kf8::publisher_contents::element_index)
             .collect();
-        crate::source::Source::parse_with_kindle_elements(xhtml, self.language, &ordinals)
+        crate::source::Source::parse_with_typography(xhtml, language, respect_embedded, &ordinals)
     }
 
     pub(crate) fn previous_mobi_chapters(&self, name: &str) -> &[String] {

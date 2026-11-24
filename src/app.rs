@@ -107,6 +107,7 @@ mod top_config;
 mod top_header;
 mod top_header_font;
 mod typeface;
+pub(crate) mod typography_settings;
 mod user_hyphenation;
 mod visual_navigation;
 mod vocabulary;
@@ -292,6 +293,8 @@ enum Screen {
     ReadingProfiles,
     DocumentDefaults,
     FontRendering(eager_typography::Scope),
+    TypographyRules,
+    TypographyLanguages(typography_settings::LanguageScope),
     StyleTweaks,
     StylePreset,
     StyleFiles,
@@ -474,6 +477,8 @@ impl Screen {
             Self::ReadingFonts => "Reading font",
             Self::ReadingProfiles => "Reading profiles",
             Self::DocumentDefaults => "Document defaults",
+            Self::TypographyRules => "Typography rules",
+            Self::TypographyLanguages(scope) => scope.title(),
             Self::FontRendering(eager_typography::Scope::Book) => "Font size rendering",
             Self::FontRendering(eager_typography::Scope::Default) => "Default font size rendering",
             Self::StyleTweaks => "Style tweaks",
@@ -625,6 +630,11 @@ enum Action {
     ApplyLogicalFont(u64, f64),
     FontRendering(eager_typography::Scope, Option<eager_typography::Mode>),
     CancelEagerFont,
+    TypographyLanguage(
+        typography_settings::LanguageScope,
+        Option<typography_settings::CatalogLanguage>,
+    ),
+    RespectEmbeddedLanguages(bool),
     ShowFonts,
     EmbeddedFontReport,
     ShowFooterFonts,
@@ -1714,6 +1724,7 @@ impl Reader {
             state.preferences = preferences;
         }
         state.top_status_header = Some(top_status_header);
+        state.preferences.record_typography(&active.reading.probe);
         let offer_publisher = self.apply_new_numbering_defaults();
         self.restore_character_pages();
         self.fixed = None;
@@ -3331,6 +3342,8 @@ impl Reader {
                 items
             }
             Screen::FontRendering(scope) => return self.font_rendering_items(scope),
+            Screen::TypographyRules => return self.typography_items(),
+            Screen::TypographyLanguages(scope) => return self.typography_language_items(scope),
             Screen::DocumentDefaults
             | Screen::StyleTweaks
             | Screen::StylePreset
@@ -4347,6 +4360,12 @@ impl Reader {
             Action::ApplyLogicalFont(owner, value) => self.apply_logical_font(owner, value)?,
             Action::EmbeddedFontReport => self.open_embedded_font_report(),
             Action::FontRendering(scope, mode) => self.set_font_rendering(scope, mode)?,
+            Action::TypographyLanguage(scope, choice) => {
+                self.choose_typography_language(scope, choice)?
+            }
+            Action::RespectEmbeddedLanguages(respect) => {
+                self.set_embedded_language_respect(respect)?
+            }
             Action::CancelEagerFont => {
                 self.eager_typography.cancel();
                 self.notice = None;
@@ -4395,6 +4414,7 @@ impl Reader {
                 preferences.override_fonts = settings.override_fonts;
                 preferences.disable_soft_hyphens = settings.disable_soft_hyphens;
                 preferences.automatic_hyphenation = Some(settings.automatic_hyphenation);
+                preferences.record_typography(&active.reading.probe);
                 preferences.page_overlap_enabled = Some(settings.page_overlap_enabled);
                 preferences.page_overlap_lines = Some(settings.page_overlap_lines.clamp(1, 10));
                 preferences.page_overlap_style = Some(settings.page_overlap_style);
@@ -4654,7 +4674,7 @@ impl Reader {
         Ok(fonts)
     }
 
-    fn apply_text_profile(&mut self, preferences: BookPreferences) -> Result<()> {
+    fn apply_text_profile(&mut self, mut preferences: BookPreferences) -> Result<()> {
         crate::document_defaults::validate_preferences(&preferences)?;
         let active = self.active.as_ref().ok_or("Open a book first")?;
         let id = active.id;
@@ -4663,6 +4683,14 @@ impl Reader {
             .state(id)
             .ok_or("Reading state unavailable")?
             .preferences;
+        if preferences.typography_language.is_none() {
+            preferences
+                .typography_language
+                .clone_from(&current.typography_language);
+        }
+        if preferences.respect_embedded_languages.is_none() {
+            preferences.respect_embedded_languages = current.respect_embedded_languages;
+        }
         let fonts = if current.font_file == preferences.font_file {
             active.reading.config.fonts.clone()
         } else {
@@ -8189,8 +8217,20 @@ impl Reader {
                         Action::ChapterLevel(setting) => {
                             RowAccessory::Toggle(self.chapter_level_checked(setting))
                         }
+                        Action::RespectEmbeddedLanguages(_) => {
+                            RowAccessory::Toggle(self.active.as_ref().is_some_and(|book| {
+                                book.reading.config.settings.typography.respect_embedded
+                            }))
+                        }
                         Action::ToggleLinkPreference(setting) => {
                             RowAccessory::Toggle(setting.checked(self.controls))
+                        }
+                        Action::SetReadingControls(_) if self.screen == Screen::TypographyRules => {
+                            RowAccessory::Toggle(
+                                self.controls
+                                    .respect_embedded_languages_default
+                                    .unwrap_or(true),
+                            )
                         }
                         Action::SetReadingControls(_) if self.screen == Screen::Scrolling => {
                             RowAccessory::None
@@ -9447,6 +9487,11 @@ impl App for Reader {
                     Screen::VeryLongPressSettings => self.show(Screen::LongPressSettings),
                     Screen::HighlightPromptSettings => self.show(Screen::LongPressSettings),
                     Screen::DocumentDefaults => self.show(Screen::ReadingControls),
+                    Screen::TypographyLanguages(_) => self.show(Screen::TypographyRules),
+                    Screen::TypographyRules => {
+                        self.open_reading_edge(true, (WIDTH / 2) as f32);
+                        self.top_group = Some(TopGroup::Appearance);
+                    }
                     Screen::FontRendering(eager_typography::Scope::Book) => {
                         self.show(Screen::ReadingControls)
                     }

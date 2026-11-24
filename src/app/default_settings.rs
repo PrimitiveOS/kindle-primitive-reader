@@ -64,6 +64,12 @@ impl Reader {
             override_fonts: settings.override_fonts,
             disable_soft_hyphens: settings.disable_soft_hyphens,
             automatic_hyphenation: Some(settings.automatic_hyphenation),
+            typography_language: active
+                .reading
+                .probe
+                .main_language
+                .map(|language| language.as_str().to_owned()),
+            respect_embedded_languages: Some(settings.typography.respect_embedded),
             page_overlap_enabled: Some(settings.page_overlap_enabled),
             page_overlap_lines: Some(settings.page_overlap_lines.clamp(1, 10)),
             page_overlap_style: Some(settings.page_overlap_style),
@@ -91,7 +97,9 @@ impl Reader {
         let mut templates = self.document_defaults.templates.clone();
         let message = match command {
             Command::SaveReflow => {
-                let prefs = self.current_text_preferences()?;
+                let mut prefs = self.current_text_preferences()?;
+                prefs.typography_language = None;
+                prefs.respect_embedded_languages = None;
                 document_defaults::validate_preferences(&prefs)?;
                 templates.reflow = Some(prefs);
                 self.document_defaults.save(templates)?;
@@ -125,9 +133,10 @@ impl Reader {
     }
 
     fn reset_reflow_defaults(&mut self) -> Result<()> {
-        let (prefs, missing_font) = self.default_reflow_preferences();
+        let (mut prefs, missing_font) = self.default_reflow_preferences();
         let fonts = self.fonts_for(prefs.font_file.as_deref())?;
         let active = self.active.as_ref().ok_or("Open a reflowable book first")?;
+        prefs.record_typography(&active.reading.probe);
         let location = position(&active.reading);
         let mut config = active.reading.config.clone();
         config.settings = prefs.apply_to(self.device_reading_settings_for(config.viewport));

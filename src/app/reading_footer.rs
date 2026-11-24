@@ -731,6 +731,7 @@ impl Reader {
         crate::Settings {
             width: viewport.dimensions().0,
             height: viewport.document_height(self.controls.overlap_footer),
+            typography: self.default_typography_languages(),
             ..super::device_settings()
         }
     }

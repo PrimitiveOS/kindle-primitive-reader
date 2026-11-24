@@ -10,6 +10,7 @@ fn historical(xml: &str, ruby: bool) -> Source {
         Extraction {
             ruby,
             origins: true,
+            ignore_embedded_language: false,
         },
     )
     .unwrap()

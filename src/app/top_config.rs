@@ -263,6 +263,10 @@ impl Reader {
             Item::new("Reading profiles", Action::Show(Screen::ReadingProfiles)),
         );
         items.insert(2, self.reading_guide_entry());
+        items.insert(
+            3,
+            Item::new("Typography rules", Action::Show(Screen::TypographyRules)),
+        );
         items
     }
 

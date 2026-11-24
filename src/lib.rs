@@ -106,6 +106,8 @@ mod tcr;
 #[cfg(feature = "kindle")]
 mod text_flow;
 mod tiff_image;
+mod typography_language;
+pub use typography_language::{TypographyLanguages, TypographyLocale};
 mod user_hyphenation;
 mod user_styles;
 mod vertical_layout;
@@ -425,6 +427,7 @@ pub struct Settings {
     pub embedded_fonts: bool,
     pub disable_soft_hyphens: bool,
     pub automatic_hyphenation: bool,
+    pub typography: TypographyLanguages,
     /// Load author stylesheets and apply inline CSS during native reflow.
     pub publisher_styles: bool,
     /// Select the low-priority base stylesheet used beneath publisher CSS.
@@ -491,6 +494,7 @@ impl Default for Settings {
             embedded_fonts: true,
             disable_soft_hyphens: false,
             automatic_hyphenation: true,
+            typography: TypographyLanguages::default(),
             publisher_styles: true,
             base_stylesheet: BaseStylesheet::Auto,
             font_kerning: true,
@@ -1006,6 +1010,10 @@ chapter_probe! {
     pub chapter: String,
     pub chapter_label: String,
     #[cfg(feature = "kindle")]
+    pub(crate) publication_language: Option<TypographyLocale>,
+    #[cfg(feature = "kindle")]
+    pub(crate) main_language: Option<TypographyLocale>,
+    #[cfg(feature = "kindle")]
     pub(crate) embedded_font_usage: embedded_font_usage::Families,
     book: u64,
     chapters: Vec<Chapter>,
@@ -1164,15 +1172,28 @@ impl Probe {
         let printed_pages = book.printed_pages().to_vec();
         #[cfg(feature = "kindle")]
         let printed_source = book.printed_page_source().map(str::to_owned);
+        let publication_language = book.language.map(TypographyLocale::publication);
+        let main_language = settings.typography.resolve(publication_language);
+        let shaping_language = main_language.map(TypographyLocale::shaping_language);
         let complete = excerpt.is_none();
         let xhtml = match excerpt {
             Some(value) => value,
             None => book.chapter(chapter).map_err(|e| e.to_string())?,
         };
         let mut source = if complete {
-            book.chapter_source(&href, &xhtml)?
+            book.chapter_source_with_language(
+                &href,
+                &xhtml,
+                shaping_language,
+                settings.typography.respect_embedded,
+            )?
         } else {
-            Source::parse_with_language(&xhtml, book.language)?
+            Source::parse_with_typography(
+                &xhtml,
+                shaping_language,
+                settings.typography.respect_embedded,
+                &Default::default(),
+            )?
         };
         if complete {
             for previous in book.previous_mobi_chapters(&href) {
@@ -1364,6 +1385,10 @@ impl Probe {
             first_series,
             chapter: href,
             chapter_label,
+            #[cfg(feature = "kindle")]
+            publication_language,
+            #[cfg(feature = "kindle")]
+            main_language,
             #[cfg(feature = "kindle")]
             embedded_font_usage: embedded_font_usage::Families::from_layout(
                 &registered_faces,

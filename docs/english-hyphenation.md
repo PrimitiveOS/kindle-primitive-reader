@@ -200,3 +200,38 @@ Reader stores up to 4,096 personal entries in its app data. It uses each selecte
 The layout regression places a custom break in an authored word, then compares the page pixel-for-pixel to a separate version with the matching publisher soft hyphen. A third version places a conflicting publisher break within that word. The personal rule produces the same reference frame when the publisher break coincides or conflicts. Search and selection return the original byte positions. Removing the rule restores the baseline frame. [Rendering and source-position checks](../src/user_hyphenation.rs) · [Touch, persistence and removal checks](../src/app/user_hyphenation.rs)
 
 The same original English EPUB was tested on the Mac and on a Kindle Oasis 3 using a separate Reader profile. The sixth section contained a word split after its seventh source character. A long press selected that entire word. The on-screen keyboard rejected changed letters, then saved an entry without breaks. Another book opened with the same language rule. Removing it restored the exact earlier page pixels, reading anchor and navigation history. The native check completed in 37 seconds. The source document, Reader library and Browser session had unchanged checksums after the temporary profile and test binary were removed. [Functional check](../src/app/user_hyphenation.rs)
+
+## Typography language
+
+Open the top reading bar and choose **Appearance › Typography rules**.
+**Main language** sets the current book's language for text shaping and
+supported line-breaking rules. **Book language** restores its publication
+metadata when present. **Respect embedded language tags** lets individual
+passages use their own language. Turn it off to use the main language
+throughout the book.
+
+**Default language** takes precedence over publication metadata in new
+books. **Fallback language** applies when a new book has no language
+metadata. Reader stores one of these global choices at a time, as KOReader
+does. Once a book has a saved setting, opening it again uses that setting.
+A separate global switch controls whether new books respect embedded tags.
+The controls are visible in the same panel and work with page buttons.
+
+The pinned KOReader replay runs the live Lua handlers and CREngine bridge.
+It verifies the 53 presets, publication and saved-book precedence, both
+hold choices, toggling embedded tags, and persistence. Native UK and US
+English hyphenation use different break opportunities for “laboratory”.
+The Mac Reader test verifies the corresponding break positions, independent
+language on a Vietnamese span, an unchanged selection anchor after editing,
+and the same position and settings after reopening. The fixture also covers
+a numeric character reference and checks that the EPUB bytes remain intact.
+[KOReader language settings](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readertypography.lua#L700-L858) · [Native replay](../scripts/koreader-typography-language-check.lua) · [Mac tests](../src/app/typography_settings/tests.rs)
+
+The 53 choices supply the language to the formatter. Broader CREngine
+hyphenation dictionaries, language-specific punctuation and line-breaking
+rules, and the stock information panel remain open. The liturgical Latin
+choice retains its own saved tag and uses Latin shaping.
+
+[Portrait typography settings](screenshots/typography-language-rules.png) ·
+[Landscape language picker](screenshots/typography-language-choices-landscape.png) ·
+[KOReader EPUB after changing language](screenshots/stock-typography-language-uk.png)

@@ -80,6 +80,7 @@ pub(super) fn panel_icon(panel: BarPanel) -> Icon {
 pub(super) fn action_icon(action: &Action) -> Icon {
     match action {
         Action::EmbeddedFontReport => INFO,
+        Action::Show(Screen::TypographyRules) => TEXT,
         Action::Show(Screen::ReadingGuides) => READING_GUIDES,
         Action::Show(Screen::Library | Screen::OrganizeLibrary) | Action::CurrentBookFolder => {
             FOLDER
