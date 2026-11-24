@@ -1,9 +1,10 @@
 //! KOReader-style interline percentage controls with anchored per-book updates.
-use super::*;
+use super::{step_buttons::StepButtons, *};
 
 const DECREASE: Rect = Rect::new(48, LIST_Y + 286, 352, 112);
 const DEFAULT: Rect = Rect::new(424, LIST_Y + 286, 416, 112);
 const INCREASE: Rect = Rect::new(864, LIST_Y + 286, 352, 112);
+const STEPS: StepButtons = StepButtons::new(DECREASE, INCREASE);
 
 impl Reader {
     pub(super) fn prepare_line_spacing_editor(&mut self) {
@@ -59,21 +60,12 @@ impl Reader {
             self.close_line_spacing();
             return Some(Change::Partial);
         }
-        let (x, y, step) = match input {
-            Input::Tap(x, y) => (x, y, 1u16),
-            Input::LongTap(x, y) => (x, y, 5u16),
-            _ => return None,
-        };
-        let value = if DEFAULT.contains(x, y) {
+        let value = if matches!(input, Input::Tap(x, y) | Input::LongTap(x, y) if DEFAULT.contains(x, y))
+        {
             Ok(self.line_spacing_default())
-        } else if DECREASE.contains(x, y) || INCREASE.contains(x, y) {
-            self.line_spacing_value().map(|value| {
-                if DECREASE.contains(x, y) {
-                    value.saturating_sub(step).max(50)
-                } else {
-                    value.saturating_add(step).min(200)
-                }
-            })
+        } else if let Some(delta) = STEPS.delta(input, 5) {
+            self.line_spacing_value()
+                .map(|value| value.saturating_add_signed(delta).clamp(50, 200))
         } else {
             return None;
         };
@@ -160,14 +152,13 @@ impl Reader {
         ) {
             return;
         }
-        canvas.button(DECREASE, "−", false, false);
+        STEPS.draw(canvas);
         canvas.button(
             DEFAULT,
             &format!("Default: {}%", self.line_spacing_default()),
             false,
             false,
         );
-        canvas.button(INCREASE, "+", false, false);
         canvas.text(
             Rect::new(48, LIST_Y + 428, 1168, 150),
             "Line spacing from 50% to 200%.\nTap −/+ for 1%; hold for 5%.\nThe default is 100% unless changed in Document defaults.",

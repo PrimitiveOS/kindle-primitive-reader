@@ -13,6 +13,8 @@ use crate::session::PAGE_HEIGHT;
 const MAX_FILE_BYTES: u64 = 4096;
 pub(crate) const MAX_AUTO_TURN_SECONDS: u32 = 86_400;
 pub(crate) const MAX_AUTO_TURN_DISTANCE_TENTHS: i16 = 200;
+pub(crate) const DEFAULT_BOOKMARK_LINES: u8 = 4;
+pub(crate) const MAX_BOOKMARK_LINES: u8 = 10;
 pub(crate) const DEFAULT_VERY_LONG_PRESS_TENTHS: u16 = 30;
 pub(crate) const MIN_VERY_LONG_PRESS_TENTHS: u16 = 9;
 pub(crate) const MAX_VERY_LONG_PRESS_TENTHS: u16 = 200;
@@ -75,6 +77,12 @@ pub(crate) struct ReadingControls {
     /// Reader-wide appearance of the in-book saved marks list.
     #[serde(skip_serializing_if = "ListDensity::is_default")]
     pub bookmark_density: ListDensity,
+    /// Fit more bookmark or note text inside the same fixed-height row.
+    #[serde(skip_serializing_if = "is_false")]
+    pub bookmark_shrink_to_fit: bool,
+    /// Flexible in-book mark rows are disabled when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bookmark_max_lines: Option<u8>,
     /// Reader-wide appearance of the Contents list.
     #[serde(skip_serializing_if = "ListDensity::is_default")]
     pub contents_density: ListDensity,
@@ -234,13 +242,18 @@ impl Default for TopHeader {
             reading_percent: false,
             chapter_marks: true,
             battery: HeaderBattery::Icon,
-            font_size: 20,
+            font_size: Self::FONT_INITIAL,
         }
     }
 }
 
 impl TopHeader {
     pub(crate) const HEIGHT: u32 = 48;
+    pub(crate) const FONT_MIN: u8 = 8;
+    pub(crate) const FONT_MAX: u8 = 36;
+    pub(crate) const FONT_INITIAL: u8 = 20;
+    // KOReader's spinner reset differs from its initial rendering fallback.
+    pub(crate) const FONT_PICKER_DEFAULT: u8 = 14;
 
     pub(crate) fn default_enabled(self) -> bool {
         self.book_default.unwrap_or(self.legacy_enabled)
@@ -259,15 +272,7 @@ impl TopHeader {
     }
 
     pub(crate) fn font_size(self) -> u8 {
-        self.font_size.clamp(8, 36)
-    }
-
-    pub(crate) fn next_font_size(self) -> Self {
-        let current = self.font_size();
-        Self {
-            font_size: if current >= 36 { 8 } else { current + 1 },
-            ..self
-        }
+        self.font_size.clamp(Self::FONT_MIN, Self::FONT_MAX)
     }
 }
 
@@ -1210,6 +1215,11 @@ impl PageRefresh {
 }
 
 impl ReadingControls {
+    pub(crate) fn bookmark_max_lines(self) -> Option<u8> {
+        self.bookmark_max_lines
+            .filter(|count| (1..=MAX_BOOKMARK_LINES).contains(count))
+    }
+
     pub(crate) fn selection_corner_scroll_enabled(self) -> bool {
         self.selection_corner_scroll.unwrap_or(true)
     }
@@ -1684,11 +1694,11 @@ mod tests {
     }
 
     #[test]
-    fn top_header_font_and_battery_options_cycle_with_bounded_values() {
+    fn top_header_font_clamps_legacy_values_and_battery_options_cycle() {
         let mut header = TopHeader::default();
-        assert_eq!(header.next_font_size().font_size(), 21);
-        header.font_size = 36;
-        assert_eq!(header.next_font_size().font_size(), 8);
+        assert_eq!(header.font_size(), 20);
+        header.font_size = 0;
+        assert_eq!(header.font_size(), 8);
         header.font_size = 255;
         assert_eq!(header.font_size(), 36);
         assert_eq!(HeaderBattery::Off.next(), HeaderBattery::Icon);

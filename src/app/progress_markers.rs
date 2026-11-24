@@ -54,7 +54,7 @@ impl Reader {
         if let Some(fixed) = &self.fixed {
             let reading = &fixed.reading;
             return Some(MarkerPages {
-                starts: fixed_marker_pages(reading, state),
+                starts: sorted_pages(fixed_headings(reading, state).map(|(page, _)| page)),
                 count: reading.count(),
             });
         }
@@ -65,7 +65,7 @@ impl Reader {
             return None;
         }
         Some(MarkerPages {
-            starts: local_marker_pages(active, state),
+            starts: sorted_pages(local_headings(active, state).map(|(page, _)| page)),
             count: active.reading.probe.page_count(),
         })
     }
@@ -73,51 +73,100 @@ impl Reader {
     pub(super) fn customized_header_marker_pages(&self, book: &ActiveBook) -> Option<Vec<usize>> {
         let state = self.library.state(book.id)?;
         (state.contents_depths.has_ignored() || state.custom_contents.enabled)
-            .then(|| local_marker_pages(book, state))
+            .then(|| sorted_pages(local_headings(book, state).map(|(page, _)| page)))
+    }
+
+    pub(super) fn bound_footer_chapter_title(&self) -> Option<&str> {
+        let state = self.library.state(self.open_book_id()?)?;
+        if !state.contents_depths.bind_title || !state.contents_depths.has_ignored() {
+            return None;
+        }
+        if let Some(fixed) = &self.fixed {
+            return Some(
+                chapter_title_at(fixed_headings(&fixed.reading, state), fixed.reading.page())
+                    .unwrap_or_default(),
+            );
+        }
+        let active = self.active.as_ref()?;
+        (active.reading.probe.chapter_count() == 1).then(|| {
+            chapter_title_at(local_headings(active, state), active.reading.page).unwrap_or_default()
+        })
     }
 }
 
-fn fixed_marker_pages(reading: &FixedReading, state: &BookState) -> Vec<usize> {
-    if state.custom_contents.enabled {
-        return sorted_pages(state.custom_contents.entries().iter().filter_map(|entry| {
-            let position = &entry.position;
-            (state.contents_depths.includes(0)
-                && position.chapter == 0
-                && position.anchor.is_none()
-                && position.page < reading.count())
-            .then_some(position.page)
-        }));
-    }
-    sorted_pages(reading.chapter_outline().filter_map(|heading| {
-        heading
-            .page
-            .filter(|&page| state.contents_depths.includes(heading.depth) && page < reading.count())
-    }))
+fn fixed_headings<'a>(
+    reading: &'a FixedReading,
+    state: &'a BookState,
+) -> impl Iterator<Item = (usize, &'a str)> {
+    let publisher = (!state.custom_contents.enabled)
+        .then_some(reading)
+        .into_iter()
+        .flat_map(FixedReading::chapter_outline)
+        .filter_map(move |heading| {
+            let page = heading.page.filter(|&page| {
+                state.contents_depths.includes(heading.depth) && page < reading.count()
+            })?;
+            Some((page, heading.title.as_str()))
+        });
+    let custom = selected_custom_headings(state).filter_map(move |entry| {
+        let position = &entry.position;
+        (position.chapter == 0 && position.anchor.is_none() && position.page < reading.count())
+            .then_some((position.page, entry.label.as_str()))
+    });
+    publisher.chain(custom)
 }
 
-fn local_marker_pages(book: &ActiveBook, state: &BookState) -> Vec<usize> {
+fn local_headings<'a>(
+    book: &'a ActiveBook,
+    state: &'a BookState,
+) -> impl Iterator<Item = (usize, &'a str)> {
     let reading = &book.reading;
     let probe = &reading.probe;
-    if state.custom_contents.enabled {
-        return sorted_pages(state.custom_contents.entries().iter().filter_map(|entry| {
-            let position = &entry.position;
-            if !state.contents_depths.includes(0) || position.chapter != reading.chapter {
-                return None;
-            }
-            probe.page_for(position.anchor.as_ref()?)
-        }));
+    let publisher = (!state.custom_contents.enabled)
+        .then(|| probe.local_contents_pages())
+        .into_iter()
+        .flatten()
+        .filter_map(move |&(index, page)| {
+            let entry = &probe.toc[index];
+            state
+                .contents_depths
+                .includes(entry.depth)
+                .then_some((page, entry.label.as_str()))
+        });
+    let custom = selected_custom_headings(state).filter_map(move |entry| {
+        let position = &entry.position;
+        if position.chapter != reading.chapter {
+            return None;
+        }
+        let page = probe.page_for(position.anchor.as_ref()?)?;
+        Some((page, entry.label.as_str()))
+    });
+    publisher.chain(custom)
+}
+
+fn selected_custom_headings(state: &BookState) -> impl Iterator<Item = &crate::library::Bookmark> {
+    (state.custom_contents.enabled && state.contents_depths.includes(0))
+        .then(|| state.custom_contents.entries())
+        .into_iter()
+        .flatten()
+}
+
+fn chapter_title_at<'a>(
+    headings: impl Iterator<Item = (usize, &'a str)>,
+    current: usize,
+) -> Option<&'a str> {
+    // For a page with several eligible headings, use its first title while
+    // reading that page and its last title after leaving it.
+    let mut previous = None;
+    for (page, title) in headings {
+        if page == current {
+            return Some(title);
+        }
+        if page < current && previous.is_none_or(|(prior_page, _)| prior_page <= page) {
+            previous = Some((page, title));
+        }
     }
-    sorted_pages(
-        probe
-            .local_contents_pages()
-            .iter()
-            .filter_map(|&(index, page)| {
-                state
-                    .contents_depths
-                    .includes(probe.toc[index].depth)
-                    .then_some(page)
-            }),
-    )
+    previous.map(|(_, title)| title)
 }
 
 fn sorted_pages(pages: impl Iterator<Item = usize>) -> Vec<usize> {

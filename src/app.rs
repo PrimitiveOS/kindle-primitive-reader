@@ -67,9 +67,11 @@ mod saved_highlight_popup;
 mod selection_popup;
 mod sidecar_marks;
 mod skim;
+mod step_buttons;
 mod style_tweaks;
 mod top_config;
 mod top_header;
+mod top_header_font;
 mod user_hyphenation;
 mod vocabulary;
 #[cfg(test)]
@@ -515,6 +517,7 @@ enum Action {
     ResetText,
     ReadingMode(bool),
     TopStatusHeader(bool),
+    EditHeaderFontSize,
     ConfirmTopStatusHeaderDefault(bool),
     FacingPages(bool),
     SearchHit(usize),
@@ -773,6 +776,7 @@ pub struct Reader {
     auto_turn: AutoTurn,
     read_alarm: read_alarm::ReadAlarm,
     top_header_default_prompt: Option<bool>,
+    top_header_font_picker: Option<top_header_font::Picker>,
     list_page: usize,
     matches_page: usize,
     result_context: Option<result_context::ResultContext>,
@@ -780,6 +784,7 @@ pub struct Reader {
     current_contents_row: Option<usize>,
     contents_view: Option<contents_view::ContentsView>,
     list_density_picker: Option<list_density::Picker>,
+    flexible_marks: Option<saved_marks_view::FlexibleMarks>,
     publisher_label_canvas: std::cell::RefCell<Option<Canvas>>,
     map_window: fixed_book_map::MapWindow,
     back: Vec<HistoryLocation>,
@@ -973,6 +978,7 @@ impl Reader {
             auto_turn: AutoTurn::default(),
             read_alarm: read_alarm::ReadAlarm::open(data.join("read-timer.json")),
             top_header_default_prompt: None,
+            top_header_font_picker: None,
             list_page: 0,
             matches_page: 0,
             result_context: None,
@@ -980,6 +986,7 @@ impl Reader {
             current_contents_row: None,
             contents_view: None,
             list_density_picker: None,
+            flexible_marks: None,
             publisher_label_canvas: Default::default(),
             map_window: fixed_book_map::MapWindow::default(),
             back: Vec::new(),
@@ -1344,6 +1351,7 @@ impl Reader {
     }
 
     fn show(&mut self, screen: Screen) {
+        self.top_header_font_picker = None;
         let previous = self.screen;
         if screen != previous {
             self.list_density_picker = None;
@@ -1621,6 +1629,7 @@ impl Reader {
             self.current_contents_row.unwrap_or_default() / page_rows
         };
         self.notice = None;
+        self.prepare_flexible_marks();
         self.update_footer_clock(Instant::now());
     }
 
@@ -1962,7 +1971,28 @@ impl Reader {
                     )
                     .detail(self.controls.annotation_list_text.label()),
                 );
+                items.push(self.bookmark_lines_item());
                 items.extend(self.list_density_items(list_density::Scope::Bookmarks));
+                let flexible = self.controls.bookmark_max_lines().is_some();
+                let shrink_action = if flexible {
+                    Action::Heading
+                } else {
+                    Action::SetReadingControls(ReadingControls {
+                        bookmark_shrink_to_fit: !self.controls.bookmark_shrink_to_fit,
+                        ..self.controls
+                    })
+                };
+                items.push(
+                    Item::new("Shrink bookmark font size to fit more text", shrink_action).detail(
+                        if flexible {
+                            "Unavailable with flexible rows"
+                        } else if self.controls.bookmark_shrink_to_fit {
+                            "On"
+                        } else {
+                            "Off"
+                        },
+                    ),
+                );
                 return items;
             }
             Screen::AnnotationListSettings => {
@@ -2644,6 +2674,8 @@ impl Reader {
     }
 
     fn bookmark_items(&self, id: u64) -> Vec<Item> {
+        let full_excerpt =
+            self.controls.bookmark_shrink_to_fit || self.controls.bookmark_max_lines().is_some();
         let state = self.library.state(id);
         let active = self.active.as_ref().filter(|book| book.id == id);
         let fixed = self.fixed.as_ref().filter(|book| book.id == id);
@@ -2694,7 +2726,7 @@ impl Reader {
                     );
                     let caption = reflow_location_label(active, location);
                     let note = mark.note.as_deref().filter(|note| !note.trim().is_empty());
-                    let excerpt = bookmark_excerpt(&mark.selection.text);
+                    let excerpt = bookmark_excerpt(&mark.selection.text, full_excerpt);
                     let title = match self.controls.annotation_list_text {
                         AnnotationListText::HighlightedText
                         | AnnotationListText::HighlightAndNote => excerpt,
@@ -2732,7 +2764,7 @@ impl Reader {
                     let location = (0, mark.page, 0, 0);
                     let caption = format!("Page {}", mark.page + 1);
                     let note = mark.note.as_deref().filter(|note| !note.trim().is_empty());
-                    let excerpt = bookmark_excerpt(&mark.text);
+                    let excerpt = bookmark_excerpt(&mark.text, full_excerpt);
                     let title = match self.controls.annotation_list_text {
                         AnnotationListText::HighlightedText
                         | AnnotationListText::HighlightAndNote => excerpt,
@@ -3708,6 +3740,7 @@ impl Reader {
             Action::DocumentDefaults(command) => self.activate_document_defaults(command)?,
             Action::Style(command) => self.activate_style(command)?,
             Action::TopStatusHeader(enabled) => self.set_book_top_header(enabled)?,
+            Action::EditHeaderFontSize => self.open_header_font_picker(),
             Action::ConfirmTopStatusHeaderDefault(enabled) => {
                 self.top_header_default_prompt = Some(enabled);
             }
@@ -7070,6 +7103,9 @@ impl Reader {
             _ => self.screen.title(),
         };
         header(canvas, title, "Back");
+        if self.draw_flexible_marks(canvas) {
+            return;
+        }
         if self.screen.is_contents() {
             self.draw_contents(canvas);
             return;
@@ -7689,6 +7725,7 @@ impl App for Reader {
         self.draw_flow_popup(canvas);
         self.draw_list_density_picker(canvas);
         self.draw_top_header_default_prompt(canvas);
+        self.draw_header_font_picker(canvas);
         self.read_alarm.draw(canvas, self.screen == Screen::Book);
         self.draw_vocabulary_dialog(canvas);
         self.draw_logical_recovery(canvas);
@@ -7719,6 +7756,9 @@ impl App for Reader {
             return self.read_alarm_input(input);
         }
         if let Some(change) = self.top_header_default_input(input) {
+            return change;
+        }
+        if let Some(change) = self.header_font_picker_input(input) {
             return change;
         }
         if let Some(change) = self.style_editor_input(input) {
@@ -7852,6 +7892,9 @@ impl App for Reader {
             return self.read_alarm_input(input);
         }
         if let Some(change) = self.top_header_default_input(input) {
+            return change;
+        }
+        if let Some(change) = self.header_font_picker_input(input) {
             return change;
         }
         if let Some(change) = self.style_editor_input(input) {
@@ -8019,6 +8062,9 @@ impl App for Reader {
         }
         if self.screen.is_contents() {
             return self.contents_input(input);
+        }
+        if self.flexible_marks.is_some() {
+            return self.flexible_mark_input(input);
         }
         if let Some(change) = self.list_density_input(input) {
             return change;
@@ -8833,8 +8879,11 @@ fn reflow_location_label(active: &ActiveBook, location: (usize, usize, usize, us
     format!("{chapter} · Page {}", location.1 + 1)
 }
 
-fn bookmark_excerpt(text: &str) -> String {
+fn bookmark_excerpt(text: &str, fit_more: bool) -> String {
     let mut words = text.split_whitespace();
+    if fit_more {
+        return words.collect::<Vec<_>>().join(" ");
+    }
     let excerpt = words.by_ref().take(22).collect::<Vec<_>>().join(" ");
     if words.next().is_some() {
         format!("{excerpt}…")
