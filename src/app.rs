@@ -467,6 +467,7 @@ impl Screen {
             Self::StyleEditor => "Book CSS",
             Self::StyleClear => "Clear book CSS?",
             Self::ProfileName(profile_panel::Name::OpeningPath(_)) => "Opening file path",
+            Self::ProfileName(profile_panel::Name::OpeningMetadata(_, field)) => field.label(),
             Self::ProfileName(_) => "Name reading profile",
             Self::ReadingProfile(_) | Self::ConfirmProfile(_, _) => "Reading profile",
             Self::ReadingProfileFields(_) => "Included settings",
@@ -934,6 +935,7 @@ pub struct Reader {
     save_at: Option<Instant>,
     metadata_checkpoint: metadata_save::Checkpoint,
     editor: Editor,
+    opening_metadata_phrase: Option<String>,
     nearby: nearby_search::Nearby,
     screen_page_jump: Option<go_to_page::PendingJump>,
     screen_page_worker: crate::session::screen_pages::background::Worker,
@@ -1164,6 +1166,7 @@ impl Reader {
             save_at: None,
             metadata_checkpoint: metadata_save::Checkpoint::new(Instant::now()),
             editor: Editor::new(64),
+            opening_metadata_phrase: None,
             nearby: nearby_search::Nearby::default(),
             screen_page_jump: None,
             screen_page_worker: Default::default(),
@@ -4500,7 +4503,7 @@ impl Reader {
         let Input::Tap(x, y) = input else {
             return Change::None;
         };
-        if let Some(change) = self.choose_current_opening_path(x, y) {
+        if let Some(change) = self.choose_current_opening_book(x, y) {
             return change;
         }
         let layout = navigation.keyboard();
@@ -7496,6 +7499,9 @@ impl Reader {
                 Screen::ProfileName(profile_panel::Name::OpeningPath(_)) => {
                     ("Path text, separated by commas", "Save")
                 }
+                Screen::ProfileName(profile_panel::Name::OpeningMetadata(..)) => {
+                    ("Phrases separated by commas", "Save")
+                }
                 Screen::ProfileName(_) => ("Profile name", "Save"),
                 Screen::FooterPresetName(_) => ("Status bar preset name", "Save"),
                 Screen::DictionaryPresets(dictionary_presets::Page::Name(_)) => {
@@ -7599,7 +7605,7 @@ impl Reader {
             if self.screen == Screen::DictionaryEntry {
                 self.draw_lookup_preset_button(canvas);
             }
-            if let Some(button) = self.current_opening_path_button() {
+            if let Some(button) = self.current_opening_book_button() {
                 canvas.button(button, "Current book", false, false);
             }
             self.draw_content_dpi(canvas);

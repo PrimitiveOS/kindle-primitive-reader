@@ -62,6 +62,13 @@ impl fmt::Display for DjvuError {
 impl std::error::Error for DjvuError {}
 
 impl Djvu {
+    #[cfg(feature = "kindle")]
+    pub(crate) fn publisher_metadata(&self) -> Option<djvu_rs::metadata::DjVuMetadata> {
+        catch_unwind(AssertUnwindSafe(|| self.document.inner().metadata()))
+            .ok()?
+            .ok()?
+    }
+
     pub fn open(bytes: Vec<u8>) -> Result<Self, DjvuError> {
         if bytes.len() > MAX_DJVU_BYTES {
             return Err(DjvuError::TooLarge);

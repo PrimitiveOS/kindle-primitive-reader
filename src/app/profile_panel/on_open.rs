@@ -26,12 +26,14 @@ impl Reader {
         id: u64,
     ) -> Result<Option<(Reading, BookPreferences)>> {
         let orientation = self.opening_orientation(id, false);
+        let metadata = self.opening_text_metadata(base, position.is_none());
         let book = Book {
             id,
             path: &base.book,
             library: &self.library,
             orientation,
             is_new: position.is_none(),
+            metadata: metadata.as_ref(),
         };
         let mut adjusted = preferences.clone();
         for profile in self.opening_profiles(&book) {
@@ -82,12 +84,14 @@ impl Reader {
         let Some(provider) = reading.profile_provider() else {
             return Ok(());
         };
+        let metadata = self.opening_fixed_metadata(reading, path, is_new);
         let book = Book {
             id,
             path,
             library: &self.library,
             orientation: self.opening_orientation(id, true),
             is_new,
+            metadata: metadata.as_ref(),
         };
         let profiles: Vec<_> = self
             .opening_profiles(&book)

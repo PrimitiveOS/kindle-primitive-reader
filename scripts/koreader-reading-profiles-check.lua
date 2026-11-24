@@ -1,5 +1,11 @@
 -- Run with LuaJIT and the pinned KOReader source tree. No writes or live device services.
 local root = assert(arg[1], "Pass the pinned KOReader source tree")
+local native_util
+if arg[2] == "native" then
+    require("setupkoenv")
+    native_util = require("util")
+    package.loaded.util = nil
+end
 package.path = root .. "/frontend/?.lua;" .. package.path
 local function mock(name, value)
     package.preload[name] = function() return value end
@@ -31,13 +37,13 @@ local function clone(value)
 end
 mock("ffi/util", {template = template, orderedPairs = ordered})
 mock("util", {
-    gsplit = function(text, separator)
+    gsplit = native_util and native_util.gsplit or function(text, separator)
         assert(separator == ",")
         return text:gmatch("[^,]+")
     end,
-    trim = function(value) return value:match("^%s*(.-)%s*$") end,
-    stringSearch = function(value, term)
-        return value:lower():find(term:lower(), 1, true) or 0
+    trim = native_util and native_util.trim or function(value) return value:match("^%s*(.-)%s*$") end,
+    stringSearch = native_util and native_util.stringSearch or function(value, term)
+        return (value or ""):lower():find(term:lower(), 1, true) or 0
     end,
     arrayContains = function(array, searched)
         for index, value in ipairs(array) do if value == searched then return index end end
@@ -104,6 +110,7 @@ mock("ui/uimanager", {
 for _, name in ipairs{"confirmbox", "inputdialog", "infomessage", "datetimewidget", "spinwidget"} do
     mock("ui/widget/" .. name, {new = function(_, widget)
         widget.getInputText = function(self) return self.input end
+        widget.addTextToInput = function(self, text) self.input = (self.input or "") .. text end
         widget.onShowKeyboard = function() end
         return widget
     end})
@@ -499,6 +506,57 @@ assert(text_open.checked_func() and not rules[2].enabled_func())
 assert(not require("util").tableGetValue(profiles.autoexec, "ReaderReadyAll", "Text"))
 always_text.callback()
 
+-- Exercise stock metadata rules through the menu's actual buttons and ReaderReady.
+local property_names = { "title", "authors", "series", "series_index", "language", "keywords", "description" }
+local property_text = {
+    title = "Title:", authors = "Authors:", series = "Series:", series_index = "Series index:",
+    language = "Language:", keywords = "Keywords:", description = "Description:",
+}
+profiles.ui.bookinfo = { props = property_names, prop_text = property_text }
+profiles.ui.doc_props = {
+    title = "Raw title", display_title = "ĐẶNG [A+B]", authors = "Ada Scout", series = "Sounding Log",
+    series_index = "2.5", language = "vi", keywords = "Estuary, Circulation", description = "Lower river delta",
+}
+local metadata = rules[3].sub_item_table_func()
+local function set_metadata(index, pattern)
+    metadata[index].callback(menu)
+    visible.input = pattern
+    choose(visible.buttons[#visible.buttons], "Save").callback()
+end
+metadata[1].callback(menu)
+assert(visible.buttons[1][1].enabled_func())
+visible.buttons[1][1].callback()
+assert(visible.input == "ĐẶNG [A+B]")
+for index, phrase in ipairs({"none, [a+b]", "ADA SCOUT", "sounding", "2.5", "VI", "circulation", "river DELTA"}) do
+    set_metadata(index, phrase)
+    assert(metadata[index].checked_func())
+    conditional_open("/documents/ordinary.epub", 0, false, true)
+    metadata[index].hold_callback(menu)
+    assert(not metadata[index].checked_func())
+end
+set_metadata(1, "raw title")
+conditional_open("/documents/ordinary.epub", 0, false, false)
+set_metadata(1, native_util and "đặng [a+b]" or "[a+b]")
+set_metadata(2, "Scout")
+conditional_open("/documents/ordinary.epub", 0, false, true) -- two matching fields, one execution
+set_metadata(1, "")
+profiles.ui.doc_props.authors = nil
+conditional_open("/documents/ordinary.epub", 0, false, false)
+metadata[2].callback(menu)
+assert(not visible.buttons[1][1].enabled_func())
+choose(visible.buttons[#visible.buttons], "Cancel").callback()
+profiles.ui.doc_props.authors = "Ada Scout"
+rules[6].callback(menu)
+conditional_open("/documents/ordinary.epub", 0, false, false)
+conditional_open("/documents/ordinary.epub", 0, true, true)
+if native_util then
+    assert(native_util.stringSearch(nil, "") == 1)
+    assert(not pcall(native_util.stringSearch, 2.5, "2.5"))
+end
+always_text.callback()
+assert(not require("util").tableGetValue(profiles.autoexec, "ReaderReadyAll", "Text"))
+always_text.callback()
+
 for _, item in ipairs(profiles:getSubMenuItems()) do
     if item.name == "PDF copy" then commands = item.sub_item_table; break end
 end
@@ -517,3 +575,4 @@ print("Stock saved scans: eight Margin and Contrast presets, isolated until Appl
 print("Stock factory, action removal, rename/duplicate/delete, format gate and batched execution verified.")
 print("Stock book opening: Always toggle, ReaderReady dispatch, format gates, reload guard and disable verified.")
 print("Stock conditional opening: orientation/path/collection alternatives, a separate new-book gate, and one execution per event.")
+print("Stock metadata opening: seven fields, effective title, Current book, OR/only-new, and save/clear.")

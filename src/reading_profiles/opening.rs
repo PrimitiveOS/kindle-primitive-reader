@@ -1,10 +1,97 @@
 //! Conditions evaluated for a particular book-opening event.
 use crate::library::{Library, MAX_COLLECTIONS, collection_name, fold_search};
 use crate::reading_controls::ReadingOrientation;
+use icu_casemap::CaseMapper;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeSet, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
 
 pub(crate) const PATH_LIMIT: usize = 160;
+pub(crate) const METADATA_LIMIT: usize = 160;
+const MAX_METADATA_VALUE_BYTES: usize = 16 * 1024;
+const MAX_METADATA_VALUES: usize = 32;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum MetadataField {
+    Title,
+    Authors,
+    Series,
+    SeriesIndex,
+    Language,
+    Keywords,
+    Description,
+}
+
+impl MetadataField {
+    pub(crate) const ALL: [Self; 7] = [
+        Self::Title,
+        Self::Authors,
+        Self::Series,
+        Self::SeriesIndex,
+        Self::Language,
+        Self::Keywords,
+        Self::Description,
+    ];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Title => "Title",
+            Self::Authors => "Authors",
+            Self::Series => "Series",
+            Self::SeriesIndex => "Series index",
+            Self::Language => "Language",
+            Self::Keywords => "Keywords",
+            Self::Description => "Description",
+        }
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct Metadata(BTreeMap<MetadataField, Vec<String>>);
+
+impl Metadata {
+    pub(crate) fn add(&mut self, field: MetadataField, value: &str) {
+        let end = value.floor_char_boundary(value.len().min(MAX_METADATA_VALUE_BYTES));
+        let value = value[..end].trim();
+        if value.is_empty() {
+            return;
+        }
+        let values = self.0.entry(field).or_default();
+        if values.len() < MAX_METADATA_VALUES && !values.iter().any(|saved| saved == value) {
+            values.push(value.to_owned());
+        }
+    }
+
+    pub(crate) fn current_phrase(&self, field: MetadataField) -> Option<String> {
+        self.0.get(&field)?.iter().find_map(|value| {
+            value
+                .split(|c: char| c == ',' || c.is_control())
+                .find_map(|part| {
+                    let phrase: String = part.trim().chars().take(METADATA_LIMIT).collect();
+                    valid_metadata(phrase.trim()).then(|| phrase.trim().to_owned())
+                })
+        })
+    }
+
+    fn matches(&self, field: MetadataField, pattern: &str) -> bool {
+        let Some(values) = self.0.get(&field) else {
+            return false;
+        };
+        let lowercase = |text: &str| -> String {
+            let mapper = CaseMapper::new();
+            text.chars().map(|c| mapper.simple_lowercase(c)).collect()
+        };
+        let needles: Vec<_> = pattern.split(',').map(str::trim).map(lowercase).collect();
+        values.iter().map(|text| lowercase(text)).any(|text| {
+            needles
+                .iter()
+                .any(|needle| !needle.is_empty() && text.contains(needle))
+        })
+    }
+}
 
 pub(crate) const ORIENTATIONS: [ReadingOrientation; 5] = [
     ReadingOrientation::FollowLauncher,
@@ -21,6 +108,8 @@ pub(crate) struct Conditions {
     pub orientations: Vec<ReadingOrientation>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub metadata: BTreeMap<MetadataField, String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub collections: Vec<String>,
     pub new_only: bool,
@@ -32,11 +121,20 @@ pub(crate) struct Book<'a> {
     pub(crate) library: &'a Library,
     pub(crate) orientation: ReadingOrientation,
     pub(crate) is_new: bool,
+    pub(crate) metadata: Option<&'a Metadata>,
 }
 
 pub(crate) fn valid_path(pattern: &str) -> bool {
+    valid_pattern(pattern, PATH_LIMIT)
+}
+
+pub(crate) fn valid_metadata(pattern: &str) -> bool {
+    valid_pattern(pattern, METADATA_LIMIT)
+}
+
+fn valid_pattern(pattern: &str, limit: usize) -> bool {
     pattern == pattern.trim()
-        && pattern.chars().count() <= PATH_LIMIT
+        && pattern.chars().count() <= limit
         && !pattern.chars().any(char::is_control)
         && pattern.split(',').all(|part| !part.trim().is_empty())
 }
@@ -50,6 +148,10 @@ impl Conditions {
                 .enumerate()
                 .all(|(index, mode)| !self.orientations[..index].contains(mode))
             && self.path.as_deref().is_none_or(valid_path)
+            && self
+                .metadata
+                .values()
+                .all(|pattern| valid_metadata(pattern))
             && self.collections.len() <= MAX_COLLECTIONS
             && {
                 let mut seen = BTreeSet::new();
@@ -61,7 +163,10 @@ impl Conditions {
     }
 
     pub(crate) fn has_matchers(&self) -> bool {
-        !self.orientations.is_empty() || self.path.is_some() || !self.collections.is_empty()
+        !self.orientations.is_empty()
+            || self.path.is_some()
+            || !self.metadata.is_empty()
+            || !self.collections.is_empty()
     }
 
     pub(super) fn matches(&self, book: &Book<'_>) -> bool {
@@ -74,6 +179,11 @@ impl Conditions {
                 pattern
                     .split(',')
                     .any(|part| path.contains(&part.trim().to_lowercase()))
+            })
+            || book.metadata.is_some_and(|metadata| {
+                self.metadata
+                    .iter()
+                    .any(|(&field, pattern)| metadata.matches(field, pattern))
             })
             || self.collections.iter().any(|name| {
                 book.library

@@ -5,12 +5,327 @@ use crate::app::tests::{Fixture, tap_contents_item};
 use crate::app::{Action, Change, ReadingOrientation, Screen, Settings};
 use crate::fixed_session::tests::striped_pdf_sized_bytes;
 use crate::library::FixedTileAxis;
+use crate::reading_profiles::opening::MetadataField;
 use crate::reading_profiles::{Field, ValueField};
 use crate::session::ReadingViewport;
 use primitive_app::App;
 use primitive_ui::Key;
 use serde_json::json;
 use std::fs;
+use std::io::{Read, Write};
+
+fn metadata_epub(path: &Path, fields: &str) {
+    let bytes = include_bytes!("../../../../tests/fixtures/field-notes-epub3.epub");
+    let mut source = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut book = zip::ZipWriter::new(fs::File::create(path).unwrap());
+    let options = zip::write::SimpleFileOptions::default();
+    for index in 0..source.len() {
+        let mut member = source.by_index(index).unwrap();
+        if member.is_dir() {
+            book.add_directory(member.name(), options).unwrap();
+        } else {
+            book.start_file(member.name(), options).unwrap();
+            if member.name() == "EPUB/package.opf" {
+                let mut package = String::new();
+                member.read_to_string(&mut package).unwrap();
+                let old = package.find("<dc:title>").unwrap();
+                let end = package.find("<dc:rights>").unwrap();
+                package.replace_range(old..end, fields);
+                book.write_all(package.as_bytes()).unwrap();
+            } else {
+                std::io::copy(&mut member, &mut book).unwrap();
+            }
+        }
+    }
+    book.finish().unwrap();
+}
+
+fn metadata_pdf(path: &Path) {
+    use lopdf::{Object, dictionary};
+    let mut file = lopdf::Document::load_mem(&striped_pdf_sized_bytes(3, 612, 820)).unwrap();
+    let id = file.add_object(dictionary! {
+        "Title" => Object::string_literal("Tide log"),
+        "Author" => Object::string_literal("Ada Scout"),
+        "Subject" => Object::string_literal("Two coastal transects"),
+        "Keywords" => Object::string_literal("Gauge, Shore"),
+    });
+    file.trailer.set("Info", id);
+    file.catalog_mut()
+        .unwrap()
+        .set("Lang", Object::string_literal("en-GB"));
+    file.save(path).unwrap();
+}
+
+fn metadata_editor(app: &mut Reader, index: usize, field: MetadataField) {
+    tap_contents_item(app, field.label());
+    assert_eq!(
+        app.screen,
+        Screen::ProfileName(Name::OpeningMetadata(index, field))
+    );
+}
+
+fn save_metadata_editor(app: &mut Reader, value: &str) {
+    app.editor.text = value.chars().collect();
+    app.editor.caret = app.editor.text.len();
+    let save = key(app, Key::Go, "Save");
+    tap(app, save);
+}
+
+fn stock_metadata_fixture(source: &Path) {
+    if let Some(output) = std::env::var_os("READER_METADATA_STOCK_FIXTURES") {
+        let output = Path::new(&output);
+        fs::create_dir_all(output).unwrap();
+        fs::copy(source, output.join(source.file_name().unwrap())).unwrap();
+    }
+}
+
+#[test]
+fn opening_metadata_uses_publisher_fields_unicode_and_preserves_the_open_book() {
+    use MetadataField::*;
+    let f = Fixture::new();
+    let edition = f.root.join("Publisher metadata.epub");
+    let fallback = f.root.join("Seabird Survey.epub");
+    metadata_epub(
+        &edition,
+        r#"
+        <dc:title>ĐẶNG [A+B]</dc:title><dc:creator>Ada Scout</dc:creator>
+        <dc:language>vi</dc:language><dc:subject>Estuary</dc:subject>
+        <dc:subject>Circulation</dc:subject><dc:description>Lower river delta</dc:description>
+        <meta name="calibre:series" content="Sounding Log"/>
+        <meta name="calibre:series_index" content="2.5"/>
+    "#,
+    );
+    metadata_epub(&fallback, "<dc:title> </dc:title>");
+    stock_metadata_fixture(&edition);
+    stock_metadata_fixture(&fallback);
+    let mut app = Reader::open(&f.root, &f.state, fonts()).unwrap();
+    app.open_path(&edition).unwrap();
+    let normal = app.active.as_ref().unwrap().reading.config.settings;
+    app.activate(Action::Text(Settings {
+        invert_night_images: true,
+        ..normal
+    }))
+    .unwrap();
+    app.save_reading_profile("Evening contrast").unwrap();
+    include(&mut app, 0, vec![Field::NightImages]);
+    app.activate(Action::Text(normal)).unwrap();
+    let metadata = app.current_opening_metadata().unwrap();
+    let id = app.open_book_id().unwrap();
+    let context = Book {
+        id,
+        path: &edition,
+        library: &app.library,
+        orientation: ReadingOrientation::Upright,
+        is_new: true,
+        metadata: Some(&metadata),
+    };
+    for (field, phrase) in [
+        (Title, "waypoint, đặng [a+b]"),
+        (Authors, "ADA SCOUT"),
+        (Series, "sounding log"),
+        (SeriesIndex, "2.5"),
+        (Language, "vi"),
+        (Keywords, "circulation"),
+        (Description, "river DELTA"),
+    ] {
+        let mut rules = crate::reading_profiles::opening::Conditions::default();
+        rules.metadata.insert(field, phrase.into());
+        let mut profile = app.profiles[0].clone();
+        profile.set_opening_conditions(rules);
+        assert!(profile.matches_opening(&context), "{field:?}");
+    }
+    app.follow_reflow_page(1, 0).unwrap();
+    let anchor = app.current_position().unwrap().anchor;
+    open_rules(&mut app, 0);
+    tap_contents_item(&mut app, "Book metadata contains");
+    let mut canvas = adopt(&mut app, ReadingViewport::LANDSCAPE, 1);
+    capture(
+        &app,
+        &mut canvas,
+        "landscape-profile-opening-metadata.png",
+        false,
+    );
+    metadata_editor(&mut app, 0, Title);
+    save_metadata_editor(&mut app, "invalid, , phrase");
+    assert_eq!(
+        app.screen,
+        Screen::ProfileName(Name::OpeningMetadata(0, Title))
+    );
+    assert!(app.profiles[0].opening_conditions().is_none());
+    let current_book = app.current_opening_book_button().unwrap();
+    tap(&mut app, current_book);
+    assert_eq!(app.editor.string(), "ĐẶNG [A+B]");
+    capture(
+        &app,
+        &mut canvas,
+        "landscape-profile-current-book-metadata.png",
+        false,
+    );
+    let save = key(&app, Key::Go, "Save");
+    tap(&mut app, save);
+    assert!(
+        !app.active
+            .as_ref()
+            .unwrap()
+            .reading
+            .config
+            .settings
+            .invert_night_images
+    );
+    assert_eq!(app.current_position().unwrap().anchor, anchor);
+    metadata_editor(&mut app, 0, Description);
+    save_metadata_editor(&mut app, "river delta");
+    app.save().unwrap();
+    let mut app = Reader::open(&f.root, &f.state, fonts()).unwrap();
+    app.open_path(&edition).unwrap();
+    assert!(
+        app.active
+            .as_ref()
+            .unwrap()
+            .reading
+            .config
+            .settings
+            .invert_night_images
+    );
+    assert_eq!(app.current_position().unwrap().anchor, anchor);
+    app.open_path(&fallback).unwrap();
+    let metadata = app.current_opening_metadata().unwrap();
+    assert_eq!(
+        metadata.current_phrase(Title).as_deref(),
+        Some("Seabird Survey")
+    );
+    assert_eq!(metadata.current_phrase(Authors), None);
+    assert!(
+        !app.active
+            .as_ref()
+            .unwrap()
+            .reading
+            .config
+            .settings
+            .invert_night_images
+    );
+    open_rules(&mut app, 0);
+    tap_contents_item(&mut app, "Book metadata contains");
+    metadata_editor(&mut app, 0, Title);
+    save_metadata_editor(&mut app, "");
+    assert_eq!(
+        app.profiles[0].opening_conditions().unwrap().metadata.len(),
+        1
+    );
+    metadata_editor(&mut app, 0, Authors);
+    assert!(app.current_opening_book_button().is_none());
+}
+
+#[test]
+fn opening_metadata_reads_fixed_document_fields_without_changing_physical_page() {
+    use MetadataField::*;
+    let f = Fixture::new();
+    let source = f.root.join("Source.pdf");
+    let target = f.root.join("Survey print.pdf");
+    fs::write(&source, striped_pdf_sized_bytes(3, 820, 612)).unwrap();
+    metadata_pdf(&target);
+    stock_metadata_fixture(&target);
+    let mut app = Reader::open(&f.root, &f.state, fonts()).unwrap();
+    app.open_path(&target).unwrap();
+    let fields = app.current_opening_metadata().unwrap();
+    for (field, phrase) in [
+        (Title, "Tide log"),
+        (Authors, "Ada Scout"),
+        (Description, "Two coastal transects"),
+        (Keywords, "Gauge"),
+        (Language, "en-GB"),
+    ] {
+        assert_eq!(fields.current_phrase(field).as_deref(), Some(phrase));
+    }
+    assert_eq!(fields.current_phrase(SeriesIndex), None);
+    app.follow_fixed(1, None).unwrap();
+    let page = app.fixed.as_ref().unwrap().reading.page();
+    app.open_path(&source).unwrap();
+    app.activate(Action::ScanGamma(23)).unwrap();
+    app.save_reading_profile("Survey gamma").unwrap();
+    include(&mut app, 0, vec![Field::ScanContrast]);
+    open_rules(&mut app, 0);
+    tap_contents_item(&mut app, "Book metadata contains");
+    metadata_editor(&mut app, 0, Keywords);
+    save_metadata_editor(&mut app, "absent, shore");
+    app.open_path(&target).unwrap();
+    let reading = &app.fixed.as_ref().unwrap().reading;
+    assert_eq!(reading.page(), page);
+    assert_eq!(reading.preferences().scan_gamma_tenths, Some(23));
+    let invalid = serde_json::to_value(&app.profiles).unwrap();
+    for metadata in [
+        json!({"title":"a,,b"}),
+        json!({"page_count":"3"}),
+        json!({"authors":"x".repeat(161)}),
+    ] {
+        let mut bad = invalid.clone();
+        bad[0]["opening"]["metadata"] = metadata;
+        assert!(crate::reading_profiles::decode(bad).is_err());
+    }
+}
+
+#[test]
+fn opening_metadata_reads_djvu_publisher_values_and_comic_title_fallback() {
+    use MetadataField::*;
+    use djvu_rs::{djvu_mut::DjVuDocumentMut, metadata::DjVuMetadata};
+    let f = Fixture::new();
+    let path = f.root.join("Scanned sequence.djvu");
+    let mut djvu = DjVuDocumentMut::from_bytes(include_bytes!(
+        "../../../../tests/fixtures/beacon-atlas.djvu"
+    ))
+    .unwrap();
+    djvu.set_metadata(&DjVuMetadata {
+        title: Some("Beacon Atlas".into()),
+        author: Some("Ada Scout".into()),
+        subject: Some("A weathered scan".into()),
+        keywords: Some("Beacon, Ice".into()),
+        extra: vec![
+            ("Series".into(), "North archive #2.5".into()),
+            ("Language".into(), "en".into()),
+        ],
+        ..DjVuMetadata::default()
+    })
+    .unwrap();
+    fs::write(&path, djvu.into_bytes()).unwrap();
+    stock_metadata_fixture(&path);
+    let mut app = Reader::open(&f.root, &f.state, fonts()).unwrap();
+    app.open_path(&path).unwrap();
+    let metadata = app.current_opening_metadata().unwrap();
+    for (field, value) in [
+        (Title, "Beacon Atlas"),
+        (Authors, "Ada Scout"),
+        (Description, "A weathered scan"),
+        (Keywords, "Beacon"),
+        (Series, "North archive"),
+        (SeriesIndex, "2.5"),
+        (Language, "en"),
+    ] {
+        assert_eq!(metadata.current_phrase(field).as_deref(), Some(value));
+    }
+    let path = f.root.join("Drawn sequence.cbz");
+    let bytes = include_bytes!("../../../../tests/fixtures/field-notes-epub3.epub");
+    let mut source = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut archive = zip::ZipWriter::new(fs::File::create(&path).unwrap());
+    archive
+        .start_file("Page 01.png", zip::write::SimpleFileOptions::default())
+        .unwrap();
+    std::io::copy(
+        &mut source.by_name("EPUB/images/shore.png").unwrap(),
+        &mut archive,
+    )
+    .unwrap();
+    archive.finish().unwrap();
+    stock_metadata_fixture(&path);
+    app.open_path(&path).unwrap();
+    let metadata = app.current_opening_metadata().unwrap();
+    assert_eq!(
+        metadata.current_phrase(Title).as_deref(),
+        Some("Drawn sequence")
+    );
+    for field in &MetadataField::ALL[1..] {
+        assert!(metadata.current_phrase(*field).is_none());
+    }
+}
 
 fn fonts() -> Vec<std::path::PathBuf> {
     vec![
@@ -216,7 +531,7 @@ fn current_book_inserts_a_path_the_keyboard_cannot_type() {
     open_rules(&mut app, 0);
     tap_contents_item(&mut app, "File path contains");
     let mut canvas = adopt(&mut app, ReadingViewport::LANDSCAPE, 1);
-    let button = app.current_opening_path_button().unwrap();
+    let button = app.current_opening_book_button().unwrap();
     tap(&mut app, button);
     assert_eq!(app.editor.string(), title);
     assert!(app.profiles[0].opening_conditions().is_none());

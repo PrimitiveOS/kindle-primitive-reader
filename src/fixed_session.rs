@@ -713,6 +713,22 @@ impl FixedReading {
         }
     }
 
+    pub(crate) fn pdf_description_fields(
+        &self,
+    ) -> Option<(Option<String>, Option<String>, Option<String>)> {
+        match &self.source {
+            FixedDocument::Pdf(pdf) => Some(pdf.description_fields()),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn djvu_publisher_metadata(&self) -> Option<djvu_rs::metadata::DjVuMetadata> {
+        match &self.source {
+            FixedDocument::Djvu(djvu) => djvu.publisher_metadata(),
+            _ => None,
+        }
+    }
+
     pub(crate) fn hidden_flow_map(&self) -> Option<&PageFlows> {
         self.hidden_flows.as_ref()
     }

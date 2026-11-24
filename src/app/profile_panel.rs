@@ -2,9 +2,11 @@
 use primitive_ui::{Sheet, SheetAction};
 
 use super::{navigation_layout::NavigationLayout, *};
+use crate::reading_profiles::opening::MetadataField;
 use crate::reading_profiles::{Field, FixedProfile};
 
 mod on_open;
+mod opening_metadata;
 pub(super) mod opening_rules;
 pub(super) mod rendering_choices;
 
@@ -14,6 +16,7 @@ pub(super) enum Name {
     Rename(usize),
     Duplicate(usize),
     OpeningPath(usize),
+    OpeningMetadata(usize, MetadataField),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,6 +32,9 @@ impl Name {
             Self::Rename(index) | Self::Duplicate(index) => Screen::ReadingProfile(index),
             Self::OpeningPath(index) => {
                 Screen::ReadingProfileOpening(index, opening_rules::Page::Overview)
+            }
+            Self::OpeningMetadata(index, _) => {
+                Screen::ReadingProfileOpening(index, opening_rules::Page::Metadata)
             }
         }
     }
@@ -287,6 +293,9 @@ impl Reader {
         let index = match mode {
             Name::Create => return self.save_reading_profile(name),
             Name::OpeningPath(index) => return self.save_opening_path(index, name),
+            Name::OpeningMetadata(index, field) => {
+                return self.save_opening_metadata(index, field, name);
+            }
             Name::Rename(index) | Name::Duplicate(index) => index,
         };
         let mut profiles = self.profiles.clone();
@@ -301,7 +310,7 @@ impl Reader {
                 copy.set_opening_conditions(Default::default());
                 profiles.push(copy);
             }
-            Name::Create | Name::OpeningPath(_) => unreachable!(),
+            Name::Create | Name::OpeningPath(_) | Name::OpeningMetadata(..) => unreachable!(),
         }
         self.commit_profiles(profiles)?;
         self.show(match mode {

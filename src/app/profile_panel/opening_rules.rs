@@ -10,6 +10,7 @@ use crate::reading_profiles::{MAX_NAME, opening::*};
 pub(in crate::app) enum Page {
     Overview,
     Orientation,
+    Metadata,
     Collections,
 }
 
@@ -18,6 +19,7 @@ impl Page {
         match self {
             Self::Overview => "Apply on book opening",
             Self::Orientation => "Opening orientations",
+            Self::Metadata => "Opening book metadata",
             Self::Collections => "Opening collections",
         }
     }
@@ -55,15 +57,27 @@ pub(super) fn summary(profile: &Profile) -> &'static str {
 }
 
 impl Reader {
-    pub(in crate::app) fn current_opening_path_button(&self) -> Option<Rect> {
-        (matches!(self.screen, Screen::ProfileName(Name::OpeningPath(_)))
-            && self.open_book_id().is_some())
-        .then_some(CURRENT_BOOK)
+    pub(in crate::app) fn current_opening_book_button(&self) -> Option<Rect> {
+        let visible = match self.screen {
+            Screen::ProfileName(Name::OpeningPath(_)) => self.open_book_id().is_some(),
+            Screen::ProfileName(Name::OpeningMetadata(..)) => {
+                self.opening_metadata_phrase.is_some()
+            }
+            _ => false,
+        };
+        visible.then_some(CURRENT_BOOK)
     }
 
-    pub(in crate::app) fn choose_current_opening_path(&mut self, x: f32, y: f32) -> Option<Change> {
-        if !self.current_opening_path_button()?.contains(x, y) {
+    pub(in crate::app) fn choose_current_opening_book(&mut self, x: f32, y: f32) -> Option<Change> {
+        if !self.current_opening_book_button()?.contains(x, y) {
             return None;
+        }
+        if matches!(self.screen, Screen::ProfileName(Name::OpeningMetadata(..))) {
+            let phrase = self.opening_metadata_phrase.as_ref()?;
+            self.editor.text = phrase.chars().collect();
+            self.editor.caret = self.editor.text.len();
+            self.notice = None;
+            return Some(Change::Partial);
         }
         let path = self
             .active
@@ -83,6 +97,12 @@ impl Reader {
     }
 
     pub(in crate::app) fn prepare_profile_name(&mut self, mode: Name) {
+        self.opening_metadata_phrase = match mode {
+            Name::OpeningMetadata(_, field) => self
+                .current_opening_metadata()
+                .and_then(|metadata| metadata.current_phrase(field)),
+            _ => None,
+        };
         let (limit, text) = match mode {
             Name::OpeningPath(index) => (
                 PATH_LIMIT,
@@ -90,6 +110,14 @@ impl Reader {
                     .get(index)
                     .and_then(Profile::opening_conditions)
                     .and_then(|rules| rules.path.as_deref()),
+            ),
+            Name::OpeningMetadata(index, field) => (
+                METADATA_LIMIT,
+                self.profiles
+                    .get(index)
+                    .and_then(Profile::opening_conditions)
+                    .and_then(|rules| rules.metadata.get(&field))
+                    .map(String::as_str),
             ),
             Name::Rename(index) => (MAX_NAME, self.profiles.get(index).map(Profile::name)),
             _ => (MAX_NAME, None),
@@ -120,6 +148,11 @@ impl Reader {
                         )
                         .detail(selected(rules.orientations.len())),
                         Item::new(
+                            "Book metadata contains",
+                            Action::Show(Screen::ReadingProfileOpening(index, Page::Metadata)),
+                        )
+                        .detail(selected(rules.metadata.len())),
+                        Item::new(
                             "File path contains",
                             Action::Show(Screen::ProfileName(Name::OpeningPath(index))),
                         )
@@ -140,6 +173,16 @@ impl Reader {
             Page::Orientation => ORIENTATIONS
                 .into_iter()
                 .map(|orientation| action(orientation.label(), Command::Orientation(orientation)))
+                .collect(),
+            Page::Metadata => MetadataField::ALL
+                .into_iter()
+                .map(|field| {
+                    Item::new(
+                        field.label(),
+                        Action::Show(Screen::ProfileName(Name::OpeningMetadata(index, field))),
+                    )
+                    .detail(rules.metadata.get(&field).map_or("Off", String::as_str))
+                })
                 .collect(),
             Page::Collections => {
                 let mut names: Vec<_> = self
@@ -249,6 +292,31 @@ impl Reader {
         profile.set_opening_conditions(rules);
         self.commit_profiles(candidate)?;
         self.show(Screen::ReadingProfileOpening(index, Page::Overview));
+        Ok(())
+    }
+
+    pub(super) fn save_opening_metadata(
+        &mut self,
+        index: usize,
+        field: MetadataField,
+        value: &str,
+    ) -> Result<()> {
+        if !value.is_empty() && !valid_metadata(value) {
+            return Err("Enter a nonempty phrase between commas".into());
+        }
+        let mut candidate = self.profiles.clone();
+        let profile = candidate
+            .get_mut(index)
+            .ok_or("That profile is unavailable")?;
+        let mut rules = profile.opening_conditions().cloned().unwrap_or_default();
+        if value.is_empty() {
+            rules.metadata.remove(&field);
+        } else {
+            rules.metadata.insert(field, value.to_owned());
+        }
+        profile.set_opening_conditions(rules);
+        self.commit_profiles(candidate)?;
+        self.show(Name::OpeningMetadata(index, field).back());
         Ok(())
     }
 }
