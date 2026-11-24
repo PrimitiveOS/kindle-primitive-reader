@@ -1130,6 +1130,39 @@ impl DictionaryFuzzySearch {
     }
 }
 
+/// A Page Browser grid is either adaptive or a saved 1–6 by 1–6 choice.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "[u8; 2]", into = "[u8; 2]")]
+pub(crate) struct PageBrowserGrid {
+    columns: u8,
+    rows: u8,
+}
+
+impl PageBrowserGrid {
+    pub(crate) fn new(columns: u8, rows: u8) -> Self {
+        Self {
+            columns: columns.clamp(1, 6),
+            rows: rows.clamp(1, 6),
+        }
+    }
+
+    pub(crate) fn dimensions(self) -> (u8, u8) {
+        (self.columns, self.rows)
+    }
+}
+
+impl From<[u8; 2]> for PageBrowserGrid {
+    fn from([columns, rows]: [u8; 2]) -> Self {
+        Self::new(columns, rows)
+    }
+}
+
+impl From<PageBrowserGrid> for [u8; 2] {
+    fn from(grid: PageBrowserGrid) -> Self {
+        [grid.columns, grid.rows]
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BookState {
     #[serde(default, skip_serializing_if = "hidden_flows::HiddenFlows::is_default")]
@@ -1175,6 +1208,8 @@ pub struct BookState {
     pub(crate) character_page_stride: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) top_status_header: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) page_browser_grid: Option<PageBrowserGrid>,
     #[serde(
         default,
         deserialize_with = "read_orientation",
@@ -1273,6 +1308,7 @@ impl BookState {
             publisher_page_margins: false,
             character_page_stride: None,
             top_status_header: None,
+            page_browser_grid: None,
             screen_orientation: None,
             preferences: BookPreferences::default(),
             fixed_preferences: FixedPreferences::default(),
@@ -1373,6 +1409,7 @@ pub struct BackupSummary {
 pub struct BackupImport {
     books: Vec<BookState>,
     collections: Vec<Collection>,
+    page_browser_grid: Option<PageBrowserGrid>,
     summary: BackupSummary,
 }
 
@@ -1388,6 +1425,8 @@ struct SavedLibrary {
     books: Vec<BookState>,
     #[serde(default)]
     collections: Vec<Collection>,
+    #[serde(default)]
+    page_browser_grid: Option<PageBrowserGrid>,
 }
 
 #[derive(Serialize)]
@@ -1395,6 +1434,8 @@ struct SavedLibraryRef<'a> {
     version: u32,
     books: &'a [BookState],
     collections: &'a [Collection],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    page_browser_grid: Option<PageBrowserGrid>,
 }
 
 pub struct Library {
@@ -1404,6 +1445,7 @@ pub struct Library {
     books: Vec<LibraryBook>,
     recent: Vec<BookState>,
     collections: Vec<Collection>,
+    page_browser_grid: Option<PageBrowserGrid>,
     truncated: bool,
 }
 
@@ -1428,13 +1470,14 @@ impl Library {
         if !fs::symlink_metadata(&original_root)?.is_dir() {
             return Err(denied());
         }
-        let (recent, collections) = load_library_state(state_path)?;
+        let saved = load_library_state(state_path)?;
         Ok(Self {
             root: original_root.canonicalize()?,
             original_root,
             state_path: state_path.to_owned(),
-            recent,
-            collections,
+            recent: saved.books,
+            collections: saved.collections,
+            page_browser_grid: saved.page_browser_grid,
             books: Vec::new(),
             truncated: false,
         })
@@ -2155,12 +2198,22 @@ impl Library {
     }
 
     pub fn bytes(&self) -> io::Result<Vec<u8>> {
-        encode_library(&self.recent, &self.collections, MAX_STATE_BYTES)
+        encode_library(
+            &self.recent,
+            &self.collections,
+            self.page_browser_grid,
+            MAX_STATE_BYTES,
+        )
     }
 
     /// Export Reader metadata as a versioned JSON document.
     pub fn backup_bytes(&self) -> io::Result<Vec<u8>> {
-        encode_library(&self.recent, &self.collections, MAX_BACKUP_BYTES)
+        encode_library(
+            &self.recent,
+            &self.collections,
+            self.page_browser_grid,
+            MAX_BACKUP_BYTES,
+        )
     }
 
     /// Validate and project the existing additive restore without mutating live state.
@@ -2174,7 +2227,12 @@ impl Library {
             &mut summary,
         );
         Ok((
-            encode_library(&merged, &collections, MAX_STATE_BYTES)?,
+            encode_library(
+                &merged,
+                &collections,
+                self.page_browser_grid.or(import.page_browser_grid),
+                MAX_STATE_BYTES,
+            )?,
             summary,
         ))
     }
@@ -2197,10 +2255,16 @@ impl Library {
             &merged,
             &mut summary,
         );
-        encode_library(&merged, &collections, MAX_STATE_BYTES)?;
+        encode_library(
+            &merged,
+            &collections,
+            self.page_browser_grid.or(backup.page_browser_grid),
+            MAX_STATE_BYTES,
+        )?;
         Ok(BackupImport {
             books: backup.books,
             collections: backup.collections,
+            page_browser_grid: backup.page_browser_grid,
             summary,
         })
     }
@@ -2214,9 +2278,11 @@ impl Library {
             &merged,
             &mut summary,
         );
-        encode_library(&merged, &collections, MAX_STATE_BYTES)?;
+        let grid = self.page_browser_grid.or(import.page_browser_grid);
+        encode_library(&merged, &collections, grid, MAX_STATE_BYTES)?;
         self.recent = merged;
         self.collections = collections;
+        self.page_browser_grid = grid;
         Ok(summary)
     }
 
@@ -2248,6 +2314,34 @@ impl Library {
                 self.recent.remove(0);
                 return Err(error);
             }
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn page_browser_grid(&self, id: u64) -> Option<PageBrowserGrid> {
+        self.state(id)
+            .and_then(|book| book.page_browser_grid)
+            .or(self.page_browser_grid)
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn save_page_browser_grid(
+        &mut self,
+        id: u64,
+        grid: PageBrowserGrid,
+    ) -> io::Result<()> {
+        let index = self
+            .recent
+            .iter()
+            .position(|state| state.id == id)
+            .ok_or_else(|| invalid_state("Open a book before changing its page browser"))?;
+        let previous_book = self.recent[index].page_browser_grid.replace(grid);
+        let previous_default = self.page_browser_grid.replace(grid);
+        if let Err(error) = self.persist() {
+            self.recent[index].page_browser_grid = previous_book;
+            self.page_browser_grid = previous_default;
+            return Err(error);
         }
         Ok(())
     }
@@ -2348,6 +2442,7 @@ fn merge_collections(
 fn encode_library(
     books: &[BookState],
     collections: &[Collection],
+    page_browser_grid: Option<PageBrowserGrid>,
     limit: u64,
 ) -> io::Result<Vec<u8>> {
     validate_state(books)?;
@@ -2356,6 +2451,7 @@ fn encode_library(
             version: BACKUP_VERSION,
             books,
             collections,
+            page_browser_grid,
         },
         limit,
     )
@@ -2487,6 +2583,9 @@ fn merge_states(current: &[BookState], backup: &[BookState]) -> (Vec<BookState>,
         }
         if target.top_status_header.is_none() {
             target.top_status_header = source.top_status_header;
+        }
+        if target.page_browser_grid.is_none() {
+            target.page_browser_grid = source.page_browser_grid;
         }
         if target.screen_orientation.is_none() {
             target.screen_orientation = source.screen_orientation;
@@ -2621,7 +2720,7 @@ fn valid_highlight(mark: &Highlight) -> bool {
             .is_none_or(|note| note.len() <= MAX_NOTE_BYTES)
 }
 
-fn load_library_state(path: &Path) -> io::Result<(Vec<BookState>, Vec<Collection>)> {
+fn load_library_state(path: &Path) -> io::Result<SavedLibrary> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.is_file() && metadata.len() <= MAX_STATE_BYTES => {}
         Ok(_) => {
@@ -2631,7 +2730,12 @@ fn load_library_state(path: &Path) -> io::Result<(Vec<BookState>, Vec<Collection
             ));
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return Ok((Vec::new(), Vec::new()));
+            return Ok(SavedLibrary {
+                version: BACKUP_VERSION,
+                books: Vec::new(),
+                collections: Vec::new(),
+                page_browser_grid: None,
+            });
         }
         Err(error) => return Err(error),
     }
@@ -2645,31 +2749,39 @@ fn load_library_state(path: &Path) -> io::Result<(Vec<BookState>, Vec<Collection
             "Reader state exceeds its size limit",
         ));
     }
-    let (mut recent, collections) =
-        if bytes.iter().find(|byte| !byte.is_ascii_whitespace()) == Some(&b'[') {
-            let books: Vec<BookState> = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
-            (books, Vec::new())
-        } else {
-            let state: SavedLibrary = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
-            if state.version != BACKUP_VERSION {
-                return Err(invalid_state("Reader state version is unsupported"));
-            }
-            (state.books, state.collections)
-        };
+    let mut saved = if bytes.iter().find(|byte| !byte.is_ascii_whitespace()) == Some(&b'[') {
+        SavedLibrary {
+            version: BACKUP_VERSION,
+            books: serde_json::from_slice(&bytes).map_err(io::Error::other)?,
+            collections: Vec::new(),
+            page_browser_grid: None,
+        }
+    } else {
+        let saved: SavedLibrary = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+        if saved.version != BACKUP_VERSION {
+            return Err(invalid_state("Reader state version is unsupported"));
+        }
+        saved
+    };
     let mut ids = HashSet::new();
-    recent.retain(|state| {
+    saved.books.retain(|state| {
         safe_path(&state.path)
             && DocumentFormat::for_path(&state.path).is_some()
             && ids.insert(state.id)
     });
-    for state in &mut recent {
+    for state in &mut saved.books {
         state.custom_contents.sanitize();
         state.hidden_flows.sanitize();
         state.pdf_highlights.retain(PdfHighlight::is_valid);
         state.pdf_highlights.truncate(MAX_PDF_HIGHLIGHTS);
     }
-    let collections = merge_collections(&[], &collections, &recent, &mut BackupSummary::default());
-    Ok((recent, collections))
+    saved.collections = merge_collections(
+        &[],
+        &saved.collections,
+        &saved.books,
+        &mut BackupSummary::default(),
+    );
+    Ok(saved)
 }
 
 fn fingerprint_update(hash: u64, bytes: &[u8]) -> u64 {

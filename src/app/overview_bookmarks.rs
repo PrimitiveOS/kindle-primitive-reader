@@ -197,8 +197,10 @@ impl Reader {
         page: usize,
     ) {
         if self.overview_bookmark_index(chapter, page).is_some() {
+            let size = (tile.h / 3).min(54);
+            let inset = (tile.h / 12).min(18);
             canvas.icon(
-                Rect::new(tile.right() - 73, tile.y + 18, 54, 54),
+                Rect::new(tile.right() - size - inset - 1, tile.y + inset, size, size),
                 bar_icons::BOOKMARK,
                 BLACK,
             );

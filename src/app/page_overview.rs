@@ -5,8 +5,18 @@ use primitive_ui::{CAPTION, Canvas, GrayImage, Input, Rect};
 use super::fixed_book_map::MapWindow;
 use super::navigation_layout::NavigationLayout;
 use super::{Action, LIST_X, LIST_Y, OVERVIEW_PAGES, Reader, Screen, fixed_page_label};
+use crate::library::PageBrowserGrid;
 use crate::session::{PageThumbnail, page_thumbnail};
 use crate::{Anchor, Probe, Result};
+
+mod grid_menu;
+
+fn capacity(grid: Option<PageBrowserGrid>) -> usize {
+    grid.map_or(OVERVIEW_PAGES, |grid| {
+        let (cols, rows) = grid.dimensions();
+        usize::from(cols) * usize::from(rows)
+    })
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum MapOrigin {
@@ -29,42 +39,98 @@ pub(super) struct PageOverview {
     pub(super) tiles: Vec<Option<PageThumbnail>>,
     pub(super) focus: OverviewFocus,
     pub(super) map_origin: Option<MapOrigin>,
+    pub(super) grid: Option<PageBrowserGrid>,
+    pub(super) grid_menu: bool,
 }
 
 #[derive(Clone, Copy)]
 pub(super) struct OverviewLayout {
     navigation: NavigationLayout,
+    grid: Option<PageBrowserGrid>,
 }
 
 impl OverviewLayout {
     pub(super) fn new(navigation: NavigationLayout) -> Self {
-        Self { navigation }
+        Self::with_grid(navigation, None)
     }
 
-    fn columns(self) -> usize {
-        if self.navigation.width > self.navigation.height {
-            4
+    pub(super) fn with_grid(navigation: NavigationLayout, grid: Option<PageBrowserGrid>) -> Self {
+        Self { navigation, grid }
+    }
+
+    pub(super) fn dimensions(self) -> (usize, usize) {
+        if let Some(grid) = self.grid {
+            let (columns, rows) = grid.dimensions();
+            (usize::from(columns), usize::from(rows))
+        } else if self.navigation.width > self.navigation.height {
+            (4, 1)
         } else {
-            2
+            (2, 2)
         }
     }
 
+    fn columns(self) -> usize {
+        self.dimensions().0
+    }
+
     pub(super) fn tile(self, index: usize) -> Rect {
-        const GAP: i32 = 26;
-        let columns = self.columns() as i32;
-        let width = (self.navigation.width - 2 * LIST_X - (columns - 1) * GAP) / columns;
-        let top = LIST_Y + 90;
-        let height = if columns == 2 {
-            420
+        let (columns, rows) = self.dimensions();
+        let (columns, rows) = (columns as i32, rows as i32);
+        let (top, height, gap_x, gap_y) = if self.grid.is_some() {
+            let top = 214;
+            let gap_x = if columns >= 4 { 12 } else { 26 };
+            let gap_y = if rows >= 4 { 6 } else { 24 };
+            let height = (self.track().y - 36 - top - (rows - 1) * gap_y) / rows;
+            (top, height, gap_x, gap_y)
         } else {
-            self.track().y - top - 88
+            let top = LIST_Y + 90;
+            let height = if columns == 2 {
+                420
+            } else {
+                self.track().y - top - 88
+            };
+            (top, height, 26, 32)
         };
+        let width = (self.navigation.width - 2 * LIST_X - (columns - 1) * gap_x) / columns;
         Rect::new(
-            LIST_X + index as i32 % columns * (width + GAP),
-            top + index as i32 / columns * (height + 32),
+            LIST_X + index as i32 % columns * (width + gap_x),
+            top + index as i32 / columns * (height + gap_y),
             width,
             height,
         )
+    }
+
+    fn label(self, tile: Rect) -> Rect {
+        if self.grid.is_none() {
+            return Rect::new(tile.x + 18, tile.bottom() - 84, tile.w - 36, 68);
+        }
+        let label_height = (tile.h / 5).clamp(28, 60);
+        Rect::new(
+            tile.x + 8,
+            tile.bottom() - label_height - 7,
+            tile.w - 16,
+            label_height,
+        )
+    }
+
+    fn draw_label(self, canvas: &mut Canvas, tile: Rect, label: &str, selected: bool) {
+        let rect = self.label(tile);
+        if self.grid.is_none() {
+            canvas.button(rect, label, selected, false);
+        } else {
+            canvas.button(rect, "", selected, false);
+            let ink = if canvas.is_control_pressed(rect) != selected {
+                255
+            } else {
+                0
+            };
+            let font = (rect.h - 9).clamp(18, 32);
+            canvas.text(
+                Rect::new(rect.x + 4, rect.y + 2, rect.w - 8, rect.h - 3),
+                label,
+                primitive_ui::TextStyle::new(font).bold().center().ink(ink),
+            );
+        }
     }
 
     pub(super) fn track(self) -> Rect {
@@ -76,9 +142,23 @@ impl OverviewLayout {
         )
     }
 
+    fn track_caption(self) -> Rect {
+        let track = self.track();
+        let offset = if self.grid.is_some() { 30 } else { 55 };
+        Rect::new(track.x, track.y - offset, track.w, 45)
+    }
+
     fn thumbnail(self, tile: Rect, image: GrayImage) -> (Rect, GrayImage) {
-        let body_height = tile.h - 112;
-        let max_width = tile.w - 36;
+        let (top, body_height, max_width) = if self.grid.is_some() {
+            let top = 9;
+            (
+                top,
+                (self.label(tile).y - tile.y - top - 7).max(1),
+                (tile.w - 16).max(1),
+            )
+        } else {
+            (21, tile.h - 112, tile.w - 36)
+        };
         let image = if image.width > max_width as u32 || image.height > body_height as u32 {
             let source = image::GrayImage::from_raw(image.width, image.height, image.pixels)
                 .expect("thumbnail dimensions belong to its raster");
@@ -98,7 +178,7 @@ impl OverviewLayout {
         };
         let width = image.width as i32;
         let height = image.height as i32;
-        let extra_y = if self.columns() == 4 {
+        let extra_y = if self.grid.is_some() || self.columns() == 4 {
             (body_height - height) / 2
         } else {
             0
@@ -106,7 +186,7 @@ impl OverviewLayout {
         (
             Rect::new(
                 tile.x + (tile.w - width) / 2,
-                tile.y + 21 + extra_y,
+                tile.y + top + extra_y,
                 width,
                 height,
             ),
@@ -176,20 +256,25 @@ impl Reader {
         anchor: Option<Anchor>,
         map_origin: Option<MapOrigin>,
     ) -> Result<()> {
-        self.update_overview(chapter, Some(page / OVERVIEW_PAGES * OVERVIEW_PAGES))?;
-        if let Some(overview) = &mut self.overview {
-            let anchor = if anchor.is_none() && overview.focus.page == page {
-                overview.focus.anchor.take()
-            } else {
-                anchor
-            };
-            overview.focus = OverviewFocus {
-                page,
-                slot: page - overview.first,
-                anchor,
-            };
-            overview.map_origin = map_origin;
-        }
+        let grid = self
+            .open_book_id()
+            .and_then(|id| self.library.page_browser_grid(id));
+        let batch = capacity(grid);
+        let mut overview =
+            self.prepare_overview(chapter, Some(page / batch * batch), None, grid)?;
+        let anchor = if anchor.is_none() && overview.focus.page == page {
+            overview.focus.anchor.take()
+        } else {
+            anchor
+        };
+        overview.focus = OverviewFocus {
+            page,
+            slot: page - overview.first,
+            anchor,
+        };
+        overview.map_origin = map_origin;
+        overview.grid_menu = false;
+        self.overview = Some(overview);
         self.show(Screen::PageOverview);
         Ok(())
     }
@@ -199,11 +284,36 @@ impl Reader {
         chapter: Option<usize>,
         first: Option<usize>,
     ) -> Result<()> {
-        let map_origin = self.overview.as_ref().and_then(|view| view.map_origin);
+        let grid = self
+            .overview
+            .as_ref()
+            .and_then(|view| view.grid)
+            .or_else(|| {
+                self.open_book_id()
+                    .and_then(|id| self.library.page_browser_grid(id))
+            });
+        self.overview = Some(self.prepare_overview(chapter, first, None, grid)?);
+        self.notice = None;
+        Ok(())
+    }
+
+    fn prepare_overview(
+        &mut self,
+        chapter: Option<usize>,
+        first: Option<usize>,
+        saved_focus: Option<&OverviewFocus>,
+        grid: Option<PageBrowserGrid>,
+    ) -> Result<PageOverview> {
+        let (map_origin, grid_menu) = self
+            .overview
+            .as_ref()
+            .map_or((None, false), |view| (view.map_origin, view.grid_menu));
+        let batch = capacity(grid);
         let mut overview = if let Some(fixed) = &self.fixed {
             let count = fixed.reading.count();
-            let first = overview_start(first, count);
-            let tiles = (first..(first + OVERVIEW_PAGES).min(count))
+            let selected = saved_focus.map(|focus| focus.page.min(count.saturating_sub(1)));
+            let (first, focus) = overview_window(count, batch, first, saved_focus, selected);
+            let tiles = (first..(first + batch).min(count))
                 .map(|page| fixed.reading.thumbnail(page).ok().map(PageThumbnail::plain))
                 .collect();
             PageOverview {
@@ -212,19 +322,18 @@ impl Reader {
                 count,
                 tiles,
                 preview: None,
-                focus: OverviewFocus {
-                    page: first,
-                    slot: 0,
-                    anchor: None,
-                },
+                focus,
                 map_origin: None,
+                grid,
+                grid_menu: false,
             }
         } else {
             let reading = &mut self.active.as_mut().ok_or("Open a book first")?.reading;
             let chapter = chapter.ok_or("Choose a chapter first")?;
             let mut preview = if chapter == reading.chapter {
                 None
-            } else if let Some(previous) = self.overview.as_mut()
+            } else if saved_focus.is_none()
+                && let Some(previous) = self.overview.as_mut()
                 && previous.chapter == Some(chapter)
             {
                 previous.preview.take()
@@ -232,14 +341,13 @@ impl Reader {
                 Some(Box::new(reading.config.chapter(chapter)?))
             };
             let probe = preview.as_deref_mut().unwrap_or(&mut reading.probe);
-            let mut overview = reflow_overview(probe, chapter, first, None)?;
+            let mut overview = reflow_overview(probe, chapter, first, saved_focus, grid)?;
             overview.preview = preview;
             overview
         };
         overview.map_origin = map_origin;
-        self.overview = Some(overview);
-        self.notice = None;
-        Ok(())
+        overview.grid_menu = grid_menu;
+        Ok(overview)
     }
 
     pub(super) fn resize_overview(
@@ -247,17 +355,8 @@ impl Reader {
         chapter: usize,
         focus: &OverviewFocus,
     ) -> Result<PageOverview> {
-        let reading = &mut self.active.as_mut().ok_or("Open a book first")?.reading;
-        let mut preview = if chapter == reading.chapter {
-            None
-        } else {
-            Some(Box::new(reading.config.chapter(chapter)?))
-        };
-        let probe = preview.as_deref_mut().unwrap_or(&mut reading.probe);
-        let mut overview = reflow_overview(probe, chapter, None, Some(focus))?;
-        overview.preview = preview;
-        overview.map_origin = self.overview.as_ref().and_then(|view| view.map_origin);
-        Ok(overview)
+        let grid = self.overview.as_ref().and_then(|view| view.grid);
+        self.prepare_overview(Some(chapter), None, Some(focus), grid)
     }
 
     pub(super) fn draw_overview(&self, canvas: &mut Canvas) {
@@ -265,8 +364,9 @@ impl Reader {
             return;
         };
         let navigation = self.navigation_layout();
-        let layout = OverviewLayout::new(navigation);
+        let layout = OverviewLayout::with_grid(navigation, overview.grid);
         let count = overview.count;
+        self.draw_overview_grid_button(canvas, navigation);
         let (section, current, chapters) = if let Some(active) = &self.active {
             let reading = &active.reading;
             let probe = overview.preview.as_deref().unwrap_or(&reading.probe);
@@ -310,7 +410,8 @@ impl Reader {
                     })
                 })
                 .is_some_and(|flow| flow != 0);
-            let map_focus = overview.map_origin.is_some() && overview.focus.page == page;
+            let map_focus = (overview.map_origin.is_some() || overview.grid.is_some())
+                && overview.focus.page == page;
             if hidden || map_focus {
                 canvas.panel(
                     rect,
@@ -332,26 +433,27 @@ impl Reader {
                 canvas.fill(frame.inset(-1), 170);
                 canvas.picture(frame, thumbnail);
             } else {
+                let y = rect.y + (rect.h / 3).min(120);
                 canvas.text(
-                    Rect::new(rect.x + 10, rect.y + 120, rect.w - 20, 64),
+                    Rect::new(
+                        rect.x + 10,
+                        y,
+                        rect.w - 20,
+                        (layout.label(rect).y - y).clamp(1, 64),
+                    ),
                     "Preview unavailable",
                     CAPTION.center(),
                 );
             }
             self.draw_overview_bookmark(canvas, rect, overview.chapter, page);
-            canvas.button(
-                Rect::new(rect.x + 18, rect.y + rect.h - 84, rect.w - 36, 68),
-                &label,
-                Some(page) == current,
-                false,
-            );
+            layout.draw_label(canvas, rect, &label, Some(page) == current);
         }
         if overview.first != 0 {
             canvas.button(navigation.previous(), "Previous", false, false);
         } else if overview.chapter.is_some_and(|chapter| chapter > 0) {
             canvas.button(navigation.previous(), "Prev chapter", false, false);
         }
-        if overview.first + OVERVIEW_PAGES < count {
+        if overview.first + capacity(overview.grid) < count {
             canvas.button(navigation.next(), "Next", false, false);
         } else if overview
             .chapter
@@ -359,7 +461,10 @@ impl Reader {
         {
             canvas.button(navigation.next(), "Next chapter", false, false);
         }
-        self.draw_overview_track(canvas, overview, chapters, layout.track());
+        self.draw_overview_track(canvas, overview, chapters, layout);
+        if overview.grid_menu {
+            self.draw_overview_grid_menu(canvas, layout);
+        }
     }
 
     fn draw_overview_track(
@@ -367,8 +472,9 @@ impl Reader {
         canvas: &mut Canvas,
         overview: &PageOverview,
         chapters: usize,
-        track: Rect,
+        layout: OverviewLayout,
     ) {
+        let track = layout.track();
         let page = if overview.map_origin.is_some() {
             overview.focus.page
         } else {
@@ -380,7 +486,7 @@ impl Reader {
                 (chapter, chapters, "Skim chapters")
             });
         let detail = format!("{title} · {} of {count}", selected + 1);
-        canvas.text(Rect::new(80, track.y - 55, track.w, 45), &detail, CAPTION);
+        canvas.text(layout.track_caption(), &detail, CAPTION);
         let center = track.y + track.h / 2;
         canvas.fill(Rect::new(track.x, center - 3, track.w, 6), 151);
         let portion = selected as f64 / count.saturating_sub(1).max(1) as f64;
@@ -389,6 +495,9 @@ impl Reader {
     }
 
     pub(super) fn overview_scrub_swipe(&mut self, input: Input, start_x: f32) -> Option<Change> {
+        if self.overview.as_ref().is_some_and(|view| view.grid_menu) {
+            return Some(Change::None);
+        }
         let layout = OverviewLayout::new(self.navigation_layout());
         let Input::Swipe { dx, dy, start_y } = input else {
             return None;
@@ -425,7 +534,12 @@ impl Reader {
             return Change::None;
         };
         let navigation = self.navigation_layout();
-        let layout = OverviewLayout::new(navigation);
+        let layout = OverviewLayout::with_grid(navigation, overview.grid);
+        if let Some(change) = self.overview_grid_input(input, layout) {
+            return change;
+        }
+        let overview = self.overview.as_ref().expect("The overview is still open");
+        let batch = capacity(overview.grid);
         let (direction, step) = match input {
             Input::LongTap(x, y) => {
                 let Some(index) =
@@ -439,16 +553,16 @@ impl Reader {
                     Err(error) => self.report(error),
                 };
             }
-            Input::PageForward => (1, OVERVIEW_PAGES),
-            Input::PageBack => (-1, OVERVIEW_PAGES),
+            Input::PageForward => (1, batch),
+            Input::PageBack => (-1, batch),
             Input::Swipe { dx, dy, .. } if dy.abs() > dx.abs() => {
                 (if dy < 0.0 { 1 } else { -1 }, layout.columns())
             }
             Input::Swipe { dx, dy, .. } if dx.abs() > dy.abs() => {
-                (if dx < 0.0 { 1 } else { -1 }, OVERVIEW_PAGES)
+                (if dx < 0.0 { 1 } else { -1 }, batch)
             }
-            Input::Tap(x, y) if navigation.previous().contains(x, y) => (-1, OVERVIEW_PAGES),
-            Input::Tap(x, y) if navigation.next().contains(x, y) => (1, OVERVIEW_PAGES),
+            Input::Tap(x, y) if navigation.previous().contains(x, y) => (-1, batch),
+            Input::Tap(x, y) if navigation.next().contains(x, y) => (1, batch),
             Input::Tap(x, y) if layout.track().contains(x, y) => return self.scrub_overview(x),
             Input::Tap(x, y) if navigation.back().contains(x, y) => {
                 if let Some(map) = overview.map_origin {
@@ -488,7 +602,7 @@ impl Reader {
         let first = if direction < 0 {
             overview.first.saturating_sub(step)
         } else {
-            (overview.first + step).min(overview_start(None, overview.count))
+            (overview.first + step).min(overview_start(None, overview.count, batch))
         };
         let (chapter, first) = if first != overview.first {
             (chapter, Some(first))
@@ -508,9 +622,43 @@ impl Reader {
     }
 }
 
-fn overview_start(first: Option<usize>, count: usize) -> usize {
-    let last = count.saturating_sub(1) / OVERVIEW_PAGES * OVERVIEW_PAGES;
+fn overview_start(first: Option<usize>, count: usize, batch: usize) -> usize {
+    let last = count.saturating_sub(1) / batch * batch;
     first.map_or(last, |first| first.min(last))
+}
+
+fn overview_window(
+    count: usize,
+    batch: usize,
+    first: Option<usize>,
+    saved: Option<&OverviewFocus>,
+    selected: Option<usize>,
+) -> (usize, OverviewFocus) {
+    if let Some((saved, page)) = saved.zip(selected) {
+        let first = overview_start(
+            Some(page.saturating_sub(saved.slot.min(batch - 1))),
+            count,
+            batch,
+        );
+        (
+            first,
+            OverviewFocus {
+                page,
+                slot: page - first,
+                anchor: saved.anchor.clone(),
+            },
+        )
+    } else {
+        let first = overview_start(first, count, batch);
+        (
+            first,
+            OverviewFocus {
+                page: first,
+                slot: 0,
+                anchor: None,
+            },
+        )
+    }
 }
 
 fn reflow_overview(
@@ -518,35 +666,26 @@ fn reflow_overview(
     chapter: usize,
     first: Option<usize>,
     saved_focus: Option<&OverviewFocus>,
+    grid: Option<PageBrowserGrid>,
 ) -> Result<PageOverview> {
     let count = probe.page_count();
-    let (first, focus) = if let Some(saved) = saved_focus {
-        let page = if let Some(anchor) = &saved.anchor {
+    let batch = capacity(grid);
+    let selected = if let Some(saved) = saved_focus {
+        Some(if let Some(anchor) = &saved.anchor {
             probe
                 .page_for(anchor)
                 .ok_or("The overview could not keep its source page")?
         } else {
             saved.page.min(count.saturating_sub(1))
-        };
-        (
-            overview_start(Some(page.saturating_sub(saved.slot)), count),
-            OverviewFocus {
-                page,
-                ..saved.clone()
-            },
-        )
+        })
     } else {
-        let first = overview_start(first, count);
-        (
-            first,
-            OverviewFocus {
-                page: first,
-                slot: 0,
-                anchor: probe.page_anchor(first),
-            },
-        )
+        None
     };
-    let tiles = (first..(first + OVERVIEW_PAGES).min(count))
+    let (first, mut focus) = overview_window(count, batch, first, saved_focus, selected);
+    if focus.anchor.is_none() {
+        focus.anchor = probe.page_anchor(focus.page);
+    }
+    let tiles = (first..(first + batch).min(count))
         .map(|page| page_thumbnail(probe, page).ok())
         .collect();
     Ok(PageOverview {
@@ -557,5 +696,7 @@ fn reflow_overview(
         tiles,
         focus,
         map_origin: None,
+        grid,
+        grid_menu: false,
     })
 }

@@ -6,13 +6,24 @@ use super::fixed_book_map::MapWindow;
 use super::page_overview::{MapOrigin, OverviewFocus, PageOverview};
 use super::{Reader, Screen};
 use crate::Result;
+use crate::library::PageBrowserGrid;
 
 #[derive(PartialEq, Eq)]
 enum Origin {
     Other,
-    Overview(Option<usize>, usize, OverviewFocus, Option<MapOrigin>),
+    Overview(
+        Option<usize>,
+        usize,
+        OverviewFocus,
+        Option<MapOrigin>,
+        Option<PageBrowserGrid>,
+        bool,
+    ),
     FixedMap(MapWindow),
-    ChapterMap { list_page: usize, chapter: usize },
+    ChapterMap {
+        list_page: usize,
+        chapter: usize,
+    },
 }
 
 enum Prepared {
@@ -40,7 +51,7 @@ impl VisualNavigation {
     pub(super) fn draw(&mut self, reader: &mut Reader, canvas: &mut Canvas) -> Result<bool> {
         self.prepared = None;
         let prepared = match &self.origin {
-            Origin::Overview(Some(chapter), _, focus, _) => {
+            Origin::Overview(Some(chapter), _, focus, ..) => {
                 let view = reader.resize_overview(*chapter, focus)?;
                 let previous = reader.overview.replace(view);
                 reader.draw(canvas);
@@ -84,6 +95,8 @@ impl Origin {
                 view.first,
                 view.focus.clone(),
                 view.map_origin,
+                view.grid,
+                view.grid_menu,
             ),
             Screen::BookMap if reader.fixed.is_some() => Self::FixedMap(reader.map_window),
             Screen::BookMap if let Some(book) = &reader.active => {
