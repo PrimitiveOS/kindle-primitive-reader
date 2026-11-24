@@ -15,9 +15,9 @@ the list without changing the book position. Only choosing a destination adds
 to navigation history.
 
 The generated and custom outline entry points stay available. Searching uses
-whichever publisher or custom outline is active. Chapter lengths, row and font
-settings, page labels in the Contents list, dot leaders, and per-depth progress
-tick settings remain separate parity work.
+whichever publisher or custom outline is active. [Contents list settings](contents-list-settings.md)
+set the number of visible rows and the size of the entry font. Chapter lengths,
+page labels, dot leaders, and per-depth progress ticks remain open.
 
 ## Evidence
 

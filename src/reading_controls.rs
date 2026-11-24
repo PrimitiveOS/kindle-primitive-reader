@@ -72,6 +72,15 @@ pub(crate) struct ReadingControls {
     pub bookmark_reverse: bool,
     /// Text shown for each saved highlight in the in-book annotations list.
     pub annotation_list_text: AnnotationListText,
+    /// Reader-wide appearance for the Contents list.
+    #[serde(skip_serializing_if = "ContentsDensity::is_default")]
+    pub contents_density: ContentsDensity,
+    /// Show the known length of each Contents section beside its heading.
+    #[serde(skip_serializing_if = "is_false")]
+    pub contents_chapter_lengths: bool,
+    /// `None` follows KOReader's default of using dot leaders in Contents.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contents_dot_leaders: Option<bool>,
     /// Bitset of reading metrics shown when `status_bar` is `Custom`.
     #[serde(default, skip_serializing_if = "is_zero_u16")]
     pub footer_items: u16,
@@ -142,6 +151,49 @@ pub(crate) struct ReadingControls {
     pub finish_at_end: bool,
     #[serde(default = "legacy_metadata_save")]
     pub metadata_save: MetadataSave,
+}
+
+/// KOReader keeps the list density separate from the document's layout.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default)]
+pub(crate) struct ContentsDensity {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rows_per_page: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_size: Option<u8>,
+}
+
+impl ContentsDensity {
+    pub(crate) const MIN_ROWS: u8 = 6;
+    pub(crate) const MAX_ROWS: u8 = 24;
+    pub(crate) const DEFAULT_ROWS: u8 = 14;
+    pub(crate) const MIN_FONT: u8 = 10;
+    pub(crate) const MAX_FONT: u8 = 72;
+
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    pub(crate) fn rows(self) -> u8 {
+        self.rows_per_page
+            .filter(|rows| (Self::MIN_ROWS..=Self::MAX_ROWS).contains(rows))
+            .unwrap_or(Self::DEFAULT_ROWS)
+    }
+
+    pub(crate) fn automatic_font(self) -> u8 {
+        // KOReader Menu.getItemFontSize, ranging from 24 at six rows to 14 at 24.
+        ((24 * 18 - u16::from(self.rows() - Self::MIN_ROWS) * 10) / 18) as u8
+    }
+
+    pub(crate) fn explicit_font(self) -> Option<u8> {
+        self.font_size
+            .filter(|size| (Self::MIN_FONT..=Self::MAX_FONT).contains(size))
+    }
+
+    pub(crate) fn font(self) -> u8 {
+        self.explicit_font()
+            .unwrap_or_else(|| self.automatic_font())
+    }
 }
 
 /// KOReader's optional top status line for reflowable documents.

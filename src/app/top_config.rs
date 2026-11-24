@@ -61,6 +61,7 @@ impl Reader {
         };
         items.extend([
             Item::new("Bookmarks", Action::Show(bookmarks)),
+            Item::new("Contents settings", Action::Show(Screen::ContentsSettings)),
             Item::new(
                 if self.page_is_bookmarked() {
                     "Remove bookmark"

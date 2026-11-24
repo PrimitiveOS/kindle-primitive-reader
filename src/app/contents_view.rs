@@ -1,18 +1,24 @@
 //! The Contents screen projects provider headings without changing reading targets.
 use primitive_ui::{BLACK, HAIRLINE, Icon, PAPER, SECONDARY, TextStyle};
 
+use super::contents_density::list_text_pixels;
 use super::contents_position::ContentsPositions;
 use super::contents_tree::{Branch, ContentsTree, SearchOutcome, VisibleRow};
 use super::{
     Action, CAPTION, Canvas, Change, CustomAction, DocumentFormat, Editor, HEIGHT, Input, Item,
-    LIST_X, LIST_Y, Layout, NEXT, PREV, Press, ROW_HEIGHT, ROWS_PER_PAGE, Reader, Rect, Screen,
-    WIDTH, keyboard_key, list_item_at, list_rect,
+    LIST_X, LIST_Y, Layout, NEXT, PREV, Press, Reader, Rect, Screen, WIDTH, keyboard_key,
 };
 use crate::epub::Destination;
+
+mod row_metadata;
+#[cfg(test)]
+mod row_metadata_tests;
 
 const SEARCH: Rect = Rect::new(338, HEIGHT as i32 - 104, 276, 72);
 const CLEAR: Rect = Rect::new(653, HEIGHT as i32 - 104, 276, 72);
 const QUERY_LIMIT: usize = 128;
+// Keep the existing height available to the Contents card above its pager.
+const LIST_HEIGHT: i32 = HEIGHT as i32 - LIST_Y - 250;
 const EXPAND: Icon = Icon {
     stroke: &["M9 5 L16 12 L9 19"],
     fill: &[],
@@ -33,7 +39,7 @@ pub(super) enum Target {
 #[derive(Eq, PartialEq)]
 pub(super) struct ContentsEntry {
     title: String,
-    depth: usize,
+    pub(super) depth: usize,
     pub(super) target: Target,
 }
 
@@ -58,11 +64,35 @@ impl Screen {
 }
 
 impl Reader {
+    pub(super) fn contents_rows(&self) -> usize {
+        usize::from(self.controls.contents_density.rows())
+    }
+
+    pub(super) fn contents_row_rect(&self, offset: usize) -> Rect {
+        let height = LIST_HEIGHT / i32::from(self.controls.contents_density.rows());
+        Rect::new(
+            LIST_X,
+            LIST_Y + offset as i32 * height,
+            WIDTH as i32 - 2 * LIST_X,
+            height,
+        )
+    }
+
+    fn contents_list_rect(&self, shown: usize) -> Rect {
+        let mut rect = self.contents_row_rect(0);
+        rect.h *= shown as i32;
+        rect
+    }
+
     #[cfg(test)]
     pub(super) fn contents_branch_button(&self, offset: usize) -> Option<(Rect, Branch)> {
-        let (_, lines) = self.contents_window(self.list_page * ROWS_PER_PAGE, ROWS_PER_PAGE);
+        let rows = self.contents_rows();
+        let (_, lines) = self.contents_window(self.list_page * rows, rows);
         let heading = lines.get(offset)?.heading?;
-        Some((branch_rect(row_rect(offset), heading)?, heading.branch))
+        Some((
+            branch_rect(self.contents_row_rect(offset), heading)?,
+            heading.branch,
+        ))
     }
 
     pub(super) fn prepare_contents(&mut self, reveal: bool) {
@@ -251,17 +281,26 @@ impl Reader {
     }
 
     pub(super) fn draw_contents(&self, canvas: &mut Canvas) {
-        let first = self.list_page * ROWS_PER_PAGE;
-        let (count, lines) = self.contents_window(first, ROWS_PER_PAGE);
+        let rows = self.contents_rows();
+        let first = self.list_page * rows;
+        let (count, lines) = self.contents_window(first, rows);
         if !lines.is_empty() {
-            canvas.card(list_rect(lines.len()));
+            canvas.card(self.contents_list_rect(lines.len()));
         }
+        let row_height = self.contents_row_rect(0).h;
+        let font = self.controls.contents_density.font();
+        let title_size = list_text_pixels(font, row_height);
+        let title_height = (title_size * 13 + 5) / 10;
+        let detail_size = list_text_pixels(font.saturating_sub(4), row_height)
+            .min((row_height - title_height - 4) * 10 / 13)
+            .min(28);
+        let detail_height = (detail_size * 13 + 5) / 10;
         let branch_column = self
             .contents_view
             .as_ref()
             .is_some_and(|view| view.hierarchical);
         for (offset, line) in lines.iter().enumerate() {
-            let row = row_rect(offset);
+            let row = self.contents_row_rect(offset);
             let branch = line.heading.and_then(|heading| branch_rect(row, heading));
             let body = heading_body(row, branch);
             let link = !matches!(line.item.action, Action::Heading);
@@ -284,23 +323,35 @@ impl Reader {
                 (true, None) => Some("Current section".into()),
                 (false, detail) => detail.clone(),
             };
-            let title_y = row.y
-                + if detail.is_some() {
-                    17
-                } else {
-                    (row.h - 50) / 2
-                };
+            let detail = detail.filter(|_| detail_size >= 20);
+            let text_height = title_height + i32::from(detail.is_some()) * detail_height;
+            let title_y = row.y + (row.h - text_height) / 2;
             let width = row.right() - title_x - if link { 86 } else { 32 };
-            canvas.text(
-                Rect::new(title_x, title_y, width, 50),
+            let numbers = line.heading.and_then(|heading| {
+                self.contents_view
+                    .as_ref()?
+                    .positions
+                    .as_ref()?
+                    .numbers(heading.source_index)
+            });
+            self.draw_contents_title(
+                canvas,
+                Rect::new(title_x, title_y, width, title_height),
                 &line.item.title,
-                TextStyle::new(38).bold().ink(ink),
+                numbers,
+                row_metadata::RowTypography {
+                    title_size,
+                    title_bold: current || line.heading.is_none(),
+                    info_size: list_text_pixels(font.saturating_sub(4), row_height),
+                    ink,
+                    info_ink: detail_ink,
+                },
             );
             if let Some(detail) = detail {
                 canvas.text(
-                    Rect::new(title_x, title_y + 50, width, 40),
+                    Rect::new(title_x, title_y + title_height, width, detail_height),
                     &detail,
-                    CAPTION.ink(detail_ink),
+                    TextStyle::new(detail_size).ink(detail_ink),
                 );
             }
             if let (Some(branch), Some(heading)) = (branch, line.heading) {
@@ -309,7 +360,13 @@ impl Reader {
                 } else {
                     EXPAND
                 };
-                let face = branch.inset(12);
+                let size = 76.min(branch.h - 10);
+                let face = Rect::new(
+                    branch.x + (branch.w - size) / 2,
+                    branch.y + (branch.h - size) / 2,
+                    size,
+                    size,
+                );
                 let pressed = canvas.control_pressed(branch, false);
                 canvas.button(face, "", false, pressed);
                 let ink = if pressed || canvas.is_control_pressed(face) {
@@ -317,7 +374,7 @@ impl Reader {
                 } else {
                     BLACK
                 };
-                canvas.icon(face.inset(18), icon, ink);
+                canvas.icon(face.inset(size / 4), icon, ink);
             }
             if link {
                 primitive_ui::chevron(
@@ -337,7 +394,7 @@ impl Reader {
         if self.list_page > 0 {
             footer_button(canvas, PREV, "Previous");
         }
-        if (self.list_page + 1) * ROWS_PER_PAGE < count {
+        if (self.list_page + 1) * rows < count {
             footer_button(canvas, NEXT, "Next");
         }
         let query = self
@@ -354,7 +411,7 @@ impl Reader {
         if query.is_some() {
             footer_button(canvas, CLEAR, "Clear");
         }
-        let pages = count.div_ceil(ROWS_PER_PAGE);
+        let pages = count.div_ceil(rows);
         if pages > 1 {
             canvas.text(
                 Rect::new(LIST_X, HEIGHT as i32 - 230, WIDTH as i32 - 2 * LIST_X, 46),
@@ -375,7 +432,23 @@ impl Reader {
         }
     }
 
-    pub(super) fn contents_tap(&mut self, x: f32, y: f32) -> Option<Change> {
+    pub(super) fn contents_input(&mut self, input: Input) -> Change {
+        match input {
+            Input::Tap(x, y) => self.contents_tap(x, y),
+            Input::PageForward => self.turn_contents_page(1),
+            Input::PageBack => self.turn_contents_page(-1),
+            Input::Swipe { dy, dx, .. } if dy.abs() > dx.abs() => {
+                self.turn_contents_page(if dy < 0.0 { 1 } else { -1 })
+            }
+            _ => Change::None,
+        }
+    }
+
+    fn contents_tap(&mut self, x: f32, y: f32) -> Change {
+        if primitive_ui::back_button(WIDTH as i32).contains(x, y) {
+            self.show(self.tools_screen());
+            return Change::Partial;
+        }
         if footer_hit(SEARCH).contains(x, y)
             && let Some(view) = &mut self.contents_view
             && !view.entries.is_empty()
@@ -387,7 +460,7 @@ impl Reader {
                 self.editor.caret = self.editor.text.len();
             }
             self.show(Screen::ContentsSearch);
-            return Some(Change::Partial);
+            return Change::Partial;
         }
         if footer_hit(CLEAR).contains(x, y)
             && self
@@ -396,31 +469,62 @@ impl Reader {
                 .is_some_and(|view| view.tree.clear_search())
         {
             self.show(self.contents_screen());
-            return Some(Change::Partial);
+            return Change::Partial;
         }
-        if !list_rect(ROWS_PER_PAGE).contains(x, y) {
-            return None;
+        if footer_hit(PREV).contains(x, y) {
+            return self.turn_contents_page(-1);
         }
-        let (count, lines) = self.contents_window(self.list_page * ROWS_PER_PAGE, ROWS_PER_PAGE);
-        let offset = list_item_at(self.list_page, count, x, y)? % ROWS_PER_PAGE;
-        let heading = lines.get(offset)?.heading?;
-        let row = row_rect(offset);
-        let branch = branch_rect(row, heading)?;
-        if !branch.contains(x, y) {
-            return (!heading_body(row, Some(branch)).contains(x, y)).then_some(Change::None);
+        if footer_hit(NEXT).contains(x, y) {
+            return self.turn_contents_page(1);
         }
-        if self
-            .contents_view
-            .as_mut()?
-            .tree
-            .toggle(heading.source_index)
+        let rows = self.contents_rows();
+        if !self.contents_list_rect(rows).contains(x, y) {
+            return Change::None;
+        }
+        let offset = ((y as i32 - LIST_Y) / self.contents_row_rect(0).h) as usize;
+        let (_, mut lines) = self.contents_window(self.list_page * rows + offset, 1);
+        let Some(line) = lines.pop() else {
+            return Change::None;
+        };
+        let row = self.contents_row_rect(offset);
+        if let Some(heading) = line.heading
+            && let Some(branch) = branch_rect(row, heading)
         {
-            self.update_contents_focus();
-            self.clamp_contents_page();
-            self.notice = None;
-            return Some(Change::Partial);
+            if branch.contains(x, y) {
+                if self
+                    .contents_view
+                    .as_mut()
+                    .is_some_and(|view| view.tree.toggle(heading.source_index))
+                {
+                    self.update_contents_focus();
+                    self.clamp_contents_page();
+                    self.notice = None;
+                    return Change::Partial;
+                }
+                return Change::None;
+            }
+            if !heading_body(row, Some(branch)).contains(x, y) {
+                return Change::None;
+            }
         }
-        Some(Change::None)
+        match self.activate(line.item.action) {
+            Ok(()) => self.applied_change(),
+            Err(error) => self.report(error),
+        }
+    }
+
+    fn turn_contents_page(&mut self, direction: isize) -> Change {
+        let rows = self.contents_rows();
+        let (count, _) = self.contents_window(0, 0);
+        let Some(page) = self
+            .list_page
+            .checked_add_signed(direction)
+            .filter(|page| page * rows < count)
+        else {
+            return Change::None;
+        };
+        self.list_page = page;
+        Change::Partial
     }
 
     pub(super) fn contents_search_input(&mut self, input: Input) -> Change {
@@ -468,17 +572,10 @@ impl Reader {
 
     fn clamp_contents_page(&mut self) {
         let (count, _) = self.contents_window(0, 0);
-        self.list_page = self.list_page.min(count.saturating_sub(1) / ROWS_PER_PAGE);
+        self.list_page = self
+            .list_page
+            .min(count.saturating_sub(1) / self.contents_rows());
     }
-}
-
-fn row_rect(index: usize) -> Rect {
-    Rect::new(
-        LIST_X,
-        LIST_Y + index as i32 * ROW_HEIGHT,
-        WIDTH as i32 - 2 * LIST_X,
-        ROW_HEIGHT,
-    )
 }
 
 fn indent(heading: VisibleRow) -> i32 {
@@ -487,11 +584,13 @@ fn indent(heading: VisibleRow) -> i32 {
 
 fn branch_rect(row: Rect, heading: VisibleRow) -> Option<Rect> {
     (heading.branch != Branch::Leaf).then(|| {
+        // The title keeps its own hit area even when adjacent rows are dense.
+        let height = row.h.min(100);
         Rect::new(
             row.x + 12 + indent(heading),
-            row.y + (row.h - 100) / 2,
+            row.y + (row.h - height) / 2,
             100,
-            100,
+            height,
         )
     })
 }
@@ -501,7 +600,7 @@ fn heading_body(row: Rect, branch: Option<Rect>) -> Rect {
     Rect::new(x, row.y, row.right() - x, row.h)
 }
 
-pub(super) fn footer_hit(face: Rect) -> Rect {
+fn footer_hit(face: Rect) -> Rect {
     // Keep the shared paging bar's 72px face with a 100px touch target.
     face.inset(-14)
 }

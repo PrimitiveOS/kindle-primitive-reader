@@ -20,14 +20,14 @@ fn key(app: &mut Reader, key: Key) -> Change {
 }
 
 fn branch(app: &mut Reader, title: &str) -> Change {
-    let first = app.list_page * ROWS_PER_PAGE;
-    let (_, visible) = app.contents_window(first, ROWS_PER_PAGE);
+    let rows = app.contents_rows();
+    let (_, visible) = app.contents_window(app.list_page * rows, rows);
     let (offset, line) = visible
         .iter()
         .enumerate()
         .find(|(_, line)| line.item.title == title)
         .unwrap_or_else(|| panic!("Missing branch: {title}"));
-    let target = branch_rect(row_rect(offset), line.heading.unwrap()).unwrap();
+    let target = branch_rect(app.contents_row_rect(offset), line.heading.unwrap()).unwrap();
     app.input(Input::Tap(
         (target.x + 5) as f32,
         (target.y + target.h / 2) as f32,
@@ -35,14 +35,14 @@ fn branch(app: &mut Reader, title: &str) -> Change {
 }
 
 fn heading(app: &mut Reader, title: &str) -> Change {
-    let first = app.list_page * ROWS_PER_PAGE;
-    let (_, visible) = app.contents_window(first, ROWS_PER_PAGE);
+    let rows = app.contents_rows();
+    let (_, visible) = app.contents_window(app.list_page * rows, rows);
     let (offset, line) = visible
         .iter()
         .enumerate()
         .find(|(_, line)| line.item.title == title)
         .unwrap_or_else(|| panic!("Missing heading: {title}"));
-    let row = row_rect(offset);
+    let row = app.contents_row_rect(offset);
     let branch = line.heading.and_then(|heading| branch_rect(row, heading));
     app.input(center(heading_body(row, branch)))
 }
@@ -212,6 +212,7 @@ fn fixed_contents_branch_toggles_and_search_keep_the_pdf_page_until_a_jump() {
     let mut app = app(&fixture);
     app.open_path(&path).unwrap();
     let start = app.current_position().unwrap();
+    app.controls.contents_density.rows_per_page = Some(24);
     app.show(Screen::FixedContents);
     assert!(!app.items().iter().any(|item| item.title == "Chart detail"));
     assert_eq!(branch(&mut app, "Part A"), Change::Partial);
