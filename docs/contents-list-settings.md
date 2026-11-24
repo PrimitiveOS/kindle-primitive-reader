@@ -97,9 +97,10 @@ levels for chapter jumps** applies the selected depth limits to these ranges.
 
 The optional chapter title in the footer, its custom text token, and the
 Skim label use the first title on the current page or the last title from
-a preceding page. **Footer chapter title** independently applies the
-selected depths to these titles. An unnamed outline level is blank in
-these reading labels and appears as **–** in Contents. Whole-book indexing
+a preceding page. **Chapter titles from ticks only** independently applies the
+selected depths to these titles and new [saved marks](bookmark-browser.md#chapter-titles-on-saved-marks).
+An unnamed outline level is blank in these reading labels and appears as
+**–** in Contents. Whole-book indexing
 resolves titles in a preceding EPUB spine item. When the layout is outside
 that index, Reader uses the titles it can resolve on the current spine and
 the existing chapter-local page numbers.

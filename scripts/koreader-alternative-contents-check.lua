@@ -59,6 +59,47 @@ pinned(segment("function ReaderToc:getTocIndexByPage(", "function ReaderToc:getF
 pinned(segment("function ReaderToc:getTocTicks(", "function ReaderToc:getPagePagemapIndex("))
 pinned(segment("function ReaderToc:getChapterPageCount(", "function ReaderToc:getChapterPagesDone("))
 local modules = assert(source:match("^(.*/)readertoc%.lua$"))
+env.ReaderBookmark, env.ReaderHighlight = {}, {}
+env.T = function(text, value) return (text:gsub("%%1", function() return value end)) end
+env.logger = {dbg = function() end}
+env.util = {cleanupSelectedText = function(text) return text end}
+pinned(segment("function ReaderBookmark:toggleBookmark(", "function ReaderBookmark:setDogearVisibility(",
+    script_at(modules .. "readerbookmark.lua")))
+pinned(segment("function ReaderHighlight:saveHighlight(", "function ReaderHighlight:writePdfAnnotation(",
+    script_at(modules .. "readerhighlight.lua")))
+
+local function capture_mark(toc, start, ending, text, rolling)
+    local marks = {}
+    local ui = {
+        rolling = rolling, paging = not rolling, toc = toc, document = toc.ui.document,
+        annotation = {
+            annotations = marks,
+            addItem = function(_, item)
+                table.insert(marks, item)
+                return #marks
+            end,
+        },
+        handleEvent = function(_, name) assert(name == "AnnotationsModified") end,
+    }
+    if text then
+        local selected_text = {pos0 = start, pos1 = ending, text = text, drawer = "lighten"}
+        env.ReaderHighlight.saveHighlight({
+            ui = ui, selected_text = selected_text,
+            writePdfAnnotation = function(_, action, item)
+                assert(action == "save" and item.page == start.page)
+            end,
+            view = {highlight = {}, footer = {maybeUpdateFooter = function() end}},
+        })
+    else
+        env.ReaderBookmark.toggleBookmark({
+            ui = ui, document = ui.document,
+            getCurrentPageNumber = function() return start end,
+            getDogearBookmarkIndex = function() return nil end,
+        })
+    end
+    assert(#marks == 1)
+    return marks[1]
+end
 local footer_chapter = pinned("return {" .. segment(
     "    book_chapter = function(footer)", "    custom_text = function(footer)",
     script_at(modules .. "readerfooter.lua")) .. "}").book_chapter
@@ -145,6 +186,35 @@ local function comparison(path, expected)
         reader.toc_ticks_ignored_levels[2] = true
         assert(footer_title(reader, page) == "East softhyphen quay")
         reader.toc_chapter_title_bind_to_ticks = nil
+
+        local doc = reader.ui.document
+        doc.getPageFromXPointer = function(_, pointer) return view:getPageFromXPointer(pointer) end
+        doc.compareXPointers = function(_, left, right) return view:compareXPointers(left, right) end
+        local function locate(text)
+            local hit = assert((view:findAllText(text, false, false, 8, true, 0, 255) or {})[1], text)
+            assert(view:getTextFromXPointers(hit.start, hit["end"]) == text)
+            return hit
+        end
+        local east = locate("An east quay field note.")
+        local west = locate("A west quay field note.")
+        assert(view:getPageFromXPointer(east.start) == view:getPageFromXPointer(west.start))
+        local bookmark = capture_mark(reader, east.start, nil, nil, true)
+        assert(bookmark.chapter == "East softhyphen quay" and bookmark.text == "in East softhyphen quay")
+        local highlight = capture_mark(reader, west.start, west["end"], "A west quay field note.", true)
+        assert(highlight.chapter == "Harbor Survey" and highlight.text == "A west quay field note.")
+
+        reader.toc_ticks_ignored_levels = {[3] = true}
+        reader.toc_chapter_title_bind_to_ticks = true
+        local blank = capture_mark(reader, east.start, nil, nil, true)
+        assert(blank.chapter == nil and blank.text == nil)
+        reader.toc_ticks_ignored_levels[2] = true
+        local limited = capture_mark(reader, east.start, east["end"], "An east quay field note.", true)
+        assert(limited.chapter == "Harbor Survey")
+        assert(bookmark.chapter == "East softhyphen quay" and highlight.chapter == "Harbor Survey")
+
+        reader.toc_chapter_title_bind_to_ticks = nil
+        local appendix = locate("An appendix without headings.")
+        assert(capture_mark(reader, appendix.start, nil, nil, true).chapter == "West quay")
     else
         assert(footer_title(reader, reader.toc[1].page) == "")
     end
@@ -201,6 +271,19 @@ end
 
 comparison(headings, {{1, "Harbor Survey"}, {2, "–"}, {3, "East softhyphen quay"}, {2, "West quay"}})
 comparison(fragments, {{1, "–"}, {1, "–"}, {1, "–"}})
+local fixed = setmetatable({
+    toc = {{title = "Western tide", depth = 1, page = 2},
+        {title = "Harbor route", depth = 2, page = 2},
+        {title = "Harbor lookout", depth = 2, page = 2}},
+    toc_ticks_ignored_levels = {[2] = true},
+    ui = {document = {}},
+}, {__index = env.ReaderToc})
+assert(capture_mark(fixed, 2, nil, nil, false).chapter == "Western tide")
+assert(capture_mark(fixed, 3, nil, nil, false).chapter == "Harbor lookout")
+fixed.toc_chapter_title_bind_to_ticks = true
+assert(capture_mark(fixed, {page = 3}, {page = 3}, "Track the tide", false).chapter == "Western tide")
+print("Pinned KOReader: bookmarks and highlights snapshot source titles, depth rules, and fixed page ties")
+
 local chapter = setmetatable({
     toc = {{title = "Harbor", depth = 1, page = 3}, {title = "", depth = 2, page = 6},
         {title = "East", depth = 3, page = 6}, {title = "West", depth = 2, page = 9}},

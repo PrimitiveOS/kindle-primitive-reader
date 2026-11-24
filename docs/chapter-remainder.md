@@ -18,15 +18,15 @@ The simulator checks selected and excluded duplicate headings, chapter
 boundaries, hidden flows, original caption geometry, and the pages and time
 shown by the footer and alarm message.
 
-## Footer chapter titles
+## Chapter title levels
 
-**Footer chapter title** independently uses the included levels for the
+**Chapter titles from ticks only** independently uses the included levels for the
 Chapter title footer item, the chapter title shown by the Remaining display,
 and the custom footer's `%C` field. Reader chooses the first included heading
 on the current page, or the last included heading on an earlier page.
-Unresolved headings are skipped. The setting is available for fixed-page
-and single-section reflow books and starts off. Saved bookmark and
-annotation titles retain the labels already present.
+Unresolved headings are skipped. The setting is available for fixed-page,
+single-section reflow and alternative Contents books. It starts off and
+also applies when Reader records a [new bookmark or highlight](bookmark-browser.md#chapter-titles-on-saved-marks).
 
 [Selected heading in the footer](screenshots/footer-title-levels.png) · [Stock heading order and title preference](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readertoc.lua#L382-L451)
 

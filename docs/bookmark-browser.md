@@ -42,6 +42,38 @@ thumbnail callback and bookmark methods with stubbed providers. Fixed
 add and remove, menu selection and dismissal, and reflow anchor matching
 after a page change all passed. [KOReader hold callback](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/pagebrowserwidget.lua#L1718-L1739) · [KOReader source-page matching](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerbookmark.lua#L384-L462) · [Reader workflow tests](../src/app/overview_bookmarks.rs)
 
+## Chapter titles on saved marks
+
+A new bookmark, highlight or note records the active outline's chapter
+title. EPUB marks use the mark's source position. PDF marks use the
+first physical page. A page bookmark with a recorded title appears as
+**In …** in the in-book list. Highlight rows and details show the saved
+title alongside the existing passage and page information. The title is
+also available in Bookmark browser details after the book is closed.
+
+**Chapter titles from ticks only** applies the included Contents levels
+to newly saved marks. Changing the outline or the level choices preserves
+the title already recorded. Moving the beginning of a saved highlight
+updates its title at the new source position. Existing marks without chapter
+metadata keep their original labels. Cross-spine lookup checks up to 16
+nearby outline-bearing sections with a font-free source parse.
+
+The pinned KOReader comparison ran the actual bookmark and highlight save
+callbacks on the authored EPUB. Two passages occupy one rendered page.
+A source point between two headings follows the earlier heading. A point
+beyond the final eligible heading in the outline can retain the first title
+on that page. The
+following spine item inherits the last preceding title. The test also
+checks ignored levels, blank depth placeholders and fixed-page ties.
+The Mac workflow checks direct title capture, reopen, backup merge, stable
+jump targets and unchanged EPUB and PDF source bytes.
+
+[Annotation details](screenshots/saved-mark-chapter-landscape.png) ·
+[Chapter labels in Bookmarks](screenshots/saved-chapter-bookmarks-landscape.png) ·
+[Pinned replay](../scripts/koreader-alternative-contents-check.lua) ·
+[Bookmark save](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerbookmark.lua#L384-L416) ·
+[Highlight save](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerhighlight.lua#L2211-L2249)
+
 ## KOReader comparison
 
 The comparison uses the installed KOReader v2026.07.1 bookmark browser and its source. Its source chooser, grouped results, type and style filters, literal search, date sorting, preview navigation, archived records and jump history provide the reference behavior. The test harness loads KOReader's actual data and preview methods with presentation dependencies replaced in memory. It performs 20 checks without displaying a KOReader screen or changing its saved data. [KOReader browser](https://github.com/koreader/koreader/blob/v2026.07.1/frontend/ui/widget/bookmarkbrowser.lua) · [Comparison harness](../scripts/koreader-bookmark-browser.lua)
