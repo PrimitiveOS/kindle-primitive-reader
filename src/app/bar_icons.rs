@@ -149,6 +149,7 @@ pub(super) fn action_icon(action: &Action) -> Icon {
             | Screen::ReadingControls
             | Screen::ReadingData
             | Screen::ContentsSettings
+            | Screen::ChapterNavigation
             | Screen::FooterSettings,
         ) => SLIDERS,
         Action::Show(Screen::Typography | Screen::ReadingProfiles)

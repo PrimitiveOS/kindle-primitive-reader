@@ -186,6 +186,7 @@ enum Screen {
     EndActionSettings,
     MetadataSaveSettings,
     HiddenFlows,
+    ChapterNavigation,
     Gestures,
     GestureBinding(Gesture),
     ReadingData,
@@ -309,6 +310,7 @@ impl Screen {
             Self::EndActionSettings => "At the end of a book",
             Self::MetadataSaveSettings => "Save reading data",
             Self::HiddenFlows => "Custom hidden flows",
+            Self::ChapterNavigation => "Chapter navigation",
             Self::Gestures => "Reading gestures",
             Self::GestureBinding(gesture) => gesture.label(),
             Self::ReadingData => "Reading data",
@@ -463,6 +465,7 @@ enum Action {
     Show(Screen),
     Jump(Destination),
     Chapter(chapter_navigation::Direction),
+    ChapterLevel(chapter_navigation::LevelSetting),
     SetCharacterPages(Option<u16>),
     CharacterPage(usize),
     AcceptPublisherNumbers,
@@ -1828,6 +1831,9 @@ impl Reader {
         }
         if self.screen == Screen::HiddenFlows {
             return self.hidden_flow_items();
+        }
+        if self.screen == Screen::ChapterNavigation {
+            return self.chapter_level_items();
         }
         if matches!(
             self.screen,
@@ -3348,6 +3354,7 @@ impl Reader {
             Action::Show(screen) => self.show(screen),
             Action::Jump(target) => self.follow(target)?,
             Action::Chapter(direction) => self.jump_chapter(direction)?,
+            Action::ChapterLevel(setting) => self.set_chapter_level(setting)?,
             Action::Custom(action) => self.custom_action(action)?,
             Action::SetCharacterPages(stride) => self.set_character_pages(stride)?,
             Action::AcceptPublisherNumbers => self.accept_publisher_numbers()?,
@@ -7274,6 +7281,9 @@ impl Reader {
                         Action::ToggleRomanizations => RowAccessory::Toggle(
                             self.lookup_history.online_languages.show_romanizations,
                         ),
+                        Action::ChapterLevel(setting) => {
+                            RowAccessory::Toggle(self.chapter_level_checked(setting))
+                        }
                         _ => RowAccessory::Disclosure,
                     }
                 },
@@ -8158,6 +8168,9 @@ impl App for Reader {
                     Screen::CustomContents => self.show(self.contents_screen()),
                     Screen::CustomEdits | Screen::CustomBookmarks => {
                         self.show(Screen::CustomContents)
+                    }
+                    Screen::ChapterNavigation => {
+                        self.open_reading_edge(true, 100.0);
                     }
                     Screen::NumberingDefaults => self.show(Screen::PageNumbering),
                     Screen::AutoTurnDistance => self.show(Screen::AutoTurn),
