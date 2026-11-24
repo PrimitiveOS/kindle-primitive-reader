@@ -145,7 +145,7 @@ impl Drop for Worker {
     }
 }
 
-fn wants_background(reading: &Reading) -> bool {
+pub(crate) fn wants_background(reading: &Reading) -> bool {
     let config = &reading.config;
     let probe = &reading.probe;
     let Some(sources) = &probe.screen_page_sources else {
@@ -157,7 +157,6 @@ fn wants_background(reading: &Reading) -> bool {
         || config.hidden_flows.enabled
         || reading.hides_nonlinear()
         || config.settings != probe.settings
-        || config.settings.status_header_height == 0
         || config.engine != Engine::Parley
         || probe.chapter_count() > SPINE_LIMIT
         || sources.book.len > ARCHIVE_LIMIT

@@ -25,8 +25,10 @@ The optional header shows its chapter-local numbers while Reader gathers
 screen page counts. Valid publisher or generated edition labels take
 precedence. The header starts a background count when the reading screen is
 visible and a screen number or count is enabled. The first page is painted
-before the worker starts. Visiting a chapter also records its count and
-source revision through the normal page layout.
+before the worker starts. An explicit whole-document jump from Go to page
+can also request the same index with the header off. Visiting a chapter
+records its count and source revision while an index is in use.
+[Go to page](go-to-page.md)
 
 A result needs a positive count for every spine item in one layout. The
 worker uses the same publisher resources and Parley pagination as normal
@@ -87,7 +89,7 @@ CSS, image decoding and text layout use the snapshot after the lease is
 released. Firmware fonts use the usual mapping on the always-mounted
 firmware volume. The worker releases each temporary layout before the next
 chapter and delivery passes the active generation check on the main thread.
-Leaving the reading screen, sleep, USB return, or changing the book or
+Leaving the requesting screen, sleep, USB return, or changing the book or
 layout cancels or discards the scheduled work.
 [Pinned lease implementation](https://github.com/PrimitiveOS/kindle-primtitive-tools/blob/50035cf068c0157abf97477ef64eb28bc984b6b7/crates/primitive-app/src/storage.rs#L26-L58)
 

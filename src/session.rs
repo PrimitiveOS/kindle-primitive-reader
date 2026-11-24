@@ -498,6 +498,59 @@ impl Reading {
             && self.probe.has_nonlinear_chapters()
     }
 
+    pub(crate) fn request_screen_page_navigation(&mut self) {
+        if self.probe.screen_page_sources.is_none()
+            && !self.hides_nonlinear()
+            && !self.probe.is_vertical()
+        {
+            self.config.screen_pages.request_navigation();
+            // The open chapter predates this on-demand index. The worker must
+            // reproduce its page breaks and source revision before publishing it.
+            self.probe.screen_page_sources =
+                with_storage(|| Ok(screen_pages::ScreenPageSources::read(&self.config)))
+                    .ok()
+                    .flatten();
+        }
+    }
+
+    pub(crate) fn jump_to_screen_ordinal(&mut self, ordinal: usize) -> Result<()> {
+        let sources = with_storage(|| Ok(screen_pages::ScreenPageSources::read(&self.config)))?;
+        if sources.is_none() || sources != self.probe.screen_page_sources {
+            self.config.screen_pages.reset();
+            self.probe.screen_page_sources = None;
+            return Err(
+                "The book or reading fonts changed. Reopen the book to use document pages.".into(),
+            );
+        }
+        let target = self
+            .config
+            .screen_pages
+            .target(&self.config, &self.probe, self.chapter, self.page, ordinal)
+            .ok_or("That screen page is unavailable")?;
+        let candidate = if target.chapter == self.chapter {
+            None
+        } else {
+            Some(self.config.chapter(target.chapter)?)
+        };
+        let probe = candidate.as_ref().unwrap_or(&self.probe);
+        if !self
+            .config
+            .screen_pages
+            .validates_target(&self.config, probe, target)
+        {
+            self.config.screen_pages.reset();
+            return Err("The book layout changed. Open Go to page and try again.".into());
+        }
+        self.go_to_laid_out_page(target.chapter, target.page, candidate)
+    }
+
+    pub(crate) fn has_exact_local_screen_pages(&self) -> bool {
+        !self.config.scroll
+            && !self.config.facing_pages
+            && !self.probe.is_vertical()
+            && !self.config.hidden_flows.enabled
+    }
+
     pub(crate) fn whole_book_screen_pages(&self) -> Option<(usize, usize)> {
         self.config
             .screen_pages

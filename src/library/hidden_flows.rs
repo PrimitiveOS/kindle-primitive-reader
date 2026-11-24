@@ -217,6 +217,32 @@ impl PageFlows {
         )
     }
 
+    pub(crate) fn relative_page(&self, page: usize, delta: isize) -> Option<usize> {
+        if page >= self.count {
+            return None;
+        }
+        let ranges = self.allowed_ranges(self.flow(page));
+        let mut offset = 0;
+        let mut current = None;
+        for range in &ranges {
+            if range.contains(&page) {
+                current = Some(offset + page - range.start);
+            }
+            offset += range.len();
+        }
+        let target = current?
+            .saturating_add_signed(delta)
+            .min(offset.checked_sub(1)?);
+        let mut remainder = target;
+        for range in ranges {
+            if remainder < range.len() {
+                return Some(range.start + remainder);
+            }
+            remainder -= range.len();
+        }
+        None
+    }
+
     pub fn count_in(&self, flow: usize, range: std::ops::Range<usize>) -> usize {
         self.starts
             .iter()

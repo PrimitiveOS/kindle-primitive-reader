@@ -1,7 +1,7 @@
 //! Exact screen pages tied to one EPUB edition and layout.
 pub(crate) mod background;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -22,7 +22,7 @@ pub(crate) struct ScreenPageSources {
 
 impl ScreenPageSources {
     pub(super) fn read(config: &BookConfig) -> Option<Self> {
-        if config.settings.status_header_height == 0
+        if (config.settings.status_header_height == 0 && !config.screen_pages.1.get())
             || config.engine != Engine::Parley
             || config.scroll
             || config.facing_pages
@@ -77,9 +77,64 @@ impl FileStamp {
 }
 
 #[derive(Clone, Default)]
-pub(crate) struct ScreenPages(Rc<RefCell<Option<Generation>>>);
+pub(crate) struct ScreenPages(Rc<RefCell<Option<Generation>>>, Rc<Cell<bool>>);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Target {
+    pub(super) chapter: usize,
+    pub(super) page: usize,
+    sample: PageSample,
+}
 
 impl ScreenPages {
+    pub(super) fn request_navigation(&self) {
+        self.1.set(true);
+    }
+
+    pub(super) fn target(
+        &self,
+        config: &BookConfig,
+        probe: &Probe,
+        chapter: usize,
+        page: usize,
+        ordinal: usize,
+    ) -> Option<Target> {
+        self.position(config, probe, chapter, page)?;
+        let zero = ordinal.checked_sub(1)?;
+        let slot = self.0.borrow();
+        let generation = slot.as_ref()?;
+        let prefix = generation.prefix.as_ref()?;
+        if zero >= *prefix.last()? {
+            return None;
+        }
+        let chapter = prefix
+            .partition_point(|&start| start <= zero)
+            .checked_sub(1)?;
+        Some(Target {
+            chapter,
+            page: zero - prefix[chapter],
+            sample: generation.samples[chapter]?,
+        })
+    }
+
+    pub(super) fn validates_target(
+        &self,
+        config: &BookConfig,
+        probe: &Probe,
+        target: Target,
+    ) -> bool {
+        let slot = self.0.borrow();
+        slot.as_ref().is_some_and(|generation| {
+            generation.matches(config, probe)
+                && generation
+                    .spine
+                    .get(target.chapter)
+                    .is_some_and(|entry| entry.href == probe.chapter)
+                && target.sample == PageSample::new(probe)
+                && target.page < probe.page_count()
+        })
+    }
+
     pub(super) fn reset(&self) {
         *self.0.borrow_mut() = None;
     }
@@ -165,7 +220,7 @@ struct Generation {
     background_rejected: bool,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PageSample {
     source_revision: u64,
     count: usize,

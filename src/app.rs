@@ -51,6 +51,7 @@ mod footer_presets;
 mod footnote_font;
 mod footnote_popup;
 mod gestures;
+mod go_to_page;
 mod hidden_flows;
 mod highlight_palette;
 mod library_export;
@@ -888,6 +889,7 @@ pub struct Reader {
     metadata_checkpoint: metadata_save::Checkpoint,
     editor: Editor,
     nearby: nearby_search::Nearby,
+    screen_page_jump: Option<go_to_page::PendingJump>,
     screen_page_worker: crate::session::screen_pages::background::Worker,
     find_match_case: bool,
     find_ignore_accents: bool,
@@ -1107,6 +1109,7 @@ impl Reader {
             metadata_checkpoint: metadata_save::Checkpoint::new(Instant::now()),
             editor: Editor::new(64),
             nearby: nearby_search::Nearby::default(),
+            screen_page_jump: None,
             screen_page_worker: Default::default(),
             find_match_case: false,
             find_ignore_accents: false,
@@ -1495,7 +1498,10 @@ impl Reader {
         if screen != Screen::PdfPassword {
             self.folder_password_return = None;
         }
-        if screen != Screen::Book {
+        if screen != Screen::GoToPage {
+            self.screen_page_jump = None;
+        }
+        if !matches!(screen, Screen::Book | Screen::GoToPage) {
             self.screen_page_worker.cancel();
         }
         self.search_results_navigation.menu_open = false;
@@ -4808,6 +4814,9 @@ impl Reader {
     }
 
     fn needs_screen_page_count(&self) -> bool {
+        if self.screen == Screen::GoToPage {
+            return self.stats_awake && self.screen_page_jump.is_some();
+        }
         let header = self.controls.top_header;
         self.stats_awake
             && self.screen == Screen::Book
@@ -5153,7 +5162,13 @@ impl Reader {
         let Some(key) = keyboard_key(&layout, &self.editor, action, x, y) else {
             return Change::None;
         };
-        if matches!(self.editor.press(key), Press::Go) {
+        let pressed = self.editor.press(key);
+        if self.screen == Screen::GoToPage && !matches!(pressed, Press::Go) {
+            self.screen_page_jump = None;
+            self.notice = None;
+        }
+        if matches!(pressed, Press::Go) {
+            self.screen_page_jump = None;
             match self.screen {
                 Screen::NumberingValue(field) => {
                     return match self.apply_numbering_input(field) {
@@ -5187,24 +5202,6 @@ impl Reader {
             }
         }
         Change::Partial
-    }
-
-    fn jump_fixed_number(&mut self, target: &str) -> Result<()> {
-        let fixed = self.fixed.as_ref().ok_or("No open document")?;
-        let reading = &fixed.reading;
-        let count = reading.count();
-        let page = if let Some(label) = target.strip_prefix("label ") {
-            reading.find_page_label(label.trim())
-        } else if let Some(percent) = target.strip_suffix('%') {
-            Some(page_at_percent(percent, count)?)
-        } else if let Ok(number) = target.parse::<usize>() {
-            (1..=count).contains(&number).then(|| number - 1)
-        } else {
-            reading.find_page_label(target)
-        };
-        let page = page
-            .ok_or_else(|| format!("Enter a page from 1 to {count} or a unique printed label"))?;
-        self.follow_fixed(page, None)
     }
 
     fn handle_pdf_password(&mut self, input: Input) -> Change {
@@ -5247,65 +5244,6 @@ impl Reader {
             }
         }
         Change::Partial
-    }
-
-    fn jump_reflow_number(&mut self) -> Result<()> {
-        let input = self.editor.string();
-        let input = input.trim();
-        if let Some(percent) = input.strip_suffix('%') {
-            let active = self.active.as_mut().ok_or("No open book")?;
-            let previous = position(&active.reading);
-            active.reading.jump_progress(percent_fraction(percent)?)?;
-            self.finish_reflow_jump(previous);
-            return Ok(());
-        }
-        let active = self.active.as_ref().ok_or("No open book")?;
-        if let Some(label) = input.strip_prefix("label ") {
-            if let Some(map) = &active.numbering {
-                let row = label
-                    .trim()
-                    .parse::<usize>()
-                    .ok()
-                    .and_then(|n| n.checked_sub(1))
-                    .filter(|row| *row < map.count)
-                    .ok_or("Enter a stable page number from the list")?;
-                return self.follow_character_page(row);
-            }
-            let mut matches = active
-                .reading
-                .probe
-                .printed_pages
-                .iter()
-                .filter_map(|entry| {
-                    (entry.label == label.trim())
-                        .then_some(entry.destination.as_ref())
-                        .flatten()
-                });
-            let target = matches
-                .next()
-                .ok_or("Enter a printed page label from the book")?;
-            if matches.next().is_some() {
-                return Err("That printed page label occurs more than once".into());
-            }
-            return self.follow(target.clone());
-        }
-        let number = |value: &str| {
-            value
-                .trim()
-                .parse::<usize>()
-                .ok()
-                .and_then(|n| n.checked_sub(1))
-        };
-        let (chapter, page) = if let Some((chapter, page)) = input.split_once(':') {
-            (
-                number(chapter).ok_or("Enter a valid chapter number")?,
-                number(page),
-            )
-        } else {
-            (active.reading.chapter, number(input))
-        };
-        let page = page.ok_or("Enter a page number, or a chapter and page separated by a colon")?;
-        self.follow_reflow_page(chapter, page)
     }
 
     fn follow_reflow_page(&mut self, chapter: usize, page: usize) -> Result<()> {
@@ -7701,16 +7639,9 @@ impl Reader {
                 }
                 Screen::NumberingValue(_) => ("500 to 3,000 characters per page", "Set"),
                 Screen::GoToPage if self.fixed.is_none() => {
-                    let hint = if self.active.as_ref().is_some_and(|book| {
-                        book.numbering.is_some() || !book.reading.probe.printed_pages.is_empty()
-                    }) {
-                        "Page, chapter:page, book %, or label followed by a stable page"
-                    } else {
-                        "Page, chapter:page, or book percentage"
-                    };
-                    (hint, "Go")
+                    ("Page, +/- pages, chapter:page, %, or label", "Go")
                 }
-                Screen::GoToPage => ("Page, printed label, or % of document", "Go"),
+                Screen::GoToPage => ("Page, +/- pages, %, or printed label", "Go"),
                 Screen::Find if self.active.is_some() && self.find_regex => {
                     ("Regular expression", "Find all")
                 }
@@ -7728,6 +7659,9 @@ impl Reader {
             self.draw_logical_font(canvas);
             self.draw_line_spacing(canvas);
             self.draw_word_spacing(canvas);
+            if self.screen == Screen::GoToPage {
+                self.draw_page_jump_context(canvas);
+            }
             if let Screen::FootnoteFontSize(mode) = self.screen {
                 self.draw_footnote_font_editor(canvas, mode);
             }
@@ -8406,6 +8340,7 @@ impl App for Reader {
     fn input(&mut self, input: Input) -> Change {
         if input == Input::Sleep {
             self.screen_page_worker.cancel();
+            self.cancel_screen_page_jump();
         }
         if matches!(
             input,
@@ -9057,7 +8992,11 @@ impl App for Reader {
             .as_ref()
             .filter(|_| needs_screen_page_count)
             .map(|active| &active.reading);
-        if self.screen_page_worker.tick(now, screen_pages) {
+        let page_count_changed = self.screen_page_worker.tick(now, screen_pages);
+        if let Some(change) = self.poll_screen_page_jump() {
+            return change;
+        }
+        if page_count_changed {
             return Change::Partial;
         }
         if self
@@ -9273,6 +9212,7 @@ impl App for Reader {
 
     fn storage_returned(&mut self) -> io::Result<()> {
         self.screen_page_worker.cancel();
+        self.cancel_screen_page_jump();
         self.document_defaults.reload();
 
         self.cjk_selection_lookup = None;
