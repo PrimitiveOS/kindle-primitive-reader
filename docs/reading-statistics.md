@@ -59,6 +59,13 @@ shows additional titles. Tap the day for its full timeline. The optional
 hourly histogram uses the relevant calendar or timeline start for its bins.
 [KOReader settings](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/main.lua#L1148-L1227) · [KOReader week spans](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/calendarview.lua#L194-L247)
 
+The native stock replay opens the real count and time controls and verifies
+the 1–5 span range, cancelling a draft, applying 04:20, and switching the
+calendar shift off and on while keeping that time. Reader’s Mac tests check
+the same choices through Settings, week-spanning titles and original reading
+position. [Stock start-time editor](screenshots/stock-calendar-start-time.png) ·
+[Native replay](../scripts/koreader-calendar-options-check.lua)
+
 ## Time range reports
 
 **Time range** shows the eight stock report choices. **All books** shows

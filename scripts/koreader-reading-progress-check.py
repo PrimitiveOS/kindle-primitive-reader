@@ -13,7 +13,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("reference", type=Path, help="pinned koreader-macos-reference directory")
     parser.add_argument("frame", type=Path, help="destination for the stock framebuffer PNG")
-    parser.add_argument("--duration-limits", action="store_true", help="check the duration editor")
+    check = parser.add_mutually_exclusive_group()
+    check.add_argument("--duration-limits", action="store_true", help="check the duration editor")
+    check.add_argument("--calendar-options", action="store_true", help="check calendar and timeline settings")
     options = parser.parse_args()
     reference = options.reference.resolve()
     runtime = reference / "runtime/koreader"
@@ -26,6 +28,12 @@ def main():
             "frontend/ui/widget/numberpickerwidget.lua": "835225f9c13a1d12d2a830d815ce28b598aa7d6499e445140c3e01e95b197f2f",
         })
         script = Path(__file__).resolve().with_name("koreader-reading-duration-check.lua")
+    elif options.calendar_options:
+        fingerprints.update({
+            "frontend/ui/widget/datetimewidget.lua": "97cf38c7fdf7965ccd8889f7f9ca0b7941b85b8ad824a3b9554f54eb77752972",
+            "plugins/statistics.koplugin/calendarview.lua": "80e232d13a46660c2c0c9aafb2a043668c36175d57a8ee5b1539c583b00347b1",
+        })
+        script = Path(__file__).resolve().with_name("koreader-calendar-options-check.lua")
     else:
         fingerprints["plugins/statistics.koplugin/readerprogress.lua"] = (
             "2edf8d29ef8374d921cb14cfb2f928c42c05b7259683b4566be05a7dbf9643d9"
