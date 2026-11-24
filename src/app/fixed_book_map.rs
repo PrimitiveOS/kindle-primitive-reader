@@ -264,7 +264,11 @@ impl Reader {
                     return Change::None;
                 };
                 if slot.len() == 1 {
-                    return match self.follow_fixed(slot.start, None) {
+                    return match self.select_book_map_page(
+                        super::page_overview::MapOrigin::Fixed(window),
+                        slot.start,
+                    ) {
+                        Ok(()) if self.screen == Screen::PageOverview => Change::Partial,
                         Ok(()) => Change::Full,
                         Err(err) => self.report(err),
                     };

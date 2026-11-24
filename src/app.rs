@@ -567,6 +567,7 @@ enum Action {
     ExportAnnotatedPdf,
     Show(Screen),
     Jump(Destination),
+    BookMapChapter(usize),
     OpenFixedLink(crate::fixed::PdfLink),
     OpenLinkAddress(String),
     ToggleLinkPreference(link_taps::LinkPreference),
@@ -3393,14 +3394,7 @@ impl Reader {
                         .filter(|mark| mark.selection.start.chapter == chapter.href)
                         .count()
                 });
-                Item::new(
-                    &chapter.label,
-                    Action::Jump(Destination {
-                        path: chapter.href.clone(),
-                        fragment: None,
-                    }),
-                )
-                .detail({
+                Item::new(&chapter.label, Action::BookMapChapter(index)).detail({
                     let detail = map_detail(index == reading.chapter, marks, highlights);
                     reading.hidden_chapter(index).map_or(detail.clone(), |all| {
                         format!(
@@ -3884,6 +3878,9 @@ impl Reader {
             }
             Action::Show(screen) => self.show(screen),
             Action::Jump(target) => self.follow(target)?,
+            Action::BookMapChapter(chapter) => {
+                self.select_book_map_page(page_overview::MapOrigin::Chapter(chapter), 0)?;
+            }
             Action::OpenFixedLink(link) => self.open_fixed_link(link)?,
             Action::OpenLinkAddress(address) => {
                 self.show(self.surface_screen());
@@ -7540,9 +7537,12 @@ impl Reader {
         {
             return;
         }
-        if self.screen == Screen::BookMap && self.fixed.is_some() {
-            self.draw_fixed_book_map(canvas);
-            return;
+        if self.screen == Screen::BookMap {
+            self.draw_book_map_tap_option(canvas);
+            if self.fixed.is_some() {
+                self.draw_fixed_book_map(canvas);
+                return;
+            }
         }
         if self.screen == Screen::PageOverview {
             self.draw_overview(canvas);
@@ -7920,8 +7920,7 @@ impl Reader {
             && let Some(active) = &self.active
         {
             for (index, item) in items.iter().enumerate() {
-                if let Action::Jump(target) = &item.action
-                    && let Some(chapter) = active.reading.probe.chapter_index(&target.path)
+                if let Action::BookMapChapter(chapter) = item.action
                     && active.reading.hidden_chapter(chapter).is_some()
                     && let Some(rect) = group.row_rect(index)
                 {
@@ -8839,8 +8838,13 @@ impl App for Reader {
         ) {
             return self.handle_page_number(input);
         }
-        if self.screen == Screen::BookMap && self.fixed.is_some() {
-            return self.fixed_map_input(input);
+        if self.screen == Screen::BookMap {
+            if let Some(change) = self.book_map_tap_option_input(input) {
+                return change;
+            }
+            if self.fixed.is_some() {
+                return self.fixed_map_input(input);
+            }
         }
         if self.screen == Screen::PageOverview {
             return self.overview_input(input);
@@ -14385,6 +14389,8 @@ mod tests {
         assert_eq!(app.input(Input::PageBack), Change::Partial);
         assert_eq!(app.current_position().unwrap().page, original);
         assert_eq!(app.back, prior);
+        let toggle = app.book_map_tap_option();
+        app.input(Input::Tap((toggle.x + 10) as f32, (toggle.y + 10) as f32));
         assert_eq!(app.input(tap(0)), Change::Full);
         assert_eq!(app.screen, Screen::Fixed);
         assert_eq!(app.current_position().unwrap().page, slot_width);

@@ -2,10 +2,17 @@
 use primitive_app::Change;
 use primitive_ui::{CAPTION, Canvas, GrayImage, Input, Rect};
 
+use super::fixed_book_map::MapWindow;
 use super::navigation_layout::NavigationLayout;
-use super::{LIST_X, LIST_Y, OVERVIEW_PAGES, Reader, Screen, fixed_page_label};
+use super::{Action, LIST_X, LIST_Y, OVERVIEW_PAGES, Reader, Screen, fixed_page_label};
 use crate::session::{PageThumbnail, page_thumbnail};
 use crate::{Anchor, Probe, Result};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum MapOrigin {
+    Fixed(MapWindow),
+    Chapter(usize),
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct OverviewFocus {
@@ -21,6 +28,7 @@ pub(super) struct PageOverview {
     pub(super) preview: Option<Box<Probe>>,
     pub(super) tiles: Vec<Option<PageThumbnail>>,
     pub(super) focus: OverviewFocus,
+    pub(super) map_origin: Option<MapOrigin>,
 }
 
 #[derive(Clone, Copy)]
@@ -108,6 +116,49 @@ impl OverviewLayout {
 }
 
 impl Reader {
+    fn book_map_previews_on_tap(&self) -> bool {
+        self.controls.book_map_tap_to_page_browser.unwrap_or(true)
+    }
+
+    pub(super) fn book_map_tap_option(&self) -> Rect {
+        Rect::new(self.navigation_layout().width - 662, 40, 362, 100)
+    }
+
+    pub(super) fn draw_book_map_tap_option(&self, canvas: &mut Canvas) {
+        canvas.button(
+            self.book_map_tap_option(),
+            "Page browser on tap",
+            self.book_map_previews_on_tap(),
+            false,
+        );
+    }
+
+    pub(super) fn book_map_tap_option_input(&mut self, input: Input) -> Option<Change> {
+        if !matches!(input, Input::Tap(x, y) if self.book_map_tap_option().contains(x, y)) {
+            return None;
+        }
+        let mut controls = self.controls;
+        controls.book_map_tap_to_page_browser = Some(!self.book_map_previews_on_tap());
+        Some(match self.activate(Action::SetReadingControls(controls)) {
+            Ok(()) => Change::Partial,
+            Err(error) => self.report(error),
+        })
+    }
+
+    pub(super) fn select_book_map_page(&mut self, map: MapOrigin, page: usize) -> Result<()> {
+        if !self.book_map_previews_on_tap() {
+            return match map {
+                MapOrigin::Fixed(_) => self.follow_fixed(page, None),
+                MapOrigin::Chapter(chapter) => self.follow_reflow_page(chapter, page),
+            };
+        }
+        let chapter = match map {
+            MapOrigin::Chapter(chapter) => Some(chapter),
+            MapOrigin::Fixed(_) => None,
+        };
+        self.open_overview_at(chapter, page, None, Some(map))
+    }
+
     pub(super) fn open_overview(&mut self) -> Result<()> {
         let (chapter, page, anchor) = if let Some(fixed) = &self.fixed {
             (None, fixed.reading.page(), None)
@@ -115,13 +166,25 @@ impl Reader {
             let reading = &self.active.as_ref().ok_or("Open a book first")?.reading;
             (Some(reading.chapter), reading.page, reading.anchor())
         };
+        self.open_overview_at(chapter, page, anchor, None)
+    }
+
+    fn open_overview_at(
+        &mut self,
+        chapter: Option<usize>,
+        page: usize,
+        anchor: Option<Anchor>,
+        map_origin: Option<MapOrigin>,
+    ) -> Result<()> {
         self.update_overview(chapter, Some(page / OVERVIEW_PAGES * OVERVIEW_PAGES))?;
         if let Some(overview) = &mut self.overview {
+            let anchor = anchor.or_else(|| overview.focus.anchor.take());
             overview.focus = OverviewFocus {
                 page,
                 slot: page - overview.first,
                 anchor,
             };
+            overview.map_origin = map_origin;
         }
         self.show(Screen::PageOverview);
         Ok(())
@@ -132,7 +195,8 @@ impl Reader {
         chapter: Option<usize>,
         first: Option<usize>,
     ) -> Result<()> {
-        let overview = if let Some(fixed) = &self.fixed {
+        let map_origin = self.overview.as_ref().and_then(|view| view.map_origin);
+        let mut overview = if let Some(fixed) = &self.fixed {
             let count = fixed.reading.count();
             let first = overview_start(first, count);
             let tiles = (first..(first + OVERVIEW_PAGES).min(count))
@@ -149,6 +213,7 @@ impl Reader {
                     slot: 0,
                     anchor: None,
                 },
+                map_origin: None,
             }
         } else {
             let reading = &mut self.active.as_mut().ok_or("Open a book first")?.reading;
@@ -167,6 +232,7 @@ impl Reader {
             overview.preview = preview;
             overview
         };
+        overview.map_origin = map_origin;
         self.overview = Some(overview);
         self.notice = None;
         Ok(())
@@ -186,6 +252,7 @@ impl Reader {
         let probe = preview.as_deref_mut().unwrap_or(&mut reading.probe);
         let mut overview = reflow_overview(probe, chapter, None, Some(focus))?;
         overview.preview = preview;
+        overview.map_origin = self.overview.as_ref().and_then(|view| view.map_origin);
         Ok(overview)
     }
 
@@ -239,8 +306,14 @@ impl Reader {
                     })
                 })
                 .is_some_and(|flow| flow != 0);
-            if hidden {
-                canvas.panel(rect, 22, 2, 235);
+            let map_focus = overview.map_origin.is_some() && overview.focus.page == page;
+            if hidden || map_focus {
+                canvas.panel(
+                    rect,
+                    22,
+                    if map_focus { 6 } else { 2 },
+                    if hidden { 235 } else { 255 },
+                );
             }
             let mut label = self.fixed.as_ref().map_or_else(
                 || format!("Page {}", page + 1),
@@ -369,11 +442,18 @@ impl Reader {
             Input::Tap(x, y) if navigation.next().contains(x, y) => (1, OVERVIEW_PAGES),
             Input::Tap(x, y) if layout.track().contains(x, y) => return self.scrub_overview(x),
             Input::Tap(x, y) if navigation.back().contains(x, y) => {
-                self.show(if self.fixed.is_some() {
-                    Screen::FixedTools
+                if let Some(map) = overview.map_origin {
+                    self.show(Screen::BookMap);
+                    match map {
+                        MapOrigin::Fixed(window) => self.map_window = window,
+                        MapOrigin::Chapter(chapter) => {
+                            self.book_map_focus = Some(chapter);
+                            self.list_page = chapter / self.list_geometry().rows;
+                        }
+                    }
                 } else {
-                    Screen::BookTools
-                });
+                    self.show(self.tools_screen());
+                }
                 return Change::Partial;
             }
             Input::Tap(x, y) => {
@@ -467,5 +547,6 @@ fn reflow_overview(
         preview: None,
         tiles,
         focus,
+        map_origin: None,
     })
 }

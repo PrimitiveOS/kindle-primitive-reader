@@ -3,14 +3,14 @@ use primitive_app::App;
 use primitive_ui::Canvas;
 
 use super::fixed_book_map::MapWindow;
-use super::page_overview::{OverviewFocus, PageOverview};
+use super::page_overview::{MapOrigin, OverviewFocus, PageOverview};
 use super::{Reader, Screen};
 use crate::Result;
 
 #[derive(PartialEq, Eq)]
 enum Origin {
     Other,
-    Overview(Option<usize>, usize, OverviewFocus),
+    Overview(Option<usize>, usize, OverviewFocus, Option<MapOrigin>),
     FixedMap(MapWindow),
     ChapterMap { list_page: usize, chapter: usize },
 }
@@ -40,7 +40,7 @@ impl VisualNavigation {
     pub(super) fn draw(&mut self, reader: &mut Reader, canvas: &mut Canvas) -> Result<bool> {
         self.prepared = None;
         let prepared = match &self.origin {
-            Origin::Overview(Some(chapter), _, focus) => {
+            Origin::Overview(Some(chapter), _, focus, _) => {
                 let view = reader.resize_overview(*chapter, focus)?;
                 let previous = reader.overview.replace(view);
                 reader.draw(canvas);
@@ -79,9 +79,12 @@ impl VisualNavigation {
 impl Origin {
     fn capture(reader: &Reader) -> Self {
         match reader.screen {
-            Screen::PageOverview if let Some(view) = &reader.overview => {
-                Self::Overview(view.chapter, view.first, view.focus.clone())
-            }
+            Screen::PageOverview if let Some(view) = &reader.overview => Self::Overview(
+                view.chapter,
+                view.first,
+                view.focus.clone(),
+                view.map_origin,
+            ),
             Screen::BookMap if reader.fixed.is_some() => Self::FixedMap(reader.map_window),
             Screen::BookMap if let Some(book) = &reader.active => {
                 let rows = reader.list_geometry().rows;
@@ -331,7 +334,48 @@ mod tests {
             target(LogicalTurn::Counterclockwise, 4),
             ViewportDecision::Commit,
         );
-        reader.input(Input::Tap(1520.0, (row.y + row.h / 2) as f32));
+        let row_tap = Input::Tap(1520.0, (row.y + row.h / 2) as f32);
+        let history = reader.back.clone();
+        assert_eq!(reader.input(row_tap), Change::Partial);
+        assert_eq!(reader.screen, Screen::PageOverview);
+        let overview = reader.overview.as_ref().unwrap();
+        assert_eq!(overview.chapter, Some(source));
+        assert_eq!(overview.focus.page, 0);
+        assert_eq!(overview.map_origin, Some(MapOrigin::Chapter(source)));
+        let anchor = overview.focus.anchor.clone().unwrap();
+        let upright = stage(
+            &mut reader,
+            target(LogicalTurn::Upright, 5),
+            ViewportDecision::Commit,
+        );
+        capture("chapter-map-page-browser.png", (1264, 1680), &upright);
+        assert_eq!(reader.overview.as_ref().unwrap().focus.anchor, Some(anchor));
+        assert_eq!(reader.back, history);
+        assert_eq!(reader.current_position().unwrap().anchor, opening.anchor);
+        let back = reader.navigation_layout().back();
+        assert_eq!(reader.input(tap(back)), Change::Partial);
+        assert_eq!(reader.screen, Screen::BookMap);
+        assert_eq!(reader.book_map_focus, Some(source));
+        assert_eq!(reader.list_page, 2);
+        let layout = reader.list_geometry();
+        let row = layout.row(source - reader.list_page * layout.rows);
+        assert_eq!(reader.input(tap(row)), Change::Partial);
+        let first = OverviewLayout::new(reader.navigation_layout()).tile(0);
+        assert_eq!(reader.input(tap(first)), Change::Partial);
+        assert_eq!(reader.screen, Screen::Book);
+        assert_eq!(reader.current_position().unwrap().chapter, source);
+        assert_eq!(reader.back.len(), history.len() + 1);
+        reader.activate(Action::ReturnToLocation).unwrap();
+        assert_eq!(reader.current_position().unwrap().anchor, opening.anchor);
+
+        reader.activate(Action::Show(Screen::BookMap)).unwrap();
+        let setting = reader.book_map_tap_option();
+        assert_eq!(reader.input(tap(setting)), Change::Partial);
+        assert_eq!(reader.controls.book_map_tap_to_page_browser, Some(false));
+        reader.navigate_list_page(source / reader.list_geometry().rows);
+        let layout = reader.list_geometry();
+        let row = layout.row(source - reader.list_page * layout.rows);
+        assert_eq!(reader.input(tap(row)), Change::Partial);
         assert_eq!(reader.screen, Screen::Book);
         assert_eq!(reader.current_position().unwrap().chapter, source);
         reader.activate(Action::ReturnToLocation).unwrap();
@@ -405,6 +449,31 @@ mod tests {
             ViewportDecision::Commit,
         );
         let cell = fixed_book_map::projected_cell(reader.navigation_layout(), 1);
+        let history = reader.back.clone();
+        assert_eq!(reader.input(tap(cell)), Change::Partial);
+        assert_eq!(reader.screen, Screen::PageOverview);
+        let overview = reader.overview.as_ref().unwrap();
+        assert_eq!(overview.focus.page, 15);
+        assert_eq!(overview.map_origin, Some(MapOrigin::Fixed(nested)));
+        assert_eq!(reader.current_position(), Some(original.clone()));
+        assert_eq!(reader.back, history);
+        let pixels = frame(&reader);
+        capture(
+            "fixed-map-page-browser-landscape.png",
+            (1680, 1264),
+            &pixels,
+        );
+        let back = reader.navigation_layout().back();
+        assert_eq!(reader.input(tap(back)), Change::Partial);
+        assert_eq!(reader.screen, Screen::BookMap);
+        assert_eq!(reader.map_window, nested);
+        let toggle = reader.book_map_tap_option();
+        assert_eq!(reader.input(tap(toggle)), Change::Partial);
+        assert_eq!(reader.controls.book_map_tap_to_page_browser, Some(false));
+        assert_eq!(
+            app(&fixture).controls.book_map_tap_to_page_browser,
+            Some(false),
+        );
         assert_eq!(reader.input(tap(cell)), Change::Full);
         assert_eq!(reader.current_position().unwrap().page, 15);
         reader.activate(Action::ReturnToLocation).unwrap();

@@ -28,6 +28,8 @@ pub(crate) struct ReadingControls {
     pub back_navigation: crate::app::back_navigation::BackPreferences,
     #[serde(skip_serializing_if = "SkimPosition::is_default")]
     pub skim_position: SkimPosition,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub book_map_tap_to_page_browser: Option<bool>,
     #[serde(skip_serializing_if = "crate::app::reading_guides::Settings::is_default")]
     pub reading_guides: crate::app::reading_guides::Settings,
     #[serde(skip_serializing_if = "crate::library::FolderOrder::is_default")]
