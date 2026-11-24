@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Execute pinned KOReader's footnote font switches and sizing in Lua."""
+"""Execute pinned KOReader's footnote font and justification callbacks in Lua."""
 import argparse
 import hashlib
 from pathlib import Path
@@ -33,6 +33,11 @@ local preferences = {}
 G_reader_settings = {
     isTrue = function(_, key) return preferences[key] == true end,
     flipNilOrFalse = function(_, key) preferences[key] = not preferences[key] end,
+    nilOrTrue = function(_, key) return preferences[key] ~= false end,
+    flipNilOrTrue = function(_, key)
+        if preferences[key] == false then preferences[key] = nil
+        else preferences[key] = false end
+    end,
     readSetting = function(_, key) return preferences[key] end,
     saveSetting = function(_, key, value) preferences[key] = value end,
     delSetting = function(_, key) preferences[key] = nil end,
@@ -150,3 +155,26 @@ assert font_size(46) == 510
 spin.callback(spin)
 assert font_size(46) == 44
 print("Footnote size callbacks: relative −10…+5 px (default −2) and fixed 12…255; saving a mode replaces the other")
+
+justify = lua.execute("""
+    for _, item in ipairs(ReaderLink:getFootnoteSettingsMenuTable()[2].sub_item_table) do
+        if item.text == "Justify text in popups" then return item end
+    end
+""")
+start = widget.index('    local text_align_css = ""')
+end = widget.index('    -- We want to display the footnote text', start)
+alignment = lua.eval("function()\n" + widget[start:end] + "return text_align_css end")
+assert justify.enabled_func() and justify.checked_func()
+assert alignment().strip() == "body { text-align: justify; }"
+assert "*[dir=rtl] { text-align: initial; }" in widget
+justify.callback()
+assert not justify.checked_func() and alignment() == ""
+justify.callback()
+assert justify.checked_func() and "justify" in alignment()
+lua.execute("previews = false")
+assert not justify.enabled_func()
+lua.execute("previews, swipe_links, tap_links = true, false, false")
+assert not justify.enabled_func()
+lua.execute("tap_links = true")
+assert justify.enabled_func()
+print("Footnote justification defaults on, toggles independently, and preserves stock RTL start alignment")

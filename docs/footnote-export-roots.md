@@ -105,3 +105,21 @@ replace each other, and the requested pixel values. The authored Reader test
 covers both ends of both ranges, the minimum size when the book text is already
 small, an enlarged paginated note, and a note with an authored tall line. It
 also checks the original reading location and navigation history after close.
+
+## Preview text alignment
+
+In **Settings › Links**, **Justify text in popups** is on by default. It
+justifies wrapped left-to-right lines in footnote previews. Turn it off to
+use the text's starting edge. Right-to-left text starts on the right in
+both modes and explicit inline alignment is preserved. This preference
+applies to footnote previews independently of the book's paragraph setting.
+
+The Mac test checks the changed word hit box, compares the exact
+right-to-left preview pixels, and restores the same note selection through
+portrait and landscape turns. It also checks that the source location,
+reading history, and saved preference survive closing and reopening.
+[Justified](screenshots/footnote-justify-on-light.png) ·
+[Start aligned](screenshots/footnote-justify-off-light.png) ·
+[Stock toggle](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerlink.lua#L431-L444) ·
+[Stock popup alignment](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/footnotewidget.lua#L266-L270) ·
+[Lua callback comparison](../scripts/compare-footnote-book-font.py)
