@@ -417,12 +417,19 @@ impl ParleyChapter {
             Ok((chapter, lines, extent))
         });
         match trial {
-            Err(error) if error.downcast_ref::<crate::PageContentTooTall>().is_some() => {
+            Err(error)
+                if error.downcast_ref::<crate::PageContentTooTall>().is_some()
+                    || error
+                        .downcast_ref::<crate::float_layout::TooManyFloats>()
+                        .is_some() =>
+            {
                 let (mut chapter, lines, extent) = layout(fonts, None)?;
-                chapter.limitations.push(
+                let reason = if error.is::<crate::float_layout::TooManyFloats>() {
+                    "Float geometry exceeded the placement limit; the chapter uses ordinary flow"
+                } else {
                     "Float geometry could not fit a reading page; the chapter uses ordinary flow"
-                        .into(),
-                );
+                };
+                chapter.limitations.push(reason.into());
                 Ok((chapter, lines, extent))
             }
             result => result,
@@ -738,14 +745,14 @@ impl ParleyChapter {
                         .box_pixels(outer_width, settings.font_size)
                         != 0.0
                     || !simple_box(style, outer_width, settings.font_size);
-                y = float_flow.clear(
-                    if separate {
+                if float.is_none() {
+                    let clear = if separate {
                         Clear::BOTH
                     } else {
                         plan.clears[index]
-                    },
-                    y,
-                );
+                    };
+                    y = float_flow.clear(clear, y);
+                }
             }
             let padding = vertical_padding
                 .as_ref()
@@ -789,8 +796,10 @@ impl ParleyChapter {
             }
             last_cell = cell;
             y += padding.before as f32;
+            let flow_y = y;
             let (column_x, column_width) = if let Some(spec) = float {
-                let (x, top) = float_flow.place(spec, outer_width, y);
+                let clear = float_plan.unwrap().clears[index];
+                let (x, top) = float_flow.place(spec, clear, outer_width, y);
                 y = top;
                 (x, spec.width)
             } else {
@@ -1263,7 +1272,7 @@ impl ParleyChapter {
                 if bottom - block_y > settings.text_height() as f32 * 0.5 {
                     return Err(Box::new(crate::PageContentTooTall));
                 }
-                float_flow.record(spec, column_x, bottom);
+                float_flow.record(spec, column_x, block_y, bottom)?;
                 if let Some(gray) = spec.gray {
                     float_fills.push(crate::vertical_padding::Fill::rectangle(
                         spec.owner,
@@ -1273,7 +1282,7 @@ impl ParleyChapter {
                         gray,
                     ));
                 }
-                y = block_y;
+                y = flow_y;
             }
         }
 
@@ -2384,8 +2393,16 @@ fn make_paragraph(
     if let Some(contour) = contour {
         let mut breaker = layout.break_lines();
         breaker.state_mut().set_layout_max_advance(width as f32);
+        let strut = match line_height(style) {
+            LineHeight::FontSizeRelative(ratio) => ratio * font_size(style),
+            LineHeight::Absolute(pixels) => pixels,
+            // A metrics-relative retry uses the same nominal font sizes.
+            LineHeight::MetricsRelative(ratio) => {
+                ratio * font_size(style) * Settings::default().line_height
+            }
+        };
         while !breaker.is_done() {
-            let (y, x, advance) = contour.for_line(breaker.committed_y());
+            let (y, x, advance) = contour.for_line(breaker.committed_y(), strut);
             let state = breaker.state_mut();
             state.set_line_y(y);
             state.set_line_x(x);

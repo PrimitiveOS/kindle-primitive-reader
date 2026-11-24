@@ -708,9 +708,8 @@ paragraph into six lines in KOReader and seven in Reader.
 [Reader right float](screenshots/render-floats-reader-right.png) ·
 [Reader width recovery](screenshots/render-floats-reader-wrap.png)
 
-The current provider supports simple text cards with explicit widths and
-at most one simultaneous float on each side. It uses horizontal physical
-sides. It keeps publisher-defined percentages for width and uses a
+The provider supports simple text cards with explicit widths on the
+horizontal physical sides. Consecutive cards can share either edge. It keeps publisher-defined percentages for width and uses a
 definite height in `PublisherHeight`. Nested and multiblock floats, inline
 floats, percentage heights, independent formatting contexts and interactions
 with collapsed outer margins require further work. Tables, illustrated,
@@ -721,6 +720,47 @@ retries the chapter in ordinary flow and retains the original anchors.
 The fixture checks link destinations, caret and quote positions, restored
 coordinates, and an authored overflow that forces this rollback.
 [Provider and tests](../src/float_layout.rs)
+
+### Consecutive floats and available width
+
+Book and Web place a later float beside earlier floats when the gap is
+wide enough. If the card does not fit, it drops to the first available
+row and can stay beside a longer opposing float. The ordinary text keeps
+its position beside the preceding card and wraps around the later one
+when it reaches that row. Clearance on a floated card moves the card;
+clearance on ordinary text moves the text below all cards on the specified
+side.
+[Pinned card placement](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L6840-L6964)
+
+The pinned native matrix asserts all 108 passage coordinates across
+Legacy, Flat, Book and Web. Legacy and Flat leave the cards in ordinary
+flow in this fixture. Book and Web place the two left cards at x=54 and
+x=254 and the two right cards at x=970 and x=670. With a wide card on
+the left, Book drops the next card to y=118 and Web drops it to y=150.
+Both place the first line of ordinary text at x=734, y=54. Web still has
+room beside the longer right float at y=150.
+
+Reader's horizontal provider retains separate card positions and combines
+the edges that intersect each text line's strut. Each paragraph uses
+up to five individual rectangles. With six or more it combines the
+widest edge and latest ending position on each side until another
+paragraph starts. This matches the pinned footprint fallback. Reader bounds placement to 64
+pending or active cards and falls back to normal text flow above that
+limit. The two engines use different text metrics. Heights derived from
+text can move, and the same 150-pixel card wraps “Far step” in Reader. [Native footprints](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L7003-L7163) · [Line strut](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvtextfm.cpp#L627-L686)
+
+The Mac tests compare left and right placement, clearance, the contour
+fallback, painted bands, selection and link targets. They reopen the
+same chapter and compare the original source anchors and frame. To
+repeat these captures, run the float tests with
+`READER_FLOAT_STACKING_CAPTURES` set to an output directory.
+[Native comparison script](../scripts/koreader-render-float-stacking-check.lua) ·
+[KOReader stacked cards](screenshots/render-float-stacking-stock-web-shelf.png) ·
+[Reader stacked cards](screenshots/render-float-stacking-reader-web-shelf.png) ·
+[KOReader dropped card](screenshots/render-float-stacking-stock-web-dropped.png) ·
+[Reader dropped card](screenshots/render-float-stacking-reader-web-dropped.png) ·
+[KOReader six-card contour](screenshots/render-float-stacking-stock-web-dense.png) ·
+[Reader six-card contour](screenshots/render-float-stacking-reader-web-dense.png)
 
 ## Forced breaks through empty boxes
 

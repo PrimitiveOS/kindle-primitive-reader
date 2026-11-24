@@ -13,7 +13,17 @@ sheet = '''body,p,div { margin:0; padding:0; text-indent:0; text-align:left; }
 .right { float:right; width:36%; height:2em; background-color:#ddd }
 .low { height:4em } .tall { height:5em }
 .clear-left { clear:left } .clear-right { clear:right } .clear-both { clear:both }
-.broken { width:99999px } .pinched { width:80px }'''
+.broken { width:99999px } .pinched { width:80px }
+.long-edge { width:200px; height:160px; background:#ccc }
+.inner-edge { width:300px; height:80px; background:#bbb }
+.opposite { width:240px; height:240px; background:#ddd }
+.outer-wide { width:680px; height:96px; background:#ccc }
+.dropped-wide { width:400px; height:160px; background:#bbb }
+.small-right { width:160px; height:120px; background:#aaa }
+.clearing { width:260px; height:80px; background:#bbb }
+.right-inner { width:300px; height:80px; background:#aaa }
+.dense { width:150px; height:160px; background:#ccc }
+.dense.short { height:80px; background:#bbb }'''
 pages = {
     "left": '''<div class="left"><p>Left card</p></div>
 <p><a href="#left-end">Left neighbor</a> falls beside this card.</p>
@@ -36,6 +46,41 @@ pages = {
 <p class="clear-both">Fallback ordinary paragraph.</p>''',
     "rollback": '<div class="left pinched"><p>' + 'Reed ' * 60
         + '</p></div><p>Readable after geometry rollback.</p>',
+    "stacked-left": '''<div class="left long-edge"><p>Long edge</p></div>
+<div class="left inner-edge"><p>Inner edge</p></div>
+<div class="right opposite"><p>Opposite bank</p></div>
+<p><a href="#shelf-end">Upper shelf</a></p>
+<p>Middle shelf</p>
+<p>Lower shelf</p>
+<p class="clear-left" id="shelf-end">Open bank</p>
+<p class="clear-both">Clear bank</p>''',
+    "stacked-right": '''<div class="right opposite"><p>Outer quay</p></div>
+<div class="right right-inner"><p>Inner quay</p></div>
+<p>Below the crane</p>
+<p class="clear-right">Clear quay</p>''',
+    "dropped-floats": '''<div class="left outer-wide"><p>Outer card</p></div>
+<div class="right opposite"><p>Right wall</p></div>
+<div class="left dropped-wide"><p>Lower card</p></div>
+<div class="right small-right"><p>Small card</p></div>
+<p>Water edge</p>
+<p class="clear-both">Clear water</p>''',
+    "clear-on-float": '''<div class="left long-edge"><p>First beam</p></div>
+<div class="left clearing clear-left"><p>Next beam</p></div>
+<p>Along beam</p>
+<p class="clear-both">After beams</p>''',
+    "stacked-dense": '''<div class="left dense"><p>A</p></div>
+<div class="left dense"><p>B</p></div>
+<div class="left dense"><p>C</p></div>
+<div class="left dense"><p>D</p></div>
+<div class="left dense"><p>E</p></div>
+<div class="left dense short"><p>Far step</p></div>
+<p>High ledge</p>
+<p>Mid ledge</p>
+<p>Low ledge</p>
+<p class="clear-both">Clear ledge</p>''',
+    "float-budget": '<p style="page-break-before:always">Float budget specimen.</p>'
+        + '<div class="left inner-edge"><p>Reed</p></div>' * 65
+        + '<p class="clear-both">Anchor beyond the float budget.</p>',
 }
 manifest = "".join(
     f'<item id="{name}" href="{name}.xhtml" media-type="application/xhtml+xml"/>'

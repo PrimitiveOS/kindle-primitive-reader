@@ -27,8 +27,8 @@ impl Clear {
         })
     }
 
-    fn applies(self, side: usize) -> bool {
-        self.0 & (1 << side) != 0
+    fn applies(self, side: Side) -> bool {
+        self.0 & (1 << side as usize) != 0
     }
 }
 
@@ -150,42 +150,58 @@ pub(crate) fn simple_box(style: &Style, width: u32, font: f32) -> bool {
             .all(|edge| edge.box_pixels(width, font) == 0.0)
 }
 
+// CREngine keeps up to five exact rectangles per text block. Keep the
+// placement list separate: even when text uses merged contours, placement
+// and clear still need each rectangle's actual coordinates.
+const EXACT_CONTOURS: usize = 5;
+const MAX_ACTIVE_FLOATS: usize = 64;
+
+#[derive(Debug)]
+pub(crate) struct TooManyFloats;
+
+impl std::fmt::Display for TooManyFloats {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("The chapter has too many simultaneously placed floats")
+    }
+}
+
+impl std::error::Error for TooManyFloats {}
+
 #[derive(Clone, Copy)]
 struct Footprint {
+    side: Side,
     edge: u32,
+    top: f32,
     bottom: f32,
     scope_end: usize,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Default)]
 pub(crate) struct Flow {
-    sides: [Option<Footprint>; 2],
+    boxes: Vec<Footprint>,
 }
 
 impl Flow {
     pub(crate) fn leave_closed_boxes(&mut self, index: usize, mut y: f32) -> f32 {
-        for side in &mut self.sides {
-            if side.is_some_and(|rect| index > rect.scope_end) {
-                y = y.max(side.take().unwrap().bottom);
+        self.boxes.retain(|rect| {
+            if index > rect.scope_end {
+                y = y.max(rect.bottom);
+                false
+            } else {
+                true
             }
-        }
+        });
         self.expire(y);
         y
     }
 
     fn expire(&mut self, y: f32) {
-        for side in &mut self.sides {
-            if side.is_some_and(|rect| rect.bottom <= y) {
-                *side = None;
-            }
-        }
+        self.boxes.retain(|rect| rect.bottom > y);
     }
 
     pub(crate) fn clear(&mut self, clear: Clear, mut y: f32) -> f32 {
-        for (index, footprint) in self.sides.iter().enumerate() {
-            if clear.applies(index)
-                && let Some(rect) = footprint
-            {
+        for rect in &self.boxes {
+            if clear.applies(rect.side) {
                 y = y.max(rect.bottom);
             }
         }
@@ -193,75 +209,131 @@ impl Flow {
         y
     }
 
-    pub(crate) fn place(&mut self, spec: Spec, width: u32, y: f32) -> (u32, f32) {
-        let (left, right, _) = self.bounds(y, width);
-        let y = if self.sides[spec.side as usize].is_some() || right - left < spec.width {
-            self.clear(Clear::BOTH, y)
-        } else {
-            y
-        };
-        let x = match spec.side {
-            Side::Left => 0,
-            Side::Right => width - spec.width,
-        };
-        (x, y)
+    pub(crate) fn place(&self, spec: Spec, clear: Clear, width: u32, mut y: f32) -> (u32, f32) {
+        // Later floats cannot start above earlier ones. A float's own
+        // clearance moves that float and leaves the main text cursor alone.
+        for rect in &self.boxes {
+            y = y.max(rect.top);
+            if clear.applies(rect.side) {
+                y = y.max(rect.bottom);
+            }
+        }
+        loop {
+            let (left, right, next) = bounds(self.boxes.iter(), y, 0.0, width);
+            if right.saturating_sub(left) >= spec.width || next.is_none() {
+                let x = match spec.side {
+                    Side::Left => left,
+                    Side::Right => right.saturating_sub(spec.width).max(left),
+                };
+                return (x, y);
+            }
+            // At this point every earlier float has already started.
+            // The available interval can only grow as rectangles end.
+            y = next.unwrap();
+        }
     }
 
-    pub(crate) fn record(&mut self, spec: Spec, left: u32, bottom: f32) {
-        self.sides[spec.side as usize] = Some(Footprint {
+    pub(crate) fn record(
+        &mut self,
+        spec: Spec,
+        left: u32,
+        top: f32,
+        bottom: f32,
+    ) -> Result<(), TooManyFloats> {
+        if self.boxes.len() == MAX_ACTIVE_FLOATS {
+            return Err(TooManyFloats);
+        }
+        self.boxes.push(Footprint {
+            side: spec.side,
             edge: if spec.side == Side::Left {
                 left + spec.width
             } else {
                 left
             },
+            top,
             bottom,
             scope_end: spec.scope_end,
         });
+        Ok(())
     }
 
-    pub(crate) fn finish(self, y: f32) -> f32 {
-        self.sides
-            .iter()
-            .flatten()
-            .fold(y, |end, rect| end.max(rect.bottom))
+    pub(crate) fn finish(&self, y: f32) -> f32 {
+        self.boxes.iter().fold(y, |end, rect| end.max(rect.bottom))
     }
 
-    pub(crate) fn contour(self, origin: f32, width: u32, min_width: f32) -> Option<Contour> {
-        (self.finish(origin) > origin).then_some(Contour {
-            flow: self,
+    pub(crate) fn contour(&self, origin: f32, width: u32, min_width: f32) -> Option<Contour> {
+        let mut exact = [None; EXACT_CONTOURS];
+        let mut count = 0;
+        let mut merged: [Option<Footprint>; 2] = [None; 2];
+        for &rect in self.boxes.iter().filter(|rect| rect.bottom > origin) {
+            if let Some(slot) = exact.get_mut(count) {
+                *slot = Some(rect);
+            }
+            count += 1;
+            let edge = merged[rect.side as usize].get_or_insert(Footprint {
+                top: origin,
+                ..rect
+            });
+            edge.edge = match rect.side {
+                Side::Left => edge.edge.max(rect.edge),
+                Side::Right => edge.edge.min(rect.edge),
+            };
+            edge.bottom = edge.bottom.max(rect.bottom);
+        }
+        if count == 0 {
+            return None;
+        }
+        if count > EXACT_CONTOURS {
+            exact = [None; EXACT_CONTOURS];
+            exact[..merged.len()].copy_from_slice(&merged);
+        }
+        Some(Contour {
+            boxes: exact,
             origin,
             width,
             min_width,
         })
     }
+}
 
-    fn bounds(self, y: f32, width: u32) -> (u32, u32, Option<f32>) {
-        let [left, right] = self.sides.map(|side| side.filter(|rect| rect.bottom > y));
-        let next = [left, right]
-            .iter()
-            .flatten()
-            .map(|rect| rect.bottom)
-            .reduce(f32::min);
-        (
-            left.map_or(0, |rect| rect.edge),
-            right.map_or(width, |rect| rect.edge),
-            next,
-        )
+fn bounds<'a>(
+    footprints: impl Iterator<Item = &'a Footprint>,
+    y: f32,
+    strut: f32,
+    width: u32,
+) -> (u32, u32, Option<f32>) {
+    let mut left = 0;
+    let mut right = width;
+    let mut next = None;
+    for rect in footprints {
+        if rect.bottom > y && rect.top <= y + strut {
+            match rect.side {
+                Side::Left => left = left.max(rect.edge),
+                Side::Right => right = right.min(rect.edge),
+            }
+            next = Some(next.map_or(rect.bottom, |previous: f32| previous.min(rect.bottom)));
+        }
     }
+    (left, right, next)
 }
 
 #[derive(Clone, Copy)]
 pub(crate) struct Contour {
-    flow: Flow,
+    boxes: [Option<Footprint>; EXACT_CONTOURS],
     origin: f32,
     width: u32,
     min_width: f32,
 }
 
 impl Contour {
-    pub(crate) fn for_line(self, mut local_y: f64) -> (f64, f32, f32) {
+    pub(crate) fn for_line(self, mut local_y: f64, strut: f32) -> (f64, f32, f32) {
         loop {
-            let (start, end, next) = self.flow.bounds(self.origin + local_y as f32, self.width);
+            let (start, end, next) = bounds(
+                self.boxes.iter().flatten(),
+                self.origin + local_y as f32,
+                strut,
+                self.width,
+            );
             let span = end.saturating_sub(start) as f32;
             if span >= self.min_width || next.is_none() {
                 return (local_y, start as f32, span);
@@ -276,7 +348,7 @@ mod tests {
     use super::*;
     use crate::{Anchor, Engine, Probe, Renderer, selection::HighlightRect};
 
-    fn settings(mode: FloatMode) -> Settings {
+    pub(super) fn settings(mode: FloatMode) -> Settings {
         Settings {
             height: 1606,
             font_size: 40.0,
@@ -286,7 +358,7 @@ mod tests {
         }
     }
 
-    fn open(name: &str, mode: FloatMode, chapter: usize) -> Probe {
+    pub(super) fn open(name: &str, mode: FloatMode, chapter: usize) -> Probe {
         Probe::open(
             &crate::test_fixture(name),
             Engine::Parley,
@@ -297,7 +369,7 @@ mod tests {
         .unwrap()
     }
 
-    fn marker(probe: &Probe, text: &str) -> (Anchor, HighlightRect) {
+    pub(super) fn marker(probe: &Probe, text: &str) -> (Anchor, HighlightRect) {
         let start = probe.matches(text)[0].clone();
         let end = Anchor {
             offset: start.offset + text.len(),
@@ -526,3 +598,6 @@ mod tests {
         assert_eq!(marker(&ordinary, after), marker(&overflow, after));
     }
 }
+
+#[cfg(test)]
+mod stacking_tests;
