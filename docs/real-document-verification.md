@@ -241,6 +241,37 @@ folder action, the dictionary close control, both clippings screens and
 column or row zoom. The folder listing differed by two grayscale pixels.
 [Current book folder](screenshots/current-book-folder.png) · [Dictionary lookup](screenshots/dictionary-close-stack.png) · [Clippings options](screenshots/export-kindle-clippings-options.png) · [Scan zoom](screenshots/fixed-tile-zoom.png)
 
+## Reader 0.1.37 release on the Oasis
+
+The published ARMHF package contains both Reader licenses. Store's
+verified transaction installed the package in place, and the installed
+executable matched the GitHub release. The public catalog reports the same
+ZIP size and digest.
+[GitHub release](https://github.com/PrimitiveOS/kindle-primitive-reader/releases/tag/v0.1.37) · [Package workflow](https://github.com/PrimitiveOS/kindle-primitive-reader/actions/runs/45349271510) · [Store entry](https://primitiveos.github.io/kindle-primitive-catalog/v1/apps/primitive-reader.json)
+
+| Verified file | SHA-256 | Bytes |
+| --- | --- | ---: |
+| ARMHF ZIP | `8d324ae43c5d430b024ea4943009898e229ca135929435bba4aa05d1e2718b12` | 21,515,843 |
+| Kindle executable | `6199cf8edd5b3524c926bd4053a8023796950d380c87d37b99b177719df002e2` | 34,170,048 |
+
+The exact installed executable opened these original Documents files through
+the picker. Each advanced to a changed frame, resumed after restart and
+kept the original bytes unchanged. First-frame time ends when a grayscale
+frame is available in memory.
+
+| File type | Bytes | First frame | Advance and resume |
+| --- | ---: | ---: | --- |
+| EPUB | 436,947 | 1,653 ms | Passed |
+| PDF | 2,005,917 | 797 ms | Passed |
+| AZW3 | 590,896 | 874 ms | Passed |
+| MOBI | 625,173 | 2,287 ms | Passed |
+
+The Mac candidate passed 1,116 checks. Its ARMHF suite passed 1,119 checks on
+the Oasis. Both skipped 64 opt-in cases. A separate native test recognized
+and exported 126 entries from the device's original Kindle clippings in an
+isolated profile, with the source checksum unchanged. Foreground touch and
+E Ink refresh timing have separate acceptance checks.
+
 ## Reader 0.1.36 native reading workflows
 
 The Mac run passed 1,080 Reader library tests, one Kindle binary test,
