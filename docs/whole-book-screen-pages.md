@@ -19,69 +19,56 @@ books with several spine items use source-byte weights. A source-byte offset or
 character-count edition page cannot establish the count of rendered leaves.
 [Chapter layout](../src/session.rs) · [Edition labels](../src/app/publisher_pages.rs) · [Reading status calculations](../src/app/reading_footer.rs)
 
-## Implemented foundation
+## Exact page count
 
-The optional top header reads an exact prefix once Reader has successfully
-laid out and displayed every spine item under one regular paged EPUB layout.
-Before then it shows its existing chapter-local numbers. Edition labels take
-precedence. Each sample carries the chapter's source revision and leaf count.
-The in-memory generation checks the ordered spine, active settings and
-publication revision, applied user CSS and hyphenation, and the archive and
-ordered fallback font file stamps. A file changing during load loses its
-sample. USB return clears the generation. This slice accepts horizontal,
-single-leaf Parley layouts from complete EPUB archives.
-[Installed layout observation](../src/session.rs) · [Validated counts](../src/session/screen_pages.rs)
+The optional header shows its chapter-local numbers while Reader gathers
+screen page counts. Valid publisher or generated edition labels take
+precedence. The header starts a background count when the reading screen is
+visible and a screen number or count is enabled. The first page is painted
+before the worker starts. Visiting a chapter also records its count and
+source revision through the normal page layout.
 
-## Background completion
-
-- Start when the paged reflow header is visible and requests a screen number
-  or count. Use valid edition labels immediately when available. Schedule the
-  count after the first painted page. A header toggle, book switch, or
-  layout-affecting change reevaluates demand and cancels obsolete work.
-- Reuse the active Probe's count and the same layout function for other
-  spine items. Count leaves using the current engine, width and height,
-  margins, font resolution, DPI, style rules, hyphenation and writing mode.
-  Retain counts and checked prefix sums. Release each temporary layout before
-  building the next. A current chapter at index `i` uses the sum of leaves
-  before `i` plus its one-based page index. The last prefix is the total.
-- Keep the chapter-local display until every required count is positive,
-  present and tied to the same edition and layout generation. Reject a result
-  for an unreadable or recovered-placeholder chapter, overflow, inconsistent
-  spine order, stale delivery, cancellation, or any count that disagrees
-  with the active Probe. Treat a deliberately blank rendered leaf as a
-  counted page. Failures leave the document readable and its location intact.
-  A permanent failure ends that generation. Retry on a new generation or
-  when storage returns after a transient interruption.
-- First support regular paged reflow. Keep the documented fallback for hidden
-  flows, continuous scrolling and facing pages until flow membership and
-  spread semantics have independent coverage. Keep the normal
-  `Chapter x of y - Page m of n` footer, track and Exit. Apply whole-book
-  screen percentages and Contents markers only after their own page
-  definitions and anchor mapping have been verified.
+A result needs a positive count for every spine item in one layout. The
+worker uses the same publisher resources and Parley pagination as normal
+reading. Its first count must agree with the visible chapter. A missing or
+recovered-placeholder member, unsupported writing mode, changed identity,
+invalid prefix or conflicting sample leaves the header chapter-local. The
+default reading footer uses `Chapter x of y - Page m of n` with its progress
+track and Exit. Whole-book percentages and Contents marks have separate
+position rules.
+[Installed layout observation](../src/session.rs) · [Validated counts](../src/session/screen_pages.rs) · [Background worker](../src/session/screen_pages/background.rs)
 
 ## Cache and storage
 
-Start with an in-memory entry keyed by the validated library edition ID,
-ordered spine, renderer and effective layout options. Include viewport and
-header reservation, reading mode, base and publisher style settings, applied
-user stylesheet identity, hyphenation rules, and the ordered reading and
-fallback font identities.
-Use a generation token so a completed worker cannot update a newer layout.
-In EPUB, the Probe's publication revision comes from the package XML and can
-survive changes to XHTML, CSS, images or embedded fonts. Use the library's
-validated publication identity as well. A durable cache also needs a
-versioned layout format and resource identities, including fonts whose files
-can be replaced at the same paths. [Publication revision](../src/epub.rs) · [Edition identification](../src/library.rs)
+The count is held in memory for one generation. Its identity covers the
+ordered spine, publication revision, current viewport and header reservation,
+typography, publisher styles and user CSS, hyphenation, and the ordered
+reading and fallback font file stamps. The Probe's EPUB publication revision
+comes from the package XML. The worker also checks archive and font file
+stamps before and after taking its snapshot, and again before delivering the
+counts. USB return clears the generation. A future durable cache would need
+the validated library edition ID, a versioned layout format, and stable
+resource identities.
+[Publication revision](../src/epub.rs) · [Edition identification](../src/library.rs)
 
-The Kindle storage helper holds a process-wide lease mutex for the callback.
-The current chapter layout runs inside that callback. Moving that call as-is
-to a worker could still delay foreground storage access. First separate a
-bounded read of owned chapter resources from shaping and layout. Consume only
-owned data after releasing the lease. Allow one job at a time and cancel or
-suspend between chapters on sleep, USB export, or a changed book or layout.
-Validate the edition after storage returns before accepting a result. Start
-work in a worker from an owned snapshot because the current BookConfig holds
-thread-local reference-counted data. [Pinned lease implementation](https://github.com/PrimitiveOS/kindle-primtitive-tools/blob/50035cf068c0157abf97477ef64eb28bc984b6b7/crates/primitive-app/src/storage.rs#L26-L58) · [Existing cancellable search worker](../src/app/nearby_search.rs)
+The worker snapshots a complete compressed archive and the non-firmware
+reading fonts in 128 KiB reads. The Kindle storage lease ends after each
+read and the file handle closes with it. EPUB decompression, source parsing,
+CSS, image decoding and text layout use the snapshot after the lease is
+released. Firmware fonts use the usual mapping on the always-mounted
+firmware volume. The worker releases each temporary layout before the next
+chapter and delivery passes the active generation check on the main thread.
+Leaving the reading screen, sleep, USB return, or changing the book or
+layout cancels or discards the scheduled work.
+[Pinned lease implementation](https://github.com/PrimitiveOS/kindle-primtitive-tools/blob/50035cf068c0157abf97477ef64eb28bc984b6b7/crates/primitive-app/src/storage.rs#L26-L58)
+
+Background snapshots cover regular horizontal paged EPUB archives up to
+8 MiB compressed and 64 MiB expanded, with at most 192 spine items and
+256 KiB per chapter. The reading stack can include up to 64 font files,
+with a combined 16 MiB budget for non-firmware files. Books above these
+limits can still collect exact counts through visited layouts where
+supported. Continuous scroll, facing pages and hidden flows retain their
+established page-number semantics.
 
 ## Acceptance checks
 

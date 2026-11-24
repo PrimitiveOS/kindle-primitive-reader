@@ -1,4 +1,6 @@
-//! Exact screen pages from already-loaded EPUB chapter layouts.
+//! Exact screen pages tied to one EPUB edition and layout.
+pub(crate) mod background;
+
 use std::cell::RefCell;
 use std::fs;
 #[cfg(unix)]
@@ -29,10 +31,13 @@ impl ScreenPageSources {
         {
             return None;
         }
+        Self::read_paths(&config.book, &config.fonts)
+    }
+
+    fn read_paths(book: &Path, fonts: &[PathBuf]) -> Option<Self> {
         Some(Self {
-            book: FileStamp::read(&config.book)?,
-            fonts: config
-                .fonts
+            book: FileStamp::read(book)?,
+            fonts: fonts
                 .iter()
                 .map(|path| FileStamp::read(path))
                 .collect::<Option<_>>()?,
@@ -50,7 +55,10 @@ struct FileStamp {
 
 impl FileStamp {
     fn read(path: &Path) -> Option<Self> {
-        let metadata = fs::metadata(path).ok()?;
+        Self::from_metadata(&fs::metadata(path).ok()?)
+    }
+
+    fn from_metadata(metadata: &fs::Metadata) -> Option<Self> {
         if !metadata.is_file() {
             return None;
         }
@@ -111,6 +119,7 @@ impl ScreenPages {
 }
 
 struct Generation {
+    id: Rc<()>,
     book: PathBuf,
     publication: u64,
     settings: Settings,
@@ -124,6 +133,7 @@ struct Generation {
     missing: usize,
     prefix: Option<Vec<usize>>,
     rejected: bool,
+    background_rejected: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -146,6 +156,7 @@ impl Generation {
         let spine = probe.chapter_entries().to_vec();
         let missing = spine.len();
         Self {
+            id: Rc::new(()),
             book: config.book.clone(),
             publication: probe.book,
             settings: config.settings,
@@ -159,6 +170,7 @@ impl Generation {
             missing,
             prefix: None,
             rejected: false,
+            background_rejected: false,
         }
     }
 
@@ -179,12 +191,7 @@ impl Generation {
     }
 
     fn same_spine(&self, spine: &[Chapter]) -> bool {
-        self.spine.len() == spine.len()
-            && self.spine.iter().zip(spine).all(|(expected, actual)| {
-                expected.href == actual.href
-                    && expected.nonlinear == actual.nonlinear
-                    && expected.is_svg == actual.is_svg
-            })
+        same_spine(&self.spine, spine)
     }
 
     fn record(&mut self, chapter: usize, href: &str, sample: PageSample) {
@@ -230,6 +237,15 @@ impl Generation {
     }
 }
 
+fn same_spine(expected: &[Chapter], actual: &[Chapter]) -> bool {
+    expected.len() == actual.len()
+        && expected.iter().zip(actual).all(|(expected, actual)| {
+            expected.href == actual.href
+                && expected.nonlinear == actual.nonlinear
+                && expected.is_svg == actual.is_svg
+        })
+}
+
 fn checked_prefix(samples: &[Option<PageSample>]) -> Option<Vec<usize>> {
     let mut prefix = Vec::with_capacity(samples.len() + 1);
     let mut total = 0_usize;
@@ -269,7 +285,7 @@ mod tests {
         assert_eq!(checked_prefix(&[sample(usize::MAX), sample(1)]), None);
     }
 
-    fn config(fixture: &str) -> BookConfig {
+    pub(super) fn config(fixture: &str) -> BookConfig {
         BookConfig {
             user_styles: Default::default(),
             user_hyphenation: Default::default(),
