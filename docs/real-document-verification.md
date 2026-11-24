@@ -193,6 +193,21 @@ page event and resumed after reopening. The originals retained their hashes.
 native tests and the Mac and Oasis frame comparison. Test profiles were
 isolated. Foreground physical input and E Ink timing remain separate checks.
 
+## Reader 0.1.30 release on the Oasis
+
+The [0.1.30 GitHub release](https://github.com/PrimitiveOS/kindle-primitive-reader/releases/tag/v0.1.30)
+passed CI. Both licenses were present in the verified ARMHF package
+(SHA-256 `aa60eded61d3a3e8285d22bcd362ac60ff15c5f136cd55be1acf64d12fe9495e`,
+21,298,825 bytes). The Store transaction installed the release on the Oasis.
+The installed executable matched release SHA-256
+`06a8aa716b2e8bbe06cfeb8f49d2d3f1229ac91c67be84afb2a0a98bdb516a7b`.
+
+An EPUB, PDF, AZW3 and MOBI already in Documents each opened through the
+normal picker, advanced, and resumed. Their original file hashes matched
+before and after. First frames took 1,489 ms, 18,972 ms, 1,943 ms and
+1,918 ms respectively. [Chapter settings](chapter-level-settings.md)
+records the complete native and simulator evidence.
+
 For a single file under an authorized Documents root, run the example with a fresh
 scratch directory and the same Noto Sans fonts as Launcher.
 
