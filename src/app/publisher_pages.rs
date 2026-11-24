@@ -6,6 +6,7 @@ use primitive_ui::{Canvas, GrayImage, Rect, TextStyle};
 use std::collections::HashMap;
 
 pub(crate) struct PublisherPositions {
+    ordered_and_resolved: bool,
     preceding: Option<usize>,
     chapters: Vec<Option<usize>>,
     screen_pages: HashMap<usize, usize>,
@@ -24,6 +25,9 @@ impl Probe {
                 let mut visible = Vec::new();
                 let mut screen_pages = HashMap::new();
                 let mut preceding = None;
+                let mut ordered_and_resolved = map.book == self.book
+                    && map.chapters.len() == self.chapter_entries().len()
+                    && map.count > 0;
                 for (chapter, (source, numbered)) in
                     self.chapter_entries().iter().zip(&map.chapters).enumerate()
                 {
@@ -44,13 +48,18 @@ impl Probe {
                                 .and_then(|a| self.anchor_top(&a)),
                         };
                         if let Some(y) = top {
+                            ordered_and_resolved &=
+                                visible.last().is_none_or(|(prior, _)| *prior <= y);
                             visible.push((y, row));
                             screen_pages.insert(row, self.page_at(y) + 1);
+                        } else {
+                            ordered_and_resolved = false;
                         }
                     }
                 }
                 visible.sort_by(|(a, i), (b, j)| a.total_cmp(b).then(i.cmp(j)));
                 return PublisherPositions {
+                    ordered_and_resolved,
                     chapters,
                     screen_pages,
                     preceding,
@@ -68,13 +77,19 @@ impl Probe {
             let mut chapters = vec![None; self.printed_pages.len()];
             let mut screen_pages = HashMap::new();
             let mut visible = Vec::new();
+            let mut ordered_and_resolved = !self.printed_pages.is_empty();
+            let mut prior_section = None;
             for (i, entry) in self.printed_pages.iter().enumerate() {
                 let Some(target) = &entry.destination else {
+                    ordered_and_resolved = false;
                     continue;
                 };
                 let Some(&section) = order.get(target.path.as_str()) else {
+                    ordered_and_resolved = false;
                     continue;
                 };
+                ordered_and_resolved &= prior_section.is_none_or(|prior| prior <= section);
+                prior_section = Some(section);
                 chapters[i] = Some(section + 1);
                 if section < chapter {
                     preceding = preceding.max(Some((section, i)));
@@ -86,13 +101,18 @@ impl Probe {
                         None => Some(0.0),
                     };
                     if let Some(top) = top {
+                        ordered_and_resolved &=
+                            visible.last().is_none_or(|(prior, _)| *prior <= top);
                         visible.push((top, i));
                         screen_pages.insert(i, self.page_at(top) + 1);
+                    } else {
+                        ordered_and_resolved = false;
                     }
                 }
             }
             visible.sort_by(|(a, i), (b, j)| a.total_cmp(b).then(i.cmp(j)));
             PublisherPositions {
+                ordered_and_resolved,
                 chapters,
                 screen_pages,
                 preceding: preceding.map(|(_, i)| i),
@@ -118,6 +138,25 @@ impl Reader {
         // CREngine labels even the front matter before the first print boundary.
         self.visible_publisher_page()
             .or_else(|| (self.active.as_ref()?.page_labels() > 0).then_some(0))
+    }
+
+    pub(super) fn top_header_page_labels(&self) -> Option<(String, String)> {
+        let book = self.active.as_ref()?;
+        if book.numbering.is_none() && !self.publisher_footer_enabled() {
+            return None;
+        }
+        let reading = &book.reading;
+        let positions = reading.probe.publisher_positions(book.numbering.as_ref());
+        if reading.has_page_error() || !positions.ordered_and_resolved {
+            return None;
+        }
+        let current = book.page_label(self.current_publisher_page()?)?;
+        // The final reference is either an authored label or part of the completed
+        // character map. It does not describe the count of rendered screen pages.
+        let last = book.page_label(book.page_labels().checked_sub(1)?)?;
+        let current = compact_label(&current).trim();
+        let last = compact_label(&last).trim();
+        (!current.is_empty() && !last.is_empty()).then(|| (current.to_owned(), last.to_owned()))
     }
 
     pub(super) fn publisher_page_window(&self, first: usize, limit: usize) -> (usize, Vec<Item>) {

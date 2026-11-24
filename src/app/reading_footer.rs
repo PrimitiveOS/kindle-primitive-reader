@@ -982,15 +982,22 @@ impl Reader {
                 status.push(time);
             }
         }
-        let page_number = header.page_number.then_some(active.reading.page + 1);
-        let page_count = header
-            .page_count
-            .then_some(active.reading.probe.page_count());
-        match (page_number, page_count) {
-            (Some(page), Some(count)) => status.push(format!("{page}/{count}")),
-            (Some(page), None) => status.push(page.to_string()),
-            (None, Some(count)) => status.push(format!("of {count}")),
-            (None, None) => {}
+        if header.page_number || header.page_count {
+            if let Some((current, last)) = self.top_header_page_labels() {
+                status.push(match (header.page_number, header.page_count) {
+                    (true, true) => format!("{current} / {last}"),
+                    (true, false) => current,
+                    (false, _) => last,
+                });
+            } else {
+                let page = active.reading.page + 1;
+                let count = active.reading.probe.page_count();
+                status.push(match (header.page_number, header.page_count) {
+                    (true, true) => format!("{page}/{count}"),
+                    (true, false) => page.to_string(),
+                    (false, _) => format!("of {count}"),
+                });
+            }
         }
         if header.reading_percent
             && let Some(progress) = &progress
@@ -2466,3 +2473,7 @@ mod pace_replay;
 #[cfg(test)]
 #[path = "reading_footer/overlap_tests.rs"]
 mod overlap_tests;
+
+#[cfg(test)]
+#[path = "reading_footer/header_page_labels_tests.rs"]
+mod header_page_labels_tests;
