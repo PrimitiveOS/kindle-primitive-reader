@@ -55,7 +55,8 @@ regions across exact, odd and even pages, verify the source coordinates of
 annotations and links, and compare an authored scan with pinned KOReader.
 [Chapter marks](whole-book-screen-pages.md) · [Footnote previews](footnote-export-roots.md) · [Folder navigation](document-end.md) · [Semi-automatic crop](semi-auto-pdf-crop.md)
 
-The ARMHF candidate passed 1,109 Reader library tests, 14 EPUB package tests
+The Mac build passed 1,124 checks. The ARMHF candidate passed 1,109 Reader
+library tests, 14 EPUB package tests
 and four layout probes on the Oasis 3. It skipped 65 opt-in cases. The top
 header, adjacent-file action grid and target, crop editor and book-font
 footnote matched their 1,264 × 1,680 Mac simulator frames pixel for pixel.
