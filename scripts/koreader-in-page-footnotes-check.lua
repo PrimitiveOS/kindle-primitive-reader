@@ -13,7 +13,9 @@ local BB = require("ffi/blitbuffer")
 local source, cache, font, captures = assert(arg[1]), assert(arg[2]), assert(arg[3]), assert(arg[4])
 local width, height, margin = 720, 480, 32
 local fb2 = arg[5] == "fb2"
-local tweak_id = fb2 and "footnote-inpage_fb2" or "footnote-inpage_epub"
+local classic = arg[5] == "classic"
+local tweak_id = fb2 and "footnote-inpage_fb2"
+    or classic and "footnote-inpage_classic_classnames" or "footnote-inpage_epub"
 local function find_tweak(items, id)
     for _, item in ipairs(items) do
         if item.tweak_id == (id or tweak_id) then return item end
@@ -145,7 +147,53 @@ local function width_in_canonical_note(view_, text)
     view_:gotoPage(view_:getPageFromXPointer(hit.start))
     local boxes = assert(view_:getWordBoxesFromPositions(hit.start, hit["end"], true))
     assert(#boxes >= 1, text)
-    return boxes[#boxes].x1 - boxes[1].x0
+    return boxes[#boxes].x1 - boxes[1].x0, boxes[1].x0
+end
+
+if classic then
+    controller:onReadSettings(Settings:wrap({}))
+    assert(row.checked_func())
+    local function item(id)
+        return assert(find_tweak(menu.style_tweaks.sub_item_table, id))
+    end
+    -- Match Reader's saved legacy default for these archived style controls.
+    local legacy_size = item("inpage_footnote_font-size_smaller")
+    legacy_size.callback()
+    assert(legacy_size.checked_func())
+    local function render_classic(name)
+        local candidate = open(assert(controller:getCssText()))
+        local reference = position(candidate, "A traditional marker")
+        assert(position(candidate, "Classic note sample") > reference)
+        local separator = assert(capture(candidate, reference, "stock-classic-note-" .. name))
+        local _, indent = width_in_canonical_note(candidate, "Classic note sample")
+        local label = width_in_canonical_note(candidate, "raised label")
+        local body = width_in_canonical_note(candidate, "A traditional marker")
+        candidate:close()
+        print(string.format("classic_notes=%s separator=%d x=%d label=%d body=%d", name, separator, indent, label, body))
+        return separator, indent, label, body
+    end
+    local base, x_before, label_before, body_before = render_classic("base")
+    local until_entry = item("extend-footnote-inpage_any")
+    until_entry.callback()
+    assert(until_entry.checked_func())
+    local all = render_classic("entry")
+    local until_heading = item("extend-footnote-inpage_until_heading")
+    until_heading.callback()
+    assert(until_heading.checked_func() and not until_entry.checked_func())
+    local heading = render_classic("heading")
+    assert(all < heading and heading < base)
+    for _, id in ipairs({
+        "inpage_footnote_text-indent_0", "inpage_footnote_text_justify",
+        "inpage_footnote_no_block_spacing", "inpage_footnote_regularize_text",
+    }) do
+        local option = item(id)
+        option.callback()
+        assert(option.checked_func())
+    end
+    local _, x_after, label_after, body_after = render_classic("fixed")
+    assert(x_after < x_before and label_after > label_before and body_before == body_after)
+    print("Stock classic note aliases, continuation modes and four text fixes verified")
+    return
 end
 
 if fb2 then

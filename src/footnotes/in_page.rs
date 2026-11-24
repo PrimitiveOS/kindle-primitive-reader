@@ -4,7 +4,7 @@ use std::ops::Range;
 
 use crate::epub::{Book, Destination};
 use crate::loose::Fb2NoteKind;
-use crate::user_styles::{FootnoteSize, Snapshot};
+use crate::user_styles::{FootnoteSize, NoteExtension, NoteFormatting, Snapshot};
 use crate::{
     Line, Settings, Source,
     publisher_breaks::{self, BoxRules, Edge},
@@ -187,39 +187,101 @@ pub(crate) struct Targets {
     roots: BTreeMap<usize, usize>,
     ids: BTreeMap<String, usize>,
     ancestry: Vec<Option<usize>>,
+    starts_note_part: Vec<bool>,
     sizes: Vec<NoteSize>,
+    formatting: NoteFormatting,
 }
 
 #[derive(Clone, Copy)]
 enum NoteSize {
-    Epub(FootnoteSize),
+    Epub {
+        font: FootnoteSize,
+        clear_margins: bool,
+    },
     Fb2(f32),
 }
 
+const CLASSIC_NOTE_CLASSES: &[&str] = &[
+    "footnote",
+    "footnote1",
+    "footnotes",
+    "fn",
+    "note",
+    "note1",
+    "note2",
+    "note3",
+    "ntb",
+    "ntb-txt",
+    "ntb-txt-j",
+    "fnote",
+    "fnote1",
+    "duokan-footnote-item",
+    "przypis",
+    "przypis1",
+    "voetnoten",
+];
+
 impl Targets {
-    pub(crate) fn epub(xhtml: &str, source: &Source, size: FootnoteSize) -> Option<Self> {
-        let document = roxmltree::Document::parse_with_options(
-            xhtml,
-            roxmltree::ParsingOptions {
-                allow_dtd: true,
-                ..Default::default()
-            },
-        )
-        .ok()?;
-        let mut marked = Vec::new();
-        for node in document.descendants().filter(roxmltree::Node::is_element) {
-            if !super::note_container(node) {
-                continue;
+    pub(crate) fn epub(
+        chapter: &str,
+        xhtml: &str,
+        source: &Source,
+        explicit: bool,
+        styles: &Snapshot,
+    ) -> Option<Self> {
+        let font = styles.footnote_size().unwrap_or(FootnoteSize::Publisher);
+        let mut roots = BTreeMap::new();
+        let mut required = BTreeSet::new();
+        if explicit {
+            let document = roxmltree::Document::parse_with_options(
+                xhtml,
+                roxmltree::ParsingOptions {
+                    allow_dtd: true,
+                    ..Default::default()
+                },
+            )
+            .ok()?;
+            for node in document.descendants().filter(roxmltree::Node::is_element) {
+                if !super::note_container(node) {
+                    continue;
+                }
+                let id = node
+                    .attribute("id")
+                    .or_else(|| node.attribute((super::XML, "id")))?;
+                let owner = source.fragment_owner(id)?;
+                if !required.insert(owner) || required.len() > MAX_NOTES {
+                    return None;
+                }
+                roots.insert(
+                    owner,
+                    NoteSize::Epub {
+                        font,
+                        clear_margins: false,
+                    },
+                );
             }
-            let id = node
-                .attribute("id")
-                .or_else(|| node.attribute((super::XML, "id")))?;
-            if marked.len() == MAX_NOTES {
-                return None;
-            }
-            marked.push((id, NoteSize::Epub(size)));
         }
-        Self::for_ids(source, marked)
+        if styles.classic_epub_notes() {
+            for (index, element) in source.elements.iter().enumerate() {
+                if !element.selector_only
+                    && !element.anonymous
+                    && note_block(&element.tag)
+                    && element
+                        .classes
+                        .split_ascii_whitespace()
+                        .any(|class| CLASSIC_NOTE_CLASSES.contains(&class))
+                {
+                    roots.insert(
+                        index,
+                        NoteSize::Epub {
+                            font,
+                            clear_margins: true,
+                        },
+                    );
+                }
+            }
+        }
+        Self::build(chapter, source, &roots, &required, styles)
     }
 
     pub(crate) fn fb2(
@@ -228,69 +290,135 @@ impl Targets {
         sections: &BTreeMap<String, Fb2NoteKind>,
         styles: &Snapshot,
     ) -> Option<Self> {
-        let mut marked = BTreeMap::new();
+        let roots = sections
+            .iter()
+            .filter_map(|(id, &kind)| {
+                let scale = styles.fb2_note_scale(kind)?;
+                Some((source.fragment_owner(id)?, NoteSize::Fb2(scale)))
+            })
+            .collect();
+        Self::build(chapter, source, &roots, &BTreeSet::new(), styles)
+    }
+
+    fn build(
+        chapter: &str,
+        source: &Source,
+        marks: &BTreeMap<usize, NoteSize>,
+        required: &BTreeSet<usize>,
+        styles: &Snapshot,
+    ) -> Option<Self> {
+        if marks.is_empty() {
+            return None;
+        }
+        let extension = styles.note_extension();
+        let mut ownership = Vec::<Option<usize>>::with_capacity(source.elements.len());
+        let mut starts_note_part = Vec::with_capacity(source.elements.len());
+        for (index, element) in source.elements.iter().enumerate() {
+            let inherited = element.parent.and_then(|parent| ownership[parent]);
+            let root = marks.contains_key(&index);
+            if required.contains(&index) && inherited.is_some() {
+                return None;
+            }
+            let continuation = if extension != NoteExtension::Off
+                && inherited.is_none()
+                && !root
+                && !element.selector_only
+                && !element.anonymous
+                && note_block(&element.tag)
+                && !(extension == NoteExtension::UntilHeading && heading(&element.tag))
+            {
+                element
+                    .previous_sibling
+                    .filter(|&sibling| starts_note_part[sibling])
+                    .and_then(|sibling| ownership[sibling])
+            } else {
+                None
+            };
+            ownership.push(inherited.or(root.then_some(index)).or(continuation));
+            starts_note_part.push(inherited.is_none() && (root || continuation.is_some()));
+        }
+
+        let mut links = BTreeMap::new();
+        let mut referenced = BTreeSet::new();
         for link in source.blocks.iter().flat_map(|block| &block.links) {
             if let Ok(Destination {
                 path,
                 fragment: Some(id),
             }) = Book::resolve_link(chapter, &link.href)
                 && path == chapter
-                && let Some((authored, &kind)) = sections.get_key_value(&id)
-                && let Some(scale) = styles.fb2_note_scale(kind)
+                && let Some(owner) = source
+                    .fragment_owner(&id)
+                    .and_then(|element| ownership[element])
             {
-                marked.insert(authored.as_str(), NoteSize::Fb2(scale));
-                if marked.len() > MAX_NOTES {
+                referenced.insert(owner);
+                links.insert(id, owner);
+                if referenced.len() > MAX_NOTES || links.len() > MAX_REFERENCES {
                     return None;
                 }
             }
         }
-        Self::for_ids(source, marked)
-    }
-
-    fn for_ids<'a>(
-        source: &Source,
-        marked: impl IntoIterator<Item = (&'a str, NoteSize)>,
-    ) -> Option<Self> {
-        let mut roots = BTreeMap::new();
-        let mut ids = BTreeMap::new();
-        let mut sizes = Vec::new();
-        for (id, size) in marked {
-            let owner = source.fragment_owner(id)?;
-            let index = roots.len();
-            if roots.insert(owner, index).is_some() || ids.insert(id.to_owned(), index).is_some() {
-                return None;
-            }
-            sizes.push(size);
-        }
-        if roots.is_empty() {
+        if referenced.is_empty() || !required.is_subset(&referenced) {
             return None;
         }
-        // Source elements are ordered so inherited ownership is already known.
-        let mut ancestry: Vec<Option<usize>> = Vec::with_capacity(source.elements.len());
-        for (index, element) in source.elements.iter().enumerate() {
-            let inherited = element.parent.and_then(|parent| ancestry[parent]);
-            let root = roots.get(&index).copied();
-            if inherited.is_some() && root.is_some() {
-                return None;
-            }
-            ancestry.push(root.or(inherited));
-        }
+        let mut sizes = Vec::with_capacity(referenced.len());
+        let roots: BTreeMap<_, _> = referenced
+            .into_iter()
+            .enumerate()
+            .map(|(index, root)| {
+                sizes.push(marks[&root]);
+                (root, index)
+            })
+            .collect();
+        let ids = links
+            .into_iter()
+            .map(|(id, root)| (id, roots[&root]))
+            .collect();
+        let ancestry = ownership
+            .into_iter()
+            .map(|root| root.and_then(|root| roots.get(&root).copied()))
+            .collect();
         Some(Self {
             roots,
             ids,
             ancestry,
+            starts_note_part,
             sizes,
+            formatting: styles.note_formatting(),
         })
     }
 
     pub(crate) fn font_scale(&self, index: usize, block: bool) -> Option<f32> {
         let id = self.ancestry[index]?;
-        let root = self.roots.contains_key(&index);
         match self.sizes[id] {
-            NoteSize::Epub(size) => size.scale(root, block),
-            NoteSize::Fb2(size) => root.then_some(size),
+            NoteSize::Epub { font, .. } => font.scale(self.starts_note_part[index], block),
+            NoteSize::Fb2(size) => self.roots.contains_key(&index).then_some(size),
         }
     }
+
+    pub(crate) fn formatting(&self, index: usize) -> Option<(NoteFormatting, bool)> {
+        let id = self.ancestry[index]?;
+        let mut formatting = self.formatting;
+        let marginless = self.starts_note_part[index];
+        formatting.regularize &= !marginless;
+        let marginless = marginless
+            && (!self.roots.contains_key(&index)
+                || matches!(
+                    self.sizes[id],
+                    NoteSize::Epub {
+                        clear_margins: true,
+                        ..
+                    }
+                ));
+        Some((formatting, marginless))
+    }
+}
+
+fn note_block(tag: &str) -> bool {
+    crate::source::is_block_tag(tag) || matches!(tag, "ol" | "ul" | "dl")
+}
+
+fn heading(tag: &str) -> bool {
+    matches!(tag, "h1" | "h2" | "h3" | "h4" | "h5" | "h6")
 }
 
 fn discover(
@@ -503,6 +631,98 @@ mod tests {
             .unwrap();
         }
         pixels
+    }
+
+    #[test]
+    fn classic_in_page_notes_follow_continuation_policy_and_keep_note_only_styles() {
+        use crate::user_styles::{
+            CLASSIC_FOOTNOTES, Data, EXTEND_NOTES, EXTEND_NOTES_UNTIL_HEADING, NOTE_BLOCK_SPACING,
+            NOTE_INDENTATION, NOTE_INLINE_SIZING, NOTE_JUSTIFICATION,
+        };
+        let path = test_fixture("in-page-footnotes.epub");
+        let font = test_fixture("fonts/NotoSans-Regular.ttf");
+        let original = std::fs::read(&path).unwrap();
+        let render = |presets: &[&str]| {
+            let mut data = Data::default();
+            for id in presets {
+                data.choose(1, id, Some(true)).unwrap();
+            }
+            Probe::layout_opened_book(
+                &mut Some(Book::open(&path).unwrap()),
+                Engine::Parley,
+                settings(false),
+                8,
+                None,
+                &Default::default(),
+                &data.snapshot(1).unwrap(),
+                || crate::font_context(std::slice::from_ref(&font)),
+            )
+            .unwrap()
+        };
+        let before = render(&[]);
+        assert!(before.in_page_notes.is_none());
+        let first = before.fragment("classic-start").unwrap();
+        let inner = before.fragment("classic-inner").unwrap();
+        let end = before.fragment("classic-second").unwrap();
+        let bounds = |probe: &Probe, page: usize, text: &str| {
+            let start = probe.matches(text).remove(0);
+            let end = probe.anchor(start.block, start.offset + text.len());
+            probe.selection_rects(page, &probe.select_range(&start, &end).unwrap())
+        };
+        let mut plain = render(&[CLASSIC_FOOTNOTES]);
+        let plain_page = plain.page_for(&first).unwrap();
+        assert!(
+            plain.in_page_notes.as_ref().unwrap()[plain_page]
+                .separator
+                .is_some()
+        );
+        let base = bounds(&plain, plain_page, "Classic note sample")[0];
+        let base_label = bounds(&plain, plain_page, "raised label")[0];
+        assert!(bounds(&plain, plain_page, "Continuation before the heading.").is_empty());
+        assert!(!bounds(&plain, plain_page, "Another class note begins here.").is_empty());
+        capture(&mut plain, plain_page, "reader-classic-note-base.png");
+
+        let all = render(&[CLASSIC_FOOTNOTES, EXTEND_NOTES]);
+        let page = all.page_for(&first).unwrap();
+        for phrase in [
+            "Continuation before the heading.",
+            "Boundary heading",
+            "Continuation after the heading.",
+        ] {
+            assert!(!bounds(&all, page, phrase).is_empty(), "{phrase}");
+        }
+        assert_eq!(all.fragment("classic-inner"), Some(inner.clone()));
+        assert_eq!(all.fragment("classic-second"), Some(end));
+
+        let mut fixed = render(&[
+            CLASSIC_FOOTNOTES,
+            EXTEND_NOTES,
+            EXTEND_NOTES_UNTIL_HEADING,
+            NOTE_BLOCK_SPACING,
+            NOTE_INDENTATION,
+            NOTE_INLINE_SIZING,
+            NOTE_JUSTIFICATION,
+        ]);
+        let fixed_page = fixed.page_for(&first).unwrap();
+        let changed = bounds(&fixed, fixed_page, "Classic note sample")[0];
+        let label = bounds(&fixed, fixed_page, "raised label")[0];
+        assert!(changed.x < base.x && label.width > base_label.width);
+        assert!(!bounds(&fixed, fixed_page, "Continuation before the heading.").is_empty());
+        for phrase in ["Boundary heading", "Continuation after the heading."] {
+            assert!(bounds(&fixed, fixed_page, phrase).is_empty(), "{phrase}");
+        }
+        assert_eq!(fixed.fragment("classic-inner"), Some(inner.clone()));
+        assert!(fixed.page_for(&inner).unwrap() > fixed_page);
+        assert_eq!(
+            bounds(&fixed, fixed_page, "A traditional marker"),
+            bounds(&plain, plain_page, "A traditional marker"),
+        );
+        eprintln!(
+            "Classic note indent x={} -> {}; raised label width={} -> {}",
+            base.x, changed.x, base_label.width, label.width
+        );
+        capture(&mut fixed, fixed_page, "reader-classic-note-fixed.png");
+        assert_eq!(std::fs::read(&path).unwrap(), original);
     }
 
     #[test]

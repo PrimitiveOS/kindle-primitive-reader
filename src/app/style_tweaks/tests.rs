@@ -637,6 +637,64 @@ fn has_note_band(app: &Reader) -> bool {
 }
 
 #[test]
+fn classic_in_page_notes_apply_and_resume_from_the_visible_style_options() {
+    let fixture = Fixture::new();
+    let path = footnote_book(&fixture, "Classic notes.epub");
+    let original = fs::read(&path).unwrap();
+    let mut app = open(&fixture);
+    app.open_path(&path).unwrap();
+    app.follow_reflow_page(8, 0).unwrap();
+    let position = app.current_history_location();
+    let history = app.back.clone();
+    assert!(!has_note_band(&app));
+    app.show(Screen::StyleTweaks);
+    tap_contents_item(&mut app, "More footnote options");
+    assert_eq!(app.screen, Screen::FootnoteTweaks);
+    for label in [
+        "In-page classic footnotes",
+        "Extend notes until next heading",
+        "No footnote indentation",
+        "Regularize footnote text",
+    ] {
+        tap_contents_item(&mut app, label);
+        tap_contents_item(&mut app, "On for this book");
+        assert!(has_note_band(&app));
+        let back = app.navigation_layout().back();
+        tap(&mut app, back);
+        assert_eq!(app.screen, Screen::FootnoteTweaks);
+    }
+    assert_eq!(app.current_history_location(), position);
+    assert_eq!(app.back, history);
+    assert!(
+        app.active
+            .as_ref()
+            .unwrap()
+            .reading
+            .visible_text()
+            .contains("Continuation before the heading.")
+    );
+    assert!(
+        !app.active
+            .as_ref()
+            .unwrap()
+            .reading
+            .visible_text()
+            .contains("Continuation after the heading.")
+    );
+    let mut canvas = crate::app::selection_viewport_tests::canvas(&app, ReadingViewport::PORTRAIT);
+    capture_viewport(&app, &mut canvas, "classic-footnote-options.png", false);
+    app.show(Screen::Book);
+    app.save().unwrap();
+    drop(app);
+
+    let mut app = open(&fixture);
+    app.open_path(&path).unwrap();
+    assert!(has_note_band(&app));
+    assert_eq!(app.current_history_location(), position);
+    assert_eq!(fs::read(&path).unwrap(), original);
+}
+
+#[test]
 fn fb2_in_page_footnotes_use_independent_book_styles_and_resume() {
     let fixture = Fixture::new();
     let path = fixture.root.join("Survey.fb2");

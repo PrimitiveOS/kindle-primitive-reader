@@ -182,6 +182,7 @@ impl Screen {
                 | Self::TypographyLanguages(_)
                 | Self::FontRendering(_)
                 | Self::StyleTweaks
+                | Self::FootnoteTweaks
                 | Self::StylePreset
                 | Self::InPageFootnoteSize(_)
                 | Self::StyleFiles

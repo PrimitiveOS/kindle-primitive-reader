@@ -318,6 +318,7 @@ enum Screen {
     ),
     TypographyLanguages(typography_settings::LanguageScope),
     StyleTweaks,
+    FootnoteTweaks,
     StylePreset,
     InPageFootnoteSize(style_tweaks::NoteSizeScope),
     StyleFiles,
@@ -522,6 +523,7 @@ impl Screen {
             Self::FontRendering(eager_typography::Scope::Book) => "Font size rendering",
             Self::FontRendering(eager_typography::Scope::Default) => "Default font size rendering",
             Self::StyleTweaks => "Style tweaks",
+            Self::FootnoteTweaks => "Footnote options",
             Self::StylePreset => "Style tweak",
             Self::InPageFootnoteSize(style_tweaks::NoteSizeScope::Book) => "In-page footnote size",
             Self::InPageFootnoteSize(style_tweaks::NoteSizeScope::Default) => {
@@ -2548,6 +2550,7 @@ impl Reader {
         if matches!(
             self.screen,
             Screen::StyleTweaks
+                | Screen::FootnoteTweaks
                 | Screen::StylePreset
                 | Screen::InPageFootnoteSize(_)
                 | Screen::StyleFiles
@@ -3439,6 +3442,7 @@ impl Reader {
             Screen::TypographyLanguages(scope) => return self.typography_language_items(scope),
             Screen::DocumentDefaults
             | Screen::StyleTweaks
+            | Screen::FootnoteTweaks
             | Screen::StylePreset
             | Screen::InPageFootnoteSize(_)
             | Screen::StyleFiles
@@ -9786,7 +9790,8 @@ impl App for Reader {
                         self.open_reading_edge(true, WIDTH as f32 / 2.0);
                     }
                     Screen::ReadingGuidesAbout => self.show(Screen::ReadingGuides),
-                    Screen::StylePreset | Screen::StyleFiles | Screen::StyleClear => {
+                    Screen::StylePreset => self.show(self.style_preset_parent()),
+                    Screen::FootnoteTweaks | Screen::StyleFiles | Screen::StyleClear => {
                         self.show(Screen::StyleTweaks)
                     }
                     Screen::StyleReview => self.show(if self.style_view.editor.is_some() {

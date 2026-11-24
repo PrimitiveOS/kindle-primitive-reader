@@ -2,8 +2,9 @@
 use super::navigation_layout::NavigationLayout;
 use super::*;
 use crate::user_styles::{
-    self, Data, EPUB_FOOTNOTES, FB2_ENDNOTES, FB2_FOOTNOTES, FB2_REGULAR_NOTE_SIZE, FootnoteSize,
-    PRESETS, Snapshot,
+    self, CLASSIC_FOOTNOTES, Data, EPUB_FOOTNOTES, EXTEND_NOTES, EXTEND_NOTES_UNTIL_HEADING,
+    FB2_ENDNOTES, FB2_FOOTNOTES, FB2_REGULAR_NOTE_SIZE, FootnoteSize, NOTE_BLOCK_SPACING,
+    NOTE_INDENTATION, NOTE_INLINE_SIZING, NOTE_JUSTIFICATION, PRESETS, Snapshot,
 };
 use primitive_ui::{TextStyle, editor::Multiline};
 #[derive(Clone)]
@@ -46,10 +47,37 @@ const COLUMNS: usize = 40;
 
 fn note_format(preset: &str) -> Option<DocumentFormat> {
     match preset {
-        EPUB_FOOTNOTES => Some(DocumentFormat::Epub),
+        EPUB_FOOTNOTES | CLASSIC_FOOTNOTES => Some(DocumentFormat::Epub),
         FB2_FOOTNOTES | FB2_ENDNOTES | FB2_REGULAR_NOTE_SIZE => Some(DocumentFormat::Fb2),
         _ => None,
     }
+}
+
+fn advanced_note(preset: &str) -> bool {
+    matches!(
+        preset,
+        CLASSIC_FOOTNOTES
+            | EXTEND_NOTES
+            | EXTEND_NOTES_UNTIL_HEADING
+            | NOTE_INDENTATION
+            | NOTE_JUSTIFICATION
+            | NOTE_BLOCK_SPACING
+            | NOTE_INLINE_SIZING
+    )
+}
+
+fn preset_item(preset: user_styles::Preset, data: &Data, book: &user_styles::BookTweaks) -> Item {
+    let source = match book.choices.get(preset.id) {
+        Some(true) => "On for this book",
+        Some(false) => "Off for this book",
+        None if data.global.contains(preset.id) => "Use default: On",
+        None => "Use default: Off",
+    };
+    Item::new(
+        preset.title,
+        Action::Style(Command::Preset(preset.id.into())),
+    )
+    .detail(source)
 }
 
 struct EditorLayout {
@@ -93,11 +121,27 @@ impl Reader {
             .ok_or_else(|| "Open a reflowable book first".into())
     }
     fn style_preset_available(&self, name: &str) -> bool {
-        note_format(name).is_none_or(|format| {
-            self.active.as_ref().is_some_and(|book| {
-                book.entry.format == format && self.style_store.data.book(book.id).enabled
-            })
+        let format = note_format(name);
+        if format.is_none() && !advanced_note(name) {
+            return true;
+        }
+        self.active.as_ref().is_some_and(|book| {
+            format.map_or(
+                matches!(
+                    book.entry.format,
+                    DocumentFormat::Epub | DocumentFormat::Fb2
+                ),
+                |required| book.entry.format == required,
+            ) && self.style_store.data.book(book.id).enabled
         })
+    }
+
+    pub(super) fn style_preset_parent(&self) -> Screen {
+        if self.style_view.preset.as_deref().is_some_and(advanced_note) {
+            Screen::FootnoteTweaks
+        } else {
+            Screen::StyleTweaks
+        }
     }
 
     fn apply_style_data(&mut self, next: Data) -> Result<()> {
@@ -369,6 +413,9 @@ impl Reader {
                 }
                 let mut note_row = 1;
                 for p in PRESETS {
+                    if advanced_note(p.id) {
+                        continue;
+                    }
                     let format = note_format(p.id);
                     if let Some(format) = format
                         && self
@@ -387,18 +434,7 @@ impl Reader {
                         note_row += 1;
                         continue;
                     }
-                    let source = match b.choices.get(p.id) {
-                        Some(true) => "On for this book",
-                        Some(false) => "Off for this book",
-                        None => {
-                            if data.global.contains(p.id) {
-                                "Use default: On"
-                            } else {
-                                "Use default: Off"
-                            }
-                        }
-                    };
-                    let row = action(p.title, Command::Preset(p.id.into())).detail(source);
+                    let row = preset_item(*p, data, &b);
                     if format.is_some() {
                         items.insert(note_row, row);
                         note_row += 1;
@@ -417,9 +453,31 @@ impl Reader {
                         note_row += 1;
                     }
                 }
+                if b.enabled
+                    && self.active.as_ref().is_some_and(|book| {
+                        matches!(
+                            book.entry.format,
+                            DocumentFormat::Epub | DocumentFormat::Fb2
+                        )
+                    })
+                {
+                    items.insert(
+                        note_row,
+                        Item::new(
+                            "More footnote options",
+                            Action::Show(Screen::FootnoteTweaks),
+                        ),
+                    );
+                }
                 items.push(Item::new("Supported reflow styles",Action::Heading).detail("Margins, hiding, floats, arbitrary selectors and vendor hints are not supported."));
                 items
             }
+            Screen::FootnoteTweaks => PRESETS
+                .iter()
+                .copied()
+                .filter(|preset| advanced_note(preset.id) && self.style_preset_available(preset.id))
+                .map(|preset| preset_item(preset, data, &b))
+                .collect(),
             Screen::InPageFootnoteSize(scope) => {
                 let mut items = Vec::new();
                 let selected = match scope {
@@ -464,9 +522,18 @@ impl Reader {
                 let global = data.global.contains(p.id);
                 let description = match p.id {
                     EPUB_FOOTNOTES => "Show marked notes in supported single-page EPUB layouts",
+                    CLASSIC_FOOTNOTES => "Use common publisher footnote classes in this EPUB",
                     FB2_FOOTNOTES => "Show linked sections from the FictionBook notes body",
                     FB2_ENDNOTES => "Show linked sections from the FictionBook comments body",
                     FB2_REGULAR_NOTE_SIZE => "Use the reading size for FictionBook note bands",
+                    EXTEND_NOTES => {
+                        "Include following blocks up to the next note or end of the group"
+                    }
+                    EXTEND_NOTES_UNTIL_HEADING => "Also stop at a following heading",
+                    NOTE_INDENTATION => "Remove the first-line indent from notes",
+                    NOTE_JUSTIFICATION => "Justify the lines of the note text",
+                    NOTE_BLOCK_SPACING => "Remove margins and padding around note blocks",
+                    NOTE_INLINE_SIZING => "Use inherited note text size, line height and baseline",
                     _ => "Book choice overrides the live all-books default",
                 };
                 let detail = if note_format(p.id).is_some() {
@@ -474,7 +541,7 @@ impl Reader {
                 } else {
                     "Existing books inherit unless they override it"
                 };
-                let status = if note_format(p.id).is_some() {
+                let status = if note_format(p.id).is_some() || advanced_note(p.id) {
                     Item::new("When notes appear in the page", Action::Heading)
                         .detail("Horizontal reading with marked notes in the same chapter")
                 } else {

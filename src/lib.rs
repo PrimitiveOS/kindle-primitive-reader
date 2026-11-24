@@ -1316,11 +1316,11 @@ impl Probe {
         let footnote_targets = if complete && engine == Engine::Parley && !spine_rtl {
             if compose_footnotes {
                 footnotes::in_page::Targets::epub(
+                    &href,
                     &xhtml,
                     &source,
-                    user_styles
-                        .footnote_size()
-                        .unwrap_or(user_styles::FootnoteSize::Publisher),
+                    settings.in_page_footnotes || user_styles.explicit_epub_notes(),
+                    user_styles,
                 )
             } else if user_styles.has_in_page_fb2_notes()
                 && let Some(sections) = book.fb2_note_sections(&href)

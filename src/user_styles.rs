@@ -7,9 +7,16 @@ use std::{
 
 pub(crate) const FILE: &str = "style-tweaks.json";
 pub(crate) const EPUB_FOOTNOTES: &str = "footnote-inpage_epub";
+pub(crate) const CLASSIC_FOOTNOTES: &str = "footnote-inpage_classic_classnames";
 pub(crate) const FB2_FOOTNOTES: &str = "footnote-inpage_fb2";
 pub(crate) const FB2_ENDNOTES: &str = "footnote-inpage_fb2_comments";
 pub(crate) const FB2_REGULAR_NOTE_SIZE: &str = "fb2_footnotes_regular_font_size";
+pub(crate) const EXTEND_NOTES: &str = "extend-footnote-inpage_any";
+pub(crate) const EXTEND_NOTES_UNTIL_HEADING: &str = "extend-footnote-inpage_until_heading";
+pub(crate) const NOTE_INDENTATION: &str = "inpage_footnote_text-indent_0";
+pub(crate) const NOTE_JUSTIFICATION: &str = "inpage_footnote_text_justify";
+pub(crate) const NOTE_BLOCK_SPACING: &str = "inpage_footnote_no_block_spacing";
+pub(crate) const NOTE_INLINE_SIZING: &str = "inpage_footnote_regularize_text";
 pub(crate) const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
 pub(crate) const MAX_BOOK_CSS: usize = 8 * 1024;
 pub(crate) const MAX_CSS: usize = 64 * 1024;
@@ -90,9 +97,29 @@ pub(crate) struct Snapshot {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct InPageNotes {
     epub_size: Option<FootnoteSize>,
+    explicit_epub: bool,
+    classic_epub: bool,
     fb2_footnotes: bool,
     fb2_endnotes: bool,
     fb2_regular_size: bool,
+    extension: NoteExtension,
+    formatting: NoteFormatting,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum NoteExtension {
+    #[default]
+    Off,
+    UntilEntry,
+    UntilHeading,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct NoteFormatting {
+    pub(crate) no_indent: bool,
+    pub(crate) justify: bool,
+    pub(crate) no_block_spacing: bool,
+    pub(crate) regularize: bool,
 }
 
 impl Default for Snapshot {
@@ -129,6 +156,18 @@ impl Snapshot {
     pub(crate) fn footnote_size(&self) -> Option<FootnoteSize> {
         self.notes.epub_size
     }
+    pub(crate) fn explicit_epub_notes(&self) -> bool {
+        self.notes.explicit_epub
+    }
+    pub(crate) fn classic_epub_notes(&self) -> bool {
+        self.notes.classic_epub
+    }
+    pub(crate) fn note_extension(&self) -> NoteExtension {
+        self.notes.extension
+    }
+    pub(crate) fn note_formatting(&self) -> NoteFormatting {
+        self.notes.formatting
+    }
     pub(crate) fn has_in_page_fb2_notes(&self) -> bool {
         self.notes.fb2_footnotes || self.notes.fb2_endnotes
     }
@@ -158,9 +197,15 @@ impl Snapshot {
 pub(crate) enum Effect {
     Css(&'static str),
     InPageEpubFootnotes,
+    InPageClassicFootnotes,
     InPageFb2Footnotes,
     InPageFb2Endnotes,
     Fb2RegularNoteSize,
+    ExtendNote(NoteExtension),
+    RemoveNoteIndentation,
+    JustifyNotes,
+    RemoveNoteBlockSpacing,
+    RegularizeNoteText,
 }
 #[derive(Clone, Copy)]
 pub(crate) struct Preset {
@@ -178,6 +223,13 @@ pub(crate) const PRESETS: &[Preset] = &[
         group: "in-page-footnotes",
         priority: 0,
         effect: Effect::InPageEpubFootnotes,
+    },
+    Preset {
+        id: CLASSIC_FOOTNOTES,
+        title: "In-page classic footnotes",
+        group: "in-page-footnotes",
+        priority: 0,
+        effect: Effect::InPageClassicFootnotes,
     },
     Preset {
         id: FB2_FOOTNOTES,
@@ -199,6 +251,48 @@ pub(crate) const PRESETS: &[Preset] = &[
         group: "fb2-note-font-size",
         priority: 0,
         effect: Effect::Fb2RegularNoteSize,
+    },
+    Preset {
+        id: EXTEND_NOTES,
+        title: "Extend notes until next entry",
+        group: "note-extension",
+        priority: 0,
+        effect: Effect::ExtendNote(NoteExtension::UntilEntry),
+    },
+    Preset {
+        id: EXTEND_NOTES_UNTIL_HEADING,
+        title: "Extend notes until next heading",
+        group: "note-extension",
+        priority: 0,
+        effect: Effect::ExtendNote(NoteExtension::UntilHeading),
+    },
+    Preset {
+        id: NOTE_INDENTATION,
+        title: "No footnote indentation",
+        group: "in-page-note-indentation",
+        priority: 0,
+        effect: Effect::RemoveNoteIndentation,
+    },
+    Preset {
+        id: NOTE_JUSTIFICATION,
+        title: "Justify footnote text",
+        group: "in-page-note-alignment",
+        priority: 0,
+        effect: Effect::JustifyNotes,
+    },
+    Preset {
+        id: NOTE_BLOCK_SPACING,
+        title: "Remove footnote block spacing",
+        group: "in-page-note-block-spacing",
+        priority: 0,
+        effect: Effect::RemoveNoteBlockSpacing,
+    },
+    Preset {
+        id: NOTE_INLINE_SIZING,
+        title: "Regularize footnote text",
+        group: "in-page-note-inline-sizing",
+        priority: 0,
+        effect: Effect::RegularizeNoteText,
     },
     Preset {
         id: "paragraph-indent-none",
@@ -420,6 +514,10 @@ impl Data {
         let target = preset(id).ok_or("This style tweak is unavailable")?;
         if !matches!(target.effect, Effect::Css(_)) {
             if enabled {
+                if matches!(target.effect, Effect::ExtendNote(_)) {
+                    self.global
+                        .retain(|old| preset(old).is_none_or(|p| p.group != target.group));
+                }
                 self.global.insert(id.into());
             } else {
                 self.global.remove(id);
@@ -466,10 +564,20 @@ impl Data {
                 }
                 Effect::InPageEpubFootnotes => {
                     notes.epub_size = Some(b.footnote_size.unwrap_or(self.footnote_size));
+                    notes.explicit_epub = true;
+                }
+                Effect::InPageClassicFootnotes => {
+                    notes.epub_size = Some(b.footnote_size.unwrap_or(self.footnote_size));
+                    notes.classic_epub = true;
                 }
                 Effect::InPageFb2Footnotes => notes.fb2_footnotes = true,
                 Effect::InPageFb2Endnotes => notes.fb2_endnotes = true,
                 Effect::Fb2RegularNoteSize => notes.fb2_regular_size = true,
+                Effect::ExtendNote(extension) => notes.extension = extension,
+                Effect::RemoveNoteIndentation => notes.formatting.no_indent = true,
+                Effect::JustifyNotes => notes.formatting.justify = true,
+                Effect::RemoveNoteBlockSpacing => notes.formatting.no_block_spacing = true,
+                Effect::RegularizeNoteText => notes.formatting.regularize = true,
             }
         }
         if b.custom_enabled

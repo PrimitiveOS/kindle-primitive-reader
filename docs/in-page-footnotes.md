@@ -99,6 +99,44 @@ Other note formats and physical E Ink checks remain open for this control.
 
 ## Replay on macOS
 
+### Classic markers and note formatting
+
+In **Style tweaks › More footnote options**, enable **In-page classic
+footnotes** for an EPUB that uses class names such as `footnote`, `fn`,
+`fnote`, `duokan-footnote-item`, `przypis`, or `voetnoten`. Reader follows
+the source ID inside a marked container and copies the whole note into the
+page band. The source link still targets its original position. A class
+name must match a recognized token. An unreferenced class alone does not
+create a band. [Reader controls](screenshots/classic-footnote-options.png)
+
+**Extend notes until next entry** includes consecutive supported sibling
+blocks before the next marked note. **Extend notes until next heading**
+also stops before a following heading. These choices are mutually
+exclusive for the book. **No footnote indentation**, **Justify footnote
+text**, **Remove footnote block spacing**, and **Regularize footnote text**
+apply to the note and its continuation. Regularizing uses the surrounding
+note text’s size, line height and baseline. It removes superscript sizing
+and positioning. The controls save the choice for the edition or as a live
+default. Whole-note flattening, non-linear note flows and some inline
+spacing remain open.
+
+The stock replay exercises the actual tweak callbacks and the same 80%
+legacy size as Reader. The note’s first word moved from x=96 to x=32 in
+both engines when the fixes were applied. The raised label measured
+57→104 px in KOReader and 60→111 px in Reader. The ordinary body stayed the
+same size. Reader checks both continuation boundaries, the canonical IDs,
+and reopening at the original passage. The authored EPUB remains read-only.
+[Reader baseline](screenshots/in-page-reader-classic-note-base.png) ·
+[Reader fix-up](screenshots/in-page-reader-classic-note-fixed.png) ·
+[KOReader baseline](screenshots/in-page-stock-classic-note-base.png) ·
+[KOReader fix-up](screenshots/in-page-stock-classic-note-fixed.png) ·
+[Pinned continuation detection](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstsheet.cpp#L5644-L5674)
+
+Run the replay below with `classic` as its fifth argument to exercise this
+chapter. Physical E Ink verification remains pending.
+
+### Running the comparison
+
 Run the Reader tests on the [deterministic authored EPUB](../tests/fixtures/in-page-footnotes.epub).
 Set `stock` to the absolute directory of the pinned native KOReader build with
 `runtime/koreader` and `build/staging` beneath it. The native script enables the

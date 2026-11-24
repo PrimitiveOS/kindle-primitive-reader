@@ -72,6 +72,17 @@ chapters = {
   <p style="font-size:1.2rem">Measured note text <sup style="font-size:0.5em">inline note label</sup>.</p>
   <p>The depths were recorded before the afternoon crossing. <a href="#size-ref" role="doc-backlink">Return</a></p>
 </aside>""",
+    "classic": """<p id="classic-start">A traditional marker describes the western pier<a href="#classic-inner" id="classic-marker"><sup>1</sup></a>.</p>
+<p>Another entry records the direction of the tide<a href="#classic-second"><sup>2</sup></a>.</p>
+<p style="page-break-before:always">The log continued on another leaf.</p>
+<div class="small footnote boxed" style="margin-left:15px; margin-right:12px">
+  <p id="classic-inner" style="padding:0 24px; text-indent:2em; text-align:left; line-height:1.25">Classic note sample <sup style="font-size:0.55em;vertical-align:super">raised label</sup> describes the wooden pier and the stone foundations along the old shoreline.</p>
+</div>
+<p id="classic-continuation">Continuation before the heading.</p>
+<h2 id="classic-boundary" style="page-break-before:auto;page-break-after:auto">Boundary heading</h2>
+<p id="classic-after-heading">Continuation after the heading.</p>
+<p class="fnote" id="classic-second">Another class note begins here.</p>
+<p class="footnote-like" id="not-a-class-note">This class name is a near match.</p>""",
 }
 manifest = ''.join(f'<item id="{name}" href="{name}.xhtml" media-type="application/xhtml+xml"/>'
                    for name in chapters)

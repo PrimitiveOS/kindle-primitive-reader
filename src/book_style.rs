@@ -831,21 +831,27 @@ impl BookStyle {
                 CascadeOrigin::Author,
                 accept_fit,
             );
+            let display = match winners[40].map(|(_, property)| property) {
+                Some(Property::Display(display)) => *display,
+                Some(Property::Reset(40, _)) => Display::Inline,
+                _ => style.display,
+            };
+            let block = display == Display::Block || display.is_list_item();
+            let formatting = footnotes.and_then(|targets| targets.formatting(index));
+            let regularize = formatting.is_some_and(|(options, _)| options.regularize);
             let footnote_size = footnotes.and_then(|targets| {
-                let display = match winners[40].map(|(_, property)| property) {
-                    Some(Property::Display(display)) => *display,
-                    Some(Property::Reset(40, _)) => Display::Inline,
-                    _ => style.display,
-                };
                 // The chosen size replaces block font declarations. Inline
                 // elements such as superscripts still compute from the resized parent.
-                let block = display == Display::Block || display.is_list_item();
                 targets.font_scale(index, block)
             });
-            let note_size = footnote_size.map(|scale| Property::Size(Size::Root(scale)));
+            let note_size = if regularize {
+                Some(Property::Size(Size::Parent(1.0)))
+            } else {
+                footnote_size.map(|scale| Property::Size(Size::Root(scale)))
+            };
             if let Some(property) = &note_size {
                 winners[1] = Some(((5, false, (0, 0, 0)), property));
-                style.allow_small_note_text = true;
+                style.allow_small_note_text |= footnote_size.is_some();
             }
             for (_, property) in winners.into_iter().flatten() {
                 match property {
@@ -1064,6 +1070,27 @@ impl BookStyle {
                     Property::VerticalAlign(value) => style.image_align = *value,
                     Property::Decoration(value) => decoration = value.unwrap_or(parent.decoration),
                     Property::FontSource(_) => {}
+                }
+            }
+            if let Some((options, marginless)) = formatting {
+                if options.no_indent {
+                    style.text_indent = TextIndent::default();
+                }
+                if options.justify {
+                    style.alignment = Some(Alignment::Justify);
+                }
+                let remove_block_spacing = options.no_block_spacing && block;
+                if marginless || remove_block_spacing {
+                    style.vertical_margin = Default::default();
+                    style.horizontal_margin = Default::default();
+                }
+                if remove_block_spacing {
+                    style.vertical_padding = Default::default();
+                    style.padding = Default::default();
+                }
+                if regularize {
+                    style.line_height = parent.line_height;
+                    style.image_align = parley::VerticalAlign::BASELINE;
                 }
             }
             style.decoration = parent.decoration.including(decoration);
