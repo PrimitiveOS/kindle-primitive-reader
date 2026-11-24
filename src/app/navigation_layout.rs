@@ -131,6 +131,12 @@ impl Screen {
                 | Self::Scrolling
                 | Self::GestureBinding(_)
                 | Self::BackOptions(_)
+                | Self::AnnotationExchange
+                | Self::AnnotationExchangePreview
+                | Self::ExportSettings(
+                    super::export_settings::Origin::Exchange,
+                    super::export_settings::Page::Folders
+                )
                 | Self::LocationHistory
                 | Self::PublisherPages
                 | Self::Dictionaries

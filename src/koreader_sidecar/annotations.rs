@@ -29,7 +29,10 @@ pub struct SidecarAnnotations {
     pub unavailable: usize,
 }
 
-fn fields<'a>(table: &'a [u8], visitor: &mut Visitor<'_, 'a>) -> Result<(), SidecarError> {
+pub(super) fn fields<'a>(
+    table: &'a [u8],
+    visitor: &mut Visitor<'_, 'a>,
+) -> Result<(), SidecarError> {
     Parser {
         bytes: table,
         offset: 0,
@@ -125,7 +128,7 @@ fn mark(record: &[u8]) -> Result<Option<SidecarMark>, SidecarError> {
         seen |= 1 << index;
         match value {
             Value::Nil => {}
-            Value::Boolean if index == 6 => {}
+            Value::Boolean(_) if index == 6 => {}
             Value::String(bytes) if index < 6 => {
                 let limit = [
                     MAX_POINTER_BYTES,

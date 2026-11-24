@@ -112,6 +112,7 @@ mod placement_tests {
             .unwrap()
             .pdf_highlights
             .push(crate::library::PdfHighlight {
+                updated_at: None,
                 chapter_title: None,
                 created_at: None,
                 style: Default::default(),

@@ -128,6 +128,7 @@ fn run_browser_and_export(epub: Option<&Path>, pdf_original: Option<&Path>, chap
     let epub_id = app.open_book_id().unwrap();
     app.library.state_mut(epub_id).unwrap().highlights.extend([
         Highlight {
+            updated_at: None,
             chapter_title: None,
             color: Default::default(),
             selection: spanning.clone(),
@@ -136,6 +137,7 @@ fn run_browser_and_export(epub: Option<&Path>, pdf_original: Option<&Path>, chap
             created_at: Some(1_740_777_900),
         },
         Highlight {
+            updated_at: None,
             chapter_title: None,
             color: Default::default(),
             selection: hidden.clone(),
@@ -198,6 +200,7 @@ fn run_browser_and_export(epub: Option<&Path>, pdf_original: Option<&Path>, chap
         .state_mut(pdf_id)
         .unwrap()
         .add_pdf_highlight(PdfHighlight {
+            updated_at: None,
             chapter_title: None,
             color: Default::default(),
             page,

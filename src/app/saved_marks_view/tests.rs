@@ -134,6 +134,7 @@ fn bookmark_density_keeps_fixed_page_highlight_holds_on_the_second_list_page() {
         let top = 0.1 + index as f32 * 0.032;
         state
             .add_pdf_highlight(PdfHighlight {
+                updated_at: None,
                 chapter_title: None,
                 color: Default::default(),
                 created_at: None,

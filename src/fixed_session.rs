@@ -327,6 +327,7 @@ impl PdfSelection {
         };
         Some(Self {
             mark: PdfHighlight {
+                updated_at: None,
                 chapter_title: None,
                 created_at: None,
                 style: crate::highlight_style::HighlightStyle::default(),
@@ -416,6 +417,7 @@ impl FixedReading {
             return Err("This selection exceeds the 64-page limit".into());
         }
         let mut mark = PdfHighlight {
+            updated_at: None,
             chapter_title: None,
             created_at: None,
             style: crate::highlight_style::HighlightStyle::default(),
@@ -844,6 +846,10 @@ impl FixedReading {
             FixedDocument::Pdf(pdf) => pdf.page_geometry(page),
             _ => None,
         }
+    }
+
+    pub(crate) fn annotation_page_size(&self, page: usize) -> Result<(f32, f32)> {
+        self.source.page_size(page)
     }
 
     pub(crate) fn visible_pages(&self) -> impl Iterator<Item = usize> + '_ {

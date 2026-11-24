@@ -152,6 +152,7 @@ fn extends_saved_range_on_an_original_pdf() {
         .first()
         .expect("Select adjacent pages with extractable words");
     let initial = PdfHighlight {
+        updated_at: None,
         chapter_title: None,
         color: Default::default(),
         created_at: None,

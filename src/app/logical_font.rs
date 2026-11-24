@@ -279,6 +279,7 @@ impl Reader {
             position(&candidate),
             top_status_header,
         )?;
+        let closing_warning = self.finish_before_switch(recovery.id);
         self.fixed = None;
         self.footnote = None;
         self.selection = None;
@@ -304,7 +305,10 @@ impl Reader {
         self.reset_footer_initial_position();
         self.remember_opening_location();
         self.record_position();
-        self.notice = Some("Text settings reset. Previous choices backed up.".into());
+        self.notice = Some(
+            closing_warning
+                .unwrap_or_else(|| "Text settings reset. Previous choices backed up.".into()),
+        );
         Ok(())
     }
 }

@@ -40,6 +40,38 @@ impl Source {
         self.normalized_xhtml.is_none()
     }
 
+    /// The publisher byte for a canonical text boundary. At inline edges, the
+    /// range end belongs to the preceding run and the range start to the next.
+    pub(crate) fn publisher_text_boundary(
+        &self,
+        document: &Document<'_>,
+        xhtml: &str,
+        block_key: usize,
+        offset: usize,
+        end: bool,
+    ) -> Option<usize> {
+        if !self.can_inspect_publisher_html()
+            || xhtml.len() > MAX_INSPECT_BYTES
+            || !self.matches_input(xhtml)
+        {
+            return None;
+        }
+        let block = self.blocks.get(
+            self.blocks
+                .binary_search_by_key(&block_key, |b| b.key)
+                .ok()?,
+        )?;
+        let node = document
+            .descendants()
+            .find(|node| node.is_element() && node.range().start == block_key)?;
+        if end && offset > 0 || offset == block.text.len() {
+            let start = block.text.get(..offset)?.char_indices().next_back()?.0;
+            return map_block(node, xhtml, &block.text, start..offset).map(|(_, end)| end.byte);
+        }
+        let length = block.text.get(offset..)?.chars().next()?.len_utf8();
+        map_block(node, xhtml, &block.text, offset..offset + length).map(|(start, _)| start.byte)
+    }
+
     pub(crate) fn publisher_selection_html(
         &self,
         xhtml: &str,

@@ -16,6 +16,7 @@ const CLEAR_DRAFT: Rect = Rect::new(LIST_X, LIST_Y + 240, 320, 96);
 pub(super) enum Origin {
     Book,
     Library,
+    Exchange,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -114,7 +115,7 @@ impl Settings {
     }
 }
 
-fn folder_label(folder: &Path) -> String {
+pub(super) fn folder_label(folder: &Path) -> String {
     let mut label = "Documents".to_owned();
     for part in folder {
         label.push_str(" / ");
@@ -251,6 +252,9 @@ impl Reader {
                     .as_ref()
                     .ok_or("Choose an export folder")?;
                 with_storage(|| self.library.browse_folder(&picker.directory))?;
+                if origin == Origin::Exchange {
+                    return self.set_annotation_exchange_folder(Some(picker.directory.clone()));
+                }
                 preferences.folder = Some(picker.directory.clone());
             }
             Command::UseDefault => preferences.folder = None,
@@ -264,6 +268,7 @@ impl Reader {
 
     pub(super) fn back_from_export_settings(&mut self, origin: Origin, page: Page) {
         self.show(match (origin, page) {
+            (Origin::Exchange, _) => Screen::AnnotationExchange,
             (_, Page::Folders | Page::Template(_) | Page::Tokens) => {
                 Screen::ExportSettings(origin, Page::Settings)
             }

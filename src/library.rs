@@ -1028,6 +1028,8 @@ pub struct Bookmark {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Highlight {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) updated_at: Option<i64>,
     #[serde(
         default,
         deserialize_with = "read_mark_chapter_title",
@@ -1061,6 +1063,8 @@ pub struct HighlightPage {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PdfHighlight {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) updated_at: Option<i64>,
     #[serde(
         default,
         deserialize_with = "read_mark_chapter_title",
@@ -1354,6 +1358,8 @@ pub struct BookState {
     pub highlights: Vec<Highlight>,
     #[serde(default)]
     pub pdf_highlights: Vec<PdfHighlight>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) annotation_exchange_digest: Option<String>,
 }
 
 fn read_ocr_language<'de, D: serde::Deserializer<'de>>(
@@ -1421,6 +1427,7 @@ impl BookState {
             contents_depths: Default::default(),
             highlights: Vec::new(),
             pdf_highlights: Vec::new(),
+            annotation_exchange_digest: None,
         }
     }
 
@@ -2470,6 +2477,41 @@ impl Library {
     pub fn persist(&self) -> io::Result<()> {
         self.save_with(primitive_app::save)
     }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn commit_annotation_exchange(
+        &mut self,
+        mut replacement: BookState,
+    ) -> io::Result<()> {
+        let index = self
+            .recent
+            .iter()
+            .position(|book| book.id == replacement.id)
+            .ok_or_else(|| invalid_state("Open the same book before importing annotations"))?;
+        if replacement.bookmarks.len() > MAX_IMPORTED_MARKS
+            || replacement.highlights.len() > MAX_IMPORTED_MARKS
+            || replacement.pdf_highlights.len() > MAX_PDF_HIGHLIGHTS
+            || !replacement
+                .bookmarks
+                .iter()
+                .all(|mark| valid_position(&mark.position))
+            || !replacement.highlights.iter().all(valid_highlight)
+            || !replacement
+                .pdf_highlights
+                .iter()
+                .all(PdfHighlight::is_valid)
+        {
+            return Err(invalid_state(
+                "The imported annotations exceed the saved mark limits",
+            ));
+        }
+        std::mem::swap(&mut self.recent[index], &mut replacement);
+        if let Err(error) = self.persist() {
+            self.recent[index] = replacement;
+            return Err(error);
+        }
+        Ok(())
+    }
 }
 
 pub(crate) fn collection_name(value: &str) -> io::Result<&str> {
@@ -3484,6 +3526,7 @@ mod tests {
             position: position.clone(),
         });
         first_state.highlights.push(Highlight {
+            updated_at: None,
             chapter_title: None,
             color: Default::default(),
             created_at: None,
@@ -3751,6 +3794,7 @@ mod tests {
             y1: 0.4,
         };
         let mark = PdfHighlight {
+            updated_at: None,
             chapter_title: None,
             color: Default::default(),
             created_at: None,
@@ -3765,6 +3809,7 @@ mod tests {
         assert!(
             saved
                 .add_pdf_highlight(PdfHighlight {
+                    updated_at: None,
                     chapter_title: None,
                     color: Default::default(),
                     bounds: vec![PdfTextRect {
@@ -3778,6 +3823,7 @@ mod tests {
         assert!(
             saved
                 .add_pdf_highlight(PdfHighlight {
+                    updated_at: None,
                     chapter_title: None,
                     color: Default::default(),
                     bounds: vec![bounds; MAX_PDF_HIGHLIGHT_BOUNDS + 1],
@@ -3788,6 +3834,7 @@ mod tests {
         assert!(
             saved
                 .add_pdf_highlight(PdfHighlight {
+                    updated_at: None,
                     chapter_title: None,
                     color: Default::default(),
                     note: Some("x".repeat(MAX_NOTE_BYTES + 1)),
@@ -3823,6 +3870,7 @@ mod tests {
             y1: 0.2,
         }];
         let mut single = PdfHighlight {
+            updated_at: None,
             chapter_title: None,
             color: Default::default(),
             created_at: None,
@@ -4069,6 +4117,7 @@ mod tests {
             position: position(page, offset),
         };
         let mark = |offset, note: Option<&str>| Highlight {
+            updated_at: None,
             chapter_title: None,
             color: Default::default(),
             created_at: None,
@@ -4113,6 +4162,7 @@ mod tests {
         added.fixed_preferences.width_fit = true;
         added
             .add_pdf_highlight(PdfHighlight {
+                updated_at: None,
                 chapter_title: None,
                 color: Default::default(),
                 created_at: Some(15),

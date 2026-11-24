@@ -144,6 +144,7 @@ fn continuous_semi_auto_crop_resolves_each_strip_and_preserves_original_taps() {
         .remember(&active.entry, active.id, &active.entry.title)
         .pdf_highlights
         .push(PdfHighlight {
+            updated_at: None,
             chapter_title: None,
             created_at: None,
             style: Default::default(),
@@ -253,6 +254,7 @@ fn continuous_manual_and_auto_crop_switch_without_losing_source_geometry() {
         .remember(&active.entry, active.id, &active.entry.title)
         .pdf_highlights
         .push(PdfHighlight {
+            updated_at: None,
             chapter_title: None,
             created_at: None,
             style: Default::default(),
@@ -420,6 +422,7 @@ fn crop_margin_adjusts_independent_strips_and_retains_source_annotations() {
         .remember(&active.entry, active.id, &active.entry.title)
         .pdf_highlights
         .push(PdfHighlight {
+            updated_at: None,
             chapter_title: None,
             created_at: None,
             style: Default::default(),

@@ -169,6 +169,7 @@ impl Reader {
                     .filter(|quote| quote.text.split_whitespace().eq(text.split_whitespace()));
                 if let Some(selection) = selection {
                     import.highlights.push(Highlight {
+                        updated_at: None,
                         chapter_title: None,
                         color: *color,
                         created_at: *created_at,

@@ -475,6 +475,7 @@ fn exposed_saved_marks_open_while_visible_footer_buttons_stay_in_front() {
     app.library
         .remember(&f.entry, f.id, &f.entry.title)
         .add_pdf_highlight(crate::library::PdfHighlight {
+            updated_at: None,
             chapter_title: None,
             color: Default::default(),
             created_at: None,

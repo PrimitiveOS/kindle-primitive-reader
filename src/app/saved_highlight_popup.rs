@@ -236,11 +236,18 @@ impl Reader {
             .clone();
         let state = self.library.state_mut(book).unwrap();
         let count = state.highlights.len() + state.pdf_highlights.len();
+        let time = crate::mark_time::now();
         for mark in &mut state.highlights {
+            if (mark.style, mark.color) != (style, color) {
+                mark.updated_at = time;
+            }
             mark.style = style;
             mark.color = color;
         }
         for mark in &mut state.pdf_highlights {
+            if (mark.style, mark.color) != (style, color) {
+                mark.updated_at = time;
+            }
             mark.style = style;
             mark.color = color;
         }
@@ -291,14 +298,20 @@ impl Reader {
                 state
                     .pdf_highlights
                     .get_mut(index)
-                    .map(|mark| &mut mark.color)
+                    .map(|mark| (&mut mark.color, &mut mark.updated_at))
             } else {
-                state.highlights.get_mut(index).map(|mark| &mut mark.color)
+                state
+                    .highlights
+                    .get_mut(index)
+                    .map(|mark| (&mut mark.color, &mut mark.updated_at))
             };
-            let (Some(target), Some(color)) = (target, color) else {
+            let (Some((target, updated)), Some(color)) = (target, color) else {
                 return Change::None;
             };
-            *target = color;
+            if *target != color {
+                *target = color;
+                *updated = crate::mark_time::now();
+            }
             self.close_saved_popup();
         } else {
             state.highlight_color = Some(color.unwrap_or(self.controls.highlight_color));
@@ -341,14 +354,23 @@ impl Reader {
         };
         if let Some(index) = index {
             let stored = if self.fixed.is_some() {
-                state.pdf_highlights.get_mut(index).map(|m| &mut m.style)
+                state
+                    .pdf_highlights
+                    .get_mut(index)
+                    .map(|m| (&mut m.style, &mut m.updated_at))
             } else {
-                state.highlights.get_mut(index).map(|m| &mut m.style)
+                state
+                    .highlights
+                    .get_mut(index)
+                    .map(|m| (&mut m.style, &mut m.updated_at))
             };
-            let (Some(stored), Some(style)) = (stored, style) else {
+            let (Some((stored, updated)), Some(style)) = (stored, style) else {
                 return Change::None;
             };
-            *stored = style;
+            if *stored != style {
+                *stored = style;
+                *updated = crate::mark_time::now();
+            }
             self.close_saved_popup();
         } else {
             state.highlight_style = style;

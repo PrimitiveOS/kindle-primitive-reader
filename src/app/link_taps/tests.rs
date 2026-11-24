@@ -664,6 +664,7 @@ fn latest_bookmark_swipe_yields_to_links_and_uses_the_newest_reflow_annotation()
         .remember(&active.entry, id, &active.reading.probe.title)
         .highlights
         .push(crate::library::Highlight {
+            updated_at: None,
             chapter_title: None,
             created_at: Some(1_769_990_000),
             style: Default::default(),

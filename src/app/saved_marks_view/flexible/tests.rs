@@ -190,6 +190,7 @@ fn flexible_fixed_page_rows_keep_oversized_notes_visible_and_target_the_painted_
         let y = 0.1 + index as f32 * 0.1;
         state
             .add_pdf_highlight(PdfHighlight {
+                updated_at: None,
                 chapter_title: None,
                 color: Default::default(),
                 created_at: Some(index),

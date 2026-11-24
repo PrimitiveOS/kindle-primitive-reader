@@ -93,6 +93,7 @@ fn bookmark_appearance_switches_persist_and_keep_epub_note_targets_in_both_layou
         let mut to = start.clone();
         to.offset += last;
         Highlight {
+            updated_at: None,
             chapter_title: None,
             created_at: Some(1_750_000_000 + first as i64),
             style,
@@ -228,6 +229,7 @@ fn bookmark_appearance_keeps_fixed_page_cues_and_actions_in_both_layouts() {
     state.highlight_color = Some(HighlightColor::Blue);
     state
         .add_pdf_highlight(PdfHighlight {
+            updated_at: None,
             chapter_title: None,
             color: HighlightColor::Blue,
             created_at: None,

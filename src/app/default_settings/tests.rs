@@ -118,6 +118,7 @@ fn reset_reflow_keeps_source_annotations_and_missing_default_fonts_use_device_fo
         .unwrap()
         .highlights
         .push(Highlight {
+            updated_at: None,
             chapter_title: None,
             selection: mark,
             note: Some("Keep this note".into()),

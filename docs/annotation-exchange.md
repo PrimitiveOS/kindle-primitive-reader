@@ -1,0 +1,57 @@
+# Local annotation exchange
+
+While reading, open **Settings › Bookmarks and notes › Annotation exchange**.
+**Export annotations on book closing** and **Keep all annotations on import**
+are independent preferences and both default to Off. Use **Export / import
+folder** to select an existing folder in Documents, or return to the book’s
+metadata folder. The default file is `<book stem>.sdr/<book filename>.annotations.lua`.
+Transfer files contain bookmarks, highlight locations, styles, colors, notes,
+and available dates. This workflow uses KOReader’s built-in book transfer.
+The separate **Export annotations** screen still produces JSON, Markdown and
+other reading exports.
+
+Turn on close export to write the transfer after Reader saves and closes the
+book, exits, or finishes preparing a different book. Sleep and cancelled or
+failed document opens keep the current book open. **Export annotation
+transfer** writes immediately. A complete file can replace Reader’s own
+previous snapshot for the same edition or a foreign snapshot already applied
+in full. Unresolved source marks or a pending foreign transfer leave the
+existing file intact. Source books remain read-only.
+
+Use **Import annotation transfer** to preview the number of marks it will add,
+update or remove. A matching newer mark replaces its older local record.
+With **Keep all** on, older marks missing from the transfer remain. With it
+off, those older marks can be removed after explicit confirmation. Reader
+preserves unmatched marks when the transfer cannot verify its edition or
+one or more of its locations. A stock transfer without a fingerprint can
+remove older marks only when it is in the book’s adjacent metadata folder.
+Dated imported marks compare with the saved
+local edit time when available. An undated local mark stays. Reader remembers
+the exact bytes of successfully applied complete files, so repeating an
+import keeps one copy of each matched mark.
+
+Reader verifies EPUB source pointers and text before applying them. A fixed
+source page is one-based on the wire and selected text is checked against
+its page rectangles. The current adapter covers packaged reflowable EPUBs
+and supported PDF and DjVu locations. Unsupported structural XPointers
+and multi-page fixed highlights remain open. Reader previews imports on
+demand and leaves the transfer file in place. KOReader checks foreign
+transfers on open and removes the consumed file. KOReader also supports
+other global metadata folder policies. [Stock source for export paths, dates and merge](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerannotation.lua#L250-L333) · [Stock settings](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerbookmark.lua#L263-L301)
+
+## Mac comparison
+
+The pinned KOReader Lua module exercises default and chosen paths, close
+export disabled and enabled, the same-writer check, both Keep all policies,
+the newer record’s edit date and transfer consumption. The native replay loaded Reader’s authored EPUB and PDF transfers through
+the stock Lua settings reader. CREngine resolved the bookmark and both
+selection endpoints, and returned the exact quotation. MuPDF selected the
+exact PDF word from the exported positions. The two PDF rectangles agree
+horizontally and overlap vertically across their different font metrics. [Stock replay](../scripts/koreader-annotation-exchange-check.lua)
+
+Four Mac simulator tests exercise toggles, folder selection, Library close
+and Exit, sleep, failed switches, resuming the same position, the import
+preview, safe rollback on a storage failure, repeated imports and fixed-page
+geometry.
+[Annotation exchange settings](screenshots/annotation-exchange-settings.png) ·
+[Import preview](screenshots/annotation-exchange-preview.png)

@@ -291,16 +291,19 @@ impl Reader {
 
     // The next provider has fully prepared its initial reading session. Until
     // this point the outgoing book remains active, even over a password retry.
-    pub(in crate::app) fn apply_closing_before_switch(&mut self, incoming: u64) -> Option<String> {
-        let request = self.closing_before_switch.take()?;
-        if incoming != request.book
-            && self.open_book_id() == Some(request.book)
-            && self.opening_profile_epoch == request.epoch
-        {
-            self.closing_profile_warning(&request.profiles)
-        } else {
-            None
+    pub(in crate::app) fn finish_before_switch(&mut self, incoming: u64) -> Option<String> {
+        let request = self.closing_before_switch.take();
+        let book = self.open_book_id();
+        if book.is_none() || book == Some(incoming) {
+            return None;
         }
+        let profile = request
+            .filter(|request| {
+                book == Some(request.book) && self.opening_profile_epoch == request.epoch
+            })
+            .and_then(|request| self.closing_profile_warning(&request.profiles));
+        let annotations = self.annotation_close_warning();
+        profile.or(annotations)
     }
 
     fn finish_close_route(
@@ -313,7 +316,9 @@ impl Reader {
                 if !saved_before_profile {
                     self.save()?;
                 }
+                let warning = self.annotation_close_warning();
                 self.close_book_to_library();
+                self.notice = warning;
                 Ok(Change::Partial)
             }
             AfterClose::Exit => {
@@ -321,6 +326,9 @@ impl Reader {
                 if !saved_before_profile {
                     self.close_fixed_search_fit()?;
                     self.save()?;
+                }
+                if let Some(warning) = self.annotation_close_warning() {
+                    eprintln!("{warning}");
                 }
                 Ok(Change::Exit)
             }
@@ -344,17 +352,21 @@ impl Reader {
                 if !saved_before_profile {
                     self.save()?;
                 }
+                let warning = self.annotation_close_warning();
                 self.close_book_to_library();
                 self.browser = browser;
                 self.reveal_book_row(&path);
+                self.notice = warning;
                 Ok(Change::Partial)
             }
             AfterClose::FinishedFolder(path) => {
                 if !saved_before_profile {
                     self.save()?;
                 }
+                let warning = self.annotation_close_warning();
                 self.close_book_to_library();
                 self.browse_from_book(&path)?;
+                self.notice = warning;
                 Ok(Change::Partial)
             }
         }

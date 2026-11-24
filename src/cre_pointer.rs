@@ -10,6 +10,7 @@ const XHTML: &str = "http://www.w3.org/1999/xhtml";
 const MAX_STEPS: usize = 64;
 const TEXT_SPLIT_SIZE: usize = 8192;
 const MARKER_ID: &str = "reader-cre-position-probe";
+pub(crate) const DOM_VERSION: u32 = 20240114;
 
 struct Step<'a> {
     name: &'a str,
@@ -334,7 +335,7 @@ fn anchor_at(xhtml: &str, byte: usize, marker_id: &str) -> Result<(u64, usize, u
 
 /// Resolve normalized pointers from the DOM version used by current saved KOReader EPUBs.
 pub fn resolve(book: &mut Book, value: &str, version: Option<u32>) -> Result<EpubPosition> {
-    if version != Some(20240114) {
+    if version != Some(DOM_VERSION) {
         return Err("This KOReader DOM version is unsupported for EPUB position import".into());
     }
     if !book.is_reflowable_epub() {
@@ -380,6 +381,99 @@ pub fn resolve(book: &mut Book, value: &str, version: Option<u32>) -> Result<Epu
             offset,
         },
     })
+}
+
+/// Encode a canonical source point only when both position models agree.
+#[cfg(feature = "kindle")]
+pub(crate) fn encode(book: &mut Book, anchor: &Anchor, end: bool) -> Result<String> {
+    use std::fmt::Write;
+
+    if !book.is_reflowable_epub() || anchor.illustration.is_some() || anchor.book != book.revision()
+    {
+        return Err("The mark does not address this reflowable EPUB".into());
+    }
+    let chapter = book
+        .chapter_index(&anchor.chapter)
+        .ok_or("The chapter has changed")?;
+    let xhtml = book.chapter(chapter)?;
+    let source = Source::parse(&xhtml)?;
+    if anchor.revision != source.revision {
+        return Err("The chapter text has changed".into());
+    }
+    let xml = crate::epub_xml::without_plain_doctype(&xhtml);
+    let document = Document::parse_with_options(&xml, xml_options())?;
+    let byte = source
+        .publisher_text_boundary(&document, &xhtml, anchor.block, anchor.offset, end)
+        .ok_or("The EPUB mark has no exact publisher text boundary")?;
+    let node = document
+        .descendants()
+        .find(|node| {
+            let range = node.range();
+            node.is_text() && (range.contains(&byte) || byte == range.end)
+        })
+        .ok_or("The EPUB mark does not address a stock text node")?;
+    let raw = &xml[node.range()];
+    let distance = byte - node.range().start;
+    let offset = text_offset(raw, distance).ok_or("The EPUB text boundary is ambiguous")?;
+
+    let ancestors: Vec<_> = node.ancestors().take(MAX_STEPS + 4).collect();
+    let body = ancestors
+        .iter()
+        .position(|node| node.has_tag_name((XHTML, "body")))
+        .ok_or("The mark is outside the XHTML reading body")?;
+    if body > MAX_STEPS {
+        return Err("The EPUB mark exceeds the KOReader nesting limit".into());
+    }
+    let mut pointer = format!("/body/DocFragment[{}]/body", chapter + 1);
+    for node in ancestors[..body].iter().rev().copied() {
+        let parent = node.parent().ok_or("Missing KOReader parent node")?;
+        let name = if node.is_text() {
+            "text()"
+        } else {
+            node.tag_name().name()
+        };
+        let mut siblings = parent.children().filter(|sibling| {
+            if node.is_text() {
+                sibling.is_text() && !omitted_initial_space(parent, *sibling)
+            } else {
+                sibling.has_tag_name((XHTML, name))
+            }
+        });
+        let ordinal = siblings
+            .position(|sibling| sibling == node)
+            .ok_or("The EPUB mark has no KOReader node selector")?
+            + 1;
+        write!(&mut pointer, "/{name}")?;
+        if ordinal > 1 || siblings.next().is_some() {
+            write!(&mut pointer, "[{ordinal}]")?;
+        }
+    }
+    write!(&mut pointer, ".{offset}")?;
+    if resolve(book, &pointer, Some(DOM_VERSION))?.anchor != *anchor {
+        return Err("The KOReader mark cannot recover the exact source point".into());
+    }
+    Ok(pointer)
+}
+
+#[cfg(feature = "kindle")]
+fn text_offset(raw: &str, end: usize) -> Option<usize> {
+    let mut offset = 0;
+    let mut chars = raw.get(..end)?.chars();
+    let mut space = false;
+    while let Some(ch) = chars.next() {
+        if ch == '&' {
+            loop {
+                if chars.next()? == ';' {
+                    break;
+                }
+            }
+        } else if xml_space(ch) && space {
+            continue;
+        }
+        offset += 1;
+        space = xml_space(ch);
+    }
+    Some(offset)
 }
 
 fn locate_in_chapter(

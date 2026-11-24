@@ -1,5 +1,6 @@
 //! The daily reader interface and foreground lifecycle.
 mod alternative_contents;
+mod annotation_exchange;
 mod annotation_search;
 mod bar_icons;
 pub(crate) const NOTE_MARK_ICON: primitive_ui::Icon = bar_icons::HIGHLIGHT;
@@ -228,6 +229,8 @@ enum Screen {
     ReadingGuides,
     ReadingGuidesAbout,
     BookmarkListSettings,
+    AnnotationExchange,
+    AnnotationExchangePreview,
     AnnotationListSettings,
     SelectionPosition,
     LongPressSettings,
@@ -394,6 +397,8 @@ impl Screen {
             Self::ReadingGuides => "Reading guides",
             Self::ReadingGuidesAbout => "About reading guides",
             Self::BookmarkListSettings => "Bookmarks and notes",
+            Self::AnnotationExchange => "Annotation exchange",
+            Self::AnnotationExchangePreview => "Import annotation transfer",
             Self::AnnotationListSettings => "Highlight list text",
             Self::SelectionPosition => "Selection dialog position",
             Self::LongPressSettings => "Long-press on text",
@@ -424,6 +429,10 @@ impl Screen {
             Self::ExportAnnotations => "Export annotations",
             Self::SelectionHtml => "Selection HTML",
             Self::ExportSettings(_, export_settings::Page::Settings) => "Export settings",
+            Self::ExportSettings(
+                export_settings::Origin::Exchange,
+                export_settings::Page::Folders,
+            ) => "Export / import folder",
             Self::ExportSettings(_, export_settings::Page::Folders) => "Export folder",
             Self::ExportSettings(_, export_settings::Page::Template(scope)) => scope.title(),
             Self::ExportSettings(_, export_settings::Page::Tokens) => "Filename tokens",
@@ -731,6 +740,7 @@ enum Action {
     ExportBookClippings,
     LibraryExport(library_export::Command),
     ExportSettings(export_settings::Origin, export_settings::Command),
+    AnnotationExchange(annotation_exchange::Command),
     FitPage(bool),
     FitHeight,
     SetFixedZoom(usize),
@@ -1069,6 +1079,7 @@ pub struct Reader {
     saved_popup: Option<saved_highlight_popup::SavedPopup>,
     exports: PathBuf,
     export_settings: export_settings::Settings,
+    annotation_exchange: annotation_exchange::State,
     library_export: library_export::Export,
     dictionaries: DictionarySources,
     dictionary_preference: PathBuf,
@@ -1315,6 +1326,9 @@ impl Reader {
             export_settings: export_settings::Settings::load(
                 data.join("annotation-export-files.json"),
             ),
+            annotation_exchange: annotation_exchange::State::load(
+                data.join("annotation-exchange.json"),
+            ),
             library_export: library_export::Export::load(data.join("highlight-export.json")),
             dictionaries: DictionarySources::for_reader(documents, data),
             dictionary_preference,
@@ -1542,7 +1556,7 @@ impl Reader {
             }
             entry.author = reading.author();
             self.save_library()?;
-            let closing_warning = self.apply_closing_before_switch(id);
+            let closing_warning = self.finish_before_switch(id);
             self.pending_orientation = None;
             self.install_opening_profile_plan(opening);
             self.active = None;
@@ -1740,7 +1754,7 @@ impl Reader {
         }
         entry.author.clone_from(&reading.probe.author);
         self.save_library()?;
-        let closing_warning = self.apply_closing_before_switch(id);
+        let closing_warning = self.finish_before_switch(id);
         self.pages_since_refresh = 0;
         self.range_edit = None;
         self.saved_popup = None;
@@ -1835,6 +1849,9 @@ impl Reader {
             Screen::ExportSettings(_, export_settings::Page::Folders)
         ) {
             self.export_settings.close_picker();
+        }
+        if screen != Screen::AnnotationExchangePreview {
+            self.annotation_exchange.finish_preview();
         }
         if screen != Screen::PdfPassword {
             self.folder_password_return = None;
@@ -2702,8 +2719,14 @@ impl Reader {
                     ),
                 );
                 items.extend(self.bookmark_appearance_settings_items());
+                items.push(Item::new(
+                    "Annotation exchange",
+                    Action::Show(Screen::AnnotationExchange),
+                ));
                 return items;
             }
+            Screen::AnnotationExchange => return self.annotation_exchange_settings(),
+            Screen::AnnotationExchangePreview => return self.annotation_exchange_preview_items(),
             Screen::AnnotationListSettings => {
                 return crate::reading_controls::AnnotationListText::ALL
                     .into_iter()
@@ -3900,6 +3923,7 @@ impl Reader {
                 self.mark_book_changed();
             }
             Action::LibraryExport(command) => self.activate_library_export(command)?,
+            Action::AnnotationExchange(command) => self.annotation_exchange_command(command)?,
             Action::ExportSettings(origin, command) => {
                 self.export_settings_command(origin, command)?
             }
@@ -5784,8 +5808,10 @@ impl Reader {
         let state = self.highlight_state()?;
         if pdf {
             state.pdf_highlights[index].note = note;
+            state.pdf_highlights[index].updated_at = crate::mark_time::now();
         } else {
             state.highlights[index].note = note;
+            state.highlights[index].updated_at = crate::mark_time::now();
         }
         self.mark_book_changed();
         if self.saved_popup.is_some() {
@@ -6985,6 +7011,7 @@ impl Reader {
                 if let Some(outcome) = resolver.step(&mut book).map_err(io::Error::other)? {
                     if let QuoteMatch::Unique(selection) = outcome {
                         import.matched.push(Highlight {
+                            updated_at: None,
                             chapter_title: None,
                             color: Default::default(),
                             created_at: entry.time,
@@ -7163,12 +7190,14 @@ impl Reader {
         {
             if note.is_some() {
                 previous.note = note;
+                previous.updated_at = crate::mark_time::now();
             }
         } else {
             if state.highlights.len() >= 256 {
                 return Err("This book has reached its highlight limit".into());
             }
             state.highlights.push(Highlight {
+                updated_at: None,
                 chapter_title,
                 color: chosen_color.unwrap_or_else(|| {
                     state
@@ -7328,6 +7357,7 @@ impl Reader {
             .into_iter()
             .filter_map(|annotation| {
                 let mark = PdfHighlight {
+                    updated_at: None,
                     chapter_title: None,
                     color: annotation.color,
                     created_at: None,
@@ -7460,6 +7490,7 @@ impl Reader {
         }) {
             if note.is_some() {
                 mark.note = note;
+                mark.updated_at = crate::mark_time::now();
             }
         } else {
             state.add_pdf_highlight(candidate)?;
@@ -8408,6 +8439,10 @@ impl Reader {
                         Action::SetReadingControls(_) if self.screen == Screen::Scrolling => {
                             RowAccessory::None
                         }
+                        Action::AnnotationExchange(command) => self
+                            .annotation_exchange
+                            .toggle(*command)
+                            .map_or(RowAccessory::None, RowAccessory::Toggle),
                         Action::ExportSettings(_, export_settings::Command::ToggleBookFolder) => {
                             RowAccessory::Toggle(self.export_settings.preferences.book_folder)
                         }
@@ -8898,9 +8933,13 @@ impl App for Reader {
         self.draw_opening_delay(canvas);
         self.draw_opening_ask(canvas);
         self.draw_closing_profile(canvas);
+        self.draw_annotation_exchange_confirmation(canvas);
     }
 
     fn press_point(&self, input: Input) -> Option<(f32, f32)> {
+        if let Some(point) = self.annotation_exchange_press(input) {
+            return point;
+        }
         if let Some(point) = self.closing_profile_press(input) {
             return point;
         }
@@ -8932,6 +8971,9 @@ impl App for Reader {
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
         self.finish_interrupted_scroll();
         if let Some(change) = self.embedded_font_report_input(input) {
+            return change;
+        }
+        if let Some(change) = self.annotation_exchange_input(input) {
             return change;
         }
         if let Some(change) = self.closing_profile_input(input) {
@@ -9182,6 +9224,9 @@ impl App for Reader {
             self.embedded_font_report = None;
         }
         if let Some(change) = self.embedded_font_report_input(input) {
+            return change;
+        }
+        if let Some(change) = self.annotation_exchange_input(input) {
             return change;
         }
         if let Some(change) = self.closing_profile_input(input) {
@@ -9775,6 +9820,8 @@ impl App for Reader {
                     } else {
                         Screen::Library
                     }),
+                    Screen::AnnotationExchange => self.show(Screen::BookmarkListSettings),
+                    Screen::AnnotationExchangePreview => self.show(Screen::AnnotationExchange),
                     Screen::ClearOcr => self.show(Screen::ReadingData),
                     Screen::RestoreBackup => {
                         self.backup_import = None;
@@ -12262,6 +12309,7 @@ mod tests {
         assert_eq!(state.pdf_highlights.len(), 1);
         state
             .add_pdf_highlight(PdfHighlight {
+                updated_at: None,
                 chapter_title: None,
                 color: Default::default(),
                 created_at: None,
@@ -12658,6 +12706,7 @@ mod tests {
         });
         state
             .add_pdf_highlight(PdfHighlight {
+                updated_at: None,
                 chapter_title: None,
                 color: Default::default(),
                 created_at: Some(1_750_000_002),
@@ -15661,6 +15710,7 @@ mod tests {
             .remember(&fixed.entry, fixed.id, &fixed.entry.title);
         state
             .add_pdf_highlight(PdfHighlight {
+                updated_at: None,
                 chapter_title: None,
                 color: Default::default(),
                 created_at: None,
@@ -18463,6 +18513,7 @@ mod tests {
         app.library
             .remember(&fixed.entry, fixed.id, "Signal chart")
             .add_pdf_highlight(PdfHighlight {
+                updated_at: None,
                 chapter_title: None,
                 color: Default::default(),
                 created_at: None,

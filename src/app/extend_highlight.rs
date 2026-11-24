@@ -200,6 +200,7 @@ impl Reader {
                         .filter(|mark| &mark.selection == original)
                         .ok_or("The original highlight changed")?;
                     mark.selection = current.clone();
+                    mark.updated_at = crate::mark_time::now();
                     if let Some(chapter_title) = chapter_title {
                         mark.chapter_title = chapter_title;
                     }
@@ -212,6 +213,7 @@ impl Reader {
                         .filter(|mark| &**mark == original)
                         .ok_or("The original highlight changed")?;
                     *mark = current.clone();
+                    mark.updated_at = crate::mark_time::now();
                     if let Some(chapter_title) = chapter_title {
                         mark.chapter_title = chapter_title;
                     }

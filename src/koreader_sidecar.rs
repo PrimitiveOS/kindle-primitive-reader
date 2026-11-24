@@ -11,6 +11,8 @@
 mod annotations;
 #[cfg(feature = "kindle")]
 pub(crate) mod custom_metadata;
+#[cfg(feature = "kindle")]
+pub(crate) mod exchange;
 pub use annotations::{SidecarAnnotations, SidecarMark, parse_annotations};
 
 use std::borrow::Cow;
@@ -337,7 +339,7 @@ enum Value<'a> {
     String(Cow<'a, [u8]>),
     Number(f64),
     Nil,
-    Boolean,
+    Boolean(bool),
     Table(&'a [u8]),
 }
 
@@ -413,7 +415,7 @@ impl<'a> Parser<'a> {
             self.expect(b'=')?;
             return match token {
                 Value::String(text) => Ok(Some(text)),
-                Value::Number(_) | Value::Boolean => Ok(None),
+                Value::Number(_) | Value::Boolean(_) => Ok(None),
                 _ => Err(SidecarError::InvalidData),
             };
         }
@@ -479,7 +481,8 @@ impl<'a> Parser<'a> {
             Some(b'0'..=b'9' | b'-' | b'.') => Value::Number(self.number()?),
             _ => match self.identifier() {
                 Some(b"nil") => Value::Nil,
-                Some(b"true" | b"false") => Value::Boolean,
+                Some(b"true") => Value::Boolean(true),
+                Some(b"false") => Value::Boolean(false),
                 _ => return Err(SidecarError::InvalidData),
             },
         };

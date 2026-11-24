@@ -490,6 +490,7 @@ mod tests {
         let mut state = app.library.state(id).unwrap().pdf_highlights.clone();
         for (word, bounds) in [("Retained", keep), ("Outside", exclude)] {
             state.push(PdfHighlight {
+                updated_at: None,
                 chapter_title: None,
                 created_at: None,
                 style: Default::default(),
