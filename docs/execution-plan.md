@@ -72,6 +72,10 @@ pixels for continuous PDF, comics and fixed-layout EPUB staging. Device
 landscape remains gated on the runtime and Launcher handoff. The integrated
 Mac build passed 1,239 checks. The focused captures cover three Skim placements,
 selective profiles in light and dark, and the continuous PDF round trip.
+The Oasis suite passed 1,242 checks. Six frames match byte for byte. The
+Top Skim capture differs at pixel (528, 244) by one grayscale level, from
+140 on Mac to 141 on the Oasis. The comparison verifies every other pixel
+of that frame and retains both original PNGs.
 [Skim controls](navigation-preferences.md#skim-position) · [Reading profiles](reading-profiles.md) · [Publisher geometry](render-modes.md#physical-space-and-paint) · [Fixed-page viewports](reading-edition-orientation.md#fixed-page-viewport-preparation)
 
 ## Reader 0.1.48 verification plan
@@ -122,6 +126,11 @@ identity, and confirm Back restores the same selection. Keep the four-mode
 CREngine reference as evidence for the remaining provider work.
 [Reading guides](reading-guides.md) · [EPUB selection markup](selection-html.md) · [Render modes](render-modes.md)
 
+The Mac suite passed 1,195 checks. The Oasis passed 1,180 Reader library
+tests, 14 EPUB package tests and four layout probes. Both skipped 66 opt-in
+cases. All six Oasis captures matched the Mac simulator pixel for pixel.
+Foreground touch and panel refresh have separate acceptance checks.
+
 ## Reader 0.1.44 verification plan
 
 Compare scan and text reflow spacing with the pinned PDF provider. Verify
@@ -132,6 +141,14 @@ verify cutoff boundaries, preserved visits and failed writes. Test portrait
 defaults and per-book choices with both supported and earlier Launchers.
 [Scan reflow](scan-controls.md) · [Annotation export](library-highlights-export.md) · [Statistics](reading-statistics.md#reset-one-book-for-a-day-week-or-month) · [Portrait orientation](reading-edition-orientation.md)
 
+The Mac suite passed 1,187 checks. The Oasis passed 1,172 Reader library
+tests, 14 EPUB package tests and four layout probes. Both skipped 66 opt-in
+cases. The first Oasis test bundle lacked the symbol font used by two
+tests. The verified rerun used the same test binaries with the bundled
+font. All eleven Oasis frames matched the Mac simulator after capturing
+the two updated export screens from the integrated build. Foreground
+touch, panel refresh and live orientation have separate acceptance checks.
+
 ## Reader 0.1.43 verification plan
 
 Compare detected PDF crop padding and fit to the pinned native provider.
@@ -140,6 +157,11 @@ saved source links and annotations, and compare Manual and full-page fit.
 Verify all eight Time range choices, cutoff inclusion, New Year week groups,
 day and book drill-down, page restoration, and an unchanged reading journal.
 [Crop margins](continuous-semi-auto-crop.md) · [Time range reports](reading-statistics.md#time-range-reports)
+
+The Mac suite passed 1,172 checks. The Oasis passed 1,157 Reader library
+tests, 14 EPUB package tests and four layout probes. Both skipped 65 opt-in
+cases. All four Oasis captures matched the Mac simulator PNGs byte for byte.
+Foreground touch and panel refresh have separate acceptance checks.
 
 ## Reader 0.1.42 verification plan
 
