@@ -373,6 +373,9 @@ pub struct Settings {
     pub preserve_forced_page_margins: bool,
     #[doc(hidden)]
     pub block_width: BlockWidthMode,
+    /// Reconstruct missing table rows and roots from supported publisher CSS boxes.
+    #[doc(hidden)]
+    pub repair_css_tables: bool,
     #[doc(hidden)]
     pub fit_content: FitContentMode,
     /// Apply positive physical sides to supported auto-width publisher paragraphs.
@@ -460,6 +463,7 @@ impl Default for Settings {
             block_margins: BlockMarginMode::Ignore,
             preserve_forced_page_margins: false,
             block_width: BlockWidthMode::Ignore,
+            repair_css_tables: false,
             fit_content: FitContentMode::Ignore,
             publisher_horizontal_margins: false,
             publisher_signed_horizontal_margins: false,
@@ -1251,7 +1255,12 @@ impl Probe {
                         if let Some(Err(error)) = fallback {
                             eprintln!("reader vertical layout unavailable: {error}");
                         }
-                        let has_table = source.blocks.iter().any(|b| b.table_cell.is_some());
+                        let has_table = source.blocks.iter().any(|b| b.table_cell.is_some())
+                            || settings.repair_css_tables
+                                && styles.iter().any(|style| {
+                                    !style.flow.suppressed
+                                        && style.display == book_style::flow::Display::TableCell
+                                });
                         let mut lay_out = |source: &Source, faces| {
                             parley_layout::ParleyChapter::with_flow(
                                 &mut book,

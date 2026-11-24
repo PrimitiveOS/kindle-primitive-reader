@@ -80,13 +80,58 @@ source-selection rectangles use the Parley or vertical engines.
 | Mechanism | Reader work required for the observed mode behavior |
 | --- | --- |
 | Legacy | Match the legacy inline model and the old handling of incomplete CSS tables. Separate publisher margins are measured below. |
-| Flat | Extend the measured empty-box geometry below to nested and margin-only boxes, and extend margin grouping to the remaining formatting contexts, inline floats, and anonymous boxes. |
+| Flat | Extend the measured empty-box geometry below to nested and margin-only boxes, and extend margin grouping to the remaining formatting contexts, inline floats, and anonymous boxes beyond the simple CSS table cases below. |
 | Book | Extend the horizontal float model below to complex boxes and inline floats, and implement the remaining style-width and auto-margin behavior |
 | Web | Extend signed margins and float geometry, implement full publisher box sizing and automatic placement, and extend physical break-page painting to complex boxes |
 
 The four options depend on independent box geometry, pagination and
 source mappings. A Reader renderer choice would currently change several
 of these behaviors together. The **Render Mode** matrix item remains open.
+
+## Repairing missing CSS table rows and roots
+
+The pinned table-completion flag groups CSS table cells into missing rows
+and groups orphan rows into a table. A supported explicit `display:table`
+can mix those repaired rows with ordinary CSS row groups. Reader's internal
+horizontal repair path reads the computed display roles and projects its
+row and column positions without rewriting the publication's source.
+A `display:none` separator in an explicit table splits adjacent direct-cell
+runs in the native fixture. An ordinary paragraph between two orphan
+runs stays outside both grids.
+
+| Authored anchor at 1264 × 1606 and 96 DPI | Stock Flat and Book | Stock Web | Reader with the corresponding internal policies |
+| --- | ---: | ---: | ---: |
+| First explicit grid, second column | x = 642 | x = 469 | x = 642 or 468–469 |
+| Grouped row, second column | x = 642 | x = 469 | x = 642 or 468–469 |
+| Orphan row with 50% cell widths, second column | x = 642 | x = 642 | x = 642 |
+| Orphan cells with intrinsic widths, second column | x = 146 | x = 146 | Measured text and publisher padding |
+
+Web uses the authored 70% width for the explicit grids. Flat and Book
+use the available column width. Legacy omits invalid direct cells in an
+explicit table and places the tested orphan cells on separate lines.
+Reader's ordinary layout keeps both kinds of cells readable in source
+order. Line pitch and the vertical gaps between row backgrounds follow
+each engine's text metrics.
+
+The Mac checks restore an exact source quote after repair, hit-test text
+in every table, and follow an in-cell link in the reconstructed geometry.
+They also check paired cells across multiple pages and compare ordinary
+native tables and nested fallback boxes byte for byte. The repair path covers bounded horizontal text grids. Spanning
+CSS cells, inline and nested table boxes, row group styling, and complete
+table border and pagination behavior remain open.
+
+Generate the authored EPUB with
+`python3 scripts/generate-render-css-tables-fixture.py`. Run the
+[native oracle](../scripts/koreader-render-css-tables-check.lua) in the
+pinned runtime with the fixture path, an empty cache directory, Noto Sans
+and a capture directory. Run `cargo test --locked --lib repair_css_tables`
+for the Reader comparison. Set `READER_CSS_TABLE_CAPTURES` to an existing
+directory to save Reader's frames.
+[CREngine missing-parent construction](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvtinydom.cpp#L7973-L8170) ·
+[KOReader Flat](screenshots/render-css-tables-stock-flat.png) ·
+[Reader full-width policy](screenshots/render-css-tables-reader-flat.png) ·
+[KOReader Web](screenshots/render-css-tables-stock-web.png) ·
+[Reader authored-width policy](screenshots/render-css-tables-reader-web.png)
 
 ## Publisher widths on ordinary paragraphs
 

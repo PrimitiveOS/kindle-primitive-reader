@@ -69,8 +69,9 @@ pub(crate) fn layout_with_flow(
     let mut in_cell = Vec::with_capacity(styles.len());
     let mut spaces = vec![Space::default(); source.blocks.len()];
     for (idx, node) in source.elements.iter().enumerate() {
-        let inside =
-            matches!(node.tag.as_str(), "td" | "th") || node.parent.is_some_and(|p| in_cell[p]);
+        let inside = matches!(node.tag.as_str(), "td" | "th")
+            || flow.css_owner(idx).is_some()
+            || node.parent.is_some_and(|p| in_cell[p]);
         in_cell.push(inside);
         if node.selector_only
             || styles[idx].flow.suppressed

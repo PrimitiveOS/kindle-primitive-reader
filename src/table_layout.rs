@@ -5,12 +5,19 @@ use std::collections::{BTreeMap, HashMap};
 
 const MAX_COLUMNS: usize = 32;
 
+mod css;
 mod flow;
 pub(crate) use flow::{TableFlow, TableFlowError};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub(crate) enum TableKey {
+    Native(NodeId),
+    Css(usize),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub(crate) struct Cell {
-    pub table: NodeId,
+    pub table: TableKey,
     pub row: usize,
     pub after_row: usize,
     fractions: Option<(u16, u16)>,
@@ -117,7 +124,7 @@ fn table_cells(
             cells.push((
                 cell.id(),
                 Cell {
-                    table: table.id(),
+                    table: TableKey::Native(table.id()),
                     row: index,
                     after_row,
                     column: column as u8,

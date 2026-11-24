@@ -6,9 +6,8 @@ use crate::{
         borders::{Border, Pattern},
     },
     source::Source,
-    table_layout::Cell,
+    table_layout::{Cell, TableKey},
 };
-use roxmltree::NodeId;
 use std::{
     collections::{BTreeMap, HashMap},
     ops::Range,
@@ -63,7 +62,7 @@ pub(crate) struct CellBorder {
 }
 pub(crate) struct Borders {
     pub cells: HashMap<Cell, CellBorder>,
-    table: HashMap<NodeId, Table>,
+    table: HashMap<TableKey, Table>,
     outer: HashMap<usize, ([Stroke; 4], u32, u32)>,
 }
 impl Borders {
@@ -125,6 +124,9 @@ impl Borders {
         let mut hierarchy = HashMap::new();
         let mut rows = HashMap::new();
         for &(element, cell) in flow.cells() {
+            if matches!(cell.table, TableKey::Css(_)) {
+                continue;
+            }
             let mut current = source.elements[element].parent;
             let (mut row, mut group) = (None, None);
             while let Some(i) = current {
@@ -186,7 +188,7 @@ impl Borders {
         let native_tables: HashMap<_, _> = table.iter().map(|(id, t)| (t.element, *id)).collect();
         let mut table_owners = Vec::with_capacity(source.elements.len());
         let mut group_owners = Vec::with_capacity(source.elements.len());
-        let mut original_rows = HashMap::<NodeId, usize>::new();
+        let mut original_rows = HashMap::<TableKey, usize>::new();
         for (index, element) in source.elements.iter().enumerate() {
             let owner = if element.tag == "table" {
                 native_tables.get(&index).copied()
@@ -345,8 +347,8 @@ impl Borders {
 
 #[derive(Default)]
 pub(crate) struct Positions {
-    rows: HashMap<NodeId, BTreeMap<usize, f32>>,
-    bottom: HashMap<NodeId, f32>,
+    rows: HashMap<TableKey, BTreeMap<usize, f32>>,
+    bottom: HashMap<TableKey, f32>,
 }
 impl Positions {
     pub fn record(&mut self, cell: Cell, start: f32, end: f32) {

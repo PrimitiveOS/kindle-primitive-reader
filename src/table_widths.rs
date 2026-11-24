@@ -2,7 +2,7 @@
 use crate::{
     book_style::{ImageLength, Style},
     source::{Block, Source},
-    table_layout::Cell,
+    table_layout::{Cell, TableKey},
 };
 use std::collections::BTreeMap;
 
@@ -18,6 +18,32 @@ struct Column {
     count: u32,
     percent: u32,
     fixed: u32,
+}
+
+impl Column {
+    fn observe(&mut self, style: &Style, min: u32, max: u32, font: f32, width: u32) {
+        let outer_min = intrinsic_width(min, style, font);
+        let outer_max = intrinsic_width(max, style, font);
+        self.min = self.min.max(outer_min);
+        self.max = self.max.max(outer_max);
+        self.sum += u64::from(outer_max);
+        self.count += 1;
+        match style.image_width {
+            Some(ImageLength::Fraction(ratio)) => {
+                self.percent = self
+                    .percent
+                    .max(((ratio * 25600.).round() / 256.).clamp(0., 100.) as u32)
+            }
+            Some(hint) => {
+                self.fixed = self.fixed.max(
+                    hint.pixels(width, font * style.size_scale)
+                        .unwrap_or(0.)
+                        .clamp(0., width as f32) as u32,
+                );
+            }
+            None => (),
+        }
+    }
 }
 
 // Percentage padding depends on the final outer width. Invert that relationship
@@ -120,27 +146,13 @@ impl TableWidths {
                 let stroke = borders
                     .and_then(|b| b.cells.get(&cell))
                     .map_or(0, |c| c.edges[3].width + c.edges[1].width);
-                let outer_min = intrinsic_width(min.saturating_add(stroke), style, font);
-                let outer_max = intrinsic_width(max.saturating_add(stroke), style, font);
-                col.min = col.min.max(outer_min);
-                col.max = col.max.max(outer_max);
-                col.sum += u64::from(outer_max);
-                col.count += 1;
-                match style.image_width {
-                    Some(ImageLength::Fraction(ratio)) => {
-                        col.percent = col
-                            .percent
-                            .max(((ratio * 25600.).round() / 256.).clamp(0., 100.) as u32)
-                    }
-                    Some(hint) => {
-                        col.fixed = col.fixed.max(
-                            hint.pixels(width, font * style.size_scale)
-                                .unwrap_or(0.)
-                                .clamp(0., width as f32) as u32,
-                        )
-                    }
-                    None => (),
-                }
+                col.observe(
+                    style,
+                    min.saturating_add(stroke),
+                    max.saturating_add(stroke),
+                    font,
+                    width,
+                );
             }
             out.insert(
                 table,
@@ -151,6 +163,88 @@ impl TableWidths {
             );
         }
         out
+    }
+
+    /// Simple CSS grids use the same measured column tracks as HTML tables.
+    /// The elements are already classified, including repaired anonymous rows.
+    pub(super) fn collect_css(
+        source: &Source,
+        styles: &[Style],
+        flow: &crate::table_layout::TableFlow<'_>,
+        font: f32,
+        width: u32,
+        mut measure: impl FnMut(&Block) -> (u32, u32),
+    ) -> BTreeMap<usize, Self> {
+        if !flow.has_repaired_css() {
+            return BTreeMap::new();
+        }
+        let mut groups = BTreeMap::<usize, Vec<(&Block, Cell, usize)>>::new();
+        for block in &source.blocks {
+            if styles[block.element].flow.suppressed {
+                continue;
+            }
+            let Some(owner) = flow.css_owner(block.element) else {
+                continue;
+            };
+            let Some(cell) = flow.cell(owner) else {
+                continue;
+            };
+            if let TableKey::Css(key) = cell.table {
+                groups.entry(key).or_default().push((block, cell, owner));
+            }
+        }
+        let mut out = BTreeMap::new();
+        let mut remaining_bytes = MAX_MEASURED_BYTES;
+        let mut remaining_blocks = MAX_MEASURED_BLOCKS;
+        for (key, blocks) in groups {
+            let bytes = blocks
+                .iter()
+                .map(|(block, _, _)| block.text.len())
+                .sum::<usize>();
+            if blocks.len() > remaining_blocks || bytes > remaining_bytes {
+                continue;
+            }
+            remaining_bytes -= bytes;
+            remaining_blocks -= blocks.len();
+            let columns = usize::from(blocks[0].1.columns);
+            let mut demands: BTreeMap<usize, (Cell, u32, u32)> = BTreeMap::new();
+            for (block, cell, owner) in blocks {
+                let (min, max) = measure(block);
+                let demand = demands.entry(owner).or_insert((cell, 0, 0));
+                demand.1 = demand.1.max(min);
+                demand.2 = demand.2.max(max);
+            }
+            let mut tracks: Vec<_> = (0..columns).map(|_| Column::default()).collect();
+            for (owner, (cell, min, max)) in demands {
+                let style = &styles[owner];
+                tracks[usize::from(cell.column)].observe(style, min, max, font, width);
+            }
+            out.insert(
+                key,
+                Self {
+                    columns: tracks,
+                    edges: Vec::new(),
+                },
+            );
+        }
+        out
+    }
+
+    pub(super) fn resolve_css(&mut self, available: u32, explicit: bool) -> u32 {
+        let natural = self
+            .columns
+            .iter()
+            .fold(0u32, |width, col| width.saturating_add(col.max));
+        let hinted = self.columns.iter().any(|c| c.percent > 0 || c.fixed > 0);
+        let width = if explicit || hinted {
+            available
+        } else {
+            natural.max(self.columns.len() as u32).min(available)
+        };
+        if self.edges.last() != Some(&width) {
+            self.resolve(width);
+        }
+        width
     }
 
     /// Allocate the publisher's fixed and percentage widths first. Unspecified

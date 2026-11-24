@@ -467,6 +467,7 @@ impl ParleyChapter {
             crate::table_layout::TableFlow::source_order(source)
         } else {
             match crate::table_layout::TableFlow::new(source, styles) {
+                Ok(flow) if settings.repair_css_tables => flow.with_repaired_css(source, styles),
                 Ok(flow) => flow,
                 Err(error)
                     if error.downcast_ref::<crate::table_layout::TableFlowError>()
@@ -702,7 +703,8 @@ impl ParleyChapter {
                 use crate::float_layout::{Clear, simple_box};
                 y = float_flow.leave_closed_boxes(index, y);
                 let style = &styles[block.element];
-                let separate = source_block.table_cell.is_some()
+                let separate = cell.is_some()
+                    || source_block.table_cell.is_some()
                     || block.list_item.is_some()
                     || !block.images.is_empty()
                     || !block.ruby.is_empty()

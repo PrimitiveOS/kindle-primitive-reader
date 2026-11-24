@@ -1,5 +1,8 @@
 //! A native table grid over retained CSS boxes; canonical cells never change.
-use super::{Cell, MAX_COLUMNS};
+use super::{
+    Cell, MAX_COLUMNS,
+    css::{self, CssTables},
+};
 use crate::{
     book_style::Style,
     source::{Block, Source},
@@ -27,6 +30,7 @@ pub(crate) struct TableFlow<'a> {
     // chapters allocate neither a dense element index nor a copied cell array.
     remapped: Option<HashMap<Cell, Option<Cell>>>,
     rows: Option<HashMap<usize, Option<usize>>>,
+    css: Option<CssTables>,
 }
 
 impl<'a> TableFlow<'a> {
@@ -35,10 +39,11 @@ impl<'a> TableFlow<'a> {
             cells: Cow::Borrowed(&source.table_cells),
             remapped: None,
             rows: None,
+            css: None,
         }
     }
     pub(crate) fn is_identity(&self) -> bool {
-        self.remapped.is_none()
+        self.remapped.is_none() && self.css.is_none()
     }
     /// An explicit degraded table view. The caller reports the narrowly typed
     /// hint limitation; CSS text masks and canonical positions stay unchanged.
@@ -53,7 +58,31 @@ impl<'a> TableFlow<'a> {
                     .collect(),
             ),
             rows: Some(HashMap::new()),
+            css: None,
         }
+    }
+    pub(crate) fn with_repaired_css(mut self, source: &Source, styles: &[Style]) -> Self {
+        if let Some(repair) = CssTables::plan(source, styles) {
+            let cells = self.cells.to_mut();
+            cells.extend(repair.cells());
+            cells.sort_unstable_by_key(|entry| entry.0);
+            self.css = Some(repair);
+        }
+        self
+    }
+    pub(crate) fn has_repaired_css(&self) -> bool {
+        self.css.is_some()
+    }
+    pub(crate) fn css_grid(&self, key: usize) -> Option<css::Grid> {
+        self.css.as_ref()?.grid(key)
+    }
+    pub(crate) fn css_root(&self, element: usize) -> bool {
+        self.css
+            .as_ref()
+            .is_some_and(|css| css.explicit_root(element))
+    }
+    pub(crate) fn css_owner(&self, element: usize) -> Option<usize> {
+        self.css.as_ref()?.owner(element)
     }
     pub(crate) fn cells(&self) -> &[(usize, Cell)] {
         &self.cells
@@ -65,6 +94,9 @@ impl<'a> TableFlow<'a> {
             .map(|i| self.cells[i].1)
     }
     pub(crate) fn block_cell(&self, block: &Block) -> Option<Cell> {
+        if let Some(owner) = self.css_owner(block.element) {
+            return self.cell(owner);
+        }
         let old = block.table_cell?;
         self.remapped
             .as_ref()
@@ -231,6 +263,7 @@ impl<'a> TableFlow<'a> {
             cells: Cow::Owned(out),
             remapped: Some(remapped),
             rows: Some(row_indices),
+            css: None,
         })
     }
 }

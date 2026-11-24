@@ -231,7 +231,7 @@ pub(crate) fn layout_with_flow(
     borders: Option<&crate::table_borders::Borders>,
     flow: &crate::table_layout::TableFlow<'_>,
     settings: Settings,
-    measure: impl FnMut(&crate::source::Block) -> (u32, u32),
+    mut measure: impl FnMut(&crate::source::Block) -> (u32, u32),
 ) -> Option<Vec<BoxArea>> {
     let block_width = settings.block_width;
     let constrained = block_width == BlockWidthMode::PublisherWithConstraints
@@ -310,8 +310,19 @@ pub(crate) fn layout_with_flow(
         cells[element] = Some(cell);
     }
     let mut widths = crate::table_widths::TableWidths::collect(
-        source, styles, &tables, &owners, &cells, flow, font, width, borders, measure,
+        source,
+        styles,
+        &tables,
+        &owners,
+        &cells,
+        flow,
+        font,
+        width,
+        borders,
+        &mut measure,
     );
+    let mut css_widths =
+        crate::table_widths::TableWidths::collect_css(source, styles, flow, font, width, measure);
     let page = BoxArea::new(0, width, None);
     let rtl_paragraphs = if constrained {
         let mut rtl = vec![false; styles.len()];
@@ -333,6 +344,16 @@ pub(crate) fn layout_with_flow(
             continue;
         }
         let mut area = BoxArea::new(parent.x, parent.width, parent.cell);
+        let css_root = flow.css_root(idx);
+        if css_root {
+            if constrained
+                && let Some(published) =
+                    publisher_width(area, &styles[idx], font * styles[idx].size_scale)
+            {
+                area = published;
+            }
+            area.sized_wrapper = true;
+        }
         let wrapper = wrapper_candidates.get(idx) == Some(&true);
         if wrapper || width_candidates.get(idx) == Some(&TextBoxCandidate::Simple) {
             let style = &styles[idx];
@@ -356,22 +377,32 @@ pub(crate) fn layout_with_flow(
         if let Some(cell) = cells[idx]
             && area.width as f32 / f32::from(cell.columns) >= 2.5 * font
         {
-            let decorated = borders.filter(|b| b.cells.contains_key(&cell));
-            let (offset, available) =
-                decorated.map_or((0, area.width), |b| b.horizontal(cell, area.width));
-            let inset = if decorated.is_some() || table.is_some_and(|id| styles[id].border_collapse)
-            {
-                0
+            if let crate::table_layout::TableKey::Css(key) = cell.table {
+                if let (Some(grid), Some(tracks)) = (flow.css_grid(key), css_widths.get_mut(&key)) {
+                    let available = tracks.resolve_css(area.width, grid.explicit_root.is_some());
+                    let (column, width) = tracks
+                        .bounds(cell, available, 0)
+                        .unwrap_or_else(|| cell.bounds(available, 0));
+                    area = BoxArea::new(area.x + column, width, Some(cell));
+                }
             } else {
-                (font * 0.22).round() as u32
-            };
-            let (start, width) = table
-                .and_then(|id| widths.get(&id))
-                .and_then(|s| s.bounds(cell, available, inset))
-                .unwrap_or_else(|| cell.bounds(available, inset));
-            area = BoxArea::new(area.x + offset + start, width, Some(cell));
-            if let Some(b) = decorated {
-                area.add_border(b.cells[&cell].edges);
+                let decorated = borders.filter(|b| b.cells.contains_key(&cell));
+                let (offset, available) =
+                    decorated.map_or((0, area.width), |b| b.horizontal(cell, area.width));
+                let inset =
+                    if decorated.is_some() || table.is_some_and(|id| styles[id].border_collapse) {
+                        0
+                    } else {
+                        (font * 0.22).round() as u32
+                    };
+                let (start, width) = table
+                    .and_then(|id| widths.get(&id))
+                    .and_then(|s| s.bounds(cell, available, inset))
+                    .unwrap_or_else(|| cell.bounds(available, inset));
+                area = BoxArea::new(area.x + offset + start, width, Some(cell));
+                if let Some(b) = decorated {
+                    area.add_border(b.cells[&cell].edges);
+                }
             }
         }
         if let Some(edges) = borders.and_then(|b| b.outer_edges(idx)) {
