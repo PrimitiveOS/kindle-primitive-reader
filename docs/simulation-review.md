@@ -26,8 +26,15 @@ test, 14 EPUB package tests, and four layout tests. Sixty-six opt-in
 tests were skipped. The Reader picker opened cached original EPUB, PDF,
 AZW3, and MOBI files, turned a page, and resumed with identical page
 pixels and source hashes. The separate original EPUB/PDF reading-history
-workflow also passed. Kindle foreground acceptance and the Store release
-remain open.
+workflow also passed.
+
+The Mac ARMHF release build from the same source produced a stripped,
+statically linked ARM EABI5 executable of 37,188,196 bytes. Its SHA-256 is
+`c7c519dfa4c4d8d1afe7c4c179485843a0fbc1a3357847b486a9defaccd338db`.
+The local staging check assembled 28 files totaling 46,762,045 bytes
+uncompressed and checked the SQLite version marker, SQLite dependency
+notices, launcher entry, and OCR model. Kindle foreground acceptance
+and the Store release remain open.
 
 ## Duration and named dictionary preset checkpoint
 

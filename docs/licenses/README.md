@@ -11,6 +11,10 @@ Launcher. [Launcher artwork terms](https://github.com/PrimitiveOS/kindle-primiti
 - [American and British English hyphenation patterns](ENGLISH-HYPHENATION.txt) cover the dictionaries compiled into native reflow.
 - [PDF assets](pdf/README.md) covers embedded fonts, character maps, and colour
   profiles supplied by the Hayro PDF libraries.
+- The KOReader statistics importer links the SQLite 3.50.2 amalgamation
+  included in libsqlite3-sys 0.35.0. The SQLite sources carry the authors'
+  copyright disclaimers. The Rust bindings and wrapper notices are in
+  [THIRD-PARTY.txt](THIRD-PARTY.txt). [Exact crate source](https://static.crates.io/crates/libsqlite3-sys/libsqlite3-sys-0.35.0.crate)
 - [Nerd Fonts Symbols](NERDFONTS.txt) covers the MIT-licensed private-use
   symbol fallback font included with Reader.
 - The MIT-licensed [vendored DjVu BZZ decoder](../../vendor/djvu-bzz) pins the
