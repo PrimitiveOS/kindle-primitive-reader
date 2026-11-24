@@ -82,6 +82,8 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         Action::Show(Screen::Contents | Screen::FixedContents) => BOOK,
         Action::Chapter(super::chapter_navigation::Direction::Previous) => FIRST_PAGE,
         Action::Chapter(super::chapter_navigation::Direction::Next) => LAST_PAGE,
+        Action::OpenFolderFile(super::FolderDirection::Previous) => FIRST_PAGE,
+        Action::OpenFolderFile(super::FolderDirection::Next) => LAST_PAGE,
         Action::Show(Screen::FixedBookmarks | Screen::Bookmarks)
         | Action::BookmarkBrowser(_)
         | Action::ToggleBookmark

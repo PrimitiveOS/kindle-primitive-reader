@@ -105,7 +105,8 @@ use crate::koreader_import::{self, ExportEntry, QuoteMatch, QuoteResolver};
 use crate::koreader_sidecar::{self, SidecarProgress};
 use crate::library::{
     BookMetadata, BookPreferences, BookState, Bookmark, DocumentFormat, FixedPreferences,
-    FixedTileAxis, Highlight, Library, LibraryBook, PdfHighlight, ReadingPosition, ReadingStatus,
+    FixedTileAxis, FolderDirection, Highlight, Library, LibraryBook, PdfHighlight, ReadingPosition,
+    ReadingStatus,
 };
 use crate::ocr_job::{OcrAssets, OcrJob};
 use crate::pdf_annotations;
@@ -435,6 +436,7 @@ enum Action {
     Open(LibraryBook),
     OpenTracked(u64),
     OpenPreviousDocument,
+    OpenFolderFile(FolderDirection),
     Browse(PathBuf),
     CurrentBookFolder,
     Continue,
@@ -784,6 +786,7 @@ pub struct Reader {
     ocr: Option<ActiveOcr>,
     text_flow: Option<TextFlow>,
     locked: Option<LibraryBook>,
+    folder_password_return: Option<Screen>,
     crop_dialog: Option<(FixedPreferences, Option<(f32, f32)>)>,
     screen: Screen,
     reading_panel: Option<BarPanel>,
@@ -992,6 +995,7 @@ impl Reader {
             ocr: None,
             text_flow: None,
             locked: None,
+            folder_password_return: None,
             crop_dialog: None,
             screen: Screen::Library,
             reading_panel: None,
@@ -1391,6 +1395,9 @@ impl Reader {
     }
 
     fn show(&mut self, screen: Screen) {
+        if screen != Screen::PdfPassword {
+            self.folder_password_return = None;
+        }
         if screen != Screen::Book {
             self.screen_page_worker.cancel();
         }
@@ -3505,6 +3512,7 @@ impl Reader {
             Action::ReturnToHistory(index) => self.return_to_location(index)?,
             Action::NextLocation => self.next_location()?,
             Action::OpenPreviousDocument => self.open_previous_document()?,
+            Action::OpenFolderFile(direction) => self.open_folder_file(direction)?,
             Action::Wikipedia => self.prepare_online(true, false)?,
             Action::TranslatePage => self.prepare_online(false, true)?,
             Action::RepeatOnline(index) => self.repeat_online(index)?,
@@ -5006,6 +5014,10 @@ impl Reader {
             self.editor = Editor::new(64);
             if self.bookmark_browser.after_password.take().is_some() {
                 self.show(Screen::BookmarkBrowser(bookmark_browser::Page::Detail));
+                return Change::Partial;
+            }
+            if let Some(screen) = self.folder_password_return.take() {
+                self.show(screen);
                 return Change::Partial;
             }
             return match self.activate(Action::Show(Screen::Library)) {

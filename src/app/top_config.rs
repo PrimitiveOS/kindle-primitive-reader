@@ -606,9 +606,19 @@ impl Reader {
             ),
         ]);
         if self.active.is_some() || self.fixed.is_some() {
-            items.insert(
-                1,
-                Item::new("Current book folder", Action::CurrentBookFolder),
+            items.splice(
+                1..1,
+                [
+                    Item::new("Current book folder", Action::CurrentBookFolder),
+                    Item::new(
+                        "Previous file in folder",
+                        Action::OpenFolderFile(super::FolderDirection::Previous),
+                    ),
+                    Item::new(
+                        "Next file in folder",
+                        Action::OpenFolderFile(super::FolderDirection::Next),
+                    ),
+                ],
             );
             items.push(Item::new("Book details", Action::OrganizeCurrent));
         }

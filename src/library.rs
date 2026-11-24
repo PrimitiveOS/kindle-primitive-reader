@@ -224,6 +224,12 @@ impl LibraryBook {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FolderDirection {
+    Previous,
+    Next,
+}
+
 #[derive(Clone, Debug)]
 pub struct BrowseList {
     pub entries: Vec<BrowseEntry>,
@@ -1278,15 +1284,43 @@ impl Library {
         &self,
         current: &LibraryBook,
     ) -> io::Result<Option<LibraryBook>> {
+        self.folder_book(current, FolderDirection::Next, false)
+    }
+
+    pub(crate) fn adjacent_book_in_folder(
+        &self,
+        current: &LibraryBook,
+        direction: FolderDirection,
+    ) -> io::Result<Option<LibraryBook>> {
+        self.folder_book(current, direction, true)
+    }
+
+    fn folder_book(
+        &self,
+        current: &LibraryBook,
+        direction: FolderDirection,
+        skip_finished: bool,
+    ) -> io::Result<Option<LibraryBook>> {
         let path = current.library_path();
         let folder = path.parent().unwrap_or_else(|| Path::new(""));
-        let listing = self.browse(folder)?;
-        let next = listing
-            .entries
+        let mut entries = self.browse(folder)?.entries;
+        if direction == FolderDirection::Previous {
+            entries.reverse();
+        }
+        let possibly_finished: HashSet<_> = if skip_finished {
+            self.recent
+                .iter()
+                .filter(|state| state.status() == ReadingStatus::Finished)
+                .map(|state| (state.path.as_path(), state.size))
+                .collect()
+        } else {
+            HashSet::new()
+        };
+        let next = entries
             .into_iter()
             .skip_while(|entry| entry.path != path)
             .skip(1)
-            .find_map(|entry| match entry.kind {
+            .filter_map(|entry| match entry.kind {
                 BrowseKind::Readable(book) => Some(book),
                 BrowseKind::Folder => {
                     let marker = entry.path.join("mimetype");
@@ -1297,6 +1331,15 @@ impl Library {
                     }
                 }
                 _ => None,
+            })
+            .find(|book| {
+                // A different edition at a finished file's path is still readable.
+                !possibly_finished.contains(&(book.path.as_path(), book.size))
+                    || self
+                        .identify(book)
+                        .ok()
+                        .and_then(|id| self.state(id))
+                        .is_none_or(|state| state.status() != ReadingStatus::Finished)
             });
         Ok(next)
     }
