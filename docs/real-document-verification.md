@@ -241,6 +241,34 @@ folder action, the dictionary close control, both clippings screens and
 column or row zoom. The folder listing differed by two grayscale pixels.
 [Current book folder](screenshots/current-book-folder.png) · [Dictionary lookup](screenshots/dictionary-close-stack.png) · [Clippings options](screenshots/export-kindle-clippings-options.png) · [Scan zoom](screenshots/fixed-tile-zoom.png)
 
+## Reader 0.1.42 release on the Oasis
+
+Store installed the published ARMHF package with both Reader licenses. The
+installed executable matched the release, and the public catalog returned the
+same ZIP digest and size.
+[GitHub release](https://github.com/PrimitiveOS/kindle-primitive-reader/releases/tag/v0.1.42) · [Package workflow](https://github.com/PrimitiveOS/kindle-primitive-reader/actions/runs/45362367701) · [Store entry](https://primitiveos.github.io/kindle-primitive-catalog/v1/apps/primitive-reader.json)
+
+| Verified file | SHA-256 | Bytes |
+| --- | --- | ---: |
+| ARMHF ZIP | `bf41edc8d034f6b2dfb8bdef9648e44a973b7ed348dd72882072e1f0b61376b1` | 21,686,023 |
+| Kindle executable | `be67ede45f80642de254b19005ce70fd9879afee419d3224c8c77e3ec1e0ab1b` | 34,540,552 |
+
+The release opened each original in an isolated Reader profile, advanced to
+a changed frame, verified its source digest and resumed after restart. Times
+end when Reader has the first grayscale frame in memory.
+
+| File type | Bytes | First frame | Advance and resume |
+| --- | ---: | ---: | --- |
+| EPUB | 436,947 | 1,603 ms | Passed |
+| PDF | 2,005,917 | 984 ms | Passed |
+| AZW3 | 590,896 | 944 ms | Passed |
+| MOBI | 625,173 | 2,229 ms | Passed |
+
+The 1,171 automated Oasis checks cover scan contrast, local book archiving
+and a swipe to the last bookmark. Five of six frames matched the simulator,
+with a two-pixel label difference on the post-archive Library screen. Physical touch and panel refresh
+have separate checks. [Verification plan](execution-plan.md#reader-0142-verification-plan)
+
 ## Reader 0.1.41 release on the Oasis
 
 Store installed the published ARMHF package with both Reader licenses. The
