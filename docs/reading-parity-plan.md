@@ -104,24 +104,33 @@ separate gates.
 - [ ] Complete foreground Kindle acceptance for document controls, touch and exit, sleep/wake, USB handoff, state preservation and the current installed app UI. Capture comparable device screenshots for the reading surface, top and bottom controls, selection/lookup, and reading settings.
 - [ ] Publish and list the candidate after the desktop and Kindle gates pass, then record the release checksum, Store listing, screenshots, and device evidence.
 
-The checklist applies to PrimitiveOS Reader. Device-wide settings remain in
-Launcher. The installed v0.1.25 ARMHF build and its automated suites have prior Oasis
-acceptance. Newer working-tree changes pass the Mac suite but still need an
-ARMHF run and foreground Kindle check. Physical E Ink behavior, a fresh
-real-document sweep, and publication remain open. Recheck device connectivity and
-the keep-awake state before foreground acceptance.
+The [release and original file log](real-document-verification.md) records
+which build passed the automated Oasis checks and which package is installed.
+The source matrix records measured workflows separately from foreground
+checks. Use the current installed binary for physical input, E Ink timing,
+sleep and wake, and USB acceptance.
 
 The Text → Rendering panel now offers per-book base styles. Auto follows the
 document format, publisher CSS and inline declarations remain higher in the
 cascade, and the built-in sheets are native subsets. See the [behavior and
 desktop capture](base-stylesheets.md); Kindle visual acceptance remains open.
 
-The Reading status bar settings now include an optional CRE-style top header.
-It is available for paged reflow documents, disappears in continuous scroll,
-and keeps the reading page visible beneath its controls. The first capture
-exposed and fixed a page-bitmap compositing issue. Desktop workflow tests pass;
-Kindle appearance, battery reporting and the stock About dialog remain open.
-[Behavior and screenshots](top-status-header.md)
+The optional top status header appears in paged reflow documents and has a
+per-book switch, an About panel, and its own font and display settings.
+The native renderer has been exercised. Foreground appearance, E Ink updates,
+and battery refresh on the panel remain open. [Behavior and screenshots](top-status-header.md)
+
+## Search result navigation still to compare
+
+The stock result-list menu has independent actions for **All results**,
+**Results in current chapter**, the current reading page, and the original
+search position. Filter the displayed hit sequence while preserving the
+original provider indices for opening a hit. Compare nested headings, headings
+sharing a page, front matter, duplicate titles, and empty result sets. Verify
+that the list, physical paging, Previous/Next, first/last shortcuts, counts,
+and return to the original position all refer to that sequence. Fixed-page
+result previews also need checks for a rotated, panned reading view and for
+restoring it after closing the preview. [Pinned KOReader result menu](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readersearch.lua#L781-L982)
 
 ## Implementation checkpoint
 
