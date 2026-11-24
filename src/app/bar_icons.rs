@@ -78,6 +78,8 @@ pub(super) fn action_icon(action: &Action) -> Icon {
     match action {
         Action::Show(Screen::Library | Screen::OrganizeLibrary) => FOLDER,
         Action::Show(Screen::Contents | Screen::FixedContents) => BOOK,
+        Action::Chapter(super::chapter_navigation::Direction::Previous) => FIRST_PAGE,
+        Action::Chapter(super::chapter_navigation::Direction::Next) => LAST_PAGE,
         Action::Show(Screen::FixedBookmarks | Screen::Bookmarks)
         | Action::BookmarkBrowser(_)
         | Action::ToggleBookmark
@@ -146,6 +148,7 @@ pub(super) fn action_icon(action: &Action) -> Icon {
             Screen::Gestures
             | Screen::ReadingControls
             | Screen::ReadingData
+            | Screen::ContentsSettings
             | Screen::FooterSettings,
         ) => SLIDERS,
         Action::Show(Screen::Typography | Screen::ReadingProfiles)

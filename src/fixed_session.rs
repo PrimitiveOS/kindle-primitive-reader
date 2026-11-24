@@ -722,14 +722,14 @@ impl FixedReading {
         self.outline()
             .iter()
             .enumerate()
-            .filter_map(|(index, item)| {
-                if let FixedDocument::Djvu(book) = &self.source
-                    && !book.stable_outline_destination(index)
-                {
-                    return None;
-                }
-                Some(item)
-            })
+            .filter_map(|(index, item)| self.stable_outline_destination(index).then_some(item))
+    }
+
+    pub(crate) fn stable_outline_destination(&self, index: usize) -> bool {
+        match &self.source {
+            FixedDocument::Djvu(book) => book.stable_outline_destination(index),
+            _ => true,
+        }
     }
 
     pub(crate) fn outline(&self) -> &[PdfOutlineItem] {

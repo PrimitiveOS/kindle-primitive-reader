@@ -49,10 +49,11 @@ device-system evidence. This count tracks plan milestones, not overall feature
 parity; many reading requirements and the foreground Kindle acceptance gates
 remain open.
 
-**Control evidence snapshot:** 185 of 536 in-scope reading-control rows have
-an implemented workflow, 235 are partial, 67 are gaps, and 49 need audit.
-Reader 0.1.28 covers collapsible, searchable Contents, including separate
-expand and jump actions, result context, and return history. The top status
+**Control evidence snapshot:** 188 of 536 in-scope reading-control rows have
+an implemented workflow, 236 are partial, 67 are gaps, and 45 need audit.
+Reader 0.1.29 adds [Contents row and font settings](contents-list-settings.md),
+[page labels and chapter lengths](contents-row-metadata.md), and
+[Previous and Next chapter](chapter-navigation.md) to the searchable outline. The top status
 header has its own settings and desktop and native suite evidence. The
 matrix distinguishes these controls from their remaining stock differences,
 including per-book header activation and document-wide page labels. These

@@ -5,8 +5,10 @@ pub(crate) const NOTE_MARK_ICON: primitive_ui::Icon = bar_icons::HIGHLIGHT;
 #[cfg(test)]
 mod base_stylesheet_tests;
 mod bookmark_browser;
+mod chapter_navigation;
 mod character_page_settings;
 mod content_dpi;
+mod contents_density;
 mod contents_position;
 mod contents_tree;
 mod contents_view;
@@ -221,6 +223,7 @@ enum Screen {
     BookTools,
     Contents,
     ContentsSearch,
+    ContentsSettings,
     GeneratedContents,
     CustomContents,
     CustomTitle,
@@ -360,6 +363,7 @@ impl Screen {
             Self::ScanColumns => "",
             Self::Contents | Self::FixedContents => "Contents",
             Self::ContentsSearch => "Search contents",
+            Self::ContentsSettings => "Contents settings",
             Self::CustomContents => "Custom contents",
             Self::CustomEdits => "Edit chapters",
             Self::CustomBookmarks => "Choose a bookmark",
@@ -429,6 +433,7 @@ enum Action {
     NameCollection(Option<String>),
     RemoveCollection,
     SetReadingControls(ReadingControls),
+    EditContentsDensity(contents_density::Field),
     BindGesture(Gesture, Binding),
     SetDisplayLevel(DisplayLevel, u32),
     RefreshDisplay,
@@ -457,6 +462,7 @@ enum Action {
     ExportAnnotatedPdf,
     Show(Screen),
     Jump(Destination),
+    Chapter(chapter_navigation::Direction),
     SetCharacterPages(Option<u16>),
     CharacterPage(usize),
     AcceptPublisherNumbers,
@@ -763,6 +769,7 @@ pub struct Reader {
     focused_result: Option<usize>,
     current_contents_row: Option<usize>,
     contents_view: Option<contents_view::ContentsView>,
+    contents_density_picker: Option<contents_density::Picker>,
     publisher_label_canvas: std::cell::RefCell<Option<Canvas>>,
     map_window: fixed_book_map::MapWindow,
     back: Vec<HistoryLocation>,
@@ -961,6 +968,7 @@ impl Reader {
             focused_result: None,
             current_contents_row: None,
             contents_view: None,
+            contents_density_picker: None,
             publisher_label_canvas: Default::default(),
             map_window: fixed_book_map::MapWindow::default(),
             back: Vec::new(),
@@ -1331,6 +1339,9 @@ impl Reader {
 
     fn show(&mut self, screen: Screen) {
         let previous = self.screen;
+        if screen != Screen::ContentsSettings {
+            self.contents_density_picker = None;
+        }
         if !matches!(screen, Screen::Book | Screen::Fixed) {
             self.touch_hold = None;
         }
@@ -1596,7 +1607,12 @@ impl Reader {
         self.list_page = if screen == Screen::Matches {
             self.matches_page
         } else {
-            self.current_contents_row.unwrap_or_default() / ROWS_PER_PAGE
+            let page_rows = if screen.is_contents() {
+                self.contents_rows()
+            } else {
+                ROWS_PER_PAGE
+            };
+            self.current_contents_row.unwrap_or_default() / page_rows
         };
         self.notice = None;
         self.update_footer_clock(Instant::now());
@@ -1728,10 +1744,11 @@ impl Reader {
     }
 
     fn list_window(&self) -> (usize, Vec<Item>) {
-        let first = self.list_page * ROWS_PER_PAGE;
         if self.screen.is_contents() {
-            return self.contents_items(first, ROWS_PER_PAGE);
+            let rows = self.contents_rows();
+            return self.contents_items(self.list_page * rows, rows);
         }
+        let first = self.list_page * ROWS_PER_PAGE;
         if let Screen::BookmarkBrowser(page) = self.screen {
             return self.bookmark_window(page, first, ROWS_PER_PAGE);
         }
@@ -1779,6 +1796,9 @@ impl Reader {
     fn items(&self) -> Vec<Item> {
         if self.screen.is_contents() {
             return self.contents_items(0, usize::MAX).1;
+        }
+        if self.screen == Screen::ContentsSettings {
+            return self.contents_settings_items();
         }
         if matches!(
             self.screen,
@@ -3060,6 +3080,7 @@ impl Reader {
 
     fn activate(&mut self, action: Action) -> Result<()> {
         match action {
+            Action::EditContentsDensity(field) => self.open_contents_density(field),
             Action::BookmarkBrowser(command) => self.activate_bookmark_browser(command)?,
             Action::ReadingHistory(command) => self.activate_reading_history(command)?,
             Action::Flow(action) => self.flow_action(action)?,
@@ -3326,6 +3347,7 @@ impl Reader {
             }
             Action::Show(screen) => self.show(screen),
             Action::Jump(target) => self.follow(target)?,
+            Action::Chapter(direction) => self.jump_chapter(direction)?,
             Action::Custom(action) => self.custom_action(action)?,
             Action::SetCharacterPages(stride) => self.set_character_pages(stride)?,
             Action::AcceptPublisherNumbers => self.accept_publisher_numbers()?,
@@ -7645,6 +7667,7 @@ impl App for Reader {
             self.draw_skim(canvas);
         }
         self.draw_flow_popup(canvas);
+        self.draw_contents_density_picker(canvas);
         self.read_alarm.draw(canvas, self.screen == Screen::Book);
         self.draw_vocabulary_dialog(canvas);
         self.draw_logical_recovery(canvas);
@@ -7967,10 +7990,10 @@ impl App for Reader {
         if self.screen == Screen::ContentsSearch {
             return self.contents_search_input(input);
         }
-        if self.screen.is_contents()
-            && let Input::Tap(x, y) = input
-            && let Some(change) = self.contents_tap(x, y)
-        {
+        if self.screen.is_contents() {
+            return self.contents_input(input);
+        }
+        if let Some(change) = self.contents_density_input(input) {
             return change;
         }
         if self.screen == Screen::PdfPassword {
@@ -8015,12 +8038,7 @@ impl App for Reader {
         }
         let (count, mut items) = self.list_window();
         let broad = self.has_list_shortcuts(count);
-        let (prev, next) = if self.screen.is_contents() {
-            (
-                contents_view::footer_hit(PREV),
-                contents_view::footer_hit(NEXT),
-            )
-        } else if broad {
+        let (prev, next) = if broad {
             (PREV_MATCH_PAGE, NEXT_MATCH_PAGE)
         } else {
             (PREV, NEXT)
@@ -8129,8 +8147,9 @@ impl App for Reader {
                         self.backup_import = None;
                         self.show(Screen::ReadingData);
                     }
-                    Screen::FixedBookmarks | Screen::FixedContents | Screen::OcrLanguage => {
-                        self.show(Screen::FixedTools)
+                    Screen::FixedBookmarks | Screen::OcrLanguage => self.show(Screen::FixedTools),
+                    Screen::ContentsSettings => {
+                        self.open_reading_edge(true, WIDTH as f32 * 0.5);
                     }
                     Screen::Highlights | Screen::LocationHistory if self.fixed.is_some() => {
                         self.show(Screen::FixedTools)
@@ -12420,7 +12439,7 @@ mod tests {
         assert_eq!(app.library.recently_read().count(), 2);
     }
 
-    fn tap_reading_control(app: &mut Reader, label: &str) -> Change {
+    pub(super) fn tap_reading_control(app: &mut Reader, label: &str) -> Change {
         let rect = app.reading_button(label);
         app.input(Input::Tap(
             (rect.x + rect.w / 2) as f32,
@@ -12732,23 +12751,28 @@ mod tests {
             .iter()
             .position(|item| item.title == label)
             .unwrap_or_else(|| panic!("No row {label} in {:?}", app.screen));
-        let page = index / ROWS_PER_PAGE;
+        let rows = if app.screen.is_contents() {
+            app.contents_rows()
+        } else {
+            ROWS_PER_PAGE
+        };
+        let page = index / rows;
         while app.list_page < page {
             app.input(Input::PageForward);
         }
         while app.list_page > page {
             app.input(Input::PageBack);
         }
-        index % ROWS_PER_PAGE
+        index % rows
     }
 
     pub(super) fn tap_contents_item(app: &mut Reader, label: &str) {
         let offset = show_list_item(app, label);
-        let y = LIST_Y + offset as i32 * ROW_HEIGHT + ROW_HEIGHT / 2;
-        let x = if app.screen.is_contents() {
-            730.0
+        let (x, y) = if app.screen.is_contents() {
+            let row = app.contents_row_rect(offset);
+            (730.0, row.y + row.h / 2)
         } else {
-            160.0
+            (160.0, LIST_Y + offset as i32 * ROW_HEIGHT + ROW_HEIGHT / 2)
         };
         assert_eq!(app.input(Input::Tap(x, y as f32)), Change::Partial);
     }
@@ -13012,7 +13036,8 @@ mod tests {
                 .position(|item| item.title == "Day 38")
                 .unwrap()
         };
-        assert!(row >= ROWS_PER_PAGE);
+        let rows = app.contents_rows();
+        assert!(row >= rows);
         let Action::Jump(destination) = &items[row].action else {
             panic!("The fixture needs an internal destination at the chosen list row");
         };
@@ -13028,7 +13053,7 @@ mod tests {
             }
             assert_eq!(tap_reading_control(&mut app, "Contents"), Change::Partial);
             assert_eq!(app.current_contents_row, Some(row));
-            assert_eq!(app.list_page, row / ROWS_PER_PAGE);
+            assert_eq!(app.list_page, row / rows);
             let contents_frame = primitive_app::frame(&app, &mut canvas, false);
             assert!(contents_frame != reading_frame);
             if upper && external.is_none() {
@@ -13040,7 +13065,7 @@ mod tests {
                 );
             }
             assert_eq!(app.input(Input::PageBack), Change::Partial);
-            assert_eq!(app.list_page, row / ROWS_PER_PAGE - 1);
+            assert_eq!(app.list_page, row / rows - 1);
             let (x, y) = rectangle_center(primitive_ui::back_button(WIDTH as i32));
             assert_eq!(app.input(Input::Tap(x, y)), Change::Partial);
             assert_eq!(app.input(Input::Tap(630.0, 1010.0)), Change::Partial);

@@ -133,10 +133,18 @@ impl Resolved {
 
 impl Reading {
     pub(crate) fn custom_flow_map(&self) -> Option<PageFlows> {
+        self.custom_flow_map_for_chapter(self.chapter, self.probe.page_count())
+    }
+
+    pub(crate) fn custom_flow_map_for_chapter(
+        &self,
+        chapter: usize,
+        count: usize,
+    ) -> Option<PageFlows> {
         self.config
             .hidden_flows
             .enabled
-            .then(|| self.custom_flows.map(self.chapter, self.probe.page_count()))
+            .then(|| self.custom_flows.map(chapter, count))
     }
 
     pub(crate) fn custom_flow_for_page(
@@ -145,10 +153,8 @@ impl Reading {
         page: usize,
         count: usize,
     ) -> Option<usize> {
-        self.config
-            .hidden_flows
-            .enabled
-            .then(|| self.custom_flows.map(chapter, count).flow(page))
+        self.custom_flow_map_for_chapter(chapter, count)
+            .map(|flows| flows.flow(page))
     }
 
     /// `true` means the whole source chapter is hidden; `false` is a partial range.

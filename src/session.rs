@@ -286,14 +286,21 @@ impl Reading {
         let anchor = anchor.filter(|anchor| probe.project_anchor(anchor).is_some());
         let page = focused_page.unwrap_or(fallback_page.min(probe.page_count() - 1));
         let scroll_top = (config.scroll && !probe.is_vertical()).then(|| {
+            let page_start = probe.page_range(page).start;
+            let scroll_end = probe.scroll_end();
+            // An explicit jump can leave a short final page at the top. Keep
+            // that saved page on history return and reopen.
+            if page == fallback_page && page_start > scroll_end {
+                return page_start;
+            }
             let top = display_anchor
                 .as_ref()
                 .and_then(|anchor| probe.anchor_top(anchor))
-                .unwrap_or_else(|| probe.page_range(page).start);
+                .unwrap_or(page_start);
             if config.hidden_flows.enabled {
                 top.max(0.0)
             } else {
-                top.clamp(0.0, probe.scroll_end())
+                top.clamp(0.0, scroll_end)
             }
         });
         let page = scroll_top.map_or(page, |top| probe.page_at(top));
@@ -672,6 +679,10 @@ impl Reading {
         self.scroll_top.is_none() && self.error.is_none()
     }
 
+    pub(crate) fn first_visible_page(&self) -> usize {
+        first_frame_page(&self.probe, self.page)
+    }
+
     pub(crate) fn last_visible_page(&self) -> usize {
         frame_columns(&self.probe, self.page)
             .map(|(page, _)| page)
@@ -967,7 +978,7 @@ impl Reading {
         if distance == 0.0 {
             return Ok(Change::None);
         }
-        let next = (top + distance).clamp(0.0, self.probe.scroll_end());
+        let next = (top + distance).clamp(0.0, top.max(self.probe.scroll_end()));
         if next != top {
             let page = self.probe.page_at(next);
             self.frame = capture(&mut self.probe, self.chapter, page, Some(next))?;
@@ -1068,28 +1079,57 @@ impl Reading {
 
     fn use_chapter(
         &mut self,
-        mut candidate: Probe,
+        candidate: Probe,
         chapter: usize,
         anchor: Option<&Anchor>,
         fallback_page: usize,
     ) -> Result<()> {
-        if self.config.hidden_flows.enabled {
+        self.use_chapter_location(Some(candidate), chapter, anchor, fallback_page, false)
+    }
+
+    pub(crate) fn go_to_laid_out_page(
+        &mut self,
+        chapter: usize,
+        page: usize,
+        probe: Option<Probe>,
+    ) -> Result<()> {
+        self.use_chapter_location(probe, chapter, None, page, true)?;
+        self.end_attempt = false;
+        Ok(())
+    }
+
+    fn use_chapter_location(
+        &mut self,
+        mut candidate: Option<Probe>,
+        chapter: usize,
+        anchor: Option<&Anchor>,
+        fallback_page: usize,
+        exact_page: bool,
+    ) -> Result<()> {
+        if self.config.hidden_flows.enabled
+            && let Some(candidate) = &mut candidate
+        {
             candidate.flow_pages = Some(self.custom_flows.map(chapter, candidate.page_count()));
         }
-        let focused_page = anchor.and_then(|anchor| candidate.page_for(anchor));
+        let probe = candidate.as_mut().unwrap_or(&mut self.probe);
+        let focused_page = anchor.and_then(|anchor| probe.page_for(anchor));
         let page = focused_page.unwrap_or(fallback_page);
-        let top = (self.config.scroll && !candidate.is_vertical()).then(|| {
+        let top = (self.config.scroll && !probe.is_vertical()).then(|| {
             let top = anchor
-                .and_then(|anchor| candidate.anchor_top(anchor))
-                .unwrap_or_else(|| candidate.page_range(page).start);
-            if self.config.hidden_flows.enabled {
+                .and_then(|anchor| probe.anchor_top(anchor))
+                .unwrap_or_else(|| probe.page_range(page).start);
+            // Chapter navigation must reach the selected screen page even if
+            // the spine item's last page is shorter than the scroll viewport.
+            if exact_page || self.config.hidden_flows.enabled {
                 top.max(0.0)
             } else {
-                top.clamp(0.0, candidate.scroll_end())
+                top.clamp(0.0, probe.scroll_end())
             }
         });
-        let frame = capture(&mut candidate, chapter, page, top)?;
-        self.probe = candidate;
+        let frame = capture(probe, chapter, page, top)?;
+        if let Some(candidate) = candidate {
+            self.probe = candidate;
+        }
         self.frame = frame;
         self.chapter = chapter;
         self.page = top.map_or(page, |top| self.probe.page_at(top));
