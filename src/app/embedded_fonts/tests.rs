@@ -162,9 +162,14 @@ fn embedded_fonts_inventory_distinguishes_inline_declarations_missing_assets_and
         write_reference_book(&path, variant);
         let mut book = Book::open(&path).unwrap();
         assert_eq!(
-            BookStyle::publication_has_embedded_fonts(&mut book),
+            BookStyle::publication_has_embedded_fonts(&mut book, 0),
             expected,
             "{variant}"
+        );
+        assert!(!BookStyle::chapter_has_embedded_fonts(&mut book, 0));
+        assert_eq!(
+            BookStyle::chapter_has_embedded_fonts(&mut book, 1),
+            expected
         );
     }
     let mut app = reader(&fixture);

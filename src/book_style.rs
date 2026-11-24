@@ -483,8 +483,13 @@ impl BookStyle {
     }
 
     #[cfg(feature = "kindle")]
-    pub(crate) fn publication_has_embedded_fonts(book: &mut Book) -> bool {
-        embedded_inventory::has_fonts(book)
+    pub(crate) fn publication_has_embedded_fonts(book: &mut Book, active: usize) -> bool {
+        embedded_inventory::has_fonts(book, active)
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn chapter_has_embedded_fonts(book: &mut Book, chapter: usize) -> bool {
+        embedded_inventory::chapter_has_fonts(book, chapter)
     }
 
     #[cfg(feature = "kindle")]

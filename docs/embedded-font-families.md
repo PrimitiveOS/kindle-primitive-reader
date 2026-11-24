@@ -17,12 +17,15 @@ choices. The choice is unavailable while Publisher CSS is off. Turning CSS
 back on restores the book's previous embedded-font choice.
 
 A positive registration in the current chapter is enough to enable the
-control. Reader can also check up to 64 stylesheets and the first 96 spine
-items within a 2 MiB chapter-markup budget when the Rendering panel opens.
+control. Reader can also check up to 64 stylesheets and the current and
+first 96 spine items within a 2 MiB chapter-markup budget when the Rendering
+panel opens.
 It uses the normal CSS parser and bounded font loader to distinguish a
 usable declaration from an unused font asset or a missing source URL. The
-result is cached for the open book. The control can become available later
-if a newly loaded chapter registers a face beyond these discovery limits.
+availability result is cached for the open book. If discovery finds no
+usable declarations, Reader checks new chapters when Rendering opens there.
+It can find a bundled face beyond the initial discovery window while the
+embedded-font setting is off.
 KOReader can inspect a broader book-wide registry and show which families
 its engine used.
 

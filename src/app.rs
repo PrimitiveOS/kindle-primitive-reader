@@ -772,7 +772,7 @@ struct ActiveBook {
     id: u64,
     reading: Reading,
     numbering: Option<crate::synthetic_pages::CharacterPages>,
-    embedded_font_inventory: Option<bool>,
+    embedded_font_inventory: Option<embedded_fonts::Availability>,
 }
 
 struct SavedMarkRow {

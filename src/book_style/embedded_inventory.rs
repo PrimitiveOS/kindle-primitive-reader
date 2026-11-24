@@ -66,7 +66,14 @@ impl Inventory {
     }
 }
 
-pub(super) fn has_fonts(book: &mut Book) -> bool {
+pub(super) fn chapter_has_fonts(book: &mut Book, chapter: usize) -> bool {
+    let mut inventory = Inventory::default();
+    book.may_have_embedded_fonts()
+        && read_chapter(&mut inventory, book, chapter, MAX_CHAPTER_BYTES) > 0
+        && inventory.contains_valid_font(book)
+}
+
+pub(super) fn has_fonts(book: &mut Book, active: usize) -> bool {
     if !book.may_have_embedded_fonts() {
         return false;
     }
@@ -79,31 +86,47 @@ pub(super) fn has_fonts(book: &mut Book) -> bool {
     }
     let known_faces = inventory.faces.len();
     let mut chapter_bytes = 0;
-    for index in 0..book.chapters.len().min(MAX_INVENTORY_CHAPTERS) {
+    let first_chapters = 0..book.chapters.len().min(MAX_INVENTORY_CHAPTERS);
+    for index in std::iter::once(active).chain(first_chapters.filter(|&index| index != active)) {
         if inventory.full() || chapter_bytes >= MAX_CHAPTER_BYTES {
             break;
         }
-        let Ok(xhtml) = book.chapter(index) else {
-            continue;
-        };
-        chapter_bytes += xhtml.len();
-        if chapter_bytes > MAX_CHAPTER_BYTES {
-            break;
-        }
-        let href = book.chapters[index].href.clone();
-        let Ok(source) = Source::parse_with_language(&xhtml, book.language) else {
-            continue;
-        };
-        for sheet in source.stylesheets {
-            match sheet {
-                Stylesheet::Linked(link) => {
-                    if let Ok(path) = Book::resolve(&href, &link) {
-                        inventory.read_sheet(book, path);
-                    }
-                }
-                Stylesheet::Inline(text) => inventory.read_styles(&href, &text),
-            }
-        }
+        chapter_bytes += read_chapter(
+            &mut inventory,
+            book,
+            index,
+            MAX_CHAPTER_BYTES - chapter_bytes,
+        );
     }
     inventory.faces.len() != known_faces && inventory.contains_valid_font(book)
+}
+
+fn read_chapter(
+    inventory: &mut Inventory,
+    book: &mut Book,
+    index: usize,
+    remaining: usize,
+) -> usize {
+    let Ok(xhtml) = book.chapter(index) else {
+        return 0;
+    };
+    let len = xhtml.len();
+    if len > remaining {
+        return len;
+    }
+    let href = book.chapters[index].href.clone();
+    let Ok(source) = Source::parse_with_language(&xhtml, book.language) else {
+        return len;
+    };
+    for sheet in source.stylesheets {
+        match sheet {
+            Stylesheet::Linked(link) => {
+                if let Ok(path) = Book::resolve(&href, &link) {
+                    inventory.read_sheet(book, path);
+                }
+            }
+            Stylesheet::Inline(text) => inventory.read_styles(&href, &text),
+        }
+    }
+    len
 }
