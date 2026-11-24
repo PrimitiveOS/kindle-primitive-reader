@@ -169,7 +169,10 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         Action::ReturnToLocation => BACK,
         Action::SetDisplayLevel(DisplayLevel::FrontLight, _) => icons::SUN,
         Action::SetDisplayLevel(DisplayLevel::Warmth, _) => icons::WARMTH,
-        Action::RefreshDisplay | Action::RotatePage | Action::SetFixedRotation(_) => icons::ROTATE,
+        Action::RefreshDisplay
+        | Action::RotatePage
+        | Action::SetFixedRotation(_)
+        | Action::SetReadingOrientation(_) => icons::ROTATE,
         Action::FixedScroll(_)
         | Action::ReadingMode(_)
         | Action::ReadFixedText

@@ -70,6 +70,7 @@ mod reader_timer;
 mod reading_backup;
 mod reading_bars;
 mod reading_footer;
+mod reading_orientation;
 mod result_context;
 mod saved_highlight_popup;
 mod search_chapter_scope;
@@ -475,6 +476,9 @@ enum Action {
     NameCollection(Option<String>),
     RemoveCollection,
     SetReadingControls(ReadingControls),
+    SetReadingOrientation(ReadingOrientation),
+    KeepReadingOrientation(bool),
+    ConfirmReadingOrientationDefault(ReadingOrientation),
     EditListDensity(list_density::Scope, list_density::Field),
     EditSearchPresentation(search_presentation::Field),
     BindGesture(Gesture, Binding),
@@ -831,6 +835,7 @@ pub struct Reader {
     auto_turn: AutoTurn,
     read_alarm: read_alarm::ReadAlarm,
     top_header_default_prompt: Option<bool>,
+    orientation_default_prompt: Option<reading_orientation::DefaultPrompt>,
     top_header_about: bool,
     top_header_font_picker: Option<top_header_font::Picker>,
     list_page: usize,
@@ -1046,6 +1051,7 @@ impl Reader {
             auto_turn: AutoTurn::default(),
             read_alarm: read_alarm::ReadAlarm::open(data.join("read-timer.json")),
             top_header_default_prompt: None,
+            orientation_default_prompt: None,
             top_header_about: false,
             top_header_font_picker: None,
             list_page: 0,
@@ -1454,6 +1460,7 @@ impl Reader {
         self.search_results_navigation.menu_open = false;
         self.top_header_about = false;
         self.top_header_font_picker = None;
+        self.orientation_default_prompt = None;
         let previous = self.screen;
         let fit_error = if screen != Screen::Fixed && screen != previous {
             self.close_fixed_search_fit().err()
@@ -1778,6 +1785,7 @@ impl Reader {
         }
         self.update_stats_activity(now);
         let reading_percent = self.folder_reading_percent();
+        let default_orientation = self.default_reading_orientation();
         let position_changed = if let Some(fixed) = &self.fixed {
             let saved = self
                 .library
@@ -1785,6 +1793,7 @@ impl Reader {
             saved
                 .highlight_color
                 .get_or_insert(self.controls.highlight_color);
+            saved.screen_orientation.get_or_insert(default_orientation);
             let position = fixed_position(&fixed.reading);
             let changed = saved.position.as_ref() != Some(&position)
                 || saved.reading_percent != reading_percent;
@@ -1799,6 +1808,7 @@ impl Reader {
             saved
                 .highlight_color
                 .get_or_insert(self.controls.highlight_color);
+            saved.screen_orientation.get_or_insert(default_orientation);
             let position = position(&active.reading);
             let changed = saved.position.as_ref() != Some(&position)
                 || saved.reading_percent != reading_percent;
@@ -3411,6 +3421,13 @@ impl Reader {
                 self.show(Screen::OrganizeLibrary);
             }
             Action::SetFolderOrder(order) => self.set_folder_order(order)?,
+            Action::SetReadingOrientation(orientation) => {
+                self.set_reading_orientation(orientation)?
+            }
+            Action::KeepReadingOrientation(keep) => self.keep_reading_orientation(keep)?,
+            Action::ConfirmReadingOrientationDefault(orientation) => {
+                self.confirm_reading_orientation_default(orientation);
+            }
             Action::SetReadingControls(mut controls) => {
                 if controls.status_bar == crate::reading_controls::StatusBar::Custom
                     && self.controls.status_bar != crate::reading_controls::StatusBar::Custom
@@ -8148,6 +8165,7 @@ impl App for Reader {
         self.draw_list_density_picker(canvas);
         self.draw_search_results_navigation(canvas);
         self.draw_top_header_default_prompt(canvas);
+        self.draw_orientation_default_prompt(canvas);
         self.draw_top_header_about(canvas);
         self.draw_header_font_picker(canvas);
         self.read_alarm.draw(canvas, self.screen == Screen::Book);
@@ -8192,6 +8210,9 @@ impl App for Reader {
             return self.read_alarm_input(input);
         }
         if let Some(change) = self.top_header_default_input(input) {
+            return change;
+        }
+        if let Some(change) = self.orientation_default_input(input) {
             return change;
         }
         if let Some(change) = self.top_header_about_input(input) {
@@ -8248,7 +8269,7 @@ impl App for Reader {
     fn preferred_rotation(&self) -> Option<primitive_app::Rotation> {
         use primitive_app::Rotation;
 
-        match self.controls.orientation {
+        match self.reading_orientation() {
             ReadingOrientation::FollowLauncher => None,
             ReadingOrientation::Upright => Some(Rotation::Upright),
             ReadingOrientation::UpsideDown => Some(Rotation::UpsideDown),
@@ -8345,6 +8366,9 @@ impl App for Reader {
             return self.read_alarm_input(input);
         }
         if let Some(change) = self.top_header_default_input(input) {
+            return change;
+        }
+        if let Some(change) = self.orientation_default_input(input) {
             return change;
         }
         if let Some(change) = self.top_header_about_input(input) {
@@ -9694,7 +9718,7 @@ mod tests {
             Self { root, book, state }
         }
 
-        fn app(&self) -> Reader {
+        pub(super) fn app(&self) -> Reader {
             let fonts = [crate::test_fixture("fonts/Silkscreen-Regular.ttf")];
             let mut app = Reader::open(&self.root, &self.state, fonts.to_vec()).unwrap();
             // Most interaction fixtures exercise the action popup explicitly;
@@ -9919,7 +9943,7 @@ mod tests {
         assert_eq!(app.page_paint().apply(page.clone()).1.pixels[0], 0);
         assert!(!titles(&app).iter().any(|t| t == "Interface palette"));
         assert!(!titles(&app).iter().any(|t| t == "Night pages"));
-        assert_eq!(rows(&app), ["Screen orientation"]);
+        assert_eq!(rows(&app), ["Screen orientation", "Keep orientation"]);
 
         fs::write(&settings, "dark_mode=off\n").unwrap();
         app.system_theme.as_ref().unwrap().refresh();
@@ -14740,6 +14764,13 @@ mod tests {
         runtime.0.system_theme = None;
         runtime.0.open_path(&fixture.book).unwrap();
         let before = runtime.0.current_position().unwrap();
+        runtime
+            .0
+            .activate(Action::SetReadingControls(ReadingControls {
+                palette: ScreenPalette::Dark,
+                ..runtime.0.controls
+            }))
+            .unwrap();
 
         for (orientation, expected) in [
             (ReadingOrientation::FollowLauncher, None),
@@ -14748,11 +14779,7 @@ mod tests {
         ] {
             runtime
                 .0
-                .activate(Action::SetReadingControls(ReadingControls {
-                    orientation,
-                    palette: ScreenPalette::Dark,
-                    ..runtime.0.controls
-                }))
+                .activate(Action::SetReadingOrientation(orientation))
                 .unwrap();
             assert_eq!(runtime.preferred_rotation(), expected);
         }
@@ -14779,7 +14806,7 @@ mod tests {
             assert_eq!(runtime.preferred_dark_mode(), None);
             assert!(!runtime.0.uses_night_pages());
             assert_eq!(
-                runtime.0.controls.orientation,
+                runtime.0.reading_orientation(),
                 ReadingOrientation::UpsideDown
             );
             assert_eq!(runtime.0.current_position().unwrap(), before);

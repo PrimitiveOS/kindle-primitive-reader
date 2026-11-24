@@ -224,7 +224,10 @@ impl Bars {
                 label: item.title,
                 detail: item.detail,
                 selected: false,
-                target: if matches!(item.action, Action::SetReadingControls(_)) {
+                target: if matches!(
+                    item.action,
+                    Action::SetReadingControls(_) | Action::SetReadingOrientation(_)
+                ) {
                     Target::Apply(item.action)
                 } else {
                     Target::Invoke(item.action)
@@ -739,6 +742,12 @@ impl Reader {
                     Target::Apply(Action::TopStatusHeader(enabled))
                     | Target::Current(Action::TopStatusHeader(enabled)),
                 ) => self.apply_overlay_action(Action::ConfirmTopStatusHeaderDefault(enabled)),
+                Some(
+                    Target::Apply(Action::SetReadingOrientation(orientation))
+                    | Target::Current(Action::SetReadingOrientation(orientation)),
+                ) => {
+                    self.apply_overlay_action(Action::ConfirmReadingOrientationDefault(orientation))
+                }
                 _ => Change::None,
             },
             Input::Tap(x, y) => {
@@ -766,6 +775,9 @@ impl Reader {
                         Change::Partial
                     }
                     Some(Target::Apply(action)) => self.apply_overlay_action(action),
+                    Some(Target::Current(action @ Action::SetReadingOrientation(_))) => {
+                        self.apply_overlay_action(action)
+                    }
                     Some(Target::Invoke(action)) => match self.activate(action) {
                         Ok(()) => self.applied_change(),
                         Err(error) => self.report(error),

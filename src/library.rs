@@ -1137,6 +1137,12 @@ pub struct BookState {
     pub(crate) character_page_stride: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) top_status_header: Option<bool>,
+    #[serde(
+        default,
+        deserialize_with = "read_orientation",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub(crate) screen_orientation: Option<crate::reading_controls::ReadingOrientation>,
     #[serde(default)]
     pub preferences: BookPreferences,
     #[serde(default)]
@@ -1190,6 +1196,13 @@ fn read_ocr_language<'de, D: serde::Deserializer<'de>>(
         .map(str::to_owned))
 }
 
+fn read_orientation<'de, D: serde::Deserializer<'de>>(
+    reader: D,
+) -> Result<Option<crate::reading_controls::ReadingOrientation>, D::Error> {
+    let value = serde_json::Value::deserialize(reader)?;
+    Ok(serde_json::from_value(value).ok())
+}
+
 fn read_pdf_crop_seeds<'de, D: serde::Deserializer<'de>>(
     reader: D,
 ) -> Result<crate::pdf_crop::Seeds, D::Error> {
@@ -1218,6 +1231,7 @@ impl BookState {
             publisher_page_margins: false,
             character_page_stride: None,
             top_status_header: None,
+            screen_orientation: None,
             preferences: BookPreferences::default(),
             fixed_preferences: FixedPreferences::default(),
             pdf_crop_seeds: Default::default(),
@@ -2425,6 +2439,9 @@ fn merge_states(current: &[BookState], backup: &[BookState]) -> (Vec<BookState>,
         }
         if target.top_status_header.is_none() {
             target.top_status_header = source.top_status_header;
+        }
+        if target.screen_orientation.is_none() {
+            target.screen_orientation = source.screen_orientation;
         }
         merge_text_marks(target, &source.bookmarks, &source.highlights, &mut summary);
         for mark in &source.pdf_highlights {
