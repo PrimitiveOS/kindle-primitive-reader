@@ -123,6 +123,7 @@ impl SearchLayout {
     }
 }
 
+#[derive(Clone, Copy)]
 pub(super) struct MatchWindow {
     viewport: ReadingViewport,
     ordinal: usize,
@@ -137,9 +138,7 @@ pub(super) struct MatchStage {
 impl MatchStage {
     pub(super) fn capture(reader: &Reader) -> Self {
         let page = reader.list_page;
-        let ordinal = reader
-            .flexible_result_range()
-            .map_or_else(|| page * reader.match_geometry().rows, |range| range.start);
+        let ordinal = reader.visible_match_anchor(page);
         Self {
             from_page: page,
             ordinal,
@@ -168,11 +167,7 @@ impl MatchStage {
     pub(super) fn commit(self, reader: &mut Reader) {
         if let Some((page, view)) = self.prepared {
             reader.list_page = page;
-            reader.matches_page = page;
-            reader.match_window = Some(MatchWindow {
-                viewport: reader.reading_viewport(),
-                ordinal: self.ordinal,
-            });
+            reader.set_match_window(page, self.ordinal);
             reader.flexible_results.replace(view);
         }
     }
@@ -185,25 +180,70 @@ impl Reader {
         }
     }
 
-    pub(super) fn remember_match_window(&mut self, page: usize) {
+    fn first_match_ordinal(&self, page: usize) -> usize {
+        self.flexible_result_range_at(page)
+            .map_or_else(|| page * self.match_geometry().rows, |range| range.start)
+    }
+
+    fn visible_match_anchor(&self, page: usize) -> usize {
+        self.match_window
+            .filter(|window| {
+                self.matches_page == page && window.viewport == self.reading_viewport()
+            })
+            .map_or_else(|| self.first_match_ordinal(page), |window| window.ordinal)
+    }
+
+    fn set_match_window(&mut self, page: usize, ordinal: usize) {
         self.matches_page = page;
-        let first = self
-            .flexible_result_range_at(page)
-            .map_or_else(|| page * self.match_geometry().rows, |range| range.start);
         self.match_window = Some(MatchWindow {
             viewport: self.reading_viewport(),
-            ordinal: first,
+            ordinal,
         });
     }
 
-    pub(super) fn reopen_match_window(&self) -> usize {
-        if self.matches_page == 0 {
-            return 0;
+    pub(super) fn reset_match_window(&mut self) {
+        self.matches_page = 0;
+        self.match_window = None;
+    }
+
+    pub(super) fn remember_match_window(&mut self, page: usize) {
+        self.set_match_window(page, self.first_match_ordinal(page));
+    }
+
+    pub(super) fn retain_match_window(&mut self) {
+        let page = self.list_page;
+        self.set_match_window(page, self.visible_match_anchor(page));
+    }
+
+    pub(super) fn resize_fixed_match_rows(&mut self, old_rows: usize, new_rows: usize) {
+        let showing_matches = self.screen == super::Screen::Matches;
+        let page = if showing_matches {
+            self.list_page
+        } else {
+            self.matches_page
+        };
+        let ordinal = self
+            .match_window
+            .filter(|_| page == self.matches_page)
+            .map_or(page * old_rows, |window| window.ordinal);
+        let next = ordinal / new_rows;
+        self.set_match_window(next, ordinal);
+        if showing_matches {
+            self.list_page = next;
         }
-        self.match_window
-            .as_ref()
+    }
+
+    pub(super) fn reopen_match_window(&mut self) -> usize {
+        if let Some(window) = self
+            .match_window
             .filter(|window| window.viewport != self.reading_viewport())
-            .and_then(|window| self.search_result_order().provider_index(window.ordinal))
-            .map_or(self.matches_page, |index| self.match_page_for_index(index))
+        {
+            let index = self.search_result_order().provider_index(window.ordinal);
+            if let Some(index) = index {
+                let page = self.match_page_for_index(index);
+                self.set_match_window(page, window.ordinal);
+            }
+        }
+        self.matches_page
     }
 }

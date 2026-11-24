@@ -533,7 +533,7 @@ impl Reader {
         })?;
         Some(match target {
             Some(Target::Page(page)) => {
-                self.list_page = page;
+                self.navigate_list_page(page);
                 Change::Partial
             }
             Some(Target::Open(index)) => {

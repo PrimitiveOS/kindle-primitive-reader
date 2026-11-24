@@ -154,7 +154,7 @@ impl Reader {
         if self.screen == Screen::Matches {
             self.list_page = 0;
         }
-        self.matches_page = 0;
+        self.reset_match_window();
         self.focused_result = None;
         self.result_context = None;
     }

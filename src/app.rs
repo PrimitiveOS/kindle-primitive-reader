@@ -1503,6 +1503,11 @@ impl Reader {
     }
 
     fn show(&mut self, screen: Screen) {
+        if matches!(self.screen, Screen::BookmarkBrowser(_))
+            || matches!(screen, Screen::BookmarkBrowser(_))
+        {
+            self.bookmark_browser.reset_list_anchor();
+        }
         self.archive.close_surfaces(screen);
         if !matches!(screen, Screen::ReadingProfileFields(_)) {
             self.profile_fields.clear();
@@ -1809,7 +1814,7 @@ impl Reader {
             self.cancel_search();
         }
         if self.screen == Screen::Matches && screen != Screen::Matches {
-            self.remember_match_window(self.list_page);
+            self.retain_match_window();
         }
         self.link_popup = None;
         self.screen = screen;
@@ -2036,6 +2041,15 @@ impl Reader {
         }
         let all = self.items();
         (all.len(), all.into_iter().skip(first).take(rows).collect())
+    }
+
+    fn navigate_list_page(&mut self, page: usize) {
+        self.list_page = page;
+        match self.screen {
+            Screen::Matches => self.remember_match_window(page),
+            Screen::BookmarkBrowser(_) => self.bookmark_browser.reset_list_anchor(),
+            _ => {}
+        }
     }
 
     fn has_list_shortcuts(&self, count: usize) -> bool {
@@ -5103,7 +5117,7 @@ impl Reader {
         self.remember_all_results_origin();
         self.nearby.clear();
         self.search_result = None;
-        self.matches_page = 0;
+        self.reset_match_window();
         self.focused_result = None;
         self.show(Screen::Matches);
         self.hits.clear();
@@ -8627,7 +8641,7 @@ impl App for Reader {
                     && layout.list_button(FIRST_MATCH_PAGE).contains(x, y)
                     && self.list_page > 0 =>
             {
-                self.list_page = 0;
+                self.navigate_list_page(0);
                 return Change::Partial;
             }
             Input::Tap(x, y)
@@ -8635,7 +8649,7 @@ impl App for Reader {
                     && layout.list_button(LAST_MATCH_PAGE).contains(x, y)
                     && (self.list_page + 1) * geometry.rows < count =>
             {
-                self.list_page = count.saturating_sub(1) / geometry.rows;
+                self.navigate_list_page(count.saturating_sub(1) / geometry.rows);
                 return Change::Partial;
             }
             Input::PageBack => -1,
@@ -8853,7 +8867,7 @@ impl App for Reader {
         else {
             return Change::None;
         };
-        self.list_page = page;
+        self.navigate_list_page(page);
         Change::Partial
     }
 

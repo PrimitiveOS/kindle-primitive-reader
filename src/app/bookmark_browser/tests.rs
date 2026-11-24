@@ -557,6 +557,29 @@ fn landscape_bookmark_browser_retains_a_result_and_exact_text_page_anchor() {
     app.finish_viewport(landscape_turn, ViewportDecision::Commit);
     assert!(app.list_window().1.iter().any(|row| row.title == retained));
 
+    use crate::app::reading_viewport_stage::draw_test_candidate;
+    let portrait = draw_test_candidate(&mut app, 2, LogicalTurn::Upright, "", false);
+    app.finish_viewport(portrait, ViewportDecision::Commit);
+    assert_eq!(app.list_page, 1);
+    assert_eq!(app.list_window().1[0].title, retained);
+
+    let landscape = draw_test_candidate(&mut app, 3, LogicalTurn::Clockwise, "", false);
+    app.finish_viewport(landscape, ViewportDecision::Commit);
+    let landscape_first = app.list_window().1[0].title.clone();
+    assert_ne!(landscape_first, retained);
+    assert_eq!(app.input(Input::PageForward), Change::Partial);
+    assert_eq!(app.input(Input::PageBack), Change::Partial);
+    let portrait = draw_test_candidate(&mut app, 4, LogicalTurn::Upright, "", false);
+    app.finish_viewport(portrait, ViewportDecision::Commit);
+    assert_eq!(app.list_page, 0);
+    let visible = app.list_window().1;
+    assert!(visible.iter().any(|row| row.title == landscape_first));
+    assert!(!visible.iter().any(|row| row.title == retained));
+
+    let landscape = draw_test_candidate(&mut app, 5, LogicalTurn::Clockwise, "", false);
+    app.finish_viewport(landscape, ViewportDecision::Commit);
+    assert_eq!(app.list_page, 1);
+
     let layout = BrowserLayout(app.navigation_layout());
     let find = layout.control(2, 198, 72);
     assert!(center(find).0 > WIDTH as f32);
@@ -585,7 +608,7 @@ fn landscape_bookmark_browser_retains_a_result_and_exact_text_page_anchor() {
     }
 
     let portrait_turn = Viewport {
-        generation: 2,
+        generation: 6,
         turn: LogicalTurn::Upright,
         logical_size: (WIDTH, HEIGHT),
     };

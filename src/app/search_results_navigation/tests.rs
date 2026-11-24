@@ -486,7 +486,6 @@ fn document_search_viewport_epub_keyboard_pagers_context_and_return_follow_the_v
     assert!(page > 0);
     assert!((page * portrait_rows..(page + 1) * portrait_rows).contains(&first));
 
-    let original = page * portrait_rows;
     let candidate = primitive_app::viewport::Viewport {
         generation: 4,
         turn: primitive_app::viewport::LogicalTurn::Clockwise,
@@ -502,6 +501,61 @@ fn document_search_viewport_epub_keyboard_pagers_context_and_return_follow_the_v
     let _landscape = adopt(&mut app, ReadingViewport::LANDSCAPE, 5);
     assert_eq!(app.screen, Screen::Matches);
     let active = app.list_page * geometry.rows;
-    assert!((active..active + geometry.rows).contains(&original));
+    assert!((active..active + geometry.rows).contains(&first));
     assert_eq!(app.current_history_location(), origin);
+}
+
+#[test]
+fn search_result_anchor_survives_round_trip_and_resets_on_explicit_page_turns() {
+    use crate::app::selection_viewport_tests::adopt;
+    use crate::session::ReadingViewport;
+
+    let fixture = Fixture::new();
+    std::fs::copy(crate::test_fixture("long-chapter.epub"), &fixture.book).unwrap();
+    let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+    app.open_path(&fixture.book).unwrap();
+    app.start_document_search("Observation").unwrap();
+    wait_for_search(&mut app, usize::MAX);
+    let portrait_rows = app.match_geometry().rows;
+    assert_eq!(app.input(Input::PageForward), Change::Partial);
+    assert_eq!(app.list_page, 1);
+    let origin = app.current_history_location();
+
+    let _ = adopt(&mut app, ReadingViewport::LANDSCAPE, 1);
+    let landscape_rows = app.match_geometry().rows;
+    assert!(landscape_rows < portrait_rows);
+    let landscape_page = portrait_rows / landscape_rows;
+    assert!(landscape_page > 0);
+    assert_eq!(app.list_page, landscape_page);
+    let _ = adopt(&mut app, ReadingViewport::PORTRAIT, 2);
+    assert_eq!(
+        app.list_page, 1,
+        "a round trip must carry the original result ordinal"
+    );
+
+    let _ = adopt(&mut app, ReadingViewport::LANDSCAPE, 3);
+    assert_eq!(app.input(Input::PageForward), Change::Partial);
+    assert_eq!(app.input(Input::PageBack), Change::Partial);
+    assert_eq!(app.list_page, landscape_page);
+    let reset = landscape_page * landscape_rows;
+    assert!(reset < portrait_rows);
+    let _ = adopt(&mut app, ReadingViewport::PORTRAIT, 4);
+    assert_eq!(
+        app.list_page, 0,
+        "explicit paging chooses the new leading result"
+    );
+
+    app.show(Screen::Book);
+    let _ = adopt(&mut app, ReadingViewport::LANDSCAPE, 5);
+    app.show(Screen::Matches);
+    assert_eq!(
+        app.list_page, landscape_page,
+        "page zero can still contain a retained nonzero ordinal"
+    );
+    assert_eq!(app.current_history_location(), origin);
+
+    app.start_document_search("changing wind").unwrap();
+    wait_for_search(&mut app, usize::MAX);
+    assert_eq!(app.list_page, 0);
 }

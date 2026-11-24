@@ -70,6 +70,13 @@ pub(super) enum Page {
 }
 
 impl Page {
+    fn is_list(self) -> bool {
+        !matches!(
+            self,
+            Self::Colors | Self::Search | Self::Detail | Self::Description
+        )
+    }
+
     pub(super) const fn title(self) -> &'static str {
         match self {
             Self::Sources => "Bookmark sources",
@@ -285,10 +292,15 @@ pub(super) struct Browser {
     book: Option<u64>,
     text_offset: usize,
     text_pages: RefCell<Vec<Range<usize>>>,
+    list_anchor: Option<(usize, usize)>,
     pub(super) after_password: Option<MarkKey>,
 }
 
 impl Browser {
+    pub(super) fn reset_list_anchor(&mut self) {
+        self.list_anchor = None;
+    }
+
     fn reset_text(&mut self) {
         self.text_offset = 0;
         self.text_pages.get_mut().clear();
@@ -337,6 +349,7 @@ impl Default for Browser {
             book: None,
             text_offset: 0,
             text_pages: RefCell::default(),
+            list_anchor: None,
             after_password: None,
         }
     }
@@ -819,8 +832,32 @@ impl Reader {
         Ok(())
     }
 
+    pub(super) fn bookmark_list_anchor(&self) -> Option<usize> {
+        let Screen::BookmarkBrowser(page) = self.screen else {
+            return None;
+        };
+        page.is_list().then(|| {
+            self.bookmark_browser
+                .list_anchor
+                .filter(|&(page, _)| page == self.list_page)
+                .map_or_else(
+                    || self.list_page * self.list_geometry().rows,
+                    |(_, ordinal)| ordinal,
+                )
+        })
+    }
+
+    pub(super) fn set_bookmark_list_anchor(&mut self, page: usize, ordinal: usize) {
+        self.list_page = page;
+        self.bookmark_browser.list_anchor = Some((page, ordinal));
+    }
+
     fn refresh_bookmark_browser(&mut self) {
         let browser = &mut self.bookmark_browser;
+        let anchor = (self.screen == Screen::BookmarkBrowser(Page::Results))
+            .then_some(browser.list_anchor)
+            .flatten()
+            .and_then(|(_, ordinal)| Some((ordinal, *browser.rows.get(ordinal)?)));
         browser.rows.clear();
         browser.marks.clear();
         for listed in &mut browser.books {
@@ -904,6 +941,11 @@ impl Reader {
                     browser.marks.push(mark);
                 }
             }
+        }
+        if let Some((ordinal, row)) = anchor
+            && browser.rows.get(ordinal) != Some(&row)
+        {
+            browser.reset_list_anchor();
         }
     }
 

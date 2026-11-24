@@ -112,7 +112,7 @@ impl Reader {
             self.result_selection = None;
             self.pdf_result_regions.clear();
             self.focused_result = None;
-            self.matches_page = 0;
+            self.reset_match_window();
         } else {
             let old_rows = self.match_geometry().rows;
             let configured_rows = Field::Rows.value(controls);
@@ -124,15 +124,12 @@ impl Reader {
                     && self.search_max_lines().is_some())
             {
                 self.clear_flexible_results();
-                self.matches_page = 0;
+                self.reset_match_window();
                 if self.screen == super::Screen::Matches {
                     self.list_page = 0;
                 }
             } else if old_rows != new_rows {
-                self.matches_page = self.matches_page * old_rows / new_rows;
-                if self.screen == super::Screen::Matches {
-                    self.list_page = self.list_page * old_rows / new_rows;
-                }
+                self.resize_fixed_match_rows(old_rows, new_rows);
             }
         }
     }

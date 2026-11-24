@@ -30,7 +30,7 @@ pub(super) struct Stage {
     marks: Option<(super::saved_marks_view::FlexibleMarks, usize)>,
     visual_navigation: super::visual_navigation::VisualNavigation,
     matches: Option<super::search_layout::MatchStage>,
-    bookmark_page: Option<usize>,
+    bookmark_page: Option<(usize, usize)>,
     bookmark_text_pages: Option<Vec<Range<usize>>>,
 }
 
@@ -46,8 +46,8 @@ impl Reader {
         } else {
             Candidate::Library(target)
         };
-        let bookmark_page = (target != from && matches!(self.screen, Screen::BookmarkBrowser(_)))
-            .then(|| {
+        let bookmark_page = if target != from {
+            self.bookmark_list_anchor().map(|ordinal| {
                 let (width, height) = target.dimensions();
                 let new_rows = Geometry::STANDARD
                     .in_navigation(NavigationLayout {
@@ -55,8 +55,11 @@ impl Reader {
                         height: height as i32,
                     })
                     .rows;
-                self.list_page * self.list_geometry().rows / new_rows
-            });
+                (ordinal / new_rows, ordinal)
+            })
+        } else {
+            None
+        };
         Ok(Stage {
             book: self.open_book_id(),
             position: self.current_position(),
@@ -92,7 +95,7 @@ impl Reader {
         staged.exchange_reading_tools(self);
         let previous_page = staged
             .bookmark_page
-            .map(|page| std::mem::replace(&mut self.list_page, page));
+            .map(|(page, _)| std::mem::replace(&mut self.list_page, page));
         let previous_text_pages = (staged.from != staged.target
             && matches!(
                 self.screen,
@@ -167,8 +170,8 @@ impl Reader {
         if let Some(matches) = staged.matches {
             matches.commit(self);
         }
-        if let Some(page) = staged.bookmark_page {
-            self.list_page = page;
+        if let Some((page, ordinal)) = staged.bookmark_page {
+            self.set_bookmark_list_anchor(page, ordinal);
         }
         if let Some(pages) = staged.bookmark_text_pages {
             self.bookmark_browser.replace_text_pages(pages);

@@ -835,7 +835,7 @@ impl Reader {
         self.remember_all_results_origin();
         self.cancel_search();
         self.search_result = None;
-        self.matches_page = 0;
+        self.reset_match_window();
         self.focused_result = None;
         self.show(Screen::Matches);
         self.hits.clear();
