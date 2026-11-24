@@ -3,14 +3,12 @@ use super::*;
 use crate::reading_controls::EndAction;
 use primitive_ui::{BLACK, Icon, SECONDARY, Sheet, SheetAction, TextStyle};
 
-const VIEW: Rect = Rect::new(0, 0, WIDTH as i32, HEIGHT as i32);
-const PANEL: Rect = Rect::new(
+const PORTRAIT_PANEL: Rect = Rect::new(
     (WIDTH as i32 - 864) / 2,
     (HEIGHT as i32 - 632) / 2,
     864,
     632,
 );
-const DISMISS: Rect = Rect::new(PANEL.x + 220, PANEL.y + PANEL.h - 128, PANEL.w - 440, 96);
 const CHECK: Icon = Icon {
     stroke: &["M5 12 L10 17 L19 7"],
     fill: &[],
@@ -35,13 +33,17 @@ const BUTTONS: [EndAction; 6] = [
     EndAction::Library,
 ];
 
-fn button(index: usize) -> Rect {
+fn button(panel: Rect, index: usize) -> Rect {
     Rect::new(
-        PANEL.x + 40 + (index % 2) as i32 * 402,
-        PANEL.y + 136 + (index / 2) as i32 * 118,
+        panel.x + 40 + (index % 2) as i32 * 402,
+        panel.y + 136 + (index / 2) as i32 * 118,
         382,
         100,
     )
+}
+
+fn dismiss(panel: Rect) -> Rect {
+    Rect::new(panel.x + 220, panel.bottom() - 128, panel.w - 440, 96)
 }
 
 impl Reader {
@@ -238,8 +240,20 @@ impl Reader {
         self.leave_finished_book()
     }
 
-    fn delete_sheet<'a>(name: &'a str) -> Sheet<'a> {
-        Sheet::centered(VIEW, "Delete this file?", name, "Delete file")
+    fn delete_sheet<'a>(&self, name: &'a str) -> Sheet<'a> {
+        let layout = self.navigation_layout();
+        let short_edge = layout.width.min(layout.height);
+        Sheet::centered(
+            Rect::new(
+                (layout.width - short_edge) / 2,
+                0,
+                short_edge,
+                layout.height,
+            ),
+            "Delete this file?",
+            name,
+            "Delete file",
+        )
     }
 
     pub(super) fn draw_end_dialog(&self, canvas: &mut Canvas) {
@@ -252,17 +266,18 @@ impl Reader {
                 .and_then(|(entry, _)| entry.path.file_name())
                 .map_or_else(|| "File".into(), |name| name.to_string_lossy());
             let detail = format!("{name}\nReader keeps your saved notes and marks.");
-            Self::delete_sheet(&detail).draw(canvas, None);
+            self.delete_sheet(&detail).draw(canvas, None);
             return;
         }
-        canvas.popup(PANEL);
+        let panel = self.navigation_layout().centered(PORTRAIT_PANEL);
+        canvas.popup(panel);
         canvas.text(
-            Rect::new(PANEL.x + 40, PANEL.y + 38, PANEL.w - 80, 70),
+            Rect::new(panel.x + 40, panel.y + 38, panel.w - 80, 70),
             "End of document",
             TextStyle::new(50).bold().center(),
         );
         for (index, action) in BUTTONS.into_iter().enumerate() {
-            let rect = button(index);
+            let rect = button(panel, index);
             let enabled = self.end_action_available(action);
             let pressed = enabled && canvas.control_pressed(rect, false);
             let ink = if !enabled {
@@ -302,7 +317,7 @@ impl Reader {
                 BODY.ink(ink),
             );
         }
-        canvas.button(DISMISS, "Close", false, false);
+        canvas.button(dismiss(panel), "Close", false, false);
     }
 
     pub(super) fn end_dialog_input(&mut self, input: Input) -> Change {
@@ -310,6 +325,7 @@ impl Reader {
             return Change::None;
         };
         let viewport = self.reading_viewport();
+        let panel = self.navigation_layout().centered(PORTRAIT_PANEL);
         let result = match input {
             Input::PageBack => {
                 self.end_dialog = None;
@@ -325,7 +341,7 @@ impl Reader {
                 return self.exit();
             }
             Input::Tap(x, y) if !self.touch_locked => match dialog {
-                Dialog::Delete => match Self::delete_sheet("").hit(x, y) {
+                Dialog::Delete => match self.delete_sheet("").hit(x, y) {
                     Some(SheetAction::Cancel) => {
                         self.end_dialog = None;
                         Ok(())
@@ -336,15 +352,14 @@ impl Reader {
                     }
                     None => return Change::None,
                 },
-                Dialog::Actions if !PANEL.contains(x, y) || DISMISS.contains(x, y) => {
+                Dialog::Actions if !panel.contains(x, y) || dismiss(panel).contains(x, y) => {
                     self.end_dialog = None;
                     Ok(())
                 }
                 Dialog::Actions => {
-                    let action = BUTTONS
-                        .into_iter()
-                        .enumerate()
-                        .find_map(|(index, action)| button(index).contains(x, y).then_some(action));
+                    let action = BUTTONS.into_iter().enumerate().find_map(|(index, action)| {
+                        button(panel, index).contains(x, y).then_some(action)
+                    });
                     match action {
                         Some(action) if !self.end_action_available(action) => {
                             return Change::None;
@@ -456,6 +471,105 @@ mod tests {
     }
 
     #[test]
+    fn end_dialog_viewport_keeps_the_source_and_centers_actions_and_confirmation() {
+        use primitive_app::viewport::{LogicalTurn, Viewport, ViewportDecision};
+
+        let fixture = Fixture::new();
+        let first = fixture.root.join("Volume 1.epub");
+        let next = fixture.root.join("Volume 2.txt");
+        fs::copy(&fixture.book, &first).unwrap();
+        fs::write(&next, "The coast beyond the bay.").unwrap();
+        let mut app = app(&fixture);
+        app.open_path(&first).unwrap();
+        chapter_end(&mut app);
+        let source = app.current_position().unwrap();
+        let book = app.open_book_id().unwrap();
+        page_input(&mut app, Input::PageForward);
+        assert_eq!(app.end_dialog, Some(Dialog::Actions));
+
+        let fonts: Vec<_> = app
+            .fonts
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect();
+        let mut portrait = Canvas::new(WIDTH, HEIGHT, &fonts).unwrap();
+        let original = primitive_app::frame(&app, &mut portrait, false);
+        let target = Viewport {
+            generation: 1,
+            turn: LogicalTurn::Clockwise,
+            logical_size: (HEIGHT, WIDTH),
+        };
+        let mut wide = Canvas::new_viewport(HEIGHT, WIDTH, WIDTH, &fonts).unwrap();
+        let mut staged_frame = |app: &mut Reader, decision| {
+            app.stage_viewport(target).unwrap();
+            wide.begin();
+            app.draw_staged_viewport(&mut wide).unwrap();
+            let frame = wide.finish(false);
+            app.finish_viewport(target, decision);
+            frame
+        };
+        let candidate = staged_frame(&mut app, ViewportDecision::Abort);
+        assert_eq!(app.current_position(), Some(source.clone()));
+        assert_eq!(app.end_dialog, Some(Dialog::Actions));
+        assert_eq!(primitive_app::frame(&app, &mut portrait, false), original);
+        assert_eq!(staged_frame(&mut app, ViewportDecision::Commit), candidate);
+        assert_eq!(primitive_app::frame(&app, &mut wide, false), candidate);
+
+        let panel = app.navigation_layout().centered(PORTRAIT_PANEL);
+        assert_eq!(
+            (panel.x * 2 + panel.w, panel.y * 2 + panel.h),
+            (HEIGHT as i32, WIDTH as i32)
+        );
+        let midpoint = (panel.y as usize + 2) * HEIGHT as usize + HEIGHT as usize / 2;
+        assert!(candidate[midpoint] < 50);
+        assert_eq!(candidate[midpoint - 8 * HEIGHT as usize], 255);
+        assert_eq!(app.current_position().unwrap().anchor, source.anchor);
+        if let Some(path) = std::env::var_os("READER_END_DIALOG_LANDSCAPE_CAPTURE") {
+            primitive_app::write_png(Path::new(&path), HEIGHT, WIDTH, &candidate).unwrap();
+        }
+
+        assert_eq!(app.input(tap(button(panel, 4))), Change::Partial);
+        assert_eq!(app.end_dialog, Some(Dialog::Delete));
+        let confirm = primitive_app::frame(&app, &mut wide, false);
+        assert_ne!(confirm, candidate);
+        let cancel = app.delete_sheet("").button(SheetAction::Cancel);
+        let original_cancel =
+            Sheet::centered(Rect::new(0, 0, WIDTH as i32, HEIGHT as i32), "", "", "")
+                .button(SheetAction::Cancel);
+        assert_eq!(cancel.x - original_cancel.x, (HEIGHT - WIDTH) as i32 / 2);
+        assert_eq!(
+            cancel.y - original_cancel.y,
+            -(HEIGHT as i32 - WIDTH as i32) / 2
+        );
+        assert_eq!(app.input(tap(cancel)), Change::Partial);
+        assert!(first.exists());
+        assert_eq!(app.end_dialog, None);
+        assert_eq!(app.current_position().unwrap().anchor, source.anchor);
+
+        page_input(&mut app, Input::PageForward);
+        assert_eq!(app.input(tap(dismiss(panel))), Change::Partial);
+        assert_eq!(app.end_dialog, None);
+        assert_eq!(app.current_position().unwrap().anchor, source.anchor);
+        page_input(&mut app, Input::PageForward);
+        assert_eq!(app.input(tap(button(panel, 3))), Change::Partial);
+        assert_eq!(
+            app.current_document().unwrap().0.path,
+            Path::new("Volume 2.txt")
+        );
+        assert_eq!(
+            app.library
+                .state(book)
+                .unwrap()
+                .position
+                .as_ref()
+                .unwrap()
+                .anchor,
+            source.anchor
+        );
+        assert_eq!(app.end_dialog, None);
+    }
+
+    #[test]
     fn paged_epub_asks_after_the_last_page_and_restarts_with_a_return_location() {
         let fixture = Fixture::new();
         let mut app = app(&fixture);
@@ -475,14 +589,14 @@ mod tests {
         assert_eq!(app.current_position(), Some(end.clone()));
 
         page_input(&mut app, Input::PageForward);
-        app.input(tap(button(0)));
+        app.input(tap(button(PORTRAIT_PANEL, 0)));
         assert!(app.book_finished());
         page_input(&mut app, Input::PageForward);
-        app.input(tap(button(0)));
+        app.input(tap(button(PORTRAIT_PANEL, 0)));
         assert!(!app.book_finished());
 
         page_input(&mut app, Input::PageForward);
-        app.input(tap(button(2)));
+        app.input(tap(button(PORTRAIT_PANEL, 2)));
         assert_eq!(app.current_position().unwrap().chapter, 0);
         assert_eq!(app.current_position().unwrap().page, 0);
         app.activate(Action::ReturnToLocation).unwrap();
@@ -582,7 +696,7 @@ mod tests {
         page_input(&mut app, Input::PageForward);
         assert_eq!(app.current_position(), first_position);
         assert_eq!(app.end_dialog, Some(Dialog::Actions));
-        assert_eq!(app.input(tap(button(3))), Change::Partial);
+        assert_eq!(app.input(tap(button(PORTRAIT_PANEL, 3))), Change::Partial);
         assert_eq!(app.open_book_id(), Some(next_id));
         assert_eq!(
             app.library.state(next_id).unwrap().status(),
@@ -618,7 +732,7 @@ mod tests {
             app.library.state(first_id).unwrap().status(),
             ReadingStatus::Finished
         );
-        assert_eq!(app.input(tap(button(3))), Change::Partial);
+        assert_eq!(app.input(tap(button(PORTRAIT_PANEL, 3))), Change::Partial);
         let second_id = app.open_book_id().unwrap();
         assert_ne!(second_id, first_id);
         assert_eq!(
@@ -638,7 +752,7 @@ mod tests {
         page_input(&mut app, Input::PageBack);
         page_input(&mut app, Input::PageForward);
         assert_eq!(app.end_dialog, Some(Dialog::Actions));
-        assert_eq!(app.input(tap(button(3))), Change::None);
+        assert_eq!(app.input(tap(button(PORTRAIT_PANEL, 3))), Change::None);
         assert_eq!(app.open_book_id(), Some(second_id));
         assert_eq!(app.end_dialog, Some(Dialog::Actions));
     }
@@ -942,11 +1056,11 @@ mod tests {
         app.activate(Action::AddBookmark).unwrap();
         chapter_end(&mut app);
         page_input(&mut app, Input::PageForward);
-        app.input(tap(button(4)));
+        app.input(tap(button(PORTRAIT_PANEL, 4)));
         assert_eq!(app.end_dialog, Some(Dialog::Delete));
         assert!(fixture.book.exists());
         capture_test_screen(&app, &app.fonts, "READER_TEST_END_DELETE_SCREEN", false);
-        let sheet = Reader::delete_sheet("");
+        let sheet = app.delete_sheet("");
         app.input(tap(sheet.button(SheetAction::Cancel)));
         assert!(fixture.book.exists());
         assert_eq!(app.end_dialog, None);
@@ -978,7 +1092,7 @@ mod tests {
         page_input(&mut app, Input::PageForward);
         assert_eq!(app.end_dialog, Some(Dialog::Delete));
         fs::write(&path, "Dinner").unwrap();
-        let sheet = Reader::delete_sheet("");
+        let sheet = app.delete_sheet("");
         app.input(tap(sheet.button(SheetAction::Confirm)));
         assert_eq!(fs::read_to_string(path).unwrap(), "Dinner");
         assert!(app.notice.as_deref().unwrap().contains("changed"));

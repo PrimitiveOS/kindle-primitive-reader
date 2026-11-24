@@ -8,6 +8,13 @@ Go to **Reading controls › At the end of a book** to select the default action
 
 **Delete file** presents a separate confirmation. It deletes the source file and keeps Reader’s saved notes, bookmarks and reading position. Reopening the same edition after restoring the file brings those records back. Whole unpacked EPUB folders can be managed in Files.
 
+The end-of-book panel and delete confirmation center on the current reading
+viewport in portrait and landscape. Rotation keeps the dialog and the
+reading location. Closing the panel or canceling deletion returns to the
+same passage. KOReader centers its two-column end-of-book dialog against
+the active screen and also opens a separate deletion confirmation.
+[Pinned actions](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerstatus.lua#L59-L125) · [Pinned layout](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/buttondialog.lua#L246-L274)
+
 ## Return to the current book folder
 
 While reading, open the **Library** menu and choose **Current book folder**.
