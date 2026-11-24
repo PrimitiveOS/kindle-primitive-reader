@@ -1,7 +1,7 @@
 //! Named profiles share the normal document-specific reading settings.
 use primitive_ui::{Sheet, SheetAction};
 
-use super::*;
+use super::{navigation_layout::NavigationLayout, *};
 use crate::reading_profiles::{Field, FixedProfile};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -181,9 +181,8 @@ impl Reader {
 
     pub(super) fn draw_profile_field_controls(&self, canvas: &mut Canvas) {
         if matches!(self.screen, Screen::ReadingProfileFields(_)) {
-            let (save, cancel) = field_buttons();
+            let (_, cancel) = field_buttons(self.navigation_layout());
             canvas.button(cancel, "Cancel", false, false);
-            canvas.button(save, "Save", true, false);
         }
     }
 
@@ -192,7 +191,7 @@ impl Reader {
             return None;
         };
         let Input::Tap(x, y) = input else { return None };
-        let (save, cancel) = field_buttons();
+        let (save, cancel) = field_buttons(self.navigation_layout());
         if cancel.contains(x, y) {
             self.show(Screen::ReadingProfile(index));
             return Some(Change::Partial);
@@ -380,7 +379,8 @@ impl Reader {
         if let Screen::ConfirmProfile(index, confirm) = self.screen
             && let Some(profile) = self.profiles.get(index)
         {
-            profile_confirmation_sheet(profile.name(), confirm).draw(canvas, None);
+            profile_confirmation_sheet(self.navigation_layout(), profile.name(), confirm)
+                .draw(canvas, None);
         }
     }
 
@@ -391,7 +391,10 @@ impl Reader {
         if let Some(profile) = self.profiles.get(index) {
             let choice = match input {
                 Input::PageBack => Some(SheetAction::Cancel),
-                Input::Tap(x, y) => profile_confirmation_sheet(profile.name(), confirm).hit(x, y),
+                Input::Tap(x, y) => {
+                    profile_confirmation_sheet(self.navigation_layout(), profile.name(), confirm)
+                        .hit(x, y)
+                }
                 _ => None,
             };
             match choice {
@@ -419,8 +422,8 @@ impl Reader {
     }
 }
 
-fn field_buttons() -> (Rect, Rect) {
-    let save = primitive_ui::back_button(WIDTH as i32);
+fn field_buttons(layout: NavigationLayout) -> (Rect, Rect) {
+    let save = layout.back();
     (
         save,
         Rect {
@@ -430,8 +433,14 @@ fn field_buttons() -> (Rect, Rect) {
     )
 }
 
-fn profile_confirmation_sheet(name: &str, confirm: Confirm) -> Sheet<'_> {
-    let view = Rect::new(0, 0, WIDTH as i32, HEIGHT as i32);
+fn profile_confirmation_sheet(layout: NavigationLayout, name: &str, confirm: Confirm) -> Sheet<'_> {
+    let short_edge = layout.width.min(layout.height);
+    let view = Rect::new(
+        (layout.width - short_edge) / 2,
+        0,
+        short_edge,
+        layout.height,
+    );
     match confirm {
         Confirm::Replace => Sheet::centered(view, "Replace this profile?", name, "Replace"),
         Confirm::Delete => Sheet::centered(view, "Delete this profile?", name, "Delete profile"),
@@ -447,3 +456,5 @@ fn profile_format(profile: &Profile) -> &'static str {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod viewport_tests;

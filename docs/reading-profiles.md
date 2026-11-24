@@ -24,3 +24,25 @@ The executable fixture runs stock snapshot creation, the individual horizontal o
 [Profile list](screenshots/reading-profiles.png) · [PDF profile options in dark mode](screenshots/reading-profile-pdf-dark.png) · [Delete confirmation](screenshots/reading-profile-delete.png)
 
 [Text setting selection](screenshots/reading-profile-settings.png) · [DjVu setting selection in dark mode](screenshots/reading-profile-settings-djvu-dark.png)
+
+## Using profiles in landscape
+
+The list, profile details, Included settings, name editor, and confirmations
+follow the active reading orientation. Profile lists retain the first
+visible entry through rotation. Included settings keeps Save and Cancel
+beside the heading. Name editing uses the shared keyboard at the active
+width. Replace and Delete stay centered at the same physical scale.
+
+The pinned KOReader Mac runtime at 1680 × 1264 kept a book open through
+the native name keyboard's Cancel and Save actions and confirmed deletion.
+The source XPointer remained identical. Reader retains its existing
+Save current settings, Included settings and Back behavior in both turns.
+[Stock name editor](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/profiles.koplugin/main.lua#L313)
+
+Run `cargo test --locked --lib app::profile_panel` to exercise the host
+workflows. The tests cover saving selected EPUB settings, rejecting an
+empty selection, discarding an uncommitted draft, renaming, duplicating,
+replacing and deleting PDF profiles, and returning to the book location.
+A viewport round trip restores the same visible profile list in portrait.
+Set `READER_LANDSCAPE_TOOLS_CAPTURES` to save the desktop render.
+[Included settings in landscape](screenshots/landscape-reading-profile-fields.png)

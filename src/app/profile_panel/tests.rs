@@ -49,7 +49,8 @@ fn specimen(fixture: &Fixture, name: &str, width: u32, height: u32) -> PathBuf {
 }
 
 fn confirm(app: &mut Reader, action: Confirm, choice: SheetAction) -> Change {
-    screen_tap(app, profile_confirmation_sheet("", action).button(choice))
+    let button = profile_confirmation_sheet(app.navigation_layout(), "", action).button(choice);
+    screen_tap(app, button)
 }
 
 #[test]
@@ -286,7 +287,7 @@ fn reading_profile_fields_are_drafts_and_apply_only_selected_text_settings() {
     app.show(Screen::ReadingProfile(0));
     assert_eq!(row(&mut app, "Included settings"), Change::Partial);
     assert_eq!(row(&mut app, "Clear all"), Change::Partial);
-    let (save, cancel) = field_buttons();
+    let (save, cancel) = field_buttons(NavigationLayout::PORTRAIT);
     screen_tap(&mut app, save);
     assert_eq!(app.screen, Screen::ReadingProfileFields(0));
     assert_eq!(fs::read(&app.profiles_path).unwrap(), legacy);
@@ -366,7 +367,10 @@ fn reading_profile_fields_apply_provider_specific_comic_and_djvu_settings() {
     app.toggle_profile_field(Field::ScanContrast).unwrap();
     assert!(app.toggle_profile_field(Field::CropMargin).is_err());
     capture_test_screen(&app, &fonts, "READER_PROFILE_FIELDS_DJVU", true);
-    assert_eq!(screen_tap(&mut app, field_buttons().0), Change::Partial);
+    assert_eq!(
+        screen_tap(&mut app, field_buttons(NavigationLayout::PORTRAIT).0),
+        Change::Partial
+    );
     app.activate(Action::ScanContrast(false)).unwrap();
     app.activate(Action::SetFixedTileZoom(FixedTileAxis::Columns, 21))
         .unwrap();
@@ -387,7 +391,10 @@ fn reading_profile_fields_apply_provider_specific_comic_and_djvu_settings() {
     app.set_profile_fields(false).unwrap();
     app.toggle_profile_field(Field::ReadingDirection).unwrap();
     assert!(app.toggle_profile_field(Field::Straighten).is_err());
-    assert_eq!(screen_tap(&mut app, field_buttons().0), Change::Partial);
+    assert_eq!(
+        screen_tap(&mut app, field_buttons(NavigationLayout::PORTRAIT).0),
+        Change::Partial
+    );
     app.activate(Action::ReversePageDirection).unwrap();
     app.activate(Action::SetFixedRotation(1)).unwrap();
     let current = app.fixed.as_ref().unwrap();

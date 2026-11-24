@@ -116,6 +116,10 @@ impl Screen {
                 | Self::ClearOnlineHistory
                 | Self::TranslationSettings
                 | Self::WikipediaSettings
+                | Self::ReadingProfiles
+                | Self::ReadingProfile(_)
+                | Self::ReadingProfileFields(_)
+                | Self::ConfirmProfile(_, _)
         )
     }
 
@@ -133,6 +137,7 @@ impl Screen {
                     | Self::ContentsSearch
                     | Self::CustomTitle
                     | Self::LibraryFind
+                    | Self::ProfileName(_)
                     | Self::PdfPassword
                     | Self::Find
                     | Self::Matches

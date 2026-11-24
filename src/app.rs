@@ -4362,8 +4362,13 @@ impl Reader {
             Screen::FooterPresetName(mode) => Some(mode),
             _ => None,
         };
+        let navigation = if self.screen.uses_navigation_viewport() {
+            self.navigation_layout()
+        } else {
+            navigation_layout::NavigationLayout::PORTRAIT
+        };
         if matches!(input, Input::PageBack)
-            || matches!(input, Input::Tap(x, y) if primitive_ui::back_button(WIDTH as i32).contains(x, y))
+            || matches!(input, Input::Tap(x, y) if navigation.back().contains(x, y))
         {
             let back = if let Some(mode) = profile {
                 mode.back()
@@ -4383,7 +4388,7 @@ impl Reader {
         let Input::Tap(x, y) = input else {
             return Change::None;
         };
-        let layout = Layout::new(WIDTH, HEIGHT, 4, 5);
+        let layout = navigation.keyboard();
         let Some(key) = keyboard_key(&layout, &self.editor, "Save", x, y) else {
             return Change::None;
         };
@@ -7274,7 +7279,12 @@ impl Reader {
         }
         let navigation = if self.screen.uses_navigation_viewport() {
             let layout = self.navigation_layout();
-            layout.header(canvas, title);
+            let action = if matches!(self.screen, Screen::ReadingProfileFields(_)) {
+                "Save"
+            } else {
+                "Back"
+            };
+            layout.header_action(canvas, title, action);
             layout
         } else {
             header(canvas, title, "Back");
