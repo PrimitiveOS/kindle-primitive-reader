@@ -1883,12 +1883,93 @@ struct ImageSizing {
     height: u32,
     requested_width: Option<f64>,
     requested_height: Option<f64>,
+    max_width: Option<f64>,
+    max_height: Option<f64>,
+    render_dpi: u16,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash)]
+struct ImageKey<'a> {
+    path: &'a str,
+    requested: [Option<u64>; 2],
+    maximum: [Option<u64>; 2],
+    viewport: (u32, u32),
     render_dpi: u16,
 }
 
 #[cfg(test)]
 mod dpi_tests {
     use super::*;
+
+    #[test]
+    fn image_maxima_match_stock_auto_and_definite_axis_rules() {
+        use crate::book_style::ImageLength;
+
+        let source = Source::parse(r#"<html><body><p><img src="x"/></p></body></html>"#).unwrap();
+        let image = &source.blocks[0].images[0];
+        let style = Style {
+            image_max_width: Some(ImageLength::Pixels(160.0)),
+            image_max_height: Some(ImageLength::Pixels(75.0)),
+            ..Style::default()
+        };
+        let fit = |style: &Style| ImageSizing::new(image, Settings::default(), style, false, 1000);
+        assert_eq!(fit(&style).target(400, 200), (150, 75));
+        assert_eq!(fit(&style).target(60, 30), (60, 30));
+        assert_eq!(
+            fit(&Style {
+                image_width: Some(ImageLength::Pixels(300.0)),
+                ..style.clone()
+            })
+            .target(400, 200),
+            (160, 75)
+        );
+        assert_eq!(
+            fit(&Style {
+                image_height: Some(ImageLength::Pixels(200.0)),
+                image_max_height: None,
+                ..style.clone()
+            })
+            .target(400, 200),
+            (160, 200)
+        );
+        assert_eq!(
+            fit(&Style {
+                image_height: Some(ImageLength::Pixels(200.0)),
+                ..style.clone()
+            })
+            .target(400, 200),
+            (150, 75)
+        );
+        assert_eq!(
+            fit(&Style {
+                image_width: Some(ImageLength::Pixels(300.0)),
+                image_height: Some(ImageLength::Pixels(200.0)),
+                ..style.clone()
+            })
+            .target(400, 200),
+            (160, 75)
+        );
+        assert_eq!(
+            fit(&Style {
+                image_max_height: Some(ImageLength::Fraction(0.03)),
+                ..style.clone()
+            })
+            .target(400, 200),
+            (160, 80)
+        );
+        assert_ne!(fit(&style).key("x"), fit(&Style::default()).key("x"));
+        let inline = ImageSizing::new(
+            image,
+            Settings {
+                height: 300,
+                ..Settings::default()
+            },
+            &style,
+            true,
+            70,
+        );
+        assert_eq!(inline.target(400, 200), (70, 35));
+    }
 
     #[test]
     fn dpi_scales_intrinsic_and_html_images_but_not_relative_constraints_and_bounds_every_target() {
@@ -1951,15 +2032,20 @@ mod dpi_tests {
 }
 
 impl ImageSizing {
-    fn key<'a>(&self, path: &'a str) -> (&'a str, Option<u64>, Option<u64>, u32, u32, u16) {
-        (
+    fn key<'a>(&self, path: &'a str) -> ImageKey<'a> {
+        ImageKey {
             path,
-            self.requested_width.map(f64::to_bits),
-            self.requested_height.map(f64::to_bits),
-            self.height,
-            self.width,
-            self.render_dpi,
-        )
+            requested: [
+                self.requested_width.map(f64::to_bits),
+                self.requested_height.map(f64::to_bits),
+            ],
+            maximum: [
+                self.max_width.map(f64::to_bits),
+                self.max_height.map(f64::to_bits),
+            ],
+            viewport: (self.width, self.height),
+            render_dpi: self.render_dpi,
+        }
     }
 
     fn new(
@@ -2000,11 +2086,26 @@ impl ImageSizing {
             )
             .filter(|v| v.is_finite())
             .map(f64::from);
+        let max_width = style
+            .image_max_width
+            .and_then(|value| value.pixels(width, font_size))
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .map(f64::from);
+        // The reflow body has no definite containing-block height. Its safe
+        // viewport limit is independent of a percentage CSS height constraint.
+        let max_height = style
+            .image_max_height
+            .filter(|value| !matches!(value, crate::book_style::ImageLength::Fraction(_)))
+            .and_then(|value| value.pixels(height, font_size))
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .map(f64::from);
         Self {
             width,
             height,
             requested_width,
             requested_height,
+            max_width,
+            max_height,
             render_dpi: settings.render_dpi,
         }
     }
@@ -2016,11 +2117,26 @@ impl ImageSizing {
             f64::from(self.render_dpi) / 96.
         };
         let ratio = f64::from(original_w) / f64::from(original_h);
-        let w = self.requested_width.unwrap_or_else(|| {
-            self.requested_height
-                .map_or(f64::from(original_w) * intrinsic_scale, |h| h * ratio)
-        });
-        let h = self.requested_height.unwrap_or(w / ratio);
+        let max_width = self.max_width.unwrap_or(f64::INFINITY);
+        let max_height = self.max_height.unwrap_or(f64::INFINITY);
+        let (w, h) = match (self.requested_width, self.requested_height) {
+            // If the width is definite, the height cap does not change it.
+            (Some(width), height) => {
+                let width = width.min(max_width);
+                let height = height.unwrap_or(width / ratio).min(max_height);
+                (width, height)
+            }
+            (None, Some(height)) => {
+                let height = height.min(max_height);
+                ((height * ratio).min(max_width), height)
+            }
+            (None, None) => {
+                let width = f64::from(original_w) * intrinsic_scale;
+                let height = width / ratio;
+                let scale = (max_width / width).min(max_height / height).min(1.0);
+                (width * scale, height * scale)
+            }
+        };
         let scale = (f64::from(self.width) / w)
             .min(f64::from(self.height) / h)
             .min(1.0);
@@ -2044,6 +2160,8 @@ fn load_image(
     let target = |original_w, original_h| sizing.target(original_w, original_h);
     let styled_size = (sizing.requested_width.is_some()
         || sizing.requested_height.is_some()
+        || sizing.max_width.is_some()
+        || sizing.max_height.is_some()
         || !matches!(sizing.render_dpi, 0 | 96))
     .then_some(&target as &dyn Fn(u32, u32) -> (u32, u32));
     let filter = if settings.smooth_images {
@@ -3191,6 +3309,133 @@ mod tests {
     }
 
     #[test]
+    fn publisher_image_maxima_keep_landscapes_inline_positions_and_originals() {
+        let book = replace_opening(
+            "publisher-image-maxima",
+            r##"<html xmlns="http://www.w3.org/1999/xhtml">
+          <head><style>
+            img.plate { width: 640px; height: auto; max-width: 50%; }
+            img.detail { max-width: 25%; }
+            img.mark { max-height: 0.5em; }
+            svg { max-height: 45px; }
+          </style></head><body><h1>Harbour field guide</h1>
+          <p>Plate and detail</p>
+          <p><img class="plate" src="../images/shore.png" alt="Shore plate"/></p>
+          <p><img class="plate detail" src="../images/shore.png" alt="Shore detail"/></p>
+          <p><span id="before">An inline</span> <img class="mark" src="../images/shore.png" alt="mark"/> <span id="after">mark stays within the sentence.</span></p>
+          <p><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 160"><rect x="3" y="3" width="314" height="154" fill="#eeeeee" stroke="#000000" stroke-width="6"/><path d="M0 158L110 30L180 125L250 70L320 148" fill="none" stroke="#121212" stroke-width="9"/></svg></p>
+          <p id="passage">The trail continues below the figures.</p>
+          </body></html>"##,
+        );
+        let original = fs::read(&book.0).unwrap();
+        let fonts = [
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        let settings = Settings {
+            width: 640,
+            height: 880,
+            margin: 40,
+            font_size: 40.0,
+            ..Settings::default()
+        };
+        let open = |settings| Probe::open(&book.0, Engine::Parley, &fonts, settings, 0).unwrap();
+        let dimensions = |probe: &Probe| {
+            let Renderer::Parley(layout) = &probe.renderer else {
+                unreachable!()
+            };
+            layout
+                .illustrations
+                .iter()
+                .map(|image| image.display)
+                .collect::<Vec<_>>()
+        };
+        let mut narrow = open(settings);
+        assert_eq!(
+            dimensions(&narrow),
+            [(280, 187), (140, 93), (30, 20), (90, 45)]
+        );
+        let landscape = open(Settings {
+            width: 880,
+            height: 640,
+            ..settings
+        });
+        assert_eq!(
+            dimensions(&landscape),
+            [(400, 267), (200, 133), (30, 20), (90, 45)]
+        );
+        let without_css = open(Settings {
+            publisher_styles: false,
+            ..settings
+        });
+        assert_eq!(&dimensions(&without_css)[..3], [(144, 96); 3]);
+
+        let passage = narrow.fragment("passage").unwrap();
+        assert_eq!(landscape.fragment("passage"), Some(passage.clone()));
+        assert_eq!(without_css.fragment("passage"), Some(passage.clone()));
+        assert!(landscape.page_for(&passage).is_some());
+        let before = narrow.fragment("before").unwrap();
+        let after = narrow.fragment("after").unwrap();
+        let page = narrow.page_for(&after).unwrap();
+        assert_eq!(narrow.page_for(&before), Some(page));
+        let Renderer::Parley(layout) = &narrow.renderer else {
+            unreachable!()
+        };
+        let (resource, cols, rows) = layout
+            .visible_illustrations(narrow.pages.range(page).unwrap(), settings)
+            .find(|(_, cols, rows)| cols.len() == 30 && rows.len() == 20)
+            .unwrap();
+        let first = |anchor: &crate::Anchor| {
+            let mut end = anchor.clone();
+            end.offset += 1;
+            narrow.selection_rects(page, &narrow.select_range(anchor, &end).unwrap())[0]
+        };
+        assert!((first(&before).x as usize) < cols.start);
+        assert!(first(&after).x as usize >= cols.end);
+        assert_eq!(
+            narrow.illustration_at(page, cols.start as f32 + 1.0, rows.start as f32 + 1.0),
+            Some(resource)
+        );
+        assert_eq!(
+            narrow
+                .open_illustration(&book.0, resource)
+                .unwrap()
+                .page_size(),
+            (144.0, 96.0)
+        );
+        assert!(
+            narrow
+                .capture(page)
+                .unwrap()
+                .iter()
+                .any(|&pixel| pixel < 100)
+        );
+        assert_eq!(fs::read(&book.0).unwrap(), original);
+        if let Some(folder) = std::env::var_os("READER_PUBLISHER_IMAGE_SCALE_CAPTURES") {
+            let folder = PathBuf::from(folder);
+            for (name, width, height) in [
+                ("publisher-image-maxima.png", 1264, 1680),
+                ("publisher-image-maxima-landscape.png", 1680, 1264),
+            ] {
+                let mut probe = open(Settings {
+                    width,
+                    height,
+                    ..settings
+                });
+                let frame = probe.capture(0).unwrap();
+                image::save_buffer(
+                    folder.join(name),
+                    &frame,
+                    width,
+                    height,
+                    image::ColorType::L8,
+                )
+                .unwrap();
+            }
+        }
+    }
+
+    #[test]
     fn dpi_decodes_actual_archive_artwork_with_intrinsic_html_css_and_relative_sizes() {
         let markup = r#"<html><body style="font-size:150%">
           <p><img src="../images/shore.png"/></p>
@@ -3330,6 +3575,8 @@ mod tests {
             height: 1200,
             requested_width: Some(144.0),
             requested_height: Some(96.0),
+            max_width: None,
+            max_height: None,
             render_dpi: 96,
         };
         let (path, preview, display) =

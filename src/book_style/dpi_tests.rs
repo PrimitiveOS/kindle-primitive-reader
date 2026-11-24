@@ -19,6 +19,40 @@ fn at<'a>(source: &Source, styles: &'a [Style], id: &str) -> &'a Style {
 }
 
 #[test]
+fn image_maxima_follow_author_cascade_and_dpi_without_inheritance() {
+    let (source, rules) = sheet(
+        r#"<html><head><style>
+      img { max-width: 50%; max-height: 1in }
+      #clear { max-width: none }
+      #reset { max-height: initial }
+      </style></head><body style="max-width:3em">
+      <img id="limited" src="a.png"/><img id="clear" src="a.png"/>
+      <img id="reset" src="a.png"/><p id="paragraph">Caption</p>
+      </body></html>"#,
+    );
+    for (dpi, expected_height) in [(0, None), (96, Some(96.0)), (212, Some(212.0))] {
+        let styles = rules.compute_for_dpi(&source.elements, dpi);
+        let width = |id| {
+            at(&source, &styles, id)
+                .image_max_width
+                .and_then(|value| value.pixels(600, 40.0))
+        };
+        let height = |id| {
+            at(&source, &styles, id)
+                .image_max_height
+                .and_then(|value| value.pixels(800, 40.0))
+        };
+        assert_eq!(width("limited"), Some(300.0));
+        assert_eq!(height("limited"), expected_height);
+        assert_eq!(width("clear"), None);
+        assert_eq!(height("reset"), None);
+        assert_eq!(width("paragraph"), None);
+    }
+    assert!(user_css::parse("img { max-width: 50%; max-height: 8em }").is_ok());
+    assert!(user_css::parse("img { max-height: 40% }").is_err());
+}
+
+#[test]
 fn dpi_scales_absolute_boxes_once_after_inheritance_and_keeps_relative_lengths_and_font() {
     let (source, sheet) = sheet(
         r#"<html style="font-size:125%"><body>
