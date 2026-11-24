@@ -50,3 +50,13 @@ A failed password leaves the same prompt open. Cancel restores the previous
 book or browser, and authentication prepares the saved PDF page at the
 accepted size before applying the edition’s orientation preference.
 [Masked landscape prompt](screenshots/landscape-unlock-pdf.png)
+
+
+## Cropping a fixed page
+
+The crop preview holds the accepted view until Apply or Cancel. The handles,
+crop press targets, and footer follow the active dimensions. Reader maps the
+touch point through the independently rotated PDF to the source page. Cancel
+restores the accepted reading frame and Apply saves the source rectangle.
+The authored PDF test verifies both paths and the original file digest.
+[Landscape crop preview](screenshots/landscape-pdf-crop.png)

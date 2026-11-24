@@ -6022,7 +6022,9 @@ impl Reader {
         let auto = viewport.bottom_right(AUTO_CROP);
         let (next, save) = match input {
             Input::PageBack => (original, false),
-            Input::Tap(x, y) if viewport.bottom_right(CANCEL_CROP).contains(x, y) => (original, false),
+            Input::Tap(x, y) if viewport.bottom_right(CANCEL_CROP).contains(x, y) => {
+                (original, false)
+            }
             Input::Tap(x, y) if viewport.bottom_right(RESET_CROP).contains(x, y) => (
                 FixedPreferences {
                     crop: None,
