@@ -8,6 +8,7 @@ signed = "--signed" in sys.argv[1:]
 fit_content = "--fit-content" in sys.argv[1:]
 fit_decorated = "--fit-decorated" in sys.argv[1:]
 fit_vertical = "--fit-vertical" in sys.argv[1:]
+fit_height = "--fit-height" in sys.argv[1:]
 name = "render-signed-widths.epub" if signed else "render-width-margins.epub"
 if fit_content:
     name = "render-fit-content.epub"
@@ -15,8 +16,10 @@ if fit_decorated:
     name = "render-fit-decorated.epub"
 if fit_vertical:
     name = "render-fit-vertical.epub"
+if fit_height:
+    name = "render-fit-height.epub"
 fixture = Path(__file__).resolve().parents[1] / "tests/fixtures" / name
-paths = [value for value in sys.argv[1:] if value not in {"--signed", "--fit-content", "--fit-decorated", "--fit-vertical"}]
+paths = [value for value in sys.argv[1:] if value not in {"--signed", "--fit-content", "--fit-decorated", "--fit-vertical", "--fit-height"}]
 output = Path(paths[0]) if paths else fixture
 container = """<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
 <rootfiles><rootfile full-path="content.opf" media-type="application/oebps-package+xml"/></rootfiles>
@@ -143,6 +146,34 @@ body,p,section {{margin:0;padding:0;text-align:left;text-indent:0}}
     padding-bottom:1%; background:#888">Sloping bank</p>
 <p class="fit passage">{passage}</p>
 <p id="shore">After the passage</p>
+</body></html>'''
+
+if fit_height:
+    opf = opf.replace("reader-width-margins", "reader-fit-height").replace(
+        "Width and Margin Soundings", "Along the tidal inlet"
+    )
+    chapter = '''<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Along the tidal inlet</title>
+<style>
+body,p,section {margin:0;padding:0;text-align:left;text-indent:0}
+.fit {width:fit-content;margin:0 auto;padding:18px 16px 22px 12px;
+    border-top:2px solid #333;border-bottom:3px solid #555}
+.first {page-break-before:always}
+</style></head><body>
+<p class="fit" style="height:180px;background:#ddd"><a href="#route">Content bay</a></p>
+<p class="fit" style="height:180px;box-sizing:border-box;background:#ccc">Border bay</p>
+<p class="fit" style="height:220px;max-height:100px;background:#bbb">Narrow basin</p>
+<p class="fit" style="height:220px;max-height:100px;min-height:155px;background:#aaa">North channel</p>
+<p class="fit" style="min-height:136px;background:#999">Quiet water</p>
+<p class="fit" style="height:60%;min-height:30%;max-height:70%;background:#888">Current line</p>
+<p class="fit" style="max-height:20px;background:#777">Twin banks<br/>Lower bank</p>
+<p class="fit first" style="height:3em;min-height:4rem;font-size:125%;background:#ddd">Deep reach</p>
+<section style="box-sizing:border-box"><p class="fit" style="height:160px;background:#ccc">Open shore</p></section>
+<p class="fit" style="height:360pt;max-height:0;background:#bbb">Tidal fall</p>
+<p class="fit" style="height:104.75pt;background:#888">Bright harbor</p>
+<p id="route" class="fit first" style="height:2200px;border:3px solid #444;background:#aaa">Far headland</p>
+<p>After the headland</p>
+<p class="fit first" style="height:2200px;border:3px solid #444;background:#999;page-break-after:always">Last headland</p>
+<p>After the last headland</p>
 </body></html>'''
 
 with zipfile.ZipFile(output, "w") as book:

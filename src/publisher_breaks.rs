@@ -92,7 +92,7 @@ fn protect_paragraph_end<'a>(
 /// around other blocks. An empty separator shares the next visible block's edge.
 #[cfg(test)]
 pub(crate) fn geometry(source: &Source, styles: &[Style], lines: &[Line]) -> Vec<BoxRules> {
-    layout(source, styles, lines, Settings::default(), &[])
+    layout(source, styles, lines, Settings::default(), &[], &[])
 }
 
 pub(crate) fn layout(
@@ -101,6 +101,7 @@ pub(crate) fn layout(
     lines: &[Line],
     settings: Settings,
     positioned: &[PositionedRun],
+    fitted_tails: &[crate::publisher_padding::fit_content::HeightTail],
 ) -> Vec<BoxRules> {
     let mut result = Vec::new();
     protect_paragraph_end(
@@ -142,6 +143,14 @@ pub(crate) fn layout(
                 extent.end,
             );
         }
+    }
+    for tail in fitted_tails {
+        extend(
+            &mut boxes,
+            tail.element,
+            tail.closing.start,
+            tail.closing.end,
+        );
     }
     let expands = settings.empty_break_mode.expands();
     let direct = (expands || !positioned.is_empty()).then(|| boxes.clone());

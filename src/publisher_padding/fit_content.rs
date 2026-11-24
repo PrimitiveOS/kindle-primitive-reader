@@ -6,6 +6,12 @@ use crate::{
     source::Source,
     table_borders::Stroke,
 };
+use std::ops::Range;
+
+pub(crate) struct HeightTail {
+    pub(crate) element: usize,
+    pub(crate) closing: Range<f32>,
+}
 
 #[derive(Clone, Copy)]
 pub(crate) struct Placed {
@@ -14,6 +20,7 @@ pub(crate) struct Placed {
     pub(crate) text_left: i32,
     pub(crate) text_width: u32,
     pub(crate) vertical_padding: [u32; 2],
+    pub(crate) desired_height: Option<f32>,
     // Top/right/bottom/left as in publisher table edges.
     pub(crate) strokes: [Stroke; 4],
 }
@@ -26,6 +33,39 @@ impl Placed {
             after + self.strokes[2].width,
         ]
     }
+}
+
+fn desired_height(style: &Style, settings: Settings, edges: u32) -> Option<f32> {
+    if settings.fit_content != FitContentMode::Web {
+        return None;
+    }
+    let font = settings.styled_font(style.size_scale);
+    let offset = if style.box_sizing == BoxSizing::ContentBox {
+        edges as f32
+    } else {
+        0.0
+    };
+    let limit = |value: Option<ImageLength>| {
+        let value = value?;
+        let px = match value {
+            ImageLength::Auto | ImageLength::FitContent | ImageLength::Fraction(_) => return None,
+            ImageLength::Physical(px) => px.floor(),
+            ImageLength::RootEm(value) => {
+                CssLength::RootEm(value).box_pixels(0, settings.font_size)
+            }
+            _ => value.css_length()?.box_pixels(0, font),
+        };
+        let one = settings.render_dpi != 0 && value.pixels(0, font).is_some_and(|raw| raw > 0.0);
+        Some(px.max(if one { 1.0 } else { 0.0 }) + offset)
+    };
+    // The max caps an explicit height only. The min can establish a height,
+    // and wins even when it exceeds max. The paint stage keeps natural text.
+    let wanted = limit(style.image_height)
+        .map(|height| height.min(limit(style.image_max_height).unwrap_or(f32::INFINITY)));
+    wanted
+        .into_iter()
+        .chain(limit(style.min_height))
+        .reduce(f32::max)
 }
 
 fn supported_edges(style: &Style, settings: Settings) -> bool {
@@ -92,9 +132,6 @@ pub(crate) fn inset(
     if vertical_padding
         .iter()
         .any(|edge| !(0.0..=(settings.text_height() / 4) as f32).contains(edge))
-        || vertical_padding != [0.0; 2]
-            && (!matches!(style.image_height, None | Some(ImageLength::Auto))
-                || !matches!(style.image_max_height, None | Some(ImageLength::Auto)))
     {
         return None;
     }
@@ -157,12 +194,15 @@ pub(crate) fn inset(
         return None;
     }
     let (left, width) = horizontal_margins::visible_box(x, offset, used, settings)?;
+    let vertical_padding = vertical_padding.map(|pixels| pixels as u32);
+    let height_edges = vertical_padding.iter().sum::<u32>() + strokes[0].width + strokes[2].width;
     Some(Placed {
         left,
         width,
         text_left: left + strokes[3].width as i32 + left_pad as i32,
         text_width: width - inset as u32,
-        vertical_padding: vertical_padding.map(|pixels| pixels as u32),
+        vertical_padding,
+        desired_height: desired_height(style, settings, height_edges),
         strokes,
     })
 }

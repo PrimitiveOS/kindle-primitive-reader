@@ -113,6 +113,15 @@ impl ImageLength {
         }
     }
 
+    fn for_fitted_height_dpi(self, dpi: u16) -> Self {
+        match self {
+            // The fitted block resolver treats physical units as an explicit
+            // zero at DPI off and truncates their converted value otherwise.
+            Self::Physical(px) => Self::Physical(px * f32::from(dpi) / 96.0),
+            value => value.for_dpi(dpi),
+        }
+    }
+
     pub(crate) fn pixels(self, available: u32, font_size: f32) -> Option<f32> {
         match self {
             Self::Auto | Self::FitContent => None,
@@ -347,6 +356,7 @@ pub(crate) struct Style {
     pub image_max_width: Option<ImageLength>,
     pub image_max_height: Option<ImageLength>,
     pub min_width: Option<CssLength>,
+    pub min_height: Option<ImageLength>,
     pub box_sizing: BoxSizing,
     pub image_align: parley::VerticalAlign,
     pub alignment: Option<Alignment>,
@@ -392,6 +402,7 @@ impl Default for Style {
             image_max_width: None,
             image_max_height: None,
             min_width: None,
+            min_height: None,
             box_sizing: BoxSizing::default(),
             image_align: parley::VerticalAlign::BASELINE,
             alignment: None,
@@ -590,10 +601,18 @@ impl BookStyle {
                 }
             }
             style.image_width = style.image_width.map(|value| value.for_dpi(dpi));
-            style.image_height = style.image_height.map(|value| value.for_dpi(dpi));
+            let height_for_dpi = if matches!(style.image_width, Some(ImageLength::FitContent)) {
+                ImageLength::for_fitted_height_dpi
+            } else {
+                ImageLength::for_dpi
+            };
+            style.image_height = style.image_height.map(|value| height_for_dpi(value, dpi));
             style.image_max_width = style.image_max_width.map(|value| value.for_dpi(dpi));
-            style.image_max_height = style.image_max_height.map(|value| value.for_dpi(dpi));
+            style.image_max_height = style
+                .image_max_height
+                .map(|value| height_for_dpi(value, dpi));
             style.min_width = style.min_width.map(|value| value.for_dpi(dpi));
+            style.min_height = style.min_height.map(|value| height_for_dpi(value, dpi));
         }
         styles
     }
@@ -682,6 +701,8 @@ impl BookStyle {
             style.image_max_width = None;
             style.image_max_height = None;
             style.min_width = None;
+            style.min_height = None;
+            style.box_sizing = BoxSizing::default();
             style.image_align = parley::VerticalAlign::BASELINE;
             let mut decoration = TextDecoration {
                 underline: matches!(element.tag.as_str(), "u" | "ins")
@@ -713,7 +734,7 @@ impl BookStyle {
                 .as_deref()
                 .filter(|text| self.author_inline && text.len() <= MAX_INLINE_BYTES)
                 .map_or_else(Vec::new, |text| declarations(&mut Parser::new(text)));
-            let mut winners: Winners = [None; 52];
+            let mut winners: Winners = [None; 53];
             let accept_fit = fit_content && element.tag == "p";
             for (origin, rules) in [
                 (CascadeOrigin::User, &self.user_rules),
@@ -933,7 +954,10 @@ impl BookStyle {
                     | Property::Height(value)
                     | Property::MaxWidth(value)
                     | Property::MaxHeight(value) => {
+                        let fit_height = matches!(style.image_width, Some(ImageLength::FitContent))
+                            && matches!(property, Property::Height(_) | Property::MaxHeight(_));
                         let value = match value {
+                            ImageLength::RootEm(_) if fit_height => *value,
                             ImageLength::RootEm(value) => {
                                 let root = result.first().map_or_else(
                                     || {
@@ -957,6 +981,7 @@ impl BookStyle {
                             _ => unreachable!(),
                         }
                     }
+                    Property::MinHeight(value) => style.min_height = Some(*value),
                     Property::VerticalAlign(value) => style.image_align = *value,
                     Property::Decoration(value) => decoration = value.unwrap_or(parent.decoration),
                     Property::FontSource(_) => {}
@@ -1514,7 +1539,7 @@ fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
 }
 
 type Priority = (u8, bool, Specificity);
-type Winners<'a> = [Option<(Priority, &'a Property)>; 52];
+type Winners<'a> = [Option<(Priority, &'a Property)>; 53];
 
 #[derive(Clone, Copy)]
 enum CascadeOrigin {
@@ -1538,6 +1563,9 @@ fn choose<'a>(
             Property::Display(_) => 40,
             Property::Visibility(_) => 41,
             Property::MaxWidth(_) => 42,
+            Property::MaxHeight(value) if !accept_fit && value.pixels(1, 1.0) == Some(0.0) => {
+                continue;
+            }
             Property::MaxHeight(_) => 43,
             Property::VerticalMargin(side, _) => 44 + side,
             Property::Float(_) => 46,
@@ -1545,6 +1573,7 @@ fn choose<'a>(
             Property::HorizontalMargin(side, _) => 48 + side,
             Property::MinWidth(_) => 50,
             Property::BoxSizing(_) => 51,
+            Property::MinHeight(_) => 52,
             Property::Family(_) => 0,
             Property::Size(_) => 1,
             Property::LineHeight(_) => 2,
@@ -1558,6 +1587,9 @@ fn choose<'a>(
             Property::WritingMode(_) => 10,
             Property::Width(ImageLength::FitContent) if !accept_fit => continue,
             Property::Width(_) => 11,
+            Property::Height(value) if !accept_fit && value.pixels(1, 1.0) == Some(0.0) => {
+                continue;
+            }
             Property::Height(_) => 12,
             Property::VerticalAlign(_) => 13,
             Property::Marker(_) => 14,
@@ -1669,6 +1701,7 @@ enum Property {
     MaxWidth(ImageLength),
     MaxHeight(ImageLength),
     MinWidth(ImageLength),
+    MinHeight(ImageLength),
     BoxSizing(BoxSizing),
     VerticalAlign(parley::VerticalAlign),
 }
@@ -1861,10 +1894,14 @@ impl<'i> DeclarationParser<'i> for Properties {
                         _ => return Err(ParseError::unexpected_token()),
                     })
                 }
-                "width" | "height" | "max-width" | "max-height" | "min-width" => {
+                "width" | "height" | "max-width" | "max-height" | "min-width" | "min-height" => {
                     let maximum = name.eq_ignore_ascii_case("max-width")
                         || name.eq_ignore_ascii_case("max-height");
-                    let minimum = name.eq_ignore_ascii_case("min-width");
+                    let zero = name.eq_ignore_ascii_case("min-width")
+                        || matches!(
+                            name.to_ascii_lowercase().as_str(),
+                            "height" | "min-height" | "max-height"
+                        );
                     let length = match input.next()?.clone() {
                         Token::Ident(s)
                             if name.eq_ignore_ascii_case("width")
@@ -1878,17 +1915,17 @@ impl<'i> DeclarationParser<'i> for Properties {
                         {
                             ImageLength::Auto
                         }
-                        Token::Number { value, .. } if minimum && value == 0.0 => {
+                        Token::Number { value, .. } if zero && value == 0.0 => {
                             ImageLength::Pixels(0.0)
                         }
                         Token::Percentage { unit_value, .. }
                             if unit_value.is_finite()
-                                && (unit_value > 0.0 || minimum && unit_value == 0.0) =>
+                                && (unit_value > 0.0 || zero && unit_value == 0.0) =>
                         {
                             ImageLength::Fraction(unit_value)
                         }
                         Token::Dimension { unit, value, .. }
-                            if value.is_finite() && (value > 0.0 || minimum && value == 0.0) =>
+                            if value.is_finite() && (value > 0.0 || zero && value == 0.0) =>
                         {
                             match unit.to_ascii_lowercase().as_str() {
                                 "px" => ImageLength::Pixels(value),
@@ -1910,6 +1947,7 @@ impl<'i> DeclarationParser<'i> for Properties {
                         "height" => Property::Height(length),
                         "max-width" => Property::MaxWidth(length),
                         "min-width" => Property::MinWidth(length),
+                        "min-height" => Property::MinHeight(length),
                         _ => Property::MaxHeight(length),
                     }
                 }

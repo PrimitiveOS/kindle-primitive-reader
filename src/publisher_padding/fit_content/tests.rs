@@ -4,6 +4,7 @@ use crate::{
 };
 use std::path::PathBuf;
 
+mod height;
 mod vertical;
 
 const WIDTH: u32 = 1264;
@@ -194,7 +195,6 @@ fn fit_content_leaves_unsupported_edges_and_sized_ancestors_on_the_normal_path()
     };
     for body in [
         "<p style='width:fit-content;padding-top:500px;background:#ddd'>Harbor marker</p>",
-        "<p style='width:fit-content;padding-top:18px;height:180px;background:#ddd'>Harbor marker</p>",
         "<p style='width:fit-content;border:5px dashed black;background:#ddd'>Harbor marker</p>",
         "<p style='width:fit-content;border:5px solid rgba(0,0,0,.5);background:#ddd'>Harbor marker</p>",
         "<p style='width:fit-content;padding-left:100%;background:#ddd'>Harbor marker</p>",

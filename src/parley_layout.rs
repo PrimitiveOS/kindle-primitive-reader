@@ -297,6 +297,7 @@ pub(crate) struct ParleyChapter {
     padded_backgrounds: Vec<crate::vertical_padding::Fill>,
     physical_break_runs: Vec<crate::publisher_breaks::PositionedRun>,
     publisher_height_spaces: Vec<Range<f32>>,
+    fitted_height_tails: Vec<crate::publisher_padding::fit_content::HeightTail>,
     float_geometry: bool,
     limitations: Vec<String>,
     glyphs: GlyphCache,
@@ -431,6 +432,7 @@ impl ParleyChapter {
             padded_backgrounds: Vec::new(),
             physical_break_runs: Vec::new(),
             publisher_height_spaces: Vec::new(),
+            fitted_height_tails: Vec::new(),
             float_geometry: false,
             limitations: Vec::new(),
             glyphs: GlyphCache::with_hinting(
@@ -1044,7 +1046,36 @@ impl ParleyChapter {
                 }
                 let text_bottom = bottom;
                 y = text_bottom + gap;
-                if float.is_none()
+                if let Some(area) = fitted {
+                    let [leading, trailing] = area.vertical_insets().map(|value| value as f32);
+                    let top = origin - leading;
+                    let natural = text_bottom + trailing - top;
+                    let fill = area.desired_height.map_or(0.0, |height| {
+                        (height - natural).clamp(0.0, settings.text_height() as f32)
+                    });
+                    bottom += fill + trailing;
+                    y += fill + trailing;
+                    if fill > 0.0 {
+                        let fill_end = text_bottom + fill;
+                        chapter.publisher_height_spaces.push(text_bottom..fill_end);
+                        // CRE emits one-pixel splittable filler followed by
+                        // the closing edge kept with the last filler pixel.
+                        chapter.fitted_height_tails.push(
+                            crate::publisher_padding::fit_content::HeightTail {
+                                element: block.element,
+                                closing: (fill_end - 1.0).max(text_bottom)..bottom,
+                            },
+                        );
+                    }
+                    if fitted_with_padding.is_some() {
+                        fitted_extent = Some((top, bottom));
+                        fitted_padding_elements.insert(block.element);
+                    }
+                    if fitted_with_padding.is_some() || fill > 0.0 {
+                        let text_end = if fill > 0.0 { text_bottom } else { bottom };
+                        keep_fitted_edges(&mut lines[first_line..], top..text_end, settings);
+                    }
+                } else if float.is_none()
                     && contour.is_none()
                     && height_candidates.get(block.element) == Some(&TextBoxCandidate::Simple)
                     && let Some(height) =
@@ -1059,17 +1090,6 @@ impl ParleyChapter {
                         bottom = minimum;
                         y = y.max(bottom);
                     }
-                }
-                if let Some(area) = fitted {
-                    let tail = area.vertical_insets()[1] as f32;
-                    bottom += tail;
-                    y += tail;
-                }
-                if let Some(area) = fitted_with_padding {
-                    let top = origin - area.vertical_insets()[0] as f32;
-                    fitted_extent = Some((top, bottom));
-                    fitted_padding_elements.insert(block.element);
-                    keep_fitted_edges(&mut lines[first_line..], top..bottom, settings);
                 }
                 chapter.paragraphs.push(Paragraph {
                     key: block.key,
@@ -1256,6 +1276,9 @@ impl ParleyChapter {
         chapter
             .publisher_height_spaces
             .sort_by(|a, b| a.start.total_cmp(&b.start));
+        chapter
+            .fitted_height_tails
+            .sort_by(|a, b| a.closing.start.total_cmp(&b.closing.start));
         let painted = chapter
             .table_frames
             .iter()
@@ -1282,6 +1305,12 @@ impl ParleyChapter {
         &self.publisher_height_spaces
     }
 
+    pub(crate) fn fitted_height_tails(
+        &self,
+    ) -> &[crate::publisher_padding::fit_content::HeightTail] {
+        &self.fitted_height_tails
+    }
+
     /// Last conservative paint bound. Parley's paragraph height also includes leading
     /// and layout lines after a final hard break, which can overflow onto a blank page.
     pub(crate) fn last_paint_bottom(&self, source: &Source) -> f32 {
@@ -1296,7 +1325,7 @@ impl ParleyChapter {
         for paragraph in self.paragraphs.iter().rev() {
             if paragraph.background.is_some_and(|gray| gray < 255)
                 || paragraph.fitted.is_some_and(|fit| {
-                    fit.vertical_padding != [0; 2]
+                    (fit.vertical_padding != [0; 2] || fit.desired_height.is_some())
                         && fit.strokes[1..]
                             .iter()
                             .any(|stroke| stroke.width > 0 && stroke.gray.is_some())

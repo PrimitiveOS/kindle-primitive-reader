@@ -800,7 +800,7 @@ impl Pagination {
         breaks: &[publisher_breaks::BoxRules],
         limit: f32,
     ) -> Result<Self> {
-        Self::with_split_spaces(lines, height, content_height, breaks, &[], limit)
+        Self::with_split_spaces(lines, height, content_height, breaks, &[], &[], limit)
     }
 
     fn with_split_spaces(
@@ -809,14 +809,12 @@ impl Pagination {
         mut content_height: f32,
         breaks: &[publisher_breaks::BoxRules],
         split_spaces: &[Range<f32>],
+        fitted_tails: &[publisher_padding::fit_content::HeightTail],
         limit: f32,
     ) -> Result<Self> {
         let mut intervals: Vec<Range<f32>> = Vec::new();
-        for line in lines {
-            if !line.top.is_finite() || !line.bottom.is_finite() || line.top > line.bottom {
-                return Err("The renderer returned invalid line positions".into());
-            }
-            let extent = line.page_extent();
+        let mut tails = fitted_tails.iter().peekable();
+        let mut include = |extent: Range<f32>| {
             content_height = content_height.max(extent.end);
             match intervals.last_mut() {
                 Some(last) if extent.start < last.end => {
@@ -825,6 +823,22 @@ impl Pagination {
                 }
                 _ => intervals.push(extent),
             }
+        };
+        for line in lines {
+            if !line.top.is_finite() || !line.bottom.is_finite() || line.top > line.bottom {
+                return Err("The renderer returned invalid line positions".into());
+            }
+            let extent = line.page_extent();
+            while tails
+                .peek()
+                .is_some_and(|tail| tail.closing.start < extent.start)
+            {
+                include(tails.next().unwrap().closing.clone());
+            }
+            include(extent);
+        }
+        for tail in tails {
+            include(tail.closing.clone());
         }
         if !content_height.is_finite() || !(0.0..=limit).contains(&content_height) {
             return Err("The chapter exceeds the layout height limit".into());
@@ -1244,6 +1258,7 @@ impl Probe {
                             &lines,
                             settings,
                             layout.physical_break_runs(),
+                            layout.fitted_height_tails(),
                         );
                         (Renderer::Parley(layout), lines, extent)
                     }
@@ -1259,9 +1274,12 @@ impl Probe {
                 settings.chapter_height_limit(),
             )?
         } else {
-            let split_spaces = match &renderer {
-                Renderer::Parley(chapter) => chapter.publisher_height_spaces(),
-                _ => &[],
+            let (split_spaces, fitted_height_tails) = match &renderer {
+                Renderer::Parley(chapter) => (
+                    chapter.publisher_height_spaces(),
+                    chapter.fitted_height_tails(),
+                ),
+                _ => (&[][..], &[][..]),
             };
             Pagination::with_split_spaces(
                 &lines,
@@ -1269,6 +1287,7 @@ impl Probe {
                 content_height,
                 &publisher_edges,
                 split_spaces,
+                fitted_height_tails,
                 settings.chapter_height_limit(),
             )?
         };

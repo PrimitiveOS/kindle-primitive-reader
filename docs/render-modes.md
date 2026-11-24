@@ -300,8 +300,7 @@ line metrics. Reader also keeps its own spacing between paragraphs. The
 source links are tested on the text. A direct Reader tap on blank padding has
 no text target. KOReader's nearby-link lookup can find a link from that
 padding. Fit falls back to the normal layout path when an individual
-padding edge exceeds a quarter of the reading height or when vertical
-padding combines with a supported `height` or `max-height` declaration.
+padding edge exceeds a quarter of the reading height.
 
 Generate the EPUB with `python3 scripts/generate-render-width-margins-fixture.py --fit-vertical`.
 Use the same native oracle arguments and `READER_FIT_CONTENT_CAPTURES` for
@@ -311,6 +310,50 @@ the `fit_content_vertical` tests to reproduce the captures.
 [Reader Web first page](screenshots/render-fit-vertical-reader-web.png) ·
 [KOReader Web continuation](screenshots/render-fit-vertical-stock-continuation.png) ·
 [Reader Web continuation](screenshots/render-fit-vertical-reader-continuation.png)
+
+#### Height constraints on fitted paragraphs
+
+Book fits the width and paints the natural text and edges. Web can reserve
+extra height. It starts with `height`, applies `max-height` to that request,
+and then applies `min-height`. The minimum can establish a height on its
+own and can exceed the maximum. Long text keeps its full natural height.
+Percentage heights are ignored for these paragraphs. Content-box heights
+add the top and bottom padding and strokes. Border-box heights already
+include those edges. Children use content-box by default and can explicitly
+inherit the parent's sizing choice.
+
+| Authored case at 96 DPI | Stock Book outer height | Stock Web outer height |
+| --- | ---: | ---: |
+| 180 px content box with 45 px of edges | 109 px | 225 px |
+| Same declaration with border-box sizing | 109 px | 180 px |
+| 220 px height capped at 100 px | 109 px | 145 px |
+| Same cap with 155 px minimum | 109 px | 200 px |
+| 136 px minimum alone | 109 px | 181 px |
+| 3 em height and 4 rem minimum at 125% font | 126 px | 205 px |
+| 160 px with a border-box parent and a default content-box child | 109 px | 205 px |
+| 104.75 pt with edges | 109 px | 184 px |
+
+The Web render adds blank space after the text and before the bottom padding
+and stroke. It caps the added space at one reading page. A tall fitted box
+can continue its side strokes across a page cut and paint its actual bottom
+edge on the continuation. With a forced break after the box, the decorated
+continuation remains visible before the next text page. It carries no
+synthetic text anchor. Source quotes and text link coordinates are retained.
+The same physical-unit sample measures 276 px with edges at 144 DPI.
+Inter-paragraph spacing, natural text height, and antialiasing remain
+engine-specific.
+The fit policy still covers ordinary paragraphs and simple opaque strokes.
+
+Generate the EPUB with `python3 scripts/generate-render-width-margins-fixture.py --fit-height`.
+The native height oracle accepts the same four arguments as the vertical
+probe and an optional DPI. Use `READER_FIT_CONTENT_CAPTURES` with
+`cargo test --locked --lib fit_content_height` for Reader frames.
+[Pinned height computation](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L7664-L7715) ·
+[Native height oracle](../scripts/koreader-render-fit-height-check.lua) ·
+[KOReader Web heights](screenshots/render-fit-height-stock-web.png) ·
+[Reader Web heights](screenshots/render-fit-height-reader-web.png) ·
+[KOReader Web closing edge](screenshots/render-fit-height-stock-tail.png) ·
+[Reader Web closing edge](screenshots/render-fit-height-reader-tail.png)
 
 ### Sized wrappers around ordinary paragraphs
 
