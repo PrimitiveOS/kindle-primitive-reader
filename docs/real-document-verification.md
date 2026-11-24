@@ -241,6 +241,25 @@ These are software-rendered frames from the Kindle and scratch-profile
 workflow checks. Foreground touch and E Ink refresh have separate
 acceptance checks.
 
+## Reader 0.1.35 release on the Oasis
+
+GitHub published the verified ARMHF package, including the code and
+documentation licenses. The Store transaction installed it and the
+installed executable matched the release.
+[Release workflow](https://github.com/PrimitiveOS/kindle-primitive-reader/actions/runs/45344363444) · [Release assets](https://github.com/PrimitiveOS/kindle-primitive-reader/releases/tag/v0.1.35)
+
+| Verified file | SHA-256 | Bytes |
+| --- | --- | ---: |
+| ARMHF ZIP | `f8860f8357135fb093c7cccb3413382bcc3eea962ffdb035299c952065a05524` | 21,415,852 |
+| Kindle executable | `6da2d0d1ef41df4f91c04a37c56f1f91ad32f9edcab7db97944e9675e958e446` | 33,950,352 |
+
+The installed executable opened an original EPUB, PDF, AZW3 and MOBI
+through the picker, advanced to a changed frame and resumed. The source
+checksums matched before and after. First frames took 1,510, 18,739, 1,365, 1,956 ms,
+respectively. The native test bundle separately verified exact page counts
+on a 30-section original EPUB, dictionary layout, and the link tap
+settings. [Whole-book page results](whole-book-screen-pages.md)
+
 ## Reader 0.1.34 release on the Oasis
 
 The first GitHub runner failed during setup. The retry passed all release
