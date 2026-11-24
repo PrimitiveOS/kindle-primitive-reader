@@ -36,3 +36,17 @@ addresses. Reader opens its address panel so you can inspect the link,
 copy it or view a QR code. Tap controls and swipe controls are independent.
 
 [Swipe-back simulator capture](screenshots/link-swipe-back.png) · [Nearest-link simulator capture](screenshots/link-swipe-follow.png) · [KOReader link settings](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerlink.lua#L515-L603) · [KOReader swipe dispatch and distance](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerlink.lua#L1040-L1272)
+
+## Swipe to the latest saved bookmark
+
+Enable **Settings › Links › Swipe to jump to latest bookmark**. Swipe left
+on a reading page to open the most recently dated bookmark, highlight or
+note in that book. EPUB uses the saved passage anchor. Fixed pages open the
+saved source page. An eligible link takes precedence when **Swipe to follow
+nearest link** is enabled. **Swipe to go back** returns to the passage you
+left. The new option starts off.
+
+The pinned stock callbacks confirm the order of the link and mark actions,
+the newest annotation selection and the EPUB and PDF destination types.
+Reader's interaction checks cover the two document paths, touch lock, saved
+preferences and return history. [Settings capture](screenshots/latest-bookmark-swipe-settings.png) · [Pinned swipe dispatch](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerlink.lua#L1040-L1073) · [Pinned annotation selection](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerbookmark.lua#L618-L629) · [Executable comparison](../scripts/koreader-latest-bookmark-swipe-check.lua)

@@ -8173,6 +8173,7 @@ impl App for Reader {
         self.assigned_gesture(input, Some(start_x))
             .or_else(|| self.reading_edge_swipe(input, start_x))
             .or_else(|| self.swipe_nearest_link(input, start_x))
+            .or_else(|| self.swipe_latest_bookmark(input, start_x))
             .unwrap_or_else(|| self.input(input))
     }
 

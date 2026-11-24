@@ -49,8 +49,8 @@ device-system evidence. This count tracks plan milestones, not overall feature
 parity; many reading requirements and the foreground Kindle acceptance gates
 remain open.
 
-**Control evidence snapshot:** 214 of 536 in-scope reading-control rows have
-an implemented workflow, 239 are partial, 58 are gaps, and 25 need audit. The
+**Control evidence snapshot:** 215 of 536 in-scope reading-control rows have
+an implemented workflow, 239 are partial, 58 are gaps, and 24 need audit. The
 [statistics reset comparison](reading-statistics.md#reset-statistics) updates
 seven rows with an executable stock check and Mac verification.
 Reader 0.1.32 adds [search from selection](selection-search.md),
