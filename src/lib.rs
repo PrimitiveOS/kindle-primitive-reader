@@ -361,6 +361,9 @@ pub struct Settings {
     /// Apply positive physical sides to supported auto-width publisher paragraphs.
     #[doc(hidden)]
     pub publisher_horizontal_margins: bool,
+    /// Apply one negative physical side when the publisher text box fits the screen.
+    #[doc(hidden)]
+    pub publisher_signed_horizontal_margins: bool,
     /// Honor definite publisher heights on supported horizontal text boxes.
     #[doc(hidden)]
     pub publisher_block_height: bool,
@@ -439,6 +442,7 @@ impl Default for Settings {
             preserve_forced_page_margins: false,
             block_width: BlockWidthMode::Ignore,
             publisher_horizontal_margins: false,
+            publisher_signed_horizontal_margins: false,
             publisher_block_height: false,
             float_mode: FloatMode::Ignore,
             empty_break_mode: EmptyBreakMode::Current,
@@ -620,6 +624,14 @@ impl Settings {
 
     fn text_columns(self) -> Range<usize> {
         self.left_margin() as usize..(self.width - self.right_margin()) as usize
+    }
+
+    fn text_hit_column(self, x: f32) -> Option<bool> {
+        let inside =
+            (self.left_margin() as f32..(self.width - self.right_margin()) as f32).contains(&x);
+        (inside
+            || self.publisher_signed_horizontal_margins && (0.0..self.width as f32).contains(&x))
+        .then_some(inside)
     }
 
     fn top_margin(self) -> u32 {
@@ -1447,17 +1459,16 @@ impl Probe {
         match &self.renderer {
             Renderer::Vertical(renderer) => renderer.source_at(range, x, y),
             Renderer::Parley(renderer) => {
+                let inside = self.settings.text_hit_column(x)?;
                 let left = self.settings.left_margin() as f32;
                 let local_y = y - self.settings.top_margin() as f32;
                 let y = range.start + local_y;
                 if !(0.0..self.settings.text_height() as f32).contains(&local_y)
                     || !range.contains(&y)
-                    || !(left..(self.settings.width - self.settings.right_margin()) as f32)
-                        .contains(&x)
                 {
                     return None;
                 }
-                renderer.source_at(x - left, y, &range)
+                renderer.source_at(x - left, y, &range, inside)
             }
             Renderer::Blitz(_) => None,
         }

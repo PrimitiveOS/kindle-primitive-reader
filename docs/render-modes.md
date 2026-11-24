@@ -107,8 +107,8 @@ The native oracle asserts the stock word origin and the width and origin of
 each solid paint band. Reader tests additionally check line wrapping,
 restored source quotes and touch hit testing. Reader wraps the 260-pixel
 sample in two lines under its own text metrics. Remaining box sizing work
-includes complex ancestor boxes, negative horizontal margins, combined
-fixed widths and margins, overflow, and boxes with images, tables, or floats.
+includes complex ancestor boxes, combined fixed widths and margins,
+overflow beyond the physical screen, and boxes with images, tables, or floats.
 [CREngine width resolution](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L7909-L7982) · [CREngine auto margins](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L8178-L8202) · [Native oracle](../scripts/koreader-render-modes-check.lua) · [Reader capture](screenshots/render-modes-reader-web-width.png)
 
 Run `cargo test --locked --lib publisher_width` for the Reader comparison.
@@ -189,6 +189,40 @@ private list of source passages and prints only the measured shifts.
 [KOReader Web](screenshots/render-horizontal-margins-stock-web.png) ·
 [Reader default](screenshots/render-horizontal-margins-reader-default.png) ·
 [Reader with the policy](screenshots/render-horizontal-margins-reader-inset.png)
+
+### One negative physical side on an auto-width paragraph
+
+An independent internal policy shapes an ordinary horizontal body paragraph
+against its signed publisher margins when exactly one side is negative and
+the whole box fits the physical screen with room for text. Its background,
+glyphs, underlines, link hits and selection rectangles use the same geometry.
+The default Reader and the positive-inset policy keep their existing frames.
+
+| Authored declaration at 96 DPI and 40 px font | KOReader Legacy, Flat and Book band | KOReader Web and Reader signed band |
+| --- | ---: | ---: |
+| Left −0.5 em, right 12 px | x = 54, width = 1,144 px | x = 34, width = 1,164 px |
+| Left 12 px, right −0.5 em | x = 66, width = 1,144 px | x = 66, width = 1,164 px |
+
+The 1264 × 1606 stock Web frame places visible glyphs 20 px into the
+left or right user margin. Its strict link lookup clips both user margins.
+Reader uses the visible linked glyphs for taps in those margins. The native
+fixture verifies both painted edges and quote restoration across the four
+stock modes. Reader tests verify the matching paint bands, exact links and
+quotes through page and scroll reading, search anchors and displayed
+highlights. Larger overflow, two negative sides, constrained widths,
+and decorated or complex boxes keep their existing layout.
+
+Run `python3 scripts/generate-render-signed-margins-fixture.py` to rebuild
+the specimen. The Lua oracle takes the same arguments as the Render Mode
+probe. Run `cargo test --locked --lib publisher_signed_margins` for Reader.
+Set `READER_SIGNED_MARGIN_CAPTURES` to an existing folder to save the frames.
+[CREngine signed margin and overflow flags](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/include/lvrend.h#L209-L214) ·
+[CREngine auto-width placement](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L7985-L7988) ·
+[CREngine strict link bounds](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvdocview.cpp#L2597-L2671) ·
+[Native oracle](../scripts/koreader-render-signed-margins-check.lua) ·
+[KOReader Web](screenshots/render-signed-margins-stock-web.png) ·
+[Reader default](screenshots/render-signed-margins-reader-default.png) ·
+[Reader with the policy](screenshots/render-signed-margins-reader.png)
 
 ## Definite heights on ordinary paragraphs
 

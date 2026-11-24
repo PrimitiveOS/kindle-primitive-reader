@@ -602,8 +602,9 @@ impl BookStyle {
         let publisher_wrapper_width = settings.is_some_and(|config| {
             config.block_width == crate::BlockWidthMode::PublisherWithWrappers
         });
-        let publisher_horizontal_margins =
-            settings.is_some_and(|config| config.publisher_horizontal_margins);
+        let publisher_horizontal_margins = settings.is_some_and(|config| {
+            config.publisher_horizontal_margins || config.publisher_signed_horizontal_margins
+        });
         let forced_margin_geometry = nested_margin_collapse
             && settings.is_some_and(|config| config.preserve_forced_page_margins);
         let logical = settings.filter(|settings| settings.logical_font_size.is_some());

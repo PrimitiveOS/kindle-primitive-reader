@@ -442,10 +442,11 @@ mod tests {
         };
         let page = opposed.page_range(0);
         let key = marker(&opposed, "Left cleared only").0.block;
-        let (_, _, _, _, layout) = renderer
-            .selection_layouts(page)
-            .find(|(block, ..)| *block == key)
-            .unwrap();
+        let layout = &renderer
+            .paragraphs_in(page)
+            .find(|p| p.key == key)
+            .unwrap()
+            .layout;
         assert_eq!(layout.get(0).unwrap().metrics().inline_max_coord, 740.0);
         capture(&mut opposed, FloatMode::PublisherHeight, 2);
 
@@ -459,10 +460,11 @@ mod tests {
             let Renderer::Parley(renderer) = &probe.renderer else {
                 panic!("Parley required")
             };
-            let (_, _, _, _, layout) = renderer
-                .selection_layouts(probe.page_range(0))
-                .find(|(block, ..)| *block == anchor.block)
-                .unwrap();
+            let layout = &renderer
+                .paragraphs_in(probe.page_range(0))
+                .find(|p| p.key == anchor.block)
+                .unwrap()
+                .layout;
             let widths: Vec<_> = layout
                 .lines()
                 .map(|line| {

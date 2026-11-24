@@ -153,10 +153,12 @@ impl Probe {
         let Renderer::Parley(renderer) = &self.renderer else {
             return None;
         };
-        for (key, left, origin, column, layout) in renderer.selection_layouts(point.page) {
-            let y = point.y - origin;
-            let x = point.x - left;
-            if column.contains(&point.x)
+        for paragraph in renderer.paragraphs_in(point.page) {
+            let y = point.y - paragraph.y;
+            let x = point.x - paragraph.x;
+            let layout = &paragraph.layout;
+            if (point.inside_columns || paragraph.signed_margin)
+                && paragraph.column.contains(&point.x)
                 && (0.0..layout.height()).contains(&y)
                 && (!renderer.uses_float_geometry()
                     || layout.lines().any(|line| {
@@ -167,7 +169,7 @@ impl Probe {
                 && Cluster::from_point(layout, x, y).is_some()
             {
                 let cursor = Cursor::from_point(layout, x, y);
-                let offset = match renderer.mapping(key) {
+                let offset = match renderer.mapping(paragraph.key) {
                     Some(mapping) => mapping.source_offset(
                         cursor.index(),
                         match cursor.affinity() {
@@ -177,7 +179,7 @@ impl Probe {
                     )?,
                     None => cursor.index(),
                 };
-                return Some(self.anchor(key, offset));
+                return Some(self.anchor(paragraph.key, offset));
             }
         }
         None
@@ -324,8 +326,8 @@ impl Probe {
             return Vec::new();
         };
         let mut rects = Vec::new();
-        for (key, left, origin, _, layout) in renderer.selection_layouts(page.clone()) {
-            let Some(index) = self.selection_block(key) else {
+        for paragraph in renderer.paragraphs_in(page.clone()) {
+            let Some(index) = self.selection_block(paragraph.key) else {
                 continue;
             };
             let Some(span) = spans.in_block(index, self.source.blocks[index].text.len()) else {
@@ -340,6 +342,10 @@ impl Probe {
             let Some(layout_spans) = view.layout_spans(span) else {
                 continue;
             };
+            let layout = &paragraph.layout;
+            let left = paragraph.x;
+            let origin = paragraph.y;
+            let columns = paragraph.paint_columns(self.settings);
             for span in layout_spans {
                 let Some(span) = visible_span(layout, origin, &page, span) else {
                     continue;
@@ -371,6 +377,7 @@ impl Probe {
                                     origin,
                                     &page,
                                     self.settings,
+                                    &columns,
                                 )
                             {
                                 rects.push(left_run);
@@ -381,7 +388,7 @@ impl Probe {
                             }
                         }
                     }
-                    if let Some(rect) = page_rect(rect, origin, &page, self.settings) {
+                    if let Some(rect) = page_rect(rect, origin, &page, self.settings, &columns) {
                         rects.push(rect);
                     }
                 });
@@ -391,17 +398,15 @@ impl Probe {
     }
 
     fn selection_point(&self, page: Range<f32>, x: f32, y: f32) -> Option<PagePoint> {
-        let left = self.settings.left_margin() as f32;
-        if !(left..(self.settings.width - self.settings.right_margin()) as f32).contains(&x) {
-            return None;
-        }
+        let inside_columns = self.settings.text_hit_column(x)?;
         let local_y = y - self.settings.top_margin() as f32;
         let y = local_y + page.start;
         ((0.0..self.settings.text_height() as f32).contains(&local_y) && page.contains(&y))
             .then_some(PagePoint {
                 page,
-                x: x - left,
+                x: x - self.settings.left_margin() as f32,
                 y,
+                inside_columns,
             })
     }
 
@@ -468,6 +473,7 @@ struct PagePoint {
     page: Range<f32>,
     x: f32,
     y: f32,
+    inside_columns: bool,
 }
 
 struct Spans {
@@ -598,6 +604,7 @@ fn page_rect(
     origin: f32,
     page: &Range<f32>,
     settings: Settings,
+    columns: &Range<usize>,
 ) -> Option<HighlightRect> {
     if ![rect.x0, rect.y0, rect.x1, rect.y1]
         .iter()
@@ -607,7 +614,8 @@ fn page_rect(
     }
     let left_margin = f64::from(settings.left_margin());
     let top_margin = f64::from(settings.top_margin());
-    let right = f64::from(settings.width - settings.right_margin());
+    let left_edge = columns.start as f64;
+    let right_edge = columns.end as f64;
     let bottom = top_margin
         + f64::from(
             (page.end - page.start)
@@ -615,9 +623,9 @@ fn page_rect(
                 .min(settings.text_height() as f32),
         );
     let y = top_margin + f64::from(origin - page.start);
-    let left = (rect.x0 + left_margin).floor().clamp(left_margin, right) as i32;
+    let left = (rect.x0 + left_margin).floor().clamp(left_edge, right_edge) as i32;
     let top = (rect.y0 + y).floor().clamp(top_margin, bottom) as i32;
-    let right = (rect.x1 + left_margin).ceil().clamp(left_margin, right) as i32;
+    let right = (rect.x1 + left_margin).ceil().clamp(left_edge, right_edge) as i32;
     let bottom = (rect.y1 + y).ceil().clamp(top_margin, bottom) as i32;
     (right > left && bottom > top).then_some(HighlightRect {
         x: left,

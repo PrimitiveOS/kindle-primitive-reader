@@ -150,8 +150,8 @@ fn large_stock_fonts_paint_real_ink_and_retain_source_selection_geometry() {
             panic!()
         };
         let sizes: Vec<_> = layout
-            .selection_layouts(probe.page_range(page))
-            .flat_map(|(_, _, _, _, p)| p.lines())
+            .paragraphs_in(probe.page_range(page))
+            .flat_map(|p| p.layout.lines())
             .flat_map(|l| l.runs())
             .map(|r| r.font_size())
             .collect();

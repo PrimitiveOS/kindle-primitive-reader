@@ -129,18 +129,37 @@ impl Default for PaintBrush {
     }
 }
 
-struct Paragraph {
-    column: Range<f32>,
+pub(crate) struct Paragraph {
+    pub(crate) column: Range<f32>,
+    pub(crate) signed_margin: bool,
     max_bottom: f32,
-    key: usize,
-    x: f32,
-    y: f32,
+    pub(crate) key: usize,
+    pub(crate) x: f32,
+    pub(crate) y: f32,
     text_bottom: f32,
     bottom: f32,
     background: Option<u8>,
-    layout: Layout<PaintBrush>,
+    pub(crate) layout: Layout<PaintBrush>,
     ruby: Vec<RubyOverlay>,
     flow: Option<Arc<OwnedProjection>>,
+}
+
+impl Paragraph {
+    fn background_columns(&self, margin: usize) -> Range<usize> {
+        if self.signed_margin {
+            (margin as f32 + self.column.start) as usize..(margin as f32 + self.column.end) as usize
+        } else {
+            margin + self.column.start as usize..margin + self.column.end as usize
+        }
+    }
+
+    pub(crate) fn paint_columns(&self, settings: Settings) -> Range<usize> {
+        if self.signed_margin {
+            self.background_columns(settings.left_margin() as usize)
+        } else {
+            settings.text_columns()
+        }
+    }
 }
 
 struct PaintedMarker {
@@ -485,6 +504,17 @@ impl ParleyChapter {
                 .round()
                 .clamp(0.0, bounds_for(block).1 as f32 * 0.49) as u32
         };
+        let signed_margin_candidates = if settings.publisher_signed_horizontal_margins {
+            crate::publisher_padding::text_box_candidates(source, styles, |style| {
+                crate::publisher_padding::horizontal_margins::signed_candidate(
+                    style,
+                    settings,
+                    outer_width,
+                )
+            })
+        } else {
+            Vec::new()
+        };
         // Share the bounded grayscale cache across distinct renderings. Duplicate icons
         // reuse one preview, while large later illustrations still receive space.
         let mut variants = HashSet::new();
@@ -758,6 +788,29 @@ impl ParleyChapter {
                                 area.outer_width.saturating_sub(gutter),
                             )
                         });
+                let contour = if float.is_none() && float_plan.is_some() {
+                    float_flow.contour(y, outer_width, settings.font_size * 4.0)
+                } else {
+                    None
+                };
+                let signed_margin = if float.is_none()
+                    && contour.is_none()
+                    && signed_margin_candidates.get(block.element)
+                        == Some(&TextBoxCandidate::Simple)
+                {
+                    crate::publisher_padding::horizontal_margins::signed_inset(
+                        column_x,
+                        column_width,
+                        style,
+                        settings,
+                    )
+                } else {
+                    None
+                };
+                let (text_x, text_width, indent_base) = signed_margin
+                    .map_or((text_x as f32, text_width, indent_base), |(left, width)| {
+                        (left as f32, width, width)
+                    });
                 let indent = LineIndent::resolve(
                     style,
                     indent_base,
@@ -765,11 +818,6 @@ impl ParleyChapter {
                     settings.font_size,
                     hanging,
                 );
-                let contour = if float.is_none() && float_plan.is_some() {
-                    float_flow.contour(y, outer_width, settings.font_size * 4.0)
-                } else {
-                    None
-                };
                 let (layout, ruby) = layout_with_images(
                     &mut context,
                     &mut fonts,
@@ -795,7 +843,7 @@ impl ParleyChapter {
                     .next()
                     .map_or(0.0, |line| line.metrics().content_block_min_coord.min(0.0));
                 rtl = layout.is_rtl();
-                let x = text_x as f32
+                let x = text_x
                     + if rtl {
                         0.0
                     } else {
@@ -877,10 +925,15 @@ impl ParleyChapter {
                 }
                 chapter.paragraphs.push(Paragraph {
                     key: block.key,
-                    column: publication_box
-                        .map_or(column_x as f32..(column_x + column_width) as f32, |area| {
-                            area.outer_x as f32..(area.outer_x + area.outer_width) as f32
-                        }),
+                    column: if let Some((left, width)) = signed_margin {
+                        left as f32..left as f32 + width as f32
+                    } else {
+                        publication_box
+                            .map_or(column_x as f32..(column_x + column_width) as f32, |area| {
+                                area.outer_x as f32..(area.outer_x + area.outer_width) as f32
+                            })
+                    },
+                    signed_margin: signed_margin.is_some(),
                     max_bottom: bottom,
                     x,
                     y: origin,
@@ -1116,12 +1169,20 @@ impl ParleyChapter {
         artwork
     }
 
-    pub(crate) fn source_at(&self, x: f32, y: f32, visible: &Range<f32>) -> Option<(usize, usize)> {
+    pub(crate) fn source_at(
+        &self,
+        x: f32,
+        y: f32,
+        visible: &Range<f32>,
+        inside_columns: bool,
+    ) -> Option<(usize, usize)> {
         let start = self.paragraphs.partition_point(|p| p.max_bottom <= y);
         let mut candidates = self.paragraphs[start..]
             .iter()
             .take_while(|p| p.y <= y)
-            .filter(|p| p.text_bottom > y && p.column.contains(&x));
+            .filter(|p| {
+                p.text_bottom > y && p.column.contains(&x) && (inside_columns || p.signed_margin)
+            });
         let hit = |paragraph: &Paragraph| {
             let (cluster, _) = parley::Cluster::from_point_exact(
                 &paragraph.layout,
@@ -1285,10 +1346,7 @@ impl ParleyChapter {
             .any(|illustration| illustration.path.as_deref() == Some(path))
     }
 
-    pub(crate) fn selection_layouts(
-        &self,
-        page: Range<f32>,
-    ) -> impl Iterator<Item = (usize, f32, f32, Range<f32>, &Layout<PaintBrush>)> {
+    pub(crate) fn paragraphs_in(&self, page: Range<f32>) -> impl Iterator<Item = &Paragraph> {
         let start = self
             .paragraphs
             .partition_point(|paragraph| paragraph.max_bottom <= page.start);
@@ -1296,7 +1354,6 @@ impl ParleyChapter {
             .iter()
             .take_while(move |paragraph| paragraph.y < page.end)
             .filter(move |p| p.bottom > page.start)
-            .map(|p| (p.key, p.x, p.y, p.column.clone(), &p.layout))
     }
 
     pub fn capture(&mut self, range: Range<f32>, settings: Settings) -> Result<Vec<u8>> {
@@ -1322,13 +1379,14 @@ impl ParleyChapter {
             if paragraph.bottom <= range.start {
                 continue;
             }
+            let paint_columns = paragraph.paint_columns(settings);
+            let paint_x = paragraph.x + (margin as f32 - paint_columns.start as f32);
             if let Some(gray) = paragraph.background {
                 let top = (paragraph.y - range.start).floor().max(0.0) as usize;
                 let bottom = ((paragraph.bottom - range.start).ceil() as usize).min(visible_height);
+                let band = paragraph.background_columns(margin);
                 for row in top.min(bottom)..bottom {
-                    let left = margin + paragraph.column.start as usize;
-                    let right = margin + paragraph.column.end as usize;
-                    page[row * stride + left..row * stride + right].fill(gray);
+                    page[row * stride + band.start..row * stride + band.end].fill(gray);
                 }
             }
             for line in paragraph.layout.lines() {
@@ -1347,8 +1405,8 @@ impl ParleyChapter {
                         self.glyphs.draw_run(
                             page,
                             stride,
-                            &columns,
-                            (paragraph.x, paragraph.y - range.start),
+                            &paint_columns,
+                            (paint_x, paragraph.y - range.start),
                             &run,
                             settings.text_contrast,
                             settings.font_gamma_index,
@@ -1369,11 +1427,11 @@ impl ParleyChapter {
                                     .strike
                                     .then_some(baseline - run.run().font_size() * 2.0 / 7.0),
                             ];
-                            let limit = columns.len() as f32;
-                            let x0 = margin
-                                + (paragraph.x + run.offset()).floor().clamp(0.0, limit) as usize;
-                            let x1 = margin
-                                + (paragraph.x + run.offset() + run.advance())
+                            let limit = paint_columns.len() as f32;
+                            let x0 = paint_columns.start
+                                + (paint_x + run.offset()).floor().clamp(0.0, limit) as usize;
+                            let x1 = paint_columns.start
+                                + (paint_x + run.offset() + run.advance())
                                     .ceil()
                                     .clamp(0.0, limit) as usize;
                             for y in rows.into_iter().flatten() {

@@ -2255,6 +2255,41 @@ mod tests {
     }
 
     #[test]
+    fn publisher_signed_margins_route_reading_taps_and_paint_restored_highlights() {
+        let mut config = example("render-signed-margins.epub", 40.0, false).config;
+        config.fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        config.settings.line_height = 1.20;
+        let regular = Reading::open(config.clone()).unwrap();
+        config.settings.publisher_signed_horizontal_margins = true;
+        for (phrase, outer_x, href) in [("Ashore", 43, "#west"), ("wind", 1222, "#east")] {
+            let saved = regular.probe.matches(phrase).pop().unwrap();
+            let end = crate::Anchor {
+                offset: saved.offset + phrase.len(),
+                ..saved.clone()
+            };
+            for scroll in [false, true] {
+                config.scroll = scroll;
+                let reading = Reading::restore(config.clone(), 0, 0, Some(&saved)).unwrap();
+                assert_eq!(reading.anchor(), Some(saved.clone()));
+                let quote = reading.anchored_quote(&saved, &end).unwrap();
+                let rectangles = reading.highlight_rects(&quote);
+                let rect = rectangles[0];
+                let y = (rect.y + rect.height / 2) as f32;
+                assert!((rect.x..rect.x + rect.width).contains(&outer_x));
+                assert_eq!(reading.word_at(outer_x as f32, y), Some(quote));
+                assert_eq!(reading.link_href_at(outer_x as f32, y), Some(href));
+                let paint = PagePaint::full(false);
+                let marked = reading.marked_frame(&[], &rectangles, &paint);
+                assert_eq!((marked.width, marked.height), (WIDTH, PAGE_HEIGHT));
+                assert!((rect.y..rect.y + rect.height).any(|row| {
+                    let index = (row as u32 * WIDTH + outer_x as u32) as usize;
+                    reading.frame.pixels[index] != marked.pixels[index]
+                }));
+            }
+        }
+    }
+
+    #[test]
     fn cover_and_blank_spine_pages_turn_both_ways_and_restore_their_location() {
         use std::io::{Cursor, Read, Write};
 

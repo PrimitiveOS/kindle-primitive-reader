@@ -1,5 +1,5 @@
 //! Publisher block boxes, measured against their parent content area.
-mod horizontal_margins;
+pub(crate) mod horizontal_margins;
 mod wrappers;
 
 use crate::{
