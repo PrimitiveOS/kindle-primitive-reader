@@ -266,7 +266,9 @@ impl Reader {
             _ => self.closing_profile_warning(&approved),
         };
         let next_result = self.finish_close_route(request.next, true);
-        if self.screen != Screen::PdfPassword || self.locked.is_none() {
+        if !self.metadata_archive.waiting_to_restore()
+            && (self.screen != Screen::PdfPassword || self.locked.is_none())
+        {
             self.closing_before_switch = None;
         }
         let change = next_result?;
@@ -303,7 +305,9 @@ impl Reader {
             })
             .and_then(|request| self.closing_profile_warning(&request.profiles));
         let annotations = self.annotation_close_warning();
-        profile.or(annotations)
+        profile
+            .or(annotations)
+            .or(self.metadata_archive_close_warning())
     }
 
     fn finish_close_route(
@@ -316,7 +320,8 @@ impl Reader {
                 if !saved_before_profile {
                     self.save()?;
                 }
-                let warning = self.annotation_close_warning();
+                let archive_warning = self.metadata_archive_close_warning();
+                let warning = self.annotation_close_warning().or(archive_warning);
                 self.close_book_to_library();
                 self.notice = warning;
                 Ok(Change::Partial)
@@ -327,7 +332,13 @@ impl Reader {
                     self.close_fixed_search_fit()?;
                     self.save()?;
                 }
-                if let Some(warning) = self.annotation_close_warning() {
+                for warning in [
+                    self.annotation_close_warning(),
+                    self.metadata_archive_close_warning(),
+                ]
+                .into_iter()
+                .flatten()
+                {
                     eprintln!("{warning}");
                 }
                 Ok(Change::Exit)
@@ -352,7 +363,8 @@ impl Reader {
                 if !saved_before_profile {
                     self.save()?;
                 }
-                let warning = self.annotation_close_warning();
+                let archive_warning = self.metadata_archive_close_warning();
+                let warning = self.annotation_close_warning().or(archive_warning);
                 self.close_book_to_library();
                 self.browser = browser;
                 self.reveal_book_row(&path);
@@ -363,7 +375,8 @@ impl Reader {
                 if !saved_before_profile {
                     self.save()?;
                 }
-                let warning = self.annotation_close_warning();
+                let archive_warning = self.metadata_archive_close_warning();
+                let warning = self.annotation_close_warning().or(archive_warning);
                 self.close_book_to_library();
                 self.browse_from_book(&path)?;
                 self.notice = warning;

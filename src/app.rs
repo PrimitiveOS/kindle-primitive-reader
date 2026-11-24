@@ -70,6 +70,7 @@ mod link_taps;
 mod lookup_history;
 mod mark_chapters;
 mod menu_search;
+mod metadata_archive;
 mod metadata_save;
 mod navigation_layout;
 mod navigation_preferences;
@@ -215,6 +216,7 @@ enum Screen {
     OrganizeLibrary,
     BookArchive,
     ArchiveFolder,
+    MetadataArchive(metadata_archive::Page),
     BookmarkBrowser(bookmark_browser::Page),
     ReadingHistory(reading_history::Page),
     BookList,
@@ -394,6 +396,7 @@ impl Screen {
             Self::OrganizeLibrary => "Library organization",
             Self::BookArchive => "Move to archive",
             Self::ArchiveFolder => "Archive folder",
+            Self::MetadataArchive(page) => page.title(),
             Self::BookmarkBrowser(page) => page.title(),
             Self::ReadingHistory(page) => page.title(),
             Self::BookList => "Books",
@@ -621,6 +624,7 @@ enum Action {
     ListBooks(BookList),
     OrganizeCurrent,
     BookArchive(book_archive::Command),
+    MetadataArchive(metadata_archive::Command),
     BookmarkBrowser(bookmark_browser::Command),
     ReadingHistory(reading_history::Command),
     ToggleNonlinear,
@@ -947,6 +951,7 @@ pub struct Reader {
     browser: FileBrowser,
     library_viewport: crate::session::ReadingViewport,
     archive: book_archive::Archive,
+    metadata_archive: metadata_archive::State,
     bookmark_browser: bookmark_browser::Browser,
     library_query: String,
     book_list: Option<BookList>,
@@ -1190,6 +1195,9 @@ impl Reader {
             library,
             browser,
             archive: book_archive::Archive::load(data.join("archive-folder.json")),
+            metadata_archive: metadata_archive::State::load(
+                data.join("book-metadata-archive.json"),
+            ),
             bookmark_browser: bookmark_browser::Browser::load(data.join("bookmark-browser.json")),
             library_query: String::new(),
             book_list: None,
@@ -1399,6 +1407,9 @@ impl Reader {
         let publication = with_storage(|| Ok(self.library.publication_for_chapter(&entry)))?;
         if let Some((marker, chapter, path)) = publication {
             self.open_with_password(marker, None)?;
+            if self.metadata_archive.waiting_to_restore() {
+                return Ok(());
+            }
             if self.fixed.is_some() {
                 return self.follow_fixed(chapter, None);
             }
@@ -1410,7 +1421,34 @@ impl Reader {
         self.open_with_password(entry, None)
     }
 
-    fn open_with_password(&mut self, mut entry: LibraryBook, password: Option<&str>) -> Result<()> {
+    fn open_with_password(&mut self, entry: LibraryBook, password: Option<&str>) -> Result<()> {
+        self.open_with_password_mode(entry, password, true)
+    }
+
+    fn open_with_password_mode(
+        &mut self,
+        entry: LibraryBook,
+        password: Option<&str>,
+        check_archive: bool,
+    ) -> Result<()> {
+        if check_archive && password.is_none() {
+            self.metadata_archive.abandon_archive_consumption();
+        }
+        let opened = self.open_with_archive_check(entry, password, check_archive);
+        if opened.is_ok() {
+            self.complete_archive_consumption();
+        } else if self.screen != Screen::PdfPassword {
+            self.metadata_archive.abandon_archive_consumption();
+        }
+        opened
+    }
+
+    fn open_with_archive_check(
+        &mut self,
+        mut entry: LibraryBook,
+        password: Option<&str>,
+        check_archive: bool,
+    ) -> Result<()> {
         self.eager_typography.cancel();
         self.closing_profile = None;
         self.opening_execution = None;
@@ -1435,6 +1473,10 @@ impl Reader {
             }
         })?;
         let unseen = self.library.state(id).is_none();
+        if unseen && check_archive && password.is_none() && self.offer_archived_metadata(&entry, id)
+        {
+            return Ok(());
+        }
         let top_status_header = self.top_header_for_book(id);
         let mut initial_preferences = self
             .document_defaults
@@ -1876,6 +1918,7 @@ impl Reader {
             self.bookmark_browser.reset_list_anchor();
         }
         self.archive.close_surfaces(screen);
+        self.metadata_archive.close_surfaces(screen);
         if !matches!(screen, Screen::ReadingProfileFields(_)) {
             self.profile_fields.clear();
         }
@@ -3110,6 +3153,9 @@ impl Reader {
         if matches!(screen, Screen::BookArchive | Screen::ArchiveFolder) {
             return self.archive_items();
         }
+        if let Screen::MetadataArchive(page) = screen {
+            return self.metadata_archive_items(page);
+        }
         if let Some(items) = self.organization_items() {
             return items;
         }
@@ -3182,6 +3228,7 @@ impl Reader {
         }
         if screen == Screen::ReadingData {
             let mut items = vec![
+                self.metadata_archive_item(),
                 Item::new(
                     "Export highlights",
                     Action::LibraryExport(library_export::Command::Open),
@@ -3989,6 +4036,7 @@ impl Reader {
             Action::Open(entry) => self.open_book(entry)?,
             Action::Browse(directory) => self.browse_to(directory)?,
             Action::BookArchive(command) => self.archive_command(command)?,
+            Action::MetadataArchive(command) => self.metadata_archive_command(command)?,
             Action::CurrentBookFolder => self.current_book_folder()?,
             Action::OpenTracked(id) => {
                 let entry = self.locate_tracked(id)?;
@@ -8516,6 +8564,9 @@ impl Reader {
                         Action::SetReadingControls(_) if self.screen == Screen::Scrolling => {
                             RowAccessory::None
                         }
+                        Action::MetadataArchive(metadata_archive::Command::Toggle(reason)) => {
+                            RowAccessory::Toggle(self.metadata_archive.enabled(*reason))
+                        }
                         Action::AnnotationExchange(command) => self
                             .annotation_exchange
                             .toggle(*command)
@@ -9001,6 +9052,7 @@ impl App for Reader {
         }
         self.draw_flow_popup(canvas);
         self.draw_archive_confirmation(canvas);
+        self.draw_metadata_archive_confirmation(canvas);
         self.draw_profile_confirmation(canvas);
         self.draw_opening_time(canvas);
         self.draw_profile_field_controls(canvas);
@@ -9030,6 +9082,9 @@ impl App for Reader {
     }
 
     fn press_point(&self, input: Input) -> Option<(f32, f32)> {
+        if let Some(point) = self.metadata_archive_press(input) {
+            return point;
+        }
         if let Some(point) = self.menu_search_preview_press(input) {
             return point;
         }
@@ -9117,6 +9172,9 @@ impl App for Reader {
             return self.flow_popup_input(input);
         }
         if let Some(change) = self.archive_confirmation_input(input) {
+            return change;
+        }
+        if let Some(change) = self.metadata_archive_confirmation_input(input) {
             return change;
         }
         if self.read_alarm.modal() {
@@ -9484,6 +9542,9 @@ impl App for Reader {
         if let Some(change) = self.archive_confirmation_input(input) {
             return change;
         }
+        if let Some(change) = self.metadata_archive_confirmation_input(input) {
+            return change;
+        }
         if self.flow_popup.is_some() {
             return self.flow_popup_input(input);
         }
@@ -9783,6 +9844,7 @@ impl App for Reader {
                     Screen::OrganizeLibrary | Screen::FolderOrder => self.show(Screen::Library),
                     Screen::BookArchive => self.show(self.surface_screen()),
                     Screen::ArchiveFolder => self.show(Screen::BookArchive),
+                    Screen::MetadataArchive(page) => self.back_from_metadata_archive(page),
                     Screen::BookList if matches!(self.book_list, Some(BookList::Author(_))) => {
                         self.book_list = Some(BookList::Authors);
                         self.show(Screen::BookList);

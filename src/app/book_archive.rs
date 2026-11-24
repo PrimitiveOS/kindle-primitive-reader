@@ -17,8 +17,8 @@ pub(super) struct Archive {
     plan: Option<MovePlan>,
 }
 
-struct FolderPicker {
-    directory: PathBuf,
+pub(super) struct FolderPicker {
+    pub(super) directory: PathBuf,
     subdirectories: Vec<PathBuf>,
 }
 
@@ -62,13 +62,49 @@ impl Archive {
     }
 }
 
-fn folder_title(folder: &Path) -> String {
+pub(super) fn folder_title(folder: &Path) -> String {
     let mut title = "Documents".to_owned();
     for part in folder {
         title.push_str(" / ");
         title.push_str(&crate::library::display_filename(&part.to_string_lossy()));
     }
     title
+}
+
+impl FolderPicker {
+    pub(super) fn load(library: &Library, directory: PathBuf) -> io::Result<Self> {
+        let listing = with_storage(|| library.browse(&directory))?;
+        let subdirectories = listing
+            .entries
+            .into_iter()
+            .filter(|entry| matches!(entry.kind, BrowseKind::Folder))
+            .map(|entry| entry.path)
+            .collect();
+        Ok(Self {
+            directory,
+            subdirectories,
+        })
+    }
+
+    pub(super) fn items(
+        &self,
+        use_folder: Action,
+        browse: impl Fn(PathBuf) -> Action,
+    ) -> Vec<Item> {
+        let mut rows =
+            vec![Item::new("Use this folder", use_folder).detail(folder_title(&self.directory))];
+        if let Some(parent) = self.directory.parent() {
+            rows.push(Item::new("Up", browse(parent.to_owned())));
+        }
+        rows.extend(self.subdirectories.iter().map(|path| {
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            Item::new(
+                crate::library::display_filename(&name),
+                browse(path.clone()),
+            )
+        }));
+        rows
+    }
 }
 
 impl Reader {
@@ -84,24 +120,9 @@ impl Reader {
         let Some(picker) = &self.archive.picker else {
             return Vec::new();
         };
-        let mut rows = vec![
-            Item::new("Use this folder", Action::BookArchive(Command::UseFolder))
-                .detail(folder_title(&picker.directory)),
-        ];
-        if let Some(parent) = picker.directory.parent() {
-            rows.push(Item::new(
-                "Up",
-                Action::BookArchive(Command::Browse(parent.to_owned())),
-            ));
-        }
-        rows.extend(picker.subdirectories.iter().map(|path| {
-            let name = path.file_name().unwrap_or_default().to_string_lossy();
-            Item::new(
-                crate::library::display_filename(&name),
-                Action::BookArchive(Command::Browse(path.clone())),
-            )
-        }));
-        rows
+        picker.items(Action::BookArchive(Command::UseFolder), |path| {
+            Action::BookArchive(Command::Browse(path))
+        })
     }
 
     pub(super) fn archive_command(&mut self, command: Command) -> Result<()> {
@@ -146,18 +167,9 @@ impl Reader {
     }
 
     fn browse_archive_folders(&mut self, directory: PathBuf) -> io::Result<()> {
-        let listing = with_storage(|| self.library.browse(&directory))?;
-        let subdirectories = listing
-            .entries
-            .into_iter()
-            .filter(|entry| matches!(entry.kind, BrowseKind::Folder))
-            .map(|entry| entry.path)
-            .collect();
+        let picker = FolderPicker::load(&self.library, directory)?;
         self.show(Screen::ArchiveFolder);
-        self.archive.picker = Some(FolderPicker {
-            directory,
-            subdirectories,
-        });
+        self.archive.picker = Some(picker);
         Ok(())
     }
 
@@ -168,15 +180,18 @@ impl Reader {
         }
         self.save()?;
         let result = with_storage(|| self.library.archive_book(&plan))?;
+        let warning = self.metadata_archive_close_warning();
         self.close_book_to_library();
         let folder = plan.destination.parent().unwrap_or_else(|| Path::new(""));
         if self.browse_to(folder.to_owned()).is_ok() {
             self.reveal_book_row(&plan.destination);
         }
-        self.notice = Some(if result.source_kept {
-            "Archive copy saved. Source file kept.".into()
-        } else {
-            "Book moved to archive".into()
+        self.notice = warning.or_else(|| {
+            Some(if result.source_kept {
+                "Archive copy saved. Source file kept.".into()
+            } else {
+                "Book moved to archive".into()
+            })
         });
         Ok(())
     }

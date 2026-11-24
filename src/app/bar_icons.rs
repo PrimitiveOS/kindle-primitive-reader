@@ -89,7 +89,7 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         Action::Show(Screen::Library | Screen::OrganizeLibrary) | Action::CurrentBookFolder => {
             FOLDER
         }
-        Action::BookArchive(_) => ARCHIVE,
+        Action::BookArchive(_) | Action::MetadataArchive(_) => ARCHIVE,
         Action::Show(Screen::Contents | Screen::FixedContents) => BOOK,
         Action::Chapter(super::chapter_navigation::Direction::Previous) => FIRST_PAGE,
         Action::Chapter(super::chapter_navigation::Direction::Next) => LAST_PAGE,

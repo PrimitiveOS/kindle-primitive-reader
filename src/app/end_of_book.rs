@@ -236,6 +236,7 @@ impl Reader {
         let (entry, id) = self.current_document().ok_or("No open book")?;
         let entry = entry.clone();
         self.save()?;
+        self.save_metadata_archive(id, crate::library::metadata_archive::SavedOn::Delete)?;
         with_storage(|| self.library.delete_book_file(&entry, id))?;
         self.mark_dirty();
         self.save()?;
