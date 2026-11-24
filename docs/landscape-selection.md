@@ -35,3 +35,21 @@ preferences, history return, and clear confirmation in both orientations.
 [Online lookup history](screenshots/landscape-lookup-history.png)
 
 Physical device rotation needs Kindle verification.
+
+
+### Oasis reading-frame check
+
+The tested ARM Reader `f3215a3` opened an authored EPUB in Landscape Left.
+A timed touch contact selected **lantern** and opened the local dictionary
+above the word. A one-entry StarDict fixture installed in the scratch
+profile returned its authored definition. The Highlight toggle was
+reversed before Done. Done returned to the same selection and its
+action grid, including Dictionary and Translate. Cancel then restored
+the original page-2 framebuffer byte for byte.
+
+This check used the Oasis touch evdev node. It establishes the live
+selection and popup behavior for this EPUB, while the mechanical gesture,
+cross-page PDF selection and direct Kindle KOReader comparison remain open.
+
+[Dictionary definition on Oasis](screenshots/oasis-landscape-dictionary.png) ·
+[Selection actions on Oasis](screenshots/oasis-landscape-selection-actions.png)
