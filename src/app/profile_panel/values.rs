@@ -17,6 +17,7 @@ impl Reader {
         let selection = profile.selection();
         let general = matches!(self.screen, Screen::ReadingProfileValues(_));
         let margins = matches!(self.screen, Screen::ReadingProfileMargins(_));
+        let font_rendering = matches!(self.screen, Screen::ReadingProfileFontRendering(_));
         let fields = match self.screen {
             Screen::ReadingProfileMargins(_) => ValueField::MARGINS.as_slice(),
             Screen::ReadingProfileFontRendering(_) => ValueField::FONT_RENDERING.as_slice(),
@@ -95,9 +96,19 @@ impl Reader {
                         "Font rendering",
                         Action::Show(Screen::ReadingProfileFontRendering(index)),
                     )
-                    .detail("Weight and contrast"),
+                    .detail("Weight, contrast, hinting and kerning"),
+                );
+                items.push(
+                    Item::new(
+                        "Book rendering",
+                        Action::Show(Screen::ReadingProfileBookRendering(index)),
+                    )
+                    .detail("Publisher styles, fonts and images"),
                 );
             }
+        }
+        if font_rendering {
+            items.extend(self.profile_rendering_items(index, &super::rendering_choices::FONT));
         }
         items
     }

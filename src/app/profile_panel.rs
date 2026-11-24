@@ -4,6 +4,8 @@ use primitive_ui::{Sheet, SheetAction};
 use super::{navigation_layout::NavigationLayout, *};
 use crate::reading_profiles::{Field, FixedProfile};
 
+pub(super) mod rendering_choices;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Name {
     Create,
@@ -76,6 +78,12 @@ impl Reader {
         | Screen::ReadingProfileFontRendering(index) = self.screen
         {
             return self.profile_value_items(index);
+        }
+        if let Screen::ReadingProfileBookRendering(index) = self.screen {
+            return self.profile_rendering_items(index, &rendering_choices::BOOK);
+        }
+        if let Screen::ReadingProfileChoice(index, field) = self.screen {
+            return self.profile_rendering_choices(index, field);
         }
         if let Screen::ReadingProfileFields(index) = self.screen {
             return self.profile_field_items(index);

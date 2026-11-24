@@ -45,7 +45,8 @@ remain open in Reader. The Mac workflow covers management, lookup precedence,
 backup compatibility, and failed-write recovery.
 [Landscape simulator](screenshots/landscape-dictionary-preset.png) ·
 [Pinned snapshot and apply](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerdictionary.lua#L1970-L2013) ·
-[Pinned one-query selection](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerdictionary.lua#L1200-L1230)
+[Pinned one-query selection](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerdictionary.lua#L1200-L1230) ·
+[Executable preset management comparison](../scripts/compare-dictionary-presets.py)
 
 ## What determines a match
 

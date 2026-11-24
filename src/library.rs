@@ -523,6 +523,18 @@ impl BookPreferences {
         }
     }
 
+    pub(crate) fn saved_font_kerning_mode(&self) -> Option<crate::FontKerningMode> {
+        self.font_kerning_mode.or_else(|| {
+            self.font_kerning.map(|enabled| {
+                if enabled {
+                    crate::FontKerningMode::Best
+                } else {
+                    crate::FontKerningMode::Off
+                }
+            })
+        })
+    }
+
     pub fn apply_to(&self, settings: Settings) -> Settings {
         let permitted_margin = |margin: &u32| *margin <= settings.width.min(settings.height) / 4;
         let edge = |specific: Option<u32>, inherited: Option<u32>| {
@@ -537,16 +549,7 @@ impl BookPreferences {
             })
         };
         let kerning_mode = self
-            .font_kerning_mode
-            .or_else(|| {
-                self.font_kerning.map(|enabled| {
-                    if enabled {
-                        crate::FontKerningMode::Best
-                    } else {
-                        crate::FontKerningMode::Off
-                    }
-                })
-            })
+            .saved_font_kerning_mode()
             .or(settings.font_kerning_mode);
         let font_kerning = kerning_mode.map_or_else(
             || self.font_kerning.unwrap_or(settings.font_kerning),

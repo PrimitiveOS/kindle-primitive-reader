@@ -295,6 +295,8 @@ enum Screen {
     ReadingProfileValues(usize),
     ReadingProfileMargins(usize),
     ReadingProfileFontRendering(usize),
+    ReadingProfileBookRendering(usize),
+    ReadingProfileChoice(usize, reading_profiles::Field),
     ConfirmProfile(usize, profile_panel::Confirm),
     Find,
     Matches,
@@ -468,6 +470,8 @@ impl Screen {
             Self::ReadingProfileValues(_) => "Saved profile values",
             Self::ReadingProfileMargins(_) => "Saved page margins",
             Self::ReadingProfileFontRendering(_) => "Saved font rendering",
+            Self::ReadingProfileBookRendering(_) => "Saved book rendering",
+            Self::ReadingProfileChoice(_, field) => field.label(),
             Self::Find => "Find in book",
             Self::Matches => "Search results",
             Self::SearchSettings => "Search settings",
@@ -607,6 +611,7 @@ enum Action {
     EditReadingProfileFields(usize),
     ToggleReadingProfileField(reading_profiles::Field),
     SetReadingProfileFields(bool),
+    SetProfileRendering(usize, profile_panel::rendering_choices::Value),
     ToggleProfileMarginLink(usize),
     UpdateFooterPreset(usize),
     ApplyFooterPreset(usize),
@@ -2134,6 +2139,8 @@ impl Reader {
                 | Screen::ReadingProfileValues(_)
                 | Screen::ReadingProfileMargins(_)
                 | Screen::ReadingProfileFontRendering(_)
+                | Screen::ReadingProfileBookRendering(_)
+                | Screen::ReadingProfileChoice(_, _)
                 | Screen::ConfirmProfile(_, _)
         ) {
             return self.reading_profile_items();
@@ -4075,6 +4082,9 @@ impl Reader {
             Action::EditReadingProfileFields(index) => self.edit_profile_fields(index)?,
             Action::ToggleReadingProfileField(field) => self.toggle_profile_field(field)?,
             Action::SetReadingProfileFields(all) => self.set_profile_fields(all)?,
+            Action::SetProfileRendering(index, value) => {
+                self.save_profile_rendering_choice(index, value)?
+            }
             Action::ToggleProfileMarginLink(index) => self.toggle_profile_margin_link(index)?,
             Action::UpdateFooterPreset(index) => {
                 let mut presets = self.footer_presets.clone();
@@ -7639,6 +7649,7 @@ impl Reader {
                             RowAccessory::Toggle(self.profile_fields.contains(field))
                         }
                         Action::SetReadingProfileFields(_) => RowAccessory::None,
+                        Action::SetProfileRendering(_, _) => RowAccessory::None,
                         Action::ToggleProfileMarginLink(index) => RowAccessory::Toggle(
                             self.profiles
                                 .get(*index)
@@ -8817,8 +8828,12 @@ impl App for Reader {
                     Screen::ReadingProfile(_) => self.show(Screen::ReadingProfiles),
                     Screen::ReadingProfileValues(index) => self.show(Screen::ReadingProfile(index)),
                     Screen::ReadingProfileMargins(index)
-                    | Screen::ReadingProfileFontRendering(index) => {
+                    | Screen::ReadingProfileFontRendering(index)
+                    | Screen::ReadingProfileBookRendering(index) => {
                         self.show(Screen::ReadingProfileValues(index))
+                    }
+                    Screen::ReadingProfileChoice(index, field) => {
+                        self.show(profile_panel::rendering_choices::parent(index, field));
                     }
                     Screen::BookDetails => {
                         if self

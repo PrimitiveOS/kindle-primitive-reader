@@ -258,6 +258,26 @@ weight_choices[5].callback()
 assert(text.font_gamma == 25 and text.font_base_weight == 1)
 assert(text_live.font_gamma == live_gamma and text_live.font_base_weight == live_weight)
 
+for _, setting in ipairs({
+    {"font hinting", "font_hinting", {0, 1, 2}, 3, 2},
+    {"font kerning", "font_kerning", {0, 1, 2, 3}, 4, 3},
+    {"embedded style", "embedded_css", {false, true}, 2, 1},
+    {"embedded fonts", "embedded_fonts", {false, true}, 2, 1},
+    {"image scaling", "smooth_scaling", {false, true}, 1, 2},
+    {"invert images", "nightmode_images", {false, true}, 2, 1},
+}) do
+    local label, key, options, default, final = unpack(setting)
+    local live = text_live[key]
+    local choices = value_action(text_commands, section, label).sub_item_table_func()
+    assert(#choices == #options and choices[default].checked_func())
+    for i, option in ipairs(options) do
+        choices[i].callback()
+        assert(text[key] == option and choices[i].checked_func())
+    end
+    choices[final].callback()
+    assert(text[key] == options[final] and text_live[key] == live)
+end
+
 local live_sides = text_live.h_page_margins
 local live_top = text_live.t_page_margin
 local live_bottom = text_live.b_page_margin
@@ -375,6 +395,9 @@ assert(sent_setting("page_margin") == nil and sent_setting("contrast") == nil)
 assert(sent_setting("line_spacing") == 137 and sent_setting("zoom_overlap_v") == nil)
 assert(sent_setting("font_size") == 31.5 and sent_setting("render_dpi") == 167)
 assert(sent_setting("font_gamma") == 25 and sent_setting("font_base_weight") == 1)
+assert(sent_setting("font_hinting") == 1 and sent_setting("font_kerning") == 2)
+assert(sent_setting("embedded_css") == 0 and sent_setting("embedded_fonts") == 0)
+assert(sent_setting("smooth_scaling") == 1 and sent_setting("nightmode_images") == 0)
 local spaces = sent_setting("word_spacing")
 assert(spaces[1] == 100 and spaces[2] == 90 and sent_setting("word_expansion") == 15)
 local applied_margins = sent_setting("h_page_margins")
@@ -389,6 +412,7 @@ assert(profiles.data["PDF copy"] and visible.ok_text == "Delete")
 visible.ok_callback()
 assert(profiles.data["PDF copy"] == nil)
 print("Stock saved font rendering verified: eight indexed gamma and seven weight presets, with document isolation and reflow dispatch.")
+print("Stock saved hinting, kerning, embedded style/fonts and image switches verified, with reflow dispatch.")
 print("Stock saved word spacing pairs and expansion presets verified, with exact reader options 10–500 / 25–100 and 0–20.")
 print("Stock saved margins: nine L/R pair presets 5–140, T/B exact 0–140 with default 15 and held step 5, and separate link flag.")
 print("Stock saved font size: 12–44, default 22, step 0.5, held step 5; content zoom presets 0/48/96/167/212/300 dpi.")

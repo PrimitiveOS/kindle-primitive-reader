@@ -8,7 +8,7 @@ Open **Included settings** and use the switches to choose which settings the pro
 
 | Format | Settings saved |
 | --- | --- |
-| Reflowable books | Font and size, line and word spacing, margins, alignment, typography and publisher options, single or facing pages, and scroll or page turns. Older text profiles keep their existing names and values. |
+| Reflowable books | Font and size, line and word spacing, margins, alignment, typography, publisher styles and fonts, image scaling and night images, single or facing pages, and scroll or page turns. Older text profiles keep their existing names and values. |
 | PDF documents | Page fit and zoom, row or column tile count, PDF page rotation, scroll and spacing, scan contrast, and pan overlap and order. Tile magnification is calculated using the target page geometry. Each PDF retains its own saved crop area, OCR policy and annotations. Crop margin settings can update an automatically calculated crop. A mode that would disable an active continuous crop is refused. |
 | DjVu documents | Fit and tiled zoom, page rotation, pan overlap and order, adaptive contrast, white level, deskew, dithering and reflow line spacing. |
 | Comics | Fit and zoom, rotation, facing pages, reading direction, pan settings, scan contrast and dithering. A profile applies to CBZ, CBT or CBR through the same provider. |
@@ -29,9 +29,11 @@ The executable fixture runs stock snapshot creation, the font size, content zoom
 
 Open a profile and tap **Edit values**. Reflowable profiles have **Font
 size**, **Content zoom**, **Line spacing**, **Word spacing**, **Word
-expansion**, **Page margins**, and **Font rendering**. Fixed-page profiles
-have **Horizontal overlap**, **Vertical overlap**, and scan controls for
-supported formats. Tap a value to enter a number or use its step buttons.
+expansion**, **Page margins**, and **Font rendering**. **Book rendering**
+groups publisher styles, publisher fonts, image scaling, and night images.
+Fixed-page profiles have **Horizontal overlap**, **Vertical overlap**, and
+scan controls for supported formats. Tap a numeric value to type it or use
+its step buttons.
 **Set** saves the value in the profile.
 **Back** discards the draft.
 The open book keeps its settings until **Apply to this book** is used.
@@ -96,6 +98,23 @@ verified weight 0.75 and gamma 1.25, including one-level and five-level
 contrast stepping and the stored index of 21 for gamma 1.25.
 [Stock font rendering options](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/creoptions.lua#L571)
 · [Landscape saved contrast](screenshots/landscape-profile-font-contrast.png)
+
+**Font rendering** also offers Off, Native and Auto for hinting and Off,
+Fast, Good and Best for kerning. **Book rendering** lets you choose whether
+Publisher styles and Publisher fonts are on, whether image scaling is Fast
+or Smooth, and whether images stay Original or are Inverted in dark mode.
+Tap a choice to save it in the profile. Use **Apply to this book** to
+activate the included settings. A copied profile can set a night-image
+preference from either reading theme.
+
+The pinned profile dispatcher selects and saves all six options and
+dispatches them when the profile is executed on a reflowable book. The
+Mac workflow checks legacy on/off kerning, inherited defaults, cancelled
+selection, a conflicting file write, the included-setting mask and the
+saved reading position in landscape.
+[Landscape font choices](screenshots/landscape-profile-rendering-choices.png) ·
+[Pinned text options](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/creoptions.lua#L629-L745) ·
+[Executable comparison](../scripts/koreader-reading-profiles-check.lua)
 
 For PDF profiles, **Crop margin** accepts 0.00–1.50 inches, with a 0.10
 default. Tap to step by 0.01 or hold to step by 0.10. Apply updates the
