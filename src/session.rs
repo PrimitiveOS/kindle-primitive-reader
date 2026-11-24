@@ -225,6 +225,39 @@ impl FacingGeometry {
 }
 
 impl BookConfig {
+    /// Keep a prepared layout's measurements separate until its frame commits.
+    /// Only actual typography changes request a fresh background count.
+    pub(crate) fn prepare_page_layout(&mut self, previous: &Self) {
+        let next = screen_pages::layout_settings(self.settings);
+        let prior = screen_pages::layout_settings(previous.settings);
+        let resources_changed = self.fonts != previous.fonts
+            || self.user_styles != previous.user_styles
+            || self.user_hyphenation != previous.user_hyphenation;
+        if next == prior
+            && !resources_changed
+            && self.scroll == previous.scroll
+            && self.facing_pages == previous.facing_pages
+        {
+            return;
+        }
+        let typography = resources_changed
+            || Settings {
+                width: prior.width,
+                height: prior.height,
+                status_header_height: prior.status_header_height,
+                ..next
+            } != prior;
+        let eligible = self.engine == Engine::Parley
+            && !self.scroll
+            && !self.facing_pages
+            && !self.hidden_flows.enabled
+            && self
+                .book
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("epub"));
+        self.screen_pages = previous.screen_pages.for_relayout(typography, eligible);
+    }
+
     fn requested_facing_geometry(&self) -> Option<FacingGeometry> {
         let width = self.settings.width;
         (self.facing_pages && !self.scroll && width >= FACING_GUTTER + 2)
@@ -563,11 +596,11 @@ impl Reading {
     }
 
     pub(crate) fn request_screen_page_navigation(&mut self) {
-        if self.probe.screen_page_sources.is_none()
-            && !self.hides_nonlinear()
-            && !self.probe.is_vertical()
-        {
-            self.config.screen_pages.request_navigation();
+        if self.hides_nonlinear() || self.probe.is_vertical() {
+            return;
+        }
+        self.config.screen_pages.request_navigation();
+        if self.probe.screen_page_sources.is_none() {
             // The open chapter predates this on-demand index. The worker must
             // reproduce its page breaks and source revision before publishing it.
             self.probe.screen_page_sources =
@@ -849,6 +882,7 @@ impl Reading {
         let anchor = self.anchor();
         let mut config = self.config.clone();
         config.settings = settings;
+        config.prepare_page_layout(&self.config);
         *self = Self::restore(config, self.chapter, self.page, anchor.as_ref())?;
         Ok(())
     }
@@ -867,7 +901,7 @@ impl Reading {
             viewport.document_height(self.config.settings.height == self.config.viewport.height);
         // Counts and sample positions came from the old geometry. A failed
         // attempt must leave the currently visible session's cache untouched.
-        config.screen_pages = Default::default();
+        config.prepare_page_layout(&self.config);
         let candidate = Self::restore(config, self.chapter, self.page, Some(&anchor))?;
         if candidate.probe.is_vertical() != self.probe.is_vertical() {
             return Err("The new viewport could not keep this chapter's writing mode".into());
@@ -891,6 +925,7 @@ impl Reading {
     pub(crate) fn set_fonts(&mut self, fonts: Vec<PathBuf>) -> Result<()> {
         let mut config = self.config.clone();
         config.fonts = fonts;
+        config.prepare_page_layout(&self.config);
         let anchor = self.anchor();
         let candidate = Self::restore(config, self.chapter, self.page, anchor.as_ref())?;
         if anchor.is_some() && candidate.anchor() != anchor {
@@ -916,6 +951,7 @@ impl Reading {
         let mut config = self.config.clone();
         config.scroll = scroll;
         config.settings.status_header_height = status_header_height;
+        config.prepare_page_layout(&self.config);
         *self = Self::restore(config, self.chapter, self.page, anchor.as_ref())?;
         Ok(())
     }
@@ -927,6 +963,7 @@ impl Reading {
         let anchor = self.anchor();
         let mut config = self.config.clone();
         config.settings.status_header_height = status_header_height;
+        config.prepare_page_layout(&self.config);
         *self = Self::restore(config, self.chapter, self.page, anchor.as_ref())?;
         Ok(())
     }
@@ -940,6 +977,7 @@ impl Reading {
         }
         let mut config = self.config.clone();
         config.facing_pages = facing_pages;
+        config.prepare_page_layout(&self.config);
         let next = Self::restore(config, self.chapter, self.page, self.anchor().as_ref())?;
         if facing_pages && !next.uses_facing_pages() {
             return Err("Two-page layout is unavailable for this chapter".into());
@@ -2016,6 +2054,7 @@ impl App for Reading {
 
     fn storage_returned(&mut self) -> io::Result<()> {
         self.config.screen_pages.reset();
+        self.config.screen_pages.clear_typography();
         self.turns = PageTurns::new(Instant::now());
         self.schedule_prefetch();
         Ok(())

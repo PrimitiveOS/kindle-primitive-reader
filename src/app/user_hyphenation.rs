@@ -133,6 +133,7 @@ impl Reader {
                 let reading = &book.reading;
                 let mut config = reading.config.clone();
                 config.user_hyphenation = rules.clone();
+                config.prepare_page_layout(&reading.config);
                 Reading::restore(
                     config,
                     reading.chapter,

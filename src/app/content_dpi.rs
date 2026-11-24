@@ -100,6 +100,7 @@ impl Reader {
         }
         let mut config = active.reading.config.clone();
         config.settings.render_dpi = value;
+        config.prepare_page_layout(&active.reading.config);
         let location = position(&active.reading);
         // Prepare without touching the current page, selection or saved model.
         let candidate = Reading::restore(

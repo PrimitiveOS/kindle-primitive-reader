@@ -13,13 +13,15 @@ use std::time::{Duration, Instant};
 use primitive_app::with_storage;
 
 use super::{
-    FileStamp, Generation, PageSample, ScreenPageSources, checked_prefix, heading_pages, same_spine,
+    FileStamp, Generation, PageSample, ScreenPageSources, ScreenPages, checked_prefix,
+    heading_pages, same_spine,
 };
 use crate::epub::{Book, Chapter};
 use crate::session::Reading;
 use crate::{Engine, Probe, Result, Settings, user_hyphenation, user_styles};
 
 const FIRST_FRAME_DELAY: Duration = Duration::from_millis(380);
+const TYPOGRAPHY_DELAY: Duration = Duration::from_secs(3);
 const POLL_INTERVAL: Duration = Duration::from_millis(150);
 const CHAPTER_YIELD: Duration = Duration::from_millis(20);
 const STORAGE_CHUNK: usize = 128 * 1024;
@@ -32,8 +34,26 @@ const FIRMWARE_FONTS: &str = "/usr/java/lib/fonts";
 
 #[derive(Default)]
 pub(crate) struct Worker {
-    start_at: Option<Instant>,
+    waiting: Option<Waiting>,
     pending: Option<Pending>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Intent {
+    Visible,
+    Typography,
+}
+
+struct Waiting {
+    layout: ScreenPages,
+    intent: Intent,
+    after: Instant,
+}
+
+impl Waiting {
+    fn matches(&self, reading: &Reading, intent: Intent) -> bool {
+        Rc::ptr_eq(&self.layout.0, &reading.config.screen_pages.0) && self.intent == intent
+    }
 }
 
 struct ChapterSample {
@@ -51,22 +71,28 @@ struct Pending {
 
 impl Worker {
     pub(crate) fn cancel(&mut self) {
-        self.start_at = None;
+        self.waiting = None;
         if let Some(pending) = &self.pending {
             pending.cancelled.store(true, Ordering::Relaxed);
         }
     }
 
-    pub(crate) fn deadline(&self, reading: Option<&Reading>) -> Option<Instant> {
+    pub(crate) fn deadline(&self, request: Option<(&Reading, Intent)>) -> Option<Instant> {
         if let Some(pending) = &self.pending {
             return Some(pending.poll_at);
         }
-        let reading = reading?;
-        wants_background(reading).then(|| self.start_at.unwrap_or_else(Instant::now))
+        let (reading, intent) = request?;
+        wants_background(reading).then(|| {
+            self.waiting
+                .as_ref()
+                .filter(|waiting| waiting.matches(reading, intent))
+                .map_or_else(Instant::now, |waiting| waiting.after)
+        })
     }
 
     /// True once page numbers available on the current screen have changed.
-    pub(crate) fn tick(&mut self, now: Instant, reading: Option<&Reading>) -> bool {
+    pub(crate) fn tick(&mut self, now: Instant, request: Option<(&Reading, Intent)>) -> bool {
+        let reading = request.map(|(reading, _)| reading);
         if let Some(pending) = &mut self.pending {
             let current =
                 reading.is_some_and(|reading| current_generation(reading, &pending.generation));
@@ -92,15 +118,30 @@ impl Worker {
                 .is_some_and(|reading| accept_result(reading, &pending.generation, result));
         }
 
-        let Some(reading) = reading.filter(|reading| wants_background(reading)) else {
-            self.start_at = None;
+        let Some((reading, intent)) = request.filter(|(reading, _)| wants_background(reading))
+        else {
+            self.waiting = None;
             return false;
         };
-        let start_at = self.start_at.get_or_insert(now + FIRST_FRAME_DELAY);
-        if now < *start_at {
+        if self
+            .waiting
+            .as_ref()
+            .is_none_or(|waiting| !waiting.matches(reading, intent))
+        {
+            self.waiting = Some(Waiting {
+                layout: reading.config.screen_pages.clone(),
+                intent,
+                after: now
+                    + match intent {
+                        Intent::Visible => FIRST_FRAME_DELAY,
+                        Intent::Typography => TYPOGRAPHY_DELAY,
+                    },
+            });
+        }
+        if now < self.waiting.as_ref().unwrap().after {
             return false;
         }
-        self.start_at = None;
+        self.waiting = None;
 
         let mut slot = reading.config.screen_pages.0.borrow_mut();
         let probe = &reading.probe;
@@ -207,6 +248,15 @@ fn accept_result(reading: &Reading, id: &Rc<()>, result: Option<Vec<ChapterSampl
         generation.background_rejected = true;
         return false;
     };
+    if with_storage(|| Ok(ScreenPageSources::read(&reading.config)))
+        .ok()
+        .flatten()
+        .as_ref()
+        != Some(&generation.sources)
+    {
+        generation.background_rejected = true;
+        return false;
+    }
     let active = PageSample::new(&reading.probe);
     if result.iter().any(|part| {
         let ChapterSample {
@@ -238,6 +288,7 @@ fn accept_result(reading: &Reading, id: &Rc<()>, result: Option<Vec<ChapterSampl
     }
     generation.missing = 0;
     generation.prefix = Some(prefix);
+    reading.config.screen_pages.complete_typography();
     true
 }
 
@@ -438,15 +489,18 @@ mod tests {
         let mut worker = Worker::default();
         let now = Instant::now();
         let begin = |worker: &mut Worker, reading: &Reading| {
-            assert!(!worker.tick(now, Some(reading)));
-            assert!(!worker.tick(now + FIRST_FRAME_DELAY, Some(reading)));
+            assert!(!worker.tick(now, Some((reading, Intent::Visible))));
+            assert!(!worker.tick(now + FIRST_FRAME_DELAY, Some((reading, Intent::Visible))));
             assert!(worker.pending.is_some());
         };
         let drain = |worker: &mut Worker, reading: Option<&Reading>| {
             let timeout = Instant::now() + Duration::from_secs(4);
             while worker.pending.is_some() {
                 assert!(Instant::now() < timeout);
-                assert!(!worker.tick(Instant::now(), reading));
+                assert!(!worker.tick(
+                    Instant::now(),
+                    reading.map(|reading| (reading, Intent::Visible))
+                ));
                 thread::sleep(Duration::from_millis(5));
             }
         };

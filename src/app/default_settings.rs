@@ -136,6 +136,7 @@ impl Reader {
         config.scroll = prefs.scroll;
         config.facing_pages = prefs.facing_pages;
         config.fonts = fonts;
+        config.prepare_page_layout(&active.reading.config);
         // Keep the old reading object/frame until both preparation and the
         // atomic library write succeed. A failed reflow cannot alter the view.
         let mut candidate = Reading::restore(

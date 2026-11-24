@@ -104,6 +104,7 @@ impl Reader {
         }
         let mut config = active.reading.config.clone();
         config.settings = config.settings.with_logical_font(value)?;
+        config.prepare_page_layout(&active.reading.config);
         let location = position(&active.reading);
         let candidate = Reading::restore(
             config,
@@ -217,7 +218,7 @@ impl Reader {
             return Err("The document edition changed; reopen it before resetting text".into());
         }
         let preferences = BookPreferences::for_new_reflow();
-        let mut config = recovery.config;
+        let mut config = recovery.config.clone();
         config.settings = preferences.apply_to(self.device_reading_settings_for(config.viewport));
         let top_status_header = self.top_header_for_book(recovery.id);
         config.settings.status_header_height =
@@ -225,6 +226,7 @@ impl Reader {
         config.fonts = self.fonts.clone();
         config.scroll = false;
         config.facing_pages = false;
+        config.prepare_page_layout(&recovery.config);
         let candidate = if let Some(saved) = &recovery.position {
             Reading::restore(config, saved.chapter, saved.page, saved.anchor.as_ref())?
         } else {

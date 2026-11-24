@@ -22,7 +22,7 @@ pub(crate) struct ScreenPageSources {
 
 impl ScreenPageSources {
     pub(super) fn read(config: &BookConfig) -> Option<Self> {
-        if (config.settings.status_header_height == 0 && !config.screen_pages.1.get())
+        if (config.settings.status_header_height == 0 && !config.screen_pages.requested())
             || config.engine != Engine::Parley
             || config.scroll
             || config.facing_pages
@@ -77,7 +77,21 @@ impl FileStamp {
 }
 
 #[derive(Clone, Default)]
-pub(crate) struct ScreenPages(Rc<RefCell<Option<Generation>>>, Rc<Cell<bool>>);
+pub(crate) struct ScreenPages(Rc<RefCell<Option<Generation>>>, Rc<Cell<Demand>>);
+
+#[derive(Clone, Copy, Default)]
+struct Demand {
+    navigation: bool,
+    typography: Typography,
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum Typography {
+    #[default]
+    None,
+    Pending,
+    Counted,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Target {
@@ -88,7 +102,42 @@ pub(super) struct Target {
 
 impl ScreenPages {
     pub(super) fn request_navigation(&self) {
-        self.1.set(true);
+        let mut demand = self.1.get();
+        demand.navigation = true;
+        self.1.set(demand);
+    }
+
+    fn requested(&self) -> bool {
+        let demand = self.1.get();
+        demand.navigation || demand.typography != Typography::None
+    }
+
+    pub(super) fn for_relayout(&self, typography: bool, eligible: bool) -> Self {
+        let mut demand = self.1.get();
+        demand.typography = if eligible && (self.typography_pending() || typography) {
+            Typography::Pending
+        } else {
+            Typography::None
+        };
+        Self(Default::default(), Rc::new(Cell::new(demand)))
+    }
+
+    pub(crate) fn typography_pending(&self) -> bool {
+        self.1.get().typography == Typography::Pending
+    }
+
+    pub(super) fn clear_typography(&self) {
+        let mut demand = self.1.get();
+        demand.typography = Typography::None;
+        self.1.set(demand);
+    }
+
+    fn complete_typography(&self) {
+        if self.typography_pending() {
+            let mut demand = self.1.get();
+            demand.typography = Typography::Counted;
+            self.1.set(demand);
+        }
     }
 
     pub(super) fn target(
@@ -154,6 +203,9 @@ impl ScreenPages {
         generation.record(chapter, &probe.chapter, PageSample::new(probe));
         if !generation.rejected && generation.heading_pages[chapter].is_none() {
             generation.heading_pages[chapter] = heading_pages(probe);
+        }
+        if generation.prefix.is_some() {
+            self.complete_typography();
         }
     }
 
@@ -328,7 +380,7 @@ pub(super) fn heading_pages(probe: &Probe) -> Option<Vec<(usize, usize)>> {
     (probe.toc.len() < MAX_HEADINGS).then(|| probe.local_contents_pages().to_vec())
 }
 
-fn layout_settings(settings: Settings) -> Settings {
+pub(super) fn layout_settings(settings: Settings) -> Settings {
     let defaults = Settings::default();
     // These controls only repaint or change interaction state in Reading::reflow.
     Settings {
@@ -338,6 +390,7 @@ fn layout_settings(settings: Settings) -> Settings {
         page_overlap_lines: defaults.page_overlap_lines,
         page_overlap_style: defaults.page_overlap_style,
         invert_night_images: defaults.invert_night_images,
+        smooth_images: defaults.smooth_images,
         link_vertical_margins: defaults.link_vertical_margins,
         ..settings
     }

@@ -203,6 +203,7 @@ impl Reader {
         let location = position(&active.reading);
         let mut config = active.reading.config.clone();
         config.settings.percent_word_spacing = Some(value);
+        config.prepare_page_layout(&active.reading.config);
         let candidate = Reading::restore(
             config,
             location.chapter,

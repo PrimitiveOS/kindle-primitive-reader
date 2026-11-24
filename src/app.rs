@@ -148,6 +148,7 @@ use crate::reading_profiles::{self, Profile};
 use crate::reading_stats::ReadingStats;
 use crate::search::{MAX_FIXED_SEARCH_HITS, PdfSearch, PdfSearchHit, Search, SearchHit};
 use crate::selection::TextSelection;
+use crate::session::screen_pages::background::Intent as ScreenPageIntent;
 use crate::session::{BookConfig, DONE, PAGE_HEIGHT, PAGE_REFRESH_GAP, PageTurns, Reading};
 use crate::text_flow::TextFlow;
 use crate::{Engine, Probe, Result, Settings, TextAlignment};
@@ -3871,6 +3872,7 @@ impl Reader {
                             let mut config = reading.config.clone();
                             config.settings.height =
                                 config.viewport.document_height(controls.overlap_footer);
+                            config.prepare_page_layout(&reading.config);
                             Reading::restore(
                                 config,
                                 reading.chapter,
@@ -4598,6 +4600,7 @@ impl Reader {
         config.scroll = preferences.scroll;
         config.facing_pages = preferences.facing_pages;
         config.fonts = fonts;
+        config.prepare_page_layout(&active.reading.config);
         let mut candidate = Reading::restore_with_scroll_top(
             config,
             location.chapter,
@@ -5233,6 +5236,25 @@ impl Reader {
                 || header.reading_percent
                 || ((header.page_number || header.page_count)
                     && self.top_header_page_labels().is_none()))
+    }
+
+    fn screen_page_count_intent(&self) -> Option<ScreenPageIntent> {
+        if self.needs_screen_page_count() {
+            return Some(ScreenPageIntent::Visible);
+        }
+        (self.stats_awake
+            && self.screen == Screen::Book
+            && self.touch_selection_enabled()
+            && self.touch_hold.is_none()
+            && self.selection.is_none()
+            && self.closing_profile.is_none()
+            && self.pending_opening_profiles.is_none()
+            && !self.opening_ask_visible()
+            && self
+                .active
+                .as_ref()
+                .is_some_and(|book| book.reading.config.screen_pages.typography_pending()))
+        .then_some(ScreenPageIntent::Typography)
     }
 
     fn sync_auto_turn(&mut self, now: Instant) {
@@ -9455,10 +9477,8 @@ impl App for Reader {
             .filter(|_| matches!(self.screen, Screen::Fixed | Screen::Skim))
             .and_then(|fixed| fixed.reading.deadline());
         let screen_pages = self
-            .active
-            .as_ref()
-            .filter(|_| self.needs_screen_page_count())
-            .map(|active| &active.reading);
+            .screen_page_count_intent()
+            .and_then(|intent| self.active.as_ref().map(|active| (&active.reading, intent)));
         page.into_iter()
             .chain(fixed_page)
             .chain(self.screen_page_worker.deadline(screen_pages))
@@ -9512,17 +9532,14 @@ impl App for Reader {
         if let Some(change) = self.opening_execution_tick(now) {
             return change;
         }
-        let needs_screen_page_count = self.needs_screen_page_count();
-        let screen_pages = self
-            .active
-            .as_ref()
-            .filter(|_| needs_screen_page_count)
-            .map(|active| &active.reading);
+        let intent = self.screen_page_count_intent();
+        let screen_pages =
+            intent.and_then(|intent| self.active.as_ref().map(|active| (&active.reading, intent)));
         let page_count_changed = self.screen_page_worker.tick(now, screen_pages);
         if let Some(change) = self.poll_screen_page_jump() {
             return change;
         }
-        if page_count_changed {
+        if page_count_changed && intent == Some(ScreenPageIntent::Visible) {
             return Change::Partial;
         }
         if self
@@ -10350,6 +10367,9 @@ mod external_range_tests;
 
 #[cfg(test)]
 mod viewport_chrome_tests;
+
+#[cfg(test)]
+mod typography_pagination_tests;
 
 #[cfg(test)]
 mod tests {

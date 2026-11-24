@@ -29,11 +29,35 @@ partial rendering off, typography changes take the full render path.
 
 Reader already lays out the active spine item first. Its background
 worker supplies verified whole-book numbering for the supported EPUB
-scope below, on demand from the header or Go to page. The setting and full
-render transaction following typography changes remain open. Acceptance
-needs a fixed edition and source anchor through both paths, an intentional
-edit while background layout is pending, and cancellation during sleep or
-USB handoff. [KOReader preference](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerrolling.lua#L445-L505) · [KOReader render and reload states](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerrolling.lua#L1740-L1880)
+scope below. An accepted typography change also starts this count with the
+header off. The new chapter frame comes first at the current passage.
+After returning to reading, the worker waits three seconds before counting.
+The header and a submitted Go to page request retain their shorter delay.
+Opening an ordinary book with the header off stays idle. Gamma, contrast,
+image smoothing and other paint-only changes keep the existing pagination.
+
+Direct text controls, content zoom, font and spacing editors, reading
+profiles, document defaults, publisher and user styles and hyphenation use
+the same generation path. A newly prepared layout has its own page counts.
+A failed settings save keeps the current frame and exact count. Another
+edit or viewport turn replaces the pending geometry. Sleep cancels active
+work and lets the same open book restart on waking. USB handoff clears the
+automatic request. The worker installs only a verified page index into
+the current chapter session, so Go to page can immediately use the new
+count. The default chapter footer and visible reading passage retain their
+pixels when the count becomes ready. [Reader workflow](../src/app/typography_pagination_tests.rs) ·
+[Edited EPUB](screenshots/typography-pagination-edited-epub.png) ·
+[Verified Go to page](screenshots/typography-pagination-completed-jump.png)
+
+The pinned native test enables partial rendering on a cached,
+multi-fragment EPUB. It checks the delayed state after a font edit,
+draws the active fragment, restores the XPointer, then verifies the full
+page count against a fresh full render. Reader's current path prepares the
+active chapter and computes an independent page index. A per-book or
+global mode control and a full-document frame transaction remain open.
+[KOReader preference](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerrolling.lua#L445-L505) ·
+[KOReader render and reload states](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerrolling.lua#L1740-L1880) ·
+[Native CREngine test](../scripts/koreader-partial-typography-check.lua)
 
 ## Exact page count
 
@@ -43,7 +67,8 @@ precedence. The header starts a background count when the reading screen is
 visible and a screen number or count is enabled. The first page is painted
 before the worker starts. An explicit whole-document jump from Go to page
 can also request the same index with the header off. Visiting a chapter
-records its count and source revision while an index is in use.
+records its count and source revision while an index is in use. A
+typography edit can fill the index before opening either control.
 [Go to page](go-to-page.md)
 
 A result needs a positive count for every spine item in one layout. The

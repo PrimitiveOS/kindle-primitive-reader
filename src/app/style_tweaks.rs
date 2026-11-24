@@ -84,6 +84,7 @@ impl Reader {
         } else {
             let mut config = active.reading.config.clone();
             config.user_styles = snapshot;
+            config.prepare_page_layout(&active.reading.config);
             Some(Reading::restore(
                 config,
                 active.reading.chapter,
