@@ -26,3 +26,9 @@ Reader’s Documents view keeps the current folder, filter, and visible item whe
 ## Cross-book Bookmark Browser
 
 The cross-book browser uses the viewport for search, filter cards, result rows, note previews, and descriptions. Rotating the result list keeps its first visible item in view through both turns. Changing the page establishes a new visible item to retain. A multi-page note or description retains its byte offset through rewrapping, and a rejected frame retains the previously measured pages. The simulator browsed an authored EPUB and PDF, searched by note text with the landscape keyboard, and changed orientation while a long note was open. [Saved note screenshot](screenshots/landscape-bookmark-detail.png)
+
+## Page links, location history, and printed pages
+
+Links on this page, Location history, and the stable page number list use the reading viewport for the rows, Back button, and pager. The printed-page list keeps its first visible label in view through a rotation and back, while the current printed-page marker updates from the newly laid-out book. Location history reuses the original history index. A link list keeps the previous first destination if it is still on the page after reflow. If that link has moved off the page, the list stays within the available links. The address and QR panels use the same viewport and stay inside the display.
+
+Run `cargo test --locked --lib reading_lists_viewport` to verify these paths with an authored EPUB page list, EPUB reading locations, and an authored PDF with link annotations. The tests cover a rejected viewport, wide-row input, the printed-page first and last shortcuts, exact reading destinations, and the PDF link’s offline copy and QR actions. Set `READER_SELECTION_VIEWPORT_CAPTURES` to save the 1680 × 1264 simulation. [Printed pages screenshot](screenshots/landscape-publisher-pages.png)

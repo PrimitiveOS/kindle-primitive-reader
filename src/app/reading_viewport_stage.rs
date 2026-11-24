@@ -1,8 +1,11 @@
 //! Hold a prepared reading view until the runtime verifies its presentation.
 
 use super::{
-    Reader, ReadingPosition, Screen, bookmark_browser, footnote_popup::Footnote,
-    list_density::Geometry, navigation_layout::NavigationLayout, selection_html::Inspector,
+    Reader, ReadingPosition, Screen, bookmark_browser,
+    footnote_popup::Footnote,
+    list_density::Geometry,
+    navigation_layout::{NavigationLayout, ReadingListStage},
+    selection_html::Inspector,
 };
 use crate::Result;
 use crate::fixed_session::PreparedFixedViewport;
@@ -31,6 +34,7 @@ pub(super) struct Stage {
     visual_navigation: super::visual_navigation::VisualNavigation,
     matches: Option<super::search_layout::MatchStage>,
     bookmark_page: Option<(usize, usize)>,
+    reading_list: Option<ReadingListStage>,
     bookmark_text_pages: Option<Vec<Range<usize>>>,
 }
 
@@ -80,6 +84,9 @@ impl Reader {
             matches: (target != from && self.screen == Screen::Matches)
                 .then(|| super::search_layout::MatchStage::capture(self)),
             bookmark_page,
+            reading_list: (target != from)
+                .then(|| ReadingListStage::capture(self))
+                .flatten(),
             bookmark_text_pages: None,
         })
     }
@@ -121,6 +128,10 @@ impl Reader {
     fn draw_staged_content(&mut self, staged: &mut Stage, canvas: &mut Canvas) -> Result<()> {
         if let Some(matches) = &mut staged.matches {
             matches.draw(self, canvas);
+            return Ok(());
+        }
+        if let Some(list) = &mut staged.reading_list {
+            list.draw(self, canvas);
             return Ok(());
         }
         if staged.from != staged.target && staged.visual_navigation.draw(self, canvas)? {
@@ -176,6 +187,9 @@ impl Reader {
         if let Some((page, ordinal)) = staged.bookmark_page {
             self.set_bookmark_list_anchor(page, ordinal);
         }
+        if let Some(list) = staged.reading_list {
+            list.commit(self);
+        }
         if let Some(pages) = staged.bookmark_text_pages {
             self.bookmark_browser.replace_text_pages(pages);
         }
@@ -228,6 +242,10 @@ impl Stage {
             || reader.current_position() != self.position
             || reader.reading_viewport() != self.from
             || !self.visual_navigation.matches(reader)
+            || self
+                .reading_list
+                .as_ref()
+                .is_some_and(|list| !list.matches(reader))
             || self
                 .matches
                 .as_ref()

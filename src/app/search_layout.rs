@@ -8,10 +8,6 @@ pub(super) struct SearchLayout {
 }
 
 impl SearchLayout {
-    pub(super) const PORTRAIT: Self = Self {
-        viewport: ReadingViewport::PORTRAIT,
-    };
-
     pub(super) fn width(self) -> i32 {
         self.viewport.dimensions().0 as i32
     }

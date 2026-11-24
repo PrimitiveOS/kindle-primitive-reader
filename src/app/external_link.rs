@@ -1,6 +1,7 @@
 //! An offline external-link dialog over the reading page. The Kindle reference
 //! offers an address, local clipboard and QR transfer on devices without an OS URL handler.
 
+use super::navigation_layout::NavigationLayout;
 use super::*;
 use primitive_ui::TextStyle;
 use qrcodegen::{QrCode, QrCodeEcc};
@@ -27,20 +28,30 @@ pub(super) struct LinkPopup {
 
 impl LinkPopup {
     pub(super) fn draw(&self, canvas: &mut Canvas) {
+        let layout = NavigationLayout {
+            width: canvas.bounds().w,
+            height: canvas.bounds().h,
+        };
+        let place = |rect| layout.centered(rect);
         if let Some(code) = &self.qr {
-            canvas.popup(QR_PANEL);
+            canvas.popup(place(QR_PANEL));
             canvas.text(
-                Rect::new(114, 294, 814, 75),
+                place(Rect::new(114, 294, 814, 75)),
                 "Scan link",
                 TextStyle::new(41).bold(),
             );
-            canvas.button(QR_CLOSE, "Back", false, false);
+            canvas.button(place(QR_CLOSE), "Back", false, false);
             // Model 2 QR codes require four light modules on each side.
             let scale = 848 / (code.size() + 8);
             let size = scale * (code.size() + 8);
-            let x0 = (WIDTH as i32 - size) / 2;
-            let y0 = 405 + (848 - size) / 2;
-            canvas.fill(Rect::new(x0, y0, size, size), 255);
+            let area = place(Rect::new(
+                (WIDTH as i32 - size) / 2,
+                405 + (848 - size) / 2,
+                size,
+                size,
+            ));
+            let (x0, y0) = (area.x, area.y);
+            canvas.fill(area, 255);
             for y in 0..code.size() {
                 for x in 0..code.size() {
                     if code.get_module(x, y) {
@@ -53,27 +64,27 @@ impl LinkPopup {
             }
             return;
         }
-        canvas.popup(PANEL);
+        canvas.popup(place(PANEL));
         canvas.text(
-            Rect::new(114, 527, 814, 75),
+            place(Rect::new(114, 527, 814, 75)),
             "Link address",
             TextStyle::new(41).bold(),
         );
-        canvas.button(CLOSE, "Close", false, false);
+        canvas.button(place(CLOSE), "Close", false, false);
         let style = TextStyle::new(34).lines(3).break_long_words();
-        let pages = canvas.text_pages(ADDRESS, &self.address, style);
+        let pages = canvas.text_pages(place(ADDRESS), &self.address, style);
         self.pages.set(pages.len().max(1));
         if let Some(range) = pages.get(self.page) {
-            canvas.text(ADDRESS, &self.address[range.clone()], style);
+            canvas.text(place(ADDRESS), &self.address[range.clone()], style);
         }
-        canvas.button(COPY, "Copy", false, false);
-        canvas.button(CODE, "QR code", false, false);
+        canvas.button(place(COPY), "Copy", false, false);
+        canvas.button(place(CODE), "QR code", false, false);
         if self.pages.get() > 1 {
-            canvas.button(PREV, "Back", false, false);
-            canvas.button(NEXT, "Next", false, false);
+            canvas.button(place(PREV), "Back", false, false);
+            canvas.button(place(NEXT), "Next", false, false);
         }
         if let Some(message) = self.message {
-            canvas.text(Rect::new(114, 750, 1038, 53), message, CAPTION);
+            canvas.text(place(Rect::new(114, 750, 1038, 53)), message, CAPTION);
         }
     }
 
@@ -142,34 +153,37 @@ impl Reader {
     }
 
     pub(super) fn link_address_input(&mut self, input: Input) -> Change {
+        let layout = self.navigation_layout();
+        let place = |rect| layout.centered(rect);
+        let done = self.reading_viewport().done();
         let Some(popup) = &mut self.link_popup else {
             return Change::None;
         };
         if let Input::Tap(x, y) = input {
-            if DONE.contains(x, y) {
+            if done.contains(x, y) {
                 self.link_popup = None;
                 return self.exit();
             }
             if popup.qr.is_some() {
-                if QR_CLOSE.contains(x, y) {
+                if place(QR_CLOSE).contains(x, y) {
                     popup.qr = None;
-                } else if !QR_PANEL.contains(x, y) {
+                } else if !place(QR_PANEL).contains(x, y) {
                     self.link_popup = None;
                 }
-            } else if CLOSE.contains(x, y) || !PANEL.contains(x, y) {
+            } else if place(CLOSE).contains(x, y) || !place(PANEL).contains(x, y) {
                 self.link_popup = None;
-            } else if COPY.contains(x, y) {
+            } else if place(COPY).contains(x, y) {
                 self.clipboard_text = Some(popup.address.clone());
                 self.link_popup = None;
                 self.notice = Some("Link copied".into());
-            } else if CODE.contains(x, y) {
+            } else if place(CODE).contains(x, y) {
                 match QrCode::encode_text(&popup.address, QrCodeEcc::Low) {
                     Ok(code) => popup.qr = Some(code),
                     Err(_) => popup.message = Some("This address is too long for a QR code"),
                 }
-            } else if PREV.contains(x, y) {
+            } else if place(PREV).contains(x, y) {
                 popup.turn(-1);
-            } else if NEXT.contains(x, y) {
+            } else if place(NEXT).contains(x, y) {
                 popup.turn(1);
             }
         } else if popup.qr.is_none() {
@@ -348,5 +362,100 @@ mod tests {
         app.paste_text();
         assert_eq!(app.editor.string(), "x");
         assert_eq!(app.clipboard_text.as_deref(), Some(address.as_str()));
+    }
+
+    #[test]
+    fn reading_lists_viewport_pdf_links_retain_the_destination_and_keep_qr_controls_visible() {
+        use crate::app::selection_viewport_tests::{adopt, press, tap};
+        use crate::session::ReadingViewport;
+
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Links supplement.pdf");
+        let address = "https://example.invalid/harbour";
+        let regions = (0..14)
+            .map(|i| {
+                let y = 542 - i * 20;
+                let target = if i == 13 {
+                    format!("/A << /S /URI /URI ({address}) >>")
+                } else {
+                    "/Dest [4 0 R /Fit]".into()
+                };
+                format!(
+                    "<< /Subtype /Link /Rect [44 {y} 174 {}] {target} >>",
+                    y + 15
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        fs::write(
+            &path,
+            pdf_objects(&[
+                "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+                "<< /Type /Pages /Count 2 /Kids [3 0 R 4 0 R] >>".to_owned(),
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 440 600] /Annots 5 0 R >>".to_owned(),
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 440 600] >>".to_owned(),
+                format!("[{regions}]"),
+            ]),
+        )
+        .unwrap();
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+        app.open_path(&path).unwrap();
+        app.show(Screen::Links);
+        assert_eq!(app.list_window().0, 14);
+        assert_eq!(app.input(Input::PageForward), Change::Partial);
+        let first = match app.list_window().1.remove(0).action {
+            Action::OpenFixedLink(link) => link,
+            _ => panic!("Expected a PDF annotation destination"),
+        };
+        let mut canvas = adopt(&mut app, ReadingViewport::LANDSCAPE, 2);
+        let layout = app.navigation_layout();
+        assert!(
+            app.list_window().1.iter().any(|item| {
+                matches!(&item.action, Action::OpenFixedLink(link) if *link == first)
+            })
+        );
+        let origin = app.current_history_location();
+        let index = app
+            .list_window()
+            .1
+            .iter()
+            .position(|item| item.detail.as_deref() == Some(address))
+            .unwrap();
+        let row = app.list_geometry().row(index);
+        let hit = Input::Tap((row.right() - 24) as f32, (row.y + row.h / 2) as f32);
+        assert_eq!(app.input(hit), Change::Partial);
+        assert_eq!(app.link_popup.as_ref().unwrap().address, address);
+        let qr = layout.centered(CODE);
+        press(&app, &mut canvas, qr, false);
+        tap(&mut app, qr);
+        assert!(app.link_popup.as_ref().unwrap().qr.is_some());
+        assert!(layout.centered(QR_PANEL).bottom() < layout.height);
+        tap(&mut app, layout.centered(QR_CLOSE));
+        assert!(app.link_popup.as_ref().unwrap().qr.is_none());
+        tap(&mut app, layout.centered(COPY));
+        assert_eq!(app.clipboard_text.as_deref(), Some(address));
+        assert!(app.link_popup.is_none());
+        assert_eq!(app.screen, Screen::Fixed);
+        assert_eq!(app.current_history_location(), origin);
+
+        app.show(Screen::Links);
+        let internal = app.list_geometry().row(0);
+        assert_eq!(
+            app.input(Input::Tap(
+                (internal.right() - 24) as f32,
+                (internal.y + internal.h / 2) as f32
+            )),
+            Change::Partial
+        );
+        assert_eq!(app.current_position().unwrap().page, 1);
+        app.activate(Action::ReturnToLocation).unwrap();
+        assert_eq!(app.current_history_location(), origin);
+        app.show(Screen::Links);
+        tap(&mut app, layout.back());
+        assert_eq!(app.screen, Screen::FixedTools);
     }
 }

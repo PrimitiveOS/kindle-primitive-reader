@@ -1,5 +1,8 @@
 //! Geometry shared by the in-book destination editor and navigation lists.
-use super::{Canvas, HEIGHT, LIST_X, Layout, NEXT, PREV, Reader, Rect, Screen, WIDTH};
+use super::{
+    Action, Canvas, HEIGHT, Item, LIST_X, Layout, NEXT, PREV, Reader, Rect, Screen, WIDTH,
+};
+use primitive_app::App;
 
 #[derive(Clone, Copy)]
 pub(super) struct NavigationLayout {
@@ -51,6 +54,15 @@ impl NavigationLayout {
         )
     }
 
+    pub(super) fn edge_footer(self, face: Rect) -> Rect {
+        let x = if face.x >= Self::PORTRAIT.width / 2 {
+            face.x + self.width - Self::PORTRAIT.width
+        } else {
+            face.x
+        };
+        Rect::new(x, self.bottom_y(face.y), face.w, face.h)
+    }
+
     pub(super) fn centered(self, rect: Rect) -> Rect {
         Rect::new(
             rect.x + (self.width - Self::PORTRAIT.width) / 2,
@@ -91,9 +103,17 @@ impl Screen {
         )
     }
 
+    pub(super) fn uses_reading_list_viewport(self) -> bool {
+        matches!(
+            self,
+            Self::Links | Self::LocationHistory | Self::PublisherPages
+        )
+    }
+
     pub(super) fn uses_navigation_viewport(self) -> bool {
         self.is_contents()
             || self.uses_contents_list_viewport()
+            || self.uses_reading_list_viewport()
             || self.uses_reading_text_editor()
             || self.is_bookmark_list()
             || matches!(
@@ -124,5 +144,108 @@ impl Reader {
     }
 }
 
+#[derive(Clone)]
+pub(super) struct ReadingListAnchor {
+    page: usize,
+    ordinal: usize,
+    link: Option<std::rc::Rc<Item>>,
+}
+
+// Keep the earliest visible destination while rebuilding a list at a new size.
+// Page links can change with reflow, so match their original destination first.
+pub(super) struct ReadingListStage {
+    original_page: usize,
+    first: usize,
+    link: Option<std::rc::Rc<Item>>,
+    presented: Option<(usize, Option<usize>)>,
+}
+
+impl ReadingListStage {
+    pub(super) fn capture(reader: &Reader) -> Option<Self> {
+        if !reader.screen.uses_reading_list_viewport() {
+            return None;
+        }
+        let retained = reader
+            .reading_list_anchor
+            .as_ref()
+            .filter(|anchor| anchor.page == reader.list_page);
+        let first = retained.map_or_else(
+            || reader.list_page * reader.list_geometry().rows,
+            |anchor| anchor.ordinal,
+        );
+        let link = retained.and_then(|anchor| anchor.link.clone()).or_else(|| {
+            if reader.screen == Screen::Links {
+                reader
+                    .page_link_items()
+                    .into_iter()
+                    .nth(first)
+                    .map(std::rc::Rc::new)
+            } else {
+                None
+            }
+        });
+        Some(Self {
+            original_page: reader.list_page,
+            first,
+            link,
+            presented: None,
+        })
+    }
+
+    pub(super) fn matches(&self, reader: &Reader) -> bool {
+        self.original_page == reader.list_page
+    }
+
+    pub(super) fn draw(&mut self, reader: &mut Reader, canvas: &mut Canvas) {
+        let first = if reader.screen == Screen::Links {
+            let items = reader.page_link_items();
+            self.link
+                .as_ref()
+                .and_then(|before| items.iter().position(|after| same_link(before, after)))
+                .unwrap_or_else(|| self.first.min(items.len().saturating_sub(1)))
+        } else {
+            self.first
+        };
+        let page = first / reader.list_geometry().rows;
+        let current = if reader.screen == Screen::PublisherPages {
+            reader.visible_publisher_page()
+        } else {
+            reader.current_contents_row
+        };
+        let previous_page = std::mem::replace(&mut reader.list_page, page);
+        let previous_current = std::mem::replace(&mut reader.current_contents_row, current);
+        reader.draw(canvas);
+        reader.list_page = previous_page;
+        reader.current_contents_row = previous_current;
+        self.presented = Some((page, current));
+    }
+
+    pub(super) fn commit(self, reader: &mut Reader) {
+        if let Some((page, current)) = self.presented {
+            reader.list_page = page;
+            reader.current_contents_row = current;
+            reader.reading_list_anchor = Some(ReadingListAnchor {
+                page,
+                ordinal: self.first,
+                link: self.link,
+            });
+        }
+    }
+}
+
+fn same_link(before: &Item, after: &Item) -> bool {
+    before.title == after.title
+        && match (&before.action, &after.action) {
+            (Action::Jump(left), Action::Jump(right)) => left == right,
+            (Action::OpenFixedLink(left), Action::OpenFixedLink(right)) => left == right,
+            (Action::OpenLinkAddress(left), Action::OpenLinkAddress(right)) => left == right,
+            _ => false,
+        }
+}
+
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "navigation_layout/reading_lists_tests.rs"]
+mod reading_lists_tests;

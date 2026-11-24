@@ -872,6 +872,7 @@ pub struct Reader {
     top_header_about: bool,
     top_header_font_picker: Option<top_header_font::Picker>,
     list_page: usize,
+    reading_list_anchor: Option<navigation_layout::ReadingListAnchor>,
     matches_page: usize,
     match_window: Option<search_layout::MatchWindow>,
     matches_return_to_reading: bool,
@@ -1098,6 +1099,7 @@ impl Reader {
             top_header_about: false,
             top_header_font_picker: None,
             list_page: 0,
+            reading_list_anchor: None,
             matches_page: 0,
             match_window: None,
             matches_return_to_reading: false,
@@ -1503,6 +1505,7 @@ impl Reader {
     }
 
     fn show(&mut self, screen: Screen) {
+        self.reading_list_anchor = None;
         if matches!(self.screen, Screen::BookmarkBrowser(_))
             || matches!(screen, Screen::BookmarkBrowser(_))
         {
@@ -1849,7 +1852,7 @@ impl Reader {
             let page_rows = if screen.is_contents() {
                 self.contents_rows()
             } else {
-                ROWS_PER_PAGE
+                self.list_geometry().rows
             };
             self.current_contents_row.unwrap_or_default() / page_rows
         };
@@ -2011,7 +2014,7 @@ impl Reader {
             return self.bookmark_window(page, first, rows);
         }
         if self.screen == Screen::PublisherPages {
-            return self.publisher_page_window(first, ROWS_PER_PAGE);
+            return self.publisher_page_window(first, rows);
         }
         if let Screen::ReadingHistory(page) = self.screen
             && let Some(report) = self.history_report_window(page, first, rows)
@@ -2048,6 +2051,7 @@ impl Reader {
 
     fn navigate_list_page(&mut self, page: usize) {
         self.list_page = page;
+        self.reading_list_anchor = None;
         match self.screen {
             Screen::Matches => self.remember_match_window(page),
             Screen::BookmarkBrowser(_) => self.bookmark_browser.reset_list_anchor(),
@@ -7536,7 +7540,7 @@ impl Reader {
         let (count, mut items) = self.list_window();
         if let Some(current) = self
             .current_contents_row
-            .and_then(|row| row.checked_sub(self.list_page * ROWS_PER_PAGE))
+            .and_then(|row| row.checked_sub(self.list_page * self.list_geometry().rows))
             .and_then(|row| items.get_mut(row))
         {
             let context = match self.screen {
@@ -7673,11 +7677,6 @@ impl Reader {
                 }
             }
         }
-        let layout = if self.screen == Screen::Matches {
-            self.search_layout()
-        } else {
-            search_layout::SearchLayout::PORTRAIT
-        };
         if rows.is_empty() {
             let empty = match self.screen {
                 Screen::Bookmarks | Screen::FixedBookmarks | Screen::Highlights => {
@@ -7710,22 +7709,22 @@ impl Reader {
             let last = count.saturating_sub(1) / page_rows;
             for (rect, icon, available) in [
                 (
-                    layout.list_button(FIRST_MATCH_PAGE),
+                    navigation.edge_footer(FIRST_MATCH_PAGE),
                     bar_icons::FIRST_PAGE,
                     self.list_page > 0,
                 ),
                 (
-                    layout.list_button(PREV_MATCH_PAGE),
+                    navigation.edge_footer(PREV_MATCH_PAGE),
                     bar_icons::PREVIOUS_PAGE,
                     self.list_page > 0,
                 ),
                 (
-                    layout.list_button(NEXT_MATCH_PAGE),
+                    navigation.edge_footer(NEXT_MATCH_PAGE),
                     bar_icons::NEXT_PAGE,
                     self.list_page < last,
                 ),
                 (
-                    layout.list_button(LAST_MATCH_PAGE),
+                    navigation.edge_footer(LAST_MATCH_PAGE),
                     bar_icons::LAST_PAGE,
                     self.list_page < last,
                 ),
@@ -7741,7 +7740,7 @@ impl Reader {
                         42,
                     ),
                     icon,
-                    if self.screen == Screen::Matches && canvas.is_control_pressed(rect) {
+                    if canvas.is_control_pressed(rect) {
                         255
                     } else if available {
                         20
@@ -7758,12 +7757,12 @@ impl Reader {
                 ""
             };
             canvas.text(
-                layout.list_caption(435, 104, 72),
+                navigation.footer_text(435, 104, 72),
                 &format!("{first}–{last} of {count}{more}"),
-                layout.counter_style(),
+                self.search_layout().counter_style(),
             );
             if let Some(notice) = &self.notice {
-                canvas.text(layout.list_caption(LIST_X, 179, 64), notice, CAPTION);
+                canvas.text(navigation.footer_text(LIST_X, 179, 64), notice, CAPTION);
             }
         } else {
             if self.list_page > 0 {
@@ -8617,11 +8616,6 @@ impl App for Reader {
         }
         let (count, mut items) = self.list_window();
         let geometry = self.list_geometry();
-        let layout = if self.screen == Screen::Matches {
-            self.search_layout()
-        } else {
-            search_layout::SearchLayout::PORTRAIT
-        };
         let broad = self.has_list_shortcuts(count);
         let navigation = self
             .screen
@@ -8631,20 +8625,21 @@ impl App for Reader {
             || primitive_ui::back_button(WIDTH as i32),
             |layout| layout.back(),
         );
+        let shortcuts = navigation.unwrap_or(navigation_layout::NavigationLayout::PORTRAIT);
         let (prev, next) = if broad {
             (
-                layout.list_button(PREV_MATCH_PAGE),
-                layout.list_button(NEXT_MATCH_PAGE),
+                shortcuts.edge_footer(PREV_MATCH_PAGE),
+                shortcuts.edge_footer(NEXT_MATCH_PAGE),
             )
         } else if let Some(layout) = navigation {
             (layout.previous(), layout.next())
         } else {
-            (layout.list_button(PREV), layout.list_button(NEXT))
+            (PREV, NEXT)
         };
         let direction = match input {
             Input::Tap(x, y)
                 if broad
-                    && layout.list_button(FIRST_MATCH_PAGE).contains(x, y)
+                    && shortcuts.edge_footer(FIRST_MATCH_PAGE).contains(x, y)
                     && self.list_page > 0 =>
             {
                 self.navigate_list_page(0);
@@ -8652,7 +8647,7 @@ impl App for Reader {
             }
             Input::Tap(x, y)
                 if broad
-                    && layout.list_button(LAST_MATCH_PAGE).contains(x, y)
+                    && shortcuts.edge_footer(LAST_MATCH_PAGE).contains(x, y)
                     && (self.list_page + 1) * geometry.rows < count =>
             {
                 self.navigate_list_page(count.saturating_sub(1) / geometry.rows);
