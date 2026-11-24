@@ -1,5 +1,6 @@
 //! Reading statistics, reports, a month calendar and clipped day timelines.
 mod calendar;
+mod calendar_options;
 mod period_reset;
 mod ranges;
 mod report;
@@ -37,6 +38,7 @@ pub(super) enum Page {
     Books,
     BookDay(Date, u64),
     Options,
+    CalendarChoice(calendar_options::Choice),
     Resets,
     ResetBooks,
     ConfirmReset(Scope),
@@ -59,6 +61,7 @@ impl Page {
             Self::Books => "Statistics by book",
             Self::BookDay(_, _) => "Book reading sessions",
             Self::Options => "Statistics settings",
+            Self::CalendarChoice(choice) => choice.title(),
             Self::Resets => "Reset reading statistics",
             Self::ResetBooks => "Choose a book",
             Self::ConfirmReset(_) | Self::ConfirmPeriodReset => "Confirm statistics reset",
@@ -75,6 +78,7 @@ pub(super) enum Command {
     Today,
     RunPage(i32),
     Configure(Options),
+    EditTimelineStart,
     ConfirmReset,
     ConfirmPeriodReset,
     CancelReset,
@@ -87,6 +91,8 @@ pub(super) struct View {
     run_page: usize,
     report: report::ReportView,
     ranges: ranges::View,
+    calendar_settings_page: usize,
+    timeline_start_draft: Option<u16>,
     reset_list_page: usize,
     period_reset: Option<period_reset::Pending>,
 }
@@ -100,6 +106,8 @@ impl Default for View {
             run_page: 0,
             report: Default::default(),
             ranges: Default::default(),
+            calendar_settings_page: 0,
+            timeline_start_draft: None,
             reset_list_page: 0,
             period_reset: None,
         }
@@ -204,6 +212,9 @@ impl Reader {
                 if matches!(page, Page::ConfirmReset(_)) {
                     self.history_view.reset_list_page = self.list_page;
                 }
+                if matches!(page, Page::CalendarChoice(_)) {
+                    self.history_view.calendar_settings_page = self.list_page;
+                }
                 self.show_history_page(page);
             }
             Filter(book) => {
@@ -220,14 +231,14 @@ impl Reader {
                 }
             }
             Today => {
-                self.history_view.month = Date::today().first();
-                self.history_view.run_page = 0;
-                self.show(Screen::ReadingHistory(Page::Day(Date::today())));
+                let day = self.history_timeline_today();
+                self.history_view.month = day.first();
+                self.activate_reading_history(Show(Page::Day(day)))?;
             }
             Day(delta) => {
                 if let Screen::ReadingHistory(Page::Day(day)) = self.screen
                     && let Some(day) = day.add_days(delta)
-                    && day <= Date::today()
+                    && day <= self.history_timeline_today()
                 {
                     self.history_view.run_page = 0;
                     self.show(Screen::ReadingHistory(Page::Day(day)));
@@ -240,12 +251,25 @@ impl Reader {
                     .saturating_add_signed(delta as isize);
             }
             Configure(options) => {
+                self.reading_history
+                    .configure(options, Instant::now(), crate::mark_time::now())?;
                 if !options.future_months {
                     self.history_view.month = self.history_view.month.min(Date::today().first());
                 }
-                self.reading_history
-                    .configure(options, Instant::now(), crate::mark_time::now())?;
+                let return_page = match self.screen {
+                    Screen::ReadingHistory(Page::CalendarChoice(_)) => {
+                        self.history_view.calendar_settings_page
+                    }
+                    Screen::ReadingHistory(Page::Options) => self.list_page,
+                    _ => 0,
+                };
                 self.show(Screen::ReadingHistory(Page::Options));
+                self.list_page = return_page;
+            }
+            EditTimelineStart => {
+                self.notice = None;
+                self.history_view.timeline_start_draft =
+                    Some(self.reading_history.options().day_start);
             }
             ConfirmReset => self.confirm_history_reset()?,
             ConfirmPeriodReset => self.confirm_period_reset()?,
@@ -256,15 +280,19 @@ impl Reader {
     fn history_month_allowed(&self, month: Date) -> bool {
         let first = self
             .reading_history
-            .days(self.history_view.book, Zone::Local)
-            .keys()
-            .next()
-            .copied()
+            .first_calendar_day(self.history_view.book, Zone::Local)
             .unwrap_or_else(Date::today)
             .first()
             .min(Date::today().first());
         month >= first
             && (self.reading_history.options().future_months || month <= Date::today().first())
+    }
+    fn history_timeline_today(&self) -> Date {
+        crate::mark_time::now()
+            .and_then(|time| {
+                Zone::Local.date_with_origin(time, self.reading_history.options().day_start)
+            })
+            .unwrap_or_else(Date::today)
     }
     pub(super) fn history_back(&mut self) {
         let Screen::ReadingHistory(page) = self.screen else {
@@ -281,6 +309,10 @@ impl Reader {
             Page::Range(page) => self.history_view.ranges.back(page),
             Page::Periods(_) => (Screen::ReadingHistory(Page::TimeRange), None),
             Page::Resets => (Screen::ReadingHistory(Page::Options), None),
+            Page::CalendarChoice(_) => (
+                Screen::ReadingHistory(Page::Options),
+                Some(self.history_view.calendar_settings_page),
+            ),
             Page::ResetBooks => (Screen::ReadingHistory(Page::Resets), None),
             Page::ConfirmReset(scope) => (
                 Screen::ReadingHistory(self.history_reset_return(scope)),
@@ -475,45 +507,7 @@ impl Reader {
                         ..options
                     },
                 ));
-                let next = match options.week_start {
-                    1 => 0,
-                    0 => 6,
-                    6 => 2,
-                    _ => 1,
-                };
-                rows.push(opt(
-                    "Calendar week starts",
-                    [
-                        "Sunday",
-                        "Monday",
-                        "Tuesday",
-                        "Wednesday",
-                        "Thursday",
-                        "Friday",
-                        "Saturday",
-                    ][options.week_start as usize]
-                        .into(),
-                    Options {
-                        week_start: next,
-                        ..options
-                    },
-                ));
-                rows.push(opt(
-                    "Calendar day starts",
-                    format!(
-                        "{:02}:{:02}",
-                        options.day_start / 60,
-                        options.day_start % 60
-                    ),
-                    Options {
-                        day_start: match options.day_start {
-                            0 => 240,
-                            240 => 360,
-                            _ => 0,
-                        },
-                        ..options
-                    },
-                ));
+                rows.extend(self.calendar_setting_items());
                 rows.push(opt(
                     "Hourly histogram",
                     if options.histogram { "On" } else { "Off" }.into(),
@@ -536,6 +530,7 @@ impl Reader {
                         .detail("Quick skims are ignored. Rereads retain their own sessions."),
                 );
             }
+            Page::CalendarChoice(choice) => return self.calendar_choice_items(choice),
             Page::TimeRange
             | Page::Range(_)
             | Page::Periods(_)
@@ -551,6 +546,9 @@ impl Reader {
         let Screen::ReadingHistory(page) = self.screen else {
             return None;
         };
+        if let Some(change) = self.timeline_start_input(input) {
+            return Some(change);
+        }
         if matches!(input,Input::Tap(x,y) if back_button(WIDTH as i32).contains(x,y)) {
             self.history_back();
             return Some(Change::Partial);

@@ -94,12 +94,99 @@ fn shifted_calendar_windows_split_visits_at_a_fractional_zone_boundary() {
     // 04:00 boundary. Daily history retains the start date, while the
     // calendar, timeline and hourly histogram split the same saved interval.
     assert_eq!(history.days(None, zone)[&feb].seconds, 90);
-    assert_eq!(history.calendar_month(jan.first(), None, zone)[&jan].0, 10);
-    assert_eq!(history.calendar_month(feb, None, zone)[&feb].0, 80);
+    assert_eq!(
+        history.calendar_month(jan.first(), None, zone)[&jan].seconds,
+        10
+    );
+    assert_eq!(history.calendar_month(feb, None, zone)[&feb].seconds, 80);
     assert_eq!(history.day_seconds(jan, None, zone), 10);
     assert_eq!(history.day_seconds(feb, None, zone), 80);
-    assert_eq!(history.hourly(jan, None, zone)[3], 10);
-    assert_eq!(history.hourly(feb, None, zone)[4], 80);
+    assert_eq!(history.hourly(jan, None, zone)[23], 10);
+    assert_eq!(history.hourly(feb, None, zone)[0], 80);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn timeline_minutes_month_shift_and_ranked_books_use_independent_saved_choices() {
+    let (mut h, now, _, dir) = fixture("minute-origin");
+    let zone = Zone::Fixed(5 * 3600 + 45 * 60);
+    let jan = Date::new(2026, 1, 31).unwrap();
+    let feb = jan.add_days(1).unwrap();
+    let boundary = zone.range(feb, 260).unwrap().0; // 04:20 local
+    let first = boundary - 10;
+    for (i, (id, wall, seconds)) in [
+        (7, first, 80u64),
+        (4, boundary + 200, 40),
+        (2, boundary + 290, 40),
+        (4, boundary + 3600 - 15, 30),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let start = now + Duration::from_secs(i as u64 * 300);
+        h.set_page_at(Some((id, 1)), start, Some(wall));
+        h.set_page_at(
+            None,
+            start + Duration::from_secs(seconds),
+            Some(wall + seconds as i64),
+        );
+    }
+
+    // A missing switch in an older journal preserves its existing shifted calendar.
+    let legacy: Options = serde_json::from_str(r#"{"day_start":260}"#).unwrap();
+    assert!(legacy.calendar_uses_shift());
+    assert_eq!(legacy.calendar_book_spans, 3);
+    h.data.options = Options {
+        shift_calendar: Some(false),
+        ..legacy
+    };
+    assert_eq!(h.first_calendar_day(None, zone), Some(feb));
+    assert_eq!(zone.date_with_origin(first, 260), Some(jan));
+    assert_eq!(zone.date_with_origin(boundary, 260), Some(feb));
+    assert_eq!(h.days(None, zone)[&feb].seconds, 190);
+    assert!(h.calendar_month(jan.first(), None, zone).is_empty());
+    let month = h.calendar_month(feb, None, zone);
+    assert_eq!(month[&feb].books, [7, 4, 2]);
+    assert_eq!(month[&feb].seconds, 190);
+    assert_eq!((month[&feb].hours[4], month[&feb].hours[5]), (160, 30));
+    assert_eq!(h.day_seconds(jan, None, zone), 10);
+    let hourly = h.hourly(feb, None, zone);
+    assert_eq!((hourly[0], hourly[1]), (165, 15));
+
+    let later = now + Duration::from_secs(1500);
+    h.configure(
+        Options {
+            shift_calendar: Some(true),
+            calendar_book_spans: 5,
+            ..legacy
+        },
+        later,
+        Some(boundary + 6_000),
+    )
+    .unwrap();
+    let mut h = History::load(dir.join("history.json"), BTreeMap::new());
+    assert_eq!(h.first_calendar_day(None, zone), Some(jan));
+    assert_eq!(h.first_calendar_day(Some(2), zone), Some(feb));
+    assert_eq!(h.calendar_month(jan.first(), None, zone)[&jan].books, [7]);
+    assert_eq!(h.calendar_month(feb, None, zone)[&feb].books, [4, 7, 2]);
+    assert_eq!(h.calendar_month(feb, None, zone)[&feb].hours, hourly);
+    assert_eq!(h.options().calendar_book_spans, 5);
+
+    let file = dir.join("history.json");
+    fs::rename(&file, dir.join("backup.json")).unwrap();
+    fs::create_dir(&file).unwrap();
+    assert!(
+        h.configure(
+            Options {
+                day_start: 0,
+                ..h.options()
+            },
+            later,
+            Some(boundary + 6_000)
+        )
+        .is_err()
+    );
+    assert_eq!(h.options().day_start, 260);
     fs::remove_dir_all(dir).unwrap();
 }
 
@@ -347,7 +434,10 @@ fn frequent_notifications_keep_the_original_start_day_and_a_fixed_save_deadline(
     assert_eq!(h.summary(None, None).seconds, 6);
     let jan = Date::new(2026, 1, 31).unwrap();
     let months = h.calendar_month(jan.first(), None, Zone::Fixed(0));
-    assert_eq!(months[&jan].0, h.day_seconds(jan, None, Zone::Fixed(0)));
+    assert_eq!(
+        months[&jan].seconds,
+        h.day_seconds(jan, None, Zone::Fixed(0))
+    );
     fs::remove_dir_all(dir).unwrap();
 }
 

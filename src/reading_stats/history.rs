@@ -26,6 +26,10 @@ pub(crate) struct Options {
     pub freeze_finished: bool,
     pub week_start: u8,
     pub day_start: u16,
+    /// Older journals always applied a saved timeline shift to the month view.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shift_calendar: Option<bool>,
+    pub calendar_book_spans: u8,
     pub histogram: bool,
     pub future_months: bool,
 }
@@ -38,6 +42,8 @@ impl Default for Options {
             freeze_finished: false,
             week_start: 1,
             day_start: 0,
+            shift_calendar: None,
+            calendar_book_spans: 3,
             histogram: true,
             future_months: false,
         }
@@ -50,7 +56,28 @@ impl Options {
             && self.max_seconds <= 3600
             && self.week_start <= 6
             && self.day_start < 1440
+            && (1..=5).contains(&self.calendar_book_spans)
     }
+
+    pub(crate) fn calendar_uses_shift(self) -> bool {
+        self.shift_calendar.unwrap_or(self.day_start > 0)
+    }
+
+    fn calendar_start(self) -> u16 {
+        if self.calendar_uses_shift() {
+            self.day_start
+        } else {
+            0
+        }
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct CalendarDay {
+    pub(crate) seconds: u64,
+    /// Most reading time first, with a stable book-ID tiebreaker.
+    pub(crate) books: Vec<u64>,
+    pub(crate) hours: [u32; 24],
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -244,9 +271,11 @@ impl History {
         if self.read_only {
             return Err(invalid());
         }
-        self.data.options = options;
+        let previous = std::mem::replace(&mut self.data.options, options);
         self.dirty = true;
-        self.save(now, wall, true).map(|_| ())
+        self.save(now, wall, true).map(|_| ()).inspect_err(|_| {
+            self.data.options = previous;
+        })
     }
     pub(crate) fn remember_title(&mut self, book: u64, title: &str) {
         if !self.read_only
@@ -492,16 +521,17 @@ impl History {
         month: Date,
         book: Option<u64>,
         zone: Zone,
-    ) -> BTreeMap<Date, (u64, BTreeSet<u64>)> {
+    ) -> BTreeMap<Date, CalendarDay> {
         let calendar = zone.calendar();
+        let origin = self.data.options.calendar_start();
         let ranges: Vec<_> = (1..=month.month_days())
             .filter_map(|day| {
                 let date = Date { day, ..month };
-                let (start, end) = calendar.range(date, self.data.options.day_start)?;
+                let (start, end) = calendar.range(date, origin)?;
                 Some((date, start, end))
             })
             .collect();
-        let mut days = BTreeMap::<Date, (u64, BTreeSet<u64>)>::new();
+        let mut days = BTreeMap::<Date, (BTreeMap<u64, u64>, [u32; 24])>::new();
         for visit in &self.data.visits {
             if book.is_some_and(|b| b != visit.book) {
                 continue;
@@ -515,15 +545,40 @@ impl History {
                 .iter()
                 .take_while(|&&(_, from, _)| from < end)
             {
-                let seconds = (end.min(until) - start.max(from)).max(0) as u64;
-                if seconds > 0 {
-                    let (total, books) = days.entry(date).or_default();
-                    *total += seconds;
-                    books.insert(visit.book);
+                let lower = start.max(from);
+                let upper = end.min(until);
+                if lower < upper {
+                    let (books, hours) = days.entry(date).or_default();
+                    *books.entry(visit.book).or_default() += (upper - lower) as u64;
+                    if self.data.options.histogram {
+                        add_hourly_time(&calendar, hours, origin, lower, upper);
+                    }
                 }
             }
         }
-        days
+        days.into_iter()
+            .map(|(date, (books, hours))| {
+                let mut books: Vec<_> = books.into_iter().collect();
+                books.sort_unstable_by_key(|&(id, seconds)| (std::cmp::Reverse(seconds), id));
+                let day = CalendarDay {
+                    seconds: books.iter().map(|&(_, seconds)| seconds).sum(),
+                    books: books.into_iter().map(|(id, _)| id).collect(),
+                    hours,
+                };
+                (date, day)
+            })
+            .collect()
+    }
+
+    pub(crate) fn first_calendar_day(&self, book: Option<u64>, zone: Zone) -> Option<Date> {
+        let start = self
+            .data
+            .visits
+            .iter()
+            .filter(|visit| book.is_none_or(|id| visit.book == id))
+            .filter_map(|visit| visit.start)
+            .min()?;
+        zone.date_with_origin(start, self.data.options.calendar_start())
     }
 
     /// Calendar/timeline windows clip a visit across midnight; daily totals above
@@ -559,6 +614,7 @@ impl History {
             })
             .sum()
     }
+    /// Hourly bins are relative to the timeline origin, e.g. 04:20–05:20 is bin zero.
     pub(crate) fn hourly(&self, date: Date, book: Option<u64>, zone: Zone) -> [u32; 24] {
         let mut bins = [0u32; 24];
         let calendar = zone.calendar();
@@ -566,18 +622,39 @@ impl History {
             return bins;
         };
         for v in self.visits_in_window(book, start, end) {
-            let mut at = v.start.unwrap().max(start);
-            let end = (v.start.unwrap() + i64::from(v.seconds)).min(end);
-            while at < end {
-                let Some((h, m, s)) = calendar.clock(at) else {
-                    break;
-                };
-                let step = (3600 - i64::from(m * 60 + s)).min(end - at).max(1);
-                bins[h as usize] = bins[h as usize].saturating_add(step as u32);
-                at += step;
-            }
+            let lower = v.start.unwrap().max(start);
+            let upper = (v.start.unwrap() + i64::from(v.seconds)).min(end);
+            add_hourly_time(
+                &calendar,
+                &mut bins,
+                self.data.options.day_start,
+                lower,
+                upper,
+            );
         }
         bins
+    }
+}
+fn add_hourly_time(
+    calendar: &date::Calendar,
+    bins: &mut [u32; 24],
+    origin: u16,
+    mut at: i64,
+    end: i64,
+) {
+    while at < end {
+        let Some((h, m, s)) = calendar.clock(at) else {
+            break;
+        };
+        let clock = i64::from(h * 3600 + m * 60 + s);
+        let shifted = (clock - i64::from(origin) * 60).rem_euclid(86400);
+        let bin = (shifted / 3600) as usize;
+        // Stop at civil hour changes as well as the shifted hour boundary.
+        let step = (3600 - shifted % 3600)
+            .min(3600 - clock % 3600)
+            .min(end - at);
+        bins[bin] = bins[bin].saturating_add(step as u32);
+        at += step;
     }
 }
 fn valid_wall(time: i64) -> bool {

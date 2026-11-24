@@ -1,5 +1,54 @@
 //! Month cells and hourly day timelines use the same native Canvas controls.
+use super::calendar_options::timeline_clock;
 use super::*;
+
+const DAYS_PER_WEEK: usize = 7;
+const MAX_BOOK_ROWS: usize = 5;
+
+fn week_book_rows(
+    days: [&[u64]; DAYS_PER_WEEK],
+    limit: usize,
+) -> [[Option<u64>; MAX_BOOK_ROWS]; DAYS_PER_WEEK] {
+    let mut rows = [[None; MAX_BOOK_ROWS]; DAYS_PER_WEEK];
+    for (day, books) in days.into_iter().enumerate() {
+        let books = &books[..books.len().min(limit)];
+        let (earlier, remaining) = rows.split_at_mut(day);
+        let slots = &mut remaining[0][..limit];
+        if let Some(previous) = earlier.last() {
+            for (&book, slot) in previous.iter().zip(slots.iter_mut()) {
+                *slot = book.filter(|id| books.contains(id));
+            }
+        }
+        for &book in books {
+            if !slots.contains(&Some(book))
+                && let Some(free) = slots.iter_mut().find(|slot| slot.is_none())
+            {
+                *free = Some(book);
+            }
+        }
+    }
+    rows
+}
+
+#[cfg(test)]
+#[test]
+fn calendar_spans_keep_contiguous_books_in_their_rows_after_duration_rank_changes() {
+    let days: [&[u64]; 7] = [&[], &[1, 2, 3], &[3, 2, 1], &[3, 4, 2], &[], &[3, 2], &[2]];
+    let rows = week_book_rows(days, 2);
+    assert_eq!(
+        rows.map(|day| [day[0], day[1]]),
+        [
+            [None, None],
+            [Some(1), Some(2)],
+            [Some(3), Some(2)],
+            [Some(3), Some(4)],
+            [None, None],
+            [Some(3), Some(2)],
+            [None, Some(2)],
+        ]
+    );
+    assert!(rows.iter().all(|row| row[2..].iter().all(Option::is_none)));
+}
 
 impl Reader {
     pub(in crate::app) fn draw_reading_history(&self, canvas: &mut Canvas) -> bool {
@@ -15,17 +64,19 @@ impl Reader {
         canvas.button(TODAY, "Today", false, false);
         let label = if let Page::Day(day) = page {
             format!(
-                "{} · {:02}:{:02} start",
+                "{} · {} start",
                 day.label(),
-                self.reading_history.options().day_start / 60,
-                self.reading_history.options().day_start % 60
+                timeline_clock(self.reading_history.options().day_start),
             )
         } else {
             self.history_view.month.month_label()
         };
         canvas.text(Rect::new(220, 146, 824, 80), &label, BODY.bold().center());
         let (prev, next) = if let Page::Day(day) = page {
-            (day.add_days(-1).is_some(), day < Date::today())
+            (
+                day.add_days(-1).is_some(),
+                day < self.history_timeline_today(),
+            )
         } else {
             (
                 self.history_view
@@ -76,7 +127,10 @@ impl Reader {
     }
     fn draw_history_calendar(&self, canvas: &mut Canvas) {
         let month = self.history_view.month;
-        let week = self.reading_history.options().week_start;
+        let options = self.reading_history.options();
+        let week = options.week_start;
+        let today = Date::today();
+        let limit = usize::from(options.calendar_book_spans);
         let offset = (month.weekday() + 7 - week) % 7;
         for col in 0..7 {
             canvas.text(
@@ -89,16 +143,10 @@ impl Reader {
         let days = self
             .reading_history
             .calendar_month(month, self.history_view.book, Zone::Local);
-        let total_max = days
-            .values()
-            .map(|(seconds, _)| *seconds)
-            .max()
-            .unwrap_or(0)
-            .max(1);
         for day in 1..=month.month_days() {
             let date = Date { day, ..month };
             let rect = cell(usize::from(offset + day - 1));
-            let allowed = date <= Date::today();
+            let allowed = date <= today;
             let pressed = allowed && canvas.control_pressed(rect, false);
             let ink = if pressed {
                 255
@@ -110,40 +158,86 @@ impl Reader {
             canvas.panel(
                 rect,
                 14,
-                if date == Date::today() { 3 } else { 1 },
+                if date == today { 3 } else { 1 },
                 if pressed { 0 } else { 255 },
             );
             canvas.text(
-                Rect::new(rect.x + 10, rect.y + 7, rect.w - 20, 38),
+                Rect::new(rect.x + 10, rect.y + 5, 39, 38),
                 &day.to_string(),
                 TextStyle::new(30).bold().ink(ink),
             );
-            let seconds = days.get(&date).map_or(0, |(seconds, _)| *seconds);
-            if seconds > 0 {
+            if let Some(day) = days.get(&date) {
                 canvas.text(
-                    Rect::new(rect.x + 10, rect.y + 45, rect.w - 20, 34),
-                    &short_time(seconds),
-                    TextStyle::new(25).ink(ink),
+                    Rect::new(rect.x + 51, rect.y + 7, rect.w - 59, 34),
+                    &short_time(day.seconds),
+                    TextStyle::new(21).ink(ink).center(),
                 );
-                let books = &days[&date].1;
-                canvas.text(
-                    Rect::new(rect.x + 10, rect.y + 84, rect.w - 20, 32),
-                    &format!(
-                        "{} {}",
-                        books.len(),
-                        if books.len() == 1 { "book" } else { "books" }
-                    ),
-                    TextStyle::new(22).ink(ink),
-                );
-                canvas.fill(
-                    Rect::new(
-                        rect.x + 10,
-                        rect.bottom() - 19,
-                        ((rect.w - 20) as u64 * seconds / total_max).max(2) as i32,
-                        7,
-                    ),
-                    ink,
-                );
+                let hidden = day.books.len().saturating_sub(limit);
+                if hidden > 0 {
+                    canvas.text(
+                        Rect::new(rect.right() - 57, rect.bottom() - 21, 50, 19),
+                        &format!("+{hidden}"),
+                        TextStyle::new(16).ink(ink).center(),
+                    );
+                }
+                if options.histogram {
+                    let chart_width = if hidden > 0 { rect.w - 71 } else { rect.w - 20 };
+                    let step = chart_width / 24;
+                    let baseline = rect.bottom() - 5;
+                    canvas.fill(Rect::new(rect.x + 10, baseline - 1, 24 * step, 1), ink);
+                    for (hour, &seconds) in day.hours.iter().enumerate() {
+                        if seconds > 0 {
+                            let height = (seconds.min(3600) * 15 / 3600).max(2) as i32;
+                            canvas.fill(
+                                Rect::new(
+                                    rect.x + 10 + hour as i32 * step,
+                                    baseline - height,
+                                    step - 1,
+                                    height,
+                                ),
+                                ink,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        let last = usize::from(offset + month.month_days());
+        let stride = 94 / i32::from(options.calendar_book_spans);
+        let font = (stride - 5).min(24);
+        for first in (0..last).step_by(DAYS_PER_WEEK) {
+            let ranked = std::array::from_fn(|column| {
+                let day = (first + column + 1).checked_sub(usize::from(offset));
+                day.and_then(|day| Date::new(month.year, month.month, day as u8))
+                    .and_then(|date| days.get(&date))
+                    .map_or(&[][..], |entry| entry.books.as_slice())
+            });
+            let week = week_book_rows(ranked, limit);
+            for row in 0..limit {
+                for (column, slots) in week.iter().enumerate() {
+                    let Some(id) = slots[row] else { continue };
+                    if column > 0 && week[column - 1][row] == Some(id) {
+                        continue;
+                    }
+                    let length = week[column..]
+                        .iter()
+                        .take_while(|slots| slots[row] == Some(id))
+                        .count();
+                    let start = cell(first + column);
+                    let end = cell(first + column + length - 1);
+                    let rect = Rect::new(
+                        start.x + 7,
+                        start.y + 42 + row as i32 * stride,
+                        end.right() - start.x - 14,
+                        stride - 2,
+                    );
+                    canvas.panel(rect, 4, 1, [235, 220, 205][(id % 3) as usize]);
+                    canvas.text(
+                        Rect::new(rect.x + 5, rect.y, rect.w - 10, rect.h),
+                        &self.history_title(id),
+                        TextStyle::new(font).center(),
+                    );
+                }
             }
         }
     }
@@ -161,10 +255,9 @@ impl Reader {
                 .reading_history
                 .hourly(day, self.history_view.book, Zone::Local);
             let max = bins.iter().copied().max().unwrap_or(1).max(1);
-            let origin = self.reading_history.options().day_start / 60;
-            for index in 0..24 {
-                let hour = (index + origin as usize) % 24;
-                let height = (u64::from(bins[hour]) * 130 / u64::from(max)) as i32;
+            let origin = self.reading_history.options().day_start;
+            for (index, &seconds) in bins.iter().enumerate() {
+                let height = (u64::from(seconds) * 130 / u64::from(max)) as i32;
                 canvas.fill(
                     Rect::new(54 + index as i32 * 48, 540 - height, 36, height),
                     BLACK,
@@ -172,7 +265,7 @@ impl Reader {
                 if index % 6 == 0 {
                     canvas.text(
                         Rect::new(50 + index as i32 * 48, 550, 78, 36),
-                        &format!("{hour:02}:00"),
+                        &timeline_clock((origin + index as u16 * 60) % 1440),
                         TextStyle::new(22),
                     );
                 }

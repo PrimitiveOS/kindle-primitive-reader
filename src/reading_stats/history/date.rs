@@ -133,6 +133,16 @@ impl Zone {
     pub(crate) fn range(self, date: Date, minutes: u16) -> Option<(i64, i64)> {
         self.calendar().range(date, minutes)
     }
+
+    pub(crate) fn date_with_origin(self, time: i64, minutes: u16) -> Option<Date> {
+        let calendar = self.calendar();
+        let date = calendar.date(time)?;
+        if minutes != 0 && time < calendar.range(date, minutes)?.0 {
+            date.add_days(-1)
+        } else {
+            Some(date)
+        }
+    }
 }
 
 impl Calendar {

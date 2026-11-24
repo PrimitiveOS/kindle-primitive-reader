@@ -7587,6 +7587,14 @@ impl Reader {
                         Action::ToggleRomanizations => RowAccessory::Toggle(
                             self.lookup_history.online_languages.show_romanizations,
                         ),
+                        Action::ReadingHistory(reading_history::Command::Configure(next))
+                            if next.calendar_uses_shift()
+                                != self.reading_history.options().calendar_uses_shift() =>
+                        {
+                            RowAccessory::Toggle(
+                                self.reading_history.options().calendar_uses_shift(),
+                            )
+                        }
                         Action::ToggleReadingProfileField(field) => {
                             RowAccessory::Toggle(self.profile_fields.contains(field))
                         }
@@ -8091,6 +8099,7 @@ impl App for Reader {
         self.read_alarm.draw(canvas, self.screen == Screen::Book);
         self.draw_vocabulary_dialog(canvas);
         self.draw_back_exit_confirmation(canvas);
+        self.draw_history_timeline_start(canvas);
         self.draw_logical_recovery(canvas);
     }
 
