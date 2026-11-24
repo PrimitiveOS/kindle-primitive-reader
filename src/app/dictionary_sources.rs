@@ -1,11 +1,26 @@
 use super::*;
 use crate::library::DictionaryFuzzySearch;
 
+const MAX_PREFERENCES_BYTES: usize = 64 * 1024;
+
+pub(super) fn valid_dictionary_key(path: &Path) -> bool {
+    path.to_str()
+        .is_some_and(|s| !s.is_empty() && s.len() <= 4096 && !s.chars().any(char::is_control))
+        && !path.components().any(|c| {
+            matches!(
+                c,
+                std::path::Component::ParentDir | std::path::Component::CurDir
+            )
+        })
+}
+
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub(super) struct SourcePreferences {
     order: Vec<PathBuf>,
-    disabled: Vec<PathBuf>,
+    pub(super) disabled: Vec<PathBuf>,
+    #[serde(skip_serializing_if = "dictionary_presets::Settings::is_empty")]
+    pub(super) presets: dictionary_presets::Settings,
     disable_word_forms: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     enable_fuzzy_search: Option<bool>,
@@ -18,6 +33,7 @@ impl Default for SourcePreferences {
         Self {
             order: Vec::new(),
             disabled: Vec::new(),
+            presets: dictionary_presets::Settings::default(),
             disable_word_forms: false,
             enable_fuzzy_search: None,
             large_window: false,
@@ -52,18 +68,13 @@ impl SourcePreferences {
         };
         if settings.order.len() > 512
             || settings.disabled.len() > 512
-            || settings.order.iter().chain(&settings.disabled).any(|path| {
-                path.as_os_str().is_empty()
-                    || path
-                        .to_str()
-                        .is_none_or(|s| s.len() > 4096 || s.chars().any(char::is_control))
-                    || path.components().any(|c| {
-                        matches!(
-                            c,
-                            std::path::Component::ParentDir | std::path::Component::CurDir
-                        )
-                    })
-            })
+            || settings
+                .order
+                .iter()
+                .chain(&settings.disabled)
+                .any(|path| !valid_dictionary_key(path))
+            || !settings.presets.is_valid()
+            || serde_json::to_vec(&settings)?.len() > MAX_PREFERENCES_BYTES
         {
             return Err(io::Error::other(
                 "The dictionary preferences backup is invalid",
@@ -73,10 +84,13 @@ impl SourcePreferences {
     }
 
     pub(super) fn load(path: &Path) -> Self {
-        let Ok(bytes) = read_import_file(path, 64 * 1024) else {
+        let Ok(bytes) = read_import_file(path, MAX_PREFERENCES_BYTES as u64) else {
             return Self::default();
         };
-        if let Ok(settings) = serde_json::from_slice::<Self>(&bytes) {
+        if let Ok(mut settings) = serde_json::from_slice::<Self>(&bytes) {
+            if !settings.presets.is_valid() {
+                settings.presets = dictionary_presets::Settings::default();
+            }
             return settings;
         }
         // Earlier releases persisted either null or one preferred relative path.
@@ -222,9 +236,25 @@ impl Reader {
         });
     }
 
-    pub(super) fn open_sources(&mut self) -> Result<()> {
+    pub(super) fn refresh_installed_dictionaries(&mut self) -> Result<()> {
         self.installed_dictionaries = with_storage(|| self.dictionaries.installed())?;
         self.sort_dictionaries();
+        Ok(())
+    }
+
+    pub(super) fn save_source_preferences(&mut self, next: SourcePreferences) -> Result<()> {
+        let bytes = serde_json::to_vec(&next)?;
+        if bytes.len() > MAX_PREFERENCES_BYTES || !next.presets.is_valid() {
+            return Err("Dictionary preferences exceed Reader's limits".into());
+        }
+        primitive_app::save(&self.dictionary_preference, &bytes)?;
+        self.dictionary_settings = next;
+        self.sort_dictionaries();
+        Ok(())
+    }
+
+    pub(super) fn open_sources(&mut self) -> Result<()> {
+        self.refresh_installed_dictionaries()?;
         self.dictionary_origin = self.screen;
         self.show(Screen::Dictionaries);
         Ok(())
@@ -287,6 +317,10 @@ impl Reader {
                 Action::DictionarySource(SourceAction::ResetOrder),
             ));
         }
+        rows.push(Item::new(
+            "Dictionary presets",
+            Action::DictionaryPreset(dictionary_presets::Command::Open),
+        ));
         if !self.book_dictionaries().is_empty() || !self.book_dictionary_exclusions().is_empty() {
             rows.push(Item::new(
                 "Reset book dictionary choices",
@@ -605,9 +639,7 @@ impl Reader {
             }
             selected_key = Some(key);
         }
-        primitive_app::save(&self.dictionary_preference, &serde_json::to_vec(&next)?)?;
-        self.dictionary_settings = next;
-        self.sort_dictionaries();
+        self.save_source_preferences(next)?;
         if let Some(key) = selected_key
             && let Some(index) = self
                 .installed_dictionaries

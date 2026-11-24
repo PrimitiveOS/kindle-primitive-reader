@@ -29,6 +29,7 @@ use character_page_settings::NumberField;
 mod cjk_selection;
 mod default_settings;
 mod dictionary_panel;
+mod dictionary_presets;
 mod dictionary_sources;
 use dictionary_sources::{SourceAction, SourcePreferences};
 pub(crate) mod back_navigation;
@@ -323,6 +324,7 @@ enum Screen {
     VocabularySearch,
     Dictionaries,
     DictionaryOptions(usize),
+    DictionaryPresets(dictionary_presets::Page),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -493,6 +495,7 @@ impl Screen {
             Self::VocabularySearch => "Find a saved word",
             Self::Dictionaries => "Dictionaries",
             Self::DictionaryOptions(_) => "Dictionary settings",
+            Self::DictionaryPresets(page) => page.title(),
         }
     }
 }
@@ -581,6 +584,7 @@ enum Action {
     ShowFooterFonts,
     SetFooterFontFace(Option<String>),
     ShowDictionaries,
+    DictionaryPreset(dictionary_presets::Command),
     DictionarySource(SourceAction),
     DocumentDefaults(default_settings::Command),
     Style(style_tweaks::Command),
@@ -1830,6 +1834,9 @@ impl Reader {
                 self.editor.caret = self.editor.text.len();
             }
         }
+        if let Screen::DictionaryPresets(dictionary_presets::Page::Name(mode)) = screen {
+            self.prepare_dictionary_preset_name(mode);
+        }
         if let Screen::FooterPresetName(mode) = screen {
             self.editor = Editor::new(footer_presets::MAX_NAME);
             if let FooterPresetName::Rename(index) = mode
@@ -2722,6 +2729,9 @@ impl Reader {
         }
         if let Screen::DictionaryOptions(i) = self.screen {
             return self.source_options(i);
+        }
+        if let Screen::DictionaryPresets(page) = self.screen {
+            return self.dictionary_preset_items(page);
         }
         if self.screen == Screen::ReadingData {
             let mut items = vec![
@@ -4046,6 +4056,7 @@ impl Reader {
                 self.show(Screen::FooterSettings);
             }
             Action::ShowDictionaries => self.open_sources()?,
+            Action::DictionaryPreset(command) => self.dictionary_preset_command(command)?,
             Action::DictionarySource(action) => self.change_source(action)?,
             Action::SetFont(font) => {
                 let fonts = self.fonts_for(font.as_deref())?;
@@ -4388,6 +4399,10 @@ impl Reader {
             Screen::ProfileName(mode) => Some(mode),
             _ => None,
         };
+        let dictionary_preset = match self.screen {
+            Screen::DictionaryPresets(dictionary_presets::Page::Name(mode)) => Some(mode),
+            _ => None,
+        };
         let footer_preset = match self.screen {
             Screen::FooterPresetName(mode) => Some(mode),
             _ => None,
@@ -4407,6 +4422,8 @@ impl Reader {
                     FooterPresetName::Create => Screen::FooterPresets,
                     FooterPresetName::Rename(index) => Screen::FooterPreset(index),
                 }
+            } else if let Some(mode) = dictionary_preset {
+                Screen::DictionaryPresets(mode.back())
             } else if self.rename_collection.take().is_some() {
                 Screen::BookList
             } else {
@@ -4428,6 +4445,8 @@ impl Reader {
                 self.edit_reading_profile_name(mode, name.trim())
             } else if let Some(mode) = footer_preset {
                 self.save_footer_preset_name(mode, name.trim())
+            } else if let Some(mode) = dictionary_preset {
+                self.save_dictionary_preset_name(mode, name.trim())
             } else {
                 self.save_collection_name(name.trim())
             };
@@ -7384,6 +7403,7 @@ impl Reader {
                 | Screen::CollectionName
                 | Screen::ProfileName(_)
                 | Screen::FooterPresetName(_)
+                | Screen::DictionaryPresets(dictionary_presets::Page::Name(_))
                 | Screen::FooterCustomText
                 | Screen::Note
                 | Screen::EditNote
@@ -7402,6 +7422,7 @@ impl Reader {
                 Screen::CollectionName => ("Collection name", "Save"),
                 Screen::ProfileName(_) => ("Profile name", "Save"),
                 Screen::FooterPresetName(_) => ("Status bar preset name", "Save"),
+                Screen::DictionaryPresets(dictionary_presets::Page::Name(_)) => ("Dictionary preset name", "Save"),
                 Screen::FooterCustomText => (
                     "Use %T title, %A author, %c page, and %t total pages",
                     "Save",
@@ -8611,7 +8632,10 @@ impl App for Reader {
         }
         if matches!(
             self.screen,
-            Screen::CollectionName | Screen::ProfileName(_) | Screen::FooterPresetName(_)
+            Screen::CollectionName
+                | Screen::ProfileName(_)
+                | Screen::FooterPresetName(_)
+                | Screen::DictionaryPresets(dictionary_presets::Page::Name(_))
         ) {
             return self.name_editor_input(input);
         }
@@ -8751,6 +8775,7 @@ impl App for Reader {
                         }
                     }
                     Screen::Dictionaries => self.show(self.dictionary_origin),
+                    Screen::DictionaryPresets(page) => self.back_from_dictionary_presets(page),
                     Screen::FooterSettings
                     | Screen::BookmarkListSettings
                     | Screen::NavigationSettings

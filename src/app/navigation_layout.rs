@@ -113,6 +113,11 @@ impl Screen {
                 | Self::PublisherPages
                 | Self::Dictionaries
                 | Self::DictionaryOptions(_)
+                | Self::DictionaryPresets(
+                    super::dictionary_presets::Page::List
+                        | super::dictionary_presets::Page::Details(_)
+                        | super::dictionary_presets::Page::Confirm(_, _)
+                )
                 | Self::DictionaryHistory
                 | Self::OnlineHistory
                 | Self::ClearOnlineHistory
@@ -150,6 +155,7 @@ impl Screen {
                     | Self::CustomTitle
                     | Self::LibraryFind
                     | Self::ProfileName(_)
+                    | Self::DictionaryPresets(super::dictionary_presets::Page::Name(_))
                     | Self::PdfPassword
                     | Self::Find
                     | Self::Matches

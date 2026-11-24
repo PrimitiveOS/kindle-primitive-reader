@@ -25,7 +25,7 @@ use icu_casemap::{CaseMapper, CaseMapperBorrowed};
 
 const MAX_DIRECTORIES_DEPTH: usize = 2;
 const MAX_SCAN_ENTRIES: usize = 1024;
-const MAX_DICTIONARIES: usize = 16;
+pub(crate) const MAX_DICTIONARIES: usize = 16;
 const MAX_INFO_BYTES: usize = 32 * 1024;
 const MAX_INDEX_BYTES: usize = 16 * 1024 * 1024;
 const MAX_COMPRESSED_INDEX_BYTES: u64 = 17 * 1024 * 1024;
