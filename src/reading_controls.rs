@@ -148,7 +148,11 @@ pub(crate) struct ReadingControls {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 pub(crate) struct TopHeader {
-    pub enabled: bool,
+    /// Activation in profiles written before the per-book control.
+    #[serde(rename = "enabled")]
+    pub legacy_enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub book_default: Option<bool>,
     pub auto_refresh: bool,
     pub title: bool,
     pub author: bool,
@@ -164,7 +168,8 @@ pub(crate) struct TopHeader {
 impl Default for TopHeader {
     fn default() -> Self {
         Self {
-            enabled: false,
+            legacy_enabled: false,
+            book_default: None,
             auto_refresh: true,
             title: true,
             author: true,
@@ -181,6 +186,18 @@ impl Default for TopHeader {
 
 impl TopHeader {
     pub(crate) const HEIGHT: u32 = 48;
+
+    pub(crate) fn default_enabled(self) -> bool {
+        self.book_default.unwrap_or(self.legacy_enabled)
+    }
+
+    pub(crate) fn height(enabled: bool, scrolling: bool) -> u32 {
+        if enabled && !scrolling {
+            Self::HEIGHT
+        } else {
+            0
+        }
+    }
 
     pub(crate) fn is_default(&self) -> bool {
         *self == Self::default()
@@ -1572,7 +1589,7 @@ mod tests {
     #[test]
     fn top_header_matches_stock_item_defaults_and_persists_configuration() {
         let legacy: ReadingControls = serde_json::from_str("{}").unwrap();
-        assert!(!legacy.top_header.enabled);
+        assert!(!legacy.top_header.default_enabled());
         assert!(legacy.top_header.auto_refresh);
         assert!(legacy.top_header.title);
         assert!(legacy.top_header.author);
@@ -1586,7 +1603,8 @@ mod tests {
 
         let controls = ReadingControls {
             top_header: TopHeader {
-                enabled: true,
+                legacy_enabled: true,
+                book_default: Some(false),
                 auto_refresh: false,
                 title: false,
                 author: true,

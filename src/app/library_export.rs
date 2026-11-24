@@ -560,6 +560,11 @@ impl Reader {
             .fonts_for(state.preferences.font_file.as_deref())
             .unwrap_or_else(|_| self.fonts.clone());
         let styles = self.style_store.data.snapshot(id)?;
+        let mut settings = state.preferences.apply_to(self.device_reading_settings());
+        settings.status_header_height = crate::reading_controls::TopHeader::height(
+            self.top_header_for_book(id),
+            state.preferences.scroll,
+        );
         let config = book.map(|_| BookConfig {
             user_styles: styles,
             user_hyphenation: self.user_hyphenation.clone(),
@@ -567,7 +572,7 @@ impl Reader {
             engine: Engine::Parley,
             book: absolute.clone(),
             fonts,
-            settings: state.preferences.apply_to(self.device_reading_settings()),
+            settings,
             scroll: state.preferences.scroll,
             facing_pages: state.preferences.facing_pages,
             hide_nonlinear: state

@@ -35,6 +35,8 @@ pub(crate) struct PagePaint {
     pub highlight_appearance: crate::highlight_style::Appearance,
     pub note_marker: crate::highlight_style::NoteMarker,
     pub visible: Range<u32>,
+    // The status strip clips the bitmap without covering the regular footer.
+    pub header_height: u32,
     pub inverted: bool,
 }
 
@@ -45,15 +47,20 @@ impl PagePaint {
             highlight_appearance: Default::default(),
             note_marker: Default::default(),
             visible: 0..PAGE_HEIGHT,
+            header_height: 0,
             inverted,
         }
     }
 
     pub(crate) fn apply(self, mut page: GrayImage) -> (Rect, GrayImage) {
         let Self {
-            visible, inverted, ..
+            visible,
+            header_height,
+            inverted,
+            ..
         } = self;
-        let visible = visible.start.min(page.height)..visible.end.min(page.height);
+        let end = visible.end.min(page.height);
+        let visible = visible.start.max(header_height).min(end)..end;
         if visible != (0..page.height) {
             let rows = (visible.start * WIDTH) as usize..(visible.end * WIDTH) as usize;
             let length = rows.len();
@@ -1504,7 +1511,6 @@ pub(crate) fn draw_document_and_footer(
 // rectangles out of the document image while retaining all surrounding page pixels.
 fn draw_page_around_footer_buttons(canvas: &mut Canvas, page: GrayImage, paint: PagePaint) {
     let (rect, mut page) = paint.apply(page);
-    debug_assert_eq!(rect.y, 0);
     let bottom = SHOW_STATUS.y + SHOW_STATUS.h;
     let width = page.width as i32;
     let strips = [
@@ -1516,12 +1522,12 @@ fn draw_page_around_footer_buttons(canvas: &mut Canvas, page: GrayImage, paint: 
             SHOW_STATUS.h,
         ),
         Rect::new(DONE.x + DONE.w, DONE.y, width - (DONE.x + DONE.w), DONE.h),
-        Rect::new(0, bottom, width, page.height as i32 - bottom),
+        Rect::new(0, bottom, width, rect.bottom() - bottom),
     ];
     for strip in strips {
         let mut pixels = Vec::with_capacity((strip.w * strip.h) as usize);
         for y in strip.y..strip.y + strip.h {
-            let start = (y * width + strip.x) as usize;
+            let start = ((y - rect.y) * width + strip.x) as usize;
             pixels.extend_from_slice(&page.pixels[start..start + strip.w as usize]);
         }
         canvas.picture(
@@ -1533,9 +1539,9 @@ fn draw_page_around_footer_buttons(canvas: &mut Canvas, page: GrayImage, paint: 
             },
         );
     }
-    page.height = SHOW_STATUS.y as u32;
+    page.height = (SHOW_STATUS.y - rect.y) as u32;
     page.pixels.truncate((page.width * page.height) as usize);
-    canvas.picture(Rect::new(0, 0, width, page.height as i32), page);
+    canvas.picture(Rect::new(0, rect.y, width, page.height as i32), page);
 }
 
 pub(crate) fn draw_page_picture(canvas: &mut Canvas, page: GrayImage, paint: PagePaint) {
@@ -1559,6 +1565,7 @@ impl App for Reading {
                 highlight_appearance: Default::default(),
                 note_marker: Default::default(),
                 visible: 0..self.frame.height,
+                header_height: 0,
                 inverted: false,
             },
             false,

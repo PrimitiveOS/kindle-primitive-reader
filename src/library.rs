@@ -809,6 +809,8 @@ pub struct BookState {
     pub(crate) publisher_page_margins: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) character_page_stride: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) top_status_header: Option<bool>,
     #[serde(default)]
     pub preferences: BookPreferences,
     #[serde(default)]
@@ -870,6 +872,7 @@ impl BookState {
             publisher_page_footer: false,
             publisher_page_margins: false,
             character_page_stride: None,
+            top_status_header: None,
             preferences: BookPreferences::default(),
             fixed_preferences: FixedPreferences::default(),
             preferred_dictionaries: Vec::new(),
@@ -1767,12 +1770,14 @@ impl Library {
         id: u64,
         preferences: BookPreferences,
         position: ReadingPosition,
+        top_status_header: bool,
     ) -> io::Result<()> {
         let index = self.recent.iter().position(|state| state.id == id);
         let mut candidate = index
             .map(|index| self.recent[index].clone())
             .unwrap_or_else(|| BookState::new(entry, id));
         candidate.preferences = preferences;
+        candidate.top_status_header = Some(top_status_header);
         candidate.position = Some(position);
         if let Some(index) = index {
             let prior = std::mem::replace(&mut self.recent[index], candidate);
@@ -2021,6 +2026,9 @@ fn merge_states(current: &[BookState], backup: &[BookState]) -> (Vec<BookState>,
         }
         if target.hide_nonlinear.is_none() {
             target.hide_nonlinear = source.hide_nonlinear;
+        }
+        if target.top_status_header.is_none() {
+            target.top_status_header = source.top_status_header;
         }
         merge_text_marks(target, &source.bookmarks, &source.highlights, &mut summary);
         for mark in &source.pdf_highlights {

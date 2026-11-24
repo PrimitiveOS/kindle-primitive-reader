@@ -489,20 +489,17 @@ impl Reader {
             )
     }
 
-    fn top_header_visible(&self) -> bool {
-        self.controls.top_header.enabled
-            && self
-                .active
-                .as_ref()
-                .is_some_and(|book| !book.reading.is_continuous())
-            && matches!(
-                self.screen,
-                Screen::Book
-                    | Screen::BookTools
-                    | Screen::Footnote
-                    | Screen::OnlineLookup
-                    | Screen::Skim
-            )
+    pub(super) fn top_header_visible(&self) -> bool {
+        self.active.as_ref().is_some_and(|book| {
+            book.reading.config.settings.status_header_height != 0 && !book.reading.is_continuous()
+        }) && (matches!(
+            self.screen,
+            Screen::Book
+                | Screen::BookTools
+                | Screen::Footnote
+                | Screen::OnlineLookup
+                | Screen::Skim
+        ) || self.definition_over_book())
     }
 
     fn footer_time_visible(&self) -> bool {
@@ -648,24 +645,15 @@ impl Reader {
         }
     }
 
-    pub(super) fn device_reading_settings_for(&self, controls: ReadingControls) -> crate::Settings {
+    pub(super) fn device_reading_settings(&self) -> crate::Settings {
         crate::Settings {
-            height: if controls.overlap_footer {
+            height: if self.controls.overlap_footer {
                 HEIGHT
             } else {
                 PAGE_HEIGHT
             },
-            status_header_height: if controls.top_header.enabled {
-                TopHeader::HEIGHT
-            } else {
-                0
-            },
             ..super::device_settings()
         }
-    }
-
-    pub(super) fn device_reading_settings(&self) -> crate::Settings {
-        self.device_reading_settings_for(self.controls)
     }
 
     pub(super) fn overlapping_book_page(&self) -> bool {
@@ -885,13 +873,10 @@ impl Reader {
 
     fn top_header_parts(&self) -> Option<(String, String)> {
         let header = self.controls.top_header;
-        if !header.enabled {
+        if !self.top_header_visible() {
             return None;
         }
         let active = self.active.as_ref()?;
-        if active.reading.is_continuous() {
-            return None;
-        }
         let progress = self.footer_progress();
         let mut identity = Vec::new();
         if header.title {
@@ -1924,17 +1909,6 @@ impl Reader {
         let header = c.top_header;
         items.extend([
             Item::new("Top status header", Action::Heading),
-            setting(
-                "Show status at top",
-                on_off(header.enabled),
-                ReadingControls {
-                    top_header: TopHeader {
-                        enabled: !header.enabled,
-                        ..header
-                    },
-                    ..c
-                },
-            ),
             setting(
                 "Refresh header clock automatically",
                 on_off(header.auto_refresh),

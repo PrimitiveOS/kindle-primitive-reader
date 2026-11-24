@@ -38,7 +38,7 @@ enum Target {
     BottomSection(BarPanel),
     TopSection(TopGroup),
     Exit,
-    Current,
+    Current(Action),
 }
 
 impl Target {
@@ -48,7 +48,7 @@ impl Target {
             Self::Toggle(panel) | Self::BottomSection(panel) => Some(panel_icon(*panel)),
             Self::TopSection(group) => Some(group_icon(*group)),
             Self::Exit => Some(EXIT),
-            Self::Current => None,
+            Self::Current(_) => None,
         }
     }
 }
@@ -279,7 +279,7 @@ impl Bars {
             let count = row.choices.len();
             for (index, choice) in row.choices.into_iter().enumerate() {
                 let target = if choice.selected {
-                    Target::Current
+                    Target::Current(choice.action)
                 } else if choice.live {
                     Target::Apply(choice.action)
                 } else {
@@ -562,32 +562,19 @@ impl Reader {
         } else {
             PAGE_HEIGHT
         };
-        let mut visible = if matches!(self.screen, Screen::BookTools | Screen::FixedTools) {
+        let visible = if matches!(self.screen, Screen::BookTools | Screen::FixedTools) {
             self.reading_bars().visible(height)
         } else {
             0..height
         };
-        if self.fixed.is_none()
-            && self
-                .active
-                .as_ref()
-                .is_some_and(|book| !book.reading.is_continuous())
-            && self.controls.top_header.enabled
-            && matches!(
-                self.screen,
-                Screen::Book
-                    | Screen::BookTools
-                    | Screen::Footnote
-                    | Screen::OnlineLookup
-                    | Screen::Skim
-            )
-        {
-            visible.start = visible
-                .start
-                .max(crate::reading_controls::TopHeader::HEIGHT);
-        }
+        let header_height = if self.top_header_visible() {
+            crate::reading_controls::TopHeader::HEIGHT
+        } else {
+            0
+        };
         PagePaint {
             visible,
+            header_height,
             inverted,
             highlight_appearance: self.controls.highlight_appearance,
             note_marker: self.controls.note_marker,
@@ -750,14 +737,14 @@ impl Reader {
     pub(super) fn reading_tools_input(&mut self, input: Input) -> Change {
         let reading_screen = self.surface_screen();
         match input {
-            Input::LongTap(x, y)
-                if matches!(
-                    self.reading_bars().button_at(x, y),
-                    Some(Target::Invoke(Action::ReadAlarm))
-                ) =>
-            {
-                self.read_alarm.stop()
-            }
+            Input::LongTap(x, y) => match self.reading_bars().button_at(x, y) {
+                Some(Target::Invoke(Action::ReadAlarm)) => self.read_alarm.stop(),
+                Some(
+                    Target::Apply(Action::TopStatusHeader(enabled))
+                    | Target::Current(Action::TopStatusHeader(enabled)),
+                ) => self.apply_overlay_action(Action::ConfirmTopStatusHeaderDefault(enabled)),
+                _ => Change::None,
+            },
             Input::Tap(x, y) => {
                 let mut bars = self.reading_bars();
                 match bars.button_at(x, y) {
@@ -787,7 +774,7 @@ impl Reader {
                         Ok(()) => self.applied_change(),
                         Err(error) => self.report(error),
                     },
-                    Some(Target::Current) => Change::None,
+                    Some(Target::Current(_)) => Change::None,
                     None if !bars.contains(x, y) => {
                         let bottom_was_open = self.reading_panel.take().is_some();
                         let top_was_open = self.top_group.take().is_some();
@@ -922,6 +909,186 @@ mod tests {
             )
             .unwrap();
         }
+    }
+
+    #[test]
+    fn top_header_lower_config_keeps_book_choice_default_and_footer_independent() {
+        use crate::app::tests::{Fixture, capture_test_screen};
+        use crate::reading_controls::TopHeader;
+        use primitive_ui::SheetAction;
+
+        fn choice(app: &Reader, default: bool, requested: bool) -> (f32, f32) {
+            let rect = app
+                .reading_bars()
+                .buttons
+                .into_iter()
+                .find(|button| match &button.target {
+                    Target::Apply(action) | Target::Current(action) => match action {
+                        Action::TopStatusHeader(enabled) => !default && *enabled == requested,
+                        Action::ConfirmTopStatusHeaderDefault(enabled) => {
+                            default && *enabled == requested
+                        }
+                        _ => false,
+                    },
+                    _ => false,
+                })
+                .unwrap()
+                .rect;
+            ((rect.x + rect.w / 2) as f32, (rect.y + rect.h / 2) as f32)
+        }
+
+        let fixture = Fixture::new();
+        let second = fixture.root.join("Sea Wall.epub");
+        let third = fixture.root.join("Two Columns.epub");
+        let pdf = fixture.root.join("Harbor chart.pdf");
+        fs::write(
+            &second,
+            include_bytes!("../../tests/fixtures/long-chapter.epub"),
+        )
+        .unwrap();
+        fs::write(
+            &third,
+            include_bytes!("../../tests/fixtures/many-chapters.epub"),
+        )
+        .unwrap();
+        fs::write(&pdf, crate::fixed::tests::document()).unwrap();
+        let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        let system_settings = fixture.root.join("launcher-settings.txt");
+        fs::write(&system_settings, "dark_mode=off\n").unwrap();
+        app.system_theme = Some(crate::app::SystemTheme::new(system_settings));
+        app.open_path(&fixture.book).unwrap();
+        app.activate(Action::Jump(crate::epub::Destination {
+            path: "EPUB/chapters/dusk.xhtml".into(),
+            fragment: Some("door".into()),
+        }))
+        .unwrap();
+        let initial = app.current_history_location();
+        let footer_mode = app.controls.status_bar;
+        let footer = app.status_caption();
+        let font_paths: Vec<_> = fonts
+            .iter()
+            .map(|font| font.display().to_string())
+            .collect();
+        let mut canvas = Canvas::new(WIDTH, HEIGHT, &font_paths).unwrap();
+        let footer_start = (WIDTH * PAGE_HEIGHT) as usize;
+        let old_frame = primitive_app::frame(&app, &mut canvas, false);
+        assert!(app.top_header_caption().is_none());
+        assert_eq!(
+            app.swipe(
+                Input::Swipe {
+                    dx: 0.0,
+                    dy: -120.0,
+                    start_y: HEIGHT as f32 - 4.0
+                },
+                500.0
+            ),
+            Change::Partial
+        );
+        assert_eq!(tap(&mut app, "Screen"), Change::Partial);
+        assert_eq!(app.reading_panel, Some(BarPanel::TextScreen));
+        let (on_x, on_y) = choice(&app, false, true);
+        assert_eq!(app.input(Input::Tap(on_x, on_y)), Change::Partial);
+        assert_eq!(app.current_history_location(), initial);
+        assert_eq!(app.screen, Screen::BookTools);
+        assert_eq!(app.reading_panel, Some(BarPanel::TextScreen));
+        assert!(app.top_header_caption().is_some());
+        assert!(!app.controls.top_header.default_enabled());
+        capture_test_screen(
+            &app,
+            &fonts,
+            "READER_TOP_HEADER_BOOK_CONFIG_SCREENSHOT",
+            false,
+        );
+
+        assert_eq!(app.input(Input::LongTap(on_x, on_y)), Change::Partial);
+        assert_eq!(app.top_header_default_prompt, Some(true));
+        capture_test_screen(
+            &app,
+            &fonts,
+            "READER_TOP_HEADER_DEFAULT_PROMPT_SCREENSHOT",
+            false,
+        );
+        assert_eq!(app.input(Input::Tap(10.0, 10.0)), Change::Partial);
+        assert!(!app.controls.top_header.default_enabled());
+        assert!(app.top_header_caption().is_some());
+        let (default_x, default_y) = choice(&app, true, true);
+        assert_eq!(app.input(Input::Tap(default_x, default_y)), Change::Partial);
+        let confirm = Reader::top_header_default_sheet(true).button(SheetAction::Confirm);
+        assert_eq!(
+            app.input(Input::Tap((confirm.x + 10) as f32, (confirm.y + 10) as f32)),
+            Change::Partial
+        );
+        assert!(app.controls.top_header.default_enabled());
+        assert_eq!(app.reading_panel, Some(BarPanel::TextScreen));
+        assert_eq!(app.input(Input::Tap(20.0, 400.0)), Change::Partial);
+        assert_eq!(app.input(Input::Tap(20.0, 400.0)), Change::Partial);
+        assert_eq!(app.screen, Screen::Book);
+        assert_eq!(app.current_history_location(), initial);
+        capture_test_screen(&app, &fonts, "READER_TOP_HEADER_BOOK_SCREENSHOT", false);
+        assert_eq!(app.controls.status_bar, footer_mode);
+        assert_eq!(app.status_caption(), footer);
+        let frame = primitive_app::frame(&app, &mut canvas, false);
+        assert_eq!(
+            &frame[footer_start..],
+            &old_frame[footer_start..],
+            "enabling the header must preserve the whole footer, including Exit"
+        );
+
+        let regular_controls = app.controls;
+        app.activate(Action::SetReadingControls(
+            crate::reading_controls::ReadingControls {
+                status_bar: crate::reading_controls::StatusBar::Minimal,
+                overlap_footer: true,
+                ..regular_controls
+            },
+        ))
+        .unwrap();
+        let hidden_frame = primitive_app::frame(&app, &mut canvas, false);
+        let exit = crate::session::DONE;
+        assert!((exit.y..exit.bottom()).any(|y| {
+            let row = y as usize * WIDTH as usize;
+            hidden_frame[row + exit.x as usize..row + exit.right() as usize].contains(&0)
+        }));
+        app.activate(Action::SetReadingControls(regular_controls))
+            .unwrap();
+
+        app.open_path(&second).unwrap();
+        assert!(app.top_header_caption().is_some());
+        app.open_reading_edge(false, 500.0);
+        if app.reading_panel != Some(BarPanel::TextScreen) {
+            tap(&mut app, "Screen");
+        }
+        let (off_x, off_y) = choice(&app, false, false);
+        assert_eq!(app.input(Input::Tap(off_x, off_y)), Change::Partial);
+        assert!(app.top_header_caption().is_none());
+        app.save().unwrap();
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+        app.open_path(&second).unwrap();
+        assert!(app.top_header_caption().is_none());
+        assert!(app.controls.top_header.default_enabled());
+        app.open_path(&fixture.book).unwrap();
+        assert!(app.top_header_caption().is_some());
+        app.activate(Action::ResetText).unwrap();
+        assert_eq!(
+            app.active
+                .as_ref()
+                .unwrap()
+                .reading
+                .config
+                .settings
+                .status_header_height,
+            TopHeader::HEIGHT
+        );
+        app.open_path(&third).unwrap();
+        assert!(app.top_header_caption().is_some());
+        app.open_path(&pdf).unwrap();
+        assert!(app.top_header_caption().is_none());
+        assert!(
+            app.bottom_config_rows(BarPanel::ViewScreen)
+                .iter()
+                .all(|row| { !row.label.contains("header") && !row.label.contains("new books") })
+        );
     }
 
     #[test]

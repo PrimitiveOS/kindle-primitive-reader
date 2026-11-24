@@ -64,6 +64,7 @@ mod sidecar_marks;
 mod skim;
 mod style_tweaks;
 mod top_config;
+mod top_header;
 mod user_hyphenation;
 mod vocabulary;
 #[cfg(test)]
@@ -501,6 +502,8 @@ enum Action {
     DeleteFooterPreset(usize),
     ResetText,
     ReadingMode(bool),
+    TopStatusHeader(bool),
+    ConfirmTopStatusHeaderDefault(bool),
     FacingPages(bool),
     SearchHit(usize),
     PdfSearchHit(usize),
@@ -757,6 +760,7 @@ pub struct Reader {
     refresh_display: bool,
     auto_turn: AutoTurn,
     read_alarm: read_alarm::ReadAlarm,
+    top_header_default_prompt: Option<bool>,
     list_page: usize,
     matches_page: usize,
     result_context: Option<result_context::ResultContext>,
@@ -955,6 +959,7 @@ impl Reader {
             refresh_display: false,
             auto_turn: AutoTurn::default(),
             read_alarm: read_alarm::ReadAlarm::open(data.join("read-timer.json")),
+            top_header_default_prompt: None,
             list_page: 0,
             matches_page: 0,
             result_context: None,
@@ -1058,6 +1063,7 @@ impl Reader {
             }
         })?;
         let unseen = self.library.state(id).is_none();
+        let top_status_header = self.top_header_for_book(id);
         let mut initial_preferences = self
             .document_defaults
             .templates
@@ -1067,11 +1073,8 @@ impl Reader {
         let mut default_font_missing = false;
         let mut settings = initial_preferences.apply_to(self.device_reading_settings());
         let mut scroll = initial_preferences.scroll;
-        settings.status_header_height = if self.controls.top_header.enabled && !scroll {
-            crate::reading_controls::TopHeader::HEIGHT
-        } else {
-            0
-        };
+        settings.status_header_height =
+            crate::reading_controls::TopHeader::height(top_status_header, scroll);
         let mut facing_pages = initial_preferences.facing_pages;
         let mut fixed_preferences = self
             .document_defaults
@@ -1084,11 +1087,8 @@ impl Reader {
             // template, including older records with empty/default preferences.
             settings = state.preferences.apply_to(self.device_reading_settings());
             scroll = state.preferences.scroll;
-            settings.status_header_height = if self.controls.top_header.enabled && !scroll {
-                crate::reading_controls::TopHeader::HEIGHT
-            } else {
-                0
-            };
+            settings.status_header_height =
+                crate::reading_controls::TopHeader::height(top_status_header, scroll);
             facing_pages = state.preferences.facing_pages;
             fixed_preferences = state.fixed_preferences;
             state.position.clone()
@@ -1275,12 +1275,10 @@ impl Reader {
         } else {
             Reading::open(config)?
         };
-        let status_header_height = if self.controls.top_header.enabled && !reading.is_continuous() {
-            crate::reading_controls::TopHeader::HEIGHT
-        } else {
-            0
-        };
-        reading.set_status_header_height(status_header_height)?;
+        reading.set_status_header_height(crate::reading_controls::TopHeader::height(
+            top_status_header,
+            reading.is_continuous(),
+        ))?;
         entry.author.clone_from(&reading.probe.author);
         self.save_library()?;
         self.pages_since_refresh = 0;
@@ -1293,12 +1291,14 @@ impl Reader {
             numbering: None,
         });
         self.style_view = Default::default();
+        let active = self.active.as_ref().unwrap();
+        let state = self
+            .library
+            .remember(&active.entry, id, &active.reading.probe.title);
         if unseen {
-            let active = self.active.as_ref().unwrap();
-            self.library
-                .remember(&active.entry, id, &active.reading.probe.title)
-                .preferences = initial_preferences;
+            state.preferences = initial_preferences;
         }
+        state.top_status_header = Some(top_status_header);
         let offer_publisher = self.apply_new_numbering_defaults();
         self.restore_character_pages();
         self.fixed = None;
@@ -3165,8 +3165,7 @@ impl Reader {
                         controls.footer_items = crate::reading_controls::FooterItem::DEFAULT_MASK;
                     }
                 }
-                let reflow_layout_changed = controls.overlap_footer != self.controls.overlap_footer
-                    || controls.top_header.enabled != self.controls.top_header.enabled;
+                let reflow_layout_changed = controls.overlap_footer != self.controls.overlap_footer;
                 let resized = if reflow_layout_changed {
                     self.active
                         .as_ref()
@@ -3178,12 +3177,6 @@ impl Reader {
                             } else {
                                 PAGE_HEIGHT
                             };
-                            config.settings.status_header_height =
-                                if controls.top_header.enabled && !reading.is_continuous() {
-                                    crate::reading_controls::TopHeader::HEIGHT
-                                } else {
-                                    0
-                                };
                             Reading::restore(
                                 config,
                                 reading.chapter,
@@ -3683,13 +3676,17 @@ impl Reader {
             Action::ResetText => self.apply_text_profile(BookPreferences::for_new_reflow())?,
             Action::DocumentDefaults(command) => self.activate_document_defaults(command)?,
             Action::Style(command) => self.activate_style(command)?,
+            Action::TopStatusHeader(enabled) => self.set_book_top_header(enabled)?,
+            Action::ConfirmTopStatusHeaderDefault(enabled) => {
+                self.top_header_default_prompt = Some(enabled);
+            }
             Action::ReadingMode(scroll) => {
-                let active = self.active.as_mut().ok_or("No open book")?;
-                let status_header_height = if self.controls.top_header.enabled && !scroll {
-                    crate::reading_controls::TopHeader::HEIGHT
-                } else {
-                    0
-                };
+                let id = self.active.as_ref().ok_or("No open book")?.id;
+                let status_header_height = crate::reading_controls::TopHeader::height(
+                    self.top_header_for_book(id),
+                    scroll,
+                );
+                let active = self.active.as_mut().unwrap();
                 active
                     .reading
                     .set_scroll_and_header(scroll, status_header_height)?;
@@ -3850,6 +3847,9 @@ impl Reader {
         let location = position(&active.reading);
         let mut config = active.reading.config.clone();
         config.settings = preferences.apply_to(base);
+        let top_status_header = self.top_header_for_book(id);
+        config.settings.status_header_height =
+            crate::reading_controls::TopHeader::height(top_status_header, preferences.scroll);
         config.scroll = preferences.scroll;
         config.facing_pages = preferences.facing_pages;
         config.fonts = fonts;
@@ -3859,13 +3859,10 @@ impl Reader {
             location.page,
             location.anchor.as_ref(),
         )?;
-        let status_header_height = if self.controls.top_header.enabled && !candidate.is_continuous()
-        {
-            crate::reading_controls::TopHeader::HEIGHT
-        } else {
-            0
-        };
-        candidate.set_status_header_height(status_header_height)?;
+        candidate.set_status_header_height(crate::reading_controls::TopHeader::height(
+            top_status_header,
+            candidate.is_continuous(),
+        ))?;
         if candidate.probe.book != active.reading.probe.book
             || with_storage(|| self.library.identify(&active.entry))? != id
         {
@@ -7645,6 +7642,7 @@ impl App for Reader {
             self.draw_skim(canvas);
         }
         self.draw_flow_popup(canvas);
+        self.draw_top_header_default_prompt(canvas);
         self.read_alarm.draw(canvas, self.screen == Screen::Book);
         self.draw_vocabulary_dialog(canvas);
         self.draw_logical_recovery(canvas);
@@ -7673,6 +7671,9 @@ impl App for Reader {
         }
         if self.read_alarm.modal() {
             return self.read_alarm_input(input);
+        }
+        if let Some(change) = self.top_header_default_input(input) {
+            return change;
         }
         if let Some(change) = self.style_editor_input(input) {
             return change;
@@ -7803,6 +7804,9 @@ impl App for Reader {
         }
         if self.read_alarm.modal() {
             return self.read_alarm_input(input);
+        }
+        if let Some(change) = self.top_header_default_input(input) {
+            return change;
         }
         if let Some(change) = self.style_editor_input(input) {
             return change;
@@ -14389,14 +14393,7 @@ mod tests {
         assert!(app.footer_refresh_at.is_none());
 
         use crate::reading_controls::TopHeader;
-        app.activate(Action::SetReadingControls(ReadingControls {
-            top_header: TopHeader {
-                enabled: true,
-                ..app.controls.top_header
-            },
-            ..app.controls
-        }))
-        .unwrap();
+        app.activate(Action::TopStatusHeader(true)).unwrap();
         assert!(app.footer_refresh_at.is_some());
         app.activate(Action::SetReadingControls(ReadingControls {
             top_header: TopHeader {
@@ -14442,14 +14439,11 @@ mod tests {
         app.input(Input::Wake);
         assert!(app.footer_refresh_at.is_some());
 
+        app.activate(Action::TopStatusHeader(false)).unwrap();
         app.activate(Action::SetReadingControls(ReadingControls {
             status_bar: StatusBar::Custom,
             footer_auto_refresh: false,
             footer_items: FooterItem::DEFAULT_MASK | FooterItem::BatteryPercentage.bit(),
-            top_header: crate::reading_controls::TopHeader {
-                enabled: false,
-                ..app.controls.top_header
-            },
             ..app.controls
         }))
         .unwrap();
@@ -14920,9 +14914,9 @@ mod tests {
             .config
             .settings
             .top_margin();
+        app.activate(Action::TopStatusHeader(true)).unwrap();
         app.activate(Action::SetReadingControls(ReadingControls {
             top_header: TopHeader {
-                enabled: true,
                 battery: HeaderBattery::Percentage,
                 reading_percent: true,
                 ..app.controls.top_header
@@ -14956,12 +14950,10 @@ mod tests {
                 .iter()
                 .any(|item| item.title == "Header battery status")
         );
-        assert_eq!(
+        assert!(
             settings
                 .iter()
-                .find(|item| item.title == "Show status at top")
-                .and_then(|item| item.detail.as_deref()),
-            Some("On")
+                .all(|item| item.title != "Show status at top")
         );
         let mut canvas = Canvas::new(
             WIDTH,
@@ -15002,14 +14994,7 @@ mod tests {
         fs::write(&long, include_bytes!("../tests/fixtures/long-chapter.epub")).unwrap();
         let mut app = fixture.app();
         app.open_path(&long).unwrap();
-        app.activate(Action::SetReadingControls(ReadingControls {
-            top_header: TopHeader {
-                enabled: true,
-                ..app.controls.top_header
-            },
-            ..app.controls
-        }))
-        .unwrap();
+        app.activate(Action::TopStatusHeader(true)).unwrap();
         assert_eq!(
             app.active
                 .as_ref()

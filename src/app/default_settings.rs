@@ -131,17 +131,24 @@ impl Reader {
         let location = position(&active.reading);
         let mut config = active.reading.config.clone();
         config.settings = prefs.apply_to(base);
+        let top_status_header = self.top_header_for_book(active.id);
+        config.settings.status_header_height =
+            crate::reading_controls::TopHeader::height(top_status_header, prefs.scroll);
         config.scroll = prefs.scroll;
         config.facing_pages = prefs.facing_pages;
         config.fonts = fonts;
         // Keep the old reading object/frame until both preparation and the
         // atomic library write succeed. A failed reflow cannot alter the view.
-        let candidate = Reading::restore(
+        let mut candidate = Reading::restore(
             config,
             location.chapter,
             location.page,
             location.anchor.as_ref(),
         )?;
+        candidate.set_status_header_height(crate::reading_controls::TopHeader::height(
+            top_status_header,
+            candidate.is_continuous(),
+        ))?;
         let id = active.id;
         let old = self
             .library
