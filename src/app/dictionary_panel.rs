@@ -8,11 +8,13 @@ const DEFINITION_TEXT: primitive_ui::TextStyle =
     primitive_ui::TextStyle::new(FONT_SIZE).break_long_words();
 const LINE: i32 = 47;
 const MAX_DEPTH: usize = 8;
+const EXAMPLE_INSET: i32 = 36;
+const MARKER_GUTTER: i32 = 112;
 
 /// One job belongs to one popup. Dropping the popup cancels its storage work
 /// and disconnects its result channel before another selected word can receive it.
 pub(super) struct SpellingLookup {
-    receiver: std::sync::mpsc::Receiver<io::Result<Vec<dictionary::Definition>>>,
+    receiver: std::sync::mpsc::Receiver<io::Result<Vec<dictionary::LookupEntry>>>,
     cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub(super) deadline: Instant,
 }
@@ -26,7 +28,7 @@ impl Drop for SpellingLookup {
 
 impl SpellingLookup {
     pub(super) fn start(
-        work: impl FnOnce(&std::sync::atomic::AtomicBool) -> io::Result<Vec<dictionary::Definition>>
+        work: impl FnOnce(&std::sync::atomic::AtomicBool) -> io::Result<Vec<dictionary::LookupEntry>>
         + Send
         + 'static,
     ) -> io::Result<Self> {
@@ -57,7 +59,7 @@ pub(super) struct Navigation {
 }
 struct Previous {
     word: String,
-    definitions: Vec<dictionary::Definition>,
+    definitions: Vec<dictionary::LookupEntry>,
     index: usize,
     expanded: bool,
     suggestions_pending: bool,
@@ -95,6 +97,10 @@ struct Find {
 struct TextLine {
     range: Range<usize>,
     soft_wrap: bool,
+    indent: i32,
+    end_inset: i32,
+    rtl: Option<bool>,
+    marker: Option<dictionary::article::Marker>,
     placed: OnceCell<PlacedLine>,
     words: OnceCell<Vec<(Range<usize>, i32, i32)>>,
 }
@@ -110,6 +116,7 @@ struct PlacedRun {
 struct PlacedLine {
     runs: Vec<PlacedRun>,
     justified: bool,
+    rtl: Option<bool>,
 }
 
 fn body(popup: Rect) -> Rect {
@@ -154,10 +161,136 @@ fn layout(canvas: &mut Canvas, text: &str, width: i32) -> Vec<TextLine> {
             soft_wrap: range.end < text.len()
                 && !text[range.clone()].ends_with(['\n', '\r', '\u{0085}', '\u{2028}', '\u{2029}']),
             range,
+            indent: 0,
+            end_inset: 0,
+            rtl: None,
+            marker: None,
             placed: OnceCell::new(),
             words: OnceCell::new(),
         })
         .collect()
+}
+
+fn article_layout(
+    canvas: &mut Canvas,
+    result: &dictionary::LookupEntry,
+    width: i32,
+) -> Vec<TextLine> {
+    let Some(article) = &result.article else {
+        return layout(canvas, &result.text, width);
+    };
+    let mut prior = 0;
+    let mut paragraphs = article.paragraphs.iter().peekable();
+    let mut rows = Vec::new();
+    for paragraph in result.text.split_inclusive('\n') {
+        let start = prior;
+        prior += paragraph.len();
+        let paragraph = paragraph.trim_end_matches('\n');
+        let style = paragraphs.next_if(|style| style.range.start == start);
+        let (indent, end_inset) = style.map_or((0, 0), |style| {
+            let nested = (i32::from(style.indent) * EXAMPLE_INSET).min(width / 6);
+            let gutter = if style.list_item { MARKER_GUTTER } else { 0 };
+            ((nested + gutter).min(width / 3), nested)
+        });
+        let rtl = style.map(|style| paragraph_rtl(paragraph, style));
+        for (index, mut line) in layout(canvas, paragraph, width - indent - end_inset)
+            .into_iter()
+            .enumerate()
+        {
+            line.range.start += start;
+            line.range.end += start;
+            line.indent = indent;
+            line.end_inset = end_inset;
+            line.rtl = rtl;
+            if index == 0 {
+                line.marker = style.and_then(|style| style.marker);
+            }
+            rows.push(line);
+        }
+    }
+    rows
+}
+
+fn paragraph_rtl(text: &str, style: &dictionary::article::Paragraph) -> bool {
+    use unicode_bidi::BidiClass::{AL, L, R};
+
+    match style.direction {
+        Some(parley::BaseDirection::Ltr) => return false,
+        Some(parley::BaseDirection::Rtl) => return true,
+        _ => {}
+    }
+    if let Some(direction) = text
+        .chars()
+        .map(unicode_bidi::bidi_class)
+        .find(|class| matches!(class, L | R | AL))
+    {
+        return direction != L;
+    }
+    // When there is no strong character, use the declared language's script
+    // to position a line of numbers or symbols. Explicit dir="auto" still
+    // uses Unicode's default direction for neutral text.
+    style.direction.is_none()
+        && style
+            .language
+            .is_some_and(|language| match language.script() {
+                Some(script) => {
+                    matches!(script, "Arab" | "Hebr" | "Thaa" | "Syrc" | "Nkoo" | "Adlm")
+                }
+                None => matches!(
+                    language.language(),
+                    "ar" | "ara"
+                        | "fa"
+                        | "fas"
+                        | "he"
+                        | "heb"
+                        | "ur"
+                        | "urd"
+                        | "ps"
+                        | "pus"
+                        | "yi"
+                        | "yid"
+                        | "dv"
+                        | "div"
+                        | "sd"
+                        | "snd"
+                        | "ug"
+                        | "uig"
+                ),
+            })
+}
+
+impl TextLine {
+    fn bounds(&self, row: Rect) -> Rect {
+        Rect::new(
+            row.x
+                + if self.rtl == Some(true) {
+                    self.end_inset
+                } else {
+                    self.indent
+                },
+            row.y,
+            row.w - self.indent - self.end_inset,
+            row.h,
+        )
+    }
+
+    fn draw_marker(&self, canvas: &mut Canvas, rect: Rect) {
+        let text = match self.marker {
+            Some(dictionary::article::Marker::Number(number)) => format!("{number}."),
+            Some(dictionary::article::Marker::Bullet) => "•".to_owned(),
+            None => return,
+        };
+        let width = self.indent.min(MARKER_GUTTER) - 14;
+        let (x, style) = if self.rtl == Some(true) {
+            (rect.right() + 14, primitive_ui::TextStyle::new(30))
+        } else {
+            (
+                rect.x - 14 - width,
+                primitive_ui::TextStyle::new(30).right(),
+            )
+        };
+        canvas.text(Rect::new(x, rect.y + 2, width, LINE), &text, style);
+    }
 }
 
 fn stretchable_space(ch: char) -> bool {
@@ -165,12 +298,20 @@ fn stretchable_space(ch: char) -> bool {
 }
 
 impl PlacedLine {
-    fn new(canvas: &mut Canvas, line: &str, width: i32, justify: bool) -> Self {
-        let bidi = unicode_bidi::BidiInfo::new(line, None);
+    fn new(canvas: &mut Canvas, line: &str, width: i32, justify: bool, rtl: Option<bool>) -> Self {
+        let level = rtl.map(|rtl| {
+            if rtl {
+                unicode_bidi::Level::rtl()
+            } else {
+                unicode_bidi::Level::ltr()
+            }
+        });
+        let bidi = unicode_bidi::BidiInfo::new(line, level);
         let Some(paragraph) = bidi.paragraphs.first() else {
             return Self {
                 runs: Vec::new(),
                 justified: false,
+                rtl,
             };
         };
         let (levels, ranges) = bidi.visual_runs(paragraph, paragraph.range.clone());
@@ -178,9 +319,14 @@ impl PlacedLine {
             return Self {
                 runs,
                 justified: true,
+                rtl,
             };
         }
-        let mut x = 0;
+        let mut x = if rtl == Some(true) {
+            (width - canvas.measure(line, FONT_SIZE)).max(0)
+        } else {
+            0
+        };
         let runs = ranges
             .into_iter()
             .map(|range| {
@@ -198,6 +344,7 @@ impl PlacedLine {
         Self {
             runs,
             justified: false,
+            rtl,
         }
     }
 
@@ -320,6 +467,17 @@ impl PlacedLine {
                 let bounds = Rect::new(rect.x + run.x, rect.y, rect.w - run.x, rect.h);
                 canvas.text(bounds, &line[run.range.clone()], DEFINITION_TEXT);
             }
+        } else if let Some(rtl) = self.rtl {
+            // Canvas auto-detects direction. A nonprinting mark pins the
+            // paragraph base direction across wrapped rows without changing
+            // the dictionary text or the hit-test byte positions.
+            let mark = if rtl { '\u{200f}' } else { '\u{200e}' };
+            let style = if rtl {
+                DEFINITION_TEXT.right()
+            } else {
+                DEFINITION_TEXT
+            };
+            canvas.text(rect, &format!("{mark}{line}"), style);
         } else {
             canvas.text(rect, line, DEFINITION_TEXT);
         }
@@ -639,7 +797,7 @@ impl Reader {
         let n = view.first_line((rect.h / LINE) as usize)
             + (y as i32 - rect.y) as usize / LINE as usize;
         let line = view.layout.get()?.get(n)?;
-        let pos = x as i32 - rect.x;
+        let pos = x as i32 - line.bounds(rect).x;
         let (bytes, _, _) = line
             .words
             .get()?
@@ -1064,18 +1222,23 @@ impl Reader {
             if text.is_empty() {
                 canvas.text(rect, HEADWORD_ONLY, CAPTION);
             }
-            let lines = view.layout.get_or_init(|| layout(canvas, text, rect.w));
+            let lines = view
+                .layout
+                .get_or_init(|| article_layout(canvas, result, rect.w));
             let current = view.find.as_ref().map(|f| &f.hits[f.index]);
             let first = view.first_line(rows);
             for (row, line) in lines.iter().skip(first).take(rows).enumerate() {
                 let y = rect.y + row as i32 * LINE;
+                let line_rect = line.bounds(Rect::new(rect.x, y, rect.w, LINE));
+                line.draw_marker(canvas, line_rect);
                 let content = text[line.range.clone()].trim_end();
                 let placement = line.placed.get_or_init(|| {
                     PlacedLine::new(
                         canvas,
                         content,
-                        rect.w,
+                        line_rect.w,
                         self.dictionary_settings.justify_text && line.soft_wrap,
+                        line.rtl,
                     )
                 });
                 line.words.get_or_init(|| {
@@ -1095,12 +1258,12 @@ impl Reader {
                         std::slice::from_ref(&part),
                     ) {
                         canvas.fill(
-                            Rect::new(rect.x + left, y, (right - left).max(2), LINE),
+                            Rect::new(line_rect.x + left, y, (right - left).max(2), LINE),
                             205,
                         );
                     }
                 }
-                placement.draw(canvas, Rect::new(rect.x, y, rect.w, LINE), content);
+                placement.draw(canvas, line_rect, content);
             }
             if lines.len() > rows {
                 let height = (rect.h * rows as i32 / lines.len() as i32).max(12);

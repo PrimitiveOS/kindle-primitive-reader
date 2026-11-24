@@ -20,3 +20,5 @@ saved by an earlier release, reopening Reader, result selection, nested lookups
 and restoring the original selection. Text tests cover paragraph endings,
 nonbreaking spaces and mixed left-to-right and right-to-left word positions.
 [Settings](screenshots/dictionary-popup-settings.png) · [Compact with justified text](screenshots/dictionary-justify-text.png) · [Large window in dark mode](screenshots/dictionary-large-window.png) · [Workflow tests](../src/app/dictionary_panel/tests.rs)
+
+[Numbered senses and bilingual examples in HTML dictionary articles](dictionary-html-articles.md)

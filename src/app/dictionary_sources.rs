@@ -120,7 +120,7 @@ impl Reader {
             .unwrap_or(!self.dictionary_settings.disable_word_forms)
     }
 
-    pub(super) fn lookup_sources(&self, word: &str) -> io::Result<Vec<dictionary::Definition>> {
+    pub(super) fn lookup_sources(&self, word: &str) -> io::Result<Vec<dictionary::LookupEntry>> {
         let prefs = &self.dictionary_settings;
         self.dictionaries.lookup_configured(
             word,
@@ -670,7 +670,7 @@ mod tests {
             app.lookup_sources("tide")
                 .unwrap()
                 .into_iter()
-                .map(|hit| hit.dictionary)
+                .map(|hit| hit.definition.dictionary)
                 .collect::<Vec<_>>()
         };
 

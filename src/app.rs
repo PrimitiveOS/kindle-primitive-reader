@@ -858,7 +858,7 @@ pub struct Reader {
     online: Option<online_panel::Panel>,
     annotation_search: annotation_search::AnnotationSearch,
     definition_word: String,
-    definitions: Vec<dictionary::Definition>,
+    definitions: Vec<dictionary::LookupEntry>,
     definition_results_page: Option<usize>,
     definition_expanded: bool,
     dictionary_navigation: dictionary_panel::Navigation,
@@ -10630,10 +10630,13 @@ mod tests {
         app.open_path(&fixture.book).unwrap();
         let original = position(&app.active.as_ref().unwrap().reading);
         app.definitions = ["The movement of the sea", "A flow of water"]
-            .map(|text| dictionary::Definition {
-                dictionary: "Sample".into(),
-                word: "Tide".into(),
-                text: text.into(),
+            .map(|text| dictionary::LookupEntry {
+                definition: dictionary::Definition {
+                    dictionary: "Sample".into(),
+                    word: "Tide".into(),
+                    text: text.into(),
+                },
+                article: None,
             })
             .into();
         app.show(Screen::Definition);

@@ -5,6 +5,7 @@
 mod spelling;
 #[cfg(feature = "kindle")]
 pub(crate) use spelling::eligible as spelling_eligible;
+pub(crate) mod article;
 mod cjk_selection;
 mod word_forms;
 pub(crate) use cjk_selection::{MAX_SCAN_CHARACTERS, word_character as cjk_word_character};
@@ -51,8 +52,22 @@ struct LookupBudget {
 pub struct Definition {
     pub dictionary: String,
     pub word: String,
-    /// Display-ready text. Markup is flattened and never opens its resources.
+    /// Canonical searchable text. Article layout never changes these offsets.
     pub text: String,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct LookupEntry {
+    pub(crate) definition: Definition,
+    pub(crate) article: Option<article::Article>,
+}
+
+impl std::ops::Deref for LookupEntry {
+    type Target = Definition;
+
+    fn deref(&self) -> &Definition {
+        &self.definition
+    }
 }
 
 #[cfg(feature = "kindle")]
@@ -152,7 +167,7 @@ impl DictionarySources {
         &self,
         word: &str,
         preferred: Option<&Path>,
-    ) -> io::Result<Vec<Definition>> {
+    ) -> io::Result<Vec<LookupEntry>> {
         let first: Vec<_> = preferred.iter().map(|path| path.to_path_buf()).collect();
         self.lookup_ordered(word, &[], &first, &[])
     }
@@ -198,7 +213,7 @@ impl DictionarySources {
         book_order: &[PathBuf],
         order: &[PathBuf],
         disabled: &[PathBuf],
-    ) -> io::Result<Vec<Definition>> {
+    ) -> io::Result<Vec<LookupEntry>> {
         self.lookup_configured(word, book_order, order, disabled, false)
     }
 
@@ -209,7 +224,7 @@ impl DictionarySources {
         order: &[PathBuf],
         disabled: &[PathBuf],
         with_word_forms: bool,
-    ) -> io::Result<Vec<Definition>> {
+    ) -> io::Result<Vec<LookupEntry>> {
         let word = word.trim();
         if word.len() > MAX_WORD_BYTES {
             return Ok(Vec::new());
@@ -282,11 +297,15 @@ fn lookup_preferred(
     word: &str,
     preferred: Option<&Path>,
 ) -> io::Result<Vec<Definition>> {
-    DictionarySources {
+    let definitions = DictionarySources {
         local: root.to_owned(),
         shared_storage: None,
     }
-    .lookup(word, preferred)
+    .lookup(word, preferred)?;
+    Ok(definitions
+        .into_iter()
+        .map(|entry| entry.definition)
+        .collect())
 }
 
 fn dictionary_root(root: &Path) -> io::Result<Option<PathBuf>> {
@@ -337,6 +356,7 @@ struct Info {
     index_size: usize,
     offset_bytes: usize,
     fields: Option<Vec<u8>>,
+    language: Option<parley::Language>,
 }
 
 impl Info {
@@ -360,6 +380,7 @@ impl Info {
         let mut index_size = None;
         let mut offset_bits = "32";
         let mut fields = None;
+        let mut language = None;
         for (key, value) in lines.filter_map(|line| line.split_once('=')) {
             let value = value.trim();
             match key {
@@ -377,6 +398,14 @@ impl Info {
                 "synwordcount" => synonyms = positive_number(value, MAX_WORDS),
                 "idxfilesize" => index_size = positive_number(value, MAX_INDEX_BYTES),
                 "idxoffsetbits" => offset_bits = value,
+                "lang" => {
+                    let (headword, definition) = value.split_once('-').unwrap_or((value, ""));
+                    language = article::language(if definition.is_empty() {
+                        headword
+                    } else {
+                        definition
+                    });
+                }
                 "sametypesequence" => {
                     if value.is_empty()
                         || value.len() > MAX_FIELDS
@@ -409,6 +438,7 @@ impl Info {
                 .ok_or_else(|| invalid("The dictionary index size is missing or too large"))?,
             offset_bytes,
             fields,
+            language,
         })
     }
 }
@@ -538,21 +568,24 @@ fn read_definitions(
     info: &Info,
     budget: &mut LookupBudget,
     matches: Vec<IndexMatch>,
-) -> io::Result<Vec<Definition>> {
+) -> io::Result<Vec<LookupEntry>> {
     let mut definitions = Vec::new();
     for matched in matches {
-        let text = if matched.size == 0 {
+        let decoded = if matched.size == 0 {
             // Some bilingual indexes intentionally contain headword-only entries.
-            Some(String::new())
+            Some((String::new(), None))
         } else {
             let bytes = data.read(matched.offset, matched.size, &mut budget.dictzip_bytes)?;
-            definition(&bytes, info.fields.as_deref())
+            definition_with_article(&bytes, info.fields.as_deref(), info.language)
         };
-        if let Some(text) = text {
-            definitions.push(Definition {
-                dictionary: info.title.clone(),
-                word: matched.word,
-                text,
+        if let Some((text, article)) = decoded {
+            definitions.push(LookupEntry {
+                definition: Definition {
+                    dictionary: info.title.clone(),
+                    word: matched.word,
+                    text,
+                },
+                article,
             });
         }
     }
@@ -566,7 +599,7 @@ fn lookup_dictionary(
     info: &Info,
     query: IndexQuery<'_>,
     budget: &mut LookupBudget,
-) -> io::Result<Hits<Definition>> {
+) -> io::Result<Hits<LookupEntry>> {
     let (index, mut data) = open_index_and_data(root, path, info, budget)?;
     let matches = scan_index(index, info, query, data.len()?)?;
     let mut read_hits = |hits| read_definitions(&mut data, info, budget, hits);
@@ -1019,8 +1052,18 @@ fn scan_index(
     Ok(hits)
 }
 
-fn definition(mut data: &[u8], sequence: Option<&[u8]>) -> Option<String> {
+#[cfg(test)]
+fn definition(data: &[u8], sequence: Option<&[u8]>) -> Option<String> {
+    definition_with_article(data, sequence, None).map(|(text, _)| text)
+}
+
+fn definition_with_article(
+    mut data: &[u8],
+    sequence: Option<&[u8]>,
+    language: Option<parley::Language>,
+) -> Option<(String, Option<article::Article>)> {
     let mut text = String::new();
+    let mut paragraphs = Vec::new();
     for index in 0..sequence.map_or(MAX_FIELDS, <[u8]>::len) {
         if data.is_empty() && sequence.is_none() {
             break;
@@ -1053,39 +1096,58 @@ fn definition(mut data: &[u8], sequence: Option<&[u8]>) -> Option<String> {
             continue;
         }
         let value = std::str::from_utf8(value).ok()?.trim_end_matches('\0');
-        let value = if matches!(kind, b'h' | b'g' | b'x' | b'k') {
-            markup_text(value, kind == b'x')
+        let (value, styles) = if matches!(kind, b'h' | b'g' | b'x' | b'k') {
+            let tracker = (kind == b'h').then(|| article::Tracker::new(language));
+            markup_text(value, kind == b'x', tracker)
         } else {
-            display_text(value)
+            (display_text(value), Vec::new())
         };
         if !value.is_empty() {
             if !text.is_empty() {
                 text.push('\n');
             }
+            let offset = text.len();
+            paragraphs.extend(
+                styles
+                    .into_iter()
+                    .take(article::MAX_PARAGRAPHS.saturating_sub(paragraphs.len()))
+                    .map(|mut paragraph| {
+                        paragraph.range.start += offset;
+                        paragraph.range.end += offset;
+                        paragraph
+                    }),
+            );
             text.push_str(&value);
         }
     }
-    (data.is_empty() && !text.is_empty()).then_some(text)
+    (data.is_empty() && !text.is_empty()).then(|| {
+        let article = (!paragraphs.is_empty()).then(|| article::Article { paragraphs });
+        (text, article)
+    })
 }
 
 fn display_text(text: &str) -> String {
     let mut output = String::new();
     for line in text.lines() {
-        let mut words = line.split_whitespace().peekable();
-        if words.peek().is_none() {
-            continue;
-        }
-        if !output.is_empty() {
-            output.push('\n');
-        }
-        for (index, word) in words.enumerate() {
-            if index > 0 {
-                output.push(' ');
-            }
-            output.extend(word.chars().filter(|ch| !ch.is_control()));
-        }
+        push_display_line(&mut output, line);
     }
     output
+}
+
+fn push_display_line(output: &mut String, line: &str) -> Option<std::ops::Range<usize>> {
+    let mut words = line.split_whitespace().peekable();
+    words.peek()?;
+    if !output.is_empty() {
+        output.push('\n');
+    }
+    let start = output.len();
+    for (index, word) in words.enumerate() {
+        if index > 0 {
+            output.push(' ');
+        }
+        output.extend(word.chars().filter(|ch| !ch.is_control()));
+    }
+    Some(start..output.len())
 }
 
 #[derive(Default)]
@@ -1094,6 +1156,7 @@ struct PlainText {
     headword_start: Cell<Option<usize>>,
     text: RefCell<String>,
     hidden: Cell<Option<&'static str>>,
+    article: Option<RefCell<article::Tracker>>,
 }
 
 impl TokenSink for PlainText {
@@ -1164,6 +1227,11 @@ impl TokenSink for PlainText {
                 {
                     self.text.borrow_mut().push('\n');
                 }
+                if self.hidden.get().is_none()
+                    && let Some(article) = &self.article
+                {
+                    article.borrow_mut().tag(&tag, self.text.borrow().len());
+                }
             }
             _ => {}
         }
@@ -1171,19 +1239,28 @@ impl TokenSink for PlainText {
     }
 }
 
-fn markup_text(text: &str, xdxf: bool) -> String {
+fn markup_text(
+    text: &str,
+    xdxf: bool,
+    article: Option<article::Tracker>,
+) -> (String, Vec<article::Paragraph>) {
     let queue = BufferQueue::default();
     queue.push_back(StrTendril::from_slice(text));
     let tokenizer = Tokenizer::new(
         PlainText {
             xdxf,
+            article: article.map(RefCell::new),
             ..Default::default()
         },
         Default::default(),
     );
     let _ = tokenizer.feed(&queue);
     tokenizer.end();
-    display_text(&tokenizer.sink.text.into_inner())
+    let raw = tokenizer.sink.text.into_inner();
+    match tokenizer.sink.article {
+        Some(tracker) => tracker.into_inner().finish(&raw),
+        None => (display_text(&raw), Vec::new()),
+    }
 }
 
 fn invalid(message: &str) -> io::Error {
@@ -1500,6 +1577,79 @@ pub(crate) mod tests {
         );
     }
 
+    #[test]
+    fn dictionary_html_article_tracks_structure_without_changing_search_text() {
+        use crate::dictionary::article::Marker;
+
+        let html = "<div lang='en-US' dir='ltr'><ol start='2'><li>First sense. \
+            <blockquote><p>An example.</p><dl><dt>Translation</dt>\
+            <dd lang='ar' dir='rtl'>في الميناء.</dd></dl></blockquote></li>\
+            <li value='7'>Next sense.</li><li>Last sense.</ol></div>\
+            <p>2026</p>";
+        let root = TestDirectory::new();
+        write_dictionary(
+            &root.0,
+            "Bilingual",
+            "sametypesequence=h\nlang=eng-ara\n",
+            &[("port", html.as_bytes())],
+        );
+        let result = DictionarySources {
+            local: root.0.clone(),
+            shared_storage: None,
+        }
+        .lookup("port", None)
+        .unwrap()
+        .pop()
+        .unwrap();
+        let text =
+            "First sense.\nAn example.\nTranslation\nفي الميناء.\nNext sense.\nLast sense.\n2026";
+        assert_eq!(result.text, text);
+        let paragraphs = result.article.unwrap().paragraphs;
+        assert_eq!(
+            paragraphs
+                .iter()
+                .map(|p| &text[p.range.clone()])
+                .collect::<Vec<_>>(),
+            text.lines().collect::<Vec<_>>()
+        );
+        assert_eq!(paragraphs[0].marker, Some(Marker::Number(2)));
+        assert_eq!(paragraphs[0].language.unwrap().as_str(), "en-US");
+        assert_eq!(paragraphs[1].marker, None);
+        assert_eq!(paragraphs[1].indent, 1);
+        assert_eq!(paragraphs[3].direction, Some(parley::BaseDirection::Rtl));
+        assert_eq!(paragraphs[3].language.unwrap().as_str(), "ar");
+        assert_eq!(paragraphs[3].indent, 2);
+        assert_eq!(paragraphs[4].marker, Some(Marker::Number(7)));
+        assert_eq!(paragraphs[5].marker, Some(Marker::Number(8)));
+        assert_eq!(paragraphs[6].direction, None);
+        assert_eq!(paragraphs[6].language.unwrap().as_str(), "ara");
+    }
+
+    #[test]
+    fn dictionary_html_article_bounds_structure_and_leaves_untrusted_resources_inert() {
+        let open = "<blockquote lang='../../files' dir='untrusted'>".repeat(64);
+        let close = "</blockquote>".repeat(64);
+        let active = "<script>hidden_script()</script><style>.hidden {color:red}</style>\
+            <img src='file:///private/file' onload='hidden_load()'><a href='https://example.invalid'>Anchor label</a>";
+        let html = format!("{open}<p>Visible sense.</p>{active}{close}");
+        let (text, article) = definition_with_article(html.as_bytes(), Some(b"h"), None).unwrap();
+        assert_eq!(text, "Visible sense.\nAnchor label");
+        assert!(article.is_none());
+        let html = format!(
+            "<ol start='9999999999999'><li dir='rtl' lang='{}'>{active}</li></ol>",
+            "q".repeat(200)
+        );
+        let (text, article) = definition_with_article(html.as_bytes(), Some(b"h"), None).unwrap();
+        let paragraphs = article.unwrap().paragraphs;
+        assert_eq!(text, "Anchor label");
+        assert_eq!(paragraphs.len(), 1);
+        assert_eq!(
+            paragraphs[0].marker,
+            Some(crate::dictionary::article::Marker::Number(1))
+        );
+        assert_eq!(paragraphs[0].language, None);
+    }
+
     #[cfg(feature = "kindle")]
     #[test]
     fn search_reader_and_existing_koreader_dictionaries_in_preference_order() {
@@ -1687,7 +1837,7 @@ pub(crate) mod tests {
                 .lookup_configured(word, &[], &[], &[], enabled)
                 .unwrap()
                 .into_iter()
-                .map(|r| r.word)
+                .map(|r| r.definition.word)
                 .collect::<Vec<_>>()
         };
         assert_eq!(query("moving", true), ["moving", "move"]);
