@@ -90,7 +90,11 @@ local skim_menu = common_settings.skim_dialog_position
 assert(skim_menu.sub_item_table[2].checked_func())
 local ui = {
     view = { shouldInvertBiDiLayoutMirroring = function() return false end },
-    toc = { getTocTicksFlattened = function() return {4, 16} end },
+    toc = {
+        getTocTicksFlattened = function() return {4, 16} end,
+        getPreviousChapter = function(_, page) assert(page == 7); return 4 end,
+        getNextChapter = function(_, page) assert(page == 7); return 16 end,
+    },
     getCurrentPage = function() return 7 end,
     document = { getPageCount = function() return 32 end },
 }
@@ -106,7 +110,12 @@ for index, expected in ipairs({"top", "center", "bottom"}) do
     assert(choice.radio)
     choice.callback()
     assert(choice.checked_func() and skim_menu.text_func():find(expected, 1, true))
-    local skim = setmetatable({ui = ui, ges_events = {}}, {__index = skim_type})
+    local goto_requested, origin_requested
+    local skim = setmetatable({
+        ui = ui,
+        ges_events = {},
+        callback_switch_to_goto = function() goto_requested = true end,
+    }, {__index = skim_type})
     skim:init()
     assert(skim[1].align == expected and skim[1].dimen.h == 1680)
     assert(skim.curr_page == 7 and skim.page_count == 32 and skim.progress_bar.percentage == 7/32)
@@ -125,5 +134,61 @@ for index, expected in ipairs({"top", "center", "bottom"}) do
     assert(requested == 17)
     assert(find_button(frame_rows, "-10")).callback()
     assert(requested == -3)
+    local shortcuts = expected == "top" and frame_rows[5] or frame_rows[1]
+    local chapter_prev, chapter_next, mark_prev, mark_next =
+        shortcuts[1], shortcuts[expected == "center" and 9 or 3],
+        shortcuts[expected == "center" and 3 or 5],
+        shortcuts[7]
+    chapter_prev.callback()
+    assert(requested == 4)
+    chapter_next.callback()
+    assert(requested == 16)
+    chapter_prev.hold_callback()
+    assert(requested == 1)
+    chapter_next.hold_callback()
+    assert(requested == 32)
+    local event
+    skim.goToByEvent = function(_, name) event = name end
+    mark_prev.callback()
+    assert(event == "GotoPreviousBookmarkFromPage")
+    mark_next.callback()
+    assert(event == "GotoNextBookmarkFromPage")
+    mark_prev.hold_callback()
+    assert(event == "GotoFirstBookmark")
+    mark_next.hold_callback()
+    assert(event == "GotoLastBookmark")
+    skim.goToOrigPage = function() origin_requested = true end
+    skim.current_page_text.callback()
+    skim.current_page_text.hold_callback()
+    assert(goto_requested and origin_requested)
 end
-print("Pinned opening-page callback, Skim placements and ten-page shortcuts passed")
+
+if arg[4] then
+    local source = block(read(arg[4]), "function ReaderBookmark:getNextBookmarkedPage", "-- bookmarks misc info")
+    local bookmark = assert(loadstring("local ReaderBookmark = {}\n" .. source .. "\nreturn ReaderBookmark"))()
+    local holder = setmetatable({
+        page = 7,
+        ui = {
+            annotation = { annotations = {
+                { page = 3, drawer = "highlight" },
+                { page = 6 },
+                { page = 9, drawer = "highlight", note = "Saved note" },
+                { page = 14 },
+            }},
+            link = { addCurrentLocationToStack = function() error("Skim owns the return location") end },
+        },
+        getBookmarkPageNumber = function(_, item) return item.page end,
+        getCurrentPageNumber = function(self) return self.page end,
+        gotoBookmark = function(self, page) self.last = page end,
+    }, {__index = bookmark})
+    holder:onGotoPreviousBookmarkFromPage(false)
+    assert(holder.last == 6)
+    holder:onGotoNextBookmarkFromPage(false)
+    assert(holder.last == 9)
+    holder:onGotoFirstBookmark(false)
+    assert(holder.last == 3)
+    holder:onGotoLastBookmark(false)
+    assert(holder.last == 14)
+end
+
+print("Pinned opening page and Skim placement, chapter, saved mark and numeric shortcuts passed")

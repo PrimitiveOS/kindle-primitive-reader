@@ -4415,7 +4415,9 @@ impl Reader {
             overview_bookmarks::push_page_bookmark(state, position, label)?;
             self.mark_book_changed();
         }
-        self.show(screen);
+        if self.screen != Screen::Skim {
+            self.show(screen);
+        }
         self.notice = Some("Page bookmarked".into());
         Ok(())
     }
@@ -4471,11 +4473,13 @@ impl Reader {
         };
         state.bookmarks.remove(index);
         self.mark_book_changed();
-        self.show(if self.fixed.is_some() {
-            Screen::Fixed
-        } else {
-            Screen::Book
-        });
+        if self.screen != Screen::Skim {
+            self.show(if self.fixed.is_some() {
+                Screen::Fixed
+            } else {
+                Screen::Book
+            });
+        }
         self.notice = Some("Bookmark removed".into());
         Ok(())
     }

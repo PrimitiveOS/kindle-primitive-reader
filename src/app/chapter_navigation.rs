@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
 
 use super::contents_view::{ContentsEntry, Target};
-use super::{Action, Item, Reader, position};
+use super::{Action, Item, Reader, Screen, position};
 use crate::fixed_session::FixedReading;
 use crate::library::Bookmark;
 use crate::session::Reading;
@@ -51,8 +51,12 @@ impl Reader {
                     state
                         .is_none_or(|state| state.contents_depths.use_for_navigation(heading.depth))
                 });
-        if let Some(fixed) = &self.fixed {
+        if let Some(fixed) = &mut self.fixed {
             if let Some(page) = fixed_page(&fixed.reading, headings, custom, direction) {
+                if self.screen == Screen::Skim {
+                    fixed.reading.jump(page)?;
+                    return Ok(());
+                }
                 let previous = self.jump_fixed(page, None)?;
                 if self.current_history_location().as_ref() != Some(&previous) {
                     self.push_history(previous);
@@ -69,7 +73,9 @@ impl Reader {
         {
             let previous = position(&active.reading);
             active.reading.go_to_laid_out_page(chapter, page, probe)?;
-            self.finish_reflow_jump(previous);
+            if self.screen != Screen::Skim {
+                self.finish_reflow_jump(previous);
+            }
             return Ok(());
         }
         self.notice = Some(

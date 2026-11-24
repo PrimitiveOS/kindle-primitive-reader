@@ -1,9 +1,16 @@
 //! Transient page preview over the current reading view.
 
-use primitive_app::{App, Change, HEIGHT, WIDTH};
-use primitive_ui::{CAPTION, Canvas, Input, Rect, TextStyle};
+use std::collections::HashMap;
 
-use super::{DONE, HistoryLocation, Reader, ReadingPosition, Screen, fixed_page_label};
+use primitive_app::{App, Change, HEIGHT, WIDTH};
+use primitive_ui::{Canvas, Icon, Input, Rect, TextStyle};
+
+use super::bar_icons::{BOOKMARK, FIRST_PAGE, LAST_PAGE};
+use super::chapter_navigation::Direction;
+use super::{
+    Action, DONE, HistoryLocation, Reader, ReadingPosition, Screen, fixed_page_label,
+    reflow_mark_location,
+};
 use crate::fixed_session::FixedJump;
 use crate::reading_controls::SkimPosition;
 
@@ -12,9 +19,12 @@ pub(super) struct Layout {
     pub(super) track: Rect,
     previous_ten: Rect,
     previous: Rect,
+    number: Rect,
     origin: Rect,
     next: Rect,
     next_ten: Rect,
+    chapters: [Rect; 2],
+    marks: [Rect; 3],
     pub(super) cancel: Rect,
     pub(super) commit: Rect,
 }
@@ -29,6 +39,163 @@ mod placement_tests {
 
     fn tap(rect: Rect) -> Input {
         Input::Tap((rect.x + rect.w / 2) as f32, (rect.y + rect.h / 2) as f32)
+    }
+
+    fn hold(rect: Rect) -> Input {
+        let Input::Tap(x, y) = tap(rect) else {
+            unreachable!();
+        };
+        Input::LongTap(x, y)
+    }
+
+    #[test]
+    fn skim_chapters_and_boundaries_keep_the_opening_location_until_accepted() {
+        let fixture = Fixture::new();
+        std::fs::copy(crate::test_fixture("many-chapters.epub"), &fixture.book).unwrap();
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        app.open_path(&fixture.book).unwrap();
+        let origin = app.current_history_location().unwrap();
+        app.activate(Action::Skim).unwrap();
+        let layout = app.skim_layout();
+        for position in [
+            SkimPosition::Top,
+            SkimPosition::Center,
+            SkimPosition::Bottom,
+        ] {
+            app.controls.skim_position = position;
+            let capture = match position {
+                SkimPosition::Top => "READER_SKIM_SHORTCUTS_TOP",
+                SkimPosition::Center => "READER_SKIM_SHORTCUTS_CENTER",
+                SkimPosition::Bottom => "READER_SKIM_SHORTCUTS_BOTTOM",
+            };
+            capture_test_screen(&app, &fonts, capture, position == SkimPosition::Bottom);
+        }
+        app.controls.skim_position = SkimPosition::Center;
+
+        assert_eq!(app.input(tap(layout.chapters[1])), Change::Partial);
+        assert_eq!(app.screen, Screen::Skim);
+        assert_eq!(app.current_position().unwrap().chapter, 1);
+        assert_eq!(app.input(tap(layout.chapters[0])), Change::Partial);
+        assert_eq!(app.current_history_location().as_ref(), Some(&origin));
+        assert_eq!(app.input(hold(layout.chapters[1])), Change::Partial);
+        let reading = &app.active.as_ref().unwrap().reading;
+        assert_eq!(reading.chapter + 1, reading.probe.chapter_count());
+        assert_eq!(reading.page + 1, reading.probe.page_count());
+        assert_eq!(app.input(hold(layout.number)), Change::Partial);
+        assert_eq!(app.current_history_location().as_ref(), Some(&origin));
+        assert!(app.back.is_empty());
+        assert_eq!(app.input(Input::Tap(8.0, 440.0)), Change::Partial);
+        assert_eq!(app.screen, Screen::Book);
+        assert_eq!(app.current_history_location().as_ref(), Some(&origin));
+    }
+
+    #[test]
+    fn skim_marks_preview_a_pdf_highlight_and_page_bookmark() {
+        let fixture = Fixture::new();
+        let pdf = fixture.root.join("Tilted Scan.pdf");
+        std::fs::copy(crate::test_fixture("tilted-scan.pdf"), &pdf).unwrap();
+        let mut app = fixture.app();
+        app.open_path(&pdf).unwrap();
+        app.add_bookmark().unwrap();
+        let origin = app.current_history_location().unwrap();
+        let book = app.open_book_id().unwrap();
+        app.library
+            .state_mut(book)
+            .unwrap()
+            .pdf_highlights
+            .push(crate::library::PdfHighlight {
+                created_at: None,
+                style: Default::default(),
+                color: Default::default(),
+                page: 1,
+                bounds: Vec::new(),
+                text: "Scan note".into(),
+                note: Some("A reference for this page".into()),
+                continuation: Vec::new(),
+            });
+        app.activate(Action::Skim).unwrap();
+        let layout = app.skim_layout();
+        assert_eq!(app.input(tap(layout.marks[2])), Change::Partial);
+        assert_eq!(app.current_position().unwrap().page, 1);
+        assert!(!app.page_is_bookmarked());
+        assert_eq!(app.input(tap(layout.marks[1])), Change::Partial);
+        assert!(app.page_is_bookmarked());
+        assert_eq!(app.screen, Screen::Skim);
+        assert_eq!(app.input(tap(layout.marks[1])), Change::Partial);
+        assert!(!app.page_is_bookmarked());
+        assert_eq!(app.input(hold(layout.marks[0])), Change::Partial);
+        assert_eq!(app.current_history_location().as_ref(), Some(&origin));
+        assert_eq!(app.input(hold(layout.marks[2])), Change::Partial);
+        assert_eq!(app.current_position().unwrap().page, 1);
+        assert!(app.back.is_empty());
+        assert_eq!(app.input(hold(layout.marks[1])), Change::Partial);
+        assert_eq!(app.screen, Screen::FixedBookmarks);
+        assert_eq!(app.back, [origin]);
+    }
+
+    #[test]
+    fn skim_go_to_opens_the_existing_page_editor_and_saves_one_preview_origin() {
+        let fixture = Fixture::new();
+        let mut app = fixture.app();
+        app.open_path(&fixture.book).unwrap();
+        let origin = app.current_history_location().unwrap();
+        app.activate(Action::Skim).unwrap();
+        let layout = app.skim_layout();
+        assert_eq!(app.input(tap(layout.chapters[1])), Change::Partial);
+        assert!(app.back.is_empty());
+        assert_eq!(app.input(tap(layout.number)), Change::Partial);
+        assert_eq!(app.screen, Screen::GoToPage);
+        assert_eq!(app.back, [origin]);
+        app.editor.text = "1:1".chars().collect();
+        app.jump_reflow_number().unwrap();
+        assert_eq!(app.current_position().unwrap().chapter, 0);
+    }
+
+    #[test]
+    fn skim_shortcut_press_changes_only_the_selected_button_in_each_theme() {
+        let fixture = Fixture::new();
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        app.open_path(&fixture.book).unwrap();
+        app.activate(Action::Skim).unwrap();
+        let layout = app.skim_layout();
+        let paths: Vec<_> = fonts
+            .iter()
+            .map(|font| font.display().to_string())
+            .collect();
+        let mut canvas = Canvas::new(WIDTH, HEIGHT, &paths).unwrap();
+        for dark in [false, true] {
+            let normal = primitive_app::frame(&app, &mut canvas, dark);
+            for button in layout
+                .chapters
+                .into_iter()
+                .chain(layout.marks)
+                .chain([layout.number])
+            {
+                let Input::Tap(x, y) = tap(button) else {
+                    unreachable!();
+                };
+                assert!(canvas.press_at(x, y));
+                let pressed = primitive_app::frame(&app, &mut canvas, dark);
+                assert_ne!(normal, pressed);
+                for (index, (a, b)) in normal.iter().zip(&pressed).enumerate() {
+                    if a != b {
+                        assert!(button.contains(
+                            (index as u32 % WIDTH) as f32,
+                            (index as u32 / WIDTH) as f32,
+                        ));
+                    }
+                }
+                canvas.clear_press();
+            }
+        }
     }
 
     #[test]
@@ -133,26 +300,34 @@ mod placement_tests {
 
 impl Layout {
     fn new(position: SkimPosition) -> Self {
-        let (height, track, preview, actions) = match position {
-            SkimPosition::Center => (384, 142, 224, 300),
-            SkimPosition::Top | SkimPosition::Bottom => (320, 92, 154, 232),
+        let (height, track, shortcuts, preview, actions) = match position {
+            SkimPosition::Center => (478, 196, 84, 258, 378),
+            SkimPosition::Top | SkimPosition::Bottom => (446, 73, 125, 233, 347),
         };
         let top = match position {
             SkimPosition::Top => 32,
             SkimPosition::Center => (HEIGHT as i32 - height) / 2,
             SkimPosition::Bottom => HEIGHT as i32 - height - 76,
         };
-        let preview_button = |index| Rect::new(80 + 224 * index, top + preview, 208, 68);
+        let button = |row, index| Rect::new(80 + 224 * index, top + row, 208, 100);
+        let action = |index| Rect::new(80 + 368 * index, top + actions, 368 - 16, 82);
         Self {
             panel: Rect::new(40, top, WIDTH as i32 - 80, height),
             track: Rect::new(92, top + track, WIDTH as i32 - 184, 42),
-            previous_ten: preview_button(0),
-            previous: preview_button(1),
-            origin: preview_button(2),
-            next: preview_button(3),
-            next_ten: preview_button(4),
-            cancel: Rect::new(260, top + actions, 300, 72),
-            commit: Rect::new(704, top + actions, 300, 72),
+            previous_ten: button(preview, 0),
+            previous: button(preview, 1),
+            number: button(preview, 2),
+            next: button(preview, 3),
+            next_ten: button(preview, 4),
+            chapters: [button(shortcuts, 0), button(shortcuts, 4)],
+            marks: [
+                button(shortcuts, 1),
+                button(shortcuts, 2),
+                button(shortcuts, 3),
+            ],
+            cancel: action(0),
+            origin: action(1),
+            commit: action(2),
         }
     }
 
@@ -163,6 +338,7 @@ impl Layout {
 
 pub(super) struct Session {
     origin: HistoryLocation,
+    origin_fraction: f64,
     commit_when_idle: bool,
 }
 
@@ -180,6 +356,7 @@ impl Reader {
             .ok_or("Open a document before skimming")?;
         self.skim = Some(Session {
             origin,
+            origin_fraction: self.skim_progress(),
             commit_when_idle: false,
         });
         self.selection = None;
@@ -232,16 +409,7 @@ impl Reader {
     }
 
     fn skim_close(&mut self, commit: bool) -> crate::Result<()> {
-        if commit
-            && (self
-                .active
-                .as_ref()
-                .is_some_and(|book| book.reading.is_turning())
-                || self
-                    .fixed
-                    .as_ref()
-                    .is_some_and(|book| book.reading.is_turning()))
-        {
+        if commit && self.skim_turn_pending() {
             if let Some(skim) = &mut self.skim {
                 skim.commit_when_idle = true;
             }
@@ -262,6 +430,16 @@ impl Reader {
         });
         self.record_position();
         Ok(())
+    }
+
+    fn skim_turn_pending(&self) -> bool {
+        self.active
+            .as_ref()
+            .is_some_and(|book| book.reading.is_turning())
+            || self
+                .fixed
+                .as_ref()
+                .is_some_and(|book| book.reading.is_turning())
     }
 
     fn skim_progress(&self) -> f64 {
@@ -310,18 +488,12 @@ impl Reader {
         let panel = layout.panel;
         let track = layout.track;
         canvas.popup(panel);
+        let title = format!("Skim  ·  {}", self.skim_label());
         canvas.text(
             Rect::new(panel.x + 28, panel.y + 20, panel.w - 56, 46),
-            &format!("Skim  ·  {}", self.skim_label()),
+            self.notice.as_deref().unwrap_or(&title),
             TextStyle::new(34).bold(),
         );
-        if self.controls.skim_position == SkimPosition::Center {
-            canvas.text(
-                Rect::new(panel.x + 28, panel.y + 65, panel.w - 56, 40),
-                "Preview by swiping, using page buttons, or moving the progress bar.",
-                CAPTION,
-            );
-        }
         canvas.panel(track, 8, 2, 224);
         let filled = (progress * track.w.saturating_sub(18) as f64).round() as i32;
         if filled > 0 {
@@ -339,14 +511,37 @@ impl Reader {
                 }
             }
         }
+        if let Some(skim) = &self.skim {
+            let origin = (skim.origin_fraction * f64::from(track.w - 18)).round() as i32;
+            canvas.fill(Rect::new(track.x + origin + 7, track.y + 5, 4, 32), 0);
+        }
         let marker = track.x + 9 + filled - 8;
         canvas.panel(Rect::new(marker, track.y + 7, 18, track.h - 14), 8, 1, 0);
+        skim_icon_button(
+            canvas,
+            layout.chapters[0],
+            FIRST_PAGE,
+            "Chapter back",
+            false,
+        );
+        skim_icon_button(canvas, layout.marks[0], MARK_BACK, "Mark back", false);
+        let marked = self.page_is_bookmarked();
+        skim_icon_button(
+            canvas,
+            layout.marks[1],
+            BOOKMARK,
+            if marked { "Saved" } else { "Save page" },
+            marked,
+        );
+        skim_icon_button(canvas, layout.marks[2], MARK_FORWARD, "Mark next", false);
+        skim_icon_button(canvas, layout.chapters[1], LAST_PAGE, "Chapter next", false);
         canvas.button(layout.previous_ten, "-10", false, false);
         canvas.button(layout.previous, "‹  Previous", false, false);
-        canvas.button(layout.origin, "Origin", false, false);
+        canvas.button(layout.number, "Go to", false, false);
         canvas.button(layout.next, "Next  ›", false, false);
         canvas.button(layout.next_ten, "+10", false, false);
         canvas.button(layout.cancel, "Cancel", false, false);
+        canvas.button(layout.origin, "Origin", false, false);
         let waiting = self.skim.as_ref().is_some_and(|skim| skim.commit_when_idle);
         canvas.button(
             layout.commit,
@@ -354,6 +549,146 @@ impl Reader {
             true,
             false,
         );
+    }
+
+    fn skim_chapter(&mut self, direction: Direction, boundary: bool) -> Change {
+        if boundary {
+            return self.skim_preview_progress(if direction == Direction::Previous {
+                0.0
+            } else {
+                1.0
+            });
+        }
+        let before = self.current_position();
+        match self.jump_chapter(direction) {
+            Ok(()) => self.skim_finish_shortcut(before),
+            Err(error) => self.report(error),
+        }
+    }
+
+    fn skim_mark(&mut self, direction: Direction, boundary: bool) -> Change {
+        let before = self.current_position();
+        let Some(target) = self.skim_mark_destination(direction, boundary) else {
+            return self.report(match direction {
+                Direction::Previous => "No earlier saved mark",
+                Direction::Next => "No later saved mark",
+            });
+        };
+        match self.skim_apply_location(&target.into()) {
+            Ok(()) => self.skim_finish_shortcut(before),
+            Err(error) => self.report(error),
+        }
+    }
+
+    fn skim_mark_destination(
+        &self,
+        direction: Direction,
+        boundary: bool,
+    ) -> Option<ReadingPosition> {
+        let current = self.current_position()?;
+        let state = self.library.state(self.open_book_id()?)?;
+        let reflow = self.active.as_ref();
+        let saved_positions = state
+            .bookmarks
+            .iter()
+            .map(|bookmark| bookmark.position.clone());
+        let reflow_marks = state.highlights.iter().filter_map(|mark| {
+            let anchor = &mark.selection.start;
+            Some(ReadingPosition {
+                chapter: reflow?.reading.probe.chapter_index(&anchor.chapter)?,
+                page: 0,
+                anchor: Some(anchor.clone()),
+            })
+        });
+        let fixed_marks = state
+            .pdf_highlights
+            .iter()
+            .filter(|mark| {
+                self.fixed
+                    .as_ref()
+                    .is_some_and(|book| mark.page < book.reading.count())
+            })
+            .map(|mark| ReadingPosition {
+                chapter: 0,
+                page: mark.page,
+                anchor: None,
+            });
+        let mut layouts = HashMap::new();
+        let candidates = saved_positions
+            .chain(reflow_marks)
+            .chain(fixed_marks)
+            .filter_map(|mut position| {
+                let key = if let Some(book) = reflow {
+                    let chapter = position
+                        .anchor
+                        .as_ref()
+                        .and_then(|anchor| book.reading.probe.chapter_index(&anchor.chapter))
+                        .unwrap_or(position.chapter);
+                    if chapter >= book.reading.probe.chapter_count()
+                        || (direction == Direction::Previous && chapter > current.chapter)
+                        || (direction == Direction::Next && chapter < current.chapter)
+                    {
+                        return None;
+                    }
+                    reflow_mark_location(
+                        book,
+                        chapter,
+                        position.page,
+                        position.anchor.as_ref(),
+                        &mut layouts,
+                    )
+                } else {
+                    let fixed = self.fixed.as_ref()?;
+                    if position.page >= fixed.reading.count() {
+                        return None;
+                    }
+                    (0, position.page, 0, 0)
+                };
+                let page = (key.0, key.1);
+                let current_page = (current.chapter, current.page);
+                let is_beyond = match direction {
+                    Direction::Previous => page < current_page,
+                    Direction::Next => page > current_page,
+                };
+                if !is_beyond {
+                    return None;
+                }
+                position.chapter = key.0;
+                position.page = key.1;
+                Some((key, position))
+            });
+        match (direction, boundary) {
+            (Direction::Previous, false) | (Direction::Next, true) => {
+                candidates.max_by_key(|(key, _)| *key)
+            }
+            (Direction::Next, false) | (Direction::Previous, true) => {
+                candidates.min_by_key(|(key, _)| *key)
+            }
+        }
+        .map(|(_, position)| position)
+    }
+
+    fn skim_finish_shortcut(&mut self, before: Option<ReadingPosition>) -> Change {
+        if self.current_position() == before {
+            return Change::Partial;
+        }
+        if let Some(skim) = &mut self.skim {
+            skim.commit_when_idle = false;
+        }
+        self.finish_skim_movement(before)
+    }
+
+    fn skim_open_screen(&mut self, screen: Screen) -> Change {
+        if self.skim_turn_pending() {
+            return self.report("Wait for the page to finish turning");
+        }
+        match self
+            .skim_close(true)
+            .and_then(|()| self.activate(Action::Show(screen)))
+        {
+            Ok(()) => Change::Partial,
+            Err(error) => self.report(error),
+        }
     }
 
     fn skim_preview_progress(&mut self, fraction: f64) -> Change {
@@ -480,6 +815,38 @@ impl Reader {
             Input::Tap(x, y) if DONE.contains(x, y) => self.exit(),
             Input::PageForward => self.skim_step(Input::PageForward),
             Input::PageBack => self.skim_step(Input::PageBack),
+            Input::Tap(x, y) | Input::LongTap(x, y) if layout.chapters[0].contains(x, y) => {
+                self.skim_chapter(Direction::Previous, matches!(input, Input::LongTap(..)))
+            }
+            Input::Tap(x, y) | Input::LongTap(x, y) if layout.chapters[1].contains(x, y) => {
+                self.skim_chapter(Direction::Next, matches!(input, Input::LongTap(..)))
+            }
+            Input::Tap(x, y) | Input::LongTap(x, y) if layout.marks[0].contains(x, y) => {
+                self.skim_mark(Direction::Previous, matches!(input, Input::LongTap(..)))
+            }
+            Input::Tap(x, y) | Input::LongTap(x, y) if layout.marks[2].contains(x, y) => {
+                self.skim_mark(Direction::Next, matches!(input, Input::LongTap(..)))
+            }
+            Input::Tap(x, y) if layout.marks[1].contains(x, y) => match self.toggle_bookmark() {
+                Ok(()) => Change::Partial,
+                Err(error) => self.report(error),
+            },
+            Input::LongTap(x, y) if layout.marks[1].contains(x, y) => {
+                self.skim_open_screen(if self.fixed.is_some() {
+                    Screen::FixedBookmarks
+                } else {
+                    Screen::Bookmarks
+                })
+            }
+            Input::Tap(x, y) if layout.number.contains(x, y) => {
+                self.skim_open_screen(Screen::GoToPage)
+            }
+            Input::LongTap(x, y) if layout.number.contains(x, y) => {
+                match self.skim_restore_origin() {
+                    Ok(()) => Change::Partial,
+                    Err(error) => self.report(error),
+                }
+            }
             Input::Tap(x, y) if layout.track.contains(x, y) => {
                 self.skim_preview_progress(layout.fraction(x))
             }
@@ -496,6 +863,10 @@ impl Reader {
                 Err(error) => self.report(error),
             },
             Input::Tap(x, y) if layout.commit.contains(x, y) => match self.skim_close(true) {
+                Ok(()) => Change::Partial,
+                Err(error) => self.report(error),
+            },
+            Input::Tap(x, y) if !layout.panel.contains(x, y) => match self.skim_close(false) {
                 Ok(()) => Change::Partial,
                 Err(error) => self.report(error),
             },
@@ -531,15 +902,7 @@ impl Reader {
             self.search_result = None;
             self.pdf_result_regions.clear();
             let commit = self.skim.as_ref().is_some_and(|skim| skim.commit_when_idle);
-            let turning = self
-                .active
-                .as_ref()
-                .is_some_and(|book| book.reading.is_turning())
-                || self
-                    .fixed
-                    .as_ref()
-                    .is_some_and(|book| book.reading.is_turning());
-            if commit && !turning {
+            if commit && !self.skim_turn_pending() {
                 return match self.skim_close(true) {
                     Ok(()) => Change::Partial,
                     Err(error) => self.report(error),
@@ -550,4 +913,30 @@ impl Reader {
             Change::None
         }
     }
+}
+
+const MARK_BACK: Icon = Icon {
+    stroke: &["M13 5 H19 V19 L16 16 L13 19 Z", "M8 8 L4 12 L8 16"],
+    fill: &[],
+};
+
+const MARK_FORWARD: Icon = Icon {
+    stroke: &["M5 5 H11 V19 L8 16 L5 19 Z", "M16 8 L20 12 L16 16"],
+    fill: &[],
+};
+
+fn skim_icon_button(canvas: &mut Canvas, rect: Rect, icon: Icon, label: &str, active: bool) {
+    let inverted = canvas.control_pressed(rect, false) != active;
+    let (background, ink) = if inverted { (0, 255) } else { (255, 0) };
+    canvas.panel(rect, 16, 2, background);
+    canvas.icon(
+        Rect::new(rect.x + (rect.w - 38) / 2, rect.y + 10, 38, 38),
+        icon,
+        ink,
+    );
+    canvas.text(
+        Rect::new(rect.x + 4, rect.y + 56, rect.w - 8, 36),
+        label,
+        TextStyle::new(25).bold().center().ink(ink),
+    );
 }
