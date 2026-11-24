@@ -17,3 +17,13 @@ The authored fixture covers a linked full-size GIF, a GIF cover, a two-frame ima
 A whole-book comparison covered all 89 sections. Reader originally decoded 67 of the 147 graphic placements. With GIF support it decoded all 147, including the other image formats, and resolved all 1,305 page anchors exactly.
 
 On a Kindle Oasis 3, three native Reader runs and three installed KOReader comparisons completed in 37 seconds. KOReader retrieved the package resources through CREngine, decoded them through the giflib provider used by its image inspector and matched all 82 independent first-frame pixel digests. Touch coordinates on each of three rendered KOReader pages returned the expected original resource bytes. PrimitiveOS Reader also matched all 82 digests and restored the same reading pixels after closing each inspector. The original EPUBs, Reader library and Browser session retained their checksums. The temporary profiles, cache and executable were removed. [Installed KOReader comparison](../scripts/koreader-gif-check.lua) · [Native Reader verification](../src/app/epub_gif_tests.rs)
+
+## Illustration inspection in landscape
+
+Reader opens illustrations, covers and comic panels at the active screen size.
+Zoom and screen rotation keep the inspected source point in view. A pan sets a new
+source point. The book and image frames are adopted together after presentation,
+and closing the image returns to the same reading location or cover’s book details.
+KOReader’s image viewer sizes itself from the active screen, carries the image’s
+center ratios through zoom, and opens comic panels in a separate image viewer.
+[Stock dimensions](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/imageviewer.lua#L321-L335) · [Stock pan focus](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/imageviewer.lua#L552-L558) · [Stock panel inspection](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerhighlight.lua#L1616-L1636)

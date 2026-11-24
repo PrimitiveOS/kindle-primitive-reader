@@ -28,6 +28,7 @@ pub(super) struct Stage {
     target: ReadingViewport,
     candidate: Candidate,
     screen: Screen,
+    illustration: Option<Box<PreparedFixedViewport>>,
     footnote: Option<Footnote>,
     selection_html: Option<Inspector>,
     marks: Option<(super::saved_marks_view::FlexibleMarks, usize)>,
@@ -74,6 +75,12 @@ impl Reader {
             target,
             candidate,
             screen: self.screen,
+            illustration: self
+                .illustration
+                .as_ref()
+                .filter(|view| view.viewport() != target)
+                .map(|view| view.prepare_viewport(target).map(Box::new))
+                .transpose()?,
             footnote: self.resize_footnote(target)?,
             selection_html: self
                 .selection_html
@@ -102,6 +109,10 @@ impl Reader {
             return Err("The staged canvas has different reading dimensions".into());
         }
         self.exchange_staged_reading(&mut staged.candidate)?;
+        if let Err(error) = staged.exchange_illustration(self) {
+            self.exchange_staged_reading(&mut staged.candidate)?;
+            return Err(error);
+        }
         staged.exchange_reading_tools(self);
         let previous_page = staged
             .bookmark_page
@@ -121,8 +132,9 @@ impl Reader {
         staged.bookmark_text_pages =
             previous_text_pages.map(|pages| self.bookmark_browser.replace_text_pages(pages));
         staged.exchange_reading_tools(self);
+        let illustration_restored = staged.exchange_illustration(self);
         let restored = self.exchange_staged_reading(&mut staged.candidate);
-        drawn.and(restored)
+        drawn.and(illustration_restored).and(restored)
     }
 
     fn draw_staged_content(&mut self, staged: &mut Stage, canvas: &mut Canvas) -> Result<()> {
@@ -169,6 +181,12 @@ impl Reader {
                     .reading
                     .commit_viewport(*prepared)?;
             }
+        }
+        if let Some(prepared) = staged.illustration {
+            self.illustration
+                .as_mut()
+                .ok_or("The image closed")?
+                .commit_viewport(*prepared)?;
         }
         if let Some(footnote) = staged.footnote {
             self.footnote = Some(footnote);
@@ -225,6 +243,17 @@ impl Reader {
 }
 
 impl Stage {
+    fn exchange_illustration(&mut self, reader: &mut Reader) -> Result<()> {
+        if let Some(prepared) = &mut self.illustration {
+            reader
+                .illustration
+                .as_mut()
+                .ok_or("The image closed")?
+                .exchange_prepared_viewport(prepared)?;
+        }
+        Ok(())
+    }
+
     fn exchange_reading_tools(&mut self, reader: &mut Reader) {
         if let (Some(current), Some(prepared)) = (&mut reader.footnote, &mut self.footnote) {
             std::mem::swap(current, prepared);
@@ -241,6 +270,12 @@ impl Stage {
             || reader.screen != self.screen
             || reader.current_position() != self.position
             || reader.reading_viewport() != self.from
+            || self.illustration.as_ref().is_some_and(|prepared| {
+                !reader
+                    .illustration
+                    .as_ref()
+                    .is_some_and(|view| view.owns_prepared_viewport(prepared))
+            })
             || !self.visual_navigation.matches(reader)
             || self
                 .reading_list

@@ -96,9 +96,7 @@ impl Reader {
             .ok_or("The document has no supported cover")?
             .into_cover_view()?;
             self.organize_book(entry, Screen::BookmarkBrowser(Page::Book))?;
-            self.show(Screen::Illustration);
-            self.illustration = Some(reading);
-            return Ok(());
+            return self.open_illustration_view(reading);
         }
         self.organize_book(entry, Screen::BookmarkBrowser(Page::Book))?;
         self.view_cover()

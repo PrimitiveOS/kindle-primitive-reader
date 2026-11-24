@@ -148,6 +148,7 @@ impl Reader {
             Screen::Library
                 | Screen::LibraryFind
                 | Screen::BookmarkBrowser(_)
+                | Screen::Illustration
                 | Screen::PdfPassword
         ) {
             return true;

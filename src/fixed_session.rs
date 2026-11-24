@@ -2450,6 +2450,48 @@ impl FixedReading {
         Ok((size, request.page_to_viewport(size)?))
     }
 
+    pub(crate) fn page_center_source(&self) -> Result<((f32, f32), Point)> {
+        let (size, projection) = self.single_page_projection()?;
+        let center = self.frame_center();
+        let point = match self.retained_viewport_anchor {
+            Some(ViewportAnchor::PageCenter(point)) => point,
+            _ => projection.inverse() * center,
+        };
+        Ok((size, point))
+    }
+
+    fn frame_center(&self) -> Point {
+        Point::new(
+            f64::from(self.frame.width) * 0.5,
+            f64::from(self.frame.height) * 0.5,
+        )
+    }
+
+    pub(crate) fn zoom_inspection(&mut self, delta: isize) -> Result<bool> {
+        let zoom = self
+            .view
+            .zoom
+            .saturating_add_signed(delta)
+            .min(ZOOM.len() - 1);
+        if zoom == self.view.zoom {
+            return Ok(false);
+        }
+        let (size, source_point) = self.page_center_source()?;
+        let mut view = View {
+            zoom,
+            offset_x: 0.0,
+            offset_y: 0.0,
+            ..self.view
+        };
+        let request = viewport(size, &mut view, self.frame_size());
+        let delta = self.frame_center() - request.page_to_viewport(size)? * source_point;
+        view.offset_x = delta.x as f32;
+        view.offset_y = delta.y as f32;
+        self.present(self.page, view)?;
+        self.retained_viewport_anchor = Some(ViewportAnchor::PageCenter(source_point));
+        Ok(true)
+    }
+
     /// Prepare the same document location in another logical screen size.
     #[allow(dead_code)] // The live viewport runner is gated on the shared handoff.
     pub(crate) fn prepare_viewport(
@@ -2539,17 +2581,7 @@ impl FixedReading {
             }
             (page, view, frame, visible, None)
         } else {
-            let (size, previous) = self.single_page_projection()?;
-            let source_point = match self.retained_viewport_anchor {
-                Some(ViewportAnchor::PageCenter(point)) => point,
-                _ => {
-                    previous.inverse()
-                        * Point::new(
-                            f64::from(self.frame.width) * 0.5,
-                            f64::from(self.frame.height) * 0.5,
-                        )
-                }
-            };
+            let (size, source_point) = self.page_center_source()?;
             if !source_point.is_finite()
                 || !source_rect(size, self.view.crop.unwrap_or(FULL_PAGE)).contains(source_point)
             {
@@ -2706,7 +2738,7 @@ impl FixedReading {
         &mut self,
         next: &mut PreparedFixedViewport,
     ) -> Result<()> {
-        if !Rc::ptr_eq(&next.owner, &self.viewport_owner) || next.basis != self.viewport_basis() {
+        if !self.owns_prepared_viewport(next) {
             return Err("The fixed reading view changed before the resize was committed".into());
         }
         use std::mem::swap;
@@ -2723,6 +2755,10 @@ impl FixedReading {
         }
         next.basis = self.viewport_basis();
         Ok(())
+    }
+
+    pub(crate) fn owns_prepared_viewport(&self, next: &PreparedFixedViewport) -> bool {
+        Rc::ptr_eq(&next.owner, &self.viewport_owner) && next.basis == self.viewport_basis()
     }
 
     pub(crate) fn resize(
@@ -3839,7 +3875,7 @@ pub(crate) mod tests {
         }
     }
 
-    struct ComicFixture(PathBuf);
+    pub(crate) struct ComicFixture(pub(crate) PathBuf);
 
     impl ComicFixture {
         fn owned_path(kind: &str) -> PathBuf {
@@ -3850,7 +3886,7 @@ pub(crate) mod tests {
                 std::process::id()
             ))
         }
-        fn panels() -> Self {
+        pub(crate) fn panels() -> Self {
             use comic_panel::tests::{HEIGHT, WIDTH, grid};
 
             let fixture = Self(Self::owned_path("panel"));
