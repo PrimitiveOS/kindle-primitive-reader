@@ -2,6 +2,56 @@
 
 ## Current Mac simulator checkpoint
 
+**Menu search** searches the open document’s available controls. It opens
+the matching route, marks the control and preserves the reading position.
+Normal tap shows the path first. A hold jumps directly. The pinned stock
+callback replay and integrated EPUB/PDF tests verify literal punctuation,
+case, remembered queries and a nested note setting. Reader jumps without
+the optional stock animation. [Comparison and captures](menu-search.md)
+
+**Dictionary and Select** show source, matched headword and result number
+as separate fields. Tapping title Back ends Find or leaves one lookup. A
+hold closes the stack and saves an armed highlight once. The explicit
+**Select** action extends a source range in EPUB and PDF before saving.
+[Dictionary comparison](dictionary-popup-display.md#source-and-result-count) ·
+[Selection control](long-press-behavior.md)
+
+**Back navigation** skips the current jump marker and can return to the
+previous distinct fixed-page view. The continued comparison verifies
+same-page PDF zoom, rotation and pan while retaining the open document’s
+other settings, the Documents root, and the direct Exit control. Physical
+Backspace mapping remains a platform gap on keyboards that support it.
+[Back comparison](back-navigation.md)
+
+**Classic EPUB footnotes** resolve links to IDs inside a class-marked note.
+The extension options stop at the next entry or at a heading. Four note
+fixes adjust indentation, justification, spacing and inherited sizing.
+In both renderers the measured note moved from x=96 to x=32 and the
+ordinary body stayed at its existing size. [Classic footnote comparison](in-page-footnotes.md#classic-markers-and-note-formatting)
+
+The calendar audit runs the stock widget callbacks for one to five titles,
+editing the timeline start and toggling the independent calendar shift.
+The stock progress and duration checks also ran again. The in-scope matrix
+now reflects these verified Reader workflows. [Statistics evidence](reading-statistics.md)
+
+The combined replay passed 87 focused Mac tests and reproduced all 35
+new or updated screenshots byte for byte. Original EPUB, PDF, AZW3 and
+MOBI documents opened from the normal picker, turned a page and resumed.
+Two original EPUBs also retained all 63 visible note anchors, with 65
+bands across eight chapters at the 65% note size. Their source bytes matched.
+
+The full Mac suite passed 1,556 library tests, one Kindle entry test, 14 EPUB
+package tests and four layout tests. The standard run skipped 72 opt-in tests.
+
+The local ARMHF package staged a stripped, statically linked 38,455,076-byte
+executable with SHA-256
+`e7d330a942421e872930a579b5cd2f4824e7af371a7110c0992f374f725ac585`.
+The stage contained 30 files totaling 48,054,576 bytes uncompressed. Both
+project licenses, SQLite notices, Launcher icon and OCR model passed inspection.
+Foreground Kindle verification and Store publication remain pending.
+
+## Footnote sizing, page turns, annotation exchange, and notifications checkpoint
+
 **In-page notes** have seven EPUB block sizes and a legacy setting, with
 independent book choices and a live default. Reader and KOReader keep
 ordinary text at the reading size and retain relative inline sizing. The

@@ -97,9 +97,7 @@ Other note formats and physical E Ink checks remain open for this control.
 [KOReader 100%](screenshots/in-page-stock-note-size-100.png) ·
 [KOReader 65%](screenshots/in-page-stock-note-size-65.png)
 
-## Replay on macOS
-
-### Classic markers and note formatting
+## Classic markers and note formatting
 
 In **Style tweaks › More footnote options**, enable **In-page classic
 footnotes** for an EPUB that uses class names such as `footnote`, `fn`,
@@ -135,7 +133,7 @@ and reopening at the original passage. The authored EPUB remains read-only.
 Run the replay below with `classic` as its fifth argument to exercise this
 chapter. Physical E Ink verification remains pending.
 
-### Running the comparison
+## Replay on macOS
 
 Run the Reader tests on the [deterministic authored EPUB](../tests/fixtures/in-page-footnotes.epub).
 Set `stock` to the absolute directory of the pinned native KOReader build with
