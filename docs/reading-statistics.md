@@ -152,37 +152,43 @@ Reader keeps already recorded visits when the limits change.
 [Pinned settings](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/main.lua#L1065-L1104) ·
 [Stock simulator check](../scripts/koreader-reading-progress-check.py)
 
-### Import a PDF's KOReader statistics
+### Import KOReader statistics for a PDF or DjVu book
 
 Close KOReader and copy `statistics.sqlite3` from its settings directory to
-the top level of Kindle Documents. In Reader, open the PDF, open its **Book
-details › Reading statistics**, then choose **Import KOReader statistics**.
+the top level of Kindle Documents. In Reader, open the PDF or self-contained
+DjVu book, open its **Book details › Reading statistics**, then choose
+**Import KOReader statistics**. Both `.djvu` and `.djv` filenames are accepted.
 **Preview database** shows the book matched in KOReader, along with the
 number of new records, reading time and dates. Check the matched title before
 importing.
 Choose **Import records** to add them to Reader's history. Back closes the
-preview. The statistics database and PDF stay in place.
+preview. The statistics database and book stay in place.
 
-Reader checks KOReader's sampled PDF fingerprint and physical page count.
-PDFs with differences outside the sample can share a fingerprint. Reader
+Reader checks KOReader's sampled book fingerprint and physical page count.
+Editions with differences outside the sample can share a fingerprint. Reader
 accepts schema 20221111 snapshots up to 8 MiB and 20,000 rows for the matched
-PDF. Use a closed copy with all commits applied. Reader rejects a copy with
+book. Use a closed copy with all commits applied. Reader rejects a copy with
 an accompanying nonempty WAL or rollback journal. A main file copied without
 its active WAL can be incomplete even when no journal is present. Duplicate or conflicting
 page-time records and rows saved under a different page count are shown in the
-preview and skipped. A changed PDF, database, or Reader journal requires a new
+preview and skipped. A changed book, database, or Reader journal requires a new
 preview or a restart before saving. Import adds the dated visits without
 changing the reading position, notes, or the pace estimator.
 
-The pinned Mac KOReader runtime recorded two page turns and a reread in the
-authored PDF, using its normal statistics write path. SQLite and Reader both
-reported 60 seconds over two distinct pages. Each visit's start time and
-duration survive the import. Reflowable books use layout-dependent source
-positions in Reader, so this import covers physical PDF pages. [Reader import
-preview](screenshots/reading-statistics-import.png) · [Stock database
-generator](../scripts/koreader-pdf-statistics-import-check.py) · [Pinned schema
+The pinned Mac KOReader runtime used its native page turns and statistics
+write path to record the two-page PDF and six-page *Beacon Atlas* DjVu. SQLite
+and Reader agreed on 60 seconds over two physical PDF pages and 75 seconds
+over DjVu pages 1, 3, and 6. The DjVu visit to page 3 used its physical
+ordinal even though the bundled component is named `reef-42.djvu`. Reader
+kept the zoomed and panned position. Reopening the same bytes as `.djv`
+recognized all four DjVu records as already imported. Each visit's start time
+and duration survive the import.
+[PDF import preview](screenshots/reading-statistics-import.png) ·
+[DjVu import preview](screenshots/reading-statistics-import-djvu.png) · [Stock database
+generator](../scripts/koreader-fixed-statistics-import-check.py) · [Pinned schema
 and rescaling](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/main.lua#L403-L493)
 · [Pinned stock write path](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/main.lua#L909-L964)
+· [KOReader DjVu page mapping](https://github.com/koreader/koreader-base/blob/6e4bc81af4e04f78d81677a323a780a71b29702a/djvu.c#L322-L336)
 
 Daily history groups visits by their civil start date. Reader clips the elapsed intervals used by the calendar and timeline to the chosen day's boundaries. A visit that crosses a boundary can contribute time to both calendar days while its daily-history total remains on the start date. KOReader's monthly SQL assigns each visit to a date using its start timestamp, with the optional offset. Day boundaries follow the current device time zone, including daylight-saving transitions. [Stock daily totals](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L1453-L1479) · [Stock calendar query](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/main.lua#L2822-L2861) · [Stock day timeline](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L2862-L2934)
 

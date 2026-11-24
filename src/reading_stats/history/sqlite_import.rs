@@ -98,14 +98,14 @@ fn read_visits(db: &Connection, checksum: [u8; 16], pages: usize) -> io::Result<
             read_label(row.get(2).map_err(db_error)?)?,
             read_label(row.get(3).map_err(db_error)?)?,
         ),
-        None => return Err(io::Error::other("The database has no match for this PDF")),
+        None => return Err(io::Error::other("The database has no match for this book")),
     };
     if matching.next().map_err(db_error)?.is_some() {
-        return Err(io::Error::other("Several KOReader books match this PDF"));
+        return Err(io::Error::other("Several KOReader records match this book"));
     }
     if id <= 0 || page_count != pages || pages <= 0 {
         return Err(io::Error::other(
-            "KOReader saved a different page count for this PDF",
+            "KOReader saved a different page count for this book",
         ));
     }
 

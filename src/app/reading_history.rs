@@ -424,7 +424,7 @@ impl Reader {
                     Item::new("Today's timeline", Action::ReadingHistory(Command::Today)),
                     show("Statistics settings", Page::Options),
                 ]);
-                if self.koreader_statistics_pdf().is_some() {
+                if self.koreader_statistics_book().is_some() {
                     rows.push(Item::new(
                         "Import KOReader statistics",
                         Action::ReadingHistory(Command::BeginKoReaderImport),

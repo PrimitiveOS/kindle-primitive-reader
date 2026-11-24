@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the checkpointed PDF journal with the pinned native stock runtime."""
+"""Generate a fixed-page statistics journal with the pinned native KOReader runtime."""
 import argparse
 import hashlib
 import os
@@ -9,11 +9,22 @@ import sqlite3
 import subprocess
 import tempfile
 
+FIXTURES = {
+    "pdf": ("tests/fixtures/scan-reflow/vector.pdf", "Survey.pdf", [
+        (1, 1769990394, 12, 2), (2, 1769990406, 18, 2), (1, 1769990424, 30, 2),
+    ]),
+    "djvu": ("tests/fixtures/beacon-atlas.djvu", "Beacon Atlas.djvu", [
+        (1, 1769990394, 12, 6), (3, 1769990406, 18, 6),
+        (6, 1769990424, 30, 6), (3, 1769990454, 15, 6),
+    ]),
+}
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("reference", type=Path, help="pinned koreader-macos-reference folder")
     parser.add_argument("output", type=Path, help="path for the resulting SQLite fixture")
+    parser.add_argument("--format", choices=FIXTURES, default="pdf")
     arguments = parser.parse_args()
     reference = arguments.reference.resolve()
     source_root = Path(__file__).resolve().parent.parent
@@ -23,16 +34,17 @@ def main() -> None:
     if revision != "9192014d8bd82a91dc1012473be0f238dedfdb54":
         raise SystemExit(f"Unexpected KOReader revision {revision}")
 
-    with tempfile.TemporaryDirectory(prefix="reader-stock-pdf-stats-") as work_path:
+    fixture, book_name, expected = FIXTURES[arguments.format]
+    with tempfile.TemporaryDirectory(prefix="reader-stock-fixed-stats-") as work_path:
         work = Path(work_path)
         home = work / "home"
         (home / "patches").mkdir(parents=True)
         shutil.copyfile(
-            source_root / "scripts/koreader-pdf-statistics-import-check.lua",
-            home / "patches/2-pdf-statistics-fixture.lua",
+            source_root / "scripts/koreader-fixed-statistics-import-check.lua",
+            home / "patches/2-fixed-statistics-fixture.lua",
         )
-        pdf = work / "Survey.pdf"
-        shutil.copyfile(source_root / "tests/fixtures/scan-reflow/vector.pdf", pdf)
+        book = work / book_name
+        shutil.copyfile(source_root / fixture, book)
         (home / "settings").mkdir()
         runtime = reference / "runtime/koreader"
         env = dict(
@@ -44,11 +56,12 @@ def main() -> None:
             EMULATE_READER_DPI="300",
             EMULATE_BW_SCREEN="1",
             EMULATE_BB_TYPE="BB8",
-            QA_PDF_SQLITE_SETTINGS=str(home / "settings"),
+            QA_FIXED_STATS_SETTINGS=str(home / "settings"),
+            QA_FIXED_STATS_FORMAT=arguments.format,
             TZ="UTC",
         )
         subprocess.run(
-            [str(runtime / "luajit"), "reader.lua", str(pdf)],
+            [str(runtime / "luajit"), "reader.lua", str(book)],
             cwd=runtime,
             env=env,
             check=True,
@@ -62,8 +75,9 @@ def main() -> None:
             raw = db.execute(
                 "SELECT page, start_time, duration, total_pages FROM page_stat_data ORDER BY start_time"
             ).fetchall()
-            assert raw == [(1, 1769990394, 12, 2), (2, 1769990406, 18, 2), (1, 1769990424, 30, 2)]
-            assert db.execute("SELECT sum(duration), count(DISTINCT page) FROM page_stat").fetchone() == (60, 2)
+            assert raw == expected, raw
+            totals = (sum(row[2] for row in expected), len({row[0] for row in expected}))
+            assert db.execute("SELECT sum(duration), count(DISTINCT page) FROM page_stat").fetchone() == totals
         shutil.copyfile(source, arguments.output)
         print(f"Stock {revision}: {raw}, SHA-256 {hashlib.sha256(source.read_bytes()).hexdigest()}")
 

@@ -9,22 +9,168 @@ use std::time::{Duration, Instant};
 
 const STOCK: &[u8] = include_bytes!("../../../../tests/fixtures/koreader-statistics/pdf.sqlite3");
 const PDF: &[u8] = include_bytes!("../../../../tests/fixtures/scan-reflow/vector.pdf");
+const STOCK_DJVU: &[u8] =
+    include_bytes!("../../../../tests/fixtures/koreader-statistics/djvu.sqlite3");
+const DJVU: &[u8] = include_bytes!("../../../../tests/fixtures/beacon-atlas.djvu");
 const FIRST: i64 = 1_769_990_394;
 
 fn setup() -> (Fixture, Reader, u64) {
+    setup_book("Survey.pdf", PDF, STOCK, 1)
+}
+
+fn setup_book(name: &str, document: &[u8], database: &[u8], page: usize) -> (Fixture, Reader, u64) {
     let fixture = Fixture::new();
-    let path = fixture.root.join("Survey.pdf");
-    fs::write(&path, PDF).unwrap();
-    fs::write(fixture.root.join(DATABASE), STOCK).unwrap();
+    let path = fixture.root.join(name);
+    fs::write(&path, document).unwrap();
+    fs::write(fixture.root.join(DATABASE), database).unwrap();
     let fonts = vec![
         crate::test_fixture("fonts/NotoSans-Regular.ttf"),
         crate::test_fixture("fonts/NotoSans-Bold.ttf"),
     ];
     let mut app = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
     app.open_path(&path).unwrap();
-    app.jump_fixed(1, None).unwrap();
+    app.jump_fixed(page, None).unwrap();
     let id = app.open_book_id().unwrap();
     (fixture, app, id)
+}
+
+#[test]
+fn stock_djvu_sqlite_import_keeps_physical_pages_zoom_and_duplicates_across_djv_alias() {
+    let (fixture, mut app, id) = setup_book("Beacon Atlas.djvu", DJVU, STOCK_DJVU, 2);
+    app.activate(Action::SetFixedZoom(3)).unwrap();
+    app.fixed
+        .as_mut()
+        .unwrap()
+        .reading
+        .restore_history_offsets(2, -250.0, 117.0)
+        .unwrap();
+    let reading = &app.fixed.as_ref().unwrap().reading;
+    assert_eq!((reading.page(), reading.count()), (2, 6));
+    let before = reading.preferences();
+    let request = reading.page_viewport();
+    let anchor = reading.history_point();
+    let position = app.current_position();
+    let source = fixture.root.join("Beacon Atlas.djvu");
+    let database = fixture.root.join(DATABASE);
+    let source_date = fs::metadata(&source).unwrap().modified().unwrap();
+    let database_date = fs::metadata(&database).unwrap().modified().unwrap();
+
+    preview(&mut app, id);
+    let pending = app.history_view.koreader_import.as_ref().unwrap();
+    assert_eq!(
+        (pending.preview.new_visits, pending.preview.seconds),
+        (4, 75)
+    );
+    assert_eq!(pending.preview.first_start, Some(FIRST));
+    assert_eq!(pending.preview.last_start, Some(FIRST + 60));
+    assert!(
+        app.items()
+            .iter()
+            .any(|row| row.title == "Matched KOReader book"
+                && row.detail.as_deref() == Some("Beacon Atlas"))
+    );
+    capture_test_screen(&app, &app.fonts, "READER_STATS_DJVU_IMPORT_SCREEN", false);
+
+    // Saving the Reader journal must never follow the old shared temporary path.
+    let old_temp = fixture.state.with_file_name("reading-history.json.tmp");
+    fs::hard_link(&database, &old_temp).unwrap();
+    tap_row(&mut app, "Import records");
+    let mut visits = app
+        .reading_history
+        .visits()
+        .iter()
+        .map(|visit| (visit.page, visit.start, visit.seconds))
+        .collect::<Vec<_>>();
+    visits.sort_by_key(|visit| visit.1);
+    assert_eq!(
+        visits,
+        [
+            (0, Some(FIRST), 12),
+            (2, Some(FIRST + 12), 18),
+            (5, Some(FIRST + 30), 30),
+            (2, Some(FIRST + 60), 15)
+        ]
+    );
+    let summary = app.reading_history.summary(Some(id), None);
+    assert_eq!((summary.seconds, summary.screens), (75, 3));
+    let reading = &app.fixed.as_ref().unwrap().reading;
+    assert_eq!(reading.preferences(), before);
+    assert_eq!(reading.page_viewport(), request);
+    assert_eq!(reading.history_point(), anchor);
+    assert_eq!(app.current_position(), position);
+    assert_eq!(fs::read(&source).unwrap(), DJVU);
+    assert_eq!(fs::read(&database).unwrap(), STOCK_DJVU);
+    assert_eq!(fs::read(&old_temp).unwrap(), STOCK_DJVU);
+    assert_eq!(
+        fs::metadata(&source).unwrap().modified().unwrap(),
+        source_date
+    );
+    assert_eq!(
+        fs::metadata(&database).unwrap().modified().unwrap(),
+        database_date
+    );
+    assert!(!fixture.root.join("statistics.sqlite3-shm").exists());
+
+    app.history_back();
+    assert_eq!(app.screen, Screen::Fixed);
+    assert_eq!(app.current_position(), position);
+    let alias = fixture.root.join("Beacon Atlas.djv");
+    fs::rename(&source, &alias).unwrap();
+    let mut reopened = Reader::open(&fixture.root, &fixture.state, app.fonts.clone()).unwrap();
+    reopened.open_path(&alias).unwrap();
+    assert_eq!(reopened.open_book_id(), Some(id));
+    preview(&mut reopened, id);
+    let pending = reopened.history_view.koreader_import.as_ref().unwrap();
+    assert_eq!(
+        (
+            pending.preview.new_visits,
+            pending.preview.duplicate,
+            pending.preview.conflicting
+        ),
+        (0, 4, 0)
+    );
+    assert!(
+        !reopened
+            .items()
+            .iter()
+            .any(|row| row.title == "Import records")
+    );
+}
+
+#[test]
+fn stock_djvu_sqlite_import_rejects_changed_edition_or_reader_journal() {
+    let (fixture, mut app, id) = setup_book("Beacon Atlas.djv", DJVU, STOCK_DJVU, 2);
+    preview(&mut app, id);
+    let source = fixture.root.join("Beacon Atlas.djv");
+    let unrelated = include_bytes!("../../../../tests/fixtures/signal-log.djvu");
+    fs::write(&source, unrelated).unwrap();
+    assert!(app.apply_koreader_statistics_import().is_err());
+    assert!(app.reading_history.visits().is_empty());
+    assert_eq!(fs::read(&source).unwrap(), unrelated);
+    fs::write(&source, DJVU).unwrap();
+
+    let journal = fixture.state.with_file_name("reading-history.json");
+    let mut other = History::load(journal.clone(), Default::default());
+    other
+        .configure(
+            crate::reading_stats::history::Options {
+                min_seconds: 6,
+                ..Default::default()
+            },
+            Instant::now(),
+            Some(FIRST),
+        )
+        .unwrap();
+    let saved = fs::read(&journal).unwrap();
+    assert!(
+        app.apply_koreader_statistics_import()
+            .unwrap_err()
+            .to_string()
+            .contains("changed on disk")
+    );
+    assert!(app.history_view.koreader_import.is_some());
+    assert!(app.reading_history.visits().is_empty());
+    assert_eq!(fs::read(&journal).unwrap(), saved);
 }
 
 fn tap_row(app: &mut Reader, title: &str) {
