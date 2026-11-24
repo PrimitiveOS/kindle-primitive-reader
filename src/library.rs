@@ -1526,7 +1526,7 @@ impl Library {
         Ok(list)
     }
 
-    fn browse_folder(&self, relative: &Path) -> io::Result<PathBuf> {
+    pub(crate) fn browse_folder(&self, relative: &Path) -> io::Result<PathBuf> {
         let denied = || {
             io::Error::new(
                 io::ErrorKind::PermissionDenied,

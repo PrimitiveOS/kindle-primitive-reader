@@ -36,6 +36,7 @@ mod backup_defaults_integration_tests;
 mod end_of_book;
 #[cfg(test)]
 mod epub_gif_tests;
+mod export_settings;
 mod extend_highlight;
 mod external_link;
 mod fixed_book_map;
@@ -216,6 +217,7 @@ enum Screen {
     ImportPosition,
     ImportPdfAnnotations,
     ExportAnnotations,
+    ExportSettings(export_settings::Origin, export_settings::Page),
     Book,
     Illustration,
     Fixed,
@@ -346,6 +348,8 @@ impl Screen {
             Self::ImportPosition => "KOReader reading position",
             Self::ImportPdfAnnotations => "PDF annotations",
             Self::ExportAnnotations => "Export annotations",
+            Self::ExportSettings(_, export_settings::Page::Settings) => "Export settings",
+            Self::ExportSettings(_, export_settings::Page::Folders) => "Export folder",
             Self::Book
             | Self::Fixed
             | Self::BookTools
@@ -564,6 +568,7 @@ enum Action {
     ExportHighlights(annotation_export::Format),
     ExportBookClippings,
     LibraryExport(library_export::Command),
+    ExportSettings(export_settings::Origin, export_settings::Command),
     FitPage(bool),
     FitHeight,
     SetFixedZoom(usize),
@@ -874,6 +879,7 @@ pub struct Reader {
     clipboard_text: Option<String>,
     saved_popup: Option<saved_highlight_popup::SavedPopup>,
     exports: PathBuf,
+    export_settings: export_settings::Settings,
     library_export: library_export::Export,
     dictionaries: DictionarySources,
     dictionary_preference: PathBuf,
@@ -1087,6 +1093,9 @@ impl Reader {
             clipboard_text: None,
             saved_popup: None,
             exports: state.parent().unwrap_or(documents).join("exports"),
+            export_settings: export_settings::Settings::load(
+                data.join("annotation-export-files.json"),
+            ),
             library_export: library_export::Export::load(data.join("highlight-export.json")),
             dictionaries: DictionarySources::for_reader(documents, data),
             dictionary_preference,
@@ -1426,6 +1435,12 @@ impl Reader {
 
     fn show(&mut self, screen: Screen) {
         self.archive.close_surfaces(screen);
+        if !matches!(
+            screen,
+            Screen::ExportSettings(_, export_settings::Page::Folders)
+        ) {
+            self.export_settings.close_picker();
+        }
         if screen != Screen::PdfPassword {
             self.folder_password_return = None;
         }
@@ -2615,14 +2630,23 @@ impl Reader {
             }));
             return rows;
         }
+        if let Screen::ExportSettings(origin, page) = self.screen {
+            return self.export_settings_items(origin, page);
+        }
         if self.screen == Screen::ExportAnnotations {
             return annotation_export::Format::ALL
                 .into_iter()
                 .map(|format| Item::new(format.label(), Action::ExportHighlights(format)))
-                .chain([Item::new(
-                    "Kindle clippings text",
-                    Action::ExportBookClippings,
-                )])
+                .chain([
+                    Item::new("Kindle clippings text", Action::ExportBookClippings),
+                    Item::new(
+                        "Export settings",
+                        Action::ExportSettings(
+                            export_settings::Origin::Book,
+                            export_settings::Command::Open,
+                        ),
+                    ),
+                ])
                 .collect();
         }
         if self.screen == Screen::ImportAnnotations
@@ -3301,6 +3325,9 @@ impl Reader {
                 self.mark_book_changed();
             }
             Action::LibraryExport(command) => self.activate_library_export(command)?,
+            Action::ExportSettings(origin, command) => {
+                self.export_settings_command(origin, command)?
+            }
             Action::Open(entry) => self.open_book(entry)?,
             Action::Browse(directory) => self.browse_to(directory)?,
             Action::BookArchive(command) => self.archive_command(command)?,
@@ -6767,10 +6794,20 @@ impl Reader {
         extension: &str,
         contents: &str,
     ) -> Result<()> {
-        with_storage(|| fs::create_dir_all(&self.exports))?;
-        let filename = format!("{id:016x}.{extension}");
-        primitive_app::save(&self.exports.join(&filename), contents.as_bytes())?;
-        self.notice = Some(format!("Exported to Reader data/exports/{filename}"));
+        let state = self.library.state(id).ok_or("No reading history")?;
+        let book = self
+            .fixed
+            .as_ref()
+            .map(|book| &book.entry)
+            .or_else(|| self.active.as_ref().map(|book| &book.entry))
+            .ok_or("No open book")?;
+        let path = self.write_annotation_export(
+            &self.export_settings.preferences,
+            Some((state, book)),
+            extension,
+            contents.as_bytes(),
+        )?;
+        self.notice = Some(format!("Exported to {path}"));
         Ok(())
     }
 
@@ -7672,6 +7709,12 @@ impl Reader {
                         Action::ToggleLinkPreference(setting) => {
                             RowAccessory::Toggle(setting.checked(self.controls))
                         }
+                        Action::ExportSettings(_, export_settings::Command::ToggleBookFolder) => {
+                            RowAccessory::Toggle(self.export_settings.preferences.book_folder)
+                        }
+                        Action::ExportSettings(_, export_settings::Command::ToggleBookName) => {
+                            RowAccessory::Toggle(self.export_settings.preferences.book_title)
+                        }
                         Action::LibraryExport(library_export::Command::ToggleKindleClippings) => {
                             RowAccessory::Toggle(self.library_export.kindle_clippings_enabled())
                         }
@@ -8571,6 +8614,9 @@ impl App for Reader {
             Input::Tap(x, y) if primitive_ui::back_button(WIDTH as i32).contains(x, y) => {
                 match self.screen {
                     Screen::LibraryExport(page) => self.back_from_library_export(page),
+                    Screen::ExportSettings(origin, page) => {
+                        self.back_from_export_settings(origin, page)
+                    }
                     Screen::OrganizeLibrary | Screen::FolderOrder => self.show(Screen::Library),
                     Screen::BookArchive => self.show(self.surface_screen()),
                     Screen::ArchiveFolder => self.show(Screen::BookArchive),

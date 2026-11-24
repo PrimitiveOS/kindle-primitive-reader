@@ -196,6 +196,7 @@ struct Job {
     done: usize,
     skipped: usize,
     format: Format,
+    preferences: super::export_settings::Preferences,
     documents: Vec<Document>,
     kindle_clippings: Vec<Document>,
     pending: Option<PendingBook>,
@@ -317,6 +318,13 @@ impl Reader {
                             1 => "1 book".to_owned(),
                             count => format!("{count} books"),
                         },
+                    ),
+                    Item::new(
+                        "Export settings",
+                        Action::ExportSettings(
+                            super::export_settings::Origin::Library,
+                            super::export_settings::Command::Open,
+                        ),
                     ),
                     row("Highlight colors", C::Choose(Page::Colors)).detail(
                         export.colors.as_ref().map_or_else(
@@ -519,6 +527,7 @@ impl Reader {
                     done: 0,
                     skipped: 0,
                     format,
+                    preferences: self.export_settings.preferences.clone(),
                     documents: Vec::new(),
                     kindle_clippings,
                     pending: None,
@@ -752,24 +761,29 @@ impl Reader {
                 return Err("No highlights to export from the available books".into());
             }
             let contents = render(&job.documents, job.format)?;
-            with_storage(|| std::fs::create_dir_all(&self.exports))?;
-            let filename = format!("library-highlights.{}", job.format.extension());
-            primitive_app::save(&self.exports.join(&filename), &contents)?;
+            let destination = self.write_annotation_export(
+                &job.preferences,
+                None,
+                job.format.extension(),
+                &contents,
+            )?;
             let marks = job
                 .documents
                 .iter()
                 .map(|book| book.entries.len())
                 .sum::<usize>();
-            self.library_export.saved = Some(format!("Reader data/exports/{filename}"));
+            self.library_export.saved = Some(destination);
             self.show(Screen::LibraryExport(Page::Formats));
-            let label = if includes_clippings {
-                "clippings"
-            } else {
-                "highlights"
+            let label = match (includes_clippings, marks) {
+                (true, 1) => "clipping",
+                (true, _) => "clippings",
+                (false, 1) => "highlight",
+                (false, _) => "highlights",
             };
+            let books = job.documents.len();
+            let book_label = if books == 1 { "book" } else { "books" };
             self.notice = Some(format!(
-                "{marks} {label} · {} books · {} unavailable",
-                job.documents.len(),
+                "{marks} {label} · {books} {book_label} · {} unavailable",
                 job.skipped
             ));
             return Ok(Change::Partial);
