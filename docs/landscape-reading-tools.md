@@ -41,3 +41,16 @@ authored fixtures. Physical Kindle refresh and controls require device
 validation. [Footnote](screenshots/landscape-footnote.png) ·
 [View HTML](screenshots/landscape-view-html.png) ·
 [View HTML in dark mode](screenshots/landscape-view-html-dark.png)
+
+## Personal hyphenation rules
+
+On the same pinned KOReader runtime at 1680 × 1264, selecting
+`international` for Hyphenation prefilled `in-ter-na-tional` and
+offered Cancel, Remove and Save above the keyboard. Opening and
+canceling the dialog left the XPointer unchanged. [Stock Hyphenation editor](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readeruserhyph.lua#L260)
+
+Reader keeps the editor in the accepted viewport and places the
+rule controls above the shared keyboard. The landscape test covers
+draft text through staged rotation, real arrow and delete key hits,
+Cancel without saving, rejection of changed letters, saving the new
+rule and removing it at the original reading anchor. [Landscape editor](screenshots/landscape-hyphenation.png)

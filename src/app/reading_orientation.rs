@@ -158,6 +158,7 @@ impl Reader {
                 | Screen::OnlineEdit
                 | Screen::Footnote
                 | Screen::SelectionHtml
+                | Screen::Hyphenate
         ) || self.screen.uses_navigation_viewport())
             && self.open_book_id().is_some()
     }

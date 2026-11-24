@@ -5,6 +5,40 @@ use crate::user_hyphenation::{Rules, eligible, locale};
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
 const REMOVE: Rect = Rect::new(LIST_X, LIST_Y + 350, 330, 96);
 
+struct Form {
+    navigation: super::navigation_layout::NavigationLayout,
+    keyboard: Layout,
+    field: Rect,
+    hint: Rect,
+    remove: Rect,
+}
+
+impl Form {
+    fn new(navigation: super::navigation_layout::NavigationLayout) -> Self {
+        let keyboard = navigation.keyboard();
+        let keyboard_top = keyboard.keyboard_area().y;
+        let short = keyboard_top < REMOVE.bottom() + 8;
+        let field = if short {
+            navigation.body(LIST_Y + 76, 98)
+        } else {
+            navigation.body(LIST_Y + 82, 130)
+        };
+        let remove = if short {
+            Rect::new(REMOVE.x, keyboard_top - REMOVE.h - 8, REMOVE.w, REMOVE.h)
+        } else {
+            REMOVE
+        };
+        let hint_y = field.bottom() + 10;
+        Self {
+            navigation,
+            keyboard,
+            field,
+            hint: navigation.body(hint_y, remove.y - hint_y - 8),
+            remove,
+        }
+    }
+}
+
 pub(super) struct Draft {
     word: String,
     language: String,
@@ -153,29 +187,36 @@ impl Reader {
         let Some(draft) = &self.hyphenation_edit else {
             return;
         };
-        header(canvas, "Hyphenate", "Cancel");
-        let width = WIDTH as i32 - 2 * LIST_X;
+        let form = Form::new(self.navigation_layout());
         canvas.text(
-            Rect::new(LIST_X, LIST_Y, width, 72),
+            Rect::new(LIST_X, 47, form.navigation.width - 354, 110),
+            "Hyphenate",
+            primitive_ui::TITLE,
+        );
+        canvas.button(form.navigation.back(), "Cancel", true, false);
+        canvas.text(
+            form.navigation.body(LIST_Y, 72),
             &format!("Word breaks · {}", draft.language),
             BODY,
         );
-        canvas.single_line_field(
-            Rect::new(LIST_X, LIST_Y + 82, width, 130),
-            &self.editor,
-            "Word with breaks",
-            false,
+        canvas.single_line_field(form.field, &self.editor, "Word with breaks", false);
+        canvas.text(
+            form.hint,
+            self.notice.as_deref().unwrap_or(
+                "Insert a space or hyphen at each break. Remove all breaks to keep the word together.",
+            ),
+            CAPTION.lines(2),
         );
-        canvas.text(Rect::new(LIST_X, LIST_Y + 222, width, 120), self.notice.as_deref().unwrap_or("Insert a space or hyphen at each break. Remove all breaks to keep the word together."), CAPTION.lines(2));
         if self.user_hyphenation.contains(&draft.language, &draft.word) {
-            canvas.button(REMOVE, "Remove rule", false, false);
+            canvas.button(form.remove, "Remove rule", false, false);
         }
         canvas.keyboard(self.editor.layer, "Save", None);
     }
 
     pub(super) fn hyphenation_input(&mut self, input: Input) -> Change {
+        let form = Form::new(self.navigation_layout());
         if matches!(input, Input::PageBack)
-            || matches!(input, Input::Tap(x,y) if primitive_ui::back_button(WIDTH as i32).contains(x,y))
+            || matches!(input, Input::Tap(x,y) if form.navigation.back().contains(x,y))
         {
             self.selection = None;
             self.show(Screen::Book);
@@ -184,14 +225,13 @@ impl Reader {
         let Input::Tap(x, y) = input else {
             return Change::None;
         };
-        let remove = REMOVE.contains(x, y)
+        let remove = form.remove.contains(x, y)
             && self
                 .hyphenation_edit
                 .as_ref()
                 .is_some_and(|draft| self.user_hyphenation.contains(&draft.language, &draft.word));
         if !remove {
-            let layout = Layout::new(WIDTH, HEIGHT, 4, 5);
-            let Some(key) = keyboard_key(&layout, &self.editor, "Save", x, y) else {
+            let Some(key) = keyboard_key(&form.keyboard, &self.editor, "Save", x, y) else {
                 return Change::None;
             };
             self.notice = None;
@@ -217,7 +257,9 @@ mod tests {
     }
 
     fn key(app: &mut Reader, key: Key) {
-        let rect = Layout::new(WIDTH, HEIGHT, 4, 5)
+        let rect = app
+            .navigation_layout()
+            .keyboard()
             .keyboard_keys_with(app.editor.layer, "Save")
             .into_iter()
             .find(|(k, _)| k.key == key)
@@ -288,6 +330,106 @@ mod tests {
                 l.block == probe.source.blocks[b].key && (from + 1..to).contains(&l.bytes.end)
             })
             .map(|l| l.bytes.end - from)
+    }
+
+    #[test]
+    fn landscape_hyphenation_keeps_real_keyboard_and_rule_controls_above_their_hit_targets() {
+        use crate::app::reading_viewport_stage::draw_test_candidate;
+        use primitive_app::viewport::{LogicalTurn, ViewportDecision, ViewportRequest};
+
+        let fixture = Fixture::new();
+        let book = fixture.root.join("Line breaks.epub");
+        fs::copy(crate::test_fixture("english-hyphenation.epub"), &book).unwrap();
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+        app.open_path(&book).unwrap();
+        app.activate(Action::Text(Settings {
+            font_size: 82.0,
+            ..device_settings().with_hyphenation(crate::HyphenationMode::Automatic)
+        }))
+        .unwrap();
+        app.set_user_hyphenation(true).unwrap();
+        let selected = candidate(&app.active.as_ref().unwrap().reading.probe).unwrap();
+        app.restore_position(&ReadingPosition {
+            chapter: 0,
+            page: 0,
+            anchor: Some(selected.start.clone()),
+        })
+        .unwrap();
+        let source = app.active.as_ref().unwrap().reading.anchor();
+        let portrait = draw_test_candidate(&mut app, 1, LogicalTurn::Upright, "", false);
+        app.finish_viewport(portrait, ViewportDecision::Commit);
+        select(&mut app, &selected);
+        edit(&mut app);
+        let language = app.hyphenation_edit.as_ref().unwrap().language.clone();
+        let typed = app.editor.string();
+        assert!(typed.contains('-'));
+
+        app.set_reading_orientation(ReadingOrientation::LandscapeLeft)
+            .unwrap();
+        let staged = draw_test_candidate(&mut app, 3, LogicalTurn::Counterclockwise, "", false);
+        assert_eq!(app.editor.string(), typed);
+        assert_eq!(app.reading_viewport().dimensions(), (1264, 1680));
+        app.finish_viewport(staged, ViewportDecision::Commit);
+        assert_eq!(
+            app.viewport_request(),
+            Some(ViewportRequest::Fixed(LogicalTurn::Counterclockwise))
+        );
+        assert_eq!(app.screen, Screen::Hyphenate);
+        assert_eq!(app.editor.string(), typed);
+        let form = Form::new(app.navigation_layout());
+        assert!(form.remove.bottom() < form.keyboard.keyboard_area().y);
+        assert!(form.hint.bottom() < form.remove.y);
+        key(&mut app, Key::Char('x'));
+        key(&mut app, Key::Go);
+        assert!(app.notice.is_some() && app.screen == Screen::Hyphenate);
+        app.input(tap(form.navigation.back()));
+        assert_eq!(app.screen, Screen::Book);
+        assert!(!load(&app.user_hyphenation_path).unwrap().has_rules());
+
+        app.selection = Some(selected.clone());
+        app.begin_hyphenation().unwrap();
+        for letter in typed.chars().rev() {
+            key(
+                &mut app,
+                if letter == '-' {
+                    Key::Delete
+                } else {
+                    Key::Left
+                },
+            );
+        }
+        assert_eq!(
+            app.editor.string().to_lowercase(),
+            selected.text.to_lowercase()
+        );
+        key(&mut app, Key::Go);
+        assert_eq!(app.screen, Screen::Book);
+        assert_eq!(
+            load(&app.user_hyphenation_path)
+                .unwrap()
+                .mask(&language, &selected.text),
+            Some(vec![])
+        );
+        assert_eq!(app.active.as_ref().unwrap().reading.anchor(), source);
+
+        app.selection = Some(selected.clone());
+        app.begin_hyphenation().unwrap();
+        let staged = draw_test_candidate(
+            &mut app,
+            5,
+            LogicalTurn::Counterclockwise,
+            "landscape-hyphenation",
+            false,
+        );
+        app.finish_viewport(staged, ViewportDecision::Commit);
+        app.input(tap(form.remove));
+        assert_eq!(app.screen, Screen::Book);
+        assert!(!load(&app.user_hyphenation_path).unwrap().has_rules());
+        assert_eq!(app.active.as_ref().unwrap().reading.anchor(), source);
     }
 
     #[test]
