@@ -215,7 +215,7 @@ fn dictionary_result_holds_jump_to_the_edges_and_keep_the_armed_highlight() {
 
     let popup = s.app.definition_layout().0;
     s.tap(definition_results_button(popup));
-    s.tap(definition_result_row(popup, 1));
+    s.tap(definition_result_row(s.app.definition_layout().0, 1));
     primitive_app::frame(&s.app, &mut wide, false);
     assert_eq!(s.app.finish_find("light"), Change::Partial);
     let index = s
@@ -276,12 +276,12 @@ fn dictionary_hold_close_returns_from_nested_epub_results_to_the_same_passage() 
     assert_eq!(s.app.finish_find("light"), Change::Partial);
     s.draw(Some("dictionary-close-stack.png"));
     s.tap(definition_results_button(s.app.definition_layout().0));
-    assert!(s.app.definition_results_page.is_some());
+    assert!(s.app.dictionary_navigation.view.results.active.is_some());
     s.hold_back();
     assert_eq!(s.app.screen, Screen::Book);
     assert!(s.app.dictionary_navigation.trail.is_empty());
     assert!(s.app.dictionary_navigation.view.find.is_none());
-    assert!(s.app.definition_results_page.is_none());
+    assert!(s.app.dictionary_navigation.view.results.active.is_none());
     assert_eq!(s.app.current_history_location(), location);
     assert_eq!(s.app.selection, original);
     assert_eq!(s.draw(None), passage);
@@ -1624,5 +1624,307 @@ fn one_query_preset_pdf_retry_filters_worker_and_preserves_book_choices() {
     assert_eq!(
         book.dictionary_fuzzy_search,
         DictionaryFuzzySearch::Disabled
+    );
+}
+
+#[test]
+fn dictionary_grouped_results_keep_separate_pages_and_nested_epub_position() {
+    let mut s = Simulation::new();
+    let dictionaries = s.fixture.root.join("dictionaries");
+    fs::remove_dir_all(&dictionaries).unwrap();
+    fs::create_dir(&dictionaries).unwrap();
+    write_dictionary(
+        &dictionaries,
+        "Coastal glossary",
+        "sametypesequence=m\n",
+        &[
+            (
+                "The",
+                b"A definite article used for an identified landmark.",
+            ),
+            ("The", b"Used before the established name of a vessel."),
+            ("The", b"Used to distinguish one point on a chart."),
+            ("The", b"Used in references to a known place or thing."),
+            ("The", b"Used with some names of rivers and seas."),
+            ("The", b"Used in a comparison to specify a measurement."),
+        ],
+    );
+    for name in [
+        "Field notes",
+        "Harbour glossary",
+        "Island terms",
+        "Marine handbook",
+        "Pilot's glossary",
+        "Seafarer's guide",
+    ] {
+        write_dictionary(
+            &dictionaries,
+            name,
+            "sametypesequence=m\n",
+            &[("The", b"A word identifying a known object.")],
+        );
+    }
+    s.app = Reader::open(
+        &s.fixture.root,
+        &s.fixture.state,
+        vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+    )
+    .unwrap();
+    s.app.controls.dictionary_on_single_word = Some(false);
+
+    s.open_epub_selection();
+    let location = s.app.current_history_location();
+    let selection = s.app.selection.clone();
+    let passage = s.draw(None);
+    s.tap(s.app.selection_button(SelectionAction::Dictionary));
+    assert_eq!(s.app.definitions.len(), 12);
+
+    s.tap(definition_results_button(s.app.definition_layout().0));
+    assert_eq!(
+        s.app.dictionary_navigation.view.results.active,
+        Some(Menu::Flat)
+    );
+    assert_eq!(s.app.input(Input::PageForward), Change::Partial);
+    s.tap(definition_actions(s.app.definition_layout().0)[1]);
+    assert_eq!(
+        s.app.dictionary_navigation.view.results.active,
+        Some(Menu::Sources)
+    );
+    s.draw(Some("dictionary-grouped-sources.png"));
+
+    assert_eq!(s.app.input(Input::PageForward), Change::Partial);
+    assert_eq!(
+        s.app.dictionary_navigation.view.results.page(Menu::Sources),
+        Some(1)
+    );
+    let last = definition_result_row(s.app.definition_layout().0, 1);
+    s.tap(result_menus::detail_button(last));
+    assert_eq!(
+        s.app.definitions[s.app.list_page].dictionary,
+        "Seafarer's guide"
+    );
+    assert_eq!(s.app.dictionary_navigation.view.results.active, None);
+
+    let choose = definition_results_button(s.app.definition_layout().0);
+    let x = (choose.x + choose.w / 2) as f32;
+    let y = (choose.y + choose.h / 2) as f32;
+    assert_eq!(s.app.input(Input::HoldStart(x, y)), Change::None);
+    assert_eq!(
+        s.app.input(Input::HoldRelease {
+            start_x: x,
+            start_y: y,
+            x,
+            y,
+            held_ms: 800
+        }),
+        Change::Partial
+    );
+    assert_eq!(
+        s.app.dictionary_navigation.view.results.page(Menu::Sources),
+        Some(1)
+    );
+    assert_eq!(s.app.input(Input::PageBack), Change::Partial);
+    s.tap(result_menus::detail_button(definition_result_row(
+        s.app.definition_layout().0,
+        0,
+    )));
+    let source = Menu::Source(0);
+    assert_eq!(
+        s.app.dictionary_navigation.view.results.active,
+        Some(source)
+    );
+    assert_eq!(s.app.input(Input::PageForward), Change::Partial);
+    let child_frame = s.draw(Some("dictionary-grouped-senses.png"));
+
+    assert_eq!(
+        s.hold(definition_result_row(s.app.definition_layout().0, 0)),
+        Change::Partial
+    );
+    assert_eq!(s.app.definition_word, "The");
+    assert_eq!(s.app.dictionary_navigation.trail.len(), 1);
+    assert_eq!(s.app.dictionary_navigation.view.results.active, None);
+    s.draw(Some("dictionary-grouped-nested-lookup.png"));
+    s.back();
+    assert_eq!(
+        s.app.dictionary_navigation.view.results.active,
+        Some(source)
+    );
+    assert_eq!(
+        s.app.dictionary_navigation.view.results.page(source),
+        Some(1)
+    );
+    assert_eq!(s.draw(None), child_frame);
+    assert_eq!(s.app.current_history_location(), location);
+    assert_eq!(s.app.selection, selection);
+
+    s.back();
+    assert_eq!(
+        s.app.dictionary_navigation.view.results.active,
+        Some(Menu::Sources)
+    );
+    s.tap(definition_actions(s.app.definition_layout().0)[1]);
+    assert_eq!(
+        s.app.dictionary_navigation.view.results.page(Menu::Flat),
+        Some(1)
+    );
+    s.tap(definition_actions(s.app.definition_layout().0)[1]);
+    s.tap(result_menus::detail_button(definition_result_row(
+        s.app.definition_layout().0,
+        0,
+    )));
+    assert_eq!(
+        s.app.dictionary_navigation.view.results.page(source),
+        Some(1)
+    );
+
+    s.tap(definition_result_row(s.app.definition_layout().0, 0));
+    assert_eq!(s.app.list_page, 5);
+    assert_eq!(s.app.dictionary_navigation.view.results.active, None);
+    assert_eq!(
+        s.app.definitions[s.app.list_page].text,
+        "Used in a comparison to specify a measurement."
+    );
+
+    assert_eq!(
+        s.hold(definition_results_button(s.app.definition_layout().0)),
+        Change::Partial
+    );
+    s.tap(definition_result_row(s.app.definition_layout().0, 0));
+    assert_eq!(s.app.list_page, 0);
+    s.back();
+    assert_eq!(s.app.screen, Screen::Book);
+    assert_eq!(s.app.current_history_location(), location);
+    assert_eq!(s.app.selection, selection);
+    assert_eq!(s.draw(None), passage);
+}
+
+#[test]
+fn dictionary_grouped_results_visible_lookup_and_outside_back_keep_pdf_selection() {
+    let mut s = Simulation::new();
+    write_dictionary(
+        &s.fixture.root.join("dictionaries"),
+        "Technical glossary",
+        "sametypesequence=m\n",
+        &[
+            ("PDF", b"A format for distributing fixed-layout pages."),
+            ("PDF", b"A portable document container."),
+        ],
+    );
+    s.app = Reader::open(
+        &s.fixture.root,
+        &s.fixture.state,
+        vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+    )
+    .unwrap();
+    s.app.controls.dictionary_on_single_word = Some(false);
+    let path = s.fixture.root.join("Fixed layout terms.pdf");
+    fs::write(&path, crate::fixed::tests::document()).unwrap();
+    s.app.open_path(&path).unwrap();
+    let reading = &s.app.fixed.as_ref().unwrap().reading;
+    let words = reading.page_text(0).unwrap();
+    let (size, viewport) = reading.page_viewport().unwrap();
+    let point = words.words[0]
+        .bounds
+        .in_viewport(size, viewport)
+        .unwrap()
+        .center();
+    s.app.input(Input::LongTap(point.x as f32, point.y as f32));
+    let selection = s.app.pdf_selection.as_ref().unwrap().highlight().clone();
+    let location = s.app.current_history_location();
+
+    s.tap(s.app.selection_button(SelectionAction::Dictionary));
+    assert_eq!(
+        s.hold(definition_results_button(s.app.definition_layout().0)),
+        Change::Partial
+    );
+    s.tap(result_menus::detail_button(definition_result_row(
+        s.app.definition_layout().0,
+        1,
+    )));
+    assert_eq!(
+        s.app.dictionary_navigation.view.results.active,
+        Some(Menu::Source(1))
+    );
+    s.draw_in_theme(Some("pdf-dictionary-grouped-results-dark.png"), true);
+    s.tap(result_menus::lookup_button(definition_result_row(
+        s.app.definition_layout().0,
+        0,
+    )));
+    assert_eq!(s.app.definition_word, "PDF");
+    assert_eq!(s.app.dictionary_navigation.trail.len(), 1);
+    s.back();
+    assert_eq!(
+        s.app.dictionary_navigation.view.results.active,
+        Some(Menu::Source(1))
+    );
+    assert_eq!(s.app.input(Input::Tap(4.0, 4.0)), Change::Partial);
+    assert_eq!(
+        s.app.dictionary_navigation.view.results.active,
+        Some(Menu::Sources)
+    );
+    assert_eq!(s.app.input(Input::Tap(4.0, 4.0)), Change::Partial);
+    assert_eq!(s.app.dictionary_navigation.view.results.active, None);
+    s.back();
+    assert_eq!(s.app.screen, Screen::Fixed);
+    assert_eq!(s.app.current_history_location(), location);
+    assert_eq!(
+        s.app.pdf_selection.as_ref().unwrap().highlight(),
+        &selection
+    );
+}
+
+#[test]
+fn dictionary_grouped_results_opens_a_wider_row_for_a_clipped_single_headword() {
+    let mut s = Simulation::new();
+    let root = s.fixture.root.join("dictionaries/Unabridged edition");
+    fs::create_dir(&root).unwrap();
+    write_dictionary(
+        &root,
+        "Coastal vocabulary",
+        "sametypesequence=m\n",
+        &[(
+            "Portable Document Format reference manual",
+            b"A specification of the page format.",
+        )],
+    );
+    crate::dictionary::tests::write_synonyms(&root, "Coastal vocabulary", &[("PDF", 0)]);
+    s.app = Reader::open(
+        &s.fixture.root,
+        &s.fixture.state,
+        vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+    )
+    .unwrap();
+    s.app.look_up("PDF").unwrap();
+    assert_eq!(s.app.definitions.len(), 2);
+    assert_eq!(
+        s.app.definitions[0].dictionary,
+        s.app.definitions[1].dictionary
+    );
+    assert_ne!(s.app.definitions[0].source, s.app.definitions[1].source);
+    let unabridged = s
+        .app
+        .definitions
+        .iter()
+        .position(|result| result.source.starts_with("Unabridged edition"))
+        .unwrap();
+    assert_eq!(
+        s.hold(definition_results_button(s.app.definition_layout().0)),
+        Change::Partial
+    );
+    s.draw(None);
+    s.tap(result_menus::detail_button(definition_result_row(
+        s.app.definition_layout().0,
+        unabridged,
+    )));
+    assert_eq!(
+        s.app.dictionary_navigation.view.results.active,
+        Some(Menu::Source(unabridged))
+    );
+    s.draw(None);
+    s.tap(definition_result_row(s.app.definition_layout().0, 0));
+    assert_eq!(s.app.list_page, unabridged);
+    assert_eq!(
+        s.app.definitions[unabridged].word,
+        "Portable Document Format reference manual"
     );
 }

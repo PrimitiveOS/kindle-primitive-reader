@@ -4,7 +4,11 @@ use std::cell::OnceCell;
 use std::ops::Range;
 
 mod preset_lookup;
+mod result_menus;
 use preset_lookup::PresetPicker;
+#[cfg(test)]
+use result_menus::definition_result_row;
+use result_menus::{Menu, Menus};
 pub(super) mod buttons;
 pub(super) mod font_size;
 use buttons::{Button, Grid};
@@ -85,6 +89,7 @@ struct View {
     save_highlight: bool,
     no_sources_for_book: bool,
     preset: Option<Vec<PathBuf>>,
+    results: Menus,
 }
 impl View {
     fn reset_result(&mut self) {
@@ -644,8 +649,6 @@ pub(super) fn definition_vocabulary(popup: Rect) -> Rect {
     Rect::new(popup.x + 30, popup.bottom() - 152, width, 58)
 }
 
-const RESULTS_PER_PAGE: usize = 5;
-
 fn definition_results_button(popup: Rect) -> Rect {
     Rect::new(popup.right() - 370, popup.y + 18, 172, 64)
 }
@@ -663,91 +666,9 @@ fn definition_edit_glyph(button: Rect) -> Rect {
     Rect::new(button.x + 18, button.y + 17, 64, 66)
 }
 
-fn definition_result_row(popup: Rect, row: usize) -> Rect {
-    Rect::new(
-        popup.x + 30,
-        popup.y + 100 + row as i32 * 104,
-        popup.w - 60,
-        98,
-    )
-}
-
 const HEADWORD_ONLY: &str = "Headword only";
 
 impl Reader {
-    fn draw_definition_results(&self, canvas: &mut Canvas, popup: Rect, page: usize) {
-        let first = page * RESULTS_PER_PAGE;
-        for (row, result) in self
-            .definitions
-            .iter()
-            .skip(first)
-            .take(RESULTS_PER_PAGE)
-            .enumerate()
-        {
-            let index = first + row;
-            let rect = definition_result_row(popup, row);
-            let selected = index == self.list_page;
-            let filled = selected != canvas.control_pressed(rect, false);
-            canvas.panel(rect, 16, 3, if filled { 0 } else { 255 });
-            let ink = if filled { 255 } else { 0 };
-            canvas.text(
-                Rect::new(rect.x + 22, rect.y + 4, rect.w - 44, 48),
-                &format!("{} · {}", result.word, result.dictionary),
-                BODY.bold().ink(ink),
-            );
-            let snippet: String = result
-                .text
-                .lines()
-                .next()
-                .unwrap_or(HEADWORD_ONLY)
-                .chars()
-                .take(120)
-                .collect();
-            canvas.text(
-                Rect::new(rect.x + 22, rect.y + 53, rect.w - 44, 39),
-                &snippet,
-                CAPTION.ink(if filled { 255 } else { 85 }),
-            );
-        }
-        let [previous, _, next] = definition_actions(popup);
-        if page > 0 {
-            canvas.button(previous, "Previous", false, false);
-        }
-        if first + RESULTS_PER_PAGE < self.definitions.len() {
-            canvas.button(next, "Next", false, false);
-        }
-    }
-
-    fn definition_results_input(&mut self, input: Input, popup: Rect, page: usize) -> Change {
-        let [previous, _, next] = definition_actions(popup);
-        let direction = match input {
-            Input::PageBack => -1,
-            Input::PageForward => 1,
-            Input::Tap(x, y) if previous.contains(x, y) => -1,
-            Input::Tap(x, y) if next.contains(x, y) => 1,
-            Input::Tap(x, y) => {
-                let first = page * RESULTS_PER_PAGE;
-                if let Some(row) = (0..RESULTS_PER_PAGE)
-                    .find(|row| definition_result_row(popup, *row).contains(x, y))
-                    && first + row < self.definitions.len()
-                {
-                    self.select_definition(first + row);
-                }
-                self.definition_results_page = None;
-                return Change::Partial;
-            }
-            _ => return Change::None,
-        };
-        if let Some(page) = page
-            .checked_add_signed(direction)
-            .filter(|page| page * RESULTS_PER_PAGE < self.definitions.len())
-        {
-            self.definition_results_page = Some(page);
-            return Change::Partial;
-        }
-        Change::None
-    }
-
     fn vocabulary_available(&self) -> bool {
         !self.definition_word.is_empty()
     }
@@ -1028,7 +949,6 @@ impl Reader {
             !searched && !self.book_dictionary_exclusions().is_empty();
         self.dictionary_navigation.view.preset = preset;
         self.definitions = definitions;
-        self.definition_results_page = None;
         self.spelling_lookup = None;
         self.show(Screen::Definition);
         if let Some(review) = review {
@@ -1052,7 +972,6 @@ impl Reader {
     fn return_from_definition(&mut self, close_all: bool) {
         self.spelling_lookup = None;
         self.notice = None;
-        self.definition_results_page = None;
         let save_highlight = self.dictionary_navigation.view.save_highlight
             || close_all
                 && self
@@ -1411,13 +1330,20 @@ impl Reader {
                 _ => {}
             }
         }
-        if let Some(page) = self.definition_results_page {
-            if matches!(input,Input::Tap(x,y) if back.contains(x,y) || !popup.contains(x,y) || definition_results_button(popup).contains(x,y))
+        let choose = definition_results_button(popup);
+        if let Some(menu) = self.dictionary_navigation.view.results.active {
+            if matches!(input, Input::Tap(x, y) if back.contains(x, y) || !popup.contains(x, y) || choose.contains(x, y))
             {
-                self.definition_results_page = None;
+                self.dictionary_navigation.view.results.dismiss();
                 return Change::Partial;
             }
-            return self.definition_results_input(input, popup, page);
+            return self.definition_results_input(input, popup, menu);
+        }
+        if self.definitions.len() > 1
+            && matches!(input, Input::LongTap(x, y) if choose.contains(x, y))
+        {
+            self.open_definition_results(Menu::Sources);
+            return Change::Partial;
         }
         let grid = self.definition_button_grid(popup);
         let found = self.dictionary_navigation.view.find.is_some();
@@ -1463,8 +1389,8 @@ impl Reader {
                     self.return_from_definition(false);
                     return Change::Partial;
                 }
-                if self.definitions.len() > 1 && definition_results_button(popup).contains(x, y) {
-                    self.definition_results_page = Some(self.list_page / RESULTS_PER_PAGE);
+                if self.definitions.len() > 1 && choose.contains(x, y) {
+                    self.open_definition_results(Menu::Flat);
                     return Change::Partial;
                 }
                 if let Some(page) =
@@ -1553,18 +1479,11 @@ impl Reader {
         let (screen_width, screen_height) = viewport.dimensions();
         let typography = self.definition_typography();
         let line_height = typography.line();
-        let height = if let Some(index) = self.definition_results_page {
-            let shown = self
-                .definitions
-                .len()
-                .saturating_sub(index * RESULTS_PER_PAGE)
-                .min(RESULTS_PER_PAGE);
-            let paging = if self.definitions.len() > RESULTS_PER_PAGE {
-                82
-            } else {
-                0
-            };
-            116 + shown as i32 * 104 + paging
+        let results = &self.dictionary_navigation.view.results;
+        let height = if let Some(menu) = results.active {
+            let page = results.page(menu).unwrap_or(0);
+            let notice_height = if self.notice.is_some() { 36 } else { 0 };
+            result_menus::height(&self.definitions, menu, page) + notice_height
         } else {
             let empty_lines = if self.can_retry_with_preset() { 4 } else { 2 };
             let capacity = (45 * font_size::DEFAULT / typography.0) as usize;
@@ -1697,10 +1616,17 @@ impl Reader {
         canvas.popup(popup);
         let choose = definition_results_button(popup);
         let end = edit.x - 12;
-        let title = self
-            .definitions
-            .get(self.list_page)
-            .map(|result| format!("{} · {}", result.word, result.dictionary));
+        let title = match view.results.active {
+            Some(Menu::Sources) => Some("Dictionary Sources".into()),
+            Some(Menu::Source(index)) => self
+                .definitions
+                .get(index)
+                .map(|result| result.dictionary.clone()),
+            _ => self
+                .definitions
+                .get(self.list_page)
+                .map(|result| format!("{} · {}", result.word, result.dictionary)),
+        };
         canvas.icon(
             Rect::new(popup.x + 28, popup.y + 31, 40, 40),
             bar_icons::BOOK,
@@ -1721,7 +1647,7 @@ impl Reader {
         canvas.button(
             back,
             if self.definition_expanded && self.back_collapses_definition()
-                || self.definition_results_page.is_some()
+                || view.results.active.is_some()
                 || !self.dictionary_navigation.trail.is_empty()
             {
                 "Back"
@@ -1732,15 +1658,10 @@ impl Reader {
             false,
         );
         if self.definitions.len() > 1 {
-            canvas.button(
-                choose,
-                "Results",
-                self.definition_results_page.is_some(),
-                false,
-            );
+            canvas.button(choose, "Results", view.results.active.is_some(), false);
         }
-        if let Some(page) = self.definition_results_page {
-            self.draw_definition_results(canvas, popup, page);
+        if let Some(menu) = view.results.active {
+            self.draw_definition_results(canvas, popup, menu);
             return;
         }
         let rect = self.definition_body(popup);

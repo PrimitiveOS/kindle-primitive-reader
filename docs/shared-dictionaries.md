@@ -2,6 +2,31 @@
 
 Hold a word and tap **Dictionary**. The results panel stays over the passage. Use **Results** to choose a source or another meaning. Closing the panel restores the selection. Open **Dictionaries** from reading settings or the lookup tools to change the sources. Tap a dictionary to enable or disable it by default or move it in the default order. **Prefer for this book** puts it ahead of the global list, including when it is disabled by default. Each book can have several preferred dictionaries in its own order. Returning to another book restores that book’s choices. [Dictionary settings](screenshots/dictionary-priorities.png)
 
+## Choosing among matching sources
+
+Tap **Results** for every matching headword and its definition preview, or
+hold **Results** to group the matches by dictionary. The flat list also
+offers **Sources**. Tap a dictionary name to open its first match. Its
+right-hand button opens the only headword or lists that dictionary's
+matches when there are several. A long headword also gets a wider row.
+**All Results** returns to the flat list. Reader remembers the page of
+each list for the current lookup. [Sources](screenshots/dictionary-grouped-sources.png) ·
+[Dictionary matches](screenshots/dictionary-grouped-senses.png)
+
+Hold a headword or tap **Look up** in its results row to look up that
+word separately. **Back** restores the chooser and its position. Closing
+the lookup returns to the original passage and selection. Reader keeps
+installed sources separate by their StarDict package path, including
+sources with the same display name. [Nested lookup](screenshots/dictionary-grouped-nested-lookup.png) ·
+[Dark PDF example](screenshots/pdf-dictionary-grouped-results-dark.png)
+
+Mac simulation exercises EPUB and PDF selections, the active source and
+result, physical page inputs, overflow, separate page positions, and
+nested return. The stock script runs menu callbacks from pinned KOReader
+Lua with an authored result list and simulated dialogs. [Pinned result
+menus](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/dictquicklookup.lua#L1976-L2170) ·
+[Reproducible stock check](../scripts/compare-dictionary-grouped-results.py)
+
 ## Excluding a source for one book
 
 Open a source in **Dictionaries** and choose **Disable for this book**.
