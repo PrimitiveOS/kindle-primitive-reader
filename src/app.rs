@@ -543,6 +543,7 @@ enum Action {
     EditNote,
     RemoveHighlight,
     ExportHighlights(annotation_export::Format),
+    ExportBookClippings,
     LibraryExport(library_export::Command),
     FitPage(bool),
     FitHeight,
@@ -2544,6 +2545,10 @@ impl Reader {
             return annotation_export::Format::ALL
                 .into_iter()
                 .map(|format| Item::new(format.label(), Action::ExportHighlights(format)))
+                .chain([Item::new(
+                    "Kindle clippings text",
+                    Action::ExportBookClippings,
+                )])
                 .collect();
         }
         if self.screen == Screen::ImportAnnotations
@@ -3952,6 +3957,7 @@ impl Reader {
                 self.notice = Some("Highlight removed".into());
             }
             Action::ExportHighlights(format) => self.export_highlights(format)?,
+            Action::ExportBookClippings => self.export_book_clippings()?,
         }
         Ok(())
     }
@@ -6563,8 +6569,68 @@ impl Reader {
                     .map(|mark| (mark.text.as_str(), mark.note.as_deref())),
             );
         let contents = format.render(&state.title, quotes);
+        self.save_book_highlight_export(id, format.extension(), &contents)
+    }
+
+    fn export_book_clippings(&mut self) -> Result<()> {
+        use annotation_export::kindle_clippings;
+        let id = self.open_book_id().ok_or("No open book")?;
+        let state = self.library.state(id).ok_or("No reading history")?;
+        let mut contents = String::new();
+        if let Some(active) = &self.active {
+            let reading = &active.reading;
+            for mark in &state.highlights {
+                let start = &mark.selection.start;
+                let location = reading
+                    .probe
+                    .chapter_entries()
+                    .iter()
+                    .position(|chapter| chapter.href == start.chapter)
+                    .map(|chapter| {
+                        let page = (chapter == reading.chapter)
+                            .then(|| reading.probe.page_for(start))
+                            .flatten();
+                        match page {
+                            Some(page) => format!("Chapter {}, page {}", chapter + 1, page + 1),
+                            None => format!("Chapter {}", chapter + 1),
+                        }
+                    });
+                kindle_clippings::write_highlight(
+                    &mut contents,
+                    &state.title,
+                    state.author.as_deref(),
+                    location.as_deref(),
+                    mark.created_at,
+                    &mark.selection.text,
+                    mark.note.as_deref(),
+                );
+            }
+        }
+        if self.fixed.is_some() {
+            for mark in &state.pdf_highlights {
+                let location = format!("page {}", mark.page + 1);
+                kindle_clippings::write_highlight(
+                    &mut contents,
+                    &state.title,
+                    state.author.as_deref(),
+                    Some(&location),
+                    mark.created_at,
+                    &mark.text,
+                    mark.note.as_deref(),
+                );
+            }
+        }
+        self.save_book_highlight_export(id, "clippings.txt", &contents)
+    }
+
+    fn save_book_highlight_export(
+        &mut self,
+        id: u64,
+        extension: &str,
+        contents: &str,
+    ) -> Result<()> {
         with_storage(|| fs::create_dir_all(&self.exports))?;
-        let filename = format!("{id:016x}.{}", format.extension());
+        let filename = format!("{id:016x}.{extension}");
         primitive_app::save(&self.exports.join(&filename), contents.as_bytes())?;
         self.notice = Some(format!("Exported to Reader data/exports/{filename}"));
         Ok(())
@@ -7453,6 +7519,9 @@ impl Reader {
                         }
                         Action::ToggleLinkPreference(setting) => {
                             RowAccessory::Toggle(setting.checked(self.controls))
+                        }
+                        Action::LibraryExport(library_export::Command::ToggleKindleClippings) => {
+                            RowAccessory::Toggle(self.library_export.kindle_clippings_enabled())
                         }
                         Action::SetReadingControls(controls)
                             if self.screen == Screen::SearchSettings

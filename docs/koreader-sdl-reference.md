@@ -213,7 +213,7 @@ The exact native algorithm is an inclusive target-to-root search for the first n
 
 ### export
 
-**Annotation exports.** Current/cross-book History, selected books and collections; combined style/color filters; KOReader JSON, text, Markdown and HTML are implemented. My Clippings merge, remote services and arbitrary export destination controls are separate gaps.
+**Annotation exports.** Current/cross-book History, selected books and collections; combined style/color filters; KOReader JSON, text, Markdown, HTML and Kindle clippings text are available. History combines relevant entries from the Kindle clippings file. Export location controls remain an open item. [Local export comparison](library-highlights-export.md)
 
 [src/app/library_export.rs](../src/app/library_export.rs) · [library-highlights-export.md](library-highlights-export.md) · [highlight-workflows.md](highlight-workflows.md)
 

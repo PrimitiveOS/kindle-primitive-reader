@@ -1,8 +1,10 @@
 //! Export highlights from History, chosen books or collections without moving the reader.
 use super::{Action, Book, BookConfig, Change, Engine, Item, Reader, Result, Screen, with_storage};
+use crate::annotation_export::kindle_clippings::{self, Kind, Location};
 use crate::highlight_style::{HighlightColor, HighlightStyle};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,6 +38,7 @@ pub(super) enum Format {
     Text,
     Markdown,
     Html,
+    KindleClippings,
 }
 
 impl Format {
@@ -45,6 +48,7 @@ impl Format {
             Self::Text => "txt",
             Self::Markdown => "md",
             Self::Html => "html",
+            Self::KindleClippings => "clippings.txt",
         }
     }
 }
@@ -60,6 +64,7 @@ pub(super) enum Command {
     Apply,
     Style(Option<HighlightStyle>),
     Color(Option<HighlightColor>),
+    ToggleKindleClippings,
     Start(Format),
     Cancel,
 }
@@ -71,6 +76,7 @@ pub(super) struct Export {
     collections: BTreeSet<String>,
     styles: Option<Vec<HighlightStyle>>,
     colors: Option<Vec<HighlightColor>>,
+    kindle_clippings: Option<bool>,
     job: Option<Job>,
     saved: Option<String>,
 }
@@ -128,6 +134,10 @@ impl Export {
         }
     }
 
+    pub(super) fn kindle_clippings_enabled(&self) -> bool {
+        self.kindle_clippings == Some(true)
+    }
+
     fn save_preferences(&self) -> Result<()> {
         primitive_app::save(
             &self.path,
@@ -148,12 +158,15 @@ struct Entry {
     note: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     time: Option<i64>,
-    drawer: HighlightStyle,
-    color: crate::highlight_style::HighlightColor,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    drawer: Option<HighlightStyle>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    color: Option<HighlightColor>,
     #[serde(skip_serializing_if = "Option::is_none")]
     page: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     chapter: Option<String>,
+    #[serde(skip_serializing_if = "serde_json::Value::is_null")]
     primitiveos: serde_json::Value,
 }
 
@@ -161,8 +174,10 @@ struct Entry {
 struct Document {
     title: String,
     author: Option<String>,
-    file: std::path::PathBuf,
-    primitiveos_book_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file: Option<std::path::PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    primitiveos_book_id: Option<String>,
     entries: Vec<Entry>,
 }
 
@@ -182,6 +197,7 @@ struct Job {
     skipped: usize,
     format: Format,
     documents: Vec<Document>,
+    kindle_clippings: Vec<Document>,
     pending: Option<PendingBook>,
     next: Instant,
 }
@@ -296,8 +312,12 @@ impl Reader {
             }
             Page::Options => {
                 let mut rows = vec![
-                    row("Choose export format", C::Choose(Page::Formats))
-                        .detail(format!("{} books", export.books.len())),
+                    row("Choose export format", C::Choose(Page::Formats)).detail(
+                        match export.books.len() {
+                            1 => "1 book".to_owned(),
+                            count => format!("{count} books"),
+                        },
+                    ),
                     row("Highlight colors", C::Choose(Page::Colors)).detail(
                         export.colors.as_ref().map_or_else(
                             || "All colors".into(),
@@ -310,6 +330,14 @@ impl Reader {
                         export.styles.is_none(),
                     ),
                 ];
+                if export.kindle_clippings.is_some() {
+                    rows.push(if export.styles.is_none() && export.colors.is_none() {
+                        row("Kindle clippings", C::ToggleKindleClippings)
+                    } else {
+                        Item::new("Kindle clippings", Action::Heading)
+                            .detail("Requires all styles and colors")
+                    });
+                }
                 rows.extend(HighlightStyle::ALL.into_iter().map(|style| {
                     selected(
                         style.label(),
@@ -333,6 +361,7 @@ impl Reader {
                     row("Plain text", C::Start(Format::Text)),
                     row("Markdown", C::Start(Format::Markdown)),
                     row("HTML", C::Start(Format::Html)),
+                    row("Kindle clippings text", C::Start(Format::KindleClippings)),
                 ]);
                 rows
             }
@@ -357,11 +386,18 @@ impl Reader {
             C::Open => {
                 self.library_export.books.clear();
                 self.library_export.collections.clear();
+                self.library_export.kindle_clippings = None;
                 self.library_export.job = None;
                 self.library_export.saved = None;
                 self.show(Screen::LibraryExport(Page::Sources));
             }
             C::History => {
+                self.library_export.kindle_clippings = with_storage(|| {
+                    self.library
+                        .absolute_path(Path::new(kindle_clippings::FILE))
+                })
+                .is_ok()
+                .then_some(true);
                 self.library_export.books = self
                     .library
                     .recently_read()
@@ -397,6 +433,7 @@ impl Reader {
                 };
             }
             C::Apply => {
+                self.library_export.kindle_clippings = None;
                 if self.screen == Screen::LibraryExport(Page::Collections) {
                     self.library_export.books = self
                         .library
@@ -457,9 +494,22 @@ impl Reader {
                 self.show(Screen::LibraryExport(Page::Options));
                 self.notice = Some("Export cancelled".into());
             }
+            C::ToggleKindleClippings => {
+                if let Some(included) = &mut self.library_export.kindle_clippings {
+                    *included = !*included;
+                }
+            }
             C::Start(format) => {
-                if self.library_export.books.is_empty() {
-                    return Err("Choose a book with highlights".into());
+                let include_clippings = self.library_export.kindle_clippings_enabled()
+                    && self.library_export.styles.is_none()
+                    && self.library_export.colors.is_none();
+                let kindle_clippings = if include_clippings {
+                    self.read_kindle_clippings()?
+                } else {
+                    Vec::new()
+                };
+                if self.library_export.books.is_empty() && kindle_clippings.is_empty() {
+                    return Err("Choose a book with highlights or include Kindle clippings".into());
                 }
                 self.save_library()?;
                 self.library_export.saved = None;
@@ -470,6 +520,7 @@ impl Reader {
                     skipped: 0,
                     format,
                     documents: Vec::new(),
+                    kindle_clippings,
                     pending: None,
                     next: Instant::now(),
                 });
@@ -505,8 +556,8 @@ impl Reader {
                     text: mark.selection.text.clone(),
                     note: mark.note.clone(),
                     time: mark.created_at,
-                    drawer: mark.style,
-                    color: mark.color,
+                    drawer: Some(mark.style),
+                    color: Some(mark.color),
                     page: None,
                     chapter: chapter
                         .and_then(|index| book.as_ref()?.chapters.get(index))
@@ -526,7 +577,7 @@ impl Reader {
         }) {
             marks.push_back((Entry {
                 sort: "highlight", text: mark.text.clone(), note: mark.note.clone(), time: mark.created_at,
-                drawer: mark.style, color: mark.color, page: Some(serde_json::json!(mark.page + 1)), chapter: None,
+                drawer: Some(mark.style), color: Some(mark.color), page: Some(serde_json::json!(mark.page + 1)), chapter: None,
                 primitiveos: serde_json::json!({"page": mark.page, "bounds": mark.bounds, "continuation": mark.continuation}),
             }, None));
         }
@@ -587,14 +638,58 @@ impl Reader {
             document: Document {
                 title: state.title.clone(),
                 author: state.author.clone(),
-                file: absolute,
-                primitiveos_book_id: format!("{id:016x}"),
+                file: Some(absolute),
+                primitiveos_book_id: Some(format!("{id:016x}")),
                 entries: Vec::new(),
             },
             marks,
             config,
             probe: None,
         })
+    }
+
+    fn read_kindle_clippings(&self) -> Result<Vec<Document>> {
+        let path = with_storage(|| {
+            self.library
+                .absolute_path(Path::new(kindle_clippings::FILE))
+        })?;
+        let bytes = super::read_import_file(&path, kindle_clippings::MAX_BYTES)?;
+        let mut by_book: BTreeMap<_, Vec<_>> = BTreeMap::new();
+        for clip in kindle_clippings::parse(&bytes)? {
+            by_book
+                .entry((clip.title, clip.author))
+                .or_default()
+                .push(Entry {
+                    sort: clip.kind.name(),
+                    text: clip.text.replace("\r\n", "\n"),
+                    note: None,
+                    time: clip.time,
+                    drawer: None,
+                    color: None,
+                    page: clip.location.map(|location| match location {
+                        Location::Page(page) => serde_json::json!(page),
+                        Location::Chapter(label) => serde_json::json!(label),
+                        Location::Position(position) => {
+                            serde_json::json!(format!("Location {position}"))
+                        }
+                    }),
+                    chapter: None,
+                    primitiveos: serde_json::Value::Null,
+                });
+        }
+        Ok(by_book
+            .into_iter()
+            .map(|((title, author), mut entries)| {
+                deduplicate_clips(&mut entries);
+                Document {
+                    title: title.to_owned(),
+                    author: author.map(str::to_owned),
+                    file: None,
+                    primitiveos_book_id: None,
+                    entries,
+                }
+            })
+            .collect())
     }
 
     pub(super) fn export_deadline(&self) -> Option<Instant> {
@@ -650,6 +745,8 @@ impl Reader {
                 }
             }
         } else {
+            let includes_clippings = !job.kindle_clippings.is_empty();
+            combine_clippings(&mut job.documents, job.kindle_clippings);
             if job.documents.is_empty() {
                 self.show(Screen::LibraryExport(Page::Options));
                 return Err("No highlights to export from the available books".into());
@@ -665,8 +762,13 @@ impl Reader {
                 .sum::<usize>();
             self.library_export.saved = Some(format!("Reader data/exports/{filename}"));
             self.show(Screen::LibraryExport(Page::Formats));
+            let label = if includes_clippings {
+                "clippings"
+            } else {
+                "highlights"
+            };
             self.notice = Some(format!(
-                "{marks} highlights · {} books · {} unavailable",
+                "{marks} {label} · {} books · {} unavailable",
                 job.documents.len(),
                 job.skipped
             ));
@@ -700,7 +802,82 @@ impl Reader {
     }
 }
 
+fn clip_key(entry: &Entry) -> (&str, &str, Option<&serde_json::Value>, Option<i64>) {
+    (entry.sort, &entry.text, entry.page.as_ref(), entry.time)
+}
+
+fn deduplicate_clips(entries: &mut Vec<Entry>) {
+    let mut seen = HashSet::new();
+    entries.retain(|entry| {
+        let (kind, text, page, time) = clip_key(entry);
+        seen.insert((kind.to_owned(), text.to_owned(), page.cloned(), time))
+    });
+}
+
+fn combine_clippings(documents: &mut Vec<Document>, clippings: Vec<Document>) {
+    let mut by_title = BTreeMap::new();
+    for (index, doc) in documents.iter().enumerate() {
+        by_title
+            .entry((doc.title.clone(), doc.author.clone()))
+            .and_modify(|match_index| *match_index = None)
+            .or_insert(Some(index));
+    }
+    for mut book in clippings {
+        let key = (book.title.clone(), book.author.clone());
+        if let Some(Some(index)) = by_title.get(&key) {
+            let native = &mut documents[*index];
+            let native_keys: HashSet<_> = native.entries.iter().map(clip_key).collect();
+            book.entries
+                .retain(|entry| !native_keys.contains(&clip_key(entry)));
+            native.entries.extend(book.entries);
+        } else {
+            documents.push(book);
+        }
+    }
+}
+
 fn render(documents: &[Document], format: Format) -> Result<Vec<u8>> {
+    if matches!(format, Format::KindleClippings) {
+        let mut output = String::new();
+        for document in documents {
+            for entry in &document.entries {
+                let kind = match entry.sort {
+                    "bookmark" => Kind::Bookmark,
+                    "note" => Kind::Note,
+                    _ => Kind::Highlight,
+                };
+                let location = entry.page.as_ref().map(|value| {
+                    value
+                        .as_str()
+                        .map_or_else(|| format!("page {value}"), str::to_owned)
+                });
+                let title = &document.title;
+                let author = document.author.as_deref();
+                if kind == Kind::Highlight {
+                    kindle_clippings::write_highlight(
+                        &mut output,
+                        title,
+                        author,
+                        location.as_deref(),
+                        entry.time,
+                        &entry.text,
+                        entry.note.as_deref(),
+                    );
+                } else {
+                    kindle_clippings::write(
+                        &mut output,
+                        title,
+                        author,
+                        kind,
+                        location.as_deref(),
+                        entry.time,
+                        &entry.text,
+                    );
+                }
+            }
+        }
+        return Ok(output.into_bytes());
+    }
     if matches!(format, Format::Json) {
         let mut value = if documents.len() == 1 {
             serde_json::to_value(&documents[0])?
@@ -750,7 +927,7 @@ fn render(documents: &[Document], format: Format) -> Result<Vec<u8>> {
     let format = match format {
         Format::Text => crate::annotation_export::Format::Text,
         Format::Markdown => crate::annotation_export::Format::Markdown,
-        Format::Html | Format::Json => unreachable!(),
+        Format::Html | Format::Json | Format::KindleClippings => unreachable!(),
     };
     let mut output = String::new();
     for document in documents {
@@ -784,7 +961,13 @@ fn caption(entry: &Entry) -> String {
         page.as_str()
             .map_or_else(|| format!("Page {page}"), str::to_owned)
     });
-    let mut parts: Vec<_> = entry.chapter.iter().cloned().collect();
+    let mut parts = Vec::new();
+    match entry.sort {
+        "bookmark" => parts.push("Bookmark".to_owned()),
+        "note" => parts.push("Note".to_owned()),
+        _ => {}
+    }
+    parts.extend(entry.chapter.iter().cloned());
     if !location.is_empty() {
         parts.push(location);
     }
