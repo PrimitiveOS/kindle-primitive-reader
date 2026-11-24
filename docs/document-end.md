@@ -25,9 +25,46 @@ Desktop tests cover a resumed EPUB beyond the first folder page, saved
 bookmarks and position after restart, fixed PDF, extracted EPUB, and
 failed folder lookup or save. [Reading menu](screenshots/current-book-folder-menu.png) · [Containing folder](screenshots/current-book-folder.png)
 
+## Switch between files in a folder
+
+From the reading **Library** menu, choose **Previous file in folder** or
+**Next file in folder**. Reader looks for the next unfinished publication
+in that direction using the file picker’s saved order. It skips unsupported
+entries and stops at the folder boundary. Reader saves the outgoing
+position and marks before opening the selected document. The selected
+document resumes at its saved position. If you cancel a PDF password,
+Reader returns to the open book.
+
+KOReader exposes both directions as reading actions and searches its active
+folder order for supported files that are still unfinished. Reader uses the
+same filtering for its manual actions. **Open previous document** uses
+the recently read list. [Pinned KOReader actions](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/dispatcher.lua#L76-L79) · [Pinned folder chooser](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/filechooser.lua#L425-L450)
+
+Desktop tests check both directions across a saved EPUB and PDF, both
+folder boundaries, skipping completed and unsupported files, an extracted
+EPUB, and wrong-password retry and cancellation. [Reading menu](screenshots/adjacent-folder-files-menu.png) · [Resumed EPUB](screenshots/adjacent-folder-files-target.png)
+
+## Choose folder order
+
+In Library, tap **Sort** to choose **Natural name**, **File name** or **File type**.
+Natural name is the default and puts Volume 2 before Volume 10. File name
+compares names alphabetically and puts Volume 10 before Volume 2. File type
+groups files by extension and orders each group by name. Folders stay
+above files. **Reverse order** flips the order within folders and within files.
+
+Reader uses one saved choice across all folders and restores it when you
+reopen the app. Manual previous and next file actions use that order and skip
+finished books. **Open next file** at the end of a book also uses that order and
+considers any readable file. Search uses its own result ranking and retains
+the visible results page when you change the folder sort. [Sort choices](screenshots/folder-order-menu.png) · [Alphabetical folder](screenshots/folder-order-picker.png)
+
+KOReader saves its sort and reverse choices in the file manager and uses
+the same folder sequence for adjacent reading. The implemented choices are
+its stable name, natural name and type modes. [Pinned sort definitions](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/booklist.lua#L19-L89) · [Pinned reverse preference](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/filemanager/filemanagermenu.lua#L467-L492) · [Pinned folder traversal](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/filechooser.lua#L425-L450)
+
 ## Reference and tests
 
-The installed KOReader source matched the v2026.07.1 reference. Thirteen checks exercised its dialog, automatic and manual reading status, next-file access under different sort orders, return to the beginning, Library, and the independent confirmation before deletion. Reader uses its natural filename order across regular document folders. Both reading providers treat a forward attempt at the boundary as the trigger. [KOReader end-of-book actions](https://github.com/koreader/koreader/blob/v2026.07.1/frontend/apps/reader/modules/readerstatus.lua#L38-L222) · [Reflow page turns](https://github.com/koreader/koreader/blob/v2026.07.1/frontend/apps/reader/modules/readerrolling.lua#L911-L945) · [Fixed-page and continuous turns](https://github.com/koreader/koreader/blob/v2026.07.1/frontend/apps/reader/modules/readerpaging.lua#L912-L1047)
+The installed KOReader source matched the v2026.07.1 reference. Thirteen checks exercised its dialog, automatic and manual reading status, next-file access under different sort orders, return to the beginning, Library, and the independent confirmation before deletion. Both reading providers treat a forward attempt at the boundary as the trigger. [KOReader end-of-book actions](https://github.com/koreader/koreader/blob/v2026.07.1/frontend/apps/reader/modules/readerstatus.lua#L38-L222) · [Reflow page turns](https://github.com/koreader/koreader/blob/v2026.07.1/frontend/apps/reader/modules/readerrolling.lua#L911-L945) · [Fixed-page and continuous turns](https://github.com/koreader/koreader/blob/v2026.07.1/frontend/apps/reader/modules/readerpaging.lua#L912-L1047)
 
 The Mac checks exercised all nine action preferences and the separate auto-finish setting, along with the end of a comic spread, confirmation and cancellation, reopening with saved marks, and the previous location after restarting. Four original reflowable books and three original PDFs each passed the same paged and continuous boundary checks. Deletion tests used a disposable authored copy.
 

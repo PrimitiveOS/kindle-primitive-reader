@@ -7,16 +7,19 @@ use super::{
     Action, BODY, CAPTION, Canvas, Change, HEIGHT, Input, Item, LIST_X, NEXT, PREV, ROW_HEIGHT,
     Reader, Rect, Result, Screen, WIDTH, library_book_item, with_storage,
 };
-use crate::library::{BrowseEntry, BrowseKind, BrowseList};
+use crate::library::{
+    BrowseEntry, BrowseKind, BrowseList, FolderDirection, FolderOrder, FolderSort,
+};
 
 pub(super) const LIBRARY_LIST_Y: i32 = 306;
 const FILE_ROWS: usize = 10;
 const UP: Rect = Rect::new(LIST_X, 150, 148, 54);
-const TOOLBAR: [(&str, Screen); 4] = [
-    ("Find", Screen::LibraryFind),
-    ("Organize", Screen::OrganizeLibrary),
-    ("Controls", Screen::ReadingControls),
-    ("Reading data", Screen::ReadingData),
+const TOOLBAR: [(&str, Screen, i32); 5] = [
+    ("Find", Screen::LibraryFind, 20),
+    ("Organize", Screen::OrganizeLibrary, 20),
+    ("Controls", Screen::ReadingControls, 20),
+    ("Reading data", Screen::ReadingData, 24),
+    ("Sort", Screen::FolderOrder, 16),
 ];
 const FOLDER: Icon = Icon {
     stroke: &["M2 6 H9 L11 8 H22 V20 H2 Z"],
@@ -49,7 +52,10 @@ impl FileBrowser {
 
 impl Reader {
     fn read_browser(&self, directory: PathBuf) -> io::Result<FileBrowser> {
-        let listing = with_storage(|| self.library.browse(&directory))?;
+        let listing = with_storage(|| {
+            self.library
+                .browse_with_order(&directory, self.controls.folder_order)
+        })?;
         Ok(FileBrowser {
             directory,
             listing,
@@ -82,6 +88,25 @@ impl Reader {
         Ok(())
     }
 
+    pub(super) fn open_folder_file(&mut self, direction: FolderDirection) -> Result<()> {
+        let (book, _) = self.current_document().ok_or("No open book")?;
+        let adjacent = with_storage(|| {
+            self.library
+                .adjacent_book_in_folder(book, direction, self.controls.folder_order)
+        })?
+        .ok_or(match direction {
+            FolderDirection::Previous => "There is no previous unfinished file in this folder",
+            FolderDirection::Next => "There is no next unfinished file in this folder",
+        })?;
+        let origin = self.surface_screen();
+        primitive_app::App::save(self)?;
+        self.open_book(adjacent)?;
+        if self.screen == Screen::PdfPassword {
+            self.folder_password_return = Some(origin);
+        }
+        Ok(())
+    }
+
     pub(super) fn browse_from_book(&mut self, path: &Path) -> io::Result<()> {
         self.browser = self.read_book_folder(path)?;
         self.show(Screen::Library);
@@ -108,7 +133,10 @@ impl Reader {
         let mut directory = self.browser.directory.clone();
         let listing = with_storage(|| {
             loop {
-                match self.library.browse(&directory) {
+                match self
+                    .library
+                    .browse_with_order(&directory, self.controls.folder_order)
+                {
                     Ok(listing) => break Ok(listing),
                     Err(_) if directory.pop() => continue,
                     Err(error) => break Err(error),
@@ -124,6 +152,62 @@ impl Reader {
             .browser
             .page
             .min(self.library_item_count().saturating_sub(1) / FILE_ROWS);
+        Ok(())
+    }
+
+    pub(super) fn folder_order_items(&self) -> Vec<Item> {
+        let order = self.controls.folder_order;
+        let mut items = [
+            (
+                FolderSort::NaturalName,
+                "Natural name",
+                "Compare numbers by value",
+            ),
+            (
+                FolderSort::FileName,
+                "File name",
+                "Compare names alphabetically",
+            ),
+            (
+                FolderSort::FileType,
+                "File type",
+                "Group files by extension",
+            ),
+        ]
+        .into_iter()
+        .map(|(sort, label, description)| {
+            let item = Item::new(label, Action::SetFolderOrder(FolderOrder { sort, ..order }));
+            if sort == order.sort {
+                item.detail(format!("Selected · {description}"))
+            } else {
+                item.detail(description)
+            }
+        })
+        .collect::<Vec<_>>();
+        items.push(
+            Item::new(
+                "Reverse order",
+                Action::SetFolderOrder(FolderOrder {
+                    reverse: !order.reverse,
+                    ..order
+                }),
+            )
+            .detail(if order.reverse { "On" } else { "Off" }),
+        );
+        items
+    }
+
+    pub(super) fn set_folder_order(&mut self, order: FolderOrder) -> io::Result<()> {
+        if order != self.controls.folder_order {
+            let mut controls = self.controls;
+            controls.folder_order = order;
+            controls.save(&self.controls_path)?;
+            self.controls = controls;
+            self.browser.listing.sort(order);
+            if self.library_query.is_empty() {
+                self.browser.first_page();
+            }
+        }
         Ok(())
     }
 
@@ -201,8 +285,8 @@ impl Reader {
             &path,
             BODY.bold(),
         );
-        for (index, (label, _)) in TOOLBAR.iter().enumerate() {
-            canvas.button(tool_button(index), label, false, false);
+        for (label, _, rect) in toolbar_controls() {
+            canvas.button(rect, label, false, false);
         }
 
         let first = self.browser.page * FILE_ROWS;
@@ -288,12 +372,10 @@ impl Reader {
             Input::Tap(x, y) if NEXT.contains(x, y) => 1,
             Input::Tap(x, y) | Input::LongTap(x, y) => {
                 if matches!(input, Input::Tap(..))
-                    && let Some((_, (_, screen))) = TOOLBAR
-                        .iter()
-                        .enumerate()
-                        .find(|(i, _)| tool_button(*i).contains(x, y))
+                    && let Some((_, screen, _)) =
+                        toolbar_controls().find(|(_, _, rect)| rect.contains(x, y))
                 {
-                    return apply(self, Action::Show(*screen));
+                    return apply(self, Action::Show(screen));
                 }
                 let action = (0..FILE_ROWS)
                     .find(|&slot| file_row(slot).contains(x, y))
@@ -333,9 +415,16 @@ impl Reader {
     }
 }
 
-fn tool_button(index: usize) -> Rect {
-    let width = (WIDTH as i32 - 2 * LIST_X - 3 * 18) / 4;
-    Rect::new(LIST_X + index as i32 * (width + 18), 222, width, 62)
+fn toolbar_controls() -> impl Iterator<Item = (&'static str, Screen, Rect)> {
+    let gap = 18;
+    let width = WIDTH as i32 - 2 * LIST_X - (TOOLBAR.len() as i32 - 1) * gap;
+    let mut left = LIST_X;
+    TOOLBAR.into_iter().map(move |(label, screen, percent)| {
+        let button_width = width * percent / 100;
+        let rect = Rect::new(left, 222, button_width, 62);
+        left += button_width + gap;
+        (label, screen, rect)
+    })
 }
 
 fn file_row(slot: usize) -> Rect {
@@ -465,6 +554,10 @@ mod tests {
     use primitive_app::{App, Lifecycle};
     use std::fs;
 
+    fn tap(rect: Rect) -> Input {
+        Input::Tap((rect.x + rect.w / 2) as f32, (rect.y + rect.h / 2) as f32)
+    }
+
     fn app(fixture: &Fixture) -> Reader {
         Reader::open(
             &fixture.root,
@@ -483,6 +576,269 @@ mod tests {
                 Action::Browse(folder) => folder == path,
                 _ => false,
             })
+    }
+
+    fn assert_button_feedback(reader: &Reader, label: &str) {
+        assert_rect_feedback(reader, reader.reading_button(label));
+    }
+
+    fn assert_rect_feedback(reader: &Reader, rect: Rect) {
+        let paths: Vec<_> = reader
+            .fonts
+            .iter()
+            .map(|font| font.display().to_string())
+            .collect();
+        let mut canvas = Canvas::new(WIDTH, HEIGHT, &paths).unwrap();
+        let normal = primitive_app::frame(reader, &mut canvas, false);
+        let pressed = Lifecycle::default()
+            .press_feedback(reader, &mut canvas, tap(rect), false)
+            .unwrap();
+        assert!(normal != pressed);
+        assert!(
+            normal
+                .iter()
+                .zip(&pressed)
+                .enumerate()
+                .all(|(index, (a, b))| {
+                    a == b
+                        || rect.contains(
+                            (index % WIDTH as usize) as f32,
+                            (index / WIDTH as usize) as f32,
+                        )
+                })
+        );
+    }
+
+    fn library_titles(reader: &Reader) -> Vec<String> {
+        reader.library_items().map(|row| row.title).collect()
+    }
+
+    fn tool_button(screen: Screen) -> Rect {
+        toolbar_controls()
+            .find(|(_, target, _)| *target == screen)
+            .unwrap()
+            .2
+    }
+
+    fn sort_button() -> Rect {
+        tool_button(Screen::FolderOrder)
+    }
+
+    #[test]
+    fn folder_order_picker_keeps_query_pages_and_restores_the_saved_choice() {
+        use primitive_ui::{Key, Layout};
+
+        let fixture = Fixture::new();
+        // Legacy profiles get natural ordering even when an older option is saved.
+        fs::write(
+            fixture.root.join("reading-controls.json"),
+            r#"{"footnote_popups":false}"#,
+        )
+        .unwrap();
+        let folder = fixture.root.join("Reading list");
+        fs::create_dir(&folder).unwrap();
+        for name in ["Set 2", "Set 10"] {
+            fs::create_dir(folder.join(name)).unwrap();
+        }
+        for volume in 1..=12 {
+            fs::write(
+                folder.join(format!("Volume {volume}.txt")),
+                format!("A field account from volume {volume}."),
+            )
+            .unwrap();
+        }
+        fs::copy(
+            crate::test_fixture("pdf-password/plain.pdf"),
+            folder.join("Atlas.pdf"),
+        )
+        .unwrap();
+        let mut reader = app(&fixture);
+        assert_eq!(reader.controls.folder_order, FolderOrder::default());
+        assert!(!reader.controls.footnote_popups);
+        reader.browse_to(PathBuf::from("Reading list")).unwrap();
+        assert_eq!(
+            &library_titles(&reader)[..3],
+            ["Set 2", "Set 10", "Atlas.pdf"]
+        );
+        assert!(visible_file(
+            &reader,
+            Path::new("Reading list/Volume 2.txt")
+        ));
+        assert!(!visible_file(
+            &reader,
+            Path::new("Reading list/Volume 10.txt")
+        ));
+        assert_eq!(reader.input(Input::PageForward), Change::Partial);
+        assert!(visible_file(
+            &reader,
+            Path::new("Reading list/Volume 10.txt")
+        ));
+        assert_eq!(reader.input(Input::PageBack), Change::Partial);
+
+        assert_rect_feedback(&reader, sort_button());
+        assert_eq!(reader.input(tap(sort_button())), Change::Partial);
+        assert_eq!(reader.screen, Screen::FolderOrder);
+        let file_name = reader.list_geometry().row(1);
+        assert_rect_feedback(&reader, file_name);
+        assert_eq!(reader.input(tap(file_name)), Change::Partial);
+        capture_test_screen(&reader, &reader.fonts, "READER_FOLDER_ORDER_MENU", false);
+        let back = tap(back_button(WIDTH as i32));
+        assert_eq!(reader.input(back), Change::Partial);
+        assert_eq!(
+            &library_titles(&reader)[..3],
+            ["Set 10", "Set 2", "Atlas.pdf"]
+        );
+        assert!(visible_file(
+            &reader,
+            Path::new("Reading list/Volume 10.txt")
+        ));
+        capture_test_screen(&reader, &reader.fonts, "READER_FOLDER_ORDER_PICKER", false);
+        assert_eq!(reader.input(Input::PageForward), Change::Partial);
+        assert!(visible_file(
+            &reader,
+            Path::new("Reading list/Volume 9.txt")
+        ));
+        assert!(!visible_file(
+            &reader,
+            Path::new("Reading list/Volume 10.txt")
+        ));
+        assert_eq!(reader.input(Input::PageBack), Change::Partial);
+        assert!(visible_file(
+            &reader,
+            Path::new("Reading list/Volume 10.txt")
+        ));
+
+        // Change folder ordering while searching without changing the result ranking or page.
+        assert_eq!(
+            reader.input(tap(tool_button(Screen::LibraryFind))),
+            Change::Partial
+        );
+        reader.editor.text = "Volume".chars().collect();
+        reader.editor.caret = reader.editor.text.len();
+        let (_, go) = Layout::new(WIDTH, HEIGHT, 4, 5)
+            .keyboard_keys_with(reader.editor.layer, "Find")
+            .into_iter()
+            .find(|(key, _)| key.key == Key::Go)
+            .unwrap();
+        assert_eq!(reader.input(tap(go)), Change::Partial);
+        let search = library_titles(&reader);
+        assert_eq!(search.len(), 12);
+        assert_eq!(reader.input(Input::PageForward), Change::Partial);
+        assert_eq!(reader.input(tap(sort_button())), Change::Partial);
+        assert_eq!(
+            reader.input(tap(reader.list_geometry().row(3))),
+            Change::Partial
+        );
+        assert_eq!(reader.input(back), Change::Partial);
+        assert_eq!(reader.browser.page, 1);
+        assert_eq!(library_titles(&reader), search);
+        assert_eq!(reader.input(Input::PageBack), Change::Partial);
+        assert_eq!(reader.input(Input::PageBack), Change::Partial);
+        let reversed = library_titles(&reader);
+        assert_eq!(&reversed[..3], ["Set 2", "Set 10", "Volume 9.txt"]);
+        assert_eq!(reader.browser.directory, Path::new("Reading list"));
+
+        let mut reopened = app(&fixture);
+        assert_eq!(reopened.controls.folder_order, reader.controls.folder_order);
+        assert!(reopened.controls.folder_order.reverse);
+        assert!(!reopened.controls.footnote_popups);
+        reopened.browse_to(PathBuf::from("Reading list")).unwrap();
+        assert_eq!(library_titles(&reopened), reversed);
+    }
+
+    #[test]
+    fn folder_order_write_failure_keeps_the_current_picker_and_saved_choice() {
+        let fixture = Fixture::new();
+        let mut reader = app(&fixture);
+        let before = library_titles(&reader);
+        fs::create_dir(&reader.controls_path).unwrap();
+        let order = FolderOrder {
+            sort: FolderSort::FileType,
+            reverse: true,
+        };
+        assert!(reader.set_folder_order(order).is_err());
+        assert_eq!(reader.controls.folder_order, FolderOrder::default());
+        assert_eq!(library_titles(&reader), before);
+        assert_eq!(app(&fixture).controls.folder_order, FolderOrder::default());
+    }
+
+    #[test]
+    fn folder_order_by_type_matches_current_book_folder_and_adjacent_open() {
+        let fixture = Fixture::new();
+        let shelf = Path::new("Mixed books");
+        let folder = fixture.root.join(shelf);
+        fs::create_dir(&folder).unwrap();
+        let epub = folder.join("Z Book.epub");
+        let pdf = folder.join("B Atlas.PDF");
+        fs::copy(&fixture.book, &epub).unwrap();
+        fs::copy(crate::test_fixture("pdf-password/plain.pdf"), &pdf).unwrap();
+        fs::write(folder.join("A Notes.txt"), "A text publication.").unwrap();
+        fs::write(folder.join("C Appendix.xyz"), "An unsupported file.").unwrap();
+        let mut reader = app(&fixture);
+        reader.browse_to(shelf.to_owned()).unwrap();
+        assert_eq!(reader.input(tap(sort_button())), Change::Partial);
+        assert_eq!(
+            reader.input(tap(reader.list_geometry().row(2))),
+            Change::Partial
+        );
+        assert_eq!(
+            reader.input(tap(back_button(WIDTH as i32))),
+            Change::Partial
+        );
+        let expected = [
+            "Z Book.epub",
+            "B Atlas.PDF",
+            "A Notes.txt",
+            "C Appendix.xyz",
+        ];
+        assert_eq!(library_titles(&reader), expected);
+        assert_eq!(reader.input(tap(file_row(0))), Change::Partial);
+        reader.follow_reflow_page(1, 0).unwrap();
+        let epub_position = reader.current_position().unwrap();
+        reader.activate(Action::ToggleBookmark).unwrap();
+        let next = || Action::OpenFolderFile(FolderDirection::Next);
+        let previous = || Action::OpenFolderFile(FolderDirection::Previous);
+        reader.activate(next()).unwrap();
+        assert_eq!(
+            reader.current_document().unwrap().0.path,
+            shelf.join("B Atlas.PDF")
+        );
+        reader.activate(previous()).unwrap();
+        assert_eq!(reader.current_position(), Some(epub_position.clone()));
+        assert!(reader.page_is_bookmarked());
+
+        reader.current_book_folder().unwrap();
+        assert_eq!(reader.browser.directory, shelf);
+        assert_eq!(library_titles(&reader), expected);
+        assert_eq!(reader.input(tap(sort_button())), Change::Partial);
+        assert_eq!(
+            reader.input(tap(reader.list_geometry().row(3))),
+            Change::Partial
+        );
+        assert_eq!(
+            reader.input(tap(back_button(WIDTH as i32))),
+            Change::Partial
+        );
+        assert_eq!(
+            library_titles(&reader),
+            expected.into_iter().rev().collect::<Vec<_>>()
+        );
+        reader.activate(Action::Continue).unwrap();
+        assert_eq!(reader.current_position(), Some(epub_position));
+        let error = reader.activate(next()).unwrap_err().to_string();
+        assert!(error.contains("no next"));
+        reader.activate(previous()).unwrap();
+        assert_eq!(
+            reader.current_document().unwrap().0.path,
+            shelf.join("B Atlas.PDF")
+        );
+        reader.activate(previous()).unwrap();
+        assert_eq!(
+            reader.current_document().unwrap().0.path,
+            shelf.join("A Notes.txt")
+        );
+        let error = reader.activate(previous()).unwrap_err().to_string();
+        assert!(error.contains("no previous"));
     }
 
     #[test]
@@ -519,36 +875,7 @@ mod tests {
 
         reader.open_reading_edge(true, 630.0);
         assert_eq!(tap_reading_control(&mut reader, "Library"), Change::Partial);
-        let rect = reader.reading_button("Current book folder");
-        let paths: Vec<_> = reader
-            .fonts
-            .iter()
-            .map(|font| font.display().to_string())
-            .collect();
-        let mut canvas = Canvas::new(WIDTH, HEIGHT, &paths).unwrap();
-        let normal = primitive_app::frame(&reader, &mut canvas, false);
-        let pressed = Lifecycle::default()
-            .press_feedback(
-                &reader,
-                &mut canvas,
-                Input::Tap((rect.x + rect.w / 2) as f32, (rect.y + rect.h / 2) as f32),
-                false,
-            )
-            .unwrap();
-        assert!(normal != pressed);
-        assert!(
-            normal
-                .iter()
-                .zip(&pressed)
-                .enumerate()
-                .all(|(index, (a, b))| {
-                    a == b
-                        || rect.contains(
-                            (index % WIDTH as usize) as f32,
-                            (index / WIDTH as usize) as f32,
-                        )
-                })
-        );
+        assert_button_feedback(&reader, "Current book folder");
         capture_test_screen(
             &reader,
             &reader.fonts,
@@ -614,6 +941,18 @@ mod tests {
 
         reader.open_path(&unpacked.join("mimetype")).unwrap();
         assert!(reader.active.is_some());
+        reader
+            .activate(Action::OpenFolderFile(FolderDirection::Next))
+            .unwrap();
+        assert!(reader.fixed.is_some());
+        reader
+            .activate(Action::OpenFolderFile(FolderDirection::Previous))
+            .unwrap();
+        assert!(reader.active.is_some());
+        assert_eq!(
+            reader.current_document().unwrap().0.path,
+            Path::new("Reference/Coastal notes.epub/mimetype")
+        );
         reader.activate(Action::CurrentBookFolder).unwrap();
         assert_eq!(reader.browser.directory, Path::new("Reference"));
         assert!(visible_file(
@@ -653,5 +992,202 @@ mod tests {
         assert_eq!(reader.open_book_id(), id);
         assert_eq!(reader.current_position(), position);
         assert!(reader.browser.directory.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn adjacent_folder_files_resume_epub_and_pdf_and_stop_at_each_boundary() {
+        use super::super::ReadingStatus;
+
+        let fixture = Fixture::new();
+        let shelf = Path::new("Series/Harbor Shelf");
+        let folder = fixture.root.join(shelf);
+        let other_folder = fixture.root.join("Other");
+        fs::create_dir_all(&folder).unwrap();
+        fs::create_dir(&other_folder).unwrap();
+        let epub = folder.join("Volume 2.epub");
+        let pdf = folder.join("Volume 10.pdf");
+        let finished = folder.join("Volume 3.txt");
+        let unrelated = other_folder.join("Tidal notes.txt");
+        fs::copy(crate::test_fixture("long-chapter.epub"), &epub).unwrap();
+        fs::write(&pdf, crate::fixed::tests::document()).unwrap();
+        fs::write(&finished, "Completed old").unwrap();
+        fs::write(folder.join("Volume 4.bin"), "Unsupported").unwrap();
+        fs::write(folder.join("Volume 5.kfx"), "Opens in Kindle Library").unwrap();
+        fs::write(&unrelated, "An unrelated reading record.").unwrap();
+
+        let mut reader = app(&fixture);
+        let completed = reader.library.resolve(&finished).unwrap();
+        let completed_id = reader.library.identify(&completed).unwrap();
+        reader
+            .library
+            .track(&completed, completed_id)
+            .set_status(ReadingStatus::Finished);
+        reader.mark_book_changed();
+
+        reader.open_path(&pdf).unwrap();
+        reader.follow_fixed(1, None).unwrap();
+        reader.activate(Action::ToggleBookmark).unwrap();
+        let pdf_position = reader.current_position().unwrap();
+        let pdf_id = reader.open_book_id().unwrap();
+        reader.open_path(&unrelated).unwrap();
+        let unrelated_id = reader.open_book_id().unwrap();
+        reader.browse_to(PathBuf::from("Other")).unwrap();
+        reader.library_query = "tidal".into();
+
+        reader.open_path(&epub).unwrap();
+        reader.follow_reflow_page(0, 2).unwrap();
+        reader.activate(Action::ToggleBookmark).unwrap();
+        let epub_position = reader.current_position().unwrap();
+        let epub_id = reader.open_book_id().unwrap();
+        assert_eq!(
+            reader
+                .library
+                .recently_read()
+                .find(|book| book.id != epub_id)
+                .unwrap()
+                .id,
+            unrelated_id
+        );
+        assert_eq!(
+            reader
+                .library
+                .next_book_in_folder(reader.current_document().unwrap().0, FolderOrder::default())
+                .unwrap()
+                .unwrap()
+                .path,
+            shelf.join("Volume 3.txt")
+        );
+        let open_previous = Action::OpenFolderFile(FolderDirection::Previous);
+        let open_next = Action::OpenFolderFile(FolderDirection::Next);
+        let error = reader.activate(open_previous).unwrap_err().to_string();
+        assert!(error.contains("no previous"));
+        assert_eq!(reader.current_position(), Some(epub_position.clone()));
+
+        reader.open_reading_edge(true, 630.0);
+        assert_eq!(tap_reading_control(&mut reader, "Library"), Change::Partial);
+        capture_test_screen(&reader, &reader.fonts, "READER_ADJACENT_FILE_MENU", false);
+        assert_button_feedback(&reader, "Previous file in folder");
+        assert_button_feedback(&reader, "Next file in folder");
+        assert_eq!(
+            tap_reading_control(&mut reader, "Next file in folder"),
+            Change::Partial
+        );
+        assert_eq!(reader.open_book_id(), Some(pdf_id));
+        assert_eq!(reader.current_position(), Some(pdf_position.clone()));
+        assert!(reader.page_is_bookmarked());
+        let error = reader.activate(open_next).unwrap_err().to_string();
+        assert!(error.contains("no next"));
+        assert_eq!(reader.current_position(), Some(pdf_position.clone()));
+
+        reader.open_reading_edge(true, 630.0);
+        assert_eq!(tap_reading_control(&mut reader, "Library"), Change::Partial);
+        assert_eq!(
+            tap_reading_control(&mut reader, "Previous file in folder"),
+            Change::Partial
+        );
+        assert_eq!(reader.open_book_id(), Some(epub_id));
+        assert_eq!(reader.current_position(), Some(epub_position.clone()));
+        assert!(reader.page_is_bookmarked());
+        capture_test_screen(&reader, &reader.fonts, "READER_ADJACENT_FILE_TARGET", false);
+        assert_eq!(reader.browser.directory, Path::new("Other"));
+        assert_eq!(reader.library_query, "tidal");
+        let mut recovered = app(&fixture);
+        recovered.activate(Action::OpenTracked(pdf_id)).unwrap();
+        assert_eq!(recovered.current_position(), Some(pdf_position));
+        assert!(recovered.page_is_bookmarked());
+        recovered.activate(Action::OpenTracked(epub_id)).unwrap();
+        assert_eq!(recovered.current_position(), Some(epub_position));
+        assert!(recovered.page_is_bookmarked());
+        assert_eq!(
+            recovered.library.state(completed_id).unwrap().status(),
+            ReadingStatus::Finished
+        );
+        assert_eq!(
+            recovered.library.state(epub_id).unwrap().status(),
+            ReadingStatus::Reading
+        );
+        assert_eq!(
+            recovered.library.state(pdf_id).unwrap().status(),
+            ReadingStatus::Reading
+        );
+
+        fs::write(&finished, "Unread volume").unwrap();
+        recovered
+            .activate(Action::OpenFolderFile(FolderDirection::Next))
+            .unwrap();
+        assert_eq!(
+            recovered.current_document().unwrap().0.path,
+            shelf.join("Volume 3.txt")
+        );
+        assert_ne!(recovered.open_book_id(), Some(completed_id));
+    }
+
+    #[test]
+    fn adjacent_folder_files_cancel_wrong_pdf_password_and_can_retry() {
+        use primitive_ui::{Key, Layout};
+
+        let fixture = Fixture::new();
+        let folder = fixture.root.join("Readings");
+        fs::create_dir(&folder).unwrap();
+        let epub = folder.join("Volume 1.epub");
+        let locked = folder.join("Volume 2.pdf");
+        fs::copy(&fixture.book, &epub).unwrap();
+        fs::copy(crate::test_fixture("password-required.pdf"), &locked).unwrap();
+        let mut reader = app(&fixture);
+        reader.open_path(&epub).unwrap();
+        reader.follow_reflow_page(1, 0).unwrap();
+        let origin = reader.current_position().unwrap();
+        let id = reader.open_book_id().unwrap();
+        let next = || Action::OpenFolderFile(FolderDirection::Next);
+        reader.activate(next()).unwrap();
+        assert_eq!(reader.screen, Screen::PdfPassword);
+        assert_eq!(reader.open_book_id(), Some(id));
+        let submit = |reader: &mut Reader, password: &str| {
+            reader.editor.text = password.chars().collect();
+            reader.editor.caret = reader.editor.text.len();
+            let (_, go) = Layout::new(WIDTH, HEIGHT, 4, 5)
+                .keyboard_keys_with(reader.editor.layer, "Open")
+                .into_iter()
+                .find(|(key, _)| key.key == Key::Go)
+                .unwrap();
+            assert_eq!(
+                reader.input(Input::Tap(
+                    (go.x + go.w / 2) as f32,
+                    (go.y + go.h / 2) as f32
+                )),
+                Change::Partial
+            );
+        };
+        submit(&mut reader, "incorrect");
+        assert_eq!(reader.screen, Screen::PdfPassword);
+        assert!(
+            reader
+                .notice
+                .as_deref()
+                .unwrap()
+                .contains("Password rejected")
+        );
+        assert_eq!(reader.input(Input::PageBack), Change::Partial);
+        assert_eq!(reader.screen, Screen::Book);
+        assert_eq!(reader.open_book_id(), Some(id));
+        assert_eq!(reader.current_position(), Some(origin.clone()));
+        assert!(reader.locked.is_none());
+        assert!(reader.editor.string().is_empty());
+
+        reader.activate(next()).unwrap();
+        submit(&mut reader, "reader-test");
+        assert_eq!(reader.screen, Screen::Fixed);
+        assert!(reader.fixed.as_ref().unwrap().reading.is_encrypted_pdf());
+        assert!(reader.folder_password_return.is_none());
+        reader
+            .activate(Action::OpenFolderFile(FolderDirection::Previous))
+            .unwrap();
+        assert_eq!(reader.current_position(), Some(origin));
+        assert_eq!(reader.open_book_id(), Some(id));
+
+        reader.open_path(&locked).unwrap();
+        assert_eq!(reader.screen, Screen::PdfPassword);
+        assert_eq!(reader.input(Input::PageBack), Change::Partial);
+        assert_eq!(reader.screen, Screen::Library);
     }
 }

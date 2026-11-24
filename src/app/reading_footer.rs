@@ -7,8 +7,8 @@ use crate::fixed_session::FixedReading;
 use crate::library::Bookmark;
 use crate::library::hidden_flows::PageFlows;
 use crate::reading_controls::{
-    FooterAlignment, FooterItem, FooterSymbolStyle, FooterTrackPosition, HeaderBattery,
-    ProgressScope, ReadingControls, StatusBar, TopHeader,
+    FooterAlignment, FooterItem, FooterItemCycle, FooterSymbolStyle, FooterTrackPosition,
+    HeaderBattery, ProgressScope, ReadingControls, StatusBar, TopHeader,
 };
 use crate::session::{DONE, PAGE_HEIGHT, SHOW_STATUS};
 use primitive_app::{Change, HEIGHT, WIDTH};
@@ -82,6 +82,22 @@ pub(super) fn fixed_chapters(reading: &FixedReading) -> Vec<(usize, String)> {
         .collect();
     sort_chapters(&mut chapters);
     chapters
+}
+
+fn draw_header_ticks(
+    canvas: &mut Canvas,
+    pages: impl ExactSizeIterator<Item = usize>,
+    count: usize,
+    ink: u8,
+) {
+    let width = (WIDTH - 24) as usize;
+    if pages.len() >= width / 5 {
+        return;
+    }
+    for page in pages {
+        let x = 12 + (width as f64 * page as f64 / count.max(1) as f64).round() as i32;
+        canvas.fill(Rect::new(x, TopHeader::HEIGHT as i32 - 5, 2, 4), ink);
+    }
 }
 
 fn sort_chapters(chapters: &mut Vec<(usize, String)>) {
@@ -547,8 +563,7 @@ impl Reader {
     fn footer_time_visible(&self) -> bool {
         self.reading_status_visible()
             && self.controls.footer_auto_refresh
-            && self.controls.status_bar == StatusBar::Custom
-            && (self.controls.footer_items & FooterItem::CurrentTime.bit() != 0
+            && (self.custom_footer_item_visible(FooterItem::CurrentTime)
                 || (self.custom_footer_text_enabled()
                     && ['D', 'd', 'm', 'M']
                         .into_iter()
@@ -572,17 +587,33 @@ impl Reader {
     fn footer_battery_visible(&self) -> bool {
         self.reading_status_visible()
             && self.controls.footer_auto_refresh
-            && self.controls.status_bar == StatusBar::Custom
-            && (self.controls.footer_items & FooterItem::BatteryPercentage.bit() != 0
+            && (self.custom_footer_item_visible(FooterItem::BatteryPercentage)
                 || (self.custom_footer_text_enabled()
                     && ['b', 'B']
                         .into_iter()
                         .any(|token| self.footer_custom_text.contains_token(token))))
     }
 
-    fn custom_footer_text_enabled(&self) -> bool {
+    fn custom_footer_item_visible(&self, item: FooterItem) -> bool {
         self.controls.status_bar == StatusBar::Custom
-            && self.controls.footer_items & FooterItem::CustomText.bit() != 0
+            && self.controls.footer_items & item.bit() != 0
+            && self
+                .controls
+                .footer_item_cycle
+                .is_none_or(|cycle| cycle.selected == Some(item))
+    }
+
+    fn custom_footer_text_enabled(&self) -> bool {
+        self.custom_footer_item_visible(FooterItem::CustomText)
+    }
+
+    fn status_footer_hidden(&self) -> bool {
+        self.controls.status_bar == StatusBar::Minimal
+            || (self.controls.status_bar == StatusBar::Custom
+                && self
+                    .controls
+                    .footer_item_cycle
+                    .is_some_and(|cycle| cycle.selected.is_none()))
     }
 
     fn footer_clock_active(&self) -> bool {
@@ -709,7 +740,7 @@ impl Reader {
 
     pub(super) fn hidden_overlap_footer(&self) -> bool {
         self.overlapping_book_page()
-            && self.controls.status_bar == StatusBar::Minimal
+            && self.status_footer_hidden()
             && self.notice.is_none()
             && self.search_result.is_none()
             && self.selection.is_none()
@@ -932,7 +963,7 @@ impl Reader {
                 }
             })
         });
-        if self.controls.status_bar == StatusBar::Minimal {
+        if self.status_footer_hidden() {
             return base;
         }
         let Some(remaining) = self.read_alarm.footer() else {
@@ -1082,22 +1113,20 @@ impl Reader {
                 Rect::new(12, TopHeader::HEIGHT as i32 - 2, WIDTH as i32 - 24, 1),
                 HAIRLINE,
             );
-            let count = self
-                .active
-                .as_ref()
-                .map_or(0, |book| book.reading.probe.page_count())
-                .max(1);
             if let Some(book) = &self.active {
-                let mut mark = |page: usize| {
-                    let x = 12 + ((WIDTH - 24) as f64 * page as f64 / count as f64).round() as i32;
-                    canvas.fill(Rect::new(x, TopHeader::HEIGHT as i32 - 5, 2, 4), ink);
-                };
-                if let Some(selected) = self.customized_header_marker_pages(book) {
-                    selected.into_iter().for_each(mark);
+                let local_count = book.reading.probe.page_count();
+                if let Some(published) = self.publisher_header_marker_pages(book) {
+                    draw_header_ticks(canvas, published.starts.into_iter(), published.count, ink);
+                } else if let Some(selected) = self.customized_header_marker_pages(book) {
+                    draw_header_ticks(canvas, selected.into_iter(), local_count, ink);
                 } else {
-                    for (page, _) in book.reading.probe.footer_sections() {
-                        mark(*page);
-                    }
+                    let pages = book
+                        .reading
+                        .probe
+                        .footer_sections()
+                        .iter()
+                        .map(|(page, _)| *page);
+                    draw_header_ticks(canvas, pages, local_count, ink);
                 }
             }
         } else {
@@ -1139,7 +1168,7 @@ impl Reader {
 
     fn progress_caption(&self) -> Option<String> {
         let mode = self.controls.status_bar;
-        if mode == StatusBar::Minimal {
+        if self.status_footer_hidden() {
             return Some(String::new());
         }
         let printed = || {
@@ -1238,7 +1267,11 @@ impl Reader {
         }
     }
 
-    fn custom_footer_parts(&self, progress: &Progress<'_>) -> Vec<(FooterItem, String, bool)> {
+    fn custom_footer_parts(
+        &self,
+        progress: &Progress<'_>,
+        cycle: Option<FooterItemCycle>,
+    ) -> Vec<(FooterItem, String, bool)> {
         let (entry, id) = if let Some(book) = &self.fixed {
             (&book.entry, book.id)
         } else if let Some(book) = &self.active {
@@ -1396,7 +1429,9 @@ impl Reader {
         };
         let mut items = Vec::new();
         for item in FooterItem::ordered(self.controls.footer_order) {
-            if self.controls.footer_items & item.bit() == 0 {
+            if self.controls.footer_items & item.bit() == 0
+                || cycle.is_some_and(|cycle| cycle.selected != Some(item))
+            {
                 continue;
             }
             let text = match item {
@@ -1487,9 +1522,13 @@ impl Reader {
     }
 
     fn custom_footer_caption(&self, progress: &Progress<'_>) -> String {
-        let items = self.custom_footer_parts(progress);
+        let items = self.custom_footer_parts(progress, self.controls.footer_item_cycle);
         if items.is_empty() {
-            "No items selected".to_owned()
+            if self.controls.footer_item_cycle.is_some() {
+                String::new()
+            } else {
+                "No items selected".to_owned()
+            }
         } else {
             let separator = self.controls.footer_separator.text();
             items.iter().enumerate().fold(
@@ -1515,7 +1554,7 @@ impl Reader {
         self.controls.status_bar == StatusBar::Custom
             && self.controls.footer_symbol_style == FooterSymbolStyle::Icons
             && self.footer_progress().is_some_and(|progress| {
-                self.custom_footer_parts(&progress)
+                self.custom_footer_parts(&progress, self.controls.footer_item_cycle)
                     .iter()
                     .any(|(item, _, _)| {
                         footer_item_icon(*item, self.page_turning_inverted()).is_some()
@@ -1527,7 +1566,7 @@ impl Reader {
         let Some(progress) = self.footer_progress() else {
             return 0;
         };
-        self.custom_footer_parts(&progress)
+        self.custom_footer_parts(&progress, self.controls.footer_item_cycle)
             .iter()
             .filter(|(item, _, _)| footer_item_icon(*item, self.page_turning_inverted()).is_some())
             .count() as i32
@@ -1544,7 +1583,7 @@ impl Reader {
         let Some(progress) = self.footer_progress() else {
             return;
         };
-        let items = self.custom_footer_parts(&progress);
+        let items = self.custom_footer_parts(&progress, self.controls.footer_item_cycle);
         let separator = self.controls.footer_separator.text();
         let mut x = status_rect.x;
         for (index, (item, text, merge)) in items.iter().enumerate() {
@@ -1644,7 +1683,7 @@ impl Reader {
             && !self.reading_bottom
             && self.reading_panel.is_none();
         if self.controls.footer_scope == ProgressScope::Off
-            || self.controls.status_bar == StatusBar::Minimal
+            || self.status_footer_hidden()
             || self.touch_locked
             || self.selection.is_some()
             || self.pdf_selection.is_some()
@@ -1776,6 +1815,20 @@ impl Reader {
         }
     }
 
+    fn available_custom_footer_items(&self) -> Vec<FooterItem> {
+        match self.footer_progress() {
+            Some(progress) => self
+                .custom_footer_parts(&progress, None)
+                .into_iter()
+                .map(|(item, _, _)| item)
+                .collect(),
+            None => FooterItem::ordered(self.controls.footer_order)
+                .into_iter()
+                .filter(|item| self.controls.footer_items & item.bit() != 0)
+                .collect(),
+        }
+    }
+
     pub(super) fn tap_footer(&mut self, x: f32, y: f32) -> Option<Change> {
         if x < 0.0
             || x >= self.footer_right() as f32
@@ -1789,19 +1842,27 @@ impl Reader {
         if self.hidden_overlap_footer() && !SHOW_STATUS.contains(x, y) {
             return None;
         }
-        let status_bar = if self.controls.footer_all_at_once {
-            if self.controls.status_bar == StatusBar::Minimal {
+        let mut controls = self.controls;
+        if controls.status_bar == StatusBar::Custom
+            && let Some(cycle) = &mut controls.footer_item_cycle
+        {
+            let items = self.available_custom_footer_items();
+            cycle.selected = cycle
+                .selected
+                .and_then(|selected| items.iter().position(|item| *item == selected))
+                .map_or_else(
+                    || items.first().copied(),
+                    |index| items.get(index + 1).copied(),
+                );
+        } else if controls.footer_all_at_once {
+            controls.status_bar = if controls.status_bar == StatusBar::Minimal {
                 StatusBar::PageNumbers
             } else {
                 StatusBar::Minimal
-            }
+            };
         } else {
-            self.controls.status_bar.next()
-        };
-        let controls = ReadingControls {
-            status_bar,
-            ..self.controls
-        };
+            controls.status_bar = controls.status_bar.next();
+        }
         Some(match self.activate(Action::SetReadingControls(controls)) {
             Ok(()) => {
                 self.notice = None;
@@ -1822,7 +1883,7 @@ impl Reader {
             return None;
         }
         if !self.controls.skim_on_footer_hold
-            || self.controls.status_bar == StatusBar::Minimal
+            || self.status_footer_hidden()
             || self.search_result.is_some()
             || self.ocr.is_some()
             || (super::NEXT_COMIC.contains(x, y) && self.next_comic().is_some())
@@ -2114,6 +2175,22 @@ impl Reader {
             Item::new("Header font size", Action::EditHeaderFontSize)
                 .detail(format!("{} px", header.font_size())),
         ]);
+        if c.status_bar == StatusBar::Custom {
+            let cycle = c.footer_item_cycle.is_none().then(|| FooterItemCycle {
+                selected: self.available_custom_footer_items().first().copied(),
+            });
+            items.insert(
+                3,
+                Item::new(
+                    "Cycle custom items",
+                    Action::SetReadingControls(ReadingControls {
+                        footer_item_cycle: cycle,
+                        ..c
+                    }),
+                )
+                .detail("Tap the status bar to show one selected item at a time"),
+            );
+        }
         if c.status_bar != StatusBar::Custom {
             items.insert(
                 1,
@@ -2484,3 +2561,7 @@ mod overlap_tests;
 #[cfg(test)]
 #[path = "reading_footer/header_page_labels_tests.rs"]
 mod header_page_labels_tests;
+
+#[cfg(test)]
+#[path = "reading_footer/item_cycle_tests.rs"]
+mod item_cycle_tests;

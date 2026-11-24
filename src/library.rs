@@ -224,10 +224,83 @@ impl LibraryBook {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FolderDirection {
+    Previous,
+    Next,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum FolderSort {
+    #[default]
+    NaturalName,
+    FileName,
+    FileType,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct FolderOrder {
+    pub(crate) sort: FolderSort,
+    pub(crate) reverse: bool,
+}
+
+impl FolderOrder {
+    pub(crate) fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct BrowseList {
     pub entries: Vec<BrowseEntry>,
     pub truncated: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum BrowseGroup {
+    EpubMarker,
+    Folder,
+    File,
+}
+
+impl BrowseList {
+    pub(crate) fn sort(&mut self, order: FolderOrder) {
+        match order.sort {
+            FolderSort::NaturalName => self.entries.sort_by(|left, right| {
+                left.group()
+                    .cmp(&right.group())
+                    .then_with(|| natural_cmp(&left.name, &right.name))
+                    .then_with(|| left.path.cmp(&right.path))
+            }),
+            FolderSort::FileName | FolderSort::FileType => {
+                self.entries.sort_by_cached_key(|entry| {
+                    let group = entry.group();
+                    let extension =
+                        if order.sort == FolderSort::FileType && group == BrowseGroup::File {
+                            entry.path.extension().and_then(|value| value.to_str())
+                        } else {
+                            None
+                        };
+                    (
+                        group,
+                        extension.map(fold_search),
+                        fold_search(&entry.name),
+                        entry.path.clone(),
+                    )
+                });
+            }
+        }
+        if order.reverse {
+            for group in self
+                .entries
+                .chunk_by_mut(|left, right| left.group() == right.group())
+            {
+                group.reverse();
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -235,6 +308,18 @@ pub struct BrowseEntry {
     pub path: PathBuf,
     pub name: String,
     pub kind: BrowseKind,
+}
+
+impl BrowseEntry {
+    fn group(&self) -> BrowseGroup {
+        if crate::epub_members::is_folder_book(&self.path) {
+            BrowseGroup::EpubMarker
+        } else if matches!(self.kind, BrowseKind::Folder) {
+            BrowseGroup::Folder
+        } else {
+            BrowseGroup::File
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -526,6 +611,8 @@ pub struct FixedPreferences {
     pub epub_right_to_left: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub crop: Option<PdfTextRect>,
+    #[serde(skip_serializing_if = "is_false")]
+    pub semi_auto_crop: bool,
 }
 
 impl FixedPreferences {
@@ -562,7 +649,7 @@ impl FixedPreferences {
             turns: self.turns % 4,
             width_fit,
             height_fit: self.height_fit && !width_fit && tile_zoom.is_none(),
-            continuous: self.continuous && tile_zoom.is_none(),
+            continuous: self.continuous && tile_zoom.is_none() && !self.semi_auto_crop,
             spread: self.spread && tile_zoom.is_none(),
             continuous_gap: self.continuous_gap.min(MAX_CONTINUOUS_GAP),
             straighten_limit: self.straighten_limit.min(MAX_STRAIGHTEN_DEGREES),
@@ -637,6 +724,7 @@ impl<'de> Deserialize<'de> for FixedPreferences {
                 .get("crop")
                 .and_then(|value| serde_json::from_value(value.clone()).ok())
                 .filter(valid_crop),
+            semi_auto_crop: switch("semi_auto_crop"),
         }
         .normalized())
     }
@@ -863,6 +951,12 @@ pub struct BookState {
     pub preferences: BookPreferences,
     #[serde(default)]
     pub fixed_preferences: FixedPreferences,
+    #[serde(
+        default,
+        deserialize_with = "read_pdf_crop_seeds",
+        skip_serializing_if = "crate::pdf_crop::Seeds::is_empty"
+    )]
+    pub(crate) pdf_crop_seeds: crate::pdf_crop::Seeds,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) preferred_dictionaries: Vec<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -906,6 +1000,13 @@ fn read_ocr_language<'de, D: serde::Deserializer<'de>>(
         .map(str::to_owned))
 }
 
+fn read_pdf_crop_seeds<'de, D: serde::Deserializer<'de>>(
+    reader: D,
+) -> Result<crate::pdf_crop::Seeds, D::Error> {
+    let value = serde_json::Value::deserialize(reader)?;
+    Ok(serde_json::from_value(value).unwrap_or_default())
+}
+
 impl BookState {
     fn new(entry: &LibraryBook, id: u64) -> Self {
         Self {
@@ -928,6 +1029,7 @@ impl BookState {
             top_status_header: None,
             preferences: BookPreferences::default(),
             fixed_preferences: FixedPreferences::default(),
+            pdf_crop_seeds: Default::default(),
             preferred_dictionaries: Vec::new(),
             dictionary_word_forms: None,
             ocr_language: None,
@@ -1147,6 +1249,14 @@ impl Library {
 
     /// List one folder at a time. An empty Documents-relative path selects the library root.
     pub fn browse(&self, folder: &Path) -> io::Result<BrowseList> {
+        self.browse_with_order(folder, FolderOrder::default())
+    }
+
+    pub(crate) fn browse_with_order(
+        &self,
+        folder: &Path,
+        order: FolderOrder,
+    ) -> io::Result<BrowseList> {
         let directory = fs::read_dir(self.browse_folder(folder)?)?;
         let known_metadata = self.known_metadata();
         let mut entries = Vec::new();
@@ -1219,15 +1329,9 @@ impl Library {
                 kind,
             });
         }
-        entries.sort_by(|left, right| {
-            let folder = |entry: &BrowseEntry| matches!(entry.kind, BrowseKind::Folder);
-            let book = |entry: &BrowseEntry| crate::epub_members::is_folder_book(&entry.path);
-            book(right)
-                .cmp(&book(left))
-                .then_with(|| folder(right).cmp(&folder(left)))
-                .then_with(|| natural_cmp(&left.name, &right.name))
-        });
-        Ok(BrowseList { entries, truncated })
+        let mut list = BrowseList { entries, truncated };
+        list.sort(order);
+        Ok(list)
     }
 
     fn browse_folder(&self, relative: &Path) -> io::Result<PathBuf> {
@@ -1273,20 +1377,51 @@ impl Library {
         &self.books
     }
 
-    /// Use the same natural filename order and document availability as the folder picker.
+    /// Use the same order and document availability as the folder picker.
     pub(crate) fn next_book_in_folder(
         &self,
         current: &LibraryBook,
+        order: FolderOrder,
+    ) -> io::Result<Option<LibraryBook>> {
+        self.folder_book(current, FolderDirection::Next, order, false)
+    }
+
+    pub(crate) fn adjacent_book_in_folder(
+        &self,
+        current: &LibraryBook,
+        direction: FolderDirection,
+        order: FolderOrder,
+    ) -> io::Result<Option<LibraryBook>> {
+        self.folder_book(current, direction, order, true)
+    }
+
+    fn folder_book(
+        &self,
+        current: &LibraryBook,
+        direction: FolderDirection,
+        order: FolderOrder,
+        skip_finished: bool,
     ) -> io::Result<Option<LibraryBook>> {
         let path = current.library_path();
         let folder = path.parent().unwrap_or_else(|| Path::new(""));
-        let listing = self.browse(folder)?;
-        let next = listing
-            .entries
+        let mut entries = self.browse_with_order(folder, order)?.entries;
+        if direction == FolderDirection::Previous {
+            entries.reverse();
+        }
+        let possibly_finished: HashSet<_> = if skip_finished {
+            self.recent
+                .iter()
+                .filter(|state| state.status() == ReadingStatus::Finished)
+                .map(|state| (state.path.as_path(), state.size))
+                .collect()
+        } else {
+            HashSet::new()
+        };
+        let next = entries
             .into_iter()
             .skip_while(|entry| entry.path != path)
             .skip(1)
-            .find_map(|entry| match entry.kind {
+            .filter_map(|entry| match entry.kind {
                 BrowseKind::Readable(book) => Some(book),
                 BrowseKind::Folder => {
                     let marker = entry.path.join("mimetype");
@@ -1297,6 +1432,15 @@ impl Library {
                     }
                 }
                 _ => None,
+            })
+            .find(|book| {
+                // A different edition at a finished file's path is still readable.
+                !possibly_finished.contains(&(book.path.as_path(), book.size))
+                    || self
+                        .identify(book)
+                        .ok()
+                        .and_then(|id| self.state(id))
+                        .is_none_or(|state| state.status() != ReadingStatus::Finished)
             });
         Ok(next)
     }
@@ -3262,6 +3406,7 @@ mod tests {
                 epub_spread: None,
                 epub_right_to_left: None,
                 crop: None,
+                semi_auto_crop: false,
             }
         );
         assert!(state.fixed_preferences.is_valid());

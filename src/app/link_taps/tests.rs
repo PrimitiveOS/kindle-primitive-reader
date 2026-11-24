@@ -112,6 +112,7 @@ fn reflow_link_tap_settings_match_defaults_preserve_explicit_links_and_enlarge_i
     assert!(LinkPreference::Follow.checked(defaults));
     assert!(!LinkPreference::IgnoreExternal.checked(defaults));
     assert!(!LinkPreference::LargerArea.checked(defaults));
+    assert!(!LinkPreference::FootnoteBookFont.checked(defaults));
     assert!(app.reflow_tap_link(nearby.0, nearby.1).is_none());
     assert!(
         !app.page_link_items()
@@ -150,6 +151,8 @@ fn reflow_link_tap_settings_match_defaults_preserve_explicit_links_and_enlarge_i
             "Allow larger tap area around links",
             "Ignore external links on tap",
             "Ignore external links on swipe",
+            "Use book font in popups",
+            "Footnote popup font size",
         ]
     );
     app.show(Screen::Book);

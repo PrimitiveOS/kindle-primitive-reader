@@ -13,7 +13,7 @@ pub(super) struct MarkerPages {
 impl Probe {
     // Keep every source heading until after depth selection, including two
     // headings at different depths on the same rendered page.
-    pub(super) fn local_contents_pages(&self) -> &[(usize, usize)] {
+    pub(crate) fn local_contents_pages(&self) -> &[(usize, usize)] {
         self.local_contents_pages.get_or_init(|| {
             self.toc
                 .iter()
@@ -68,6 +68,17 @@ impl Reader {
             starts: sorted_pages(local_headings(active, state).map(|(page, _)| page)),
             count: active.reading.probe.page_count(),
         })
+    }
+
+    pub(super) fn publisher_header_marker_pages(&self, book: &ActiveBook) -> Option<MarkerPages> {
+        let state = self.library.state(book.id)?;
+        if state.custom_contents.enabled {
+            return None;
+        }
+        let (starts, count) = book
+            .reading
+            .whole_book_publisher_markers(|depth| state.contents_depths.includes(depth))?;
+        Some(MarkerPages { starts, count })
     }
 
     pub(super) fn customized_header_marker_pages(&self, book: &ActiveBook) -> Option<Vec<usize>> {

@@ -46,6 +46,7 @@ mod font_render_tests;
 mod footer_custom_text;
 mod footer_font_face;
 mod footer_presets;
+mod footnote_font;
 mod footnote_popup;
 mod gestures;
 mod hidden_flows;
@@ -70,6 +71,7 @@ mod result_context;
 mod saved_highlight_popup;
 mod search_chapter_scope;
 mod selection_popup;
+mod semi_auto_crop;
 mod sidecar_marks;
 mod skim;
 mod step_buttons;
@@ -105,7 +107,8 @@ use crate::koreader_import::{self, ExportEntry, QuoteMatch, QuoteResolver};
 use crate::koreader_sidecar::{self, SidecarProgress};
 use crate::library::{
     BookMetadata, BookPreferences, BookState, Bookmark, DocumentFormat, FixedPreferences,
-    FixedTileAxis, Highlight, Library, LibraryBook, PdfHighlight, ReadingPosition, ReadingStatus,
+    FixedTileAxis, FolderDirection, FolderOrder, Highlight, Library, LibraryBook, PdfHighlight,
+    ReadingPosition, ReadingStatus,
 };
 use crate::ocr_job::{OcrAssets, OcrJob};
 use crate::pdf_annotations;
@@ -172,6 +175,7 @@ enum Screen {
     Footnote,
     Library,
     LibraryFind,
+    FolderOrder,
     OrganizeLibrary,
     BookmarkBrowser(bookmark_browser::Page),
     ReadingHistory(reading_history::Page),
@@ -244,6 +248,7 @@ enum Screen {
     CustomBookmarks,
     Links,
     LinkSettings,
+    FootnoteFontSize(footnote_font::Mode),
     Bookmarks,
     Typography,
     ReadingFonts,
@@ -298,6 +303,7 @@ impl Screen {
             Self::Footnote => "Footnote",
             Self::Library => "Reader",
             Self::LibraryFind => "Find a document",
+            Self::FolderOrder => "Folder order",
             Self::OrganizeLibrary => "Library organization",
             Self::BookmarkBrowser(page) => page.title(),
             Self::ReadingHistory(page) => page.title(),
@@ -388,6 +394,7 @@ impl Screen {
             Self::GeneratedContents => "Generated outline",
             Self::Links => "Links on this page",
             Self::LinkSettings => "Links",
+            Self::FootnoteFontSize(_) => "Footnote popup font size",
             Self::Bookmarks | Self::FixedBookmarks => "Bookmarks",
             Self::Typography => "Text settings",
             Self::ReadingFonts => "Reading font",
@@ -435,10 +442,12 @@ enum Action {
     Open(LibraryBook),
     OpenTracked(u64),
     OpenPreviousDocument,
+    OpenFolderFile(FolderDirection),
     Browse(PathBuf),
     CurrentBookFolder,
     Continue,
     ClearLibraryFilter,
+    SetFolderOrder(FolderOrder),
     ListBooks(BookList),
     OrganizeCurrent,
     BookmarkBrowser(bookmark_browser::Command),
@@ -568,6 +577,7 @@ enum Action {
     RotatePage,
     ReversePageDirection,
     CropPage,
+    SemiAutoCrop,
     RecognizeText,
     RecognizeLanguage(String),
     ReadFixedText,
@@ -784,7 +794,9 @@ pub struct Reader {
     ocr: Option<ActiveOcr>,
     text_flow: Option<TextFlow>,
     locked: Option<LibraryBook>,
+    folder_password_return: Option<Screen>,
     crop_dialog: Option<(FixedPreferences, Option<(f32, f32)>)>,
+    semi_auto_crop: Option<semi_auto_crop::Draft>,
     screen: Screen,
     reading_panel: Option<BarPanel>,
     last_text_panel: BarPanel,
@@ -886,15 +898,17 @@ impl Reader {
     }
 
     fn open_data(documents: &Path, state: &Path, fonts: Vec<PathBuf>) -> io::Result<Self> {
-        let (library, browser) = with_storage(|| {
+        let library = with_storage(|| {
             let mut library = Library::open(documents, state)?;
             library.scan()?;
-            let browser = FileBrowser::new(library.browse(Path::new(""))?);
-            Ok((library, browser))
+            Ok(library)
         })?;
         let data = state.parent().unwrap_or(documents);
         let controls_path = data.join("reading-controls.json");
         let controls = ReadingControls::load(&controls_path, !library.recents().is_empty());
+        let browser = FileBrowser::new(with_storage(|| {
+            library.browse_with_order(Path::new(""), controls.folder_order)
+        })?);
         let fonts_directory = data.join("fonts");
         let footer_font_path = data.join("status-bar-font.json");
         let footer_font_file = footer_font_face::load(&footer_font_path, &fonts_directory);
@@ -992,7 +1006,9 @@ impl Reader {
             ocr: None,
             text_flow: None,
             locked: None,
+            folder_password_return: None,
             crop_dialog: None,
+            semi_auto_crop: None,
             screen: Screen::Library,
             reading_panel: None,
             last_text_panel: BarPanel::Text,
@@ -1188,6 +1204,9 @@ impl Reader {
         self.search_result = None;
         self.result_selection = None;
         if let Some(mut reading) = fixed {
+            if let Some(state) = self.library.state(id) {
+                reading.load_crop_seeds(state.pdf_crop_seeds.clone())?;
+            }
             let flows = self
                 .library
                 .state(id)
@@ -1391,6 +1410,9 @@ impl Reader {
     }
 
     fn show(&mut self, screen: Screen) {
+        if screen != Screen::PdfPassword {
+            self.folder_password_return = None;
+        }
         if screen != Screen::Book {
             self.screen_page_worker.cancel();
         }
@@ -1668,6 +1690,7 @@ impl Reader {
         self.prepare_logical_font_editor();
         self.prepare_line_spacing_editor();
         self.prepare_word_spacing_editor();
+        self.prepare_footnote_font_editor();
         self.map_window = fixed_book_map::MapWindow::default();
         self.sync_auto_turn(Instant::now());
         self.update_stats_activity(Instant::now());
@@ -1707,7 +1730,7 @@ impl Reader {
     }
 
     fn record_position_at(&mut self, now: Instant) {
-        if self.fixed_search_fit_active() {
+        if self.fixed_search_fit_active() || self.semi_auto_crop.is_some() {
             return;
         }
         self.update_stats_activity(now);
@@ -2395,6 +2418,9 @@ impl Reader {
         }
         if self.screen == Screen::Library {
             return self.library_items().collect();
+        }
+        if self.screen == Screen::FolderOrder {
+            return self.folder_order_items();
         }
         if let Some(items) = self.organization_items() {
             return items;
@@ -3317,6 +3343,7 @@ impl Reader {
                 self.book_list = None;
                 self.show(Screen::OrganizeLibrary);
             }
+            Action::SetFolderOrder(order) => self.set_folder_order(order)?,
             Action::SetReadingControls(mut controls) => {
                 if controls.status_bar == crate::reading_controls::StatusBar::Custom
                     && self.controls.status_bar != crate::reading_controls::StatusBar::Custom
@@ -3325,6 +3352,16 @@ impl Reader {
                     if controls.footer_items == 0 {
                         controls.footer_items = crate::reading_controls::FooterItem::DEFAULT_MASK;
                     }
+                }
+                if let Some(cycle) = &mut controls.footer_item_cycle
+                    && cycle
+                        .selected
+                        .is_some_and(|item| controls.footer_items & item.bit() == 0)
+                {
+                    cycle.selected =
+                        crate::reading_controls::FooterItem::ordered(controls.footer_order)
+                            .into_iter()
+                            .find(|item| controls.footer_items & item.bit() != 0);
                 }
                 let reflow_layout_changed = controls.overlap_footer != self.controls.overlap_footer;
                 let resized = if reflow_layout_changed {
@@ -3505,6 +3542,7 @@ impl Reader {
             Action::ReturnToHistory(index) => self.return_to_location(index)?,
             Action::NextLocation => self.next_location()?,
             Action::OpenPreviousDocument => self.open_previous_document()?,
+            Action::OpenFolderFile(direction) => self.open_folder_file(direction)?,
             Action::Wikipedia => self.prepare_online(true, false)?,
             Action::TranslatePage => self.prepare_online(false, true)?,
             Action::RepeatOnline(index) => self.repeat_online(index)?,
@@ -3669,6 +3707,7 @@ impl Reader {
                 self.crop_dialog = Some((fixed.reading.start_crop()?, None));
                 self.show(Screen::FixedCrop);
             }
+            Action::SemiAutoCrop => self.start_semi_auto_crop()?,
             Action::RecognizeText => self.start_ocr(None)?,
             Action::RecognizeLanguage(language) => self.start_ocr(Some(&language))?,
             Action::ReadFixedText => self.read_fixed_text(false)?,
@@ -4618,7 +4657,15 @@ impl Reader {
         self.stats_awake
             && self.screen == Screen::Book
             && self.top_header_visible()
-            && (header.reading_percent
+            && ((header.chapter_marks
+                && self.active.as_ref().is_some_and(|book| {
+                    !book.reading.probe.toc.is_empty()
+                        && self
+                            .library
+                            .state(book.id)
+                            .is_some_and(|state| !state.custom_contents.enabled)
+                }))
+                || header.reading_percent
                 || ((header.page_number || header.page_count)
                     && self.top_header_page_labels().is_none()))
     }
@@ -4905,6 +4952,9 @@ impl Reader {
     }
 
     fn handle_page_number(&mut self, input: Input) -> Change {
+        if let Some(change) = self.footnote_font_input(input) {
+            return change;
+        }
         if let Some(change) = self.logical_font_input(input) {
             return change;
         }
@@ -4922,6 +4972,7 @@ impl Reader {
         {
             self.show(match self.screen {
                 Screen::NumberingValue(field) => field.parent(),
+                Screen::FootnoteFontSize(_) => Screen::LinkSettings,
                 Screen::FooterCustomText | Screen::FooterCustomTextGuide => Screen::FooterSettings,
                 _ if self.fixed.is_some() => Screen::FixedTools,
                 _ => Screen::BookTools,
@@ -4932,7 +4983,10 @@ impl Reader {
             return Change::None;
         };
         let layout = Layout::new(WIDTH, HEIGHT, 4, 5);
-        let action = if matches!(self.screen, Screen::NumberingValue(_)) {
+        let action = if matches!(
+            self.screen,
+            Screen::NumberingValue(_) | Screen::FootnoteFontSize(_)
+        ) {
             "Set"
         } else if self.screen == Screen::FooterCustomText {
             "Save"
@@ -4946,6 +5000,12 @@ impl Reader {
             match self.screen {
                 Screen::NumberingValue(field) => {
                     return match self.apply_numbering_input(field) {
+                        Ok(()) => Change::Partial,
+                        Err(error) => self.report(error),
+                    };
+                }
+                Screen::FootnoteFontSize(mode) => {
+                    return match self.apply_footnote_font_input(mode) {
                         Ok(()) => Change::Partial,
                         Err(error) => self.report(error),
                     };
@@ -4998,6 +5058,10 @@ impl Reader {
             self.editor = Editor::new(64);
             if self.bookmark_browser.after_password.take().is_some() {
                 self.show(Screen::BookmarkBrowser(bookmark_browser::Page::Detail));
+                return Change::Partial;
+            }
+            if let Some(screen) = self.folder_password_return.take() {
+                self.show(screen);
                 return Change::Partial;
             }
             return match self.activate(Action::Show(Screen::Library)) {
@@ -5297,7 +5361,12 @@ impl Reader {
                 else {
                     return Change::None;
                 };
-                let result = self.show_flow_page_popup(overview.chapter, overview.first + index);
+                let page = overview.first + index;
+                let result = if overview.chapter.is_none() && self.custom_contents_enabled() {
+                    self.show_fixed_page_actions(page)
+                } else {
+                    self.show_flow_page_popup(overview.chapter, page)
+                };
                 return match result {
                     Ok(()) => Change::Partial,
                     Err(error) => self.report(error),
@@ -6042,6 +6111,9 @@ impl Reader {
     }
 
     fn crop_input(&mut self, input: Input) -> Change {
+        if let Some(change) = self.semi_auto_crop_input(input) {
+            return change;
+        }
         let Some((original, first)) = self.crop_dialog else {
             return Change::None;
         };
@@ -6054,6 +6126,7 @@ impl Reader {
             Input::Tap(x, y) if RESET_CROP.contains(x, y) => (
                 FixedPreferences {
                     crop: None,
+                    semi_auto_crop: false,
                     offset_x: 0.0,
                     offset_y: 0.0,
                     ..original
@@ -6086,18 +6159,10 @@ impl Reader {
                 (
                     FixedPreferences {
                         crop: Some(region),
-                        turns: original.turns,
-                        right_to_left: original.right_to_left,
-                        width_fit: original.continuous,
-                        continuous: original.continuous,
-                        height_fit: original.height_fit,
-                        scan_contrast: original.scan_contrast,
-                        dither: original.dither,
-                        straighten_limit: original.straighten_limit,
-                        force_ocr: original.force_ocr,
-                        scan_white_level: original.scan_white_level,
-                        continuous_gap: original.continuous_gap,
-                        ..FixedPreferences::default()
+                        semi_auto_crop: false,
+                        offset_x: 0.0,
+                        offset_y: 0.0,
+                        ..original
                     },
                     true,
                 )
@@ -6911,6 +6976,9 @@ impl Reader {
         if self.screen == Screen::FixedCrop
             && let Some(fixed) = &self.fixed
         {
+            if self.draw_semi_auto_crop(canvas) {
+                return;
+            }
             let first = self.crop_dialog.and_then(|(_, first)| first);
             let point = first.map(|(x, y)| PdfTextRect {
                 x0: (x - 0.009).max(0.0),
@@ -7364,6 +7432,7 @@ impl Reader {
                 | Screen::EditNote
                 | Screen::GoToPage
                 | Screen::NumberingValue(_)
+                | Screen::FootnoteFontSize(_)
                 | Screen::PdfPassword
         ) {
             let (hint, action) = match self.screen {
@@ -7381,6 +7450,7 @@ impl Reader {
                     "Save",
                 ),
                 Screen::PdfPassword => ("PDF password", "Open"),
+                Screen::FootnoteFontSize(mode) => (mode.hint(), "Set"),
                 Screen::NumberingValue(NumberField::ContentDpi(_)) => {
                     ("Content zoom: 0 to 300 dpi", "Set")
                 }
@@ -7459,6 +7529,9 @@ impl Reader {
             self.draw_logical_font(canvas);
             self.draw_line_spacing(canvas);
             self.draw_word_spacing(canvas);
+            if let Screen::FootnoteFontSize(mode) = self.screen {
+                self.draw_footnote_font_editor(canvas, mode);
+            }
             if self.can_paste_text() {
                 external_link::draw_paste(canvas);
             }
@@ -7550,6 +7623,13 @@ impl Reader {
                         }
                         Action::LibraryExport(library_export::Command::ToggleKindleClippings) => {
                             RowAccessory::Toggle(self.library_export.kindle_clippings_enabled())
+                        }
+                        Action::SetReadingControls(controls)
+                            if self.screen == Screen::FooterSettings
+                                && controls.footer_item_cycle.is_some()
+                                    != self.controls.footer_item_cycle.is_some() =>
+                        {
+                            RowAccessory::Toggle(self.controls.footer_item_cycle.is_some())
                         }
                         Action::SetReadingControls(controls)
                             if self.screen == Screen::SearchSettings
@@ -8317,7 +8397,10 @@ impl App for Reader {
         }
         if matches!(
             self.screen,
-            Screen::GoToPage | Screen::NumberingValue(_) | Screen::FooterCustomText
+            Screen::GoToPage
+                | Screen::NumberingValue(_)
+                | Screen::FooterCustomText
+                | Screen::FootnoteFontSize(_)
         ) {
             return self.handle_page_number(input);
         }
@@ -8424,7 +8507,7 @@ impl App for Reader {
             Input::Tap(x, y) if primitive_ui::back_button(WIDTH as i32).contains(x, y) => {
                 match self.screen {
                     Screen::LibraryExport(page) => self.back_from_library_export(page),
-                    Screen::OrganizeLibrary => self.show(Screen::Library),
+                    Screen::OrganizeLibrary | Screen::FolderOrder => self.show(Screen::Library),
                     Screen::BookList if matches!(self.book_list, Some(BookList::Author(_))) => {
                         self.book_list = Some(BookList::Authors);
                         self.show(Screen::BookList);
@@ -12487,7 +12570,11 @@ mod tests {
         let panel = note.panel();
         assert!(panel.y >= HEIGHT as i32 * 2 / 3);
         assert!(panel.bottom() <= HEIGHT as i32);
-        let (wx, wy) = note.test_word("shore");
+        let shore_page = note.test_word_page("shore");
+        for _ in 0..shore_page {
+            assert_eq!(app.input(Input::PageForward), Change::Partial);
+        }
+        let (wx, wy) = app.footnote.as_ref().unwrap().test_word("shore");
         capture_test_screen(&app, &fonts, "READER_FOOTNOTE_SCREENSHOT", false);
         let font_paths: Vec<_> = fonts.iter().map(|p| p.display().to_string()).collect();
         let mut canvas = Canvas::new(WIDTH, HEIGHT, &font_paths).unwrap();
@@ -12566,6 +12653,10 @@ mod tests {
         app.activate(Action::ReturnToLocation).unwrap();
         assert_eq!(position(&app.active.as_ref().unwrap().reading), original);
         app.input(Input::Tap(x, y));
+        let return_page = app.footnote.as_ref().unwrap().test_word_page("Return");
+        for _ in 0..return_page {
+            assert_eq!(app.input(Input::PageForward), Change::Partial);
+        }
         let (bx, by) = app.footnote.as_ref().unwrap().test_word("Return");
         app.input(Input::Tap(bx, by));
         assert_eq!(app.screen, Screen::Book);
@@ -15743,9 +15834,25 @@ mod tests {
         let after = primitive_app::frame(&app, &mut canvas, false);
         let header_end = crate::reading_controls::TopHeader::HEIGHT as usize * WIDTH as usize;
         assert!(before[header_end..] == after[header_end..]);
-        let counts: Vec<_> = (0..chapters)
-            .map(|chapter| reading.config.chapter(chapter).unwrap().page_count())
-            .collect();
+        let mut counts = Vec::with_capacity(chapters);
+        let mut expected_marks = Vec::new();
+        let mut offset = 0;
+        for chapter in 0..chapters {
+            let probe = reading.config.chapter(chapter).unwrap();
+            expected_marks.extend(
+                probe
+                    .local_contents_pages()
+                    .iter()
+                    .map(|&(_, page)| offset + page),
+            );
+            counts.push(probe.page_count());
+            offset += probe.page_count();
+        }
+        expected_marks.sort_unstable();
+        expected_marks.dedup();
+        let (marks, marker_count) = reading.whole_book_publisher_markers(|_| true).unwrap();
+        assert_eq!(marker_count, total);
+        assert_eq!(marks, expected_marks);
         assert_eq!(
             ordinal,
             counts[..reading.chapter].iter().sum::<usize>() + reading.page + 1
@@ -15757,7 +15864,7 @@ mod tests {
             serde_json::json!({
                 "chapters": chapters, "screen_page": ordinal, "screen_pages": total,
                 "first_frame_ms": first_frame_ms, "whole_book_ready_ms": settled_ms,
-                "peak_rss_kib": peak_rss_kib,
+                "peak_rss_kib": peak_rss_kib, "publisher_marks": marks.len(),
             })
         );
     }

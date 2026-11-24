@@ -16,6 +16,7 @@ pub(super) enum LinkPreference {
     SwipeBack,
     SwipeFollow,
     SwipeIgnoreExternal,
+    FootnoteBookFont,
 }
 
 impl LinkPreference {
@@ -27,6 +28,7 @@ impl LinkPreference {
             Self::SwipeBack => controls.swipe_to_go_back,
             Self::SwipeFollow => controls.swipe_to_follow_nearest_link,
             Self::SwipeIgnoreExternal => controls.swipe_ignore_external_links.unwrap_or(true),
+            Self::FootnoteBookFont => controls.footnote_book_font,
         }
     }
 
@@ -38,6 +40,7 @@ impl LinkPreference {
             Self::SwipeBack => "Swipe to go back",
             Self::SwipeFollow => "Swipe to follow nearest link",
             Self::SwipeIgnoreExternal => "Ignore external links on swipe",
+            Self::FootnoteBookFont => "Use book font in popups",
         }
     }
 
@@ -48,6 +51,14 @@ impl LinkPreference {
             }
             Self::SwipeIgnoreExternal if !Self::SwipeFollow.checked(controls) => {
                 Some("Available when swipe to follow nearest link is on")
+            }
+            Self::FootnoteBookFont if !controls.footnote_popups => {
+                Some("Available when footnote previews are on")
+            }
+            Self::FootnoteBookFont
+                if !Self::Follow.checked(controls) && !Self::SwipeFollow.checked(controls) =>
+            {
+                Some("Available when tap or swipe to follow links is on")
             }
             _ => None,
         }
@@ -76,16 +87,22 @@ impl ReflowLink {
 
 impl Reader {
     pub(super) fn link_settings_items(&self) -> Vec<Item> {
-        [
+        let mut items: Vec<_> = [
             LinkPreference::Follow,
             LinkPreference::LargerArea,
             LinkPreference::IgnoreExternal,
             LinkPreference::SwipeBack,
             LinkPreference::SwipeFollow,
             LinkPreference::SwipeIgnoreExternal,
+            LinkPreference::FootnoteBookFont,
         ]
         .into_iter()
-        .filter(|setting| !matches!(setting, LinkPreference::LargerArea) || self.active.is_some())
+        .filter(|setting| {
+            !matches!(
+                setting,
+                LinkPreference::LargerArea | LinkPreference::FootnoteBookFont
+            ) || self.active.is_some()
+        })
         .map(|setting| {
             if let Some(reason) = setting.unavailable_reason(self.controls) {
                 return Item::new(setting.label(), Action::Heading).detail(reason);
@@ -101,7 +118,23 @@ impl Reader {
                 _ => item,
             }
         })
-        .collect()
+        .collect();
+        if self.active.is_some() {
+            let size = self.controls.footnote_font_size;
+            let item = if let Some(reason) =
+                LinkPreference::FootnoteBookFont.unavailable_reason(self.controls)
+            {
+                Item::new("Footnote popup font size", Action::Heading).detail(reason)
+            } else {
+                Item::new(
+                    "Footnote popup font size",
+                    Action::Show(Screen::FootnoteFontSize(footnote_font::Mode::current(size))),
+                )
+                .detail(size.description())
+            };
+            items.push(item);
+        }
+        items
     }
 
     pub(super) fn toggle_link_preference(&mut self, setting: LinkPreference) -> Result<()> {
@@ -119,6 +152,7 @@ impl Reader {
             LinkPreference::SwipeIgnoreExternal => {
                 controls.swipe_ignore_external_links = Some(!checked)
             }
+            LinkPreference::FootnoteBookFont => controls.footnote_book_font = !checked,
         }
         self.activate(Action::SetReadingControls(controls))
     }

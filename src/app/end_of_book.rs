@@ -168,8 +168,11 @@ impl Reader {
             EndAction::Library => self.leave_finished_book()?,
             EndAction::Next => {
                 let (entry, _) = self.current_document().ok_or("No open book")?;
-                let next = with_storage(|| self.library.next_book_in_folder(entry))?
-                    .ok_or("There is no next readable file in this folder")?;
+                let next = with_storage(|| {
+                    self.library
+                        .next_book_in_folder(entry, self.controls.folder_order)
+                })?
+                .ok_or("There is no next readable file in this folder")?;
                 self.save()?;
                 self.open_book(next)?;
             }
@@ -526,6 +529,42 @@ mod tests {
         assert!(
             app.library_items()
                 .any(|item| item.title.contains("Volume 10"))
+        );
+    }
+
+    #[test]
+    fn folder_order_controls_only_the_existing_next_file_end_action() {
+        use crate::library::{FolderOrder, FolderSort};
+
+        let fixture = Fixture::new();
+        let dir = fixture.root.join("Series");
+        fs::create_dir(&dir).unwrap();
+        let first = dir.join("Volume 10.txt");
+        let next = dir.join("Volume 2.txt");
+        fs::write(&first, "Port lights").unwrap();
+        fs::write(&next, "A calm sea").unwrap();
+        let mut app = app(&fixture);
+        app.activate(Action::SetFolderOrder(FolderOrder {
+            sort: FolderSort::FileName,
+            reverse: false,
+        }))
+        .unwrap();
+        app.open_path(&next).unwrap();
+        let next_id = app.open_book_id().unwrap();
+        app.library
+            .state_mut(next_id)
+            .unwrap()
+            .set_status(ReadingStatus::Finished);
+        app.open_path(&first).unwrap();
+        let first_position = app.current_position();
+        page_input(&mut app, Input::PageForward);
+        assert_eq!(app.current_position(), first_position);
+        assert_eq!(app.end_dialog, Some(Dialog::Actions));
+        assert_eq!(app.input(tap(button(3))), Change::Partial);
+        assert_eq!(app.open_book_id(), Some(next_id));
+        assert_eq!(
+            app.library.state(next_id).unwrap().status(),
+            ReadingStatus::Finished
         );
     }
 

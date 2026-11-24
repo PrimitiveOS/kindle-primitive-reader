@@ -95,8 +95,36 @@ impl ScreenPages {
         }) {
             *slot = None;
         }
-        slot.get_or_insert_with(|| Generation::new(config, probe, sources))
-            .record(chapter, &probe.chapter, PageSample::new(probe));
+        let generation = slot.get_or_insert_with(|| Generation::new(config, probe, sources));
+        generation.record(chapter, &probe.chapter, PageSample::new(probe));
+        if !generation.rejected && generation.heading_pages[chapter].is_none() {
+            generation.heading_pages[chapter] = heading_pages(probe);
+        }
+    }
+
+    pub(super) fn publisher_markers(
+        &self,
+        config: &BookConfig,
+        probe: &Probe,
+        chapter: usize,
+        page: usize,
+        allow_depth: impl Fn(usize) -> bool,
+    ) -> Option<(Vec<usize>, usize)> {
+        let (_, count) = self.position(config, probe, chapter, page)?;
+        let slot = self.0.borrow();
+        let generation = slot.as_ref()?;
+        let prefix = generation.prefix.as_ref()?;
+        let mut marks = Vec::new();
+        for (chapter, local) in generation.heading_pages.iter().enumerate() {
+            for &(heading, page) in local.as_ref()? {
+                if allow_depth(probe.toc.get(heading)?.depth) {
+                    marks.push(prefix[chapter] + page);
+                }
+            }
+        }
+        marks.sort_unstable();
+        marks.dedup();
+        Some((marks, count))
     }
 
     pub(super) fn position(
@@ -130,6 +158,7 @@ struct Generation {
     sources: ScreenPageSources,
     spine: Vec<Chapter>,
     samples: Vec<Option<PageSample>>,
+    heading_pages: Vec<Option<Vec<(usize, usize)>>>,
     missing: usize,
     prefix: Option<Vec<usize>>,
     rejected: bool,
@@ -167,6 +196,7 @@ impl Generation {
             sources: sources.clone(),
             spine,
             samples: vec![None; missing],
+            heading_pages: vec![None; missing],
             missing,
             prefix: None,
             rejected: false,
@@ -235,6 +265,12 @@ impl Generation {
         let end = *prefix.get(chapter.checked_add(1)?)?;
         (page < end - start).then(|| (start + page + 1, *prefix.last().unwrap()))
     }
+}
+
+// Keep outline indexing bounded independently of the displayed tick density.
+pub(super) fn heading_pages(probe: &Probe) -> Option<Vec<(usize, usize)>> {
+    const MAX_HEADINGS: usize = 16_384;
+    (probe.toc.len() < MAX_HEADINGS).then(|| probe.local_contents_pages().to_vec())
 }
 
 fn layout_settings(settings: Settings) -> Settings {
