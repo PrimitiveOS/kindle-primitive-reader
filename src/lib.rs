@@ -690,10 +690,23 @@ struct Line {
     spans: Option<std::sync::Arc<[Range<usize>]>>,
     top: f32,
     bottom: f32,
+    // Attached paint at the first and last line of a fitted paragraph.
+    // Text geometry and canonical offsets continue to use top and bottom.
+    page_extension: [f32; 2],
     missing_glyphs: usize,
 }
 
 impl Line {
+    fn page_extent(&self) -> Range<f32> {
+        self.top - self.page_extension[0]..self.bottom + self.page_extension[1]
+    }
+
+    fn keep_page_extension(&mut self, extension: [f32; 2], page_height: f32) {
+        if self.bottom - self.top + extension[0] + extension[1] <= page_height {
+            self.page_extension = extension;
+        }
+    }
+
     fn source_spans(&self) -> &[Range<usize>] {
         self.spans
             .as_deref()
@@ -803,10 +816,14 @@ impl Pagination {
             if !line.top.is_finite() || !line.bottom.is_finite() || line.top > line.bottom {
                 return Err("The renderer returned invalid line positions".into());
             }
-            content_height = content_height.max(line.bottom);
+            let extent = line.page_extent();
+            content_height = content_height.max(extent.end);
             match intervals.last_mut() {
-                Some(last) if line.top < last.end => last.end = last.end.max(line.bottom),
-                _ => intervals.push(line.top..line.bottom),
+                Some(last) if extent.start < last.end => {
+                    last.start = last.start.min(extent.start);
+                    last.end = last.end.max(extent.end);
+                }
+                _ => intervals.push(extent),
             }
         }
         if !content_height.is_finite() || !(0.0..=limit).contains(&content_height) {

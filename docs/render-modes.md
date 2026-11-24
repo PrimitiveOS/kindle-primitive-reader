@@ -262,8 +262,8 @@ square joins between different edge shades.
 Selection and text or link taps use the inner text area, including visible
 text in a Web margin. The verification covers exact source quotes,
 default frame equivalence and border paint during fractional scrolling.
-Vertical padding, nonsolid, oversized, or translucent strokes, patterned
-or complex ancestors, and mixed boxes with artwork use the existing layout path.
+Nonsolid, oversized, or translucent strokes, patterned or complex ancestors,
+and mixed boxes with artwork use the existing layout path.
 Vertical spacing and line wrapping can differ between the engines.
 
 Generate the specimen with `python3 scripts/generate-render-width-margins-fixture.py --fit-decorated`.
@@ -272,6 +272,45 @@ capture directory. Use the same `fit_content` Reader test and capture option.
 [Native decorated width oracle](../scripts/koreader-render-fit-decoration-check.lua) ·
 [KOReader Web capture](screenshots/render-fit-decorated-stock-web.png) ·
 [Reader Web capture](screenshots/render-fit-decorated-reader-web.png)
+
+#### Vertical padding at page boundaries
+
+Book and Web resolve vertical percentages against the containing column,
+even when the paragraph is narrower. Font-relative padding uses the computed
+paragraph font. Each painted edge follows its original stroke, padding, and
+text order. The paragraph background fills the fitted width through its
+padding. Leading and trailing edges stay with the first and last line where
+they fit, while the middle of a long passage can turn at an ordinary line.
+The continuation page paints the side strokes without creating a top or
+bottom border at the page cut. Selection and resume still use the original
+text coordinates.
+
+| Authored case at 1264 px and 96 DPI | Leading edge | Trailing edge |
+| --- | ---: | ---: |
+| 26/19 px padding with 3/4 px strokes | 29 px | 23 px |
+| 3%/2% with a 1,156 px containing column and `border-box` width | 34 px | 23 px |
+| 0.5/1 em with a 50 px paragraph font | 25 px | 50 px |
+| 2%/1% with a signed horizontal margin in Book and Web | 23 px | 11 px |
+| 42 authored lines with 28/37 px padding and 3 px strokes | 31 px | 40 px |
+
+Pinned KOReader and Reader keep the 42-line specimen between opening and
+closing forced breaks and span two body pages. KOReader's second page starts
+at `Sounding 23`, while Reader's starts at `Sounding 26` with its current
+line metrics. Reader also keeps its own spacing between paragraphs. The
+source links are tested on the text. A direct Reader tap on blank padding has
+no text target. KOReader's nearby-link lookup can find a link from that
+padding. Fit falls back to the normal layout path when an individual
+padding edge exceeds a quarter of the reading height or when vertical
+padding combines with a supported `height` or `max-height` declaration.
+
+Generate the EPUB with `python3 scripts/generate-render-width-margins-fixture.py --fit-vertical`.
+Use the same native oracle arguments and `READER_FIT_CONTENT_CAPTURES` for
+the `fit_content_vertical` tests to reproduce the captures.
+[Native vertical edge oracle](../scripts/koreader-render-fit-vertical-check.lua) ·
+[KOReader Web first page](screenshots/render-fit-vertical-stock-web.png) ·
+[Reader Web first page](screenshots/render-fit-vertical-reader-web.png) ·
+[KOReader Web continuation](screenshots/render-fit-vertical-stock-continuation.png) ·
+[Reader Web continuation](screenshots/render-fit-vertical-reader-continuation.png)
 
 ### Sized wrappers around ordinary paragraphs
 

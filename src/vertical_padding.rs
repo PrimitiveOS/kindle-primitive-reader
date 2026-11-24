@@ -12,6 +12,7 @@ pub(crate) struct Space {
     pub after: u32,
     pub before_grid: u32,
     pub after_grid: u32,
+    pub own: [u32; 2],
 }
 pub(crate) fn layout(
     source: &Source,
@@ -100,14 +101,22 @@ pub(crate) fn layout_with_flow(
         } else {
             &mut lead.before
         };
+        let old = *before;
         *before = before.saturating_add(top).min(max);
+        if first == last && source.blocks[first].element == idx {
+            lead.own[0] = *before - old;
+        }
         let trail = &mut spaces[last];
         let after = if !inside && flow.block_cell(&source.blocks[last]).is_some() {
             &mut trail.after_grid
         } else {
             &mut trail.after
         };
+        let old = *after;
         *after = after.saturating_add(bottom).min(max);
+        if first == last && source.blocks[last].element == idx {
+            trail.own[1] = *after - old;
+        }
     }
     Some(spaces)
 }
@@ -174,6 +183,7 @@ pub(crate) fn fills(
     boxes: Option<&[BoxArea]>,
     positions: &[(f32, f32)],
     cfg: Settings,
+    includes_own_padding: impl Fn(usize) -> bool,
 ) -> Vec<Fill> {
     if positions.is_empty() {
         return Vec::new();
@@ -196,6 +206,7 @@ pub(crate) fn fills(
         let el = &source.elements[idx];
         let style = &styles[idx];
         if !el.selector_only
+            && !includes_own_padding(idx)
             && (is_block_tag(&el.tag) || matches!(el.tag.as_str(), "html" | "ol" | "ul" | "dl"))
         {
             let (left, width) = boxes.map_or((0, cfg.text_width()), |b| {
@@ -267,6 +278,7 @@ mod flow_tests {
             None,
             &[(0., 900.), (30., 50.), (60., 80.), (0., 900.)],
             cfg,
+            |_| false,
         );
         assert_eq!(fills.len(), 1);
         assert_eq!((fills[0].top, fills[0].bottom), (18., 95.));
@@ -295,7 +307,14 @@ mod flow_tests {
             b.before_grid,
             b.after_grid
         )));
-        let painted = fills(&source, &styles, None, &[(30., 50.), (60., 80.)], cfg);
+        let painted = fills(
+            &source,
+            &styles,
+            None,
+            &[(30., 50.), (60., 80.)],
+            cfg,
+            |_| false,
+        );
         assert_eq!(painted.len(), 1);
         assert_eq!(source.elements[painted[0].element].tag, "p");
         assert_eq!(

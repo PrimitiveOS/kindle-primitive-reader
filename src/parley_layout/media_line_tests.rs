@@ -116,6 +116,7 @@ fn media_caret_fix_does_not_accept_invalid_text_utf8_or_out_of_range_source_boun
             spans: None,
             top: 0.,
             bottom: 20.,
+            page_extension: [0.0; 2],
             missing_glyphs: 0,
         };
         assert!(line.project(&view, bytes).is_err());

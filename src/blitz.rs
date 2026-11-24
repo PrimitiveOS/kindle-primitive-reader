@@ -251,6 +251,7 @@ impl BlitzChapter {
                         spans: None,
                         top: origin + metrics.content_block_min_coord,
                         bottom: origin + metrics.content_block_max_coord,
+                        page_extension: [0.0; 2],
                         missing_glyphs: line
                             .items()
                             .filter_map(|item| match item {
@@ -275,6 +276,7 @@ impl BlitzChapter {
                     spans: None,
                     top: y,
                     bottom: y + layout.size.height,
+                    page_extension: [0.0; 2],
                     missing_glyphs: 0,
                 });
             }

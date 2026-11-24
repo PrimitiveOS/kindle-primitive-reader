@@ -63,9 +63,10 @@ fn protect_paragraph_end<'a>(
         let limit = minimum(&styles[source.blocks[i].element]);
         let (count, extent) = &mut ends[i];
         if limit > 1 && *count < limit {
-            let extent = extent.get_or_insert(line.top..line.bottom);
-            extent.start = extent.start.min(line.top);
-            extent.end = extent.end.max(line.bottom);
+            let paint = line.page_extent();
+            let extent = extent.get_or_insert(paint.clone());
+            extent.start = extent.start.min(paint.start);
+            extent.end = extent.end.max(paint.end);
             *count += 1;
         }
     }
@@ -133,7 +134,13 @@ pub(crate) fn layout(
             if styles[source.blocks[i].element].flow.suppressed {
                 continue;
             }
-            extend(&mut boxes, source.blocks[i].element, line.top, line.bottom);
+            let extent = line.page_extent();
+            extend(
+                &mut boxes,
+                source.blocks[i].element,
+                extent.start,
+                extent.end,
+            );
         }
     }
     let expands = settings.empty_break_mode.expands();
@@ -449,6 +456,7 @@ mod tests {
                 spans: None,
                 top: i as f32 * 20.,
                 bottom: i as f32 * 20. + 18.,
+                page_extension: [0.0; 2],
                 missing_glyphs: 0,
             })
             .collect();

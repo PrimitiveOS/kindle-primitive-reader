@@ -13,16 +13,23 @@ pub(crate) struct Placed {
     pub(crate) width: u32,
     pub(crate) text_left: i32,
     pub(crate) text_width: u32,
+    pub(crate) vertical_padding: [u32; 2],
     // Top/right/bottom/left as in publisher table edges.
     pub(crate) strokes: [Stroke; 4],
 }
 
-fn supported_edges(style: &Style, settings: Settings, width: u32) -> bool {
+impl Placed {
+    pub(crate) fn vertical_insets(self) -> [u32; 2] {
+        let [before, after] = self.vertical_padding;
+        [
+            before + self.strokes[0].width,
+            after + self.strokes[2].width,
+        ]
+    }
+}
+
+fn supported_edges(style: &Style, settings: Settings) -> bool {
     style.clear == Default::default()
-        && style
-            .vertical_padding
-            .iter()
-            .all(|edge| edge.box_pixels(width, settings.font_size) == 0.0)
         && style.borders.as_ref().is_none_or(|borders| {
             borders.iter().all(|border| {
                 matches!(border.pattern, Pattern::None | Pattern::Hidden)
@@ -52,7 +59,7 @@ pub(crate) fn candidates(
         styles,
         |style| {
             matches!(style.image_width, Some(ImageLength::FitContent))
-                && supported_edges(style, settings, width)
+                && supported_edges(style, settings)
                 && !style.text_indent.hanging
                 && style.text_indent.pixels(width, settings.font_size) >= 0.0
         },
@@ -76,6 +83,21 @@ pub(crate) fn inset(
     let sides = [left?, right?];
     let parent = width as f32;
     let font = settings.font_size;
+    // Percentages resolve against the containing width, even when the fit
+    // creates a much narrower paragraph. Preserve the ordinary path for
+    // edge sizes that could fill an appreciable part of a page on their own.
+    let vertical_padding = style
+        .vertical_padding
+        .map(|edge| edge.box_pixels(width, font));
+    if vertical_padding
+        .iter()
+        .any(|edge| !(0.0..=(settings.text_height() / 4) as f32).contains(edge))
+        || vertical_padding != [0.0; 2]
+            && (!matches!(style.image_height, None | Some(ImageLength::Auto))
+                || !matches!(style.image_max_height, None | Some(ImageLength::Auto)))
+    {
+        return None;
+    }
     let strokes = style
         .borders
         .as_ref()
@@ -140,6 +162,7 @@ pub(crate) fn inset(
         width,
         text_left: left + strokes[3].width as i32 + left_pad as i32,
         text_width: width - inset as u32,
+        vertical_padding: vertical_padding.map(|pixels| pixels as u32),
         strokes,
     })
 }

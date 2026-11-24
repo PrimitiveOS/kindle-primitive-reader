@@ -466,6 +466,7 @@ impl VerticalChapter {
                 spans: None,
                 top: logical_top + slot as f32 * logical_pitch,
                 bottom: logical_end,
+                page_extension: [0.0; 2],
                 missing_glyphs: 0,
             });
             start = end;

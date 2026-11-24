@@ -51,6 +51,24 @@ fn declared_box_height(style: &Style, width: u32, font: f32) -> Option<f32> {
     .then_some(pixels)
 }
 
+fn keep_fitted_edges(lines: &mut [Line], outer: Range<f32>, settings: Settings) {
+    let page_height = settings.text_height() as f32;
+    match lines {
+        [only] => only.keep_page_extension(
+            [
+                (only.top - outer.start).max(0.0),
+                (outer.end - only.bottom).max(0.0),
+            ],
+            page_height,
+        ),
+        [first, .., last] => {
+            first.keep_page_extension([(first.top - outer.start).max(0.0), 0.0], page_height);
+            last.keep_page_extension([0.0, (outer.end - last.bottom).max(0.0)], page_height);
+        }
+        [] => {}
+    }
+}
+
 const KERNING_OFF: [FontFeature; 2] = [
     FontFeature::new(Tag::new(b"kern"), 0),
     FontFeature::new(Tag::new(b"vkrn"), 0),
@@ -182,7 +200,7 @@ impl Paragraph {
         self.y
             - self
                 .fitted
-                .map_or(0.0, |fitted| fitted.strokes[0].width as f32)
+                .map_or(0.0, |fit| fit.vertical_insets()[0] as f32)
     }
 
     fn paint_fitted_border(&self, page: &mut [u8], settings: Settings, range: &Range<f32>) {
@@ -632,6 +650,7 @@ impl ParleyChapter {
                             .any(|v| v.pixels(outer_width, settings.font_size) > 0.)
                 }))
         .then(|| Vec::with_capacity(source.blocks.len()));
+        let mut fitted_padding_elements = HashSet::new();
         let mut last_cell = None;
         // Marker ownership is the LI, not whichever paragraph happens to be
         // first in canonical extraction. Prefer its first retained content;
@@ -766,6 +785,7 @@ impl ParleyChapter {
             let hanging = literal.unwrap_or(0.0).round().clamp(0.0, gutter as f32) as u32;
             let width = column_width - gutter + hanging;
             let block_y = y;
+            let mut fitted_extent = None;
             let mut rtl = matches!(block.direction, parley::BaseDirection::Rtl);
             let mut marker_baseline = None;
             let mut float_height = 0.0_f32;
@@ -914,8 +934,12 @@ impl ParleyChapter {
                 } else {
                     (None, None)
                 };
+                let fitted_with_padding = fitted.filter(|area| area.vertical_padding != [0; 2]);
                 let (text_x, text_width, indent_base) = if let Some(area) = fitted {
-                    y += area.strokes[0].width as f32;
+                    y += area.vertical_insets()[0] as f32;
+                    if fitted_with_padding.is_some() {
+                        y -= padding.own[0] as f32;
+                    }
                     (area.text_left as f32, area.text_width, area.width)
                 } else {
                     placed_box.map_or((text_x as f32, text_width, indent_base), |(left, width)| {
@@ -963,6 +987,7 @@ impl ParleyChapter {
                 marker_baseline = layout.get(0).map(|line| origin + line.metrics().baseline);
                 let mut bottom = origin + layout.height();
                 let mut overlays = ruby.iter().peekable();
+                let first_line = lines.len();
                 for (index, line) in layout.lines().enumerate() {
                     for item in line.items() {
                         if let PositionedLayoutItem::InlineBox(position) = item {
@@ -1001,6 +1026,7 @@ impl ParleyChapter {
                         spans: None,
                         top,
                         bottom: line_bottom,
+                        page_extension: [0.0; 2],
                         missing_glyphs: line
                             .items()
                             .filter_map(|item| match item {
@@ -1035,9 +1061,15 @@ impl ParleyChapter {
                     }
                 }
                 if let Some(area) = fitted {
-                    let tail = area.strokes[2].width as f32;
+                    let tail = area.vertical_insets()[1] as f32;
                     bottom += tail;
                     y += tail;
+                }
+                if let Some(area) = fitted_with_padding {
+                    let top = origin - area.vertical_insets()[0] as f32;
+                    fitted_extent = Some((top, bottom));
+                    fitted_padding_elements.insert(block.element);
+                    keep_fitted_edges(&mut lines[first_line..], top..bottom, settings);
                 }
                 chapter.paragraphs.push(Paragraph {
                     key: block.key,
@@ -1080,6 +1112,7 @@ impl ParleyChapter {
                         spans: None,
                         top,
                         bottom,
+                        page_extension: [0.0; 2],
                         missing_glyphs: 0,
                     });
                     image.y = top;
@@ -1160,9 +1193,9 @@ impl ParleyChapter {
                 return Err("The chapter exceeds the Parley height limit".into());
             }
             if let Some(points) = &mut fill_positions {
-                points.push((block_y, (y - gap).max(block_y)));
+                points.push(fitted_extent.unwrap_or((block_y, (y - gap).max(block_y))));
             }
-            y += padding.after as f32;
+            y += (padding.after - fitted_extent.map_or(0, |_| padding.own[1])) as f32;
             if let Some((c, _)) = decorated {
                 let following = source.blocks[index + 1..]
                     .iter()
@@ -1210,6 +1243,7 @@ impl ParleyChapter {
                 publisher_boxes.as_deref(),
                 points,
                 settings,
+                |element| fitted_padding_elements.contains(&element),
             );
         }
         if let (Some(b), Some(boxes)) = (&borders, &publisher_boxes) {
@@ -1260,7 +1294,14 @@ impl ParleyChapter {
             .chain(self.padded_backgrounds.iter().map(|f| f.painted_bottom()))
             .fold(0.0, f32::max);
         for paragraph in self.paragraphs.iter().rev() {
-            if paragraph.background.is_some_and(|gray| gray < 255) {
+            if paragraph.background.is_some_and(|gray| gray < 255)
+                || paragraph.fitted.is_some_and(|fit| {
+                    fit.vertical_padding != [0; 2]
+                        && fit.strokes[1..]
+                            .iter()
+                            .any(|stroke| stroke.width > 0 && stroke.gray.is_some())
+                })
+            {
                 return artwork.max(paragraph.bottom);
             }
             let Ok(index) = source

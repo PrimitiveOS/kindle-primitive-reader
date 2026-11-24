@@ -21,6 +21,7 @@ fn protects_each_end_of_a_paragraph_and_relaxes_impossible_keeps() {
             spans: None,
             top: n as f32 * 10.,
             bottom: n as f32 * 10. + 8.,
+            page_extension: [0.0; 2],
             missing_glyphs: 0,
         })
         .collect();

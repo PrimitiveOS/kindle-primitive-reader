@@ -7,13 +7,16 @@ import zipfile
 signed = "--signed" in sys.argv[1:]
 fit_content = "--fit-content" in sys.argv[1:]
 fit_decorated = "--fit-decorated" in sys.argv[1:]
+fit_vertical = "--fit-vertical" in sys.argv[1:]
 name = "render-signed-widths.epub" if signed else "render-width-margins.epub"
 if fit_content:
     name = "render-fit-content.epub"
 if fit_decorated:
     name = "render-fit-decorated.epub"
+if fit_vertical:
+    name = "render-fit-vertical.epub"
 fixture = Path(__file__).resolve().parents[1] / "tests/fixtures" / name
-paths = [value for value in sys.argv[1:] if value not in {"--signed", "--fit-content", "--fit-decorated"}]
+paths = [value for value in sys.argv[1:] if value not in {"--signed", "--fit-content", "--fit-decorated", "--fit-vertical"}]
 output = Path(paths[0]) if paths else fixture
 container = """<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
 <rootfiles><rootfile full-path="content.opf" media-type="application/oebps-package+xml"/></rootfiles>
@@ -115,6 +118,31 @@ p {{width:fit-content}}
 <p style="background:#a1a1a1;border:4px solid #444;padding-left:8px;padding-right:4px;min-width:400px;box-sizing:border-box;margin-left:auto;margin-right:24px">Beacon marker</p>
 <p class="physical" style="background:#979797">Wide marker {wide}</p>
 <p id="shore">The shore path</p>
+</body></html>'''
+
+if fit_vertical:
+    opf = opf.replace("reader-width-margins", "reader-fit-vertical").replace(
+        "Width and Margin Soundings", "Between the sea marks"
+    )
+    passage = "<br/>\n".join(f"Sounding {i:02d}" for i in range(1, 43))
+    chapter = f'''<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Between the sea marks</title>
+<style type="text/css">
+body,p,section {{margin:0;padding:0;text-align:left;text-indent:0}}
+.fit {{width:fit-content; margin:0 auto; padding-left:16px; padding-right:20px}}
+.passage {{max-width:460px; padding:28px 20px 37px; border:3px solid #444;
+    background:#bbb; page-break-before:always; page-break-after:always}}
+</style></head><body>
+<p class="fit" style="background:#ddd">Base marker</p>
+<p class="fit" style="padding-top:26px; padding-bottom:19px; border-top:3px solid #333;
+    border-bottom:4px solid #555; background:#ccc"><a href="#shore">Upper ledge</a></p>
+<section><p class="fit" style="padding-top:3%; padding-bottom:2%; max-width:440px;
+    box-sizing:border-box; background:#aaa">Lower ledge</p></section>
+<p class="fit" style="padding-top:.5em; padding-bottom:1em; font-size:125%;
+    background:#999">Long measure</p>
+<p class="fit" style="margin-left:-14px; margin-right:18px; padding-top:2%;
+    padding-bottom:1%; background:#888">Sloping bank</p>
+<p class="fit passage">{passage}</p>
+<p id="shore">After the passage</p>
 </body></html>'''
 
 with zipfile.ZipFile(output, "w") as book:
