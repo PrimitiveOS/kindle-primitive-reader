@@ -204,3 +204,26 @@ USB resume, and return to Launcher.
 [Landscape toolbar](screenshots/reading-viewport-bars.png) ·
 [Landscape Skim](screenshots/reading-viewport-skim.png) ·
 [Landscape PDF](screenshots/reading-viewport-pdf.png)
+
+## In-book font chooser
+
+Reading font uses the active dimensions of the EPUB and opens on the saved
+face for that edition. The font list shows each local face's full name, file
+name and a specimen in a script that the font supports. Back returns to the
+reading tool or Typography screen that opened the chooser. Applying a face
+repaginates the book at the same chapter, block and byte offset before saving
+the font choice. Fonts that cannot open leave the earlier reading state intact.
+[Chooser](../src/app/typeface.rs) · [Source-preserving font change](../src/session.rs)
+
+KOReader opens its font menu on the current face, renders each option in its
+own face and sends `UpdatePos` when applying a new face. The pinned Lua 5.1
+callback check exercised all three actions. Reader keeps the font choice by
+file and shows a separate specimen next to the readable label.
+[KOReader font menu](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerfont.lua#L79-L147) · [Position update](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerfont.lua#L283-L295)
+
+Run `cargo test --locked --lib typeface_viewport` to stage and present the
+chooser at 1680 × 1264, select a different face near the right edge, rotate
+back to 1264 × 1680 and reopen the edition. The test verifies the same EPUB
+source position, the saved face, and selectable rows across different page
+counts. Set `READER_TYPEFACE_LANDSCAPE_CAPTURE` to write the landscape frame.
+[Authored EPUB test](../src/app/typeface/tests.rs)

@@ -859,7 +859,12 @@ impl Reading {
     pub(crate) fn set_fonts(&mut self, fonts: Vec<PathBuf>) -> Result<()> {
         let mut config = self.config.clone();
         config.fonts = fonts;
-        *self = Self::restore(config, self.chapter, self.page, self.anchor().as_ref())?;
+        let anchor = self.anchor();
+        let candidate = Self::restore(config, self.chapter, self.page, anchor.as_ref())?;
+        if anchor.is_some() && candidate.anchor() != anchor {
+            return Err("The selected font could not keep the current reading position".into());
+        }
+        *self = candidate;
         Ok(())
     }
 

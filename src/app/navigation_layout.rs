@@ -120,6 +120,8 @@ impl Screen {
                 | Self::ReadingProfile(_)
                 | Self::ReadingProfileFields(_)
                 | Self::ConfirmProfile(_, _)
+                | Self::ReadingFonts
+                | Self::Typography
         )
     }
 
@@ -151,6 +153,16 @@ impl Screen {
 }
 
 impl Reader {
+    pub(super) fn focus_reading_list(&mut self, ordinal: usize) {
+        let page = ordinal / self.list_geometry().rows;
+        self.list_page = page;
+        self.reading_list_anchor = Some(ReadingListAnchor {
+            page,
+            ordinal,
+            link: None,
+        });
+    }
+
     pub(super) fn navigation_layout(&self) -> NavigationLayout {
         let (width, height) = self.reading_viewport().dimensions();
         NavigationLayout {

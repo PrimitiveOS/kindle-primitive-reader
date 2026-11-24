@@ -98,6 +98,7 @@ mod style_tweaks;
 mod top_config;
 mod top_header;
 mod top_header_font;
+mod typeface;
 mod user_hyphenation;
 mod visual_navigation;
 mod vocabulary;
@@ -834,6 +835,7 @@ pub struct Reader {
     fonts: Vec<PathBuf>,
     fonts_directory: PathBuf,
     available_fonts: Vec<String>,
+    font_chooser_return: Option<typeface::FontChooserReturn>,
     profiles: Vec<Profile>,
     profile_fields: Vec<reading_profiles::Field>,
     profiles_path: PathBuf,
@@ -1057,6 +1059,7 @@ impl Reader {
             fonts,
             fonts_directory,
             available_fonts: Vec::new(),
+            font_chooser_return: None,
             profiles,
             profile_fields: Vec::new(),
             profiles_path,
@@ -1508,6 +1511,9 @@ impl Reader {
 
     fn show(&mut self, screen: Screen) {
         self.reading_list_anchor = None;
+        if screen != Screen::ReadingFonts {
+            self.font_chooser_return = None;
+        }
         if matches!(self.screen, Screen::BookmarkBrowser(_))
             || matches!(screen, Screen::BookmarkBrowser(_))
         {
@@ -2924,19 +2930,7 @@ impl Reader {
                 );
                 items
             }
-            Screen::ReadingFonts => {
-                let mut items = vec![Item::new("Device fonts", Action::SetFont(None))];
-                items.extend(
-                    self.available_fonts.iter().map(|filename| {
-                        Item::new(filename, Action::SetFont(Some(filename.clone())))
-                    }),
-                );
-                items.push(
-                    Item::new("Add more fonts", Action::Heading)
-                        .detail("Copy TTF or OTF files to reader/data/fonts"),
-                );
-                items
-            }
+            Screen::ReadingFonts => self.reading_font_rows(),
             Screen::FooterFontFaces => {
                 let mut items = vec![
                     Item::new("Device default", Action::SetFooterFontFace(None)).detail(
@@ -4001,11 +3995,7 @@ impl Reader {
                 self.show(Screen::Book);
                 self.record_position();
             }
-            Action::ShowFonts => {
-                with_storage(|| fs::create_dir_all(&self.fonts_directory))?;
-                self.available_fonts = reading_fonts::available(&self.fonts_directory)?;
-                self.show(Screen::ReadingFonts);
-            }
+            Action::ShowFonts => self.open_font_chooser()?,
             Action::ShowFooterFonts => {
                 with_storage(|| fs::create_dir_all(&self.fonts_directory))?;
                 self.available_fonts = reading_fonts::available(&self.fonts_directory)?;
@@ -7632,6 +7622,8 @@ impl Reader {
             self.draw_match_rows(canvas, &group);
         } else if self.screen.is_bookmark_list() {
             self.draw_saved_mark_rows(canvas, &group, &items);
+        } else if self.screen == Screen::ReadingFonts {
+            self.draw_reading_font_rows(canvas, &group, &items);
         } else {
             group.draw(canvas, None);
         }
@@ -8636,7 +8628,7 @@ impl App for Reader {
                             / ROWS_PER_PAGE;
                     }
                     Screen::Gestures | Screen::LinkSettings => self.show(Screen::ReadingControls),
-                    Screen::ReadingFonts => self.show(Screen::Typography),
+                    Screen::ReadingFonts => self.close_font_chooser(),
                     Screen::DictionaryOptions(i) => {
                         self.show(Screen::Dictionaries);
                         let row = self.source_rows().iter().position(|item| {
