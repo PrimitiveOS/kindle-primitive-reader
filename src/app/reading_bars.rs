@@ -975,6 +975,8 @@ mod tests {
         for (index, (path, surface, toolbar, lower_button)) in cases.into_iter().enumerate() {
             app.open_path(path).unwrap();
             app.controls.footer_tap_locked = true;
+            // Probe menu geometry without turning pages at points outside its bands.
+            app.controls.disable_page_taps = true;
             let portrait = draw_test_candidate(
                 &mut app,
                 index as u64 * 3 + 1,

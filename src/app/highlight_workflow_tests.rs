@@ -120,6 +120,7 @@ fn original_fields(mut marks: Vec<Value>) -> Vec<Value> {
         let object = mark.as_object_mut().unwrap();
         object.remove("style");
         object.remove("color");
+        object.remove("updated_at");
     }
     marks
 }
@@ -195,7 +196,9 @@ fn bulk_restyle_requires_consent_and_preserves_every_saved_passage_note_date_and
             true,
         );
         app.controls.night_pages = false;
+        let applied = crate::mark_time::now().unwrap();
         finish_all(&mut app);
+        let edit_window = applied..=crate::mark_time::now().unwrap();
         assert!(app.saved_popup.is_none());
         let after = marks(&app);
         assert_eq!(after.len(), 2);
@@ -204,6 +207,11 @@ fn bulk_restyle_requires_consent_and_preserves_every_saved_passage_note_date_and
                 .iter()
                 .all(|mark| mark["style"] == "strikeout" && mark["color"] == "purple")
         );
+        assert!(after.iter().all(|mark| {
+            mark["updated_at"]
+                .as_i64()
+                .is_some_and(|date| edit_window.contains(&date))
+        }));
         assert_eq!(original_fields(after), original_fields(before));
         assert_eq!(app.current_history_location(), position);
         assert_eq!(app.back, history);

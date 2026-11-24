@@ -74,8 +74,8 @@ impl Reader {
 mod tests {
     use super::*;
     use crate::app::{
-        DONE, LIST_X, LIST_Y, ROW_HEIGHT, Screen,
-        tests::{Fixture, capture_test_screen},
+        DONE, Screen,
+        tests::{Fixture, capture_test_screen, tap_contents_item},
     };
     use crate::library::Library;
     use primitive_app::{App, Change, Lifecycle};
@@ -124,13 +124,6 @@ mod tests {
         app
     }
 
-    fn tap_row(index: usize) -> Input {
-        Input::Tap(
-            (LIST_X + 40) as f32,
-            (LIST_Y + (index as i32 * ROW_HEIGHT) + ROW_HEIGHT / 2) as f32,
-        )
-    }
-
     #[test]
     fn close_and_sleep_save_the_position_and_bookmark_with_periodic_saving_disabled() {
         let fixture = Fixture::new();
@@ -140,20 +133,10 @@ mod tests {
         let id = app.open_book_id().unwrap();
 
         app.activate(Action::Show(Screen::ReadingControls)).unwrap();
-        let settings = app
-            .items()
-            .into_iter()
-            .position(|row| matches!(row.action, Action::Show(Screen::MetadataSaveSettings)))
-            .unwrap();
-        assert_eq!(app.input(tap_row(settings)), Change::Partial);
+        tap_contents_item(&mut app, "Save reading data");
         assert_eq!(app.screen, Screen::MetadataSaveSettings);
         capture_test_screen(&app, &app.fonts, "READER_TEST_METADATA_SCREEN", false);
-        let choose = app
-            .items()
-            .into_iter()
-            .position(|row| row.title == "On close or sleep")
-            .unwrap();
-        assert_eq!(app.input(tap_row(choose)), Change::Partial);
+        tap_contents_item(&mut app, "On close or sleep");
         assert_eq!(
             ReadingControls::load(&app.controls_path, true).metadata_save,
             MetadataSave::CloseOrSleep

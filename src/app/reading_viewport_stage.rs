@@ -632,8 +632,14 @@ mod tests {
             assert_eq!(reader.back.len(), history_len);
 
             let mut wide = adopt(&mut reader, landscape, 6);
+            reader.controls.disable_page_taps = true;
             assert_eq!(reader.input(Input::Tap(950.0, 600.0)), Change::None);
             assert!(reader.text_flow.as_ref().unwrap().deadline().is_none());
+            reader.controls.disable_page_taps = false;
+            turn(&mut reader, Input::Tap(950.0, 600.0));
+            assert_ne!(primitive_app::frame(&reader, &mut wide, false), staged);
+            turn(&mut reader, Input::PageBack);
+            assert_eq!(primitive_app::frame(&reader, &mut wide, false), staged);
             turn(&mut reader, Input::Tap(1550.0, 600.0));
             assert_ne!(primitive_app::frame(&reader, &mut wide, false), staged);
             turn(&mut reader, Input::PageBack);
