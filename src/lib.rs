@@ -2223,7 +2223,8 @@ impl Probe {
                 for part in &page.parts {
                     let rows = footnotes::in_page::height_of(&part.source);
                     let settings = Settings {
-                        height: top + self.settings.bottom_margin() + rows,
+                        // Settings clamps the top margin to one quarter of the viewport.
+                        height: (top + self.settings.bottom_margin() + rows).max(4 * top),
                         ..self.settings
                     };
                     let pixels = renderer.capture(part.source.clone(), settings)?;

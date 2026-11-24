@@ -36,6 +36,11 @@ chapters = {
 <aside id="early" epub:type="footnote"><p>Interleaved note stays in canonical flow.</p></aside>
 <p>Narrative resumes below this note.</p>
 <aside id="unreferenced" epub:type="footnote"><p>Unreferenced note stays readable.</p></aside>''',
+    "boxed-reference": """<p>The northern door opened.</p>
+<p style="line-height:1.8">The lower panel beside the lantern was carved with ivy <a id="boxed-ref" href="#boxed-note"
+ epub:type="noteref" style="display:inline-block; width:250px; padding-top:68px; padding-bottom:8px; background:#ddd"><span xml:lang="de">2</span></a>.</p>
+<p>The ledger kept a separate entry for the south door.</p>
+<aside id="boxed-note" epub:type="footnote"><p style="font-size:14px">The original dates from 1807.</p></aside>""",
 }
 manifest = ''.join(f'<item id="{name}" href="{name}.xhtml" media-type="application/xhtml+xml"/>'
                    for name in chapters)

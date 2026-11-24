@@ -205,10 +205,15 @@ fn discover(
                 return None;
             }
             let Some(index) = block_lines.get(&block.key).and_then(|indices| {
-                indices
-                    .iter()
-                    .copied()
-                    .find(|&index| lines[index].contains_source(link.bytes.start))
+                indices.iter().copied().find(|&index| {
+                    // A wrapping inline-block can leave the link's initial
+                    // space on the previous line while its marker moves.
+                    lines[index].source_spans().iter().any(|span| {
+                        let start = span.start.max(link.bytes.start);
+                        let end = span.end.min(link.bytes.end);
+                        start < end && block.text[start..end].chars().any(|ch| !ch.is_whitespace())
+                    })
+                })
             }) else {
                 continue;
             };
@@ -323,11 +328,15 @@ mod tests {
     }
 
     fn open(chapter: usize, enabled: bool) -> Probe {
+        open_with_settings(chapter, settings(enabled))
+    }
+
+    fn open_with_settings(chapter: usize, settings: Settings) -> Probe {
         Probe::open(
             &test_fixture("in-page-footnotes.epub"),
             Engine::Parley,
             &[test_fixture("fonts/NotoSans-Regular.ttf")],
-            settings(enabled),
+            settings,
             chapter,
         )
         .unwrap()
@@ -468,6 +477,105 @@ mod tests {
             fallback.fragment("unreferenced")
         );
         assert_eq!(ordinary.capture(0).unwrap(), fallback.capture(0).unwrap());
+    }
+
+    #[test]
+    fn inline_footnote_marker_owns_its_band_across_a_page_break() {
+        for (respect_embedded, language) in [(true, "de"), (false, "fr")] {
+            let mut probe = open_with_settings(
+                3,
+                Settings {
+                    height: 250,
+                    inline_block_mode: crate::InlineBlockMode::BoxSizing,
+                    typography: crate::TypographyLanguages {
+                        main: crate::TypographyLocale::parse("fr"),
+                        respect_embedded,
+                        ..Default::default()
+                    },
+                    ..settings(true)
+                },
+            );
+            let reference_block = probe
+                .source
+                .blocks
+                .iter()
+                .find(|block| block.links.iter().any(|link| link.href == "#boxed-note"))
+                .unwrap();
+            let reference = reference_block
+                .links
+                .iter()
+                .find(|link| link.href == "#boxed-note")
+                .unwrap();
+            assert_eq!(&reference_block.text[reference.bytes.clone()], " 2");
+            let marker_offset = reference.bytes.end - 1;
+            assert_eq!(
+                reference_block
+                    .styled_text
+                    .iter()
+                    .find(|run| run.bytes.contains(&marker_offset))
+                    .unwrap()
+                    .language
+                    .unwrap()
+                    .as_str(),
+                language
+            );
+            let whitespace = probe.anchor(reference_block.key, reference.bytes.start);
+            let marker = probe.anchor(reference_block.key, marker_offset);
+            let after_marker = probe.anchor(reference_block.key, reference.bytes.end);
+            let preceding_page = probe.page_for(&whitespace).unwrap();
+            let marker_page = probe.page_for(&marker).unwrap();
+            assert!(
+                marker_page > preceding_page,
+                "boxed marker must move to a new page"
+            );
+            let pages = probe
+                .in_page_notes
+                .as_ref()
+                .expect("combined eligible authored note");
+            assert!(
+                pages[preceding_page].separator.is_none(),
+                "markerless preceding page has a footnote band"
+            );
+            assert!(
+                pages[marker_page].separator.is_some(),
+                "marked page has no footnote band"
+            );
+            let note = pages[marker_page].parts.last().unwrap();
+            assert!(note.y > 0);
+            let source = note.source.clone();
+            let top = probe.settings.top_margin() as usize;
+            let bottom = probe.settings.bottom_margin() as usize;
+            let rows = height_of(&source) as usize;
+            assert!(
+                top + bottom + rows < 4 * top,
+                "scratch height must exercise margin clamping"
+            );
+            let width = probe.settings.width as usize;
+            let from = (top + note.y as usize) * width;
+            let count = rows * width;
+
+            let selection = probe.select_range(&marker, &after_marker).unwrap();
+            let rect = probe.selection_rects(marker_page, &selection)[0];
+            let target = probe
+                .link_at(
+                    marker_page,
+                    (rect.x + rect.width / 2) as f32,
+                    (rect.y + rect.height / 2) as f32,
+                )
+                .unwrap();
+            assert_eq!(target.fragment.as_deref(), Some("boxed-note"));
+            let composed = probe.capture(marker_page).unwrap();
+            let ordinary = probe.capture_range(source).unwrap();
+            assert!(
+                ordinary[top * width..top * width + count]
+                    .iter()
+                    .any(|&pixel| pixel < 255)
+            );
+            assert_eq!(
+                &composed[from..from + count],
+                &ordinary[top * width..top * width + count]
+            );
+        }
     }
 
     #[cfg(feature = "kindle")]
