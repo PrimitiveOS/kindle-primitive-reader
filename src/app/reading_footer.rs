@@ -91,20 +91,9 @@ impl Probe {
     fn footer_sections(&self) -> &[(usize, String)] {
         self.footer_chapters.get_or_init(|| {
             let mut sections: Vec<_> = self
-                .toc
+                .local_contents_pages()
                 .iter()
-                .filter_map(|entry| {
-                    let target = entry.destination.as_ref()?;
-                    if target.path != self.chapter {
-                        return None;
-                    }
-                    let page = if let Some(id) = &target.fragment {
-                        self.page_for(&self.fragment(id)?)?
-                    } else {
-                        0
-                    };
-                    Some((page, entry.label.clone()))
-                })
+                .map(|&(index, page)| (page, self.toc[index].label.clone()))
                 .collect();
             sort_chapters(&mut sections);
             sections
@@ -141,6 +130,16 @@ impl<'a> PageSections<'a> {
             Self::Custom(entries) => entries
                 .get(index)
                 .map(|entry| (entry.position.page, entry.label.as_str())),
+        }
+    }
+
+    fn for_marker_pages(self, selected: Option<&[usize]>, mut visit: impl FnMut(usize)) {
+        if let Some(selected) = selected {
+            selected.iter().copied().for_each(visit);
+        } else {
+            for (page, _) in (0..self.len()).filter_map(|index| self.at(index)) {
+                visit(page);
+            }
         }
     }
 
@@ -208,18 +207,20 @@ enum Ticks<'a> {
 }
 
 impl Ticks<'_> {
-    fn draw(&self, mut mark: impl FnMut(f64)) {
+    fn draw(&self, selected: Option<&[usize]>, mut mark: impl FnMut(f64)) {
         match self {
             Self::Pages(sections, count) => {
-                for (page, _) in (0..sections.len()).filter_map(|index| sections.at(index)) {
+                sections.for_marker_pages(selected, |page| {
                     mark(page as f64 / *count as f64);
-                }
+                });
             }
             Self::FlowPages(sections, flows, flow) => {
                 let total = flows.count_in(*flow, 0..usize::MAX).max(1);
-                for (page, _) in (0..sections.len()).filter_map(|index| sections.at(index)) {
-                    mark(flows.count_in(*flow, 0..page) as f64 / total as f64);
-                }
+                sections.for_marker_pages(selected, |page| {
+                    if selected.is_none() || flows.flow(page) == *flow {
+                        mark(flows.count_in(*flow, 0..page) as f64 / total as f64);
+                    }
+                });
             }
             Self::Bytes(offsets) => {
                 if let Some(&length) = offsets.last().filter(|&&n| n > 0) {
@@ -1012,9 +1013,16 @@ impl Reader {
                 .map_or(0, |book| book.reading.probe.page_count())
                 .max(1);
             if let Some(book) = &self.active {
-                for (page, _) in book.reading.probe.footer_sections() {
-                    let x = 12 + ((WIDTH - 24) as f64 * *page as f64 / count as f64).round() as i32;
+                let mut mark = |page: usize| {
+                    let x = 12 + ((WIDTH - 24) as f64 * page as f64 / count as f64).round() as i32;
                     canvas.fill(Rect::new(x, TopHeader::HEIGHT as i32 - 5, 2, 4), ink);
+                };
+                if let Some(selected) = self.customized_header_marker_pages(book) {
+                    selected.into_iter().for_each(mark);
+                } else {
+                    for (page, _) in book.reading.probe.footer_sections() {
+                        mark(*page);
+                    }
                 }
             }
         } else {
@@ -1674,18 +1682,24 @@ impl Reader {
         if scope == ProgressScope::Book && !self.controls.hide_chapter_markers {
             let marker_width = self.controls.chapter_marker_width.width();
             let mut last = -marker_width;
-            p.book_ticks.draw(|tick| {
-                let x = (tick * bar.w as f64).round() as i32;
-                let marker_x = x - marker_width / 2;
-                if marker_x > last + marker_width && marker_x > 0 && marker_x < bar.w - marker_width
-                {
-                    canvas.fill(
-                        Rect::new(bar.x + marker_x, bar.y - 1, marker_width, bar.h + 2),
-                        0,
-                    );
-                    last = marker_x;
-                }
-            });
+            let selected = self.whole_book_marker_pages(true);
+            p.book_ticks.draw(
+                selected.as_ref().map(|markers| markers.starts.as_slice()),
+                |tick| {
+                    let x = (tick * bar.w as f64).round() as i32;
+                    let marker_x = x - marker_width / 2;
+                    if marker_x > last + marker_width
+                        && marker_x > 0
+                        && marker_x < bar.w - marker_width
+                    {
+                        canvas.fill(
+                            Rect::new(bar.x + marker_x, bar.y - 1, marker_width, bar.h + 2),
+                            0,
+                        );
+                        last = marker_x;
+                    }
+                },
+            );
         }
     }
 
@@ -2347,8 +2361,15 @@ mod tests {
         assert_eq!(pages_left_display(0, true), 1);
         assert_eq!(pages_left_display(3, true), 4);
         let mut ticks = Vec::new();
-        regular.book_ticks.draw(|position| ticks.push(position));
+        regular
+            .book_ticks
+            .draw(None, |position| ticks.push(position));
         assert_eq!(ticks, [0., 2. / 7., 5. / 7.]);
+        ticks.clear();
+        regular
+            .book_ticks
+            .draw(Some(&[3, 5, 9]), |position| ticks.push(position));
+        assert_eq!(ticks, [2. / 7.]);
         let mut note = Progress::from_pages(3, 12, sections, "Book");
         note.apply_flows(flows, 3, 3, 12, sections);
         assert_eq!(
@@ -2383,7 +2404,7 @@ mod tests {
             assert_eq!(p.pages_left(), count - current);
         }
         let mut ticks = Vec::new();
-        Ticks::Pages(PageSections::Publisher(&sections), 7).draw(|pos| ticks.push(pos));
+        Ticks::Pages(PageSections::Publisher(&sections), 7).draw(None, |pos| ticks.push(pos));
         assert_eq!(ticks, [2.0 / 7.0, 5.0 / 7.0]);
     }
 }

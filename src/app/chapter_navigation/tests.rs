@@ -327,7 +327,10 @@ fn epub_chapter_levels_filter_only_when_bound_and_keep_same_page_children() {
     assert_eq!(location(&app), (0, last));
 
     tap_chapter(&mut app, "Chapter navigation");
-    assert_eq!(tap_level(&mut app, "Use selected levels"), Change::Partial);
+    assert_eq!(
+        tap_level(&mut app, "Use levels for chapter jumps"),
+        Change::Partial
+    );
     assert!(app.chapter_level_checked(&LevelSetting::BindNavigation));
     assert!(!app.chapter_level_checked(&LevelSetting::ToggleLevel(0)));
     assert!(app.chapter_level_checked(&LevelSetting::ToggleLevel(1)));

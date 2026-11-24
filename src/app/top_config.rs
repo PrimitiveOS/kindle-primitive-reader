@@ -80,7 +80,7 @@ impl Reader {
                 "Chapter navigation",
                 Action::Show(Screen::ChapterNavigation),
             )
-            .detail("Choose Contents levels for chapter jumps"),
+            .detail("Choose Contents levels"),
             Item::new("Auto turn", Action::Show(Screen::AutoTurn)).detail(
                 self.auto_turn.interval().map_or_else(
                     || "Off".to_owned(),

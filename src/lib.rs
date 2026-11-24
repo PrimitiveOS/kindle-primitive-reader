@@ -774,6 +774,8 @@ pub struct Probe {
     #[cfg(feature = "kindle")]
     footer_chapters: std::cell::OnceCell<Vec<(usize, String)>>,
     #[cfg(feature = "kindle")]
+    local_contents_pages: std::cell::OnceCell<Vec<(usize, usize)>>,
+    #[cfg(feature = "kindle")]
     pace_page: std::cell::Cell<Option<(usize, u64)>>,
     #[cfg(feature = "kindle")]
     publisher_positions: std::cell::OnceCell<app::publisher_pages::PublisherPositions>,
@@ -1075,6 +1077,8 @@ impl Probe {
             printed_source,
             #[cfg(feature = "kindle")]
             footer_chapters: Default::default(),
+            #[cfg(feature = "kindle")]
+            local_contents_pages: Default::default(),
             #[cfg(feature = "kindle")]
             pace_page: Default::default(),
             #[cfg(feature = "kindle")]
