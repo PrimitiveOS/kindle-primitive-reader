@@ -23,4 +23,12 @@ selected PDF text, restoring the original painted viewport and reopening the
 document at the restored position. Returning to the original page clears
 temporary match emphasis and preserves list pagination.
 
+The reference harness also ran the installed KOReader's dynamic result menu on
+the Oasis with authored input. It confirmed that chapter filtering retained
+the two matching rows out of four, All results restored all four, page focus
+chose the first hit on that page or the previous hit between pages, and the
+original-position action returned to the saved page. The test exercises
+stock Lua callbacks without writing a book or a KOReader profile.
+[Reference harness](../scripts/koreader-search-controls-check.lua)
+
 [EPUB options](screenshots/search-results-options.png) · [Focused result](screenshots/search-results-current.png) · [PDF options in dark mode](screenshots/search-results-options-pdf.png)

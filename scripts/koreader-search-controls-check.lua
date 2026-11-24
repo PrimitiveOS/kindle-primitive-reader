@@ -15,7 +15,8 @@ local callbacks = table.concat({
     methods("init", "local regex_help_text"),
     methods("addToMainMenu", "-- if reverse == 1 search backwards"),
     methods("onShowSearchDialog", "-- if case == true or nil"),
-    methods("restorePageView", "return ReaderSearch"),
+    methods("updateAllResultsMenu", "function ReaderSearch:gotoResultsItem("),
+    methods("onGoToStartPage", "return ReaderSearch"),
     "return ReaderSearch",
 }, "\n")
 
@@ -27,7 +28,11 @@ function settings:saveSetting(key, value) saved[key] = value end
 function settings:delSetting(key) saved[key] = nil end
 function settings:flipNilOrFalse(key) saved[key] = not saved[key] end
 
-local manager = { show = function(_, widget) shown = widget end, setDirty = function() end }
+local manager = {
+    show = function(_, widget) shown = widget end,
+    setDirty = function() end,
+    close = function() end,
+}
 local widget = { new = function(_, spec) return spec end }
 local function translate(text) return text end
 local stock = assert(loadstring(callbacks))
@@ -40,6 +45,7 @@ setfenv(stock, setmetatable({
     logger = { dbg = function() end },
     BD = { getArrowLabels = function() return "Previous", "Next", "First", "Last" end },
     _ = translate,
+    T = function(pattern, value) return (pattern:gsub("%%1", tostring(value))) end,
 }, { __index = _G }))
 
 local entered, exited, cleared, directed, selected, goto_page = 0, 0, 0, 0, 0, nil
@@ -121,4 +127,46 @@ assert(not fit and exited == 1 and cleared == 2)
 no_match = true
 reader:onShowSearchDialog("owned fixture", 0, {}, true)
 assert(not fit and entered == 2 and exited == 2)
+-- Drive the options that the static stock screenshot inventory cannot open.
+local all_results = {{start = 2}, {start = 5}, {start = 5}, {start = 9}}
+local active_page, focused_index, closed = 5, nil, 0
+local headings = {[2] = "First", [5] = "Middle", [9] = "Last"}
+reader.start_page = 3
+reader.findall_results = all_results
+reader.result_menu = {
+    item_table = all_results,
+    switchItemTable = function(menu, _, items, index)
+        if items then menu.item_table = items end
+        focused_index = index
+    end,
+    close_callback = function() closed = closed + 1 end,
+}
+reader.ui.getCurrentPage = function() return active_page end
+reader.ui.toc = {
+    getTocTitleOfCurrentPage = function() return headings[active_page] end,
+    getTocTitleByPage = function(_, page) return headings[page] end,
+}
+reader.ui.annotation = {getPageRef = function(_, _, page) return page end}
+reader.ui.paging.onGotoPage = function(_, page) goto_page = page end
+
+reader:showAllResultsMenuDialog()
+shown.buttons[2][1].callback()
+local filtered = reader.result_menu.item_table
+assert(#filtered == 2 and filtered[1] == all_results[2] and filtered[2] == all_results[3])
+reader:showAllResultsMenuDialog()
+shown.buttons[1][1].callback()
+assert(reader.result_menu.item_table == all_results)
+
+reader:showAllResultsMenuDialog()
+shown.buttons[4][1].callback()
+assert(focused_index == 2 and active_page == 5)
+active_page = 8
+reader:showAllResultsMenuDialog()
+shown.buttons[4][1].callback()
+assert(focused_index == 3)
+reader:showAllResultsMenuDialog()
+shown.buttons[5][1].callback()
+assert(closed == 1 and goto_page == 3)
+
 print("stock-search selection=forward/list context=1..50/5 rows=2..24/10 max_lines=1..10/4 fit=off/enter/step/close/exhaust")
+print("stock-search-results chapter=2/4 first_on_page=2 prior_between_pages=3 origin=3")
