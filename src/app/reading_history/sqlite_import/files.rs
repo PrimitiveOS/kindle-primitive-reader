@@ -40,8 +40,12 @@ pub(super) fn list(library: &Library, relative: &Path) -> io::Result<Listing> {
             break;
         }
         let Ok(visible) = name.to_str() else { continue };
+        // Path components normalize a trailing dot after joining it to a folder.
+        if visible.starts_with('.') || visible.chars().any(char::is_control) {
+            continue;
+        }
         let path = relative.join(visible);
-        if !safe_path(&path) || visible.chars().any(char::is_control) {
+        if !safe_path(&path) {
             continue;
         }
         let Ok(entry) = stat_at(&folder, name) else {

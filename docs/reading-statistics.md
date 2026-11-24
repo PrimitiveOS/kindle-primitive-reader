@@ -155,20 +155,25 @@ Reader keeps already recorded visits when the limits change.
 ### Import KOReader statistics for a PDF or DjVu book
 
 Close KOReader and copy `statistics.sqlite3` from its settings directory to
-the top level of Kindle Documents. In Reader, open the PDF or self-contained
-DjVu book, open its **Book details › Reading statistics**, then choose
-**Import KOReader statistics**. Both `.djvu` and `.djv` filenames are accepted.
-**Preview database** shows the book matched in KOReader, along with the
-number of new records, reading time and dates. Check the matched title before
-importing.
+Kindle Documents or a folder inside it. In Reader, open the PDF or
+self-contained DjVu book, open its **Book details › Reading statistics**, then
+choose **Import KOReader statistics**. Both `.djvu` and `.djv` filenames are
+accepted. **Preview database** opens `Documents/statistics.sqlite3` directly.
+Use **Browse Documents** to choose a `.sqlite3`, `.sqlite`, or `.db` copy
+in a visible Documents folder. The browser supports touch and the page buttons.
+The preview shows the matched KOReader book and the selected file, along with
+the number of new records, reading time, and dates. Check the matched title
+and file before importing.
 Choose **Import records** to add them to Reader's history. Back closes the
 preview. The statistics database and book stay in place.
 
 Reader checks KOReader's sampled book fingerprint and physical page count.
 Editions with differences outside the sample can share a fingerprint. Reader
 accepts schema 20221111 snapshots up to 8 MiB and 20,000 rows for the matched
-book. Use a closed copy with all commits applied. Reader rejects a copy with
-an accompanying nonempty WAL or rollback journal. A main file copied without
+book. Use a closed copy with all commits applied. Reader checks for a
+nonempty WAL or rollback journal beside the selected file, using that file's
+own name. It opens files and folders without following symbolic links.
+A main file copied without
 its active WAL can be incomplete even when no journal is present. Duplicate or conflicting
 page-time records and rows saved under a different page count are shown in the
 preview and skipped. A changed book, database, or Reader journal requires a new
@@ -189,6 +194,9 @@ generator](../scripts/koreader-fixed-statistics-import-check.py) · [Pinned sche
 and rescaling](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/main.lua#L403-L493)
 · [Pinned stock write path](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/main.lua#L909-L964)
 · [KOReader DjVu page mapping](https://github.com/koreader/koreader-base/blob/6e4bc81af4e04f78d81677a323a780a71b29702a/djvu.c#L322-L336)
+
+[Landscape database browser](screenshots/landscape-statistics-database-picker.png) ·
+[Preview of a selected snapshot](screenshots/landscape-statistics-database-preview.png)
 
 Daily history groups visits by their civil start date. Reader clips the elapsed intervals used by the calendar and timeline to the chosen day's boundaries. A visit that crosses a boundary can contribute time to both calendar days while its daily-history total remains on the start date. KOReader's monthly SQL assigns each visit to a date using its start timestamp, with the optional offset. Day boundaries follow the current device time zone, including daylight-saving transitions. [Stock daily totals](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L1453-L1479) · [Stock calendar query](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/main.lua#L2822-L2861) · [Stock day timeline](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L2862-L2934)
 

@@ -243,6 +243,7 @@ fn sqlite_picker_pages_in_landscape_and_preserves_the_preview_on_cancel() {
     assert_eq!(app.reading_list_ordinal(), ordinal);
     tap_row(&mut app, "Reading archive");
     tap_row(&mut app, "2026");
+    assert_eq!(app.items().len(), 2);
     assert!(
         app.items()
             .iter()
