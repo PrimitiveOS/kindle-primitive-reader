@@ -325,6 +325,66 @@ mod tests {
         );
         capture_test_screen(&app, &fonts, "READER_READING_GUIDES_PDF", false);
     }
+
+    #[test]
+    fn reading_guides_follow_the_accepted_scan_viewport() {
+        use crate::app::selection_viewport_tests::{adopt, capture};
+        use crate::session::ReadingViewport;
+
+        let fixture = Fixture::new();
+        let source = fixture.root.join("Harbor survey.pdf");
+        std::fs::copy(crate::test_fixture("scan-reflow/raster.pdf"), &source).unwrap();
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+        app.open_path(&source).unwrap();
+        app.jump_fixed(1, None).unwrap();
+        let ocr = crate::ocr::parse_tsv(
+            include_bytes!("../../tests/fixtures/scan-reflow/page-2-ocr.tsv"),
+            1350,
+            1800,
+        )
+        .unwrap();
+        app.fixed
+            .as_mut()
+            .unwrap()
+            .reading
+            .remember_ocr(1, "eng", ocr.text)
+            .unwrap();
+        app.read_fixed_text(true).unwrap();
+
+        for (generation, size, lanes, start) in [
+            (1, ReadingViewport::PORTRAIT, [126, 1139], 84),
+            (2, ReadingViewport::LANDSCAPE, [168, 1514], 63),
+        ] {
+            let mut canvas = adopt(&mut app, size, generation);
+            app.controls.reading_guides.enabled = false;
+            let plain = primitive_app::frame(&app, &mut canvas, false);
+            app.controls.reading_guides.enabled = true;
+            let marked = primitive_app::frame(&app, &mut canvas, false);
+            let width = size.dimensions().0 as usize;
+            for lane in lanes {
+                let before_line = (start - 1) * width + lane;
+                let on_line = start * width + lane;
+                assert_eq!(marked[before_line], plain[before_line]);
+                assert_eq!(&marked[on_line..on_line + 2], &[179, 179]);
+            }
+            let footer = size.page_height() as usize * width;
+            assert_eq!(marked[footer..], plain[footer..]);
+            assert_ne!(marked, plain);
+            if size == ReadingViewport::LANDSCAPE {
+                assert_eq!(marked[84 * width + 126], plain[84 * width + 126]);
+                capture(
+                    &app,
+                    &mut canvas,
+                    "landscape-scan-reading-guides.png",
+                    false,
+                );
+            }
+        }
+    }
 }
 
 pub(crate) struct Lines {
@@ -360,11 +420,9 @@ impl Lines {
 
 impl Reader {
     pub(super) fn guide_lines(&self) -> Option<Lines> {
-        self.reading_guide_progress.guides(
-            self.controls.reading_guides,
-            primitive_app::WIDTH,
-            primitive_app::HEIGHT,
-        )
+        let (width, height) = self.reading_viewport().dimensions();
+        self.reading_guide_progress
+            .guides(self.controls.reading_guides, width, height)
     }
 
     pub(super) fn reading_guide_entry(&self) -> Item {

@@ -31,3 +31,7 @@ image. The tests exercise the exact source anchor, 1264 × 1680 and 1680 × 1264
 frames, staged abort and retry, far-right touch and hardware page-button input,
 spacing cancellation, scan size changes, and Back. Set
 `READER_SELECTION_VIEWPORT_CAPTURES` to save the simulator frames. [Read text](screenshots/landscape-read-text.png) · [Read text spacing](screenshots/landscape-read-text-spacing.png) · [Reflow scan](screenshots/landscape-reflow-scan.png) · [Reflow scan spacing](screenshots/landscape-reflow-scan-spacing.png) · [Fixture generator](../scripts/generate-scan-reflow-fixtures.py)
+
+`cargo test --locked --lib reading_guides` also verifies the optional guide
+lines in both scan viewport sizes. The lines move relative to the screen
+edges, keep their physical thickness, and end before the footer. [Reading guides](screenshots/landscape-scan-reading-guides.png)
