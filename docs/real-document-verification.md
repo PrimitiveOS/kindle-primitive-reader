@@ -241,6 +241,34 @@ folder action, the dictionary close control, both clippings screens and
 column or row zoom. The folder listing differed by two grayscale pixels.
 [Current book folder](screenshots/current-book-folder.png) · [Dictionary lookup](screenshots/dictionary-close-stack.png) · [Clippings options](screenshots/export-kindle-clippings-options.png) · [Scan zoom](screenshots/fixed-tile-zoom.png)
 
+## Reader 0.1.43 release on the Oasis
+
+Store installed the published ARMHF package with both Reader licenses. The
+installed executable matched the release, and the public catalog returned the
+same ZIP digest and size.
+[GitHub release](https://github.com/PrimitiveOS/kindle-primitive-reader/releases/tag/v0.1.43) · [Package workflow](https://github.com/PrimitiveOS/kindle-primitive-reader/actions/runs/45366408798) · [Store entry](https://primitiveos.github.io/kindle-primitive-catalog/v1/apps/primitive-reader.json)
+
+| Verified file | SHA-256 | Bytes |
+| --- | --- | ---: |
+| ARMHF ZIP | `89edbe003b1f054e936841ad47e310089e1e7ce3df9658c29bab4da4ba5fa0f8` | 21,698,084 |
+| Kindle executable | `8e2584e9deb47f4a9021103b4412034946b0a7ee91fccaa0b8203d1ef802790f` | 34,596,072 |
+
+The release opened each original in an isolated Reader profile, advanced to
+a changed frame, verified its source digest and resumed after restart. Times
+end when Reader has the first grayscale frame in memory.
+
+| File type | Bytes | First frame | Advance and resume |
+| --- | ---: | ---: | --- |
+| EPUB | 436,947 | 1,552 ms | Passed |
+| PDF | 2,005,917 | 800 ms | Passed |
+| AZW3 | 590,896 | 868 ms | Passed |
+| MOBI | 625,173 | 1,956 ms | Passed |
+
+The 1,175 automated Oasis checks cover detected PDF crop margins and all eight
+reading time-range reports. All four native screenshots matched the Mac
+simulator PNGs byte for byte. Physical touch and panel refresh
+have separate checks. [Verification plan](execution-plan.md#reader-0143-verification-plan)
+
 ## Reader 0.1.42 release on the Oasis
 
 Store installed the published ARMHF package with both Reader licenses. The
