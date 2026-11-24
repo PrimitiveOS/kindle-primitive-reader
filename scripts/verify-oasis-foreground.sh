@@ -1,7 +1,15 @@
 #!/bin/sh
 # Run on Kindle. Probe the Oasis 3 hardware gate or stream a fixture's frame.
 set -eu
-run=/var/tmp/kl
+run=${KL_RUN:-/var/tmp/kl}
+case "$run" in
+    /var/tmp/kl) ;;
+    /var/tmp/kl-reader-*)
+        name=${run#/var/tmp/kl-reader-}
+        case "$name" in ''|*[!a-z0-9-]*) exit 2 ;; esac
+        ;;
+    *) exit 2 ;;
+esac
 screen=/sys/class/graphics/fb0
 operation=${1:-preflight}
 width=1264

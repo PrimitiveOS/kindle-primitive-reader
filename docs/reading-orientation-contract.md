@@ -74,7 +74,8 @@ scratch supervisor.
 Start from Amazon’s Library after the installed supervisor has exited.
 Use a scratch Launcher payload, a scratch Documents folder, and the
 supervisor’s runtime entry with `KL_DIR` and `KL_DOCUMENTS` pointing to
-those folders. Record the manual `Documents/Launcher.sh` checksum before
+those folders. Give the isolated session a separate `KL_RUN` under
+`/var/tmp/kl-reader-*` and pass the same value to the capture helper. Record the manual `Documents/Launcher.sh` checksum before
 starting the scratch session. The launcher tile starts the scratch Reader through the normal session
 creation path. Its reader home and document directory contain authored
 fixtures and private test state.
@@ -99,7 +100,11 @@ executable, supervisor, launch header and fixture checksums. Reader’s
 package carries both project licenses, the OCR executable and model, and
 the protocol marker in the first ten lines of the installed entry. The
 Mac passed 1,277 library tests, 14 EPUB package tests, and four layout
-probes against this Reader source.
+probes against this Reader source. The Oasis ran the same source in
+ARM hard-float and passed 1,281 library tests, 14 EPUB package tests and
+four layout probes. The library suite adds four device-clock checks on
+Linux. The native runner used an isolated POSIX temporary directory for
+fixtures with Unix-only filenames.
 [Launcher source and handoff notes](https://github.com/PrimitiveOS/kindle-primitive-launcher/blob/65e47b5da8338924932a49f2bb7953efce8f24a7/docs/launcher-viewport-handoff.md)
 
 
@@ -134,3 +139,23 @@ redraw. Reader now renders the matching pending orientation in the staged frame
 and saves the edition preference on commit. It also sizes toolbar tap zones and
 custom swipe edges from the accepted viewport. The host regressions exercise
 both landscape turns and preserve the existing portrait input boundaries.
+
+
+### Live retest of the landscape fixes
+
+Reader `f3215a3` used the same scratch Launcher and reopened the first
+session's saved EPUB in Landscape Left. A lower-center tap brought up the
+Screen controls. Tapping Right replaced the Left underline with the Right
+underline in the first ready framebuffer. An upper-center tap in Landscape
+Right, outside the corresponding portrait tap zone, opened the reading
+toolbar. Both ready records matched the live app identity and its isolated
+viewport path. Exit returned to the portrait Launcher. The scratch
+session handed back to Amazon’s Library before reopening the installed
+Launcher. The manual Library entry, Launcher binary and installed
+supervisor matched their baseline hashes.
+
+The same ARM binary opened, advanced and resumed four original documents
+in separate scratch profiles, one each in EPUB, PDF, AZW3 and MOBI. Each
+original matched its starting SHA-256 digest.
+
+[First live Landscape Right frame](screenshots/oasis-viewport-first-right-frame.png)
