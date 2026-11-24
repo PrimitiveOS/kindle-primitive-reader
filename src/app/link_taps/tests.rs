@@ -84,7 +84,8 @@ fn reflow_link_tap_settings_match_defaults_preserve_explicit_links_and_enlarge_i
         .into_iter()
         .map(|dx| (internal.0 - dx, internal.1))
         .find(|&(x, y)| {
-            reading.link_href_at(x, y).is_none() && nearest_internal_link(reading, x, y).is_some()
+            reading.link_href_at(x, y).is_none()
+                && nearest_reflow_link(reading, x, y, LINK_TAP_RADIUS, true).is_some()
         })
         .expect("blank touch near local link");
     let mut canvas = Canvas::new(
@@ -137,12 +138,19 @@ fn reflow_link_tap_settings_match_defaults_preserve_explicit_links_and_enlarge_i
 
     open_preferences(&mut app);
     tap_contents_item(&mut app, "Tap to follow links");
-    assert!(
-        app.items()
-            .iter()
-            .filter(|item| matches!(item.action, Action::Heading))
-            .count()
-            == 2
+    let disabled: Vec<_> = app
+        .items()
+        .into_iter()
+        .filter(|item| matches!(item.action, Action::Heading))
+        .map(|item| item.title)
+        .collect();
+    assert_eq!(
+        disabled,
+        [
+            "Allow larger tap area around links",
+            "Ignore external links on tap",
+            "Ignore external links on swipe",
+        ]
     );
     app.show(Screen::Book);
     assert!(app.reflow_tap_link(internal.0, internal.1).is_none());
@@ -406,4 +414,226 @@ fn pdf_swipe_back_restores_a_panned_viewport_before_normal_zoom_panning() {
     assert_eq!(panned.position, original.position);
     assert!((panned.scan_point.unwrap() - origin).hypot() > 10.0);
     assert!(app.notice.is_none());
+}
+
+fn swipe_between(app: &mut ReaderRuntime, start: (f32, f32), end: (f32, f32)) -> Change {
+    let (dx, dy) = (end.0 - start.0, end.1 - start.1);
+    assert!(-dx > dy.abs() * 1.5, "test path must be a left swipe");
+    app.swipe(
+        Input::Swipe {
+            dx,
+            dy,
+            start_y: start.1,
+        },
+        start.0,
+    )
+}
+
+#[test]
+fn epub_nearest_link_swipe_keeps_tap_independent_and_uses_the_device_touch_origin() {
+    let fixture = Fixture::new();
+    write_book(&fixture.book);
+    let fonts = test_fonts();
+    let mut runtime =
+        ReaderRuntime(Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap());
+    runtime.0.open_path(&fixture.book).unwrap();
+    let origin = runtime.0.current_history_location().unwrap();
+    let reading = &runtime.0.active.as_ref().unwrap().reading;
+    let external = hit(reading, ADDRESS);
+    let local = hit(reading, "routes.xhtml#route");
+
+    assert!(!LinkPreference::SwipeFollow.checked(runtime.0.controls));
+    assert!(LinkPreference::SwipeIgnoreExternal.checked(runtime.0.controls));
+    assert_eq!(runtime.0.controls.swipe_ignore_external_links, None);
+    swipe_between(&mut runtime, external, local);
+    runtime.tick(Instant::now() + Duration::from_secs(1));
+    assert_eq!(runtime.0.current_position().unwrap().chapter, 1);
+    assert!(runtime.0.back.is_empty());
+    runtime.0.restore_position(&origin.position).unwrap();
+
+    open_preferences(&mut runtime.0);
+    let ignore = runtime
+        .0
+        .items()
+        .into_iter()
+        .find(|item| item.title == "Ignore external links on swipe")
+        .unwrap();
+    assert!(matches!(ignore.action, Action::Heading));
+    tap_contents_item(&mut runtime.0, "Tap to follow links");
+    tap_contents_item(&mut runtime.0, "Swipe to follow nearest link");
+    capture_test_screen(&runtime.0, &fonts, "READER_LINK_SWIPE_FOLLOW_FRAME", false);
+    runtime.0.show(Screen::Book);
+
+    assert_eq!(
+        swipe_between(&mut runtime, external, local),
+        Change::Partial
+    );
+    assert_eq!(runtime.0.current_position().unwrap().chapter, 1);
+    assert!(runtime.0.link_popup.is_none());
+    assert_eq!(runtime.0.back, [origin.clone()]);
+    runtime.0.activate(Action::ReturnToLocation).unwrap();
+
+    open_preferences(&mut runtime.0);
+    tap_contents_item(&mut runtime.0, "Ignore external links on swipe");
+    runtime.0.show(Screen::Book);
+    assert!(!LinkPreference::Follow.checked(runtime.0.controls));
+    assert!(!LinkPreference::SwipeIgnoreExternal.checked(runtime.0.controls));
+
+    assert_eq!(
+        swipe_between(&mut runtime, external, local),
+        Change::Partial
+    );
+    assert!(runtime.0.link_popup.is_some());
+    assert_eq!(runtime.0.current_history_location(), Some(origin.clone()));
+    assert!(runtime.0.back.is_empty());
+
+    runtime
+        .0
+        .gestures
+        .set(gestures::Gesture::TopLeft, gestures::Binding::Bookmarks)
+        .unwrap();
+    let left_edge_swipe = Input::Swipe {
+        dx: -300.0,
+        dy: 0.0,
+        start_y: 35.0,
+    };
+    runtime.swipe(left_edge_swipe, 700.0);
+    assert!(runtime.0.link_popup.is_some());
+    runtime.input(Input::Tap(30.0, 30.0));
+    runtime.swipe(left_edge_swipe, 700.0);
+    assert_eq!(runtime.0.screen, Screen::Bookmarks);
+    assert!(runtime.0.back.is_empty());
+    runtime.0.show(Screen::Book);
+
+    runtime.0.save().unwrap();
+    let mut reopened = ReaderRuntime(Reader::open(&fixture.root, &fixture.state, fonts).unwrap());
+    reopened.0.open_path(&fixture.book).unwrap();
+    assert!(LinkPreference::SwipeFollow.checked(reopened.0.controls));
+    assert!(!LinkPreference::SwipeIgnoreExternal.checked(reopened.0.controls));
+    assert_eq!(
+        swipe_between(&mut reopened, external, local),
+        Change::Partial
+    );
+    assert!(reopened.0.link_popup.is_some());
+    assert_eq!(reopened.0.current_history_location(), Some(origin));
+}
+
+#[test]
+fn epub_nearest_link_swipe_opens_and_dismisses_the_footnote_in_place() {
+    let fixture = Fixture::new();
+    let mut runtime =
+        ReaderRuntime(Reader::open(&fixture.root, &fixture.state, test_fonts()).unwrap());
+    runtime.0.open_path(&fixture.book).unwrap();
+    let origin = runtime.0.current_history_location();
+    let reading = &runtime.0.active.as_ref().unwrap().reading;
+    let (x, y) = hit(reading, "#tide-note");
+    runtime
+        .0
+        .toggle_link_preference(LinkPreference::SwipeFollow)
+        .unwrap();
+    runtime
+        .0
+        .toggle_link_preference(LinkPreference::SwipeBack)
+        .unwrap();
+    assert_eq!(
+        swipe_between(&mut runtime, (x, y), (x - 80.0, y)),
+        Change::Partial
+    );
+    assert_eq!(runtime.0.screen, Screen::Footnote);
+    assert_eq!(runtime.0.current_history_location(), origin);
+    assert!(runtime.0.back.is_empty());
+    runtime.swipe(
+        Input::Swipe {
+            dx: 120.0,
+            dy: 0.0,
+            start_y: 700.0,
+        },
+        500.0,
+    );
+    assert_eq!(runtime.0.screen, Screen::Book);
+    assert_eq!(runtime.0.current_history_location(), origin);
+}
+
+#[test]
+fn pdf_nearest_link_swipe_stays_on_the_touched_scan_and_yields_to_paging() {
+    let fixture = Fixture::new();
+    let path = fixture.root.join("Three harbor charts.pdf");
+    fs::write(
+        &path,
+        pdf_objects(&[
+            "<< /Type /Catalog /Pages 2 0 R >>".into(),
+            "<< /Type /Pages /Count 3 /Kids [3 0 R 4 0 R 5 0 R] /MediaBox [0 0 600 800] >>".into(),
+            "<< /Type /Page /Parent 2 0 R /Annots [6 0 R 7 0 R] >>".into(),
+            "<< /Type /Page /Parent 2 0 R >>".into(),
+            "<< /Type /Page /Parent 2 0 R >>".into(),
+            format!(
+                "<< /Subtype /Link /Rect [420 450 550 480] /A << /S /URI /URI ({ADDRESS}) >> >>"
+            ),
+            "<< /Subtype /Link /Rect [70 450 190 480] /Dest [4 0 R /XYZ 110 525 null] >>".into(),
+        ]),
+    )
+    .unwrap();
+    let mut runtime =
+        ReaderRuntime(Reader::open(&fixture.root, &fixture.state, test_fonts()).unwrap());
+    runtime.0.open_path(&path).unwrap();
+    let origin = runtime.0.current_history_location().unwrap();
+    let reading = &runtime.0.fixed.as_ref().unwrap().reading;
+    let [external, internal] = reading.visible_links().try_into().unwrap();
+    let center = |link: PdfLink| {
+        let point = reading.visible_rectangle(0, link.bounds).unwrap().center();
+        (point.x as f32, point.y as f32)
+    };
+    let external = center(external);
+    let internal = center(internal);
+
+    open_preferences(&mut runtime.0);
+    tap_contents_item(&mut runtime.0, "Swipe to follow nearest link");
+    runtime.0.show(Screen::Fixed);
+    assert_eq!(
+        swipe_between(&mut runtime, external, internal),
+        Change::Partial
+    );
+    assert_eq!(runtime.0.current_position().unwrap().page, 1);
+    assert!(runtime.0.link_popup.is_none());
+    assert_eq!(runtime.0.back, [origin.clone()]);
+
+    swipe_between(&mut runtime, external, internal);
+    runtime.tick(Instant::now() + Duration::from_secs(1));
+    assert_eq!(runtime.0.current_position().unwrap().page, 2);
+    assert_eq!(runtime.0.back, [origin.clone()]);
+    runtime.0.activate(Action::ReturnToLocation).unwrap();
+
+    open_preferences(&mut runtime.0);
+    tap_contents_item(&mut runtime.0, "Ignore external links on swipe");
+    tap_contents_item(&mut runtime.0, "Ignore external links on tap");
+    runtime.0.show(Screen::Fixed);
+    assert!(runtime.0.fixed_tap_link(external.0, external.1).is_none());
+    assert_eq!(
+        swipe_between(&mut runtime, external, internal),
+        Change::Partial
+    );
+    assert!(runtime.0.link_popup.is_some());
+    assert_eq!(runtime.0.current_history_location(), Some(origin));
+
+    runtime.input(Input::Tap(30.0, 30.0));
+    runtime.0.activate(Action::SetFixedZoom(1)).unwrap();
+    let zoom_origin = runtime.0.current_history_location();
+    let reading = &runtime.0.fixed.as_ref().unwrap().reading;
+    let external_link = reading
+        .visible_links()
+        .into_iter()
+        .find(|link| link.target == PdfLinkTarget::External)
+        .unwrap();
+    let center = reading
+        .visible_rectangle(0, external_link.bounds)
+        .unwrap()
+        .center();
+    let (x, y) = (center.x as f32, center.y as f32);
+    assert!((x - external.0).abs() > 20.0 || (y - external.1).abs() > 20.0);
+    assert_eq!(
+        swipe_between(&mut runtime, (x, y), (x - 150.0, y)),
+        Change::Partial
+    );
+    assert!(runtime.0.link_popup.is_some());
+    assert_eq!(runtime.0.current_history_location(), zoom_origin);
 }

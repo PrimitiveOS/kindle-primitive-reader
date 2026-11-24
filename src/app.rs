@@ -5432,18 +5432,7 @@ impl Reader {
                 return self.exit();
             }
             if let Some((link, link_x, link_y)) = self.reflow_tap_link(x, y) {
-                return match link {
-                    link_taps::ReflowLink::Address(address) => self.show_link_address(address),
-                    link_taps::ReflowLink::Internal(target) => {
-                        if self.open_note_at(target.clone(), link_x, link_y) {
-                            return Change::Partial;
-                        }
-                        match self.follow(target) {
-                            Ok(()) => Change::Partial,
-                            Err(error) => self.report(error),
-                        }
-                    }
-                };
+                return self.open_reflow_link(link, link_x, link_y);
             }
             if let Some(change) = self.tap_footer(x, y) {
                 return change;
@@ -7941,6 +7930,9 @@ impl App for Reader {
         if self.end_dialog.is_some() {
             return self.end_dialog_input(input);
         }
+        if self.link_popup.is_some() {
+            return self.input(input);
+        }
         if self.range_edit.is_some() {
             return self.range_input(input);
         }
@@ -7966,6 +7958,7 @@ impl App for Reader {
         }
         self.assigned_gesture(input, Some(start_x))
             .or_else(|| self.reading_edge_swipe(input, start_x))
+            .or_else(|| self.swipe_nearest_link(input, start_x))
             .unwrap_or_else(|| self.input(input))
     }
 
@@ -9277,6 +9270,10 @@ impl App for ReaderRuntime {
 
     fn input(&mut self, input: Input) -> Change {
         self.0.input(self.0.controls.invert_page_turn_input(input))
+    }
+
+    fn swipe(&mut self, input: Input, start_x: f32) -> Change {
+        self.0.swipe(input, start_x)
     }
 
     fn press_point(&self, input: Input) -> Option<(f32, f32)> {

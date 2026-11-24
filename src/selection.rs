@@ -245,7 +245,16 @@ impl Probe {
         page: Range<f32>,
         selection: &TextSelection,
     ) -> Vec<HighlightRect> {
-        let Some(spans) = self.selection_spans(&selection.start, &selection.end) else {
+        self.anchor_rects_in(page, &selection.start, &selection.end)
+    }
+
+    pub(crate) fn anchor_rects_in(
+        &self,
+        page: Range<f32>,
+        start: &Anchor,
+        end: &Anchor,
+    ) -> Vec<HighlightRect> {
+        let Some(spans) = self.selection_spans(start, end) else {
             return Vec::new();
         };
         if let Renderer::Vertical(renderer) = &self.renderer {

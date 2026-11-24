@@ -3,7 +3,7 @@
 use super::*;
 use crate::fixed::PdfLink;
 use crate::selection::HighlightRect;
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 // KOReader's 30 px radius at 167 DPI on Reader's 300 DPI logical canvas.
 const LINK_TAP_RADIUS: f32 = 30.0 * 300.0 / 167.0;
@@ -14,6 +14,8 @@ pub(super) enum LinkPreference {
     LargerArea,
     IgnoreExternal,
     SwipeBack,
+    SwipeFollow,
+    SwipeIgnoreExternal,
 }
 
 impl LinkPreference {
@@ -23,6 +25,8 @@ impl LinkPreference {
             Self::LargerArea => controls.larger_tap_area_for_links,
             Self::IgnoreExternal => controls.ignore_external_link_taps,
             Self::SwipeBack => controls.swipe_to_go_back,
+            Self::SwipeFollow => controls.swipe_to_follow_nearest_link,
+            Self::SwipeIgnoreExternal => controls.swipe_ignore_external_links.unwrap_or(true),
         }
     }
 
@@ -32,11 +36,21 @@ impl LinkPreference {
             Self::LargerArea => "Allow larger tap area around links",
             Self::IgnoreExternal => "Ignore external links on tap",
             Self::SwipeBack => "Swipe to go back",
+            Self::SwipeFollow => "Swipe to follow nearest link",
+            Self::SwipeIgnoreExternal => "Ignore external links on swipe",
         }
     }
 
-    fn requires_tap_following(self) -> bool {
-        matches!(self, Self::LargerArea | Self::IgnoreExternal)
+    fn unavailable_reason(self, controls: ReadingControls) -> Option<&'static str> {
+        match self {
+            Self::LargerArea | Self::IgnoreExternal if !Self::Follow.checked(controls) => {
+                Some("Available when tap to follow links is on")
+            }
+            Self::SwipeIgnoreExternal if !Self::SwipeFollow.checked(controls) => {
+                Some("Available when swipe to follow nearest link is on")
+            }
+            _ => None,
+        }
     }
 }
 
@@ -67,33 +81,31 @@ impl Reader {
             LinkPreference::LargerArea,
             LinkPreference::IgnoreExternal,
             LinkPreference::SwipeBack,
+            LinkPreference::SwipeFollow,
+            LinkPreference::SwipeIgnoreExternal,
         ]
         .into_iter()
         .filter(|setting| !matches!(setting, LinkPreference::LargerArea) || self.active.is_some())
         .map(|setting| {
-            let enabled =
-                !setting.requires_tap_following() || LinkPreference::Follow.checked(self.controls);
-            let item = Item::new(
-                setting.label(),
-                if enabled {
-                    Action::ToggleLinkPreference(setting)
-                } else {
-                    Action::Heading
-                },
-            );
-            if !enabled {
-                item.detail("Available when tap to follow links is on")
-            } else if matches!(setting, LinkPreference::SwipeBack) {
-                item.detail("Swipe right to return to your previous location")
-            } else {
-                item
+            if let Some(reason) = setting.unavailable_reason(self.controls) {
+                return Item::new(setting.label(), Action::Heading).detail(reason);
+            }
+            let item = Item::new(setting.label(), Action::ToggleLinkPreference(setting));
+            match setting {
+                LinkPreference::SwipeBack => {
+                    item.detail("Swipe right to return to your previous location")
+                }
+                LinkPreference::SwipeFollow => {
+                    item.detail("Swipe left from near a link to follow it")
+                }
+                _ => item,
             }
         })
         .collect()
     }
 
     pub(super) fn toggle_link_preference(&mut self, setting: LinkPreference) -> Result<()> {
-        if setting.requires_tap_following() && !LinkPreference::Follow.checked(self.controls) {
+        if setting.unavailable_reason(self.controls).is_some() {
             return Ok(());
         }
         let checked = setting.checked(self.controls);
@@ -103,8 +115,67 @@ impl Reader {
             LinkPreference::LargerArea => controls.larger_tap_area_for_links = !checked,
             LinkPreference::IgnoreExternal => controls.ignore_external_link_taps = !checked,
             LinkPreference::SwipeBack => controls.swipe_to_go_back = !checked,
+            LinkPreference::SwipeFollow => controls.swipe_to_follow_nearest_link = !checked,
+            LinkPreference::SwipeIgnoreExternal => {
+                controls.swipe_ignore_external_links = Some(!checked)
+            }
         }
         self.activate(Action::SetReadingControls(controls))
+    }
+
+    pub(super) fn swipe_nearest_link(&mut self, input: Input, start_x: f32) -> Option<Change> {
+        let Input::Swipe { dx, dy, start_y } = input else {
+            return None;
+        };
+        if !self.controls.swipe_to_follow_nearest_link
+            || self.touch_locked
+            || self.selection.is_some()
+            || self.pdf_selection.is_some()
+            || self.selection_mode
+            || self.touch_hold.is_some()
+            || !dx.is_finite()
+            || !dy.is_finite()
+            || -dx <= dy.abs() * 1.5
+            || !(0.0..WIDTH as f32).contains(&start_x)
+            || !(0.0..HEIGHT as f32).contains(&start_y)
+        {
+            return None;
+        }
+        let internal_only = LinkPreference::SwipeIgnoreExternal.checked(self.controls);
+        match self.screen {
+            Screen::Book => {
+                let reading = &self.active.as_ref()?.reading;
+                let (link, x, y) =
+                    nearest_reflow_link(reading, start_x, start_y, f32::INFINITY, internal_only)?;
+                self.auto_turn.activity(Instant::now());
+                Some(self.open_reflow_link(link, x, y))
+            }
+            Screen::Fixed => {
+                let reading = &self.fixed.as_ref()?.reading;
+                let link = reading.nearest_link(start_x, start_y, internal_only)?;
+                self.auto_turn.activity(Instant::now());
+                Some(match self.open_fixed_link(link) {
+                    Ok(()) => self.applied_change(),
+                    Err(error) => self.report(error),
+                })
+            }
+            _ => None,
+        }
+    }
+
+    pub(super) fn open_reflow_link(&mut self, link: ReflowLink, x: f32, y: f32) -> Change {
+        match link {
+            ReflowLink::Address(address) => self.show_link_address(address),
+            ReflowLink::Internal(target) => {
+                if self.open_note_at(target.clone(), x, y) {
+                    return Change::Partial;
+                }
+                match self.follow(target) {
+                    Ok(()) => Change::Partial,
+                    Err(error) => self.report(error),
+                }
+            }
+        }
     }
 
     pub(super) fn swipe_back_input(&mut self, input: Input) -> Option<Change> {
@@ -153,8 +224,7 @@ impl Reader {
         if !self.controls.larger_tap_area_for_links || !(0.0..PAGE_HEIGHT as f32).contains(&y) {
             return None;
         }
-        nearest_internal_link(reading, x, y)
-            .map(|(target, x, y)| (ReflowLink::Internal(target), x, y))
+        nearest_reflow_link(reading, x, y, LINK_TAP_RADIUS, true)
     }
 
     pub(super) fn fixed_tap_link(&self, x: f32, y: f32) -> Option<PdfLink> {
@@ -232,20 +302,26 @@ impl Reader {
     }
 }
 
-fn nearest_internal_link(reading: &Reading, x: f32, y: f32) -> Option<(Destination, f32, f32)> {
+fn nearest_reflow_link(
+    reading: &Reading,
+    x: f32,
+    y: f32,
+    radius: f32,
+    internal_only: bool,
+) -> Option<(ReflowLink, f32, f32)> {
     let probe = &reading.probe;
     let mut nearest = None;
-    let mut distance = LINK_TAP_RADIUS * LINK_TAP_RADIUS;
+    let mut distance = radius * radius;
     for part in reading.visible_parts() {
         let local_x = x - part.x as f32;
         let local_y = y - part.y as f32;
         let content_y = local_y - probe.settings.top_margin() as f32 + part.range.start;
-        let top = part.range.start.max(content_y - LINK_TAP_RADIUS);
-        let end = part.range.end.min(content_y + LINK_TAP_RADIUS);
+        let top = part.range.start.max(content_y - radius);
+        let end = part.range.end.min(content_y + radius);
         if top >= end {
             continue;
         }
-        let mut consider = |rect: HighlightRect, target: &Destination| {
+        let mut consider = |rect: HighlightRect, href: &str| {
             let x0 = rect.x as f32;
             let y0 = rect.y as f32;
             let x1 = (rect.x + rect.width) as f32;
@@ -253,10 +329,14 @@ fn nearest_internal_link(reading: &Reading, x: f32, y: f32) -> Option<(Destinati
             let dx = local_x - local_x.clamp(x0, x1);
             let dy = local_y - local_y.clamp(y0, y1);
             let candidate = dx * dx + dy * dy;
-            if candidate <= distance && (candidate < distance || nearest.is_none()) {
+            if candidate <= distance
+                && (candidate < distance || nearest.is_none())
+                && let Some(link) = ReflowLink::resolve(&probe.chapter, href)
+                && (!internal_only || matches!(link, ReflowLink::Internal(_)))
+            {
                 distance = candidate;
                 nearest = Some((
-                    target.clone(),
+                    link,
                     part.x as f32 + (x0 + x1) * 0.5,
                     part.y as f32 + (y0 + y1) * 0.5,
                 ));
@@ -266,12 +346,17 @@ fn nearest_internal_link(reading: &Reading, x: f32, y: f32) -> Option<(Destinati
             .lines
             .partition_point(|line| line.top < top - probe.settings.text_height() as f32);
         let last = probe.lines.partition_point(|line| line.top < end);
-        let blocks: BTreeSet<_> = probe.lines[first..last]
+        let mut visible_spans = BTreeMap::new();
+        for line in probe.lines[first..last]
             .iter()
             .filter(|line| line.bottom > top)
-            .map(|line| line.block)
-            .collect();
-        for key in blocks {
+        {
+            visible_spans
+                .entry(line.block)
+                .or_insert_with(Vec::new)
+                .extend(line.source_spans());
+        }
+        for (key, spans) in visible_spans {
             let Ok(index) = probe
                 .source
                 .blocks
@@ -280,34 +365,31 @@ fn nearest_internal_link(reading: &Reading, x: f32, y: f32) -> Option<(Destinati
                 continue;
             };
             for link in &probe.source.blocks[index].links {
-                let Ok(target) = Book::resolve_link(&probe.chapter, &link.href) else {
+                if !spans
+                    .iter()
+                    .any(|span| span.start < link.bytes.end && span.end > link.bytes.start)
+                {
                     continue;
-                };
-                let Some(selection) = probe.select_range(
-                    &probe.anchor(key, link.bytes.start),
-                    &probe.anchor(key, link.bytes.end),
-                ) else {
-                    continue;
-                };
-                for rect in probe.selection_rects_in(part.range.clone(), &selection) {
-                    consider(rect, &target);
+                }
+                let start = probe.anchor(key, link.bytes.start);
+                let end = probe.anchor(key, link.bytes.end);
+                for rect in probe.anchor_rects_in(part.range.clone(), &start, &end) {
+                    consider(rect, &link.href);
                 }
             }
         }
         if let crate::Renderer::Parley(layout) = &probe.renderer {
             for (href, cols, rows) in layout.image_link_regions(part.range.clone(), probe.settings)
             {
-                if let Ok(target) = Book::resolve_link(&probe.chapter, href) {
-                    consider(
-                        HighlightRect {
-                            x: cols.start as i32,
-                            y: rows.start as i32,
-                            width: cols.len() as i32,
-                            height: rows.len() as i32,
-                        },
-                        &target,
-                    );
-                }
+                consider(
+                    HighlightRect {
+                        x: cols.start as i32,
+                        y: rows.start as i32,
+                        width: cols.len() as i32,
+                        height: rows.len() as i32,
+                    },
+                    href,
+                );
             }
         }
     }
