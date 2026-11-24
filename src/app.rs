@@ -9579,6 +9579,14 @@ impl App for ReaderRuntime {
         self.0.swipe(input, start_x)
     }
 
+    fn preferred_rotation(&self) -> Option<primitive_app::Rotation> {
+        self.0.preferred_rotation()
+    }
+
+    fn preferred_dark_mode(&self) -> Option<bool> {
+        self.0.preferred_dark_mode()
+    }
+
     fn press_point(&self, input: Input) -> Option<(f32, f32)> {
         self.0.press_point(input)
     }
@@ -14690,6 +14698,42 @@ mod tests {
         assert_eq!(reading.chapter, 1);
         assert!(reading.uses_facing_pages());
         assert_eq!(reading.anchor(), at_key);
+    }
+
+    #[test]
+    fn runtime_forwards_reading_orientation_and_defers_to_the_launcher_theme() {
+        use crate::reading_controls::ScreenPalette;
+        use primitive_app::Rotation;
+
+        let fixture = Fixture::new();
+        let mut runtime = ReaderRuntime(fixture.app());
+        runtime.0.system_theme = None;
+        runtime.0.open_path(&fixture.book).unwrap();
+        let before = runtime.0.current_position().unwrap();
+
+        for (orientation, expected) in [
+            (ReadingOrientation::FollowLauncher, None),
+            (ReadingOrientation::Upright, Some(Rotation::Upright)),
+            (ReadingOrientation::UpsideDown, Some(Rotation::UpsideDown)),
+        ] {
+            runtime
+                .0
+                .activate(Action::SetReadingControls(ReadingControls {
+                    orientation,
+                    palette: ScreenPalette::Dark,
+                    ..runtime.0.controls
+                }))
+                .unwrap();
+            assert_eq!(runtime.preferred_rotation(), expected);
+        }
+        assert_eq!(runtime.preferred_dark_mode(), Some(true));
+        let settings = fixture.root.join("launcher-settings.txt");
+        fs::write(&settings, "dark_mode=off\n").unwrap();
+        runtime.0.system_theme = Some(SystemTheme::new(settings));
+        assert_eq!(runtime.preferred_dark_mode(), None);
+        assert!(!runtime.0.uses_night_pages());
+        assert_eq!(runtime.preferred_rotation(), Some(Rotation::UpsideDown));
+        assert_eq!(runtime.0.current_position().unwrap(), before);
     }
 
     #[test]
