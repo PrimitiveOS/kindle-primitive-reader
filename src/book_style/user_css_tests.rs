@@ -100,7 +100,9 @@ fn strict_css_diagnostics_reject_unimplemented_features_and_bound_work() {
     assert!(validate_user_css(&too_many).is_err());
     assert!(validate_user_css("/* empty and commented sheets are harmless */").is_ok());
     for p in crate::user_styles::PRESETS {
-        validate_user_css(p.css).unwrap_or_else(|e| panic!("{}: {e}", p.id));
+        if let crate::user_styles::Effect::Css(css) = p.effect {
+            validate_user_css(css).unwrap_or_else(|e| panic!("{}: {e}", p.id));
+        }
     }
 }
 #[test]
@@ -134,6 +136,9 @@ fn user_rules_remain_effective_without_author_css_and_never_mutate_source() {
 fn every_published_preset_changes_its_supported_computed_property_through_user_origin() {
     let markup = r#"<html><body style="font-size:150%;font-family:monospace"><p id="p" style="text-indent:2em!important;padding:8px!important;text-align:right!important;break-before:page!important;break-after:page!important;orphans:1;widows:1">Paragraph <a id="a" href="x" style="font-weight:300!important">link</a></p><h1 id="h" style="text-align:left!important">Heading</h1><img id="i" src="x" style="width:72px!important"/><table id="t"><tr><td>Cell</td></tr></table><code id="code">code</code></body></html>"#;
     for preset in crate::user_styles::PRESETS {
+        let crate::user_styles::Effect::Css(css) = preset.effect else {
+            continue;
+        };
         let markup = if preset.id == "link-underline" {
             markup.replace(
                 "font-weight:300!important",
@@ -143,7 +148,7 @@ fn every_published_preset_changes_its_supported_computed_property_through_user_o
             markup.into()
         };
         let (source, before) = styles(&markup, "");
-        let (_, after) = styles(&markup, preset.css);
+        let (_, after) = styles(&markup, css);
         let p = at(&source, &after, "p");
         let old = at(&source, &before, "p");
         match preset.id {

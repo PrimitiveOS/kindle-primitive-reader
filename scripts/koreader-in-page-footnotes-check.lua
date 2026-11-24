@@ -4,21 +4,71 @@ local DataStorage = require("datastorage")
 G_reader_settings = require("luasettings"):open(DataStorage:getDataDir() .. "/settings.reader.lua")
 require("document/canvascontext"):init(require("device"))
 local Typeset = require("apps/reader/modules/readertypeset")
+local StyleTweak = require("apps/reader/modules/readerstyletweak")
+local Settings = require("luasettings")
+local UIManager = require("ui/uimanager")
 local Cre = require("libs/libkoreader-cre")
 local BB = require("ffi/blitbuffer")
 
 local source, cache, font, captures = assert(arg[1]), assert(arg[2]), assert(arg[3]), assert(arg[4])
 local width, height, margin = 720, 480, 32
+local tweak_id = "footnote-inpage_epub"
 local function find_tweak(items)
     for _, item in ipairs(items) do
-        if item.id == "footnote-inpage_epub" then return item.css end
-        if type(item) == "table" then
-            local child = find_tweak(item)
+        if item.tweak_id == tweak_id then return item end
+        if type(item.sub_item_table) == "table" then
+            local child = find_tweak(item.sub_item_table)
             if child then return child end
         end
     end
 end
-local css = assert(find_tweak(require("ui/data/css_tweaks")))
+
+G_reader_settings:saveSetting("style_tweaks", {})
+local settings = Settings:wrap({})
+local applies = 0
+local registered = {}
+local controller = StyleTweak:new{ ui = {
+    menu = { registerToMainMenu = function(_, widget) table.insert(registered, widget) end },
+    doc_settings = settings,
+    handleEvent = function(_, event)
+        assert(event.handler == "onApplyStyleSheet")
+        applies = applies + 1
+    end,
+} }
+assert(registered[1] == controller)
+controller:onReadSettings(settings)
+local menu = {}
+controller:addToMainMenu(menu)
+local row = assert(find_tweak(menu.style_tweaks.sub_item_table))
+local master = menu.style_tweaks.sub_item_table[1]
+assert(row.enabled_func() and not row.checked_func())
+row.callback()
+local css = assert(controller:getCssText())
+assert(row.checked_func() and applies == 1)
+assert(css:find("footnote%-inpage"))
+master.callback()
+assert(not row.enabled_func() and not controller:getCssText())
+master.callback()
+assert(row.enabled_func() and row.checked_func())
+row.callback()
+assert(not row.checked_func() and controller:getCssText() == "")
+local details
+local show = UIManager.show
+UIManager.show = function(_, widget) details = widget end
+row.hold_callback({ updateItems = function() end })
+UIManager.show = show
+assert(details and not details.is_global_default)
+details.toggle_global_default_callback()
+assert(row.checked_func() and controller.global_tweaks[tweak_id])
+row.callback()
+assert(not row.checked_func() and controller.doc_tweaks[tweak_id] == false)
+controller:onSaveSettings()
+controller:onReadSettings(Settings:wrap({}))
+assert(row.checked_func() and controller.doc_tweaks[tweak_id] == nil)
+controller:onReadSettings(settings)
+assert(not row.checked_func() and controller.doc_tweaks[tweak_id] == false)
+print("Pinned Style tweaks menu: tap, master switch, hold/default, saved book override")
+
 Cre.initCache(cache, 0, true, 1)
 Cre.registerFont(font)
 

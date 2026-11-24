@@ -322,11 +322,10 @@ impl BookConfig {
         self.chapter_offsets
             .get_or_init(|| book.chapter_offsets().unwrap_or_default());
         let facing = self.requested_facing_geometry();
+        let note_layout = !self.scroll && facing.is_none() && !self.hidden_flows.enabled;
+        let user_styles = self.user_styles.for_note_layout(note_layout);
         let full = Settings {
-            in_page_footnotes: self.settings.in_page_footnotes
-                && !self.scroll
-                && facing.is_none()
-                && !self.hidden_flows.enabled,
+            in_page_footnotes: self.settings.in_page_footnotes && note_layout,
             ..self.settings
         };
         let settings = if let Some(geometry) = facing {
@@ -355,7 +354,7 @@ impl BookConfig {
             index,
             None,
             &self.user_hyphenation,
-            &self.user_styles,
+            &user_styles,
         ) {
             Ok(probe) if !narrow || !probe.requests_vertical => Ok(probe),
             Err(error) if !narrow => Err(error),
@@ -371,7 +370,7 @@ impl BookConfig {
                     index,
                     None,
                     &self.user_hyphenation,
-                    &self.user_styles,
+                    &user_styles,
                 )
             }
         }?;

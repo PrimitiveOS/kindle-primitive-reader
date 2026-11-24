@@ -1237,7 +1237,10 @@ impl Probe {
         let main_language = settings.typography.resolve(publication_language);
         let shaping_language = main_language.map(TypographyLocale::shaping_language);
         let complete = excerpt.is_none();
-        let compose_footnotes = settings.in_page_footnotes && complete && book.is_reflowable_epub();
+        let compose_footnotes = (settings.in_page_footnotes
+            || user_styles.in_page_epub_footnotes())
+            && complete
+            && book.is_reflowable_epub();
         let xhtml = match excerpt {
             Some(value) => value,
             None => book.chapter(chapter).map_err(|e| e.to_string())?,

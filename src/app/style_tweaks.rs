@@ -1,7 +1,7 @@
 //! Supported style controls, book-specific CSS review and multiline editing.
 use super::navigation_layout::NavigationLayout;
 use super::*;
-use crate::user_styles::{self, Data, PRESETS, Snapshot};
+use crate::user_styles::{self, Data, EPUB_FOOTNOTES, PRESETS, Snapshot};
 use primitive_ui::{TextStyle, editor::Multiline};
 #[derive(Clone)]
 pub(super) enum Command {
@@ -74,6 +74,14 @@ impl Reader {
             .map(|b| b.id)
             .ok_or_else(|| "Open a reflowable book first".into())
     }
+    fn style_preset_available(&self, name: &str) -> bool {
+        name != EPUB_FOOTNOTES
+            || self.active.as_ref().is_some_and(|book| {
+                book.entry.format == DocumentFormat::Epub
+                    && self.style_store.data.book(book.id).enabled
+            })
+    }
+
     fn apply_style_data(&mut self, next: Data) -> Result<()> {
         let id = self.style_book()?;
         next.validate()?;
@@ -85,12 +93,20 @@ impl Reader {
             let mut config = active.reading.config.clone();
             config.user_styles = snapshot;
             config.prepare_page_layout(&active.reading.config);
-            Some(Reading::restore(
+            let anchor = active.reading.anchor();
+            let candidate = Reading::restore_with_scroll_top(
                 config,
                 active.reading.chapter,
                 active.reading.page,
-                active.reading.anchor().as_ref(),
-            )?)
+                anchor.as_ref(),
+                active.reading.scroll_history_top(),
+            )?;
+            if candidate.probe.book != active.reading.probe.book
+                || anchor.is_some() && candidate.anchor() != anchor
+            {
+                return Err("The reading location changed; reopen the book before applying".into());
+            }
+            Some(candidate)
         };
         // A failed write leaves the visible page, stored model and old snapshot intact.
         self.style_store.save(next)?;
@@ -117,6 +133,12 @@ impl Reader {
         ) && self.style_view.owner != Some(id)
         {
             return Err("Review this book's styles again before applying".into());
+        }
+        if let Command::Preset(name) | Command::Choose(name, _) | Command::Global(name, _) =
+            &command
+            && !self.style_preset_available(name)
+        {
+            return Err("Enable style tweaks in a reflowable EPUB first".into());
         }
         match command {
             Command::Preset(name) => {
@@ -312,6 +334,22 @@ impl Reader {
                     );
                 }
                 for p in PRESETS {
+                    if p.id == EPUB_FOOTNOTES
+                        && self
+                            .active
+                            .as_ref()
+                            .is_none_or(|book| book.entry.format != DocumentFormat::Epub)
+                    {
+                        continue;
+                    }
+                    if !self.style_preset_available(p.id) {
+                        items.insert(
+                            1,
+                            Item::new(p.title, Action::Heading)
+                                .detail("Enable style tweaks to change this setting"),
+                        );
+                        continue;
+                    }
                     let source = match b.choices.get(p.id) {
                         Some(true) => "On for this book",
                         Some(false) => "Off for this book",
@@ -323,7 +361,12 @@ impl Reader {
                             }
                         }
                     };
-                    items.push(action(p.title, Command::Preset(p.id.into())).detail(source));
+                    let row = action(p.title, Command::Preset(p.id.into())).detail(source);
+                    if p.id == EPUB_FOOTNOTES {
+                        items.insert(1, row);
+                    } else {
+                        items.push(row);
+                    }
                 }
                 items.push(Item::new("Supported reflow styles",Action::Heading).detail("Margins, hiding, floats, arbitrary selectors and vendor hints are not supported."));
                 items
@@ -339,12 +382,59 @@ impl Reader {
                 };
                 let current = b.choices.get(p.id).copied();
                 let global = data.global.contains(p.id);
-                vec![Item::new(p.title,Action::Heading).detail("Book choice overrides the live all-books default"),
-                    action("Use default",Command::Choose(p.id.into(),None)).detail(if current.is_none(){"Selected"}else{"Inherit future all-books changes"}),
-                    action("On for this book",Command::Choose(p.id.into(),Some(true))).detail(if current==Some(true){"Selected"}else{"Override the default"}),
-                    action("Off for this book",Command::Choose(p.id.into(),Some(false))).detail(if current==Some(false){"Selected"}else{"Override the default"}),
-                    action(if global{"Stop using on all books"}else{"Use on all books"},Command::Global(p.id.into(),!global)).detail("Existing books inherit unless they override it"),
-                    Item::new("Reader settings still apply",Action::Heading).detail("Explicit alignment, font override and line spacing remain independent controls."),]
+                let description = if p.id == EPUB_FOOTNOTES {
+                    "Show marked notes in supported single-page EPUB layouts"
+                } else {
+                    "Book choice overrides the live all-books default"
+                };
+                let detail = if p.id == EPUB_FOOTNOTES {
+                    "Apply to eligible EPUBs that use the default"
+                } else {
+                    "Existing books inherit unless they override it"
+                };
+                let status = if p.id == EPUB_FOOTNOTES {
+                    Item::new("When notes appear in the page", Action::Heading)
+                        .detail("Horizontal reading with marked notes in the same chapter")
+                } else {
+                    Item::new("Reader settings still apply", Action::Heading)
+                        .detail("Explicit alignment, font override and line spacing remain independent controls.")
+                };
+                vec![
+                    Item::new(p.title, Action::Heading).detail(description),
+                    action("Use default", Command::Choose(p.id.into(), None)).detail(
+                        if current.is_none() {
+                            "Selected"
+                        } else {
+                            "Inherit future all-books changes"
+                        },
+                    ),
+                    action("On for this book", Command::Choose(p.id.into(), Some(true))).detail(
+                        if current == Some(true) {
+                            "Selected"
+                        } else {
+                            "Override the default"
+                        },
+                    ),
+                    action(
+                        "Off for this book",
+                        Command::Choose(p.id.into(), Some(false)),
+                    )
+                    .detail(if current == Some(false) {
+                        "Selected"
+                    } else {
+                        "Override the default"
+                    }),
+                    action(
+                        if global {
+                            "Stop using on all books"
+                        } else {
+                            "Use on all books"
+                        },
+                        Command::Global(p.id.into(), !global),
+                    )
+                    .detail(detail),
+                    status,
+                ]
             }
             Screen::StyleFiles => {
                 let mut items: Vec<_> = self

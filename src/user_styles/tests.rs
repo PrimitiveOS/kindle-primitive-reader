@@ -105,3 +105,32 @@ fn atomic_store_failures_and_unknown_files_preserve_the_existing_bytes_and_model
     assert!(storage::Store::load(path).problem.is_some());
     assert_eq!(std::fs::read(outside).unwrap(), bytes);
 }
+
+#[test]
+fn in_page_footnote_effect_preserves_version_one_inheritance() {
+    let legacy = "{\"version\":1,\"global\":[\"link-bold\"],\"books\":{}}";
+    let mut data: Data = serde_json::from_str(legacy).unwrap();
+    let baseline = data.snapshot(1).unwrap();
+    assert!(!baseline.in_page_epub_footnotes());
+
+    data.choose(1, EPUB_FOOTNOTES, Some(false)).unwrap();
+    data.make_global(1, EPUB_FOOTNOTES, true).unwrap();
+    assert_eq!(data.snapshot(1).unwrap(), baseline);
+    let inherited = data.snapshot(2).unwrap();
+    assert!(inherited.in_page_epub_footnotes());
+    assert_eq!(inherited.css(), baseline.css());
+    assert_ne!(inherited, baseline);
+
+    data.choose(2, EPUB_FOOTNOTES, Some(true)).unwrap();
+    data.books.get_mut(&2).unwrap().enabled = false;
+    assert_eq!(data.snapshot(2).unwrap(), Snapshot::default());
+    assert!(data.enabled(2, EPUB_FOOTNOTES));
+    data.books.get_mut(&2).unwrap().enabled = true;
+    let serialized = serde_json::to_vec(&data).unwrap();
+    data = serde_json::from_slice(&serialized).unwrap();
+    assert_eq!(data.snapshot(2).unwrap(), inherited);
+
+    data.make_global(1, EPUB_FOOTNOTES, false).unwrap();
+    assert!(!data.books[&1].choices.contains_key(EPUB_FOOTNOTES));
+    assert!(data.snapshot(2).unwrap().in_page_epub_footnotes());
+}

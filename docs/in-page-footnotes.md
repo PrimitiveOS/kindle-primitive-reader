@@ -1,8 +1,12 @@
 # In-page EPUB footnote pagination
 
-Reader has an opt-in layout policy for eligible EPUB footnotes in single-page
-horizontal reading. It reserves space in the reading area, paints the note and
-separator at the bottom, and carries long notes across page turns. The original
+Open **Settings › Style tweaks › In-page EPUB footnotes** in a reflowable
+EPUB. Choose **On for this book**, **Off for this book**, or **Use default**.
+**Use on all books** enables the live default for EPUBs using it. The master
+style switch suspends the effect and retains the choices.
+
+In supported single-page horizontal reading, Reader reserves space for the note
+and its separator at the bottom and carries long notes across page turns. The original
 note remains in the book flow. The in-page copy uses the same source positions,
 so word selection, highlighting, backlink hits and saved locations use the
 original book text. Repeated references to the same note share one copy on a
@@ -19,13 +23,21 @@ location. Line wraps and exact page breaks reflect each engine's layout.
 [KOReader's EPUB tweak](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L920-L943) ·
 [Pinned page splitter](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvpagesplitter.cpp#L810-L1340)
 
-The current policy is internal. It covers explicit EPUB and ARIA notes in a
-trailing rendered region, referenced from the same spine chapter. All targets
-must resolve and their layout must be horizontal, left-to-right text with
-non-overlapping lines. Interleaved, nested, and cross-spine notes, complex
-publisher breaks, images and tables, FictionBook, and facing or continuous
-reading use the existing Book layout. A user-facing style control and broader
-CREngine coverage remain open.
+The compositor covers explicit EPUB and ARIA notes in a trailing rendered
+region referenced from the same spine chapter. All targets must resolve in a
+horizontal, left-to-right layout. Overlapping glyphs within a text band stay
+together, and overlapping note boundaries use the normal layout. Interleaved,
+nested and cross-spine notes, complex publisher breaks, images and tables,
+FictionBook, facing pages, continuous reading and custom flows use the normal
+layout. The reading position uses the same source anchor when the layout changes.
+
+The Mac workflow exercises the visible controls, book defaults and overrides,
+reopen, master switch, and facing and continuous layout fallback. The pinned
+KOReader replay invokes the stock tap and long-press actions and reloads the
+saved edition override before checking the native rendered note bands.
+[Stock style controls](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerstyletweak.lua#L509-L610) ·
+[Mac controls](screenshots/in-page-footnote-style.png) ·
+[Mac reading page](screenshots/in-page-footnote-reading.png)
 
 [Reader short note](screenshots/in-page-reader-band.png) ·
 [KOReader short note](screenshots/in-page-stock-band.png) ·
@@ -44,6 +56,8 @@ book, font, viewport and margins. Both runs use only local files.
 reader="$PWD"
 scratch=$(mktemp -d)
 mkdir -p "$scratch/profile" "$scratch/cache" "$scratch/captures"
+READER_SELECTION_VIEWPORT_CAPTURES="$scratch/captures" \
+  cargo test --locked --features kindle --lib in_page_footnote_style
 READER_IN_PAGE_FOOTNOTE_CAPTURES="$scratch/captures" \
   cargo test --locked --features kindle --lib footnotes::in_page::tests
 cd "$stock/runtime/koreader"

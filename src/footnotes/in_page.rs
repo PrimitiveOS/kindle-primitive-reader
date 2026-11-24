@@ -33,21 +33,14 @@ pub(crate) fn paginate(
         return None;
     }
     let (notes, references) = discover(chapter, xhtml, source, lines)?;
-    // Disjoint cuts also keep hit tests, box decoration and raster rows consistent.
-    let mut previous = 0.0;
-    for line in lines {
-        if !line.top.is_finite()
-            || !line.bottom.is_finite()
-            || line.top + 0.01 < previous
-            || line.bottom <= line.top
-            || line.bytes.is_empty()
-            || line.page_extent() != (line.top..line.bottom)
-            || height_of(&(line.top..line.bottom)) > height - gap
-        {
-            return None;
-        }
-        previous = line.bottom;
-    }
+    let groups = line_groups(lines, &notes, height - gap)?;
+    let notes: Vec<_> = notes
+        .into_iter()
+        .map(|note| {
+            groups.partition_point(|group| group.lines.end <= note.start)
+                ..groups.partition_point(|group| group.lines.start < note.end)
+        })
+        .collect();
 
     let mut packer = Packer {
         height,
@@ -56,30 +49,37 @@ pub(crate) fn paginate(
         draft: Draft::default(),
     };
     let mut pending = VecDeque::new();
-    for (index, line) in lines.iter().enumerate() {
+    for group in &groups {
+        let first_group = group.lines.start == 0;
         let body_start = packer.draft.body.as_ref().map_or_else(
-            || if index == 0 { 0.0 } else { line.top },
+            || if first_group { 0.0 } else { group.extent.start },
             |body| body.start,
         );
-        if height_of(&(body_start..line.bottom)) > height - packer.draft.reserve(gap) {
-            if index == 0 {
+        if height_of(&(body_start..group.extent.end)) > height - packer.draft.reserve(gap) {
+            if first_group {
                 return None;
             }
             packer.finish()?;
         }
-        let body = packer.draft.body.get_or_insert(line.top..line.bottom);
-        if index == 0 {
+        let body = packer
+            .draft
+            .body
+            .get_or_insert_with(|| group.extent.clone());
+        if first_group {
             body.start = 0.0;
         }
-        body.end = line.bottom;
+        body.end = group.extent.end;
 
-        for &id in references.get(&index).into_iter().flatten() {
+        for &id in references
+            .range(group.lines.clone())
+            .flat_map(|(_, ids)| ids)
+        {
             if !pending.contains(&id) && !packer.draft.seen.contains(&id) {
                 pending.push_back(id);
             }
         }
         while let Some(&id) = pending.front() {
-            if !packer.add_note(id, &lines[notes[id].clone()])? {
+            if !packer.add_note(id, &groups[notes[id].clone()])? {
                 // Continue filling the body while a first note line cannot fit.
                 break;
             }
@@ -87,15 +87,60 @@ pub(crate) fn paginate(
         }
     }
     for id in pending {
-        if !packer.add_note(id, &lines[notes[id].clone()])? {
+        if !packer.add_note(id, &groups[notes[id].clone()])? {
             packer.finish()?;
-            if !packer.add_note(id, &lines[notes[id].clone()])? {
+            if !packer.add_note(id, &groups[notes[id].clone()])? {
                 return None;
             }
         }
     }
     packer.finish()?;
     Some(packer.pages)
+}
+
+struct LineGroup {
+    lines: Range<usize>,
+    extent: Range<f32>,
+}
+
+fn line_groups(lines: &[Line], notes: &[Range<usize>], max_extent: u32) -> Option<Vec<LineGroup>> {
+    let boundaries: BTreeSet<_> = notes
+        .iter()
+        .flat_map(|note| [note.start, note.end])
+        .collect();
+    let mut groups: Vec<LineGroup> = Vec::with_capacity(lines.len());
+    for (index, line) in lines.iter().enumerate() {
+        let extent = line.top..line.bottom;
+        if !line.top.is_finite()
+            || !line.bottom.is_finite()
+            || line.top < 0.0
+            || line.bottom <= line.top
+            || line.bytes.is_empty()
+            || line.page_extent() != extent
+        {
+            return None;
+        }
+        // Glyph extents can overlap after line spacing by a pixel or more.
+        // Cut between whole bands so both paint and source hit testing agree.
+        if let Some(previous) = groups.last_mut()
+            && previous.extent.end > extent.start + 0.01
+        {
+            if boundaries.contains(&index) {
+                return None;
+            }
+            previous.lines.end = index + 1;
+            previous.extent.end = previous.extent.end.max(extent.end);
+        } else {
+            groups.push(LineGroup {
+                lines: index..index + 1,
+                extent,
+            });
+        }
+    }
+    groups
+        .iter()
+        .all(|group| height_of(&group.extent) <= max_extent)
+        .then_some(groups)
 }
 
 type References = BTreeMap<usize, Vec<usize>>;
@@ -254,28 +299,29 @@ struct Packer {
 }
 
 impl Packer {
-    fn add_note(&mut self, id: usize, mut lines: &[Line]) -> Option<bool> {
+    fn add_note(&mut self, id: usize, mut groups: &[LineGroup]) -> Option<bool> {
         if self.draft.seen.contains(&id) {
             return Some(true);
         }
-        while let Some(first) = lines.first() {
+        while let Some(first) = groups.first() {
             let body_height = self.draft.body.as_ref().map_or(0, height_of);
             let available = self
                 .height
                 .saturating_sub(body_height + self.draft.note_height + self.gap);
-            let count = lines
+            let start = first.extent.start;
+            let count = groups
                 .iter()
-                .take_while(|line| height_of(&(first.top..line.bottom)) <= available)
+                .take_while(|group| height_of(&(start..group.extent.end)) <= available)
                 .count();
             if count == 0 {
                 return Some(false);
             }
-            let range = first.top..lines[count - 1].bottom;
+            let range = start..groups[count - 1].extent.end;
             self.draft.note_height += height_of(&range);
             self.draft.notes.push(range);
             self.draft.seen.insert(id);
-            lines = &lines[count..];
-            if !lines.is_empty() {
+            groups = &groups[count..];
+            if !groups.is_empty() {
                 self.finish()?;
             }
         }

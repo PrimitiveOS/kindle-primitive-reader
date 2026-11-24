@@ -48,8 +48,8 @@ only to find and compare relevant controls.
 device evidence. The control inventory and foreground Kindle acceptance
 checks below track the remaining feature and device work.
 
-**Pinned control inventory:** 241 of 536 in-scope reading-control rows have
-an implemented workflow, 232 are partial, 45 are gaps, and 18 need audit. The
+**Pinned control inventory:** 242 of 536 in-scope reading-control rows have
+an implemented workflow, 231 are partial, 45 are gaps, and 18 need audit. The
 [statistics reset comparison](reading-statistics.md#reset-statistics) updates
 seven rows with an executable stock check and Mac verification. The
 [corner hold comparison](corner-hold-gestures.md) covers the ignore toggle,
@@ -182,7 +182,7 @@ other typography controls and broader publication types remains open.
 - [x] Set the active Reader goal to KOReader's core Kindle reading workflows: document open/render, navigation/layout, search/lookup, bookmarks/annotations, reading progress, accessibility, offline scans, and local reading data.
 - [x] Save per-book typography language and the embedded-tag switch. Compare the stock 53 choices and default/fallback precedence, real English line breaks, and source-anchor preservation. Broader language rules remain open. [Typography language](english-hyphenation.md#typography-language)
 - [x] Group local dictionary results by source, with nested lookup and a return to the exact chooser page and original passage. Compare the stock Results tap and hold on EPUB and PDF. [Grouped dictionaries](shared-dictionaries.md#choosing-among-matching-sources)
-- [x] Compose explicit trailing EPUB notes in an in-page band behind an internal style setting. Verify long-note continuation, body text and link geometry, page turns and restore. The UI setting and wider note layouts remain open. [In-page footnotes](in-page-footnotes.md)
+- [x] Compose explicit trailing EPUB notes in an in-page band. Match saved book choice, live default, the master style switch, canonical link and selection positions, and long-note continuation. Wider note layouts remain open. [In-page footnotes](in-page-footnotes.md)
 - [x] Implement horizontal, text-only inline-block geometry for the supported Flat, Book and Web policies. Check native width, atomic page carry, links and selections. The four-mode selector and broader content remain open. [Inline-block comparison](render-modes.md#text-only-inline-blocks)
 - [x] Audit all four native CREngine Render Mode masks against authored CSS and compare Reader’s existing Parley and Blitz paths. The mode control remains open for the measured layout and source-position work. [Reference and captures](render-modes.md)
 - [x] Recount exact screen pages after committed typography edits for supported EPUBs. Check canonical position, ordinary opens, paint-only edits, rollback, sleep, USB and immediate Go to page after completion. [Native comparison and Mac captures](whole-book-screen-pages.md#partial-typography-rendering-comparison)

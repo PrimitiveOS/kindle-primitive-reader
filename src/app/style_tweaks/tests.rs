@@ -620,3 +620,147 @@ fn styles_backup_component_round_trips_live_defaults_and_rejects_unsupported_css
         expected.snapshot(id).unwrap()
     );
 }
+
+fn footnote_book(f: &Fixture, name: &str) -> PathBuf {
+    let path = f.root.join(name);
+    fs::copy(crate::test_fixture("in-page-footnotes.epub"), &path).unwrap();
+    path
+}
+
+fn has_note_band(app: &Reader) -> bool {
+    let reading = &app.active.as_ref().unwrap().reading;
+    reading
+        .probe
+        .in_page_notes
+        .as_ref()
+        .is_some_and(|pages| pages.iter().any(|page| page.separator.is_some()))
+}
+
+#[test]
+fn in_page_footnote_style_reflows_from_visible_controls_and_preserves_the_passage() {
+    let f = Fixture::new();
+    let path = footnote_book(&f, "Footnotes.epub");
+    let original = fs::read(&path).unwrap();
+    let mut app = open(&f);
+    app.open_path(&path).unwrap();
+    let position = app.active.as_ref().unwrap().reading.anchor();
+    let baseline = capture(&mut app);
+    assert!(!has_note_band(&app));
+
+    app.activate(Action::Show(Screen::StyleTweaks)).unwrap();
+    tap_contents_item(&mut app, "In-page EPUB footnotes");
+    assert_eq!(app.screen, Screen::StylePreset);
+    tap_contents_item(&mut app, "On for this book");
+    assert!(has_note_band(&app));
+    assert_ne!(capture(&mut app), baseline);
+    assert_eq!(app.active.as_ref().unwrap().reading.anchor(), position);
+    let mut screen = crate::app::selection_viewport_tests::canvas(&app, ReadingViewport::PORTRAIT);
+    capture_viewport(&app, &mut screen, "in-page-footnote-style.png", false);
+    app.show(Screen::Book);
+    capture_viewport(&app, &mut screen, "in-page-footnote-reading.png", false);
+    let active = app.active.as_ref().unwrap();
+    assert!(
+        active.reading.probe.in_page_notes.as_ref().unwrap()[active.reading.page]
+            .separator
+            .is_some()
+    );
+    assert!(active.reading.visible_text().contains("The repair date"));
+
+    app.activate(Action::ReadingMode(true)).unwrap();
+    assert!(!has_note_band(&app));
+    assert!(
+        app.style_store
+            .data
+            .enabled(app.open_book_id().unwrap(), EPUB_FOOTNOTES)
+    );
+    app.activate(Action::ReadingMode(false)).unwrap();
+    assert!(has_note_band(&app));
+
+    app.activate(Action::FacingPages(true)).unwrap();
+    assert!(!has_note_band(&app));
+    app.activate(Action::FacingPages(false)).unwrap();
+    assert!(has_note_band(&app));
+    let current = app.active.as_ref().unwrap().reading.anchor();
+
+    app.show(Screen::StyleTweaks);
+    tap_contents_item(&mut app, "Enable style tweaks");
+    assert!(!has_note_band(&app));
+    assert_eq!(capture(&mut app), baseline);
+    assert!(
+        app.activate_style(Command::Preset(EPUB_FOOTNOTES.into()))
+            .is_err()
+    );
+    tap_contents_item(&mut app, "Enable style tweaks");
+    assert!(has_note_band(&app));
+    assert_eq!(app.active.as_ref().unwrap().reading.anchor(), current);
+    app.active
+        .as_mut()
+        .unwrap()
+        .reading
+        .go_to_page(2, 0)
+        .unwrap();
+    assert!(!has_note_band(&app));
+    assert!(
+        app.active
+            .as_ref()
+            .unwrap()
+            .reading
+            .visible_text()
+            .contains("Interleaved note")
+    );
+    assert_eq!(fs::read(&path).unwrap(), original);
+}
+
+#[test]
+fn in_page_footnote_style_defaults_persist_and_book_override_does_not_change_another_epub() {
+    let f = Fixture::new();
+    let one = footnote_book(&f, "First notes.epub");
+    let two = footnote_book(&f, "Second notes.epub");
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&two)
+        .unwrap();
+    let mut archive = zip::ZipWriter::new_append(file).unwrap();
+    archive.set_comment("Second edition");
+    archive.finish().unwrap();
+
+    let mut app = open(&f);
+    app.open_path(&one).unwrap();
+    let one_id = app.open_book_id().unwrap();
+    app.activate_style(Command::Preset(EPUB_FOOTNOTES.into()))
+        .unwrap();
+    tap_contents_item(&mut app, "Use on all books");
+    assert!(has_note_band(&app));
+    app.open_path(&two).unwrap();
+    let two_id = app.open_book_id().unwrap();
+    assert_ne!(one_id, two_id);
+    assert!(has_note_band(&app));
+    app.activate_style(Command::Preset(EPUB_FOOTNOTES.into()))
+        .unwrap();
+    tap_contents_item(&mut app, "Off for this book");
+    assert!(!has_note_band(&app));
+    app.save().unwrap();
+
+    let mut reopened = open(&f);
+    reopened.open_path(&one).unwrap();
+    assert!(has_note_band(&reopened));
+    reopened.open_path(&two).unwrap();
+    assert!(!has_note_band(&reopened));
+    reopened
+        .activate_style(Command::Preset(EPUB_FOOTNOTES.into()))
+        .unwrap();
+    tap_contents_item(&mut reopened, "Use default");
+    assert!(has_note_band(&reopened));
+
+    let non_epub = source_book(&f);
+    reopened.open_path(&non_epub).unwrap();
+    reopened.show(Screen::StyleTweaks);
+    assert!(
+        !reopened
+            .items()
+            .iter()
+            .any(|item| item.title == "In-page EPUB footnotes")
+    );
+    assert!(!has_note_band(&reopened));
+}
