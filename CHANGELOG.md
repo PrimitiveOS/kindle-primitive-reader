@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.33
+
+- Show up to 1–10 lines per search result with measured row heights.
+- Focus the results list near the current page or return to the location where the query began.
+- Temporarily fit a fixed page when opening a match from the results list. Step between exact matches and restore the previous view when leaving the preview.
+
 ## 0.1.32
 
 - Choose what Find does with selected text, how many search results appear per page, and how many context words each result shows.
