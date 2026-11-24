@@ -22,6 +22,8 @@ pub(crate) const MAX_VERY_LONG_PRESS_TENTHS: u16 = 200;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 pub(crate) struct ReadingControls {
+    #[serde(skip_serializing_if = "crate::library::FolderOrder::is_default")]
+    pub folder_order: crate::library::FolderOrder,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub search_rows: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]

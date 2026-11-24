@@ -56,6 +56,8 @@ The development candidate offers **Text › Type** presets and a decimal **More*
 
 At the end of a book, Reader can show actions, mark the book as finished, open the next readable file or return to Library. [End-of-book actions](docs/document-end.md)
 
+Choose **Sort** in Library to set the order shared by the folder picker and previous or next file actions. [Folder ordering](docs/document-end.md#choose-folder-order)
+
 Choose when Reader saves your position, bookmarks and notes, or save them immediately from the reading tools. [Save reading data](docs/metadata-save.md)
 
 Browse page bookmarks, highlights and notes across books from **Library › Bookmark browser**. Choose History, collections, selected books, archived records or a folder. Select books by author, series, language or keyword, and inspect available covers and descriptions. Preview a mark, then tap **View in book** to open its passage. [Bookmark browser](docs/bookmark-browser.md)

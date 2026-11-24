@@ -106,8 +106,8 @@ use crate::koreader_import::{self, ExportEntry, QuoteMatch, QuoteResolver};
 use crate::koreader_sidecar::{self, SidecarProgress};
 use crate::library::{
     BookMetadata, BookPreferences, BookState, Bookmark, DocumentFormat, FixedPreferences,
-    FixedTileAxis, FolderDirection, Highlight, Library, LibraryBook, PdfHighlight, ReadingPosition,
-    ReadingStatus,
+    FixedTileAxis, FolderDirection, FolderOrder, Highlight, Library, LibraryBook, PdfHighlight,
+    ReadingPosition, ReadingStatus,
 };
 use crate::ocr_job::{OcrAssets, OcrJob};
 use crate::pdf_annotations;
@@ -174,6 +174,7 @@ enum Screen {
     Footnote,
     Library,
     LibraryFind,
+    FolderOrder,
     OrganizeLibrary,
     BookmarkBrowser(bookmark_browser::Page),
     ReadingHistory(reading_history::Page),
@@ -300,6 +301,7 @@ impl Screen {
             Self::Footnote => "Footnote",
             Self::Library => "Reader",
             Self::LibraryFind => "Find a document",
+            Self::FolderOrder => "Folder order",
             Self::OrganizeLibrary => "Library organization",
             Self::BookmarkBrowser(page) => page.title(),
             Self::ReadingHistory(page) => page.title(),
@@ -442,6 +444,7 @@ enum Action {
     CurrentBookFolder,
     Continue,
     ClearLibraryFilter,
+    SetFolderOrder(FolderOrder),
     ListBooks(BookList),
     OrganizeCurrent,
     BookmarkBrowser(bookmark_browser::Command),
@@ -892,15 +895,17 @@ impl Reader {
     }
 
     fn open_data(documents: &Path, state: &Path, fonts: Vec<PathBuf>) -> io::Result<Self> {
-        let (library, browser) = with_storage(|| {
+        let library = with_storage(|| {
             let mut library = Library::open(documents, state)?;
             library.scan()?;
-            let browser = FileBrowser::new(library.browse(Path::new(""))?);
-            Ok((library, browser))
+            Ok(library)
         })?;
         let data = state.parent().unwrap_or(documents);
         let controls_path = data.join("reading-controls.json");
         let controls = ReadingControls::load(&controls_path, !library.recents().is_empty());
+        let browser = FileBrowser::new(with_storage(|| {
+            library.browse_with_order(Path::new(""), controls.folder_order)
+        })?);
         let fonts_directory = data.join("fonts");
         let footer_font_path = data.join("status-bar-font.json");
         let footer_font_file = footer_font_face::load(&footer_font_path, &fonts_directory);
@@ -2410,6 +2415,9 @@ impl Reader {
         if self.screen == Screen::Library {
             return self.library_items().collect();
         }
+        if self.screen == Screen::FolderOrder {
+            return self.folder_order_items();
+        }
         if let Some(items) = self.organization_items() {
             return items;
         }
@@ -3331,6 +3339,7 @@ impl Reader {
                 self.book_list = None;
                 self.show(Screen::OrganizeLibrary);
             }
+            Action::SetFolderOrder(order) => self.set_folder_order(order)?,
             Action::SetReadingControls(mut controls) => {
                 if controls.status_bar == crate::reading_controls::StatusBar::Custom
                     && self.controls.status_bar != crate::reading_controls::StatusBar::Custom
@@ -8468,7 +8477,7 @@ impl App for Reader {
             Input::Tap(x, y) if primitive_ui::back_button(WIDTH as i32).contains(x, y) => {
                 match self.screen {
                     Screen::LibraryExport(page) => self.back_from_library_export(page),
-                    Screen::OrganizeLibrary => self.show(Screen::Library),
+                    Screen::OrganizeLibrary | Screen::FolderOrder => self.show(Screen::Library),
                     Screen::BookList if matches!(self.book_list, Some(BookList::Author(_))) => {
                         self.book_list = Some(BookList::Authors);
                         self.show(Screen::BookList);

@@ -230,10 +230,77 @@ pub(crate) enum FolderDirection {
     Next,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum FolderSort {
+    #[default]
+    NaturalName,
+    FileName,
+    FileType,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct FolderOrder {
+    pub(crate) sort: FolderSort,
+    pub(crate) reverse: bool,
+}
+
+impl FolderOrder {
+    pub(crate) fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct BrowseList {
     pub entries: Vec<BrowseEntry>,
     pub truncated: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum BrowseGroup {
+    EpubMarker,
+    Folder,
+    File,
+}
+
+impl BrowseList {
+    pub(crate) fn sort(&mut self, order: FolderOrder) {
+        match order.sort {
+            FolderSort::NaturalName => self.entries.sort_by(|left, right| {
+                left.group()
+                    .cmp(&right.group())
+                    .then_with(|| natural_cmp(&left.name, &right.name))
+                    .then_with(|| left.path.cmp(&right.path))
+            }),
+            FolderSort::FileName | FolderSort::FileType => {
+                self.entries.sort_by_cached_key(|entry| {
+                    let group = entry.group();
+                    let extension =
+                        if order.sort == FolderSort::FileType && group == BrowseGroup::File {
+                            entry.path.extension().and_then(|value| value.to_str())
+                        } else {
+                            None
+                        };
+                    (
+                        group,
+                        extension.map(fold_search),
+                        fold_search(&entry.name),
+                        entry.path.clone(),
+                    )
+                });
+            }
+        }
+        if order.reverse {
+            for group in self
+                .entries
+                .chunk_by_mut(|left, right| left.group() == right.group())
+            {
+                group.reverse();
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -241,6 +308,18 @@ pub struct BrowseEntry {
     pub path: PathBuf,
     pub name: String,
     pub kind: BrowseKind,
+}
+
+impl BrowseEntry {
+    fn group(&self) -> BrowseGroup {
+        if crate::epub_members::is_folder_book(&self.path) {
+            BrowseGroup::EpubMarker
+        } else if matches!(self.kind, BrowseKind::Folder) {
+            BrowseGroup::Folder
+        } else {
+            BrowseGroup::File
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1170,6 +1249,14 @@ impl Library {
 
     /// List one folder at a time. An empty Documents-relative path selects the library root.
     pub fn browse(&self, folder: &Path) -> io::Result<BrowseList> {
+        self.browse_with_order(folder, FolderOrder::default())
+    }
+
+    pub(crate) fn browse_with_order(
+        &self,
+        folder: &Path,
+        order: FolderOrder,
+    ) -> io::Result<BrowseList> {
         let directory = fs::read_dir(self.browse_folder(folder)?)?;
         let known_metadata = self.known_metadata();
         let mut entries = Vec::new();
@@ -1242,15 +1329,9 @@ impl Library {
                 kind,
             });
         }
-        entries.sort_by(|left, right| {
-            let folder = |entry: &BrowseEntry| matches!(entry.kind, BrowseKind::Folder);
-            let book = |entry: &BrowseEntry| crate::epub_members::is_folder_book(&entry.path);
-            book(right)
-                .cmp(&book(left))
-                .then_with(|| folder(right).cmp(&folder(left)))
-                .then_with(|| natural_cmp(&left.name, &right.name))
-        });
-        Ok(BrowseList { entries, truncated })
+        let mut list = BrowseList { entries, truncated };
+        list.sort(order);
+        Ok(list)
     }
 
     fn browse_folder(&self, relative: &Path) -> io::Result<PathBuf> {
@@ -1296,31 +1377,34 @@ impl Library {
         &self.books
     }
 
-    /// Use the same natural filename order and document availability as the folder picker.
+    /// Use the same order and document availability as the folder picker.
     pub(crate) fn next_book_in_folder(
         &self,
         current: &LibraryBook,
+        order: FolderOrder,
     ) -> io::Result<Option<LibraryBook>> {
-        self.folder_book(current, FolderDirection::Next, false)
+        self.folder_book(current, FolderDirection::Next, order, false)
     }
 
     pub(crate) fn adjacent_book_in_folder(
         &self,
         current: &LibraryBook,
         direction: FolderDirection,
+        order: FolderOrder,
     ) -> io::Result<Option<LibraryBook>> {
-        self.folder_book(current, direction, true)
+        self.folder_book(current, direction, order, true)
     }
 
     fn folder_book(
         &self,
         current: &LibraryBook,
         direction: FolderDirection,
+        order: FolderOrder,
         skip_finished: bool,
     ) -> io::Result<Option<LibraryBook>> {
         let path = current.library_path();
         let folder = path.parent().unwrap_or_else(|| Path::new(""));
-        let mut entries = self.browse(folder)?.entries;
+        let mut entries = self.browse_with_order(folder, order)?.entries;
         if direction == FolderDirection::Previous {
             entries.reverse();
         }

@@ -45,6 +45,13 @@ separate from Oasis acceptance. Schedule only relevant reading controls from
 this inventory; excluded controls are not implementation tasks, and inventory
 counts do not measure completed parity.
 
+## Folder order verification
+
+Compare natural name, file name, file type and reverse order with the pinned
+KOReader file chooser. Test the saved choice after reopen, physical pagination,
+retained search result ranking and page, traversal between EPUB and PDF, and
+the existing next-file end action. [Folder order controls](document-end.md#choose-folder-order)
+
 ## Reader 0.1.38 verification plan
 
 Compare the optional top header’s published chapter marks across an entire
