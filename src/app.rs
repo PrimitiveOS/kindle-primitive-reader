@@ -8,6 +8,8 @@ mod bookmark_browser;
 mod character_page_settings;
 mod content_dpi;
 mod contents_position;
+mod contents_tree;
+mod contents_view;
 mod custom_contents;
 mod line_spacing;
 mod logical_font;
@@ -218,6 +220,7 @@ enum Screen {
     LocationHistory,
     BookTools,
     Contents,
+    ContentsSearch,
     GeneratedContents,
     CustomContents,
     CustomTitle,
@@ -356,6 +359,7 @@ impl Screen {
             Self::PdfPassword => "Unlock PDF",
             Self::ScanColumns => "",
             Self::Contents | Self::FixedContents => "Contents",
+            Self::ContentsSearch => "Search contents",
             Self::CustomContents => "Custom contents",
             Self::CustomEdits => "Edit chapters",
             Self::CustomBookmarks => "Choose a bookmark",
@@ -758,6 +762,7 @@ pub struct Reader {
     result_context: Option<result_context::ResultContext>,
     focused_result: Option<usize>,
     current_contents_row: Option<usize>,
+    contents_view: Option<contents_view::ContentsView>,
     publisher_label_canvas: std::cell::RefCell<Option<Canvas>>,
     map_window: fixed_book_map::MapWindow,
     back: Vec<HistoryLocation>,
@@ -955,6 +960,7 @@ impl Reader {
             result_context: None,
             focused_result: None,
             current_contents_row: None,
+            contents_view: None,
             publisher_label_canvas: Default::default(),
             map_window: fixed_book_map::MapWindow::default(),
             back: Vec::new(),
@@ -1324,6 +1330,7 @@ impl Reader {
     }
 
     fn show(&mut self, screen: Screen) {
+        let previous = self.screen;
         if !matches!(screen, Screen::Book | Screen::Fixed) {
             self.touch_hold = None;
         }
@@ -1580,11 +1587,12 @@ impl Reader {
         if screen == Screen::Library {
             self.reading_history.finish(Instant::now());
         }
-        self.current_contents_row = if screen == Screen::PublisherPages {
-            self.visible_publisher_page()
-        } else {
-            self.locate_contents_row()
-        };
+        self.current_contents_row = None;
+        if screen == Screen::PublisherPages {
+            self.current_contents_row = self.visible_publisher_page();
+        } else if screen.is_contents() {
+            self.prepare_contents(previous != Screen::ContentsSearch);
+        }
         self.list_page = if screen == Screen::Matches {
             self.matches_page
         } else {
@@ -1721,6 +1729,9 @@ impl Reader {
 
     fn list_window(&self) -> (usize, Vec<Item>) {
         let first = self.list_page * ROWS_PER_PAGE;
+        if self.screen.is_contents() {
+            return self.contents_items(first, ROWS_PER_PAGE);
+        }
         if let Screen::BookmarkBrowser(page) = self.screen {
             return self.bookmark_window(page, first, ROWS_PER_PAGE);
         }
@@ -1766,6 +1777,9 @@ impl Reader {
     }
 
     fn items(&self) -> Vec<Item> {
+        if self.screen.is_contents() {
+            return self.contents_items(0, usize::MAX).1;
+        }
         if matches!(
             self.screen,
             Screen::StyleTweaks
@@ -1798,9 +1812,7 @@ impl Reader {
         if matches!(
             self.screen,
             Screen::CustomContents | Screen::CustomEdits | Screen::CustomBookmarks
-        ) || (matches!(self.screen, Screen::Contents | Screen::FixedContents)
-            && self.custom_contents_enabled())
-        {
+        ) {
             return self.custom_items();
         }
         match self.screen {
@@ -2439,17 +2451,6 @@ impl Reader {
             return match self.screen {
                 Screen::FixedBookmarks => self.bookmark_items(fixed.id),
                 Screen::Highlights => self.bookmark_items(fixed.id),
-                Screen::FixedContents => std::iter::once(Item::new(
-                    "Custom contents",
-                    Action::Show(Screen::CustomContents),
-                ))
-                .chain(fixed.reading.outline().iter().map(|entry| {
-                    Item::new(
-                        format!("{}{}", "  ".repeat(entry.depth.min(6)), entry.title),
-                        entry.page.map_or(Action::Heading, Action::FixedPage),
-                    )
-                }))
-                .collect(),
                 Screen::OcrLanguage => self.ocr_assets.as_ref().map_or_else(Vec::new, |assets| {
                     assets
                         .languages()
@@ -2470,41 +2471,6 @@ impl Reader {
         };
         let reading = &active.reading;
         match self.screen {
-            Screen::Contents => {
-                let mut items = Vec::new();
-                if active.entry.format == DocumentFormat::Epub {
-                    items.push(
-                        Item::new("Generated outline", Action::ShowGeneratedContents)
-                            .detail("Build from headings in the book"),
-                    );
-                }
-                items.push(Item::new(
-                    "Custom contents",
-                    Action::Show(Screen::CustomContents),
-                ));
-                if reading.probe.toc.is_empty() {
-                    items.extend(reading.probe.chapter_entries().iter().map(|chapter| {
-                        Item::new(
-                            &chapter.label,
-                            Action::Jump(Destination {
-                                path: chapter.href.clone(),
-                                fragment: None,
-                            }),
-                        )
-                    }));
-                } else {
-                    items.extend(reading.probe.toc.iter().map(|entry| {
-                        Item::new(
-                            format!("{}{}", "  ".repeat(entry.depth.min(4)), entry.label),
-                            entry
-                                .destination
-                                .clone()
-                                .map_or(Action::Heading, Action::Jump),
-                        )
-                    }));
-                }
-                items
-            }
             Screen::PageNumbering => self.numbering_items(),
             Screen::NumberingDefaults => self.numbering_defaults_items(),
             Screen::PublisherOffer => self.publisher_offer_items(),
@@ -7076,6 +7042,10 @@ impl Reader {
             _ => self.screen.title(),
         };
         header(canvas, title, "Back");
+        if self.screen.is_contents() {
+            self.draw_contents(canvas);
+            return;
+        }
         if self.screen == Screen::LibraryExport(library_export::Page::Colors) {
             self.draw_export_colors(canvas);
             return;
@@ -7100,6 +7070,7 @@ impl Reader {
         if matches!(
             self.screen,
             Screen::Find
+                | Screen::ContentsSearch
                 | Screen::LibraryFind
                 | Screen::VocabularySearch
                 | Screen::DictionaryEntry
@@ -7117,6 +7088,7 @@ impl Reader {
             let (hint, action) = match self.screen {
                 Screen::Note | Screen::EditNote => ("Note text", "Save"),
                 Screen::LibraryFind => ("Title, author or filename", "Find"),
+                Screen::ContentsSearch => ("Heading text, or * to show all", "Find"),
                 Screen::VocabularySearch => ("Saved word", "Find"),
                 Screen::DictionaryEntry => ("Word or phrase", "Look up"),
                 Screen::BookmarkFind => ("Bookmark, highlighted text, or note", "Find"),
@@ -7992,6 +7964,15 @@ impl App for Reader {
         ) {
             return self.name_editor_input(input);
         }
+        if self.screen == Screen::ContentsSearch {
+            return self.contents_search_input(input);
+        }
+        if self.screen.is_contents()
+            && let Input::Tap(x, y) = input
+            && let Some(change) = self.contents_tap(x, y)
+        {
+            return change;
+        }
         if self.screen == Screen::PdfPassword {
             return self.handle_pdf_password(input);
         }
@@ -8034,7 +8015,12 @@ impl App for Reader {
         }
         let (count, mut items) = self.list_window();
         let broad = self.has_list_shortcuts(count);
-        let (prev, next) = if broad {
+        let (prev, next) = if self.screen.is_contents() {
+            (
+                contents_view::footer_hit(PREV),
+                contents_view::footer_hit(NEXT),
+            )
+        } else if broad {
             (PREV_MATCH_PAGE, NEXT_MATCH_PAGE)
         } else {
             (PREV, NEXT)
@@ -11596,7 +11582,7 @@ mod tests {
         );
     }
 
-    fn write_outline_fixture(path: &Path, nav: Option<&[u8]>, ncx: Option<&[u8]>) {
+    pub(super) fn write_outline_fixture(path: &Path, nav: Option<&[u8]>, ncx: Option<&[u8]>) {
         let mut zip = zip::ZipWriter::new(fs::File::create(path).unwrap());
         let options = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Stored);
@@ -12740,7 +12726,7 @@ mod tests {
         assert!(!prefs.smooth_images && prefs.invert_night_images);
     }
 
-    pub(super) fn tap_contents_item(app: &mut Reader, label: &str) {
+    fn show_list_item(app: &mut Reader, label: &str) -> usize {
         let index = app
             .items()
             .iter()
@@ -12753,8 +12739,27 @@ mod tests {
         while app.list_page > page {
             app.input(Input::PageBack);
         }
-        let y = LIST_Y + (index % ROWS_PER_PAGE) as i32 * ROW_HEIGHT + ROW_HEIGHT / 2;
-        assert_eq!(app.input(Input::Tap(160.0, y as f32)), Change::Partial);
+        index % ROWS_PER_PAGE
+    }
+
+    pub(super) fn tap_contents_item(app: &mut Reader, label: &str) {
+        let offset = show_list_item(app, label);
+        let y = LIST_Y + offset as i32 * ROW_HEIGHT + ROW_HEIGHT / 2;
+        let x = if app.screen.is_contents() {
+            730.0
+        } else {
+            160.0
+        };
+        assert_eq!(app.input(Input::Tap(x, y as f32)), Change::Partial);
+    }
+
+    fn expand_contents_branch(app: &mut Reader, label: &str) {
+        let offset = show_list_item(app, label);
+        let (button, state) = app.contents_branch_button(offset).expect("a branch");
+        if state == contents_tree::Branch::Collapsed {
+            let (x, y) = rectangle_center(button);
+            assert_eq!(app.input(Input::Tap(x, y)), Change::Partial);
+        }
     }
 
     #[test]
@@ -12780,14 +12785,15 @@ mod tests {
         let mut canvas = Canvas::new(WIDTH, HEIGHT, &[font.display().to_string()]).unwrap();
         let opening = primitive_app::frame(&app, &mut canvas, false);
 
-        for title in ["Summit notes", "  Survey notes"] {
+        for title in ["Summit notes", "Survey notes"] {
             assert_eq!(app.input(Input::Tap(630.0, 25.0)), Change::Partial);
             if app.top_group != Some(TopGroup::Navigation) {
                 tap_reading_control(&mut app, "Navigation");
             }
             assert_eq!(tap_reading_control(&mut app, "Contents"), Change::Partial);
             assert_eq!(app.screen, Screen::Contents);
-            assert!(app.items().iter().any(|i| i.title == "  Elevation profile"));
+            expand_contents_branch(&mut app, "Coastal field notes");
+            assert!(app.items().iter().any(|i| i.title == "Elevation profile"));
             if title == "Summit notes" {
                 capture_test_screen(
                     &app,
@@ -12819,12 +12825,13 @@ mod tests {
         let mut canvas = Canvas::new(WIDTH, HEIGHT, &[font.display().to_string()]).unwrap();
         let opening = primitive_app::frame(&app, &mut canvas, false);
 
-        for title in ["Arrival", "  Trail directions", "  Elevation figure"] {
+        for title in ["Arrival", "Trail directions", "Elevation figure"] {
             app.open_reading_edge(true, 630.0);
             if app.top_group != Some(TopGroup::Navigation) {
                 tap_reading_control(&mut app, "Navigation");
             }
             assert_eq!(tap_reading_control(&mut app, "Contents"), Change::Partial);
+            expand_contents_branch(&mut app, "Shoreline itinerary");
             if title == "Arrival" {
                 capture_test_screen(
                     &app,
@@ -12863,7 +12870,7 @@ mod tests {
         let mut canvas = Canvas::new(WIDTH, HEIGHT, &[font.display().to_string()]).unwrap();
         let opening = primitive_app::frame(&app, &mut canvas, false);
         let mut targets = Vec::new();
-        for (index, label) in ["Start the survey", "Reference", "  Source notes"]
+        for (index, label) in ["Start the survey", "Reference", "Source notes"]
             .iter()
             .enumerate()
         {
@@ -12872,6 +12879,7 @@ mod tests {
                 tap_reading_control(&mut app, "Navigation");
             }
             assert_eq!(tap_reading_control(&mut app, "Contents"), Change::Partial);
+            expand_contents_branch(&mut app, "Reference");
             if index == 0 {
                 capture_test_screen(&app, &fonts, "READER_LANDMARK_CONTENTS_SCREENSHOT", false);
             }
@@ -13193,6 +13201,7 @@ mod tests {
         }
         tap_reading_control(&mut app, "Contents");
         assert_eq!(app.screen, Screen::FixedContents);
+        expand_contents_branch(&mut app, "Northern shore");
         capture_test_screen(&app, &fonts, "READER_DJVU_CONTENTS_SCREENSHOT", false);
         let items = app.items();
         assert!(
@@ -13204,7 +13213,7 @@ mod tests {
         tap_contents_item(&mut app, "Unknown plate");
         assert_eq!(app.screen, Screen::FixedContents);
         assert_eq!(app.current_position(), Some(cover.clone()));
-        tap_contents_item(&mut app, "  Outer reef");
+        tap_contents_item(&mut app, "Outer reef");
         let reef = app.current_position().unwrap();
         assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 2);
         app.input(Input::Tap(630.0, 1420.0));
@@ -13212,9 +13221,9 @@ mod tests {
         assert_eq!(app.screen, Screen::FixedContents);
         assert_eq!(
             app.items()[app.current_contents_row.unwrap()].title,
-            "  Outer reef"
+            "Outer reef"
         );
-        tap_contents_item(&mut app, "  Nearest station");
+        tap_contents_item(&mut app, "Nearest station");
         assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 4);
         app.activate(Action::ReturnToLocation).unwrap();
         assert_eq!(app.current_position(), Some(reef));

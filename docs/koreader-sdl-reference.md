@@ -81,9 +81,9 @@ The exact native algorithm is an inclusive target-to-root search for the first n
 
 ### contents
 
-**Contents.** Publisher/generated/custom contents and anchored jumps are supported. This audit does not establish the stock per-list font, row-count, dot-leader or depth controls.
+**Contents.** Publisher outlines have branch controls and reveal the current path. Publisher and custom headings support title search with ancestor context and preserve their original destinations. The generated outline remains available. Per-list font, row count, chapter lengths, dot leaders, and depth-specific progress ticks remain open.
 
-[src/app/custom_contents.rs](../src/app/custom_contents.rs) · [src/app/top_config.rs](../src/app/top_config.rs) · [reading-control-evidence.md](reading-control-evidence.md)
+[Searchable contents and simulator captures](searchable-contents.md) · [src/app/custom_contents.rs](../src/app/custom_contents.rs) · [reading-control-evidence.md](reading-control-evidence.md)
 
 ### bookmarks
 
@@ -278,7 +278,7 @@ The exact native algorithm is an inclusive target-to-root search for the first n
 
 | ID and stock path/control | Frame | Pinned source function/dispatch | Native comparison |
 | --- | --- | --- | --- |
-| `T1-1` Table of contents | 002 | [readertoc.lua:1190](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readertoc.lua#L1190) callback | **workflow** — Publisher/generated/custom contents, current-entry focus and anchored jumps are available. [evidence](#contents) |
+| `T1-1` Table of contents | 002 | [readertoc.lua:1190](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readertoc.lua#L1190) callback | **workflow** — Publisher outlines open at the current section and expand by branch. Title search includes ancestor context and works with both publisher and custom headings. The generated outline remains available. Desktop tests confirm exact destinations and preserved history. [evidence](searchable-contents.md) |
 | `T1-2` Bookmarks | 002 | [readerbookmark.lua:77](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerbookmark.lua#L77) callback | **workflow** — The in-book Saved marks list combines bookmarks and highlights; tapping jumps to the saved location, and holding a highlight opens its management actions. [evidence](#bookmarks) |
 | `T1-3` Settings | 002 | [touchmenu.lua:856](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/touchmenu.lua#L856) generic navigation | **group** — Literal submenu navigation; descendant controls are audited individually. Native menu grouping is not a one-for-one copy. [evidence](#navigation) |
 | `T1-3.1` Settings → Progress bars: 1 tick (dynamic; unopened) | 009 | [readertoc.lua:1296](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readertoc.lua#L1296) sub item table func | **open-audit** — Publisher/generated/custom contents and anchored jumps are supported. This audit does not establish the stock per-list font, row-count, dot-leader or depth controls. [evidence](#contents) |
