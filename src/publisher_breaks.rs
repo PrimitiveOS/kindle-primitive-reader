@@ -3,6 +3,7 @@ use super::{Line, Settings, book_style::Style, source::Source};
 use std::ops::Range;
 
 mod empty;
+mod opening;
 mod text_keeps;
 pub(crate) use empty::physical::plan as plan_empty_geometry;
 
@@ -30,6 +31,7 @@ pub(crate) struct PositionedRun {
 pub(crate) struct BoxRules {
     extent: Range<f32>,
     rules: Rules,
+    prefer_opening: bool,
     extra_splits: u16,
     physical_cuts: Option<Box<[f32]>>,
 }
@@ -77,6 +79,7 @@ fn protect_paragraph_end<'a>(
                     keep_together: true,
                     ..Default::default()
                 },
+                prefer_opening: false,
                 extra_splits: 0,
                 physical_cuts: None,
             });
@@ -141,6 +144,7 @@ pub(crate) fn layout(
         }
     }
     let oversized = text_keeps::oversized(source, styles, settings, &boxes);
+    let openings = opening::explicit_before(source, styles, settings);
     let mut following = None;
     for (i, element) in source.elements.iter().enumerate().rev() {
         if element.selector_only
@@ -160,6 +164,7 @@ pub(crate) fn layout(
                 result.push(BoxRules {
                     extent,
                     rules,
+                    prefer_opening: openings.get(i) == Some(&true),
                     extra_splits: 0,
                     physical_cuts: None,
                 });
@@ -178,6 +183,7 @@ pub(crate) fn layout(
                 result.push(BoxRules {
                     extent: range.start..range.start,
                     rules: Rules::default(),
+                    prefer_opening: false,
                     extra_splits: 0,
                     physical_cuts: Some(run.cuts.clone()),
                 });
@@ -214,6 +220,20 @@ pub(crate) fn boundaries(lines: &[Range<f32>], boxes: &[BoxRules]) -> Vec<Edge> 
         active += change;
         if active > 0 {
             *edge = Edge::Avoid;
+        }
+    }
+    // Enhanced CREngine resolves an explicit opening margin before the
+    // line splitter combines the neighboring flags. Only reproduce that
+    // when the real paragraph starts at its own, nonoverlapping interval.
+    for item in boxes.iter().filter(|item| item.prefer_opening) {
+        let first = lines.partition_point(|line| line.end <= item.extent.start);
+        if first > 0
+            && item.extent.start < item.extent.end
+            && lines
+                .get(first)
+                .is_some_and(|line| line.start == item.extent.start && line.end <= item.extent.end)
+        {
+            edges[first] = Edge::Force;
         }
     }
     edges
@@ -276,6 +296,7 @@ mod tests {
         let marker = |at| BoxRules {
             extent: at..at,
             rules: Rules::default(),
+            prefer_opening: false,
             extra_splits: 2,
             physical_cuts: None,
         };
@@ -287,6 +308,43 @@ mod tests {
             structural_splits(&[0.0..20.0, 30.0..80.0], &[marker(45.0)]),
             [0, 0]
         );
+    }
+
+    #[test]
+    fn preferred_openings_cannot_split_an_overlapping_line_group() {
+        let protected = BoxRules {
+            extent: 0.0..20.0,
+            rules: Rules {
+                after: Edge::Avoid,
+                ..Rules::default()
+            },
+            prefer_opening: false,
+            extra_splits: 0,
+            physical_cuts: None,
+        };
+        let opening = |extent| BoxRules {
+            extent,
+            rules: Rules {
+                before: Edge::Force,
+                ..Rules::default()
+            },
+            prefer_opening: true,
+            extra_splits: 0,
+            physical_cuts: None,
+        };
+        let lines = [0.0..20.0, 30.0..80.0, 90.0..110.0];
+        assert!(boundaries(&lines, &[opening(38.0..80.0), protected])[1] == Edge::Avoid);
+        let keep = BoxRules {
+            extent: 0.0..80.0,
+            rules: Rules {
+                keep_together: true,
+                ..Rules::default()
+            },
+            prefer_opening: false,
+            extra_splits: 0,
+            physical_cuts: None,
+        };
+        assert!(boundaries(&lines, &[opening(30.0..56.0), keep])[1] == Edge::Avoid);
     }
 
     #[test]
@@ -400,6 +458,7 @@ mod tests {
                 keep_together: true,
                 ..Rules::default()
             },
+            prefer_opening: false,
             extra_splits: 0,
             physical_cuts: None,
         };
@@ -417,6 +476,7 @@ mod tests {
                 before: Edge::Force,
                 ..Default::default()
             },
+            prefer_opening: false,
             extra_splits: 0,
             physical_cuts: None,
         };

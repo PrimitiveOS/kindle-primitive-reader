@@ -10,6 +10,8 @@ The CSS cascade supplies before, after and inside rules for each block. Reader f
 
 Reader handles forced page breaks, automatic breaks, blocks kept together, adjacent blocks kept together, and explicit inheritance. The modern break properties and the legacy page-break properties share the cascade. Horizontal paragraphs also honor inherited widow and orphan line counts. Left and right page parity remains a separate layout feature. [Paragraph line protection](paragraph-ends.md)
 
+The internal enhanced opening policy resolves a forced break before an ordinary paragraph inside a supported parent or sibling keep. Forced closing edges retain their usual line-split priority. [Opening and closing comparison](render-modes.md#forced-openings-inside-a-kept-group)
+
 ## Original documents
 
 An independent XML and CSS scan found 166 forced breaks before elements and 151 after them in the collection. Some occur at existing chapter boundaries. For 31 interior locations in five original EPUBs, an independent script located a text passage on each side. Installed KOReader placed the passages on different pages in all 31 cases. Desktop Reader did the same. When the KOReader comparison overrode the break rules, 16 pairs still fell on different pages naturally. With publisher styles disabled in Reader, 11 pairs still fell on different pages. The selections track source text across layout changes. [Installed KOReader comparator](../scripts/koreader-publisher-breaks.lua)

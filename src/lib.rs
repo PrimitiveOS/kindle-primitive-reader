@@ -370,6 +370,9 @@ pub struct Settings {
     /// Let an oversized ordinary publisher keep group flow into available pages.
     #[doc(hidden)]
     pub relax_oversized_publisher_keeps: bool,
+    /// Give an eligible explicit page-break-before priority at its opening edge.
+    #[doc(hidden)]
+    pub prefer_publisher_opening_breaks: bool,
     pub line_height: f32,
     /// None preserves legacy multiplier-based line spacing for existing profiles.
     pub line_spacing_percent: Option<u16>,
@@ -436,6 +439,7 @@ impl Default for Settings {
             empty_break_mode: EmptyBreakMode::Current,
             empty_break_geometry: false,
             relax_oversized_publisher_keeps: false,
+            prefer_publisher_opening_breaks: false,
             line_height: 1.35,
             line_spacing_percent: None,
             word_spacing: 0.0,

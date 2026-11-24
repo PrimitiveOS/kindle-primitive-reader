@@ -489,6 +489,49 @@ its comparison frames.
 [Reader default](screenshots/render-forced-margin-reader-current.png) ·
 [Reader with the policy](screenshots/render-forced-margin-reader-retained.png)
 
+## Forced openings inside a kept group
+
+KOReader’s enhanced block layout resolves a forced opening before the
+final page splitter combines neighboring line flags. With an explicit
+`page-break-before:always`, it can insert a zero-height boundary after
+the preceding keep so the new paragraph starts another page. A
+competing forced closing and keep can reach the final splitter, where
+the keep has priority.
+
+| Authored conflict at 1264 × 720 | Pinned Legacy | Pinned Flat, Book and Web | Reader with the opening policy |
+| --- | --- | --- | --- |
+| Forced opening inside a direct or nested parent keep | New page | New page | New page |
+| Forced closing inside a direct or nested parent keep | New page | Same page | Same page |
+| Forced opening after a sibling’s keep | Same page | New page | New page |
+| Forced closing before a sibling’s keep | Same page | Same page | Same page |
+| Unambiguous forced opening or closing | New page | New page | New page |
+
+The internal policy applies the opening priority at a visible ordinary
+paragraph with its own text interval. It accepts adjacent horizontal
+paragraphs in the body or transparent `div`, `section` and `article`
+wrappers without vertical spacing. Overlapping intervals, empty
+separators, complex boxes and active floats keep their existing path.
+The default continues to use the final splitter’s usual keep priority.
+
+The tests restore a saved quote and its touch position after the
+paragraph moves from page 1 to page 2. Cases where the policy leaves
+the page assignment intact have byte-identical frames, including when
+Publisher styles are disabled. The native comparison checks the
+opening and closing targets through all four modes.
+
+Generate the specimen with
+`python3 scripts/generate-render-opening-breaks-fixture.py`.
+Run the pinned oracle with the same arguments as the Render Mode probe.
+Run `cargo test --locked --lib publisher_breaks` for Reader and set
+`READER_OPENING_BREAK_CAPTURES` to an existing folder to save the
+comparison frames.
+[CREngine’s margin flags](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L6230-L6272) ·
+[Zero-height boundary](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L6484-L6502) ·
+[Native oracle](../scripts/koreader-render-opening-breaks-check.lua) ·
+[KOReader Web](screenshots/render-opening-break-stock-web.png) ·
+[Reader default](screenshots/render-opening-break-reader-current.png) ·
+[Reader with the policy](screenshots/render-opening-break-reader-enhanced.png)
+
 ## Reproduce
 
 The EPUB uses authored CSS and text. Generate it with

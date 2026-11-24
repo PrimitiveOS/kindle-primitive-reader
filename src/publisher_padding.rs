@@ -56,6 +56,17 @@ pub(crate) fn text_box_candidates(
     styles: &[Style],
     accepts: impl Fn(&Style) -> bool,
 ) -> Vec<TextBoxCandidate> {
+    text_box_candidates_with_parent(source, styles, accepts, |parent| {
+        source.elements[parent].tag == "body"
+    })
+}
+
+pub(crate) fn text_box_candidates_with_parent(
+    source: &Source,
+    styles: &[Style],
+    accepts: impl Fn(&Style) -> bool,
+    accepts_parent: impl Fn(usize) -> bool,
+) -> Vec<TextBoxCandidate> {
     // Only ordinary paragraphs represented by a single text block get this
     // policy. More elaborate boxes still use the existing provider.
     let mut candidates = vec![TextBoxCandidate::Unseen; styles.len()];
@@ -65,9 +76,7 @@ pub(crate) fn text_box_candidates(
         let style = &styles[index];
         let eligible = candidates[index] == TextBoxCandidate::Unseen
             && element.tag == "p"
-            && element
-                .parent
-                .is_some_and(|parent| source.elements[parent].tag == "body")
+            && element.parent.is_some_and(&accepts_parent)
             && matches!(style.display, crate::book_style::flow::Display::Block)
             && style.writing_mode == WritingMode::Horizontal
             && !style.flow.suppressed

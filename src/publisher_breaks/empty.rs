@@ -155,6 +155,7 @@ pub(super) fn propagate(
             result.push(BoxRules {
                 extent: y..y,
                 rules: Rules::default(),
+                prefer_opening: false,
                 extra_splits: count,
                 physical_cuts: None,
             });

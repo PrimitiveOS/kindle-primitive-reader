@@ -597,6 +597,8 @@ impl BookStyle {
         });
         let keep_group_geometry =
             settings.is_some_and(|config| config.relax_oversized_publisher_keeps);
+        let opening_break_geometry =
+            settings.is_some_and(|config| config.prefer_publisher_opening_breaks);
         let forced_margin_geometry = nested_margin_collapse
             && settings.is_some_and(|config| config.preserve_forced_page_margins);
         let logical = settings.filter(|settings| settings.logical_font_size.is_some());
@@ -797,7 +799,7 @@ impl BookStyle {
                             && crate::source::is_block_tag(&element.tag))
                             || (nested_margin_collapse
                                 && crate::block_margins::collapsible_wrapper(&element.tag))
-                            || (keep_group_geometry
+                            || ((keep_group_geometry || opening_break_geometry)
                                 && (element.tag == "p"
                                     || crate::block_margins::collapsible_wrapper(
                                         &element.tag,
