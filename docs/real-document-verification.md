@@ -241,6 +241,35 @@ folder action, the dictionary close control, both clippings screens and
 column or row zoom. The folder listing differed by two grayscale pixels.
 [Current book folder](screenshots/current-book-folder.png) · [Dictionary lookup](screenshots/dictionary-close-stack.png) · [Clippings options](screenshots/export-kindle-clippings-options.png) · [Scan zoom](screenshots/fixed-tile-zoom.png)
 
+## Reader 0.1.38 release on the Oasis
+
+Both Reader licenses match the tagged source. Store installed the published
+ARMHF package in place. The installed executable and public catalog match the
+release checksums.
+[Package workflow](https://github.com/PrimitiveOS/kindle-primitive-reader/actions/runs/45353195313) · [Release](https://github.com/PrimitiveOS/kindle-primitive-reader/releases/tag/v0.1.38) · [Store entry](https://primitiveos.github.io/kindle-primitive-catalog/v1/apps/primitive-reader.json)
+
+| Verified file | SHA-256 | Bytes |
+| --- | --- | ---: |
+| ARMHF ZIP | `405196660ba176cbc8bf491a182f193475b3f8a48184faa37961ce39e713111d` | 21,523,845 |
+| Kindle executable | `a4083468223b8baa2f87b046c71fc2bcc46d8072aa755a68b8d6d779065f4309` | 34,209,216 |
+
+The exact release opened four original Documents files, advanced to a changed
+frame and resumed after restart. The source checksums matched. Times end when
+the first grayscale frame is available in memory.
+
+| File type | Bytes | First frame | Advance and resume |
+| --- | ---: | ---: | --- |
+| EPUB | 436,947 | 1,513 ms | Passed |
+| PDF | 2,005,917 | 793 ms | Passed |
+| AZW3 | 590,896 | 876 ms | Passed |
+| MOBI | 625,173 | 2,004 ms | Passed |
+
+Native tests also verified 430 screen pages and 111 publisher marks on an
+original EPUB, and the page-one semi-auto crop on the original PDF. Both
+original checks preserved input bytes. The 1,127 automated Oasis checks and
+five pixel comparisons are recorded in the verification plan. Foreground input
+and E Ink timing have separate acceptance checks. [Verification plan](execution-plan.md#reader-0138-verification-plan)
+
 ## Reader 0.1.37 release on the Oasis
 
 The published ARMHF package contains both Reader licenses. Store's
