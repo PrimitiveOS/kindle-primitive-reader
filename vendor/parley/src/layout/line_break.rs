@@ -513,6 +513,7 @@ struct PrevBoundaryState {
     run_idx: usize,
     cluster_idx: u32,
     state: LineState,
+    trusted_authored_word: Option<usize>,
     /// Length of [`BreakerState::contributed`] at this opportunity.
     contributed_len: usize,
     /// Length of [`BreakerState::subtrees`] at this opportunity, as [saved](SubtreeHistory::save).
@@ -740,17 +741,33 @@ impl BreakerState {
 
     /// Store the current iteration state so that we can revert to it if we later want to take
     /// the line breaking opportunity at this point.
-    fn mark_line_break_opportunity(&mut self, hyphen: Option<(core::num::NonZeroU32, f32)>) {
+    fn mark_line_break_opportunity(&mut self, hyphen: Option<(core::num::NonZeroU32, super::data::SoftHyphenOpportunity)>) {
+        // A fitting authored break wins over a later dictionary or
+        // algorithmic opportunity inside that same word.
+        if let Some((_, alternative)) = hyphen
+            && alternative.append
+            && alternative.trusted_word_end.is_some()
+            && self.prev_boundary.as_ref().is_some_and(|prior| {
+                prior.trusted_authored_word == alternative.trusted_word_end
+            })
+        {
+            return;
+        }
+        let mut trusted_authored_word = None;
         let mut line = self.line.clone();
-        if let Some((index, advance)) = hyphen {
+        if let Some((index, alternative)) = hyphen {
             line.soft_hyphen = Some(index);
-            line.x += advance;
+            line.x += alternative.glyph.expect("fitting discretionary glyph").advance;
+            if !alternative.append {
+                trusted_authored_word = alternative.trusted_word_end;
+            }
         }
         self.prev_boundary = Some(PrevBoundaryState {
             item_idx: self.item_idx,
             run_idx: self.run_idx,
             cluster_idx: self.cluster_idx,
             state: line,
+            trusted_authored_word,
             contributed_len: self.contributed.len(),
             subtrees_len: self.subtrees.save(),
         });
@@ -764,6 +781,7 @@ impl BreakerState {
             run_idx: self.run_idx,
             cluster_idx: self.cluster_idx,
             state: self.line.clone(),
+            trusted_authored_word: None,
             contributed_len: self.contributed.len(),
             subtrees_len: self.subtrees.save(),
         });
@@ -914,7 +932,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
     fn soft_hyphen_at_boundary(
         &self,
         next_cluster: u32,
-    ) -> Option<(core::num::NonZeroU32, Option<parley_engine::Glyph>)> {
+    ) -> Option<(core::num::NonZeroU32, super::data::SoftHyphenOpportunity)> {
         let line = &self.state.line;
         let data = &self.layout.data;
         if data.soft_hyphens.is_empty()
@@ -935,7 +953,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
             .ok()?;
         Some((
             core::num::NonZeroU32::new((index + 1) as u32)?,
-            data.soft_hyphens[index].glyph,
+            data.soft_hyphens[index],
         ))
     }
 
@@ -1215,13 +1233,13 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                             // line breaks. We should accept the overflowing fragment in that scenario.
                             if self.state.line.x != 0.0 {
                                 match soft_hyphen {
-                                    Some((index, Some(glyph)))
-                                        if self.state.line.x + glyph.advance - self.state.line.shrink_capacity <= max_advance =>
+                                    Some((index, alternative))
+                                        if alternative.glyph.is_some_and(|glyph| {
+                                            self.state.line.x + glyph.advance
+                                                - self.state.line.shrink_capacity <= max_advance
+                                        }) =>
                                     {
-                                        self.state.mark_line_break_opportunity(Some((
-                                            index,
-                                            glyph.advance,
-                                        )));
+                                        self.state.mark_line_break_opportunity(Some((index, alternative)));
                                     }
                                     None => self.state.mark_line_break_opportunity(None),
                                     Some(_) => {}

@@ -235,3 +235,40 @@ choice retains its own saved tag and uses Latin shaping.
 [Portrait typography settings](screenshots/typography-language-rules.png) ·
 [Landscape language picker](screenshots/typography-language-choices-landscape.png) ·
 [KOReader EPUB after changing language](screenshots/stock-typography-language-uk.png)
+
+## Hyphenation options
+
+Open the top reading bar and choose **Appearance › Typography rules ›
+Hyphenation**. **Enable hyphenation** keeps the last method when switched off
+and on again. Choose a dictionary, algorithmic breaks, or soft hyphens only.
+The same choices are available in the bottom Text controls. **Defaults for
+new books** sets the initial method and soft-hyphen preference independently
+of already saved books. An explicit saved reflow template can supply its own
+starting preferences.
+
+**Trust soft hyphens** gives fitting publisher marks priority over automatic
+breaks in that word. A mark beyond the available width leaves earlier
+dictionary or algorithmic breaks eligible. Personal word rules take priority
+when enabled, including in Soft hyphens only. **Hyphenation limits** lets you
+set 1–10 letters before and after an automatic break. Apply saves both values
+for all books, and **Use language defaults** clears them. The English
+dictionaries default to 2 before and 3 after. Algorithmic mode defaults
+to 2 on both sides.
+
+The pinned KOReader replay invokes the actual menu callbacks, including
+long-press defaults, and checks the first-line boundaries after each setting.
+For a word with an early publisher mark, Trust changes the split from
+“labo-” to “la-”. For a later mark that cannot fit, the dictionary split
+stays “labo-”. The Mac tests compare the same relationships under the
+Rust shaper and exercise the saved passage, authored and algorithmic
+choices, limits, Cancel, and failed-save rollback. The captures use the
+authored EPUB. [Pinned KOReader handlers](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readertypography.lua#L318-L553) · [Native replay](../scripts/koreader-hyphenation-options-check.lua) · [EPUB specimen](../tests/fixtures/hyphenation-options.epub)
+
+Dictionary patterns are complete for US and British English. Algorithmic
+breaks cover the supported horizontal Latin and Cyrillic text with
+original UTF-8 offsets. Additional dictionaries, full CREngine letter
+classes, and spelling-changing hyphenation remain open.
+
+[Reader options](screenshots/hyphenation-options-settings.png) ·
+[Reader limits in landscape](screenshots/hyphenation-limits-landscape.png) ·
+[KOReader Trust soft hyphens specimen](screenshots/stock-hyphenation-trust.png)

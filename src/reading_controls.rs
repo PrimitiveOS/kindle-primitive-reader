@@ -28,6 +28,12 @@ pub(crate) struct ReadingControls {
     pub typography_language_default: Option<crate::app::typography_settings::DefaultLanguage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub respect_embedded_languages_default: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hyphenation_default: Option<crate::HyphenationMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trust_soft_hyphens_default: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hyphenation_limits: Option<crate::HyphenationLimits>,
     #[serde(skip_serializing_if = "is_false")]
     pub remember_opening_location: bool,
     #[serde(skip_serializing_if = "crate::app::back_navigation::BackPreferences::is_default")]
@@ -1381,6 +1387,12 @@ impl ReadingControls {
                 return Err(io::Error::other("Reading controls settings are too large"));
             }
             let mut controls: Self = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+            if controls
+                .hyphenation_limits
+                .is_some_and(|value| !value.valid())
+            {
+                controls.hyphenation_limits = None;
+            }
             if !controls.reading_guides.valid() {
                 controls.reading_guides = Default::default();
             }

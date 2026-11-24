@@ -67,7 +67,7 @@ impl Reader {
         let reading = &self.active.as_ref()?.reading;
         let probe = &reading.probe;
         if probe.is_vertical()
-            || reading.config.settings.hyphenation_mode() != crate::HyphenationMode::Automatic
+            || reading.config.settings.hyphenation_mode() == crate::HyphenationMode::Off
         {
             return None;
         }

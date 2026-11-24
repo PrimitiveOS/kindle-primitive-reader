@@ -64,6 +64,8 @@ impl Reader {
             override_fonts: settings.override_fonts,
             disable_soft_hyphens: settings.disable_soft_hyphens,
             automatic_hyphenation: Some(settings.automatic_hyphenation),
+            algorithmic_hyphenation: Some(settings.algorithmic_hyphenation),
+            trust_soft_hyphens: Some(settings.trust_soft_hyphens),
             typography_language: active
                 .reading
                 .probe
@@ -165,6 +167,7 @@ impl Reader {
             .state(id)
             .cloned()
             .ok_or("Reading state unavailable")?;
+        prefs.record_hyphenation(candidate.config.settings);
         self.library.state_mut(id).unwrap().preferences = prefs;
         if let Err(error) = self.library.persist() {
             *self.library.state_mut(id).unwrap() = old;

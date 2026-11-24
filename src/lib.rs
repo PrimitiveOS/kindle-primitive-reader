@@ -49,6 +49,7 @@ mod footnotes;
 mod gif_image;
 pub mod highlight_style;
 mod hyphenation;
+pub use hyphenation::HyphenationLimits;
 mod jpeg2000;
 mod kf8;
 mod kindle_sections;
@@ -444,6 +445,9 @@ pub struct Settings {
     pub embedded_fonts: bool,
     pub disable_soft_hyphens: bool,
     pub automatic_hyphenation: bool,
+    pub algorithmic_hyphenation: bool,
+    pub trust_soft_hyphens: bool,
+    pub hyphenation_limits: Option<HyphenationLimits>,
     pub typography: TypographyLanguages,
     /// Load author stylesheets and apply inline CSS during native reflow.
     pub publisher_styles: bool,
@@ -513,6 +517,9 @@ impl Default for Settings {
             embedded_fonts: true,
             disable_soft_hyphens: false,
             automatic_hyphenation: true,
+            algorithmic_hyphenation: false,
+            trust_soft_hyphens: false,
+            hyphenation_limits: None,
             typography: TypographyLanguages::default(),
             publisher_styles: true,
             base_stylesheet: BaseStylesheet::Auto,
@@ -580,26 +587,35 @@ impl Settings {
 }
 
 #[cfg(feature = "kindle")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum HyphenationMode {
     Automatic,
+    Algorithmic,
     Authored,
     Off,
 }
 
 #[cfg(feature = "kindle")]
 impl HyphenationMode {
-    const ALL: [Self; 3] = [Self::Automatic, Self::Authored, Self::Off];
+    const ALL: [Self; 4] = [
+        Self::Automatic,
+        Self::Algorithmic,
+        Self::Authored,
+        Self::Off,
+    ];
     fn label(self) -> &'static str {
         match self {
             Self::Automatic => "Automatic",
+            Self::Algorithmic => "Algorithmic",
             Self::Authored => "Authored",
             Self::Off => "Off",
         }
     }
     fn next(self) -> Self {
         match self {
-            Self::Automatic => Self::Authored,
+            Self::Automatic => Self::Algorithmic,
+            Self::Algorithmic => Self::Authored,
             Self::Authored => Self::Off,
             Self::Off => Self::Automatic,
         }
@@ -611,7 +627,11 @@ impl Settings {
         if self.disable_soft_hyphens {
             HyphenationMode::Off
         } else if self.automatic_hyphenation {
-            HyphenationMode::Automatic
+            if self.algorithmic_hyphenation {
+                HyphenationMode::Algorithmic
+            } else {
+                HyphenationMode::Automatic
+            }
         } else {
             HyphenationMode::Authored
         }
@@ -620,7 +640,16 @@ impl Settings {
     fn with_hyphenation(self, mode: HyphenationMode) -> Self {
         Self {
             disable_soft_hyphens: mode == HyphenationMode::Off,
-            automatic_hyphenation: mode == HyphenationMode::Automatic,
+            automatic_hyphenation: match mode {
+                HyphenationMode::Off => self.automatic_hyphenation,
+                HyphenationMode::Automatic | HyphenationMode::Algorithmic => true,
+                HyphenationMode::Authored => false,
+            },
+            algorithmic_hyphenation: match mode {
+                HyphenationMode::Off => self.algorithmic_hyphenation,
+                HyphenationMode::Algorithmic => true,
+                _ => false,
+            },
             ..self
         }
     }
@@ -634,6 +663,9 @@ impl Settings {
             || self.top_margin() > self.height / 4
             || self.bottom_margin() > self.height / 4
             || !valid_render_dpi(self.render_dpi)
+            || self
+                .hyphenation_limits
+                .is_some_and(|limits| !limits.valid())
             || if let Some(logical) = self.logical_font_size {
                 !logical_font::valid(logical)
                     || self.font_scale.effective(logical).ok() != Some(self.font_size)

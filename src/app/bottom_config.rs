@@ -865,7 +865,7 @@ impl Reader {
                                 )
                             }),
                         ));
-                        if settings.hyphenation_mode() == crate::HyphenationMode::Automatic {
+                        if settings.hyphenation_mode() != crate::HyphenationMode::Off {
                             rows.push(ConfigRow::new(
                                 "Custom rules",
                                 [false, true].map(|enabled| {

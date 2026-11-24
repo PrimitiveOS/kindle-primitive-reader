@@ -14,7 +14,10 @@ ordinary break decision without drawing a hyphen.
 The same builder accepts sorted byte offsets for dictionary breaks. At a complete
 one-character LTR shaping atom, the chosen break appends a measured hyphen
 after the original glyphs. Line, run, cluster and positioned-glyph advances
-include the same decoration. Other builders retain the upstream behavior.
+include the same decoration. Optionally, eligible source-word ranges tell the
+line breaker to prefer an authored opportunity within that word once its
+hyphen glyph fits. Earlier generated points remain available when the
+authored mark cannot fit. Other builders retain the upstream behavior.
 
 Manual hyphenation covers opportunities represented by standalone zero-advance
 clusters, with U+2010 or U+002D in the original face. Each layout considers at

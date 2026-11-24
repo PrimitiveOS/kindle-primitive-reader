@@ -146,6 +146,10 @@ impl Screen {
                 )
                 | Self::ReadingFonts
                 | Self::Typography
+                | Self::HyphenationOptions
+                | Self::HyphenationDefaults
+                | Self::HyphenationLimits(_)
+                | Self::HyphenationLimitValue(..)
                 | Self::TypographyRules
                 | Self::TypographyLanguages(_)
                 | Self::FontRendering(_)

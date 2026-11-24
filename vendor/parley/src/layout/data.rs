@@ -93,6 +93,7 @@ pub(crate) struct SoftHyphenOpportunity {
     pub(crate) append: bool,
     pub(crate) cluster: u32,
     pub(crate) glyph: Option<Glyph>,
+    pub(crate) trusted_word_end: Option<usize>,
 }
 
 #[derive(Clone, Default, Debug, PartialEq)]

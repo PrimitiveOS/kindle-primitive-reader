@@ -480,6 +480,7 @@ pub(crate) fn collect_soft_hyphens<B: Brush>(
     text: &str,
     layout: &mut Layout<B>,
     policy: &dyn Fn(usize) -> crate::SoftHyphenAction,
+    trusted_words: &[core::ops::Range<usize>],
 ) {
     use crate::{SoftHyphenAction, layout::data::SoftHyphenOpportunity};
 
@@ -528,6 +529,7 @@ pub(crate) fn collect_soft_hyphens<B: Brush>(
                 append: false,
                 cluster: clusters.start,
                 glyph: alternative,
+                trusted_word_end: trusted_word_end(trusted_words, bytes.start),
             });
         }
     }
@@ -536,7 +538,11 @@ pub(crate) fn collect_soft_hyphens<B: Brush>(
 }
 
 /// Attach dictionary boundaries to shaped text without inserting source bytes.
-pub(crate) fn collect_automatic_hyphens<B: Brush>(layout: &mut Layout<B>, offsets: &[usize]) {
+pub(crate) fn collect_automatic_hyphens<B: Brush>(
+    layout: &mut Layout<B>,
+    offsets: &[usize],
+    trusted_words: &[core::ops::Range<usize>],
+) {
     use crate::layout::data::SoftHyphenOpportunity;
     if offsets.len() > 4096 || !offsets.windows(2).all(|pair| pair[0] < pair[1]) {
         return;
@@ -569,12 +575,18 @@ pub(crate) fn collect_automatic_hyphens<B: Brush>(layout: &mut Layout<B>, offset
                     append: true,
                     cluster: atom.shaped_clusters_range().start,
                     glyph: Some(glyph),
+                    trusted_word_end: trusted_word_end(trusted_words, end - 1),
                 });
             }
         }
     }
     data.soft_hyphens
         .sort_unstable_by_key(|hyphen| hyphen.cluster);
+}
+
+fn trusted_word_end(words: &[core::ops::Range<usize>], offset: usize) -> Option<usize> {
+    let candidate = words.get(words.partition_point(|word| word.end <= offset))?;
+    candidate.contains(&offset).then_some(candidate.end)
 }
 
 fn hyphen_glyph(

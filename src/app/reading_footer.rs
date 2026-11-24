@@ -728,12 +728,17 @@ impl Reader {
     }
 
     pub(super) fn device_reading_settings_for(&self, viewport: ReadingViewport) -> crate::Settings {
-        crate::Settings {
+        let settings = crate::Settings {
             width: viewport.dimensions().0,
             height: viewport.document_height(self.controls.overlap_footer),
             typography: self.default_typography_languages(),
+            hyphenation_limits: self.controls.hyphenation_limits,
+            trust_soft_hyphens: self.controls.trust_soft_hyphens_default.unwrap_or(false),
             ..super::device_settings()
-        }
+        };
+        self.controls
+            .hyphenation_default
+            .map_or(settings, |mode| settings.with_hyphenation(mode))
     }
 
     pub(super) fn overlapping_book_page(&self) -> bool {

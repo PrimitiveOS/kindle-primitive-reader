@@ -256,21 +256,23 @@ mod tests {
         let soft = collect(4, settings, &rules);
         assert_eq!(soft.breaks, vec![2]);
         assert_eq!(soft.custom_words, vec![0.."labo\u{ad}ratory".len()]);
-        for disable_soft_hyphens in [true, false] {
-            assert!(
-                collect(
-                    0,
-                    crate::Settings {
-                        automatic_hyphenation: false,
-                        disable_soft_hyphens,
-                        ..settings
-                    },
-                    &rules
-                )
-                .custom_words
-                .is_empty()
-            );
-        }
+        let soft_only = crate::Settings {
+            automatic_hyphenation: false,
+            ..settings
+        };
+        assert_eq!(collect(0, soft_only, &rules).breaks, [2]);
+        assert!(
+            collect(
+                0,
+                crate::Settings {
+                    disable_soft_hyphens: true,
+                    ..soft_only
+                },
+                &rules,
+            )
+            .custom_words
+            .is_empty()
+        );
         rules.set("en-US", "laboratory", "laboratory").unwrap();
         assert!(collect(0, settings, &rules).breaks.is_empty());
         rules.remove("en-US", "laboratory");

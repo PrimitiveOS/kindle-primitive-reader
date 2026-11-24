@@ -5,10 +5,29 @@ use crate::{
     source::{Block, StyledText},
 };
 use parley::{Language, LineBreak, WordBreak};
+use serde::{Deserialize, Serialize};
+
+mod algorithmic;
 
 include!(concat!(env!("OUT_DIR"), "/english_patterns.rs"));
 const MAX_WORD: usize = 64;
 const MAX_BREAKS: usize = 4096;
+
+/// Global minimum visible letters on either side of an automatic break.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HyphenationLimits {
+    pub left: u8,
+    pub right: u8,
+}
+
+impl HyphenationLimits {
+    pub const fn valid(self) -> bool {
+        self.left >= 1 && self.left <= 10 && self.right >= 1 && self.right <= 10
+    }
+}
+
+pub(crate) const ENGLISH_LIMITS: HyphenationLimits = HyphenationLimits { left: 2, right: 3 };
+pub(crate) const ALGORITHMIC_LIMITS: HyphenationLimits = HyphenationLimits { left: 2, right: 2 };
 
 struct Patterns {
     nodes: &'static [(u16, u8, u16, u8)],
@@ -59,32 +78,49 @@ pub(crate) fn opportunities_text(
     settings: Settings,
 ) -> Vec<usize> {
     let mut breaks = Vec::new();
+    let algorithmic = settings.algorithmic_hyphenation;
     if !settings.automatic_hyphenation
         || settings.disable_soft_hyphens
-        || !styled
-            .iter()
-            .any(|run| dictionary(&styles[run.element], run.language).is_some())
+        || !styled.iter().any(|run| {
+            let style = &styles[run.element];
+            if algorithmic {
+                allows_user_rules(style)
+            } else {
+                dictionary(style, run.language).is_some()
+            }
+        })
     {
         return breaks;
     }
+    let limits = settings.hyphenation_limits.unwrap_or(if algorithmic {
+        ALGORITHMIC_LIMITS
+    } else {
+        ENGLISH_LIMITS
+    });
     for range in crate::selection::word_ranges(text) {
         let word = &text[range.clone()];
         let first = styled.partition_point(|span| span.bytes.end <= range.start);
         let mut spans = styled[first..]
             .iter()
             .take_while(|span| span.bytes.start < range.end);
-        let Some(locale) = spans
-            .next()
-            .and_then(|span| dictionary(&styles[span.element], span.language))
-        else {
+        let Some(head) = spans.next() else {
             continue;
         };
-        if spans.all(|span| dictionary(&styles[span.element], span.language) == Some(locale)) {
-            word_breaks(locale, word, |offset| {
-                if breaks.len() < MAX_BREAKS {
-                    breaks.push(range.start + offset);
-                }
-            });
+        let emit = |offset| {
+            if breaks.len() < MAX_BREAKS {
+                breaks.push(range.start + offset);
+            }
+        };
+        if algorithmic {
+            if allows_user_rules(&styles[head.element])
+                && spans.all(|span| allows_user_rules(&styles[span.element]))
+            {
+                algorithmic::breaks(word, limits, emit);
+            }
+        } else if let Some(locale) = dictionary(&styles[head.element], head.language)
+            && spans.all(|span| dictionary(&styles[span.element], span.language) == Some(locale))
+        {
+            word_breaks_with_limits(locale, word, limits, emit);
         }
         if breaks.len() == MAX_BREAKS {
             break;
@@ -144,7 +180,7 @@ pub(crate) fn with_user_rules_text(
         custom_words: Vec::new(),
         matching_soft_hyphens: Vec::new(),
     };
-    if !rules.has_rules() || settings.disable_soft_hyphens || !settings.automatic_hyphenation {
+    if !rules.has_rules() || settings.disable_soft_hyphens {
         return result;
     }
     let mut custom_breaks = Vec::new();
@@ -205,15 +241,35 @@ pub(crate) fn with_user_rules_text(
     result
 }
 
-fn word_breaks(locale: English, word: &str, mut emit: impl FnMut(usize)) {
+fn word_breaks(locale: English, word: &str, emit: impl FnMut(usize)) {
+    word_breaks_with_limits(locale, word, ENGLISH_LIMITS, emit);
+}
+
+fn word_breaks_with_limits(
+    locale: English,
+    word: &str,
+    limits: HyphenationLimits,
+    mut emit: impl FnMut(usize),
+) {
     let patterns = locale.patterns();
-    let n = word.len();
-    if !(5..=MAX_WORD).contains(&n) || !word.bytes().all(|ch| ch.is_ascii_alphabetic()) {
-        return;
-    }
     let mut letters = [b'.'; MAX_WORD + 2];
-    for (dest, src) in letters[1..=n].iter_mut().zip(word.bytes()) {
-        *dest = src.to_ascii_lowercase();
+    let mut offsets = [0; MAX_WORD + 1];
+    let mut n = 0;
+    for (at, character) in word.char_indices() {
+        if character == '\u{ad}' {
+            continue;
+        }
+        if n == MAX_WORD || !character.is_ascii_alphabetic() {
+            return;
+        }
+        n += 1;
+        letters[n] = character.to_ascii_lowercase() as u8;
+        offsets[n] = at + 1;
+    }
+    let left = usize::from(limits.left);
+    let right = usize::from(limits.right);
+    if !limits.valid() || n < left + right {
+        return;
     }
     let mut scores = [0u8; MAX_WORD + 3];
     for start in 0..n + 2 {
@@ -234,9 +290,11 @@ fn word_breaks(locale: English, word: &str, mut emit: impl FnMut(usize)) {
             }
         }
     }
-    for at in 2..=n - 3 {
-        if scores[at + 1] % 2 == 1 {
-            emit(at);
+    for at in left..=n - right {
+        let offset = offsets[at];
+        // The authored soft hyphen supplies this exact opportunity.
+        if scores[at + 1] % 2 == 1 && !word[offset..].starts_with('\u{ad}') {
+            emit(offset);
         }
     }
 }
@@ -396,7 +454,7 @@ mod tests {
     }
 
     #[test]
-    fn package_language_inline_overrides_css_and_explicit_points_limit_automatic_breaks() {
+    fn package_language_css_and_authored_points_preserve_all_eligible_break_offsets() {
         let xhtml = "<html><body><p>hyphenation</p><p lang='en-GB'>hyphenation</p><p lang=''>hyphenation</p><p lang='vi'>hyphenation</p><p style='hyphens: manual'>hyphenation</p><p>hy<span style='hyphens: none'>phen</span>ation</p><p lang='en-US'>hy&#173;phenation</p><p lang='en-US'>hy<span>phen</span>ation</p><p lang='en-Latn-US'>hyphenation</p><p lang='en'>internationalé</p></body></html>";
         let src = Source::parse_with_language(xhtml, Some(Language::parse("en").unwrap())).unwrap();
         let mut book =
@@ -410,6 +468,10 @@ mod tests {
             let actual = opportunities(block, &styles, active);
             if [0, 1, 7, 8].contains(&i) {
                 assert_eq!(actual, [2, 6, 7], "block {i}");
+            } else if i == 6 {
+                // The authored break at hy- stays separate. Dictionary
+                // candidates after it still map to the original UTF-8 bytes.
+                assert_eq!(actual, [8, 9]);
             } else {
                 assert!(actual.is_empty(), "block {i}: {actual:?}");
             }

@@ -504,6 +504,10 @@ pub struct BookPreferences {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub automatic_hyphenation: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub algorithmic_hyphenation: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trust_soft_hyphens: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub typography_language: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub respect_embedded_languages: Option<bool>,
@@ -539,6 +543,14 @@ impl BookPreferences {
         self.respect_embedded_languages = Some(probe.settings.typography.respect_embedded);
     }
 
+    #[cfg(feature = "kindle")]
+    pub(crate) fn record_hyphenation(&mut self, settings: Settings) {
+        self.disable_soft_hyphens = settings.disable_soft_hyphens;
+        self.automatic_hyphenation = Some(settings.automatic_hyphenation);
+        self.algorithmic_hyphenation = Some(settings.algorithmic_hyphenation);
+        self.trust_soft_hyphens = Some(settings.trust_soft_hyphens);
+    }
+
     pub(crate) fn saved_font_kerning_mode(&self) -> Option<crate::FontKerningMode> {
         self.font_kerning_mode.or_else(|| {
             self.font_kerning.map(|enabled| {
@@ -552,6 +564,8 @@ impl BookPreferences {
     }
 
     pub fn apply_to(&self, settings: Settings) -> Settings {
+        let saved_hyphenation_mode =
+            self.automatic_hyphenation.is_some() || self.disable_soft_hyphens;
         let typography_language = self
             .typography_language
             .as_deref()
@@ -647,10 +661,20 @@ impl BookPreferences {
             smooth_images: self.smooth_images.unwrap_or(settings.smooth_images),
             invert_night_images: self.invert_night_images,
             override_fonts: self.override_fonts,
-            disable_soft_hyphens: self.disable_soft_hyphens,
+            disable_soft_hyphens: if saved_hyphenation_mode {
+                self.disable_soft_hyphens
+            } else {
+                settings.disable_soft_hyphens
+            },
             automatic_hyphenation: self
                 .automatic_hyphenation
                 .unwrap_or(settings.automatic_hyphenation),
+            algorithmic_hyphenation: self
+                .algorithmic_hyphenation
+                .unwrap_or(!saved_hyphenation_mode && settings.algorithmic_hyphenation),
+            trust_soft_hyphens: self
+                .trust_soft_hyphens
+                .unwrap_or(settings.trust_soft_hyphens),
             typography: crate::TypographyLanguages {
                 main: typography_language,
                 fallback: settings

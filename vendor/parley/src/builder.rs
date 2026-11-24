@@ -43,6 +43,7 @@ pub(crate) struct BuilderOptions<'a> {
     base_direction: BaseDirection,
     line_break_override: Option<&'a LineBreakOverrideFn>,
     automatic_hyphens: &'a [usize],
+    trusted_soft_hyphen_words: &'a [Range<usize>],
     cluster_spacing: Option<&'a ClusterSpacingFn>,
     font_weight_spacing: Option<&'a FontWeightSpacingFn>,
     soft_hyphen_policy: Option<&'a (dyn Fn(usize) -> SoftHyphenAction + Send + Sync)>,
@@ -57,6 +58,7 @@ impl BuilderOptions<'_> {
             line_break_override: None,
             soft_hyphen_policy: None,
             automatic_hyphens: &[],
+            trusted_soft_hyphen_words: &[],
             cluster_spacing: None,
             font_weight_spacing: None,
         }
@@ -144,6 +146,12 @@ impl<'b, B: Brush> RangedBuilder<'b, B> {
     /// if the line ends there. A break can only follow a complete LTR shaping atom.
     pub fn set_automatic_hyphens(&mut self, boundaries: &'b [usize]) {
         self.options.automatic_hyphens = boundaries;
+    }
+
+    /// For these sorted nonoverlapping source words, a fitting authored
+    /// hyphen takes precedence over a generated break in the same word.
+    pub fn set_trusted_soft_hyphen_words(&mut self, words: &'b [Range<usize>]) {
+        self.options.trusted_soft_hyphen_words = words;
     }
 
     pub fn build_into(self, layout: &mut Layout<B>, text: impl AsRef<str>) {
@@ -515,11 +523,11 @@ fn build_into_layout<B: Brush>(
     }
 
     if let Some(policy) = options.soft_hyphen_policy {
-        super::shape::collect_soft_hyphens(text, layout, policy);
+        super::shape::collect_soft_hyphens(text, layout, policy, options.trusted_soft_hyphen_words);
     }
 
     if !options.automatic_hyphens.is_empty() {
-        super::shape::collect_automatic_hyphens(layout, options.automatic_hyphens);
+        super::shape::collect_automatic_hyphens(layout, options.automatic_hyphens, options.trusted_soft_hyphen_words);
     }
 
     // After shaping, so that the metrics of fonts used for shaping can be reused.

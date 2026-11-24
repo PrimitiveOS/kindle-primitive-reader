@@ -294,6 +294,13 @@ enum Screen {
     DocumentDefaults,
     FontRendering(eager_typography::Scope),
     TypographyRules,
+    HyphenationOptions,
+    HyphenationDefaults,
+    HyphenationLimits(typography_settings::hyphenation_controls::LimitsDraft),
+    HyphenationLimitValue(
+        typography_settings::hyphenation_controls::LimitsDraft,
+        typography_settings::hyphenation_controls::Side,
+    ),
     TypographyLanguages(typography_settings::LanguageScope),
     StyleTweaks,
     StylePreset,
@@ -478,6 +485,10 @@ impl Screen {
             Self::ReadingProfiles => "Reading profiles",
             Self::DocumentDefaults => "Document defaults",
             Self::TypographyRules => "Typography rules",
+            Self::HyphenationOptions => "Hyphenation",
+            Self::HyphenationDefaults => "Hyphenation defaults",
+            Self::HyphenationLimits(_) => "Hyphenation limits",
+            Self::HyphenationLimitValue(_, side) => side.title(),
             Self::TypographyLanguages(scope) => scope.title(),
             Self::FontRendering(eager_typography::Scope::Book) => "Font size rendering",
             Self::FontRendering(eager_typography::Scope::Default) => "Default font size rendering",
@@ -635,6 +646,7 @@ enum Action {
         Option<typography_settings::CatalogLanguage>,
     ),
     RespectEmbeddedLanguages(bool),
+    Hyphenation(typography_settings::hyphenation_controls::Command),
     ShowFonts,
     EmbeddedFontReport,
     ShowFooterFonts,
@@ -1723,6 +1735,9 @@ impl Reader {
         }
         state.top_status_header = Some(top_status_header);
         state.preferences.record_typography(&active.reading.probe);
+        state
+            .preferences
+            .record_hyphenation(active.reading.config.settings);
         let offer_publisher = self.apply_new_numbering_defaults();
         self.restore_character_pages();
         self.fixed = None;
@@ -3277,7 +3292,7 @@ impl Reader {
                     self.pending_logical_size(active.id),
                 );
                 if !reading.probe.is_vertical()
-                    && settings.hyphenation_mode() == crate::HyphenationMode::Automatic
+                    && settings.hyphenation_mode() != crate::HyphenationMode::Off
                 {
                     let enabled = self.user_hyphenation.enabled;
                     items.push(
@@ -3341,6 +3356,12 @@ impl Reader {
             }
             Screen::FontRendering(scope) => return self.font_rendering_items(scope),
             Screen::TypographyRules => return self.typography_items(),
+            Screen::HyphenationOptions => return self.hyphenation_items(),
+            Screen::HyphenationDefaults => return self.hyphenation_defaults_items(),
+            Screen::HyphenationLimits(draft) => return self.hyphenation_limit_items(draft),
+            Screen::HyphenationLimitValue(draft, side) => {
+                return self.hyphenation_limit_values(draft, side);
+            }
             Screen::TypographyLanguages(scope) => return self.typography_language_items(scope),
             Screen::DocumentDefaults
             | Screen::StyleTweaks
@@ -3948,7 +3969,9 @@ impl Reader {
                 }
                 let footer_overlap_changed =
                     controls.overlap_footer != self.controls.overlap_footer;
-                let resized = if footer_overlap_changed {
+                let limits_changed =
+                    controls.hyphenation_limits != self.controls.hyphenation_limits;
+                let resized = if footer_overlap_changed || limits_changed {
                     self.active
                         .as_ref()
                         .map(|book| {
@@ -3956,13 +3979,27 @@ impl Reader {
                             let mut config = reading.config.clone();
                             config.settings.height =
                                 config.viewport.document_height(controls.overlap_footer);
+                            config.settings.hyphenation_limits = controls.hyphenation_limits;
                             config.prepare_page_layout(&reading.config);
-                            Reading::restore(
+                            let anchor = reading.anchor();
+                            let candidate = Reading::restore_with_scroll_top(
                                 config,
                                 reading.chapter,
                                 reading.page,
-                                reading.anchor().as_ref(),
-                            )
+                                anchor.as_ref(),
+                                if limits_changed {
+                                    reading.scroll_history_top()
+                                } else {
+                                    None
+                                },
+                            )?;
+                            if limits_changed
+                                && (candidate.probe.book != reading.probe.book
+                                    || anchor.is_some() && candidate.anchor() != anchor)
+                            {
+                                return Err("Could not keep this book's reading position".into());
+                            }
+                            Result::Ok(candidate)
                         })
                         .transpose()?
                 } else {
@@ -4364,6 +4401,7 @@ impl Reader {
             Action::RespectEmbeddedLanguages(respect) => {
                 self.set_embedded_language_respect(respect)?
             }
+            Action::Hyphenation(command) => self.activate_hyphenation(command)?,
             Action::CancelEagerFont => {
                 self.eager_typography.cancel();
                 self.notice = None;
@@ -4410,8 +4448,7 @@ impl Reader {
                 preferences.smooth_images = Some(settings.smooth_images);
                 preferences.invert_night_images = settings.invert_night_images;
                 preferences.override_fonts = settings.override_fonts;
-                preferences.disable_soft_hyphens = settings.disable_soft_hyphens;
-                preferences.automatic_hyphenation = Some(settings.automatic_hyphenation);
+                preferences.record_hyphenation(settings);
                 preferences.record_typography(&active.reading.probe);
                 preferences.page_overlap_enabled = Some(settings.page_overlap_enabled);
                 preferences.page_overlap_lines = Some(settings.page_overlap_lines.clamp(1, 10));
@@ -4516,7 +4553,11 @@ impl Reader {
                 self.show(Screen::FooterPresets);
                 self.notice = Some("Status bar preset deleted".into());
             }
-            Action::ResetText => self.apply_text_profile(BookPreferences::for_new_reflow())?,
+            Action::ResetText => {
+                let mut preferences = BookPreferences::for_new_reflow();
+                preferences.record_hyphenation(self.device_reading_settings());
+                self.apply_text_profile(preferences)?;
+            }
             Action::DocumentDefaults(command) => self.activate_document_defaults(command)?,
             Action::Style(command) => self.activate_style(command)?,
             Action::TopStatusHeader(enabled) => self.set_book_top_header(enabled)?,
@@ -4681,6 +4722,14 @@ impl Reader {
             .state(id)
             .ok_or("Reading state unavailable")?
             .preferences;
+        if preferences.automatic_hyphenation.is_none() && !preferences.disable_soft_hyphens {
+            preferences.disable_soft_hyphens = current.disable_soft_hyphens;
+            preferences.automatic_hyphenation = current.automatic_hyphenation;
+            preferences.algorithmic_hyphenation = current.algorithmic_hyphenation;
+        }
+        if preferences.trust_soft_hyphens.is_none() {
+            preferences.trust_soft_hyphens = current.trust_soft_hyphens;
+        }
         if preferences.typography_language.is_none() {
             preferences
                 .typography_language
@@ -8215,6 +8264,7 @@ impl Reader {
                         Action::ChapterLevel(setting) => {
                             RowAccessory::Toggle(self.chapter_level_checked(setting))
                         }
+                        Action::Hyphenation(command) => self.hyphenation_accessory(*command),
                         Action::RespectEmbeddedLanguages(_) => {
                             RowAccessory::Toggle(self.active.as_ref().is_some_and(|book| {
                                 book.reading.config.settings.typography.respect_embedded
@@ -9485,7 +9535,15 @@ impl App for Reader {
                     Screen::VeryLongPressSettings => self.show(Screen::LongPressSettings),
                     Screen::HighlightPromptSettings => self.show(Screen::LongPressSettings),
                     Screen::DocumentDefaults => self.show(Screen::ReadingControls),
-                    Screen::TypographyLanguages(_) => self.show(Screen::TypographyRules),
+                    Screen::HyphenationLimitValue(draft, _) => {
+                        self.show(Screen::HyphenationLimits(draft))
+                    }
+                    Screen::HyphenationLimits(_) | Screen::HyphenationDefaults => {
+                        self.show(Screen::HyphenationOptions)
+                    }
+                    Screen::TypographyLanguages(_) | Screen::HyphenationOptions => {
+                        self.show(Screen::TypographyRules)
+                    }
                     Screen::TypographyRules => {
                         self.open_reading_edge(true, (WIDTH / 2) as f32);
                         self.top_group = Some(TopGroup::Appearance);

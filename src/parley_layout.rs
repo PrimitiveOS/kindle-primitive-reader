@@ -1,4 +1,6 @@
 mod cjk_width;
+#[cfg(test)]
+mod hyphenation_options_tests;
 mod inline_blocks;
 #[cfg(test)]
 mod inline_blocks_tests;
@@ -2346,6 +2348,14 @@ fn make_paragraph(
 ) -> Layout<PaintBrush> {
     let style = &styles[block.element];
     let language = block.language;
+    let trusted_words = if settings.trust_soft_hyphens && block.text.contains('\u{ad}') {
+        crate::selection::word_ranges(&block.text)
+            .filter(|range| block.text[range.clone()].contains('\u{ad}'))
+            .take(4096)
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
     let mut builder = context.ranged_builder(fonts, &block.text, 1.0, true);
     let font_weights = style.font_weights.clone();
     let weight_spacing = move |font: &parley::FontData, requested: f32, size: f32| {
@@ -2353,6 +2363,7 @@ fn make_paragraph(
     };
     builder.set_font_weight_spacing(Some(&weight_spacing));
     builder.set_automatic_hyphens(&automatic.breaks);
+    builder.set_trusted_soft_hyphen_words(&trusted_words);
     let cjk_spacing = cjk_width::policy(&block.text, settings.cjk_width_percent);
     if let Some(policy) = &cjk_spacing {
         builder.set_cluster_spacing(Some(policy));

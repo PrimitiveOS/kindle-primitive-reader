@@ -3,6 +3,8 @@ use super::{Action, Item, Reader, Result, Screen};
 use crate::typography_language::{CATALOG, TypographyLanguages, TypographyLocale, label};
 use serde::{Deserialize, Serialize};
 
+pub(in crate::app) mod hyphenation_controls;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub(crate) struct CatalogLanguage(u8);
@@ -83,7 +85,7 @@ impl Reader {
         };
         let probe = &book.reading.probe;
         let defaults = self.default_typography_languages();
-        vec![
+        let mut items = vec![
             Item::new(
                 "Main language",
                 Action::Show(Screen::TypographyLanguages(LanguageScope::Book)),
@@ -116,7 +118,14 @@ impl Reader {
                 }),
             )
             .detail("Apply when opening a new book"),
-        ]
+        ];
+        if !probe.is_vertical() {
+            items.push(
+                Item::new("Hyphenation", Action::Show(Screen::HyphenationOptions))
+                    .detail(probe.settings.hyphenation_mode().label()),
+            );
+        }
+        items
     }
 
     pub(super) fn typography_language_items(&self, scope: LanguageScope) -> Vec<Item> {
