@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run pinned KOReader Page Browser grid controls and edge swipe callbacks."""
+"""Run pinned KOReader Page Browser grid controls, edge swipes, and body taps."""
 import argparse
 import hashlib
 from pathlib import Path
@@ -64,9 +64,11 @@ def main():
     lua.execute(segment(source, "function PageBrowserWidget:saveSettings(", "function PageBrowserWidget:updateNbTocSpans("))
     lua.execute(segment(source, "function PageBrowserWidget:updateNbCols(", "function PageBrowserWidget:updateThumbnailPageNumsDisplayType("))
     lua.execute(segment(source, "function PageBrowserWidget:onSwipe(", "function PageBrowserWidget:onPan("))
+    lua.execute(segment(source, "function PageBrowserWidget:onTap(", "function PageBrowserWidget:onHold("))
+    lua.execute(segment(source, "function PageBrowserWidget:onScrollPageUp(", "function PageBrowserWidget:onScrollRowUp("))
     lua.execute(segment(detector, "function Contact:getPath(", "function Contact:isSwipe("))
     lua.execute(segment(detector, "function Contact:handleSwipe(", "--[[--\nEmits the pan gestures"))
-    lua.execute(segment(bidi, "local mirrored_directions =", "function Bidi.flipIfMirroredUILayout("))
+    lua.execute(segment(bidi, "local mirrored_directions =", "-- Wrap provided text with bidirectionality control characters"))
     lua.execute("""
         local function browser()
             return setmetatable({
@@ -152,8 +154,49 @@ def main():
         local relayouts = third.relayouts
         assert(swipe(third, 209, 660, 0, 240) and third.nb_rows == 1)
         assert(third.relayouts == relayouts)
+
+        local taps = browser()
+        taps.title_bar_h, taps.nb_grid_items, taps.focus_page_shift = 180, 2, 0
+        taps.grid = {
+            {dimen = {x = 80, y = 220, w = 500, h = 500}, page_idx = 6, {{}}},
+            {dimen = {x = 900, y = 220, w = 500, h = 500}},
+        }
+        taps.onClose = function(self, jump)
+            assert(jump)
+            self.action = "jump"
+        end
+        taps.row = {{getPageAtX = function(_, x) if x == 600 then return 15 end end}}
+        taps.updateFocusPage = function(self, page, relative)
+            self.action = relative and (page < 0 and "previous" or "next") or page
+            if relative then assert(math.abs(page) == self.nb_grid_items) end
+            return true
+        end
+        taps.ui.link = {addCurrentLocationToStack = function() taps.history = true end}
+        taps.ui.handleEvent = function(_, event)
+            assert(event.handler == "GotoPage" and event.page == 6)
+        end
+        Event = {new = function(_, handler, page) return {handler = handler, page = page} end}
+        local function tap(x, y)
+            taps.action = nil
+            local pos = {x = x, y = y, intersectWith = function(self, rect)
+                return self.x >= rect.x and self.x < rect.x + rect.w and
+                       self.y >= rect.y and self.y < rect.y + rect.h
+            end}
+            assert(taps:onTap(nil, {pos = pos}))
+            return taps.action
+        end
+        Bidi._mirrored_ui_layout = false
+        assert(tap(30, 150) == nil)            -- title occurs before fallback
+        assert(tap(30, 220) == "previous")
+        assert(tap(840, 220) == "next")      -- exact screen midpoint
+        assert(tap(1010, 300) == "next")     -- an empty grid slot
+        assert(tap(600, 1200) == 14)           -- ribbon precedes fallback
+        assert(tap(1000, 1200) == nil)        -- ribbon with no mapped page
+        assert(tap(110, 300) == "jump" and taps.history)
+        Bidi._mirrored_ui_layout = true
+        assert(tap(30, 220) == "next")
     """)
-    print(f"KOReader {PIN} Lua 5.1: grid bounds, saves, contact-origin edge swipes, and ordinary routing passed")
+    print(f"KOReader {PIN} Lua 5.1: grid bounds, saves, edge swipes, and blank body taps passed")
 
 
 if __name__ == "__main__":

@@ -78,6 +78,15 @@ Launcher keeps its downward Quick Settings gesture.
 [Portrait after adding a column](screenshots/page-browser-edge-swipes-portrait.png) ·
 [Landscape after adding a row](screenshots/page-browser-edge-swipes-landscape.png)
 
+Tap a gap on the left or right side of the thumbnail area to move one grid
+back or forward. Empty slots at the end of the book work the same way.
+Tapping an occupied slot opens that page, even if its preview is unavailable.
+The title and summary, progress caption and ribbon, and space around the
+footer controls are outside the blank-tap area. Browsing leaves your reading
+position intact.
+[Empty tail in landscape](screenshots/page-browser-empty-tail-landscape.png) ·
+[Stock tap routing](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/pagebrowserwidget.lua#L1586-L1653)
+
 Changing the grid keeps the focused page visible and preserves its EPUB
 source anchor through a turn. Page buttons and horizontal swipes in the
 body step one grid at a time. Vertical swipes in the body step by one row.
