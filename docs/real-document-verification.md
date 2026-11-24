@@ -240,6 +240,18 @@ The Mac run passed 1,040 Reader library tests, one Kindle binary test,
 Reader tests. The [stock search callback check](fixed-search-fit.md)
 also passed in the installed KOReader's runtime on the Oasis.
 
+The native ARMHF run passed 1,044 Reader library tests, 14 EPUB package tests,
+and four layout checks. It skipped 62 optional Reader tests. A follow-up on
+one original EPUB and one original PDF held a result, opened its exact source
+location, and returned to the original reading position. Each used an
+isolated profile and the original file checksum matched before and after.
+
+The suite saved eight 1264 × 1680 software-rendered frames. Six matched the
+desktop captures exactly and the 24-row search view differed by six pixels.
+The selected-text results screenshot now shows the device's integrated row
+geometry and context. The prior desktop image predated those changes. These
+checks do not measure foreground touch or E Ink refresh.
+
 For a single file under an authorized Documents root, run the example with a fresh
 scratch directory and the same Noto Sans fonts as Launcher.
 

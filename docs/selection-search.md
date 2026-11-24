@@ -11,4 +11,4 @@ the width, pan, rotation and saved view of a zoomed fixed-page book. The EPUB
 and PDF workflow tests select text through the reading screen and check
 both search modes, cancellation, and persisted settings.
 
-[Selection search results](screenshots/search-from-selection-results.png) · [KOReader selection dispatch](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readersearch.lua#L240-L266)
+[Selection search results on the Oasis](screenshots/search-from-selection-results.png) · [KOReader selection dispatch](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readersearch.lua#L240-L266)
