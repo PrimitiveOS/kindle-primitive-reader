@@ -231,6 +231,41 @@ impl Probe {
         })
     }
 
+    #[cfg(feature = "kindle")]
+    pub(crate) fn can_inspect_publisher_html(&self, selection: &TextSelection) -> bool {
+        self.source.can_inspect_publisher_html()
+            && selection.start.chapter == self.chapter
+            && selection.end.chapter == self.chapter
+            && selection.start.revision == self.source.revision
+            && selection.end.revision == self.source.revision
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn inspect_publisher_html(
+        &self,
+        xhtml: &str,
+        selection: &TextSelection,
+    ) -> Option<String> {
+        if !self.can_inspect_publisher_html(selection)
+            || self
+                .select_source_range(&selection.start, &selection.end)?
+                .text
+                != selection.text
+        {
+            return None;
+        }
+        let spans = self.selection_spans(&selection.start, &selection.end)?;
+        let mut contributing = (spans.first..=spans.last).filter_map(|index| {
+            Some((
+                index,
+                spans.in_block(index, self.source.blocks[index].text.len())?,
+            ))
+        });
+        let first = contributing.next()?;
+        let last = contributing.next_back().unwrap_or_else(|| first.clone());
+        self.source.publisher_selection_html(xhtml, first, last)
+    }
+
     /// Return the portions of a selection visible on this page. Geometry is
     /// derived anew from source anchors after font, page, or viewport changes.
     pub fn selection_rects(&self, page: usize, selection: &TextSelection) -> Vec<HighlightRect> {

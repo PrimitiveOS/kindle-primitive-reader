@@ -75,6 +75,7 @@ mod reading_orientation;
 mod result_context;
 mod saved_highlight_popup;
 mod search_chapter_scope;
+mod selection_html;
 mod selection_popup;
 mod semi_auto_crop;
 mod sidecar_marks;
@@ -221,6 +222,7 @@ enum Screen {
     ImportPosition,
     ImportPdfAnnotations,
     ExportAnnotations,
+    SelectionHtml,
     ExportSettings(export_settings::Origin, export_settings::Page),
     Book,
     Illustration,
@@ -354,6 +356,7 @@ impl Screen {
             Self::ImportPosition => "KOReader reading position",
             Self::ImportPdfAnnotations => "PDF annotations",
             Self::ExportAnnotations => "Export annotations",
+            Self::SelectionHtml => "Selection HTML",
             Self::ExportSettings(_, export_settings::Page::Settings) => "Export settings",
             Self::ExportSettings(_, export_settings::Page::Folders) => "Export folder",
             Self::ExportSettings(_, export_settings::Page::Template(scope)) => scope.title(),
@@ -881,6 +884,7 @@ pub struct Reader {
     search_at: Option<Instant>,
     next_search_refresh: Instant,
     selection: Option<TextSelection>,
+    selection_html: Option<selection_html::Inspector>,
     touch_hold: Option<TouchHold>,
     selection_mode: bool,
     highlight_prompt_stage: Option<selection_popup::HighlightPromptStage>,
@@ -1098,6 +1102,7 @@ impl Reader {
             search_at: None,
             next_search_refresh: Instant::now(),
             selection: None,
+            selection_html: None,
             touch_hold: None,
             selection_mode: false,
             highlight_prompt_stage: None,
@@ -1453,6 +1458,9 @@ impl Reader {
 
     fn show(&mut self, screen: Screen) {
         self.archive.close_surfaces(screen);
+        if screen != Screen::SelectionHtml {
+            self.selection_html = None;
+        }
         if !matches!(
             screen,
             Screen::ExportSettings(_, export_settings::Page::Folders)
@@ -7521,6 +7529,10 @@ impl Reader {
             title
         };
         header(canvas, title, "Back");
+        if self.screen == Screen::SelectionHtml {
+            self.draw_selection_html(canvas);
+            return;
+        }
         if let Screen::ExportSettings(_, export_settings::Page::Template(scope)) = self.screen {
             self.draw_export_template(canvas, scope);
             return;
@@ -8556,6 +8568,9 @@ impl App for Reader {
         }
         if self.screen == Screen::Footnote {
             return self.footnote_input(input);
+        }
+        if self.screen == Screen::SelectionHtml {
+            return self.selection_html_input(input);
         }
         if self.screen == Screen::OnlineLookup {
             return self.online_input(input);

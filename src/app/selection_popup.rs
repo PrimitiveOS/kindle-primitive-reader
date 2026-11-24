@@ -24,6 +24,7 @@ pub(super) enum SelectionAction {
     Translate,
     Find,
     Chapter,
+    Html,
     Hyphenate,
     Cancel,
     PromptStyle(HighlightStyle),
@@ -32,7 +33,7 @@ pub(super) enum SelectionAction {
 }
 
 impl SelectionAction {
-    const ALL: [Self; 10] = [
+    const ALL: [Self; 11] = [
         Self::Highlight,
         Self::Copy,
         Self::Note,
@@ -41,6 +42,7 @@ impl SelectionAction {
         Self::Translate,
         Self::Find,
         Self::Chapter,
+        Self::Html,
         Self::Hyphenate,
         Self::Cancel,
     ];
@@ -55,6 +57,7 @@ impl SelectionAction {
             Self::Translate => "Translate",
             Self::Find => "Find",
             Self::Chapter => "Chapter",
+            Self::Html => "View HTML",
             Self::Hyphenate => "Hyphenate",
             Self::Cancel => "Cancel",
             Self::PromptStyle(style) => style.label(),
@@ -69,6 +72,7 @@ pub(super) struct SelectionPopup {
     large: bool,
     custom_chapters: bool,
     hyphenate: bool,
+    html: bool,
     select_mode: bool,
     prompt_stage: Option<HighlightPromptStage>,
     pending_style: Option<HighlightStyle>,
@@ -82,6 +86,7 @@ impl SelectionPopup {
         large: bool,
         custom_chapters: bool,
         hyphenate: bool,
+        html: bool,
         select_mode: bool,
         prompt_stage: Option<HighlightPromptStage>,
         pending_style: Option<HighlightStyle>,
@@ -117,6 +122,7 @@ impl SelectionPopup {
                 large,
                 custom_chapters,
                 hyphenate,
+                html,
                 select_mode,
                 prompt_stage,
                 pending_style,
@@ -136,6 +142,7 @@ impl SelectionPopup {
                 large,
                 custom_chapters,
                 hyphenate,
+                html,
                 select_mode,
                 prompt_stage,
                 pending_style,
@@ -160,6 +167,7 @@ impl SelectionPopup {
                 large,
                 custom_chapters,
                 hyphenate,
+                html,
                 select_mode,
                 prompt_stage,
                 pending_style,
@@ -184,6 +192,7 @@ impl SelectionPopup {
                     large,
                     custom_chapters,
                     hyphenate,
+                    html,
                     select_mode,
                     prompt_stage,
                     pending_style,
@@ -200,6 +209,7 @@ impl SelectionPopup {
             large,
             custom_chapters,
             hyphenate,
+            html,
             select_mode,
             prompt_stage,
             pending_style,
@@ -234,6 +244,7 @@ impl SelectionPopup {
                 .into_iter()
                 .filter(|action| *action != SelectionAction::Chapter || self.custom_chapters)
                 .filter(|action| *action != SelectionAction::Hyphenate || self.hyphenate)
+                .filter(|action| *action != SelectionAction::Html || self.html)
                 .collect()
         };
         let count = actions.len() as i32;
@@ -367,8 +378,21 @@ impl SelectionPopup {
             if floating && rect.y > self.rect.y + 5 {
                 canvas.fill(Rect::new(rect.x + 10, rect.y, rect.w - 20, 1), HAIRLINE);
             }
-            if canvas.control_pressed(rect, false) {
-                canvas.fill(rect.inset(2), 218);
+            let pressed = canvas.control_pressed(rect, false);
+            let ink = if pressed && action == SelectionAction::Html {
+                255
+            } else {
+                0
+            };
+            if pressed {
+                canvas.fill(
+                    rect.inset(2),
+                    if action == SelectionAction::Html {
+                        0
+                    } else {
+                        218
+                    },
+                );
             }
             let text_y = if floating {
                 use super::bar_icons;
@@ -379,6 +403,7 @@ impl SelectionPopup {
                     SelectionAction::Dictionary | SelectionAction::Chapter => bar_icons::BOOK,
                     SelectionAction::Wikipedia => bar_icons::LINK,
                     SelectionAction::Hyphenate | SelectionAction::Translate => bar_icons::TEXT,
+                    SelectionAction::Html => bar_icons::CODE,
                     SelectionAction::Find => bar_icons::SEARCH,
                     SelectionAction::Cancel => bar_icons::BACK,
                     SelectionAction::PromptStyle(_) | SelectionAction::PromptColor(_) => {
@@ -389,7 +414,7 @@ impl SelectionPopup {
                 canvas.icon(
                     Rect::new(rect.x + (rect.w - 40) / 2, rect.y + 9, 40, 40),
                     icon,
-                    0,
+                    ink,
                 );
                 rect.y + 55
             } else {
@@ -397,8 +422,12 @@ impl SelectionPopup {
             };
             canvas.text(
                 Rect::new(rect.x, text_y, rect.w, size + 9),
-                action.label(),
-                TextStyle::new(size).bold().center(),
+                if floating || action != SelectionAction::Html {
+                    action.label()
+                } else {
+                    "HTML"
+                },
+                TextStyle::new(size).bold().center().ink(ink),
             );
         }
         canvas.button(DONE, "Done", false, false);
@@ -579,6 +608,7 @@ impl Reader {
                 self.controls.large_toolbar,
                 self.custom_contents_enabled(),
                 self.hyphenation_word().is_some(),
+                self.can_view_selection_html(),
                 self.selection_mode,
                 self.highlight_prompt_stage,
                 self.pending_highlight_style,
@@ -679,6 +709,12 @@ impl Reader {
             Some(SelectionAction::Find) => self.find_selection(SelectionSearchOrigin::Reading),
             Some(SelectionAction::Hyphenate) => self.begin_hyphenation(),
             Some(SelectionAction::Chapter) => self.edit_selected_contents_chapter(),
+            Some(SelectionAction::Html) => {
+                return Some(match self.view_selection_html() {
+                    Ok(()) => Change::Full,
+                    Err(error) => self.report(error),
+                });
+            }
             Some(SelectionAction::Cancel) => {
                 self.selection = None;
                 self.pdf_selection = None;
@@ -788,6 +824,7 @@ mod tests {
                 true,
                 false,
                 false,
+                false,
                 None,
                 None,
                 None,
@@ -831,6 +868,7 @@ mod tests {
                 true,
                 false,
                 false,
+                false,
                 None,
                 None,
                 None,
@@ -855,6 +893,7 @@ mod tests {
             false,
             true,
             true,
+            false,
             true,
             None,
             None,
@@ -894,6 +933,7 @@ mod tests {
                 SelectionPopupPosition::Highlight,
                 false,
                 true,
+                false,
                 false,
                 false,
                 Some(stage),
