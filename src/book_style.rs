@@ -74,6 +74,7 @@ pub(crate) enum WritingMode {
 #[derive(Clone, Copy)]
 pub(crate) enum ImageLength {
     Auto,
+    FitContent,
     Pixels(f32),
     /// Physical CSS units normalized to pixels at 96 DPI.
     Physical(f32),
@@ -85,7 +86,7 @@ pub(crate) enum ImageLength {
 impl ImageLength {
     pub(crate) fn css_length(self) -> Option<CssLength> {
         match self {
-            Self::Auto => None,
+            Self::Auto | Self::FitContent => None,
             Self::Pixels(value) => Some(CssLength::Pixels(value)),
             Self::Physical(value) => Some(CssLength::Physical(value)),
             Self::Fraction(value) => Some(CssLength::Fraction(value)),
@@ -107,7 +108,7 @@ impl ImageLength {
 
     pub(crate) fn pixels(self, available: u32, font_size: f32) -> Option<f32> {
         match self {
-            Self::Auto => None,
+            Self::Auto | Self::FitContent => None,
             Self::Pixels(px) | Self::Physical(px) => Some(px),
             Self::Fraction(ratio) => Some(ratio * available as f32),
             Self::Em(scale) | Self::RootEm(scale) => Some(scale * font_size),
@@ -616,6 +617,8 @@ impl BookStyle {
         let constrained_width = settings.is_some_and(|config| {
             config.block_width == crate::BlockWidthMode::PublisherWithConstraints
         });
+        let fit_content =
+            settings.is_some_and(|config| config.fit_content != crate::FitContentMode::Ignore);
         let publisher_wrapper_width = constrained_width
             || settings.is_some_and(|config| {
                 config.block_width == crate::BlockWidthMode::PublisherWithWrappers
@@ -702,6 +705,7 @@ impl BookStyle {
                 .filter(|text| self.author_inline && text.len() <= MAX_INLINE_BYTES)
                 .map_or_else(Vec::new, |text| declarations(&mut Parser::new(text)));
             let mut winners: Winners = [None; 51];
+            let accept_fit = fit_content && element.tag == "p";
             for (origin, rules) in [
                 (CascadeOrigin::User, &self.user_rules),
                 (CascadeOrigin::Author, &self.rules),
@@ -715,7 +719,14 @@ impl BookStyle {
                         .map(|selector| selector.specificity)
                         .max()
                     {
-                        choose(&mut winners, &rule.declarations, false, specificity, origin);
+                        choose(
+                            &mut winners,
+                            &rule.declarations,
+                            false,
+                            specificity,
+                            origin,
+                            accept_fit,
+                        );
                     }
                 }
             }
@@ -725,6 +736,7 @@ impl BookStyle {
                 true,
                 (0, 0, 0),
                 CascadeOrigin::Author,
+                accept_fit,
             );
             for (_, property) in winners.into_iter().flatten() {
                 match property {
@@ -792,7 +804,13 @@ impl BookStyle {
                     }
                     Property::HorizontalMargin(side, value) => {
                         style.horizontal_margin[*side] = match value {
-                            Some(BoxMargin::Length(length)) if publisher_horizontal_margins => {
+                            Some(BoxMargin::Length(length))
+                                if publisher_horizontal_margins
+                                    || matches!(
+                                        style.image_width,
+                                        Some(ImageLength::FitContent)
+                                    ) =>
+                            {
                                 let font = relative_font(style.size_scale);
                                 let root = result
                                     .first()
@@ -830,7 +848,7 @@ impl BookStyle {
                             "td" | "th" | "tr" | "thead" | "tbody" | "tfoot" | "table"
                         ) || (structural_borders
                             && crate::source::is_block_tag(&element.tag))
-                            || (nested_margin_collapse
+                            || ((nested_margin_collapse || fit_content)
                                 && crate::block_margins::collapsible_wrapper(&element.tag))
                             || ((keep_group_geometry
                                 || opening_break_geometry
@@ -841,7 +859,8 @@ impl BookStyle {
                                     )))
                             || ((publisher_block_height
                                 || forced_margin_geometry
-                                || publisher_horizontal_margins)
+                                || publisher_horizontal_margins
+                                || matches!(style.image_width, Some(ImageLength::FitContent)))
                                 && element.tag == "p") =>
                     {
                         let target = style
@@ -889,7 +908,9 @@ impl BookStyle {
                     Property::Hyphens(mode) => style.hyphens = *mode,
                     Property::WritingMode(mode) => style.writing_mode = *mode,
                     Property::MinWidth(value) => {
-                        if constrained_width {
+                        if constrained_width
+                            || matches!(style.image_width, Some(ImageLength::FitContent))
+                        {
                             let font = relative_font(style.size_scale);
                             let root = result
                                 .first()
@@ -1498,6 +1519,7 @@ fn choose<'a>(
     inline: bool,
     specificity: Specificity,
     origin: CascadeOrigin,
+    accept_fit: bool,
 ) {
     for declaration in declarations {
         let index = match declaration.property {
@@ -1523,6 +1545,7 @@ fn choose<'a>(
             Property::WordBreak(_) => 8,
             Property::Hyphens(_) => 9,
             Property::WritingMode(_) => 10,
+            Property::Width(ImageLength::FitContent) if !accept_fit => continue,
             Property::Width(_) => 11,
             Property::Height(_) => 12,
             Property::VerticalAlign(_) => 13,
@@ -1824,6 +1847,12 @@ impl<'i> DeclarationParser<'i> for Properties {
                         || name.eq_ignore_ascii_case("max-height");
                     let minimum = name.eq_ignore_ascii_case("min-width");
                     let length = match input.next()?.clone() {
+                        Token::Ident(s)
+                            if name.eq_ignore_ascii_case("width")
+                                && s.eq_ignore_ascii_case("fit-content") =>
+                        {
+                            ImageLength::FitContent
+                        }
                         Token::Ident(s)
                             if !maximum && s.eq_ignore_ascii_case("auto")
                                 || maximum && s.eq_ignore_ascii_case("none") =>

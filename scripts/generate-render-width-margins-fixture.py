@@ -1,13 +1,16 @@
-"""Build an EPUB with authored fixed and constrained text box widths."""
+"""Build an EPUB with authored fixed, constrained or intrinsic text box widths."""
 
 from pathlib import Path
 import sys
 import zipfile
 
 signed = "--signed" in sys.argv[1:]
+fit_content = "--fit-content" in sys.argv[1:]
 name = "render-signed-widths.epub" if signed else "render-width-margins.epub"
+if fit_content:
+    name = "render-fit-content.epub"
 fixture = Path(__file__).resolve().parents[1] / "tests/fixtures" / name
-paths = [value for value in sys.argv[1:] if value != "--signed"]
+paths = [value for value in sys.argv[1:] if value not in {"--signed", "--fit-content"}]
 output = Path(paths[0]) if paths else fixture
 container = """<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
 <rootfiles><rootfile full-path="content.opf" media-type="application/oebps-package+xml"/></rootfiles>
@@ -65,6 +68,29 @@ body,p { margin:0; padding:0; text-align:left; text-indent:0 }
 <p class="minimum">The staff rises above the <a href="#channel">Saltbush</a></p>
 <p class="relative">Look out beyond the <a href="#channel">Ebb gate</a></p>
 <p id="channel">West channel directions</p>
+</body></html>"""
+
+if fit_content:
+    opf = opf.replace("reader-width-margins", "reader-fit-content").replace(
+        "Width and Margin Soundings", "Intrinsic Width Soundings"
+    )
+    current = "long coast readings proceed along the winding shelf beyond weather gauge " * 5
+    chapter = f"""<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Intrinsic Width Soundings</title>
+<style type="text/css">
+body,p {{ margin:0; padding:0; text-align:left; text-indent:0 }}
+.fit {{ width:fit-content }}
+</style></head><body>
+<p class="fit" style="background:#ddd">Shore marker </p>
+<p class="fit" style="background:#d3d3d3;margin:0 auto">Harbor marker </p>
+<p class="fit" style="background:#c9c9c9;margin-left:auto;margin-right:56px">Anchor marker </p>
+<p class="fit" style="background:#bfbfbf;max-width:150px;margin:0 auto">Beacon marker </p>
+<p class="fit" style="background:#b5b5b5;min-width:420px;margin:0 auto">Needle marker </p>
+<p class="fit" style="background:#8d8d8d;margin-left:-24px;margin-right:12px"><a href="#channel">Sounding marker</a> </p>
+<p class="fit" style="background:#838383;margin-left:20px;margin-right:12px">Current marker {current}</p>
+<p class="fit" style="background:#797979;max-width:22%;min-width:30%;margin:0 auto">Ledger marker </p>
+<p class="fit" style="background:#6f6f6f;min-width:110%;margin-left:-24px;margin-right:auto">Quartz marker </p>
+<p class="fit" style="background:#515151;margin-left:40px;margin-right:24px;text-align:right" dir="rtl">Turn marker </p>
+<p id="channel">Channel directions</p>
 </body></html>"""
 
 with zipfile.ZipFile(output, "w") as book:

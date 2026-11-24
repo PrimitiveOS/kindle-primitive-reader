@@ -43,6 +43,25 @@ pub(crate) fn signed_candidates(
     settings: Settings,
     parent_width: u32,
 ) -> Vec<TextBoxCandidate> {
+    let full_width = full_width_parents(source, styles, settings, parent_width);
+    let has_signed_margin = |style: &Style| {
+        (ordinary_box(style, settings, parent_width)
+            || constrained_signed_box(style, settings, parent_width))
+            && style.horizontal_margin.iter().any(|margin| {
+                resolved_edge(*margin, parent_width, settings).is_some_and(|(_, px)| px < 0.0)
+            })
+    };
+    text_box_candidates_with_parent(source, styles, has_signed_margin, |parent| {
+        full_width[parent]
+    })
+}
+
+pub(super) fn full_width_parents(
+    source: &Source,
+    styles: &[Style],
+    settings: Settings,
+    parent_width: u32,
+) -> Vec<bool> {
     let mut full_width = Vec::with_capacity(styles.len());
     for (element, style) in source.elements.iter().zip(styles) {
         let in_full_width = element.parent.is_some_and(|parent| full_width[parent]);
@@ -61,16 +80,7 @@ pub(crate) fn signed_candidates(
                     }),
         );
     }
-    let has_signed_margin = |style: &Style| {
-        (ordinary_box(style, settings, parent_width)
-            || constrained_signed_box(style, settings, parent_width))
-            && style.horizontal_margin.iter().any(|margin| {
-                resolved_edge(*margin, parent_width, settings).is_some_and(|(_, px)| px < 0.0)
-            })
-    };
-    text_box_candidates_with_parent(source, styles, has_signed_margin, |parent| {
-        full_width[parent]
-    })
+    full_width
 }
 
 fn constrained_signed_box(style: &Style, settings: Settings, parent_width: u32) -> bool {
@@ -103,12 +113,24 @@ pub(crate) fn signed_inset(
     } else {
         return None;
     };
+    if box_width < settings.styled_font(style.size_scale).ceil() {
+        return None;
+    }
+    visible_box(x, offset, box_width, settings)
+}
+
+pub(super) fn visible_box(
+    x: u32,
+    offset: f32,
+    box_width: f32,
+    settings: Settings,
+) -> Option<(i32, u32)> {
     let start = x as f32 + offset;
     let physical_left = settings.left_margin() as f32 + start;
     let physical_right = physical_left + box_width;
     let screen = settings.width as f32;
     // Limit extreme publisher geometry to one extra viewport on each side.
-    if box_width < settings.styled_font(style.size_scale).ceil()
+    if box_width < 1.0
         || !(-screen..screen).contains(&physical_left)
         || !(physical_right > 0.0 && physical_right <= 2.0 * screen)
     {
@@ -117,7 +139,11 @@ pub(crate) fn signed_inset(
     Some((start as i32, box_width as u32))
 }
 
-fn resolved_edge(margin: BoxMargin, width: u32, settings: Settings) -> Option<(bool, f32)> {
+pub(super) fn resolved_edge(
+    margin: BoxMargin,
+    width: u32,
+    settings: Settings,
+) -> Option<(bool, f32)> {
     let BoxMargin::Length(length) = margin else {
         return Some((false, 0.0));
     };

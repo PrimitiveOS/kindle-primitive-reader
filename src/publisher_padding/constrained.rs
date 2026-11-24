@@ -2,15 +2,16 @@
 use super::{BoxArea, horizontal_margins::positive_pixels};
 use crate::{
     Settings,
-    book_style::{BoxMargin, ImageLength, Style},
+    book_style::{BoxMargin, CssLength, ImageLength, Style},
 };
 
 pub(super) fn candidate(style: &Style) -> bool {
-    style.min_width.is_some()
-        || [style.image_width, style.image_max_width]
-            .into_iter()
-            .flatten()
-            .any(|length| !matches!(length, ImageLength::Auto))
+    !matches!(style.image_width, Some(ImageLength::FitContent))
+        && (style.min_width.is_some()
+            || [style.image_width, style.image_max_width]
+                .into_iter()
+                .flatten()
+                .any(|length| !matches!(length, ImageLength::Auto)))
 }
 
 pub(super) fn inset(
@@ -51,7 +52,7 @@ pub(super) fn place(
     style: &Style,
     settings: Settings,
     rtl: bool,
-    [mut left, mut right]: [f32; 2],
+    [left, right]: [f32; 2],
     permit_overflow: bool,
 ) -> Option<(f32, f32)> {
     let font = settings.styled_font(style.size_scale);
@@ -63,37 +64,72 @@ pub(super) fn place(
     };
     let requested = width(style.image_width);
     let automatic = parent - left - right;
-    let original = requested.unwrap_or(automatic);
+    let used = limit(
+        requested.unwrap_or(automatic),
+        parent_width,
+        style,
+        settings,
+        true,
+    );
     // The minimum wins if it exceeds the maximum. A constraint that leaves
     // the automatic width alone does not trigger fixed-box alignment.
-    let used = original
-        .min(width(style.image_max_width).unwrap_or(f32::INFINITY))
-        .max(style.min_width.map_or(0.0, |length| {
-            length.box_pixels(parent_width, settings.font_size)
-        }));
     if !used.is_finite() || used < font.ceil() || (!permit_overflow && used > parent) {
         return None;
     }
     if requested.is_some() || used != automatic {
-        if used + left + right > parent {
-            if rtl {
-                left = 0.0;
-            } else {
-                right = 0.0;
-            }
-        }
-        let remaining = parent - used - left - right;
-        // When the width still overflows, CREngine leaves auto sides unresolved.
-        if remaining < 0.0 {
-            return permit_overflow.then_some((left, used));
-        }
-        left = match style.horizontal_margin {
-            [BoxMargin::Auto, BoxMargin::Auto] => (remaining / 2.0).floor(),
-            [BoxMargin::Auto, _] => remaining,
-            [_, BoxMargin::Auto] => left,
-            _ if rtl => parent - used,
-            _ => left,
-        };
+        return align(parent, used, style, rtl, [left, right], permit_overflow);
     }
+    Some((left, used))
+}
+
+pub(super) fn limit(
+    width: f32,
+    parent_width: u32,
+    style: &Style,
+    settings: Settings,
+    percentages: bool,
+) -> f32 {
+    let allowed = |length: &CssLength| percentages || !matches!(length, CssLength::Fraction(_));
+    let font = settings.styled_font(style.size_scale);
+    let high = style
+        .image_max_width
+        .and_then(ImageLength::css_length)
+        .filter(allowed)
+        .map_or(f32::INFINITY, |length| {
+            length.box_pixels(parent_width, font)
+        });
+    let low = style.min_width.filter(allowed).map_or(0.0, |length| {
+        length.box_pixels(parent_width, settings.font_size)
+    });
+    width.min(high).max(low)
+}
+
+pub(super) fn align(
+    parent: f32,
+    used: f32,
+    style: &Style,
+    rtl: bool,
+    [mut left, mut right]: [f32; 2],
+    permit_overflow: bool,
+) -> Option<(f32, f32)> {
+    if used + left + right > parent {
+        if rtl {
+            left = 0.0;
+        } else {
+            right = 0.0;
+        }
+    }
+    let remaining = parent - used - left - right;
+    // When the width still overflows, CREngine leaves auto sides unresolved.
+    if remaining < 0.0 {
+        return permit_overflow.then_some((left, used));
+    }
+    let left = match style.horizontal_margin {
+        [BoxMargin::Auto, BoxMargin::Auto] => (remaining / 2.0).floor(),
+        [BoxMargin::Auto, _] => remaining,
+        [_, BoxMargin::Auto] => left,
+        _ if rtl => parent - used,
+        _ => left,
+    };
     Some((left, used))
 }

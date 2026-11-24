@@ -516,6 +516,12 @@ impl ParleyChapter {
         } else {
             Vec::new()
         };
+        let fit_content_candidates = crate::publisher_padding::fit_content::candidates(
+            source,
+            styles,
+            settings,
+            outer_width,
+        );
         // Share the bounded grayscale cache across distinct renderings. Duplicate icons
         // reuse one preview, while large later illustrations still receive space.
         let mut variants = HashSet::new();
@@ -794,10 +800,41 @@ impl ParleyChapter {
                 } else {
                     None
                 };
-                let signed_margin = if float.is_none()
-                    && contour.is_none()
-                    && signed_margin_candidates.get(block.element)
-                        == Some(&TextBoxCandidate::Simple)
+                let placed_box = if float.is_some() || contour.is_some() {
+                    None
+                } else if fit_content_candidates.get(block.element)
+                    == Some(&TextBoxCandidate::Simple)
+                {
+                    // CREngine measures intrinsic percentage indents against one em.
+                    let em = settings.styled_font(style.size_scale).floor() as u32;
+                    let indent =
+                        LineIndent::resolve(style, em, column_width, settings.font_size, 0);
+                    let intrinsic = make_paragraph(
+                        &mut context,
+                        &mut fonts,
+                        block,
+                        None,
+                        settings,
+                        styles,
+                        &[],
+                        &[],
+                        false,
+                        indent,
+                        &Default::default(),
+                        None,
+                    )
+                    .calculate_content_widths()
+                    .max;
+                    crate::publisher_padding::fit_content::inset(
+                        column_x,
+                        column_width,
+                        style,
+                        settings,
+                        crate::publisher_padding::paragraph_is_rtl(block.direction, block.text),
+                        intrinsic,
+                    )
+                } else if signed_margin_candidates.get(block.element)
+                    == Some(&TextBoxCandidate::Simple)
                 {
                     crate::publisher_padding::horizontal_margins::signed_inset(
                         column_x,
@@ -809,7 +846,7 @@ impl ParleyChapter {
                 } else {
                     None
                 };
-                let (text_x, text_width, indent_base) = signed_margin
+                let (text_x, text_width, indent_base) = placed_box
                     .map_or((text_x as f32, text_width, indent_base), |(left, width)| {
                         (left as f32, width, width)
                     });
@@ -927,7 +964,7 @@ impl ParleyChapter {
                 }
                 chapter.paragraphs.push(Paragraph {
                     key: block.key,
-                    column: if let Some((left, width)) = signed_margin {
+                    column: if let Some((left, width)) = placed_box {
                         left as f32..left as f32 + width as f32
                     } else {
                         publication_box
@@ -935,7 +972,7 @@ impl ParleyChapter {
                                 area.outer_x as f32..(area.outer_x + area.outer_width) as f32
                             })
                     },
-                    signed_margin: signed_margin.is_some(),
+                    signed_margin: placed_box.is_some(),
                     max_bottom: bottom,
                     x,
                     y: origin,

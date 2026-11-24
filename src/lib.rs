@@ -303,6 +303,16 @@ pub enum BlockWidthMode {
     PublisherWithConstraints,
 }
 
+/// Experimental intrinsic sizing for ordinary publisher paragraphs.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FitContentMode {
+    #[default]
+    Ignore,
+    Book,
+    Web,
+}
+
 /// Experimental horizontal float policy for the Parley provider.
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -359,6 +369,8 @@ pub struct Settings {
     pub preserve_forced_page_margins: bool,
     #[doc(hidden)]
     pub block_width: BlockWidthMode,
+    #[doc(hidden)]
+    pub fit_content: FitContentMode,
     /// Apply positive physical sides to supported auto-width publisher paragraphs.
     #[doc(hidden)]
     pub publisher_horizontal_margins: bool,
@@ -442,6 +454,7 @@ impl Default for Settings {
             block_margins: BlockMarginMode::Ignore,
             preserve_forced_page_margins: false,
             block_width: BlockWidthMode::Ignore,
+            fit_content: FitContentMode::Ignore,
             publisher_horizontal_margins: false,
             publisher_signed_horizontal_margins: false,
             publisher_block_height: false,
@@ -630,9 +643,9 @@ impl Settings {
     fn text_hit_column(self, x: f32) -> Option<bool> {
         let inside =
             (self.left_margin() as f32..(self.width - self.right_margin()) as f32).contains(&x);
-        (inside
-            || self.publisher_signed_horizontal_margins && (0.0..self.width as f32).contains(&x))
-        .then_some(inside)
+        let allows_bleed =
+            self.publisher_signed_horizontal_margins || self.fit_content == FitContentMode::Web;
+        (inside || allows_bleed && (0.0..self.width as f32).contains(&x)).then_some(inside)
     }
 
     fn top_margin(self) -> u32 {

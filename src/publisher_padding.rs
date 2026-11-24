@@ -1,5 +1,6 @@
 //! Publisher block boxes, measured against their parent content area.
 mod constrained;
+pub(crate) mod fit_content;
 pub(crate) mod horizontal_margins;
 mod wrappers;
 

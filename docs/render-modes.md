@@ -138,8 +138,8 @@ The native probe asserts each band, text edge, and linked word. Saved source
 quotes survive repagination in Reader and mode changes in KOReader. Reader's
 continued text can wrap differently because the engines shape with different
 metrics. The nonnegative policy covers boxes that fit the containing column
-with room for text. Complex ancestry, floats, decorated boxes, and
-`fit-content` still require separate work.
+with room for text. Complex ancestry, floats, and decorated boxes require
+separate work.
 
 Regenerate the authored EPUB with
 `python3 scripts/generate-render-width-margins-fixture.py`. Run the Lua
@@ -189,6 +189,48 @@ Pass `signed` after the capture directory to the same Lua oracle. Run
 [KOReader Web](screenshots/render-signed-widths-stock-web.png) ·
 [Reader default](screenshots/render-signed-widths-reader-default.png) ·
 [Reader with both policies](screenshots/render-signed-widths-reader.png)
+
+### Paragraphs that fit their text
+
+The internal `FitContentMode` policy measures the styled text of ordinary
+horizontal `width: fit-content` paragraphs. Book and Web both limit the
+measured width to the available column, using absolute minimum and maximum
+widths during measurement. Book clamps negative margins to zero. Web uses
+signed margins and reapplies the resolved constraints, which lets a
+percentage minimum extend paint to the screen edge. The default preserves
+the existing cascade, including a valid width declared before `fit-content`.
+
+| Authored case at 1264 px and 96 DPI | KOReader Book x / width | KOReader Web x / width |
+| --- | ---: | ---: |
+| Content-sized paragraph centered with auto margins | 491 / 282 | 491 / 282 |
+| Left auto and 56 px right margin | 871 / 283 | 871 / 283 |
+| Centered paragraph capped at 150 px | 557 / 150 | 557 / 150 |
+| Centered paragraph with 420 px minimum | 422 / 420 | 422 / 420 |
+| Linked text with −24 px left margin | 54 / 328 | 30 / 328 |
+| Long text with physical side margins | 74 / 1,124 | 74 / 1,124 |
+| Centered 30% minimum overrides 22% maximum | 491 / 281 | 459 / 346 |
+| 110% minimum with −24 px left and auto right | 54 / 275 | 30 / 1,234 |
+
+The native fixture checks ten horizontal paint bands in all four stock modes.
+Reader checks the Book and Web positions and widths with up to two pixels of
+tolerance for text advance on four samples. Line wrapping and line height
+still differ. Reader restores all ten source quotes and exercises link and
+word taps in the left user margin in Web. Coverage is limited to plain
+paragraphs in the body or width-neutral wrappers. Decorated boxes, negative
+and hanging indents, and extremely narrow width constraints use the ordinary
+layout path. The complete Render Mode control remains open.
+
+Generate the sample with `python3 scripts/generate-render-width-margins-fixture.py --fit-content`.
+Pass `fit-content` after the capture directory to the Lua oracle. Run
+`cargo test --locked --lib fit_content` and set `READER_FIT_CONTENT_CAPTURES`
+to an existing directory to save Reader frames.
+[CREngine width calculation](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L7909-L8021) ·
+[Intrinsic text measurement](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L12020-L12068) ·
+[Native oracle](../scripts/koreader-render-width-margins-check.lua) ·
+[KOReader Book](screenshots/render-fit-content-stock-book.png) ·
+[KOReader Web](screenshots/render-fit-content-stock-web.png) ·
+[Reader Book policy](screenshots/render-fit-content-reader-book.png) ·
+[Reader Web policy](screenshots/render-fit-content-reader-web.png)
 
 ### Sized wrappers around ordinary paragraphs
 

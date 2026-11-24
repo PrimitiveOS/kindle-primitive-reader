@@ -33,6 +33,7 @@ end
 
 local modes = {"Legacy", "Flat", "Book", "Web"}
 local signed = arg[5] == "signed"
+local fit = arg[5] == "fit-content"
 local cases = {
     {"Fixed marker", 221, {94, 1092}, {94, 320}},
     {"Trailing marker", 204, {54, 1100}, {692, 462}},
@@ -53,6 +54,20 @@ if signed then
         {"One small lookout", 136, {54, 1156}, {22, 420}},
         {"Saltbush", 119, {54, 1148}, {20, 1244}, "right", 1314},
         {"Ebb gate", 102, {54, 1156}, {92, 1172}, "right", 1294},
+    }
+end
+if fit then
+    cases = {
+        {"Shore marker", 221, {54, 1156}, {54, 258}, {54, 258}},
+        {"Harbor marker", 211, {54, 1156}, {491, 282}, {491, 282}},
+        {"Anchor marker", 201, {54, 1100}, {871, 283}, {871, 283}},
+        {"Beacon marker", 191, {54, 1156}, {557, 150}, {557, 150}},
+        {"Needle marker", 181, {54, 1156}, {422, 420}, {422, 420}},
+        {"Sounding marker", 141, {54, 1144}, {30, 328}, {54, 328}},
+        {"Current marker", 131, {74, 1124}, {74, 1124}, {74, 1124}},
+        {"Ledger marker", 121, {54, 1156}, {459, 346}, {491, 281}},
+        {"Quartz marker", 111, {54, 1156}, {30, 1234}, {54, 275}},
+        {"Turn marker", 81, {94, 1092}, {974, 236}, {974, 236}},
     }
 end
 local function locate(view, phrase)
@@ -86,18 +101,16 @@ for mode = 0, 3 do
                 if run > widest then left, widest = x + 1 - run, run end
             end
         end
-        local expected = case[mode == 3 and 4 or 3]
+        local expected = case[mode == 3 and 4 or fit and mode == 2 and 5 or 3]
         print(string.format("WIDTH %s|%d|word=%d..%d|x=%d|w=%d", modes[mode+1],
             i, word.x0, word.x1, left, widest))
         assert(left == expected[1] and widest == expected[2])
-        local edge = (mode == 3 and case[6]) or ((case[5] == "right" or not signed and i == 7) and left + widest or left)
-        if case[5] == "right" or not signed and i == 7 then
-            assert(math.abs(word.x1 - edge) <= 1)
-        else
-            assert(word.x0 == edge)
-        end
-        if i == 1 then
-            assert(view:getLinkFromPosition(math.max(word.x0 + 8, 60), math.floor((word.y0 + word.y1) / 2)) ~= "")
+        local right_aligned = case[5] == "right" or (fit and i == 10) or (not signed and not fit and i == 7)
+        local edge = (mode == 3 and case[6]) or (right_aligned and left + widest or left)
+        assert(math.abs((right_aligned and word.x1 or word.x0) - edge) <= (right_aligned and 1 or 0))
+        if i == (fit and 6 or 1) then
+            local x = math.max(word.x0 + 8, 60)
+            assert(view:getLinkFromPosition(x, math.floor((word.y0 + word.y1) / 2)) ~= "")
         end
     end
     view:drawCurrentPage(frame, false, false, false, false)
