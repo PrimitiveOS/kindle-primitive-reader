@@ -1995,6 +1995,7 @@ impl Reader {
         let header = c.top_header;
         items.extend([
             Item::new("Top status header", Action::Heading),
+            Item::new("About the top status header", Action::AboutTopHeader),
             setting(
                 "Refresh header clock automatically",
                 on_off(header.auto_refresh),
