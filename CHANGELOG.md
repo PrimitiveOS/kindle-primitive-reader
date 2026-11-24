@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.36
+
+- Calculate the optional top header percentage from exact rendered pages when available.
+- Show numbered senses, indented examples, and paragraph direction in supported StarDict HTML articles.
+- Enable an optional right swipe to return to the previous EPUB passage or PDF viewport.
+- Compare time spent and screens read by book across local weeks and months.
+
 ## 0.1.35
 
 - Count whole-book screen pages for supported EPUBs in the optional top status header.
