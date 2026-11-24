@@ -2,17 +2,20 @@
 
 use std::collections::HashMap;
 
-use primitive_app::{App, Change, HEIGHT, WIDTH};
+use primitive_app::{App, Change};
+#[cfg(test)]
+use primitive_app::{HEIGHT, WIDTH};
 use primitive_ui::{Canvas, Icon, Input, Rect, TextStyle};
 
 use super::bar_icons::{BOOKMARK, FIRST_PAGE, LAST_PAGE};
 use super::chapter_navigation::Direction;
 use super::{
-    Action, DONE, HistoryLocation, Reader, ReadingPosition, Screen, fixed_page_label,
+    Action, HistoryLocation, Reader, ReadingPosition, Screen, fixed_page_label,
     reflow_mark_location,
 };
 use crate::fixed_session::FixedJump;
 use crate::reading_controls::SkimPosition;
+use crate::session::ReadingViewport;
 
 pub(super) struct Layout {
     pub(super) panel: Rect,
@@ -299,21 +302,40 @@ mod placement_tests {
 }
 
 impl Layout {
-    fn new(position: SkimPosition) -> Self {
+    fn new(position: SkimPosition, viewport: ReadingViewport) -> Self {
+        let (width, screen_height) = viewport.dimensions();
+        let width = width as i32;
+        let screen_height = screen_height as i32;
         let (height, track, shortcuts, preview, actions) = match position {
             SkimPosition::Center => (478, 196, 84, 258, 378),
             SkimPosition::Top | SkimPosition::Bottom => (446, 73, 125, 233, 347),
         };
         let top = match position {
             SkimPosition::Top => 32,
-            SkimPosition::Center => (HEIGHT as i32 - height) / 2,
-            SkimPosition::Bottom => HEIGHT as i32 - height - 76,
+            SkimPosition::Center => (screen_height - height) / 2,
+            SkimPosition::Bottom => screen_height - height - 76,
         };
-        let button = |row, index| Rect::new(80 + 224 * index, top + row, 208, 100);
-        let action = |index| Rect::new(80 + 368 * index, top + actions, 368 - 16, 82);
+        let button_stride = (width - 144) / 5;
+        let action_stride = (width - 160) / 3;
+        let button = |row, index| {
+            Rect::new(
+                80 + button_stride * index,
+                top + row,
+                button_stride - 16,
+                100,
+            )
+        };
+        let action = |index| {
+            Rect::new(
+                80 + action_stride * index,
+                top + actions,
+                action_stride - 16,
+                82,
+            )
+        };
         Self {
-            panel: Rect::new(40, top, WIDTH as i32 - 80, height),
-            track: Rect::new(92, top + track, WIDTH as i32 - 184, 42),
+            panel: Rect::new(40, top, width - 80, height),
+            track: Rect::new(92, top + track, width - 184, 42),
             previous_ten: button(preview, 0),
             previous: button(preview, 1),
             number: button(preview, 2),
@@ -344,7 +366,7 @@ pub(super) struct Session {
 
 impl Reader {
     pub(super) fn skim_layout(&self) -> Layout {
-        Layout::new(self.controls.skim_position)
+        Layout::new(self.controls.skim_position, self.reading_viewport())
     }
 
     pub(super) fn start_skim(&mut self) -> crate::Result<()> {
@@ -812,7 +834,7 @@ impl Reader {
     pub(super) fn skim_input(&mut self, input: Input) -> Change {
         let layout = self.skim_layout();
         match input {
-            Input::Tap(x, y) if DONE.contains(x, y) => self.exit(),
+            Input::Tap(x, y) if self.reading_viewport().done().contains(x, y) => self.exit(),
             Input::PageForward => self.skim_step(Input::PageForward),
             Input::PageBack => self.skim_step(Input::PageBack),
             Input::Tap(x, y) | Input::LongTap(x, y) if layout.chapters[0].contains(x, y) => {

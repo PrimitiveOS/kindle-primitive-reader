@@ -43,8 +43,17 @@ impl ReadingViewport {
         self.height - FOOTER_HEIGHT
     }
 
-    const fn show_status(self) -> Rect {
+    pub(crate) const fn show_status(self) -> Rect {
         Rect::new(8, self.page_height() as i32 + 5, 148, 60)
+    }
+
+    pub(crate) const fn bottom_right(self, portrait: Rect) -> Rect {
+        Rect::new(
+            portrait.x + self.width as i32 - WIDTH as i32,
+            portrait.y + self.height as i32 - HEIGHT as i32,
+            portrait.w,
+            portrait.h,
+        )
     }
 
     pub(crate) const fn done(self) -> Rect {
@@ -56,7 +65,7 @@ impl ReadingViewport {
         )
     }
 
-    fn caption(self, width: i32, font_size: i32) -> Rect {
+    pub(crate) fn caption(self, width: i32, font_size: i32) -> Rect {
         let caption_region = FOOTER_HEIGHT as i32 - 14;
         let height = font_size.saturating_add(20).clamp(30, caption_region);
         let top = self.page_height() as i32 + (caption_region - height) / 2;

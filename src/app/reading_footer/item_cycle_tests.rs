@@ -1,5 +1,6 @@
 use super::*;
 use crate::app::tests::{Fixture, capture_test_screen};
+use crate::session::SHOW_STATUS;
 use primitive_app::App;
 use primitive_ui::Input;
 

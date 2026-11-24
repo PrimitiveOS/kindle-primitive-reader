@@ -75,3 +75,18 @@ The Mac renderer reproduced the original portrait frame after both transitions.
 [Paged landscape](screenshots/fixed-viewport-landscape.png) ·
 [Continuous portrait](screenshots/fixed-continuous-portrait.png) ·
 [Continuous landscape](screenshots/fixed-continuous-landscape.png)
+
+## Reading controls in the prepared viewport
+
+Reader uses the prepared document dimensions for the reading footer, Exit,
+zoom, toolbars, Skim, and their hit areas. The Mac tests render the document
+at 1264 × 1680 and 1680 × 1264. They exercise the lower-edge gesture on
+the landscape canvas, verify that Exit remains reachable and leave the
+original reflow source position intact on return to portrait. They also
+check the PDF zoom and footer boundaries after resizing.
+
+The legacy shared Canvas scales its type and strokes by width. The
+landscape captures showed clipped captions in the unchanged compact row
+height. A negotiated Canvas needs a physical-size reference independent
+of turn before the control can be enabled. Lists, keyboard sheets,
+selection popups and the Launcher handoff retain separate checks.

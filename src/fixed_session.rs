@@ -393,6 +393,10 @@ impl PdfSelection {
 }
 
 impl FixedReading {
+    pub(crate) fn viewport(&self) -> ReadingViewport {
+        self.viewport
+    }
+
     fn selection_document(&self, page: usize) -> Result<PdfPageText> {
         if self.view.force_ocr {
             return self
@@ -514,7 +518,7 @@ impl FixedReading {
         }
     }
 
-    fn zoom_buttons(&self) -> (Rect, Rect) {
+    pub(crate) fn zoom_buttons(&self) -> (Rect, Rect) {
         let dx = self.viewport.dimensions().0 as i32 - WIDTH as i32;
         let y = self.viewport.page_height() as i32 + 5;
         (

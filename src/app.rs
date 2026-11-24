@@ -108,7 +108,9 @@ use crate::annotation_export;
 use crate::dictionary::{self, DictionarySources, InstalledDictionary};
 use crate::epub::{Book, Destination};
 use crate::fixed::{PdfError, PdfLinkTarget};
-use crate::fixed_session::{FixedJump, FixedReading, PdfSelection, SMALLER};
+#[cfg(test)]
+use crate::fixed_session::SMALLER;
+use crate::fixed_session::{FixedJump, FixedReading, PdfSelection};
 use crate::fixed_text::PdfTextRect;
 use crate::generated_contents::{GeneratedContents, OutlineTarget};
 use crate::koreader_import::{self, ExportEntry, QuoteMatch, QuoteResolver};
@@ -4445,6 +4447,16 @@ impl Reader {
             .or_else(|| self.active.as_ref().map(|book| book.id))
     }
 
+    fn reading_viewport(&self) -> crate::session::ReadingViewport {
+        if let Some(book) = &self.active {
+            book.reading.config.viewport
+        } else if let Some(book) = &self.fixed {
+            book.reading.viewport()
+        } else {
+            crate::session::ReadingViewport::PORTRAIT
+        }
+    }
+
     fn current_position(&self) -> Option<ReadingPosition> {
         self.fixed
             .as_ref()
@@ -4875,9 +4887,11 @@ impl Reader {
         {
             return None;
         }
-        let width = WIDTH as f32;
-        let page_height = PAGE_HEIGHT as f32;
-        let screen_height = HEIGHT as f32;
+        let viewport = self.reading_viewport();
+        let (width, screen_height) = viewport.dimensions();
+        let width = width as f32;
+        let page_height = viewport.page_height() as f32;
+        let screen_height = screen_height as f32;
         let central = (width / 4.0..=width * 0.75).contains(&start_x);
         let edge = if central {
             page_height / 5.0
@@ -5667,7 +5681,7 @@ impl Reader {
             if let Some(change) = self.search_result_input(x, y) {
                 return change;
             }
-            if DONE.contains(x, y) {
+            if self.reading_viewport().done().contains(x, y) {
                 return self.exit();
             }
             if let Some((link, link_x, link_y)) = self.reflow_tap_link(x, y) {
@@ -5829,10 +5843,13 @@ impl Reader {
             if let Some(change) = self.search_result_input(x, y) {
                 return change;
             }
-            if DONE.contains(x, y) {
+            if self.reading_viewport().done().contains(x, y) {
                 return self.exit();
             }
-            if NEXT_COMIC.contains(x, y)
+            if self
+                .reading_viewport()
+                .bottom_right(NEXT_COMIC)
+                .contains(x, y)
                 && self.ocr.is_none()
                 && let Some(next) = self.next_comic().cloned()
             {
@@ -7273,7 +7290,10 @@ impl Reader {
                 0
             };
             let status_rect = self.footer_caption_rect(
-                self.footer_caption_width(SMALLER.x.saturating_sub(60) as u32, status_text_width),
+                self.footer_caption_width(
+                    fixed.reading.zoom_buttons().0.x.saturating_sub(60) as u32,
+                    status_text_width,
+                ),
                 status_text_width,
                 footer_font_px,
             );
@@ -7312,14 +7332,19 @@ impl Reader {
             if self.screen == Screen::FixedTools {
                 self.draw_reading_tools(canvas);
             } else if self.touch_locked {
-                draw_locked_footer(canvas, self.notice.as_deref());
+                draw_locked_footer(canvas, self.reading_viewport(), self.notice.as_deref());
             } else if self.ocr.is_some() && selection.is_empty() {
                 canvas.button(CANCEL_OCR, "Cancel OCR", false, false);
             } else if self.screen == Screen::Fixed
                 && selection.is_empty()
                 && self.next_comic().is_some()
             {
-                canvas.button(NEXT_COMIC, "Next comic", false, false);
+                canvas.button(
+                    self.reading_viewport().bottom_right(NEXT_COMIC),
+                    "Next comic",
+                    false,
+                    false,
+                );
             } else if self.screen == Screen::Fixed && selection.is_empty() {
                 self.draw_search_steps(canvas);
                 if self.fixed_search_fit_active() {
@@ -7442,7 +7467,10 @@ impl Reader {
                 0
             };
             let status_rect = self.footer_caption_rect(
-                self.footer_caption_width(DONE.x.saturating_sub(60) as u32, status_text_width),
+                self.footer_caption_width(
+                    self.reading_viewport().done().x.saturating_sub(60) as u32,
+                    status_text_width,
+                ),
                 status_text_width,
                 footer_font_px,
             );
@@ -7484,7 +7512,7 @@ impl Reader {
             if self.screen == Screen::BookTools {
                 self.draw_reading_tools(canvas);
             } else if self.touch_locked {
-                draw_locked_footer(canvas, self.notice.as_deref());
+                draw_locked_footer(canvas, self.reading_viewport(), self.notice.as_deref());
             } else if self.screen == Screen::Book && selection.is_empty() {
                 self.draw_search_steps(canvas);
             }
@@ -8106,8 +8134,9 @@ impl Reader {
             Screen::Fixed => {}
             _ => return None,
         }
-        let width = WIDTH as f32;
-        let height = HEIGHT as f32;
+        let (width, height) = self.reading_viewport().dimensions();
+        let width = width as f32;
+        let height = height as f32;
         let left = x <= width * 0.12;
         let right = x >= width * 0.88;
         let top = y <= height * 0.10;
@@ -8261,7 +8290,12 @@ impl App for Reader {
     fn press_point(&self, input: Input) -> Option<(f32, f32)> {
         match input {
             Input::Tap(x, y)
-                if !self.touch_locked || UNLOCK_TOUCH.contains(x, y) || DONE.contains(x, y) =>
+                if !self.touch_locked
+                    || self
+                        .reading_viewport()
+                        .bottom_right(UNLOCK_TOUCH)
+                        .contains(x, y)
+                    || self.reading_viewport().done().contains(x, y) =>
             {
                 Some((x, y))
             }
@@ -8497,12 +8531,19 @@ impl App for Reader {
         }
         if self.touch_locked {
             match input {
-                Input::Tap(x, y) if UNLOCK_TOUCH.contains(x, y) => {
+                Input::Tap(x, y)
+                    if self
+                        .reading_viewport()
+                        .bottom_right(UNLOCK_TOUCH)
+                        .contains(x, y) =>
+                {
                     self.touch_locked = false;
                     self.notice = None;
                     return Change::Partial;
                 }
-                Input::Tap(x, y) if DONE.contains(x, y) => return self.exit(),
+                Input::Tap(x, y) if self.reading_viewport().done().contains(x, y) => {
+                    return self.exit();
+                }
                 Input::PageBack | Input::PageForward => {}
                 _ => return Change::None,
             }
@@ -8543,7 +8584,7 @@ impl App for Reader {
         if matches!(self.screen, Screen::Book | Screen::Fixed)
             && self.selection.is_none()
             && self.pdf_selection.is_none()
-            && matches!(input, Input::Tap(x, y) if x >= WIDTH as f32 - 58.0 && y < 58.0)
+            && matches!(input, Input::Tap(x, y) if x >= self.reading_viewport().dimensions().0 as f32 - 58.0 && y < 58.0)
         {
             return match self.toggle_bookmark() {
                 Ok(()) => self.applied_change(),
@@ -9453,16 +9494,22 @@ fn ocr_language_name(code: &str) -> &str {
     }
 }
 
-fn draw_locked_footer(canvas: &mut Canvas, notice: Option<&str>) {
-    let top = PAGE_HEIGHT as i32;
-    canvas.fill(Rect::new(0, top, WIDTH as i32, HEIGHT as i32 - top), 255);
+fn draw_locked_footer(
+    canvas: &mut Canvas,
+    viewport: crate::session::ReadingViewport,
+    notice: Option<&str>,
+) {
+    let (width, height) = viewport.dimensions();
+    let top = viewport.page_height() as i32;
+    let unlock = viewport.bottom_right(UNLOCK_TOUCH);
+    canvas.fill(Rect::new(0, top, width as i32, height as i32 - top), 255);
     canvas.text(
-        Rect::new(38, top + 12, UNLOCK_TOUCH.x - 60, 48),
+        Rect::new(38, top + 12, unlock.x - 60, 48),
         notice.unwrap_or("Touch locked. Use the physical page buttons."),
         CAPTION,
     );
-    canvas.button(UNLOCK_TOUCH, "Unlock touch", true, false);
-    canvas.button(DONE, "Exit", false, false);
+    canvas.button(unlock, "Unlock touch", true, false);
+    canvas.button(viewport.done(), "Exit", false, false);
 }
 
 fn draw_toolbar_button(canvas: &mut Canvas, rect: Rect, title: &str) {
@@ -9783,6 +9830,9 @@ pub fn run_probe(engine: Engine, book: PathBuf, fonts: Vec<PathBuf>, home: &Path
 
 #[cfg(test)]
 mod external_range_tests;
+
+#[cfg(test)]
+mod viewport_chrome_tests;
 
 #[cfg(test)]
 mod tests {

@@ -10,8 +10,10 @@ use crate::reading_controls::{
     FooterAlignment, FooterItem, FooterItemCycle, FooterSymbolStyle, FooterTrackPosition,
     HeaderBattery, ProgressScope, ReadingControls, StatusBar, TopHeader,
 };
-use crate::session::{DONE, PAGE_HEIGHT, SHOW_STATUS};
-use primitive_app::{Change, HEIGHT, WIDTH};
+use crate::session::PAGE_HEIGHT;
+#[cfg(test)]
+use primitive_app::WIDTH;
+use primitive_app::{Change, HEIGHT};
 use primitive_ui::{Canvas, HAIRLINE, Icon, Rect, SECONDARY, TextStyle};
 use std::io;
 use std::time::{Duration, Instant};
@@ -86,11 +88,12 @@ pub(super) fn fixed_chapters(reading: &FixedReading) -> Vec<(usize, String)> {
 
 fn draw_header_ticks(
     canvas: &mut Canvas,
+    width: u32,
     pages: impl ExactSizeIterator<Item = usize>,
     count: usize,
     ink: u8,
 ) {
-    let width = (WIDTH - 24) as usize;
+    let width = (width - 24) as usize;
     if pages.len() >= width / 5 {
         return;
     }
@@ -768,10 +771,11 @@ impl Reader {
         let (Input::Tap(x, y) | Input::LongTap(x, y)) = input else {
             return None;
         };
-        if y < PAGE_HEIGHT as f32 {
+        let viewport = self.reading_viewport();
+        if y < viewport.page_height() as f32 {
             return None;
         }
-        if DONE.contains(x, y) {
+        if viewport.done().contains(x, y) {
             return Some(if matches!(input, Input::Tap(..)) {
                 self.exit()
             } else {
@@ -783,7 +787,7 @@ impl Reader {
             return None;
         }
         if self.hidden_overlap_footer() {
-            if !SHOW_STATUS.contains(x, y) {
+            if !viewport.show_status().contains(x, y) {
                 return None;
             }
             if matches!(input, Input::LongTap(..)) || self.controls.footer_tap_locked {
@@ -1064,15 +1068,16 @@ impl Reader {
         let Some((identity, status)) = self.top_header_parts() else {
             return;
         };
+        let width = self.reading_viewport().dimensions().0;
         let night = self.uses_night_pages();
         let background = if night { 0 } else { 255 };
         let ink = if night { 255 } else { 0 };
         canvas.fill(
-            Rect::new(0, 0, WIDTH as i32, TopHeader::HEIGHT as i32),
+            Rect::new(0, 0, width as i32, TopHeader::HEIGHT as i32),
             background,
         );
         let font_size = i32::from(header.font_size());
-        let baseline = Rect::new(20, 4, WIDTH as i32 - 40, 38);
+        let baseline = Rect::new(20, 4, width as i32 - 40, 38);
         let battery_width = if header.battery == HeaderBattery::Icon {
             42
         } else {
@@ -1110,15 +1115,21 @@ impl Reader {
         }
         if header.chapter_marks {
             canvas.fill(
-                Rect::new(12, TopHeader::HEIGHT as i32 - 2, WIDTH as i32 - 24, 1),
+                Rect::new(12, TopHeader::HEIGHT as i32 - 2, width as i32 - 24, 1),
                 HAIRLINE,
             );
             if let Some(book) = &self.active {
                 let local_count = book.reading.probe.page_count();
                 if let Some(published) = self.publisher_header_marker_pages(book) {
-                    draw_header_ticks(canvas, published.starts.into_iter(), published.count, ink);
+                    draw_header_ticks(
+                        canvas,
+                        width,
+                        published.starts.into_iter(),
+                        published.count,
+                        ink,
+                    );
                 } else if let Some(selected) = self.customized_header_marker_pages(book) {
-                    draw_header_ticks(canvas, selected.into_iter(), local_count, ink);
+                    draw_header_ticks(canvas, width, selected.into_iter(), local_count, ink);
                 } else {
                     let pages = book
                         .reading
@@ -1126,12 +1137,12 @@ impl Reader {
                         .footer_sections()
                         .iter()
                         .map(|(page, _)| *page);
-                    draw_header_ticks(canvas, pages, local_count, ink);
+                    draw_header_ticks(canvas, width, pages, local_count, ink);
                 }
             }
         } else {
             canvas.fill(
-                Rect::new(0, TopHeader::HEIGHT as i32 - 1, WIDTH as i32, 1),
+                Rect::new(0, TopHeader::HEIGHT as i32 - 1, width as i32, 1),
                 HAIRLINE,
             );
         }
@@ -1643,14 +1654,13 @@ impl Reader {
 
     fn footer_right(&self) -> i32 {
         // Zoom and Done keep their own touch targets in the same row.
-        if self
+        match self
             .fixed
             .as_ref()
-            .is_some_and(|fixed| !fixed.reading.is_spread())
+            .filter(|fixed| !fixed.reading.is_spread())
         {
-            crate::fixed_session::SMALLER.x
-        } else {
-            DONE.x
+            Some(fixed) => fixed.reading.zoom_buttons().0.x,
+            None => self.reading_viewport().done().x,
         }
     }
 
@@ -1668,7 +1678,8 @@ impl Reader {
                 .unwrap_or(20)
                 .clamp(5, 90),
         );
-        let minimum_track_width = (WIDTH as i32 * minimum_pct + 99) / 100;
+        let width = self.reading_viewport().dimensions().0 as i32;
+        let minimum_track_width = (width * minimum_pct + 99) / 100;
         let first_track_left = FOOTER_CAPTION_LEFT + FOOTER_TRACK_GAP;
         if self.controls.footer_track_lock_min_width {
             let locked_width = minimum_track_width.min((track_right - first_track_left).max(0));
@@ -1720,7 +1731,7 @@ impl Reader {
             return None;
         }
         let right = if self.next_comic().is_some() {
-            super::NEXT_COMIC.x
+            self.reading_viewport().bottom_right(super::NEXT_COMIC).x
         } else {
             self.footer_right()
         };
@@ -1733,10 +1744,12 @@ impl Reader {
         let track_width = (right - margin - margin).max(0);
         let thickness = self.controls.footer_track_thickness.height();
         let bottom_shift = self.footer_bottom_margin_shift();
+        let viewport = self.reading_viewport();
+        let page_height = viewport.page_height() as i32;
         Some(match self.controls.footer_track_position {
             FooterTrackPosition::Above => Rect::new(
                 margin,
-                PAGE_HEIGHT as i32 + 2 - bottom_shift,
+                page_height + 2 - bottom_shift,
                 track_width,
                 thickness,
             ),
@@ -1744,14 +1757,14 @@ impl Reader {
                 let (_, track_left, bar_width) = self.footer_track_layout(right, status_text_width);
                 Rect::new(
                     track_left,
-                    PAGE_HEIGHT as i32 + 32 - bottom_shift,
+                    page_height + 32 - bottom_shift,
                     bar_width,
                     thickness,
                 )
             }
             FooterTrackPosition::Below => Rect::new(
                 margin,
-                HEIGHT as i32 - 12 - bottom_shift,
+                viewport.dimensions().1 as i32 - 12 - bottom_shift,
                 track_width,
                 thickness,
             ),
@@ -1761,7 +1774,7 @@ impl Reader {
     pub(super) fn footer_caption_width(&self, default: u32, status_text_width: i32) -> u32 {
         if self.controls.footer_track_position == FooterTrackPosition::Alongside {
             let right = if self.next_comic().is_some() {
-                super::NEXT_COMIC.x
+                self.reading_viewport().bottom_right(super::NEXT_COMIC).x
             } else {
                 self.footer_right()
             };
@@ -1776,7 +1789,9 @@ impl Reader {
         content_width: i32,
         font_size: i32,
     ) -> Rect {
-        let mut rect = crate::session::footer_caption_rect(slot_width as i32, font_size);
+        let mut rect = self
+            .reading_viewport()
+            .caption(slot_width as i32, font_size);
         let center_y = rect.y + rect.h / 2;
         rect.h = i32::from(
             self.controls
@@ -1855,16 +1870,18 @@ impl Reader {
     }
 
     pub(super) fn tap_footer(&mut self, x: f32, y: f32) -> Option<Change> {
+        let viewport = self.reading_viewport();
+        let height = viewport.dimensions().1 as f32;
         if x < 0.0
             || x >= self.footer_right() as f32
-            || !(HEIGHT as f32 * 12.0 / 13.0..HEIGHT as f32).contains(&y)
+            || !(height * 12.0 / 13.0..height).contains(&y)
         {
             return None;
         }
         if self.controls.footer_tap_locked {
             return Some(Change::None);
         }
-        if self.hidden_overlap_footer() && !SHOW_STATUS.contains(x, y) {
+        if self.hidden_overlap_footer() && !viewport.show_status().contains(x, y) {
             return None;
         }
         let mut controls = self.controls;
@@ -1898,20 +1915,22 @@ impl Reader {
     }
 
     pub(super) fn hold_footer(&mut self, x: f32, y: f32) -> Option<Change> {
+        let viewport = self.reading_viewport();
         if x < 0.0
             || x >= self.footer_right() as f32
-            || !(PAGE_HEIGHT as f32..HEIGHT as f32).contains(&y)
+            || !(viewport.page_height() as f32..viewport.dimensions().1 as f32).contains(&y)
         {
             return None;
         }
-        if self.hidden_overlap_footer() && !SHOW_STATUS.contains(x, y) {
+        if self.hidden_overlap_footer() && !viewport.show_status().contains(x, y) {
             return None;
         }
         if !self.controls.skim_on_footer_hold
             || self.status_footer_hidden()
             || self.search_result.is_some()
             || self.ocr.is_some()
-            || (super::NEXT_COMIC.contains(x, y) && self.next_comic().is_some())
+            || (viewport.bottom_right(super::NEXT_COMIC).contains(x, y)
+                && self.next_comic().is_some())
         {
             return Some(Change::None);
         }

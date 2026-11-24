@@ -162,6 +162,7 @@ impl Button {
 
 #[derive(Default)]
 struct Bars {
+    width: i32,
     top: Vec<Rect>,
     bottom: Vec<Rect>,
     title: Option<Rect>,
@@ -203,7 +204,7 @@ impl Bars {
         let row_height = if large { 180 } else { 170 };
         let height = rows as i32 * row_height + 20;
         let y = if at_top { above } else { above - height };
-        let panel = Rect::new(0, y, WIDTH as i32, height);
+        let panel = Rect::new(0, y, self.width, height);
         if at_top {
             self.top.push(panel);
         } else {
@@ -257,7 +258,7 @@ impl Bars {
             104
         };
         let height = rows.len() as i32 * row_height + section_height + 8;
-        let width = WIDTH as i32;
+        let width = self.width;
         let panel = Rect::new(0, above - height, width, height);
         self.bottom.push(panel);
         if !sections.is_empty() {
@@ -355,9 +356,14 @@ impl Reader {
     }
 
     fn reading_bars(&self) -> Bars {
-        let mut bars = Bars::default();
+        let viewport = self.reading_viewport();
+        let (width, screen_height) = viewport.dimensions();
+        let width = width as i32;
+        let mut bars = Bars {
+            width,
+            ..Bars::default()
+        };
         let large = self.controls.large_toolbar;
-        let width = WIDTH as i32;
         let fixed = self.fixed.as_ref().map(|document| &document.reading);
         let has_scan = self.supports_scan_panel();
 
@@ -405,7 +411,7 @@ impl Reader {
 
         if self.reading_bottom {
             let height = if large { 112 } else { 104 };
-            let bottom = Rect::new(0, HEIGHT as i32 - height, width, height);
+            let bottom = Rect::new(0, screen_height as i32 - height, width, height);
             bars.bottom.push(bottom);
             let fixed_book = fixed.is_some();
             let supports_text = fixed.is_none_or(|reading| reading.supports_text());
@@ -461,7 +467,7 @@ impl Reader {
             let above = bars
                 .bottom
                 .first()
-                .map_or(PAGE_HEIGHT as i32, |rect| rect.y);
+                .map_or(viewport.page_height() as i32, |rect| rect.y);
             if panel == BarPanel::Pages {
                 bars.group(above, self.page_actions(), large, false);
             } else if self.reading_bottom {
@@ -556,10 +562,11 @@ impl Reader {
 
     pub(super) fn page_paint(&self) -> PagePaint {
         let inverted = self.uses_night_pages();
+        let viewport = self.reading_viewport();
         let height = if self.overlapping_book_page() {
-            HEIGHT
+            viewport.dimensions().1
         } else {
-            PAGE_HEIGHT
+            viewport.page_height()
         };
         let visible = if matches!(self.screen, Screen::BookTools | Screen::FixedTools) {
             self.reading_bars().visible(height)
@@ -679,7 +686,7 @@ impl Reader {
     }
 
     pub(super) fn open_reading_edge(&mut self, from_top: bool, x: f32) -> Change {
-        let width = WIDTH as f32;
+        let width = self.reading_viewport().dimensions().0 as f32;
         self.show(self.tools_screen());
         self.reading_top = from_top;
         self.reading_bottom = !from_top || self.controls.both_toolbars;
