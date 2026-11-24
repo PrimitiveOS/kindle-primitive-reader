@@ -19,6 +19,8 @@ pub mod document_check;
 #[cfg(feature = "kindle")]
 mod document_defaults;
 mod docx;
+#[cfg(feature = "kindle")]
+mod embedded_font_usage;
 pub mod epub;
 pub mod epub_cfi;
 mod epub_font;
@@ -1004,7 +1006,7 @@ chapter_probe! {
     pub chapter: String,
     pub chapter_label: String,
     #[cfg(feature = "kindle")]
-    pub(crate) registered_embedded_fonts: bool,
+    pub(crate) embedded_font_usage: embedded_font_usage::Families,
     book: u64,
     chapters: Vec<Chapter>,
     pub toc: Vec<TocEntry>,
@@ -1185,7 +1187,7 @@ impl Probe {
         #[cfg(feature = "kindle")]
         let mut requests_vertical = false;
         #[cfg(feature = "kindle")]
-        let mut registered_embedded_fonts = false;
+        let mut registered_faces = std::collections::HashMap::new();
         let (renderer, mut lines, content_height) = match engine {
             Engine::Blitz => {
                 let (layout, lines, extent) =
@@ -1199,7 +1201,7 @@ impl Probe {
                 .with_user_css(user_styles)?;
                 #[cfg(feature = "kindle")]
                 {
-                    registered_embedded_fonts = author.has_registered_fonts();
+                    registered_faces.clone_from(author.registered_faces());
                 }
                 let styles = author.compute_for_settings(&source.elements, settings);
                 reading_flow = flow_view::ChapterFlow::from_styles(&source, &styles)?;
@@ -1363,7 +1365,10 @@ impl Probe {
             chapter: href,
             chapter_label,
             #[cfg(feature = "kindle")]
-            registered_embedded_fonts,
+            embedded_font_usage: embedded_font_usage::Families::from_layout(
+                &registered_faces,
+                &renderer,
+            ),
             book: publication,
             spine_rtl,
             #[cfg(feature = "kindle")]

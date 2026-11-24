@@ -6,7 +6,7 @@ use crate::session::ReadingViewport;
 use primitive_app::App;
 use std::{fs, io::Write, path::Path};
 
-fn write_reference_book(path: &Path, variant: &str) {
+pub(super) fn write_reference_book(path: &Path, variant: &str) {
     let source = crate::test_fixture("publisher-faces.epub");
     let mut original = zip::ZipArchive::new(fs::File::open(source).unwrap()).unwrap();
     let mut epub = zip::ZipWriter::new(fs::File::create(path).unwrap());
@@ -20,8 +20,14 @@ fn write_reference_book(path: &Path, variant: &str) {
         "inline" | "unused" => "",
         _ => r#"@font-face {font-family: Voyage; src: url("../fonts/Silkscreen-Regular.ttf");}"#,
     };
+    let unused = if variant == "report" {
+        r#"@font-face {font-family: Quarry; src: url("../fonts/NotoSans-Regular.ttf");}"#
+    } else {
+        ""
+    };
     let css = format!(
         r#"{embedded}
+{unused}
     .embedded {{font-family: Voyage, "Noto Sans", sans-serif;}}
     .installed {{font-family: Silkscreen, "Noto Sans", sans-serif;}}
     p.proof {{ margin-left: 80px; font-size: 145%; }}"#
@@ -64,13 +70,13 @@ fn write_reference_book(path: &Path, variant: &str) {
     epub.finish().unwrap();
 }
 
-fn reader(fixture: &Fixture) -> Reader {
+pub(super) fn reader(fixture: &Fixture) -> Reader {
     let fonts = ["NotoSans-Regular.ttf", "Silkscreen-Regular.ttf"]
         .map(|name| crate::test_fixture(&format!("fonts/{name}")));
     Reader::open(&fixture.root, &fixture.state, fonts.to_vec()).unwrap()
 }
 
-fn open_rendering(app: &mut Reader) {
+pub(super) fn open_rendering(app: &mut Reader) {
     app.last_text_panel = BarPanel::TextRendering;
     app.open_reading_edge(false, 520.0);
     assert_eq!(app.reading_panel, Some(BarPanel::TextRendering));
@@ -100,12 +106,13 @@ fn embedded_fonts_control_handles_remote_availability_and_preserves_independent_
     app.open_path(&path).unwrap();
     assert!(font_setting(&app));
     assert!(
-        !app.active
+        app.active
             .as_ref()
             .unwrap()
             .reading
             .probe
-            .registered_embedded_fonts
+            .embedded_font_usage
+            .is_empty()
     );
     let original_anchor = app.current_history_location();
     let mut canvas = adopt(&mut app, ReadingViewport::PORTRAIT, 1);
@@ -220,7 +227,7 @@ fn embedded_fonts_toggle_keeps_installed_families_and_other_publisher_styles() {
     };
     let mut on = open(true, true, false);
     let mut off = open(false, true, false);
-    assert!(on.registered_embedded_fonts && !off.registered_embedded_fonts);
+    assert!(!on.embedded_font_usage.is_empty() && off.embedded_font_usage.is_empty());
     assert_ne!(
         measure(&on, "Harbor lettering"),
         measure(&off, "Harbor lettering")

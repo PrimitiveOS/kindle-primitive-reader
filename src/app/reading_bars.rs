@@ -172,6 +172,7 @@ struct Bars {
     title: Option<Rect>,
     row_labels: Vec<(Rect, String)>,
     row_information: Vec<(Rect, &'static str)>,
+    row_help: Vec<(Rect, Action)>,
     buttons: Vec<Button>,
 }
 
@@ -279,12 +280,25 @@ impl Bars {
             let y = panel.y + section_height + 4 + index as i32 * row_height;
             let label_width = if row.label.is_empty() { 0 } else { 272 };
             if label_width != 0 {
-                self.row_labels
-                    .push((Rect::new(34, y, label_width - 18, row_height), row.label));
+                let label = Rect::new(34, y, label_width - 18, row_height);
+                self.row_labels.push((label, row.label));
+                if let Some(action) = row.help {
+                    self.row_help.push((label, action));
+                }
             }
-            let options = Rect::new(16 + label_width, y, width - 32 - label_width, row_height);
+            let mut options = Rect::new(16 + label_width, y, width - 32 - label_width, row_height);
             if let Some(information) = row.information {
-                self.row_information.push((options, information));
+                let info_width = if row.choices.is_empty() {
+                    options.w
+                } else {
+                    options.w * 2 / 3
+                };
+                self.row_information.push((
+                    Rect::new(options.x, options.y, info_width, options.h),
+                    information,
+                ));
+                options.x += info_width;
+                options.w -= info_width;
             }
             let count = row.choices.len();
             for (index, choice) in row.choices.into_iter().enumerate() {
@@ -513,6 +527,16 @@ impl Reader {
             })
             .unwrap_or_else(|| panic!("No {button_label} choice in {row_label}"))
             .rect
+    }
+
+    #[cfg(test)]
+    pub(super) fn reading_row_help_rect(&self, label: &str) -> Rect {
+        self.reading_bars()
+            .row_labels
+            .into_iter()
+            .find(|(_, entry)| entry == label)
+            .expect("reading settings row")
+            .0
     }
 
     #[cfg(test)]
@@ -784,20 +808,30 @@ impl Reader {
     pub(super) fn reading_tools_input(&mut self, input: Input) -> Change {
         let reading_screen = self.surface_screen();
         match input {
-            Input::LongTap(x, y) => match self.reading_bars().button_at(x, y) {
-                Some(Target::Invoke(Action::ReadAlarm)) => self.read_alarm.stop(),
-                Some(
-                    Target::Apply(Action::TopStatusHeader(enabled))
-                    | Target::Current(Action::TopStatusHeader(enabled)),
-                ) => self.apply_overlay_action(Action::ConfirmTopStatusHeaderDefault(enabled)),
-                Some(
-                    Target::Apply(Action::SetReadingOrientation(orientation))
-                    | Target::Current(Action::SetReadingOrientation(orientation)),
-                ) => {
-                    self.apply_overlay_action(Action::ConfirmReadingOrientationDefault(orientation))
+            Input::LongTap(x, y) => {
+                let mut bars = self.reading_bars();
+                if let Some(index) = bars
+                    .row_help
+                    .iter()
+                    .position(|(rect, _)| rect.contains(x, y))
+                {
+                    return self.apply_overlay_action(bars.row_help.swap_remove(index).1);
                 }
-                _ => Change::None,
-            },
+                match bars.button_at(x, y) {
+                    Some(Target::Invoke(Action::ReadAlarm)) => self.read_alarm.stop(),
+                    Some(
+                        Target::Apply(Action::TopStatusHeader(enabled))
+                        | Target::Current(Action::TopStatusHeader(enabled)),
+                    ) => self.apply_overlay_action(Action::ConfirmTopStatusHeaderDefault(enabled)),
+                    Some(
+                        Target::Apply(Action::SetReadingOrientation(orientation))
+                        | Target::Current(Action::SetReadingOrientation(orientation)),
+                    ) => self.apply_overlay_action(Action::ConfirmReadingOrientationDefault(
+                        orientation,
+                    )),
+                    _ => Change::None,
+                }
+            }
             Input::Tap(x, y) => {
                 let mut bars = self.reading_bars();
                 match bars.button_at(x, y) {

@@ -4,6 +4,9 @@ use crate::{book_style::BookStyle, epub::Book};
 use primitive_app::with_storage;
 use std::io;
 
+mod report;
+pub(super) use report::Inspection;
+
 #[derive(Clone, Copy)]
 pub(super) enum Availability {
     Found,
@@ -12,7 +15,7 @@ pub(super) enum Availability {
 
 impl ActiveBook {
     pub(super) fn has_embedded_fonts(&self) -> bool {
-        self.reading.probe.registered_embedded_fonts
+        !self.reading.probe.embedded_font_usage.is_empty()
             || matches!(self.embedded_font_inventory, Some(Availability::Found))
     }
 }

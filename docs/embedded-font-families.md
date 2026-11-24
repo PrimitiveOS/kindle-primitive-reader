@@ -26,8 +26,7 @@ availability result is cached for the open book. If discovery finds no
 usable declarations, Reader checks new chapters when Rendering opens there.
 It can find a bundled face beyond the initial discovery window while the
 embedded-font setting is off.
-KOReader can inspect a broader book-wide registry and show which families
-its engine used.
+
 
 The pinned KOReader replay executes the actual control availability and
 change callbacks against the authored Harbor lettering EPUB. Changing
@@ -45,6 +44,34 @@ CSS/font choices, reopen, and source selection geometry.
 [Reader Off](screenshots/embedded-fonts-reader-off.png) ·
 [Native KOReader replay](../scripts/koreader-embedded-font-toggle-check.lua) ·
 [Pinned control](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/creoptions.lua#L693-L717)
+
+### Font family details
+
+Hold the **Embedded fonts** label or tap **Details** to open the family
+report over Rendering. The report groups font faces by their declared
+family and marks those used by Parley’s shaped glyph runs. It includes
+bundled families registered from local CSS even if the current chapter
+does not use them. The report is available with either font setting and
+with Publisher CSS off. Done returns to the same Rendering controls
+and reading location.
+
+For packaged EPUBs with a regular layout, up to 96 spine items, an 8 MiB
+archive and 2 MiB of spine markup, Reader checks the book in the background
+one chapter at a time. Installed fonts and publisher styles use the active
+layout settings. The worker checks the book and font source stamps before
+accepting its result. Larger books, extracted EPUBs, facing pages and other
+providers show current-chapter usage and label unchecked families explicitly.
+The existing publisher CSS and font resource limits still apply.
+
+The pinned KOReader help replay verifies both names for a two-chapter EPUB,
+including a family that is registered but unused, a family instantiated
+only after the preface, and disabled font use. The Mac workflow also
+checks the touch and hold entry points, rotation, sleep cancellation,
+previous and next controls, and source and history preservation.
+[Native help replay](../scripts/koreader-embedded-font-report-check.lua) ·
+[Whole-book report](screenshots/embedded-fonts-report.png) ·
+[Disabled in landscape](screenshots/embedded-fonts-report-off-landscape.png) ·
+[Current-chapter report](screenshots/embedded-fonts-report-unchecked.png)
 
 ## Reading checks
 

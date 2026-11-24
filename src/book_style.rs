@@ -428,6 +428,8 @@ pub(crate) struct BookStyle {
     user_rules: Vec<Rule>,
     families: HashMap<String, Arc<str>>,
     font_weights: Arc<HashMap<u64, f32>>,
+    #[cfg(feature = "kindle")]
+    registered_faces: HashMap<u64, Arc<str>>,
 }
 
 impl BookStyle {
@@ -493,8 +495,13 @@ impl BookStyle {
     }
 
     #[cfg(feature = "kindle")]
-    pub(crate) fn has_registered_fonts(&self) -> bool {
-        !self.font_weights.is_empty()
+    pub(crate) fn embedded_font_catalog(book: &mut Book, active: usize) -> Vec<Arc<str>> {
+        embedded_inventory::catalog(book, active)
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn registered_faces(&self) -> &HashMap<u64, Arc<str>> {
+        &self.registered_faces
     }
 
     /// The exact same stylesheet selection, caps, cascade and inline handling as
@@ -1113,6 +1120,8 @@ impl BookStyle {
                         .is_empty()
                     {
                         Arc::make_mut(&mut self.font_weights).insert(font_id, face.weight.value());
+                        #[cfg(feature = "kindle")]
+                        self.registered_faces.insert(font_id, face.name.clone());
                         registered.push(descriptor);
                         break;
                     }
@@ -1147,6 +1156,8 @@ impl FontPath {
 
 struct FontFace {
     family: String,
+    #[cfg(feature = "kindle")]
+    name: Arc<str>,
     weight: FontWeight,
     style: FontStyle,
     paths: Vec<FontPath>,
@@ -1165,7 +1176,7 @@ impl FontFace {
             match declaration.property {
                 Property::Family(names) => {
                     if let [Family::Named(name)] = names.as_slice() {
-                        family = Some(name.to_ascii_lowercase());
+                        family = Some(name.clone());
                     }
                 }
                 Property::Weight(Weight::Fixed(value)) => weight = value,
@@ -1182,8 +1193,11 @@ impl FontFace {
         if paths.is_empty() {
             return None;
         }
+        let family = family?;
         Some(Self {
-            family: family?,
+            family: family.to_ascii_lowercase(),
+            #[cfg(feature = "kindle")]
+            name: family.into(),
             weight,
             style,
             paths,

@@ -1,6 +1,7 @@
 //! Exact screen pages tied to one EPUB edition and layout.
 pub(crate) mod background;
 pub(crate) mod eager;
+pub(crate) mod embedded_fonts;
 
 use std::cell::{Cell, RefCell};
 use std::fs;

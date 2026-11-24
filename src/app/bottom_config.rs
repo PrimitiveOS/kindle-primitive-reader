@@ -49,6 +49,7 @@ pub(super) struct ConfigRow {
     pub(super) label: String,
     pub(super) choices: Vec<Choice>,
     pub(super) information: Option<&'static str>,
+    pub(super) help: Option<Action>,
 }
 
 impl ConfigRow {
@@ -58,11 +59,19 @@ impl ConfigRow {
         row
     }
 
+    fn embedded_font_help(mut self) -> Self {
+        self.help = Some(Action::EmbeddedFontReport);
+        self.choices
+            .push(Choice::link("Details", Action::EmbeddedFontReport));
+        self
+    }
+
     fn new(label: impl Into<String>, choices: impl IntoIterator<Item = Choice>) -> Self {
         Self {
             label: label.into(),
             choices: choices.into_iter().collect(),
             information: None,
+            help: None,
         }
     }
 }
@@ -623,7 +632,7 @@ impl Reader {
                                 )
                             }),
                         ),
-                        if !settings.publisher_styles {
+                        (if !settings.publisher_styles {
                             ConfigRow::unavailable("Embedded fonts", "Turn on Publisher CSS")
                         } else if !active.has_embedded_fonts() {
                             ConfigRow::unavailable("Embedded fonts", "No embedded fonts found")
@@ -641,7 +650,8 @@ impl Reader {
                                     )
                                 }),
                             )
-                        },
+                        })
+                        .embedded_font_help(),
                         ConfigRow::new(
                             "Zoom (dpi)",
                             crate::RENDER_DPI_PRESETS.map(|render_dpi| {

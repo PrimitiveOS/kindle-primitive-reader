@@ -224,6 +224,13 @@ pub(crate) struct VerticalChapter {
 }
 
 impl VerticalChapter {
+    #[cfg(feature = "kindle")]
+    pub(crate) fn for_each_shaped_font(&self, mut visit: impl FnMut(u64)) {
+        for glyph in &self.glyphs {
+            visit(self.faces[glyph.face].font.data.id());
+        }
+    }
+
     pub(crate) fn new(
         source: &Source,
         styles: &[Style],

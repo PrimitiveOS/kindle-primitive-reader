@@ -25,12 +25,12 @@ const TYPOGRAPHY_DELAY: Duration = Duration::from_secs(3);
 const POLL_INTERVAL: Duration = Duration::from_millis(150);
 const CHAPTER_YIELD: Duration = Duration::from_millis(20);
 const STORAGE_CHUNK: usize = 128 * 1024;
-const ARCHIVE_LIMIT: u64 = 8 * 1024 * 1024;
-const FONT_LIMIT: u64 = 16 * 1024 * 1024;
-const FONT_COUNT_LIMIT: usize = 64;
+pub(super) const ARCHIVE_LIMIT: u64 = 8 * 1024 * 1024;
+pub(super) const FONT_LIMIT: u64 = 16 * 1024 * 1024;
+pub(super) const FONT_COUNT_LIMIT: usize = 64;
 const SPINE_LIMIT: usize = 192;
 const CHAPTER_BYTES_LIMIT: u64 = 256 * 1024;
-const FIRMWARE_FONTS: &str = "/usr/java/lib/fonts";
+pub(super) const FIRMWARE_FONTS: &str = "/usr/java/lib/fonts";
 
 #[derive(Default)]
 pub(crate) struct Worker {

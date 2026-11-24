@@ -625,6 +625,7 @@ enum Action {
     FontRendering(eager_typography::Scope, Option<eager_typography::Mode>),
     CancelEagerFont,
     ShowFonts,
+    EmbeddedFontReport,
     ShowFooterFonts,
     SetFooterFontFace(Option<String>),
     ShowDictionaries,
@@ -940,6 +941,7 @@ pub struct Reader {
     semi_auto_crop: Option<semi_auto_crop::Draft>,
     screen: Screen,
     reading_panel: Option<BarPanel>,
+    embedded_font_report: Option<embedded_fonts::Inspection>,
     last_text_panel: BarPanel,
     last_fixed_panel: BarPanel,
     top_group: Option<TopGroup>,
@@ -1184,6 +1186,7 @@ impl Reader {
             semi_auto_crop: None,
             screen: Screen::Library,
             reading_panel: None,
+            embedded_font_report: None,
             last_text_panel: BarPanel::Text,
             last_fixed_panel: BarPanel::View,
             top_group: None,
@@ -1748,6 +1751,7 @@ impl Reader {
     }
 
     fn show(&mut self, screen: Screen) {
+        self.embedded_font_report = None;
         self.finish_interrupted_scroll();
         self.opening_path_overlay = None;
         if !matches!(
@@ -4311,6 +4315,7 @@ impl Reader {
             Action::SetUserHyphenation(enabled) => self.set_user_hyphenation(enabled)?,
             Action::ApplyWordSpacing(owner, value) => self.apply_word_spacing(owner, value)?,
             Action::ApplyLogicalFont(owner, value) => self.apply_logical_font(owner, value)?,
+            Action::EmbeddedFontReport => self.open_embedded_font_report(),
             Action::FontRendering(scope, mode) => self.set_font_rendering(scope, mode)?,
             Action::CancelEagerFont => {
                 self.eager_typography.cancel();
@@ -8635,6 +8640,7 @@ impl App for Reader {
         self.draw_dictionary_preset_picker(canvas);
         self.draw_dictionary_font_size(canvas);
         self.draw_alternative_contents_confirmation(canvas);
+        self.draw_embedded_font_report(canvas);
         self.draw_logical_recovery(canvas);
         self.draw_opening_delay(canvas);
         self.draw_opening_ask(canvas);
@@ -8646,6 +8652,9 @@ impl App for Reader {
             return point;
         }
         if let Some(point) = self.opening_modal_press(input) {
+            return point;
+        }
+        if let Some(point) = self.embedded_font_report_press(input) {
             return point;
         }
         if let Some(point) = self.dictionary_font_size_press(input) {
@@ -8669,6 +8678,9 @@ impl App for Reader {
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
         self.finish_interrupted_scroll();
+        if let Some(change) = self.embedded_font_report_input(input) {
+            return change;
+        }
         if let Some(change) = self.closing_profile_input(input) {
             return change;
         }
@@ -8884,6 +8896,9 @@ impl App for Reader {
                 Ok(()) => {
                     self.accepted_viewport = Some(candidate);
                     self.accept_pending_orientation(candidate.turn);
+                    if self.embedded_font_report.is_some() {
+                        self.open_embedded_font_report();
+                    }
                 }
                 Err(error) => {
                     eprintln!("reader viewport_commit_failed={error}");
@@ -8908,6 +8923,10 @@ impl App for Reader {
         }
         if input == Input::Sleep {
             self.eager_typography.cancel();
+            self.embedded_font_report = None;
+        }
+        if let Some(change) = self.embedded_font_report_input(input) {
+            return change;
         }
         if let Some(change) = self.closing_profile_input(input) {
             return change;
@@ -9595,6 +9614,7 @@ impl App for Reader {
             .chain(fixed_page)
             .chain(self.screen_page_worker.deadline(screen_pages))
             .chain(self.eager_font_deadline())
+            .chain(self.embedded_font_report_deadline())
             .chain(self.export_deadline())
             .chain(self.bookmark_metadata_deadline())
             .chain(
@@ -9642,6 +9662,9 @@ impl App for Reader {
     }
 
     fn tick(&mut self, now: Instant) -> Change {
+        if let Some(change) = self.poll_embedded_font_report(now) {
+            return change;
+        }
         if let Some(change) = self.eager_font_tick(now) {
             return change;
         }
@@ -9860,6 +9883,7 @@ impl App for Reader {
 
     fn save(&mut self) -> io::Result<()> {
         self.finish_interrupted_scroll();
+        self.embedded_font_report = None;
         self.eager_typography.cancel();
         self.screen_page_worker.cancel();
         self.save_library()?;
@@ -9876,6 +9900,7 @@ impl App for Reader {
 
     fn storage_returned(&mut self) -> io::Result<()> {
         self.finish_interrupted_scroll();
+        self.embedded_font_report = None;
         self.gestures.clear_assigned_corner_hold();
         if let Some(book) = &mut self.active {
             book.embedded_font_inventory = None;

@@ -305,6 +305,28 @@ pub(crate) struct ParleyChapter {
 
 impl ParleyChapter {
     #[cfg(feature = "kindle")]
+    pub(crate) fn for_each_shaped_font(&self, mut visit: impl FnMut(u64)) {
+        let mut layout_fonts = |layout: &Layout<PaintBrush>| {
+            for line in layout.lines() {
+                for run in line.runs() {
+                    visit(run.font().data.id());
+                }
+            }
+        };
+        for paragraph in &self.paragraphs {
+            layout_fonts(&paragraph.layout);
+            for ruby in &paragraph.ruby {
+                layout_fonts(&ruby.layout);
+            }
+        }
+        for marker in &self.markers {
+            if let MarkerPaint::Text { layout, .. } = &marker.paint {
+                layout_fonts(layout);
+            }
+        }
+    }
+
+    #[cfg(feature = "kindle")]
     pub(crate) fn release_raster_cache(&mut self) {
         self.glyphs.release_masks();
     }

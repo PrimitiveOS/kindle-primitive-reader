@@ -4,7 +4,7 @@ use super::{
 };
 use super::{MAX_CSS_BYTES, MAX_FACE_RULES, MAX_RULES};
 use crate::source::{Source, Stylesheet};
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::Arc};
 
 pub(crate) const MAX_INVENTORY_SHEETS: usize = 64;
 const MAX_INVENTORY_CHAPTERS: usize = 96;
@@ -37,14 +37,16 @@ impl Inventory {
         }
     }
 
-    fn contains_valid_font(&self, book: &mut Book) -> bool {
-        if self.faces.is_empty() {
-            return false;
-        }
+    fn register_faces(&self, book: &mut Book) -> BookStyle {
         let mut style = BookStyle::default();
-        let mut scratch = FontContext::default();
-        style.register_fonts(book, &self.faces, &mut scratch);
-        style.has_registered_fonts()
+        if !self.faces.is_empty() {
+            style.register_fonts(book, &self.faces, &mut FontContext::default());
+        }
+        style
+    }
+
+    fn contains_valid_font(&self, book: &mut Book) -> bool {
+        !self.register_faces(book).registered_faces().is_empty()
     }
 
     fn read_styles(&mut self, base: &str, text: &str) {
@@ -85,20 +87,35 @@ pub(super) fn has_fonts(book: &mut Book, active: usize) -> bool {
         return true;
     }
     let known_faces = inventory.faces.len();
+    read_chapters(&mut inventory, book, active);
+    inventory.faces.len() != known_faces && inventory.contains_valid_font(book)
+}
+
+pub(super) fn catalog(book: &mut Book, active: usize) -> Vec<Arc<str>> {
+    if !book.may_have_embedded_fonts() {
+        return Vec::new();
+    }
+    let mut inventory = Inventory::default();
+    for path in book.publisher_stylesheets().to_vec() {
+        inventory.read_sheet(book, path);
+    }
+    read_chapters(&mut inventory, book, active);
+    inventory
+        .register_faces(book)
+        .registered_faces
+        .into_values()
+        .collect()
+}
+
+fn read_chapters(inventory: &mut Inventory, book: &mut Book, active: usize) {
     let mut chapter_bytes = 0;
     let first_chapters = 0..book.chapters.len().min(MAX_INVENTORY_CHAPTERS);
     for index in std::iter::once(active).chain(first_chapters.filter(|&index| index != active)) {
         if inventory.full() || chapter_bytes >= MAX_CHAPTER_BYTES {
             break;
         }
-        chapter_bytes += read_chapter(
-            &mut inventory,
-            book,
-            index,
-            MAX_CHAPTER_BYTES - chapter_bytes,
-        );
+        chapter_bytes += read_chapter(inventory, book, index, MAX_CHAPTER_BYTES - chapter_bytes);
     }
-    inventory.faces.len() != known_faces && inventory.contains_valid_font(book)
 }
 
 fn read_chapter(
