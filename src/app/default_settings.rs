@@ -1,6 +1,7 @@
 //! Save format defaults separately from source-specific progress and geometry.
 use super::*;
 use crate::document_defaults::{self, FixedDefaults};
+use crate::session::DONE;
 
 #[derive(Clone, Copy)]
 pub(super) enum Command {
