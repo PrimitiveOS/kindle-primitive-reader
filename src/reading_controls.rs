@@ -237,13 +237,18 @@ impl Default for TopHeader {
             reading_percent: false,
             chapter_marks: true,
             battery: HeaderBattery::Icon,
-            font_size: 20,
+            font_size: Self::FONT_INITIAL,
         }
     }
 }
 
 impl TopHeader {
     pub(crate) const HEIGHT: u32 = 48;
+    pub(crate) const FONT_MIN: u8 = 8;
+    pub(crate) const FONT_MAX: u8 = 36;
+    pub(crate) const FONT_INITIAL: u8 = 20;
+    // KOReader's spinner reset differs from its initial rendering fallback.
+    pub(crate) const FONT_PICKER_DEFAULT: u8 = 14;
 
     pub(crate) fn default_enabled(self) -> bool {
         self.book_default.unwrap_or(self.legacy_enabled)
@@ -262,15 +267,7 @@ impl TopHeader {
     }
 
     pub(crate) fn font_size(self) -> u8 {
-        self.font_size.clamp(8, 36)
-    }
-
-    pub(crate) fn next_font_size(self) -> Self {
-        let current = self.font_size();
-        Self {
-            font_size: if current >= 36 { 8 } else { current + 1 },
-            ..self
-        }
+        self.font_size.clamp(Self::FONT_MIN, Self::FONT_MAX)
     }
 }
 
@@ -1687,11 +1684,11 @@ mod tests {
     }
 
     #[test]
-    fn top_header_font_and_battery_options_cycle_with_bounded_values() {
+    fn top_header_font_clamps_legacy_values_and_battery_options_cycle() {
         let mut header = TopHeader::default();
-        assert_eq!(header.next_font_size().font_size(), 21);
-        header.font_size = 36;
-        assert_eq!(header.next_font_size().font_size(), 8);
+        assert_eq!(header.font_size(), 20);
+        header.font_size = 0;
+        assert_eq!(header.font_size(), 8);
         header.font_size = 255;
         assert_eq!(header.font_size(), 36);
         assert_eq!(HeaderBattery::Off.next(), HeaderBattery::Icon);
