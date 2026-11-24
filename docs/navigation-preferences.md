@@ -29,8 +29,8 @@ last mark in its direction. **Save page** toggles a page bookmark. Hold it
 to open your saved marks. Tap **Go to** to accept the preview and open
 the existing page and percentage editor. Hold **Go to**, or tap **Origin**,
 to return within the preview. The editor retains its format-specific
-input rules. Stock's whole-document absolute numbering, signed movement
-and hidden-flow syntax are tracked separately.
+input rules, including absolute or signed page entries for supported
+EPUB layouts and PDF flow destinations. [Go to page](go-to-page.md)
 [Stock chapter and mark shortcuts](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/skimtowidget.lua#L148-L283) · [Stock saved-mark order](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerbookmark.lua#L512-L595)
 
 The executable stock comparison exercises the opening-page setting and the

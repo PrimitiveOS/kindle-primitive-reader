@@ -44,11 +44,18 @@ and checks its hit region before and after changing viewport.
 ## Fixed-page viewport preparation
 
 `FixedReading::prepare_viewport` stages a fully rendered frame for paged and
-continuous PDF, still images, comics and fixed-layout EPUB. Paged views keep
-the source point in the document's upright coordinates. The target viewport
-recomputes the existing fit or tile policy and keeps the point as close to the
-center as the crop and pan limits allow. Document rotation and crop remain part
-of the source projection. Screen rotation belongs to the runtime.
+continuous PDF, paged DjVu, still images, comics and fixed-layout EPUB. Paged
+views keep the source point in the document's upright coordinates. The target
+viewport recomputes the existing fit or tile policy and keeps the point as close
+to the center as the crop and pan limits allow. Document rotation and crop
+remain part of the source projection. Screen rotation belongs to the runtime.
+
+DjVu uses the paged scan path for crop, embedded text selection, annotations
+and tile zoom. Its document turn and straightening settings carry through the
+resize. Scaled pages use bounded native DjVu patches sampled with the same
+inverse transform as embedded text, so the ink and selection stay aligned.
+A candidate for an earlier page is rejected after navigation. The continuous
+scroll path is available for PDF.
 
 Continuous PDF keeps the first visible cropped source point and any leading
 inter-page gap. It applies per-page crops, hidden flows and the existing
@@ -61,9 +68,8 @@ new dimensions and keeps the selected spine page.
 Rendering, hit testing, annotation clipping and footer bounds use the prepared
 viewport. The stage carries its frame and scratch rendering caches.
 `commit_viewport` checks the reading session and the presentation generation
-before replacing the active view. DjVu does not have a staged transition yet.
-The landscape control remains disabled while the Reader canvas, input and
-Launcher overlay handoff are integrated.
+before replacing the active view. The landscape control remains disabled
+while the Reader canvas, input and Launcher overlay handoff are integrated.
 
 Run `cargo test --locked --lib fixed_session::` for the fixed-page transition
 tests. Set `READER_FIXED_VIEWPORT_CAPTURE_DIR` to capture the authored PDF in
@@ -75,6 +81,17 @@ The Mac renderer reproduced the original portrait frame after both transitions.
 [Paged landscape](screenshots/fixed-viewport-landscape.png) ·
 [Continuous portrait](screenshots/fixed-continuous-portrait.png) ·
 [Continuous landscape](screenshots/fixed-continuous-landscape.png)
+
+The same tests capture the original *Signal log* DjVu plate in both screen
+sizes, a returned portrait frame and Reader's 480 × 640 source raster. The
+native raster and embedded word coordinates can be checked independently
+with `ddjvu -format=pgm -page=1 tests/fixtures/signal-log.djvu signal.pgm`
+and `djvused -u -e print-txt tests/fixtures/signal-log.djvu`. Regenerate the
+fixture with `python3 scripts/generate-djvu-viewport.py` using Python with
+Pillow and DjVuLibre on the path. [Authored fixture](../tests/fixtures/signal-log.djvu) · [DjVuLibre tools](https://djvu.sourceforge.net/doc/)
+
+[DjVu portrait](screenshots/djvu-viewport-portrait.png) ·
+[DjVu landscape](screenshots/djvu-viewport-landscape.png)
 
 ## Reading controls in the prepared viewport
 

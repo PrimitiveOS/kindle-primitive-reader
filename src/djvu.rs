@@ -2,6 +2,7 @@
 
 use djvu_rs::djvu_render::{RenderRect, RenderRequest as DecodeRequest, UserRotation};
 use djvu_rs::{Document, Page, ParseOptions, ResourceLimits, Rotation, TextZone, TextZoneKind};
+use hayro::kurbo::{Affine, Point, Rect};
 use std::fmt;
 use std::ops::Range;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -116,26 +117,49 @@ impl Djvu {
 
     /// Return one row-major grayscale viewport, with white outside the page.
     pub fn render(&self, index: usize, request: RenderRequest) -> Result<Vec<u8>, DjvuError> {
-        let page = self.page(index)?;
-        let (page_width, page_height) = display_size(&page)?;
-        self.validate_wavelet_planes(index)?;
-        request
-            .page_to_viewport((page_width, page_height))
-            .map_err(|_| DjvuError::InvalidViewport)?;
+        self.render_transformed(index, request, Affine::IDENTITY)
+    }
 
+    pub(crate) fn render_transformed(
+        &self,
+        index: usize,
+        request: RenderRequest,
+        correction: Affine,
+    ) -> Result<Vec<u8>, DjvuError> {
+        let page = self.page(index)?;
+        let size = display_size(&page)?;
+        self.validate_wavelet_planes(index)?;
+        let transform = request
+            .page_to_viewport(size)
+            .map_err(|_| DjvuError::InvalidViewport)?
+            * correction;
+        if correction == Affine::IDENTITY
+            && request.scale == 1.0
+            && request.x.fract() == 0.0
+            && request.y.fract() == 0.0
+        {
+            return self.render_native(&page, request, size);
+        }
+        self.render_projected(&page, request, size, transform)
+    }
+
+    fn render_native(
+        &self,
+        page: &Page<'_>,
+        request: RenderRequest,
+        (width, height): (f32, f32),
+    ) -> Result<Vec<u8>, DjvuError> {
         let mut output = vec![255; (request.width * request.height) as usize];
-        let width = (page_width * request.scale).round().max(1.0) as u32;
-        let height = (page_height * request.scale).round().max(1.0) as u32;
         let turns = request.turns % 4;
-        let (turned_width, turned_height) = if turns.is_multiple_of(2) {
-            (width, height)
+        let (turn_width, turn_height) = if turns.is_multiple_of(2) {
+            (width as i32, height as i32)
         } else {
-            (height, width)
+            (height as i32, width as i32)
         };
-        let (x, y) = (request.x.round() as i32, request.y.round() as i32);
+        let (x, y) = (request.x as i32, request.y as i32);
         let (left, top) = (x.max(0), y.max(0));
-        let right = (x + turned_width as i32).min(request.width as i32);
-        let bottom = (y + turned_height as i32).min(request.height as i32);
+        let right = (x + turn_width).min(request.width as i32);
+        let bottom = (y + turn_height).min(request.height as i32);
         if left >= right || top >= bottom {
             return Ok(output);
         }
@@ -145,7 +169,22 @@ impl Djvu {
             width: (right - left) as u32,
             height: (bottom - top) as u32,
         };
-        let mut options = page.options_for_size(width, height);
+        let pixels = self.decode_region(page, (width, height), region, turns)?;
+        for (row, source) in pixels.chunks_exact(region.width as usize).enumerate() {
+            let start = (top as usize + row) * request.width as usize + left as usize;
+            output[start..start + region.width as usize].copy_from_slice(source);
+        }
+        Ok(output)
+    }
+
+    fn decode_region(
+        &self,
+        page: &Page<'_>,
+        size: (f32, f32),
+        region: RenderRect,
+        turns: u8,
+    ) -> Result<Vec<u8>, DjvuError> {
+        let mut options = page.options_for_size(size.0 as u32, size.1 as u32);
         options.rotation = [
             UserRotation::None,
             UserRotation::Cw90,
@@ -167,90 +206,86 @@ impl Djvu {
         {
             return Err(DjvuError::RenderFailed);
         }
-        for (row, rgba) in raster
+        Ok(raster
             .data
-            .chunks_exact((region.width * 4) as usize)
-            .enumerate()
-        {
-            let start = (top as usize + row) * request.width as usize + left as usize;
-            let dest = &mut output[start..start + region.width as usize];
-            for (pixel, rgba) in dest.iter_mut().zip(rgba.as_chunks::<4>().0) {
-                *pixel = ((54 * u16::from(rgba[0])
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|rgba| {
+                ((54 * u16::from(rgba[0])
                     + 183 * u16::from(rgba[1])
                     + 19 * u16::from(rgba[2])
                     + 128)
-                    >> 8) as u8;
-            }
-        }
-        Ok(output)
+                    >> 8) as u8
+            })
+            .collect())
     }
 
-    /// Decode only the source patch needed for each output tile. A rotated crop at high zoom
-    /// can project an entire page to tens of thousands of pixels on either axis.
-    #[cfg(feature = "kindle")]
-    pub(crate) fn render_transformed(
+    /// The decoder's four-bit scale step drifts from the text transform at
+    /// fractional zoom. Decode native source patches and sample them with the
+    /// same inverse transform as text, including fit, rotation and deskew.
+    fn render_projected(
         &self,
-        page: usize,
+        page: &Page<'_>,
         request: RenderRequest,
-        correction: hayro::kurbo::Affine,
+        size: (f32, f32),
+        transform: Affine,
     ) -> Result<Vec<u8>, DjvuError> {
-        use hayro::kurbo::{Affine, Point, Rect};
-        if correction == Affine::IDENTITY {
-            return self.render(page, request);
+        let inverse = transform.inverse();
+        let step = inverse.as_coeffs();
+        if !step.into_iter().all(f64::is_finite) {
+            return Err(DjvuError::InvalidViewport);
         }
-        let size = self.page_size(page)?;
-        let transform = request
-            .page_to_viewport(size)
-            .map_err(|_| DjvuError::InvalidViewport)?
-            * correction;
-        let scale = transform.determinant().sqrt() as f32;
-        // Measure inverse positions in upright rendered pixels, rather than native page units.
-        let inverse = Affine::scale(f64::from(scale)) * transform.inverse();
-        let source_width = (size.0 * scale).round().max(1.0) as i32;
-        let source_height = (size.1 * scale).round().max(1.0) as i32;
-        let mut result = vec![255; (request.width * request.height) as usize];
-        const TILE: usize = 900;
-        for top in (0..request.height as usize).step_by(TILE) {
-            for left in (0..request.width as usize).step_by(TILE) {
-                let right = (left + TILE).min(request.width as usize);
-                let bottom = (top + TILE).min(request.height as usize);
+        // Limit the source rectangle to about 900 pixels per side, including
+        // when rotation or deskew makes the projected tile wider or taller.
+        const TILE: f64 = 900.0;
+        let source_span = (step[0].abs() + step[2].abs()).max(step[1].abs() + step[3].abs());
+        let tile = (TILE / source_span).clamp(1.0, TILE) as usize;
+        let source_width = size.0 as i32;
+        let source_height = size.1 as i32;
+        let source_bounds = Rect::new(0.0, 0.0, f64::from(source_width), f64::from(source_height));
+        let width = request.width as usize;
+        let height = request.height as usize;
+        let mut result = vec![255; width * height];
+        for top in (0..height).step_by(tile) {
+            for left in (0..width).step_by(tile) {
+                let right = (left + tile).min(width);
+                let bottom = (top + tile).min(height);
                 let patch = inverse.transform_rect_bbox(Rect::new(
-                    left as f64,
-                    top as f64,
-                    right as f64,
-                    bottom as f64,
+                    left as f64 + 0.5,
+                    top as f64 + 0.5,
+                    right as f64 - 0.5,
+                    bottom as f64 - 0.5,
                 ));
-                let x0 = (patch.x0.floor() as i32 - 1).max(0);
-                let y0 = (patch.y0.floor() as i32 - 1).max(0);
-                let x1 = (patch.x1.ceil() as i32 + 1).min(source_width);
-                let y1 = (patch.y1.ceil() as i32 + 1).min(source_height);
+                // Bilinear sampling needs one neighboring native pixel.
+                let x0 = (patch.x0.floor() as i32).saturating_sub(1).max(0);
+                let y0 = (patch.y0.floor() as i32).saturating_sub(1).max(0);
+                let x1 = (patch.x1.ceil() as i32).saturating_add(1).min(source_width);
+                let y1 = (patch.y1.ceil() as i32)
+                    .saturating_add(1)
+                    .min(source_height);
                 if x0 >= x1 || y0 >= y1 {
                     continue;
                 }
                 let w = (x1 - x0) as usize;
                 let h = (y1 - y0) as usize;
-                let pixels = self.render(
+                let pixels = self.decode_region(
                     page,
-                    RenderRequest {
+                    size,
+                    RenderRect {
+                        x: x0 as u32,
+                        y: y0 as u32,
                         width: w as u32,
                         height: h as u32,
-                        x: -(x0 as f32),
-                        y: -(y0 as f32),
-                        scale,
-                        turns: 0,
                     },
+                    0,
                 )?;
-                let step = inverse.as_coeffs();
                 for y in top..bottom {
                     let mut point = inverse * Point::new(left as f64 + 0.5, y as f64 + 0.5);
-                    let row = &mut result
-                        [y * request.width as usize + left..y * request.width as usize + right];
-                    for pixel in row {
-                        let x = point.x - f64::from(x0);
-                        let y = point.y - f64::from(y0);
-                        if (0.0..w as f64).contains(&x) && (0.0..h as f64).contains(&y) {
-                            let sx = (x - 0.5).clamp(0.0, (w - 1) as f64);
-                            let sy = (y - 0.5).clamp(0.0, (h - 1) as f64);
+                    for pixel in &mut result[y * width + left..y * width + right] {
+                        if source_bounds.contains(point) {
+                            let sx = (point.x - f64::from(x0) - 0.5).clamp(0.0, (w - 1) as f64);
+                            let sy = (point.y - f64::from(y0) - 0.5).clamp(0.0, (h - 1) as f64);
                             let a = sx as usize;
                             let b = (a + 1).min(w - 1);
                             let upper = sy as usize * w;

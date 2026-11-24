@@ -92,7 +92,7 @@ fn natural_anchor(reading: &FixedReading) -> Point {
     transform.inverse() * Point::new(f64::from(frame.width) / 2.0, f64::from(frame.height) / 2.0)
 }
 
-fn render(reading: &FixedReading, annotation: PdfTextRect) -> Vec<u8> {
+fn render(reading: &FixedReading, page: usize, annotation: PdfTextRect) -> Vec<u8> {
     let (width, height) = reading.viewport.dimensions();
     let fonts = ["fonts/NotoSans-Regular.ttf", "fonts/NotoSans-Bold.ttf"]
         .map(|file| crate::test_fixture(file).display().to_string());
@@ -101,7 +101,7 @@ fn render(reading: &FixedReading, annotation: PdfTextRect) -> Vec<u8> {
     reading.draw_with_footer(
         &mut canvas,
         None,
-        &[((1, annotation), crate::highlight_style::Paint::Selection)],
+        &[((page, annotation), crate::highlight_style::Paint::Selection)],
         &[],
         PagePaint {
             visible: 0..reading.frame.height,
@@ -188,7 +188,7 @@ fn pdf_viewport_preserves_source_crop_rotation_policy_and_actual_hit_geometry() 
     assert_ne!(original_prefs.offset_y, 0.0);
     let original_hits = verify_pdf_interactions(&reading, &link, annotation);
     let original_pixels = reading.frame.pixels.clone();
-    let portrait = render(&reading, annotation);
+    let portrait = render(&reading, 1, annotation);
 
     let wide = reading
         .prepare_viewport(ReadingViewport::LANDSCAPE)
@@ -207,14 +207,14 @@ fn pdf_viewport_preserves_source_crop_rotation_policy_and_actual_hit_geometry() 
     let landscape_hits = verify_pdf_interactions(&reading, &link, annotation);
     assert_ne!(landscape_hits, original_hits);
     assert!(landscape_hits.0.x > f64::from(WIDTH));
-    let landscape = render(&reading, annotation);
+    let landscape = render(&reading, 1, annotation);
     assert_ne!(landscape, portrait);
 
     let returned = reading.prepare_viewport(ReadingViewport::PORTRAIT).unwrap();
     reading.commit_viewport(returned).unwrap();
     assert_eq!(reading.page(), 1);
     assert!((natural_anchor(&reading) - anchor).hypot() < 0.001);
-    let restored = render(&reading, annotation);
+    let restored = render(&reading, 1, annotation);
     assert_eq!(restored, portrait);
 
     if let Some(out) = std::env::var_os("READER_FIXED_VIEWPORT_CAPTURE_DIR") {
@@ -492,7 +492,7 @@ fn continuous_viewport_keeps_its_leading_gap_crops_source_and_pdf_hits() {
     assert_eq!(anchor.page, 1);
     let original_frame = reading.frame.pixels.clone();
     let original_crop_cache = reading.detected_crops.borrow().clone();
-    let portrait = render(&reading, annotation);
+    let portrait = render(&reading, 1, annotation);
 
     let wide = reading
         .prepare_viewport(ReadingViewport::LANDSCAPE)
@@ -512,11 +512,11 @@ fn continuous_viewport_keeps_its_leading_gap_crops_source_and_pdf_hits() {
         verify_pdf_interactions(&reading, &link, annotation),
         original_hits
     );
-    let landscape = render(&reading, annotation);
+    let landscape = render(&reading, 1, annotation);
 
     let back = reading.prepare_viewport(ReadingViewport::PORTRAIT).unwrap();
     reading.commit_viewport(back).unwrap();
-    let returned = render(&reading, annotation);
+    let returned = render(&reading, 1, annotation);
     assert_eq!(returned, portrait);
     assert_eq!(reading.continuous_viewport_anchor().unwrap(), anchor);
 
@@ -569,4 +569,220 @@ fn continuous_viewport_keeps_its_leading_gap_crops_source_and_pdf_hits() {
             primitive_app::write_png(&dir.join(file), width, height, &pixels).unwrap();
         }
     }
+}
+
+fn open_djvu(file: &str, page: usize, view: View) -> FixedReading {
+    let path = crate::test_fixture(file);
+    FixedReading::open(
+        PAGE_HEIGHT,
+        DocumentFormat::Djvu,
+        &path,
+        page,
+        &[],
+        view,
+        None,
+        None,
+        None,
+    )
+    .unwrap()
+    .unwrap()
+}
+
+fn check_djvu_word(reading: &FixedReading, reference: &ImagePage, bounds: PdfTextRect) -> Rect {
+    let rendered = reading.visible_rectangle(0, bounds).unwrap();
+    let center = rendered.center();
+    let WordAtTouch::Ready(Some(selection)) = reading
+        .select_word(center.x as f32, center.y as f32)
+        .unwrap()
+    else {
+        panic!("The projected scan area should contain the authored word")
+    };
+    assert_eq!(selection.text(), "BEACON");
+    assert_eq!(selection.page_bounds().collect::<Vec<_>>(), [(0, bounds)]);
+    let selected = reading.selection_bounds(&selection).unwrap();
+    let request = reading.page_viewport().unwrap().1;
+    let expected = reference.render(request).unwrap();
+    let width = request.width as usize;
+    let mut dark_reference_pixels = 0;
+    let mut maximum_error = 0;
+    for y in selected.y as usize..selected.bottom() as usize {
+        let start = y * width + selected.x as usize;
+        let end = start + selected.w as usize;
+        for (&expected, &actual) in expected[start..end]
+            .iter()
+            .zip(&reading.frame.pixels[start..end])
+        {
+            dark_reference_pixels += usize::from(expected < 48);
+            maximum_error = maximum_error.max(expected.abs_diff(actual));
+        }
+    }
+    assert!(
+        dark_reference_pixels > 100,
+        "The selected area contains the authored label's ink"
+    );
+    assert!(
+        maximum_error <= 2,
+        "Scan and selection drift by up to {maximum_error} gray levels"
+    );
+    selected
+}
+
+#[test]
+fn djvu_viewport_preserves_cropped_scan_selection_and_source_anchor() {
+    let mut reading = open_djvu(
+        "signal-log.djvu",
+        0,
+        View {
+            width_fit: true,
+            crop: Some(CROP),
+            ..View::default()
+        },
+    );
+    assert!(reading.supports_text());
+    assert!(!reading.supports_continuous());
+    assert!(reading.set_continuous(true).is_err());
+    let text = reading.page_text(0).unwrap();
+    assert!(text.text.contains("Signal log"));
+    let bounds = text
+        .words
+        .iter()
+        .find(|word| &text.text[word.bytes.clone()] == "BEACON")
+        .unwrap()
+        .bounds;
+    // DjVuLibre's text coordinates are bottom-left in the native 480 x 640 plate.
+    let expected = PdfTextRect {
+        x0: 205.0 / 480.0,
+        y0: 321.0 / 640.0,
+        x1: 285.0 / 480.0,
+        y1: 335.0 / 640.0,
+    };
+    assert_eq!(bounds, expected);
+    let FixedDocument::Djvu(source) = &reading.source else {
+        unreachable!()
+    };
+    let native = source
+        .render(
+            0,
+            RenderRequest {
+                width: 480,
+                height: 640,
+                scale: 1.0,
+                x: 0.0,
+                y: 0.0,
+                turns: 0,
+            },
+        )
+        .unwrap();
+    let reference = ImagePage::from_grayscale(480, 640, native.clone()).unwrap();
+    for (scale, turns) in [(0.53, 0), (37.3, 1)] {
+        let mut request = RenderRequest {
+            width: 520,
+            height: 510,
+            scale,
+            x: 0.0,
+            y: 0.0,
+            turns,
+        };
+        let point = request.page_to_viewport((480.0, 640.0)).unwrap() * Point::new(242.4, 327.6);
+        request.x = 260.0 - point.x as f32;
+        request.y = 255.0 - point.y as f32;
+        let expected = reference.render(request).unwrap();
+        let actual = source.render(0, request).unwrap();
+        assert!(actual.iter().any(|&pixel| pixel < 48));
+        assert!(
+            actual
+                .iter()
+                .zip(expected)
+                .all(|(&actual, expected)| actual.abs_diff(expected) <= 2)
+        );
+    }
+    let first = check_djvu_word(&reading, &reference, bounds);
+    let anchor = natural_anchor(&reading);
+    let portrait = render(&reading, 0, bounds);
+    let baseline = reading.frame.pixels.clone();
+    let target = reading
+        .prepare_viewport(ReadingViewport::LANDSCAPE)
+        .unwrap();
+    assert_eq!(reading.frame.pixels, baseline);
+    assert_eq!((target.frame().width, target.frame().height), (1680, 1190));
+    reading.commit_viewport(target).unwrap();
+    assert_eq!(reading.page(), 0);
+    assert!(reading.view.width_fit);
+    assert!(!reading.is_continuous());
+    assert_eq!(reading.view.crop, Some(CROP));
+    assert_eq!(
+        reading.retained_viewport_anchor,
+        Some(ViewportAnchor::PageCenter(anchor))
+    );
+    assert!((natural_anchor(&reading) - anchor).hypot() < 0.001);
+    assert_ne!(check_djvu_word(&reading, &reference, bounds), first);
+    let landscape = render(&reading, 0, bounds);
+    let target = reading.prepare_viewport(ReadingViewport::PORTRAIT).unwrap();
+    reading.commit_viewport(target).unwrap();
+    let returned = render(&reading, 0, bounds);
+    assert_eq!(returned, portrait);
+    assert_eq!(check_djvu_word(&reading, &reference, bounds), first);
+
+    if let Some(dir) = std::env::var_os("READER_FIXED_VIEWPORT_CAPTURE_DIR") {
+        let dir = PathBuf::from(dir);
+        fs::create_dir_all(&dir).unwrap();
+        for (file, viewport, pixels) in [
+            ("djvu-portrait.png", ReadingViewport::PORTRAIT, portrait),
+            ("djvu-landscape.png", ReadingViewport::LANDSCAPE, landscape),
+            ("djvu-returned.png", ReadingViewport::PORTRAIT, returned),
+        ] {
+            let (width, height) = viewport.dimensions();
+            primitive_app::write_png(&dir.join(file), width, height, &pixels).unwrap();
+        }
+        primitive_app::write_png(&dir.join("djvu-reader-native.png"), 480, 640, &native).unwrap();
+    }
+}
+
+#[test]
+fn djvu_viewport_keeps_rotated_tiles_and_rejects_an_old_page() {
+    let mut reading = open_djvu(
+        "beacon-atlas.djvu",
+        2,
+        View {
+            turns: 1,
+            crop: Some(CROP),
+            ..View::default()
+        },
+    );
+    assert!(reading.supports_tile_zoom());
+    reading.set_straighten(10).unwrap();
+    reading.set_tile_zoom(FixedTileAxis::Rows, 20).unwrap();
+    let portrait_tile = reading.view.tile_zoom.unwrap();
+    let anchor = natural_anchor(&reading);
+    let target = reading
+        .prepare_viewport(ReadingViewport::LANDSCAPE)
+        .unwrap();
+    let wide_tile = target.view.tile_zoom.unwrap();
+    assert_eq!(
+        (wide_tile.axis, wide_tile.count_tenths),
+        (portrait_tile.axis, portrait_tile.count_tenths)
+    );
+    assert_ne!(wide_tile.width_factor, portrait_tile.width_factor);
+    reading.commit_viewport(target).unwrap();
+    assert_eq!(reading.page(), 2);
+    assert_eq!(reading.view.turns, 1);
+    assert_eq!(reading.view.straighten_limit, 10);
+    assert_eq!(reading.view.crop, Some(CROP));
+    assert_eq!(
+        reading.retained_viewport_anchor,
+        Some(ViewportAnchor::PageCenter(anchor))
+    );
+    assert!(reading.visible[0].contains_source(anchor, 1680));
+    let next = reading.prepare_viewport(ReadingViewport::PORTRAIT).unwrap();
+    assert_eq!(next.view.tile_zoom, Some(portrait_tile));
+    reading.jump(3).unwrap();
+    let view = reading.view;
+    let frame = reading.frame.pixels.clone();
+    reading.turns.pending.push(-1);
+    assert!(reading.commit_viewport(next).is_err());
+    assert_eq!(reading.viewport, ReadingViewport::LANDSCAPE);
+    assert_eq!(reading.page(), 3);
+    assert_eq!(reading.view, view);
+    assert_eq!(reading.frame.pixels, frame);
+    assert_eq!(reading.turns.pending, [-1]);
 }

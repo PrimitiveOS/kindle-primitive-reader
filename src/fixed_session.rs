@@ -2460,9 +2460,6 @@ impl FixedReading {
             FixedDocument::Epub(book) => {
                 book.with_preserved_page_cache(|| self.prepare_viewport_frame(target))
             }
-            FixedDocument::Djvu(_) => {
-                Err("This fixed-page layout does not support resizing yet".into())
-            }
             _ => self.prepare_viewport_frame(target),
         }
     }
