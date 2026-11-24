@@ -2,6 +2,53 @@
 
 ## Current Mac simulator checkpoint
 
+Reader composes book-opening profiles against the accepted screen turn
+when Launcher offers a verified viewport. The Mac transactions preserve
+the EPUB anchor, resolve competing metadata and orientation rules in list
+order, and match the committed reading frame to the candidate byte for
+byte. The PDF test rejects a landscape opening, turns a page in the
+fallback, then commits against the verified fallback turn. The desktop
+API and older Launchers continue to use the saved orientation preference.
+[Opening profiles and screenshots](reading-profiles.md#apply-a-profile-on-book-opening)
+
+Opening rules can match seven publisher metadata fields. The pinned stock
+profile callbacks and native EPUB, PDF, DjVu, and comic providers were
+checked against authored examples. Reader can fill a condition from the
+current book, including Unicode characters, and uses a filename title
+when the provider has none.
+[Metadata fields](screenshots/landscape-profile-opening-metadata.png) ·
+[Native provider comparison](../scripts/koreader-profile-metadata-providers.lua)
+
+The portrait calendar can jump to a typed month, the first recorded month,
+or the current month. Returning from a day timeline opens the month of the
+day reached. The pinned stock callbacks and Mac interaction tests cover
+these paths while preserving the reading position and statistics.
+[Calendar controls and captures](reading-statistics.md#jumping-to-a-month)
+
+The signed EPUB layout policy matches KOReader Web's paint bands for
+two negative sides, a paragraph in width-neutral wrappers, and text and
+background that extend beyond either physical screen edge. Reader clips
+the displayed selection while restoring the complete source quote.
+[Screen-edge clipping and comparisons](render-modes.md#two-negative-sides-and-clipping-at-the-screen-edge)
+
+The four-thread Mac suite passed 1,385 library tests, one Kindle entry
+test, 14 EPUB package tests, and four layout tests. Sixty-seven opt-in
+tests were skipped in the main run. The normal picker opened original
+EPUB, PDF, AZW3 and MOBI files, turned a page, and resumed at the same
+saved position with identical central page pixels and unchanged source
+hashes. The separate original-file statistics and positive-margin tests
+also passed.
+
+The Mac ARMHF release build produced a stripped, statically linked
+37,361,684-byte executable with SHA-256
+`b01170ba291c7ea852d50e43760d095844f1fae22352dd7ffd15b144d6e332b7`.
+The local hard-float stage assembled 28 files totaling 46,935,533 bytes
+uncompressed and verified the SQLite notices, embedded Launcher icon,
+and OCR model. Kindle foreground acceptance and the Store release remain
+open.
+
+## Opening conditions and grouped dictionary history checkpoint
+
 The opening-profile simulator checks conditional file paths, collections,
 preferred orientation and first-time reading. The pinned KOReader callbacks
 confirm that any configured condition can match and that the new-book gate

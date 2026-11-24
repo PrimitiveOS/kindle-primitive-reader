@@ -78,18 +78,21 @@ shows a notice. The EPUB tests check a saved
 passage after restart. The PDF test checks the exact physical page,
 tiled zoom and overlap after combining two profiles.
 
-The pinned comparison exercises Always, orientation, path, collection
-and all seven metadata fields, and the separate new-book gate. Stock
+The pinned comparison exercises Always, orientation, path, collection,
+all seven metadata fields, and the separate new-book gate. Stock
 reader-ready metadata may include KOReader custom sidecar overrides.
 Reader uses publisher data and its filename fallback. On the same authored
 PDF the pinned MuPDF interface leaves catalog language unavailable.
 On a numeric series index its matching utility raises a Lua error. Reader
 matches a published index as text and rejects empty comma alternatives.
 The native provider comparison uses authored EPUB, PDF, DjVu and CBZ
-documents. Matching the accepted display turn, folder shortcut expansion,
+documents. The Mac transaction tests check mixed metadata and screen-turn
+rules, byte-identical staged and accepted frames, and a PDF's position
+through a rejected turn. The legacy display path still uses the preferred
+orientation. Folder shortcut expansion, custom sidecar metadata,
 confirmation and scheduling remain open.
 [Landscape simulator capture](screenshots/landscape-profile-apply-on-opening.png) ·
-[Opening conditions in landscape](screenshots/landscape-profile-opening-conditions.png) ·
+[Opening conditions in the legacy display path](screenshots/landscape-profile-opening-conditions.png) ·
 [Current book path shortcut](screenshots/landscape-profile-current-book-path.png) ·
 [Opening metadata fields](screenshots/landscape-profile-opening-metadata.png) ·
 [Current book metadata shortcut](screenshots/landscape-profile-current-book-metadata.png) ·

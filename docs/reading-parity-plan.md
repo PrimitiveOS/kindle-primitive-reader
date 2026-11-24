@@ -88,14 +88,18 @@ Saved profile editing covers reflow typography, hinting, kerning,
 publisher styles and fonts, image rendering, page overlap, PDF crop
 margin, and PDF or comic scan contrast. Enabled profiles can also apply
 their included settings whenever Reader opens a matching book. The opening
-rules cover file path, collections, preferred orientation, and a separate
-new-book requirement. The orientation rule still needs to use the turn
-accepted by the display.
+rules cover file path, collections, seven metadata fields and a separate
+new-book requirement. They also use the screen turn accepted when Launcher
+offers a verified viewport. Older Launchers and the desktop API use the
+saved preference when the accepted turn is unavailable.
 Reading statistics has a whole-second duration editor with the stock
 bounds, steps, defaults and accounting. It can preview and import dated
 visits for the open PDF or self-contained DjVu book from a closed KOReader
 database chosen in Documents. Reflowable book import still needs a stable
-mapping from KOReader pages to source locations. Dictionary result arrows
+mapping from KOReader pages to source locations. The calendar can jump to
+a typed month, the first recorded month or the current month. Returning
+from a day timeline brings the calendar to the day reached in the timeline.
+Dictionary result arrows
 support held jumps to the first and last definition and
 preserve an armed highlight while switching sources. Named dictionary
 presets manage source enablement, report unavailable dictionary titles and
@@ -107,6 +111,7 @@ and provides its own recording and clearing controls.
 [Opening profiles](reading-profiles.md#apply-a-profile-on-book-opening) ·
 [Page duration limits](reading-statistics.md#page-duration-limits) ·
 [Fixed-page statistics import](reading-statistics.md#import-koreader-statistics-for-a-pdf-or-djvu-book) ·
+[Calendar month navigation](reading-statistics.md#jumping-to-a-month) ·
 [Dictionary result navigation](dictionary-popup-display.md#first-and-last-results) ·
 [One-query preset](shared-dictionaries.md#searching-with-a-preset-once) ·
 [Dictionary history](shared-dictionaries.md#dictionary-history)
@@ -117,8 +122,9 @@ centered container around ordinary paragraphs. They also match
 the measured definite box heights and preserve text and source positions when
 a box's background fills across a page break. In supported ordinary
 paragraphs, the opt-in policies also match stock's positive physical
-margins, Web mode's single bounded negative side, and explicit opening
-breaks inside keep groups and beside a sibling keep. Full Render Mode
+margins, Web mode's signed sides with physical screen clipping inside
+ordinary wrappers, and explicit opening breaks inside keep groups and
+beside a sibling keep. Full Render Mode
 behavior and its user-facing choices remain open. [Publisher comparisons](render-modes.md)
 
 
