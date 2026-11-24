@@ -23,11 +23,14 @@ location. Line wraps and exact page breaks reflect each engine's layout.
 [KOReader's EPUB tweak](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L920-L943) ·
 [Pinned page splitter](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvpagesplitter.cpp#L810-L1340)
 
-The compositor covers explicit EPUB and ARIA notes in a trailing rendered
-region referenced from the same spine chapter. All targets must resolve in a
-horizontal, left-to-right layout. Overlapping glyphs within a text band stay
-together, and overlapping note boundaries use the normal layout. Interleaved,
-nested and cross-spine notes, complex publisher breaks, images and tables,
+The compositor covers explicit EPUB and ARIA notes referenced from the same
+spine chapter, including notes between paragraphs. Ordinary standalone and
+inline illustrations stay in body flow. Each artwork area stays on one page,
+its links and opening position keep the original source geometry, and
+ordinary forced page breaks still start a new page.
+Overlapping glyphs within a text band stay together. A note whose boundaries
+overlap adjacent content, an illustration without a source line, nested or
+cross-spine notes, images inside notes, tables, complex publisher breaks,
 FictionBook, facing pages, continuous reading and custom flows use the normal
 layout. The reading position uses the same source anchor when the layout changes.
 
@@ -44,12 +47,26 @@ saved edition override before checking the native rendered note bands.
 [Reader continuation](screenshots/in-page-reader-note-only.png) ·
 [KOReader continuation](screenshots/in-page-stock-note-only.png)
 
-The normal style-control path also ran on two original EPUBs through 14
-chapters with marked references. Every toggle kept the reading position and
-both original byte sequences matched. These chapters used the ordinary
-layout. The structural audit found media in six chapters of one original
-and interleaved targets in six chapters of the other. Note-band rendering
-and repeated same-source resume were verified with the authored EPUB.
+The authored comparison also places an explicit note between narrative
+paragraphs and includes linked artwork in a separate chapter. Both engines
+show the interleaved note at its reference and keep the original note before
+the following prose. Reader keeps the illustrated note and the linked diagram
+on a single page at the measured viewport. The native engine uses a different
+artwork scale and places the illustrated note and diagram on adjacent pages.
+[Reader interleaved note](screenshots/in-page-reader-note-interleaved-band.png) ·
+[KOReader interleaved note](screenshots/in-page-stock-note-interleaved-band.png) ·
+[Reader illustrated page](screenshots/in-page-reader-note-illustrated-page.png) ·
+[KOReader note band](screenshots/in-page-stock-note-illustrated-band.png) ·
+[KOReader diagram](screenshots/in-page-stock-note-illustrated-page.png)
+
+Mac verification covered 14 chapters across two unchanged original EPUBs.
+Reader composed 70 note bands across eight chapters, including all six
+illustrated chapters, and painted the first band in each of those chapters.
+All 63 visible canonical note anchors matched the ordinary layout. The pinned
+KOReader Book-mode run also observed bands in all eight chapters. Both
+engines kept the other six chapters in the ordinary layout because the
+publisher stylesheet hides their note targets. The source-file hashes matched
+before and after both runs. [Private-corpus test](../src/footnotes/in_page.rs)
 
 ## Replay on macOS
 
@@ -73,3 +90,10 @@ KO_HOME="$scratch/profile" KO_DYLD_PREFIX="$stock/build/staging" \
   "$reader/tests/fixtures/in-page-footnotes.epub" "$scratch/cache" \
   "$reader/tests/fixtures/fonts/NotoSans-Regular.ttf" "$scratch/captures"
 ```
+
+For local originals, set `READER_IN_PAGE_FOOTNOTE_ORIGINALS` to a private JSON
+array of book records. Each book record contains its `path` and a `chapters`
+array. Each chapter entry contains its archive `href`, an array of note IDs in
+`notes`, and the numeric `media` count. Run the opt-in test with
+`cargo test --locked --features kindle --lib original_epub_in_page_notes -- --ignored`.
+The test reports aggregate counts and skips screenshot capture for private books.

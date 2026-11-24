@@ -1,9 +1,12 @@
-//! Source-space pagination for supported trailing EPUB notes.
+//! Source-space pagination for supported explicit EPUB notes.
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ops::Range;
 
 use crate::epub::{Book, Destination};
-use crate::{Line, Settings, Source};
+use crate::{
+    Line, Settings, Source,
+    publisher_breaks::{self, BoxRules, Edge},
+};
 
 pub(crate) struct Part {
     pub source: Range<f32>,
@@ -25,6 +28,8 @@ pub(crate) fn paginate(
     xhtml: &str,
     source: &Source,
     lines: &[Line],
+    artwork_bottoms: &BTreeMap<usize, f32>,
+    breaks: &[BoxRules],
     settings: Settings,
 ) -> Option<Vec<Page>> {
     let height = settings.text_height();
@@ -33,7 +38,9 @@ pub(crate) fn paginate(
         return None;
     }
     let (notes, references) = discover(chapter, xhtml, source, lines)?;
-    let groups = line_groups(lines, &notes, height - gap)?;
+    let groups = line_groups(lines, &notes, artwork_bottoms, height)?;
+    let extents: Vec<_> = groups.iter().map(|group| group.extent.clone()).collect();
+    let edges = publisher_breaks::in_page_note_boundaries(&extents, breaks)?;
     let notes: Vec<_> = notes
         .into_iter()
         .map(|note| {
@@ -41,6 +48,13 @@ pub(crate) fn paginate(
                 ..groups.partition_point(|group| group.lines.start < note.end)
         })
         .collect();
+    if notes.iter().any(|note| {
+        groups[note.clone()]
+            .iter()
+            .any(|group| height_of(&group.extent) > height - gap)
+    }) {
+        return None;
+    }
 
     let mut packer = Packer {
         height,
@@ -49,8 +63,11 @@ pub(crate) fn paginate(
         draft: Draft::default(),
     };
     let mut pending = VecDeque::new();
-    for group in &groups {
-        let first_group = group.lines.start == 0;
+    for (index, group) in groups.iter().enumerate() {
+        let first_group = index == 0;
+        if !first_group && edges.get(index) == Some(&Edge::Force) {
+            packer.finish()?;
+        }
         let body_start = packer.draft.body.as_ref().map_or_else(
             || if first_group { 0.0 } else { group.extent.start },
             |body| body.start,
@@ -103,7 +120,12 @@ struct LineGroup {
     extent: Range<f32>,
 }
 
-fn line_groups(lines: &[Line], notes: &[Range<usize>], max_extent: u32) -> Option<Vec<LineGroup>> {
+fn line_groups(
+    lines: &[Line],
+    notes: &[Range<usize>],
+    artwork_bottoms: &BTreeMap<usize, f32>,
+    max_extent: u32,
+) -> Option<Vec<LineGroup>> {
     let boundaries: BTreeSet<_> = notes
         .iter()
         .flat_map(|note| [note.start, note.end])
@@ -115,11 +137,15 @@ fn line_groups(lines: &[Line], notes: &[Range<usize>], max_extent: u32) -> Optio
             || !line.bottom.is_finite()
             || line.top < 0.0
             || line.bottom <= line.top
-            || line.bytes.is_empty()
+            || (line.bytes.is_empty() && !artwork_bottoms.contains_key(&index))
             || line.page_extent() != extent
         {
             return None;
         }
+        let extent = extent.start
+            ..extent
+                .end
+                .max(artwork_bottoms.get(&index).copied().unwrap_or(extent.end));
         // Glyph extents can overlap after line spacing by a pixel or more.
         // Cut between whole bands so both paint and source hit testing agree.
         if let Some(previous) = groups.last_mut()
@@ -198,34 +224,28 @@ fn discover(
         .map(|block| (block.key, block))
         .collect();
     let mut regions = vec![None::<Range<usize>>; roots.len()];
-    let mut first = lines.len();
     let mut checked_directions = BTreeSet::new();
     let mut block_lines = BTreeMap::<_, Vec<_>>::new();
     for (index, line) in lines.iter().enumerate() {
         let block = blocks.get(&line.block)?;
-        if !block.images.is_empty()
-            || block.table_cell.is_some()
+        if block.table_cell.is_some()
             || (checked_directions.insert(line.block)
                 && crate::publisher_padding::paragraph_is_rtl(block.direction, &block.text))
         {
             return None;
         }
         if let Some(id) = elements[block.element] {
-            first = first.min(index);
+            if !block.images.is_empty() {
+                return None;
+            }
             let region = regions[id].get_or_insert(index..index);
             if region.end != index {
                 return None;
             }
             region.end += 1;
         } else {
-            if first < index {
-                return None;
-            }
             block_lines.entry(line.block).or_default().push(index);
         }
-    }
-    if first == 0 {
-        return None;
     }
     let regions = regions.into_iter().collect::<Option<Vec<_>>>()?;
     let mut references = References::new();
@@ -622,6 +642,227 @@ mod tests {
                 &ordinary[top * width..top * width + count]
             );
         }
+    }
+
+    #[test]
+    fn interleaved_note_stays_in_the_chapter_and_links_back_from_its_copy() {
+        let mut probe = open(4, true);
+        let ordinary = open(4, false);
+        let reference = probe.fragment("cross-ref").unwrap();
+        let note = probe.fragment("cross-note").unwrap();
+        let resume = probe.fragment("resume").unwrap();
+        assert_eq!(ordinary.fragment("cross-note"), Some(note.clone()));
+        assert_eq!(ordinary.fragment("resume"), Some(resume.clone()));
+        let marker_page = probe.page_for(&reference).unwrap();
+        let note_page = probe.page_for(&note).unwrap();
+        assert!(marker_page < note_page);
+        assert!(note_page <= probe.page_for(&resume).unwrap());
+        let note_y = probe.anchor_top(&note).unwrap();
+        assert!(
+            probe
+                .page_parts(marker_page)
+                .any(|(range, y)| y > 0 && range.contains(&note_y))
+        );
+        let label = "Return to gauge";
+        let start = probe.matches(label).pop().unwrap();
+        let selection = probe
+            .select_range(
+                &start,
+                &probe.anchor(start.block, start.offset + label.len()),
+            )
+            .unwrap();
+        let rect = probe.selection_rects(marker_page, &selection)[0];
+        let target = probe
+            .link_at(
+                marker_page,
+                (rect.x + rect.width / 2) as f32,
+                (rect.y + rect.height / 2) as f32,
+            )
+            .unwrap();
+        assert_eq!(target.fragment.as_deref(), Some("cross-ref"));
+        capture(&mut probe, marker_page, "reader-note-interleaved-band.png");
+        capture(
+            &mut probe,
+            note_page,
+            "reader-note-interleaved-canonical.png",
+        );
+    }
+
+    #[test]
+    fn body_artwork_keeps_complete_pixels_links_and_anchors_when_notes_reflow() {
+        let mut probe = open_with_settings(
+            5,
+            Settings {
+                height: 370,
+                ..settings(true)
+            },
+        );
+        let ordinary = open_with_settings(
+            5,
+            Settings {
+                height: 370,
+                ..settings(false)
+            },
+        );
+        let contract = probe.fragment("diagram").unwrap();
+        assert_eq!(ordinary.fragment("diagram"), Some(contract.clone()));
+        let diagram_page = probe.page_for(&contract).unwrap();
+        let reference_page = probe.page_for(&probe.fragment("key-ref").unwrap()).unwrap();
+        assert!(
+            probe.in_page_notes.as_ref().unwrap()[reference_page]
+                .separator
+                .is_some()
+        );
+        let crate::Renderer::Parley(layout) = &probe.renderer else {
+            unreachable!()
+        };
+        let mut visible = Vec::new();
+        for page in 0..probe.page_count() {
+            for (range, y) in probe.page_parts(page) {
+                for (path, cols, rows) in
+                    layout.visible_illustrations(range.clone(), probe.settings)
+                {
+                    assert_eq!(y, 0);
+                    visible.push((page, range.clone(), path, cols, rows));
+                }
+            }
+        }
+        assert_eq!(
+            visible.len(),
+            2,
+            "one standalone and one inline illustration must each paint once"
+        );
+        let (page, range, path, cols, rows) = visible.remove(0);
+        assert_eq!(page, diagram_page);
+        assert!(rows.len() > visible[0].4.len());
+        let x = (cols.start + cols.len() / 2) as f32;
+        let y = (rows.start + rows.len() / 2) as f32;
+        assert_eq!(probe.illustration_at(page, x, y), Some(path));
+        assert_eq!(
+            probe.link_at(page, x, y).unwrap().fragment.as_deref(),
+            Some("diagram-legend")
+        );
+        let width = probe.settings.width as usize;
+        let composed = capture(&mut probe, page, "reader-note-illustrated-page.png");
+        let canonical = probe.capture_range(range).unwrap();
+        assert!(rows.clone().any(|row| {
+            canonical[row * width + cols.start..row * width + cols.end]
+                .iter()
+                .any(|&pixel| pixel < 200)
+        }));
+        for row in rows {
+            let pixels = row * width + cols.start..row * width + cols.end;
+            assert_eq!(&composed[pixels.clone()], &canonical[pixels]);
+        }
+    }
+
+    #[test]
+    fn notes_leave_an_authored_hard_page_break_in_place() {
+        let probe = open(6, true);
+        let marker = probe.fragment("force-marker").unwrap();
+        let restart = probe.fragment("force-restart").unwrap();
+        let marker_page = probe.page_for(&marker).unwrap();
+        let restart_page = probe.page_for(&restart).unwrap();
+        assert!(restart_page > marker_page);
+        assert!(
+            probe.in_page_notes.as_ref().unwrap()[marker_page]
+                .separator
+                .is_some()
+        );
+        assert_eq!(probe.page_anchor(restart_page), Some(restart));
+    }
+
+    #[test]
+    #[ignore = "Requires a private manifest of authorized, unchanged original EPUBs"]
+    fn original_epub_in_page_notes_compose_and_preserve_canonical_anchors() {
+        #[derive(serde::Deserialize)]
+        struct Original {
+            path: std::path::PathBuf,
+            chapters: Vec<Chapter>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Chapter {
+            href: String,
+            notes: Vec<String>,
+            media: usize,
+        }
+        let manifest = std::env::var_os("READER_IN_PAGE_FOOTNOTE_ORIGINALS").unwrap();
+        let input = std::fs::File::open(manifest)
+            .unwrap_or_else(|_| panic!("cannot open private manifest"));
+        let originals: Vec<Original> =
+            serde_json::from_reader(input).unwrap_or_else(|_| panic!("invalid private manifest"));
+        let fonts = [
+            test_fixture("fonts/NotoSans-Regular.ttf"),
+            test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        let settings = Settings {
+            height: 1606,
+            font_size: 47.0,
+            in_page_footnotes: true,
+            ..Default::default()
+        };
+        let mut tested = 0;
+        let mut composed = 0;
+        let mut composed_media = 0;
+        let mut painted_bands = 0;
+        let mut anchors = 0;
+        for (ordinal, original) in originals.iter().enumerate() {
+            let package =
+                Book::open(&original.path).unwrap_or_else(|_| panic!("cannot open private EPUB"));
+            for chapter in &original.chapters {
+                let index = package
+                    .chapters
+                    .iter()
+                    .position(|entry| entry.href == chapter.href)
+                    .expect("private chapter locator");
+                let open = |settings| {
+                    Probe::open(&original.path, Engine::Parley, &fonts, settings, index)
+                        .unwrap_or_else(|_| panic!("cannot render private chapter"))
+                };
+                let ordinary = open(Settings {
+                    in_page_footnotes: false,
+                    ..settings
+                });
+                let mut enabled = open(settings);
+                tested += 1;
+                let bands = enabled.in_page_notes.as_ref().map_or(Vec::new(), |pages| {
+                    pages
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(page, part)| part.separator.map(|_| page))
+                        .collect::<Vec<_>>()
+                });
+                eprintln!(
+                    "private edition={} spine={} media={} bands={}",
+                    ordinal,
+                    index,
+                    chapter.media,
+                    bands.len()
+                );
+                for id in &chapter.notes {
+                    assert!(
+                        ordinary.fragment(id) == enabled.fragment(id),
+                        "private anchor changed"
+                    );
+                    anchors += usize::from(enabled.fragment(id).is_some());
+                }
+                if let Some(&page) = bands.first() {
+                    let (_, offset) = enabled.page_parts(page).last().unwrap();
+                    let pixels = enabled
+                        .capture(page)
+                        .unwrap_or_else(|_| panic!("cannot paint private note"));
+                    let start = (offset + settings.top_margin()) as usize * settings.width as usize;
+                    assert!(pixels[start..].iter().any(|&gray| gray < 225));
+                    composed += 1;
+                    composed_media += usize::from(chapter.media > 0);
+                    painted_bands += bands.len();
+                }
+            }
+        }
+        eprintln!(
+            "private matched={tested} composed={composed} composed_media={composed_media} bands={painted_bands} canonical_anchors={anchors}"
+        );
+        assert!(composed > 0);
     }
 
     #[cfg(feature = "kindle")]

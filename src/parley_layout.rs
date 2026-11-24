@@ -1564,6 +1564,34 @@ impl ParleyChapter {
         &self.limitations
     }
 
+    /// The bottom edge of artwork assigned to each ordinary source line. In-page
+    /// pagination can cut only where the whole illustration belongs to one band.
+    pub(crate) fn pagination_artwork_bottoms(
+        &self,
+        lines: &[Line],
+    ) -> Option<std::collections::BTreeMap<usize, f32>> {
+        let mut bottoms = std::collections::BTreeMap::<_, f32>::new();
+        for image in &self.illustrations {
+            let top = image.line_top?;
+            let first = lines.partition_point(|line| line.top < top - 0.01);
+            let (offset, line) = lines[first..]
+                .iter()
+                .enumerate()
+                .take_while(|(_, line)| line.top <= top + 0.01)
+                .find(|(_, line)| line.block == image.block)?;
+            // Drawing rounds the image position relative to the page's origin.
+            if (image.y - line.top).round() < 0.0 {
+                return None;
+            }
+            let bottom = image.y + image.display.1 as f32;
+            bottoms
+                .entry(first + offset)
+                .and_modify(|extent| *extent = extent.max(bottom))
+                .or_insert(bottom);
+        }
+        Some(bottoms)
+    }
+
     pub(crate) fn image_top(&self, key: usize, ordinal: usize) -> Option<f32> {
         self.illustrations
             .iter()

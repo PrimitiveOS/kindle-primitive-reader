@@ -1504,17 +1504,29 @@ impl Probe {
         {
             pages.trim_unpainted_tail(chapter.last_paint_bottom(&source));
         }
-        let in_page_notes = if compose_footnotes
-            && !spine_rtl
-            && publisher_edges.is_empty()
-            && matches!(&renderer, Renderer::Parley(layout)
-                if !layout.uses_float_geometry()
+        let in_page_notes = match &renderer {
+            Renderer::Parley(layout)
+                if compose_footnotes
+                    && !spine_rtl
+                    && !layout.uses_float_geometry()
                     && layout.publisher_height_spaces().is_empty()
-                    && layout.fitted_height_tails().is_empty())
-        {
-            footnotes::in_page::paginate(&href, &xhtml, &source, &lines, settings)
-        } else {
-            None
+                    && layout.fitted_height_tails().is_empty() =>
+            {
+                layout
+                    .pagination_artwork_bottoms(&lines)
+                    .and_then(|artwork| {
+                        footnotes::in_page::paginate(
+                            &href,
+                            &xhtml,
+                            &source,
+                            &lines,
+                            &artwork,
+                            &publisher_edges,
+                            settings,
+                        )
+                    })
+            }
+            _ => None,
         };
         Ok(Self {
             title,
@@ -1679,7 +1691,8 @@ impl Probe {
 
     /// Resolve a successfully displayed illustration at a page's viewport coordinates.
     pub fn illustration_at(&self, page: usize, x: f32, y: f32) -> Option<&str> {
-        self.illustration_in(self.pages.range(page)?, x, y)
+        let (range, y) = self.page_target(page, y)?;
+        self.illustration_in(range, x, y)
     }
 
     pub(crate) fn illustration_in(&self, range: Range<f32>, x: f32, y: f32) -> Option<&str> {

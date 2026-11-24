@@ -115,7 +115,9 @@ local function capture(view, page, name)
     local separator
     for y = margin, height - margin do
         local gray = frame:getPixel(margin, y):getColor8().a
-        if gray < 200 then
+        if gray < 200 and frame:getPixel(margin + math.floor(width / 7), y):getColor8().a > 235
+            and frame:getPixel(margin, y - 1):getColor8().a > 235
+            and frame:getPixel(margin, y + 1):getColor8().a > 235 then
             local continuous = true
             for x = margin + 1, margin + math.floor(width / 7) - 1 do
                 if frame:getPixel(x, y):getColor8().a ~= gray then
@@ -156,6 +158,23 @@ for i = 1, 17 do
     previous = page
 end
 position(view, "Narrative resumes")
+local interleaved_ref = position(view, "The tide gauge showed")
+local interleaved_note = position(view, "Tide gauge note")
+local interleaved_after = position(view, "The gauge register continues")
+assert(interleaved_ref < interleaved_note and interleaved_note <= interleaved_after)
+assert(capture(view, interleaved_ref, "stock-note-interleaved-band"))
+assert(not capture(view, interleaved_note, "stock-note-interleaved-canonical"))
+local illustrated_ref = position(view, "The harbor key explains")
+local illustrated_legend = position(view, "The chart legend names")
+assert(illustrated_ref <= illustrated_legend)
+assert(capture(view, illustrated_ref, "stock-note-illustrated-band"))
+if illustrated_legend ~= illustrated_ref then
+    capture(view, illustrated_legend, "stock-note-illustrated-page")
+end
+local forced_ref = position(view, "The keeper marked a second")
+local restart = position(view, "The harbor record restarts")
+assert(forced_ref < restart)
+assert(capture(view, forced_ref, "stock-note-before-hard-break"))
 view:close()
 local ordinary = open("")
 local ordinary_reference = position(ordinary, "The east pier")

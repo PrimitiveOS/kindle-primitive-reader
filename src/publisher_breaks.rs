@@ -255,6 +255,22 @@ pub(crate) fn boundaries(lines: &[Range<f32>], boxes: &[BoxRules]) -> Vec<Edge> 
     edges
 }
 
+/// Avoid/structural paths need coordination with note reserves. Ordinary hard
+/// breaks already use the same source bands in both pagination providers.
+pub(crate) fn in_page_note_boundaries(
+    lines: &[Range<f32>],
+    boxes: &[BoxRules],
+) -> Option<Vec<Edge>> {
+    if boxes
+        .iter()
+        .any(|item| item.extra_splits > 0 || item.physical_cuts.is_some())
+    {
+        return None;
+    }
+    let edges = boundaries(lines, boxes);
+    (!edges.contains(&Edge::Avoid)).then_some(edges)
+}
+
 pub(crate) fn structural_splits(lines: &[Range<f32>], boxes: &[BoxRules]) -> Vec<u16> {
     if !boxes.iter().any(|item| item.extra_splits > 0) {
         return Vec::new();
