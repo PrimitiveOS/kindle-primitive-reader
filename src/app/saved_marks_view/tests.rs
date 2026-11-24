@@ -5,7 +5,7 @@ use crate::library::{Bookmark, ReadingPosition};
 use crate::reading_controls::ListDensity;
 use primitive_app::App;
 
-fn open(fixture: &Fixture, path: &Path) -> Reader {
+pub(super) fn open(fixture: &Fixture, path: &Path) -> Reader {
     let fonts = vec![
         crate::test_fixture("fonts/NotoSans-Regular.ttf"),
         crate::test_fixture("fonts/NotoSans-Bold.ttf"),
@@ -19,17 +19,17 @@ fn at(rect: Rect) -> (f32, f32) {
     ((rect.x + rect.w / 2) as f32, (rect.y + rect.h / 2) as f32)
 }
 
-fn tap(app: &mut Reader, rect: Rect) -> Change {
+pub(super) fn tap(app: &mut Reader, rect: Rect) -> Change {
     let (x, y) = at(rect);
     app.input(Input::Tap(x, y))
 }
 
-fn hold(app: &mut Reader, rect: Rect) -> Change {
+pub(super) fn hold(app: &mut Reader, rect: Rect) -> Change {
     let (x, y) = at(rect);
     app.input(Input::LongTap(x, y))
 }
 
-fn bookmark_settings(app: &mut Reader) {
+pub(super) fn bookmark_settings(app: &mut Reader) {
     assert_eq!(app.input(Input::Tap(630.0, 25.0)), Change::Partial);
     if app.top_group != Some(TopGroup::Settings) {
         assert_eq!(tap_reading_control(app, "Settings"), Change::Partial);

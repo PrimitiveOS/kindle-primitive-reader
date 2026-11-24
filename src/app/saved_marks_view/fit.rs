@@ -15,9 +15,19 @@ pub(super) struct TitleFit {
 
 impl TitleFit {
     pub(super) fn measure(canvas: &mut Canvas, title: &str, area: Rect, logical_font: u8) -> Self {
+        Self::measure_limited(canvas, title, area, logical_font, usize::MAX)
+    }
+
+    pub(super) fn measure_limited(
+        canvas: &mut Canvas,
+        title: &str,
+        area: Rect,
+        logical_font: u8,
+        max_lines: usize,
+    ) -> Self {
         let pixels = font_pixels(logical_font);
         let line_height = (pixels * 13 + 5) / 10;
-        let capacity = (area.h / line_height).max(1) as usize;
+        let capacity = ((area.h / line_height).max(1) as usize).min(max_lines);
         let ranges = canvas.text_pages(area, title, title_style(pixels));
         let lines = ranges.len().min(capacity).max(1);
         let visible_end = ranges.get(lines - 1).map_or(title.len(), |range| range.end);

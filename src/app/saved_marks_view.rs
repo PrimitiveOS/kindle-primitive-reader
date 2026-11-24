@@ -7,7 +7,9 @@ use super::list_density::{Geometry, fit_logical_font, list_text_pixels};
 use super::{Action, Canvas, Item, Reader, Rect, Screen};
 
 mod fit;
+mod flexible;
 use fit::TitleFit;
+pub(super) use flexible::FlexibleMarks;
 
 struct RowTypography {
     title_size: i32,
@@ -142,7 +144,10 @@ impl Reader {
                     Rect::new(0, 0, 0, 0),
                 ),
             };
-            if is_mark && self.controls.bookmark_shrink_to_fit {
+            if is_mark
+                && self.controls.bookmark_shrink_to_fit
+                && self.controls.bookmark_max_lines().is_none()
+            {
                 let title = if item.title.contains(['\n', '\r']) {
                     Cow::Owned(item.title.replace(['\n', '\r'], " "))
                 } else {
