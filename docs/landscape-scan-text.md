@@ -35,3 +35,15 @@ spacing cancellation, scan size changes, and Back. Set
 `cargo test --locked --lib reading_guides` also verifies the optional guide
 lines in both scan viewport sizes. The lines move relative to the screen
 edges, keep their physical thickness, and end before the footer. [Reading guides](screenshots/landscape-scan-reading-guides.png)
+
+
+## Cancelling recognition
+
+KOReader passes the selected word box through either the native or reflowed
+OCR path. Reader runs recognition in a background process and keeps Cancel
+alongside the current fixed-page footer. Cancel and the physical Back
+action stop the pending job and retain the reading page. The test runs a
+pending worker against an authored PDF, drives each cancellation path, and
+checks the page and recognizer cache.
+[Pinned KOReader OCR path](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/koptinterface.lua#L776-L788) ·
+[Landscape cancellation](screenshots/landscape-ocr-cancel.png)

@@ -27,3 +27,5 @@ and closing the image returns to the same reading location or cover’s book det
 KOReader’s image viewer sizes itself from the active screen, carries the image’s
 center ratios through zoom, and opens comic panels in a separate image viewer.
 [Stock dimensions](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/imageviewer.lua#L321-L335) · [Stock pan focus](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/imageviewer.lua#L552-L558) · [Stock panel inspection](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerhighlight.lua#L1616-L1636)
+
+[Landscape illustration](screenshots/landscape-illustration.png)

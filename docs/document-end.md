@@ -129,3 +129,5 @@ The installed KOReader source matched the v2026.07.1 reference. Thirteen checks 
 The Mac checks exercised all nine action preferences and the separate auto-finish setting, along with the end of a comic spread, confirmation and cancellation, reopening with saved marks, and the previous location after restarting. Four original reflowable books and three original PDFs each passed the same paged and continuous boundary checks. Deletion tests used a disposable authored copy.
 
 The same seven originals passed the boundary checks on the Oasis 3 from its Documents folder. Their SHA-256 checksums matched after the run. The end-of-book panel and the deletion confirmation from the authored test produced byte-identical screenshots on the Mac and Oasis. The Kindle run used temporary Reader state with a separate disposable copy for the deletion check.
+
+[Landscape end-of-book panel](screenshots/landscape-end-of-book.png)

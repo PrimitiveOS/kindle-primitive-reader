@@ -60,3 +60,33 @@ touch point through the independently rotated PDF to the source page. Cancel
 restores the accepted reading frame and Apply saves the source rectangle.
 The authored PDF test verifies both paths and the original file digest.
 [Landscape crop preview](screenshots/landscape-pdf-crop.png)
+
+
+## Foreground acceptance on Oasis 3
+
+The Reader development entry advertises viewport handoff protocol 2 in its
+package header. The foreground test uses a Launcher compiled with
+`viewport-handoff` and a supervisor started with
+`KL_EXPERIMENTAL_VIEWPORT_HANDOFF=1`. Both binaries use Tools revision
+`c8ee49b764c96c013d0fa8e9d79dfdeddbdaaecc`. The setting applies to the
+scratch supervisor. Ordinary launcher sessions keep their existing startup
+policy.
+
+Start from Amazon’s Library after the installed supervisor has exited.
+Use a scratch Launcher payload, a scratch Documents folder, and the
+supervisor’s runtime entry with `KL_DIR` and `KL_DOCUMENTS` pointing to
+those folders. The manual `Documents/Launcher.sh` entry stays in place.
+The launcher tile starts the scratch Reader through the normal session
+creation path. Its reader home and document directory contain authored
+fixtures and private test state.
+
+| Checkpoint | Evidence |
+| --- | --- |
+| Foreground presentation | Run `scripts/verify-oasis-foreground.sh preflight` at the scratch Launcher grid. Open Reader from the grid and validate the ready record against the live PID, process start tick, scope, stride, framebuffer turn and row offset. Capture the authored EPUB in portrait and both landscape directions. |
+| Input and overlay | Check both physical page keys and a body swipe. Open Quick Settings from the top edge. Observe the stopped Reader process and held page-key fence. Compare the awake frames before and after closing an unchanged overlay. A queued page key pressed under the overlay leaves the page intact. A fresh page key advances it. |
+| Sleep and USB | After the power-button sleep cycle and after a data-cable mount and host eject, check the resumed source page, fresh ready generation and page-button input. |
+| Rollback and exit | Reject the oversized vertical EPUB draft viewport and check that the prior page remains available. Exit Reader to the portrait Launcher, then to Amazon’s Library. Verify removal of the scratch session records and compare the installed startup files with their baseline checksums. |
+
+The capture helper checks the live fixture process around each awake
+framebuffer read. The hardware evidence additionally records visible panel
+refresh, physical touch and keys, the power cycle, and the USB data session.

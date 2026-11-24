@@ -74,10 +74,14 @@ refresh, touch, routed page keys, sleep, USB and exit tests.
 [Document and navigation screens](landscape-navigation.md) ·
 [Selection and lookup screens](landscape-selection.md)
 
-Exact-value reading editors and the Cancel OCR control still need active
-viewport geometry and matching hardware and touch exit paths. The scan
-text and illustration viewers need staged sizing that preserves their
-source page and the reading position on rollback and return.
+Mac coverage includes exact-value editors, OCR cancellation, scan text
+and illustration inspection in both viewport sizes. The scan and
+illustration tests preserve the source location through a rejected turn and
+a return to the original view. The foreground hardware sequence remains
+open. [Exact-value editors](landscape-numeric-editors.md) ·
+[Scans and OCR](landscape-scan-text.md) ·
+[Illustrations](epub-gif-illustrations.md) ·
+[Oasis test sequence](reading-orientation-contract.md#foreground-acceptance-on-oasis-3)
 
 
 - [x] Set the active Reader goal to KOReader's core Kindle reading workflows: document open/render, navigation/layout, search/lookup, bookmarks/annotations, reading progress, accessibility, offline scans, and local reading data.

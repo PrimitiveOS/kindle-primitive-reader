@@ -174,11 +174,12 @@ committed dimensions. Scenes awaiting their viewport updates follow Launcher
 and retain the edition preference for later reading.
 [Selection and lookups in landscape](landscape-selection.md)
 
-The combined workflow passed 1,263 Mac tests with 66 opt-in cases skipped.
+The combined workflow passed 1,275 Mac tests with 66 opt-in cases skipped.
 It covered cross-book Bookmark Browser, full-document search and live
 results rotation, Book Map, Page Overview, Footnote, View HTML, the personal
 hyphenation editor, encrypted PDF entry, PDF crop, custom Contents, page
-links, location history, and printed-page navigation. A delayed
+links, location history, printed pages, numeric controls, illustration
+inspection, scan text, and the end-of-book panel. A delayed
 callback from a superseded viewport leaves the current proposal and the
 edition’s orientation preference intact.
 [Search screenshots](landscape-document-search.md) ·
