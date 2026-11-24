@@ -955,7 +955,7 @@ impl Reader {
             return None;
         }
         let active = self.active.as_ref()?;
-        let progress = self.footer_progress();
+        let screen_pages = active.reading.whole_book_screen_pages();
         let mut identity = Vec::new();
         if header.title {
             let title = active.reading.probe.title.trim();
@@ -990,7 +990,7 @@ impl Reader {
                     (false, _) => last,
                 });
             } else {
-                let (page, count) = active.reading.whole_book_screen_pages().unwrap_or_else(|| {
+                let (page, count) = screen_pages.unwrap_or_else(|| {
                     (active.reading.page + 1, active.reading.probe.page_count())
                 });
                 status.push(match (header.page_number, header.page_count) {
@@ -1000,10 +1000,15 @@ impl Reader {
                 });
             }
         }
-        if header.reading_percent
-            && let Some(progress) = &progress
-        {
-            status.push(progress.percentage_with_digits(self.controls.footer_percentage_digits));
+        if header.reading_percent {
+            let digits = self.controls.footer_percentage_digits;
+            if let Some((page, count)) = screen_pages {
+                let percent = page as f64 / count as f64 * 100.0;
+                let precision = usize::from(digits.min(2));
+                status.push(format!("{percent:.precision$}%"));
+            } else if let Some(progress) = self.footer_progress() {
+                status.push(progress.percentage_with_digits(digits));
+            }
         }
         if header.battery == HeaderBattery::Percentage
             && let Some(level) = primitive_device::battery()

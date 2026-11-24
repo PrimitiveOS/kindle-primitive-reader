@@ -100,12 +100,14 @@ impl Simulation {
                     .unwrap()
                     .iter()
                     .find(|(bytes, _, _)| &text[bytes.clone()] == word)
-                    .map(|(_, left, right)| (row, left, right))
+                    .map(|(_, left, right)| {
+                        (row, left + line.bounds(body).x, right + line.bounds(body).x)
+                    })
             })
             .unwrap();
         assert_eq!(
             self.app.input(Input::LongTap(
-                (body.x + (left + right) / 2) as f32,
+                ((left + right) / 2) as f32,
                 (body.y + row as i32 * LINE + LINE / 2) as f32
             )),
             Change::Partial
@@ -264,7 +266,7 @@ fn dictionary_justification_respects_paragraphs_and_maps_mixed_direction_words()
     }
 
     let text = "Coast في الميناء now";
-    let result = PlacedLine::new(&mut s.canvas, text, 480, true);
+    let result = PlacedLine::new(&mut s.canvas, text, 480, true, None);
     assert!(result.justified);
     let hits: Vec<_> = crate::selection::word_ranges(text).collect();
     let boxes = result.range_boxes(&mut s.canvas, text, 0, &hits);
@@ -275,9 +277,246 @@ fn dictionary_justification_respects_paragraphs_and_maps_mixed_direction_words()
     assert_eq!(visual, ["Coast", "الميناء", "في", "now"]);
     assert!(boxes.windows(2).all(|pair| pair[0].2 < pair[1].1));
     assert_eq!(boxes.last().unwrap().2, 480);
-    assert!(!PlacedLine::new(&mut s.canvas, "one\u{00a0}unit", 480, true).justified);
-    assert!(!PlacedLine::new(&mut s.canvas, "  Indented text", 480, true).justified);
-    assert!(!PlacedLine::new(&mut s.canvas, text, 40, true).justified);
+    assert!(!PlacedLine::new(&mut s.canvas, "one\u{00a0}unit", 480, true, None).justified);
+    assert!(!PlacedLine::new(&mut s.canvas, "  Indented text", 480, true, None).justified);
+    assert!(!PlacedLine::new(&mut s.canvas, text, 40, true, None).justified);
+}
+
+#[test]
+fn dictionary_rich_html_displays_senses_and_preserves_find_and_nested_lookup() {
+    use dictionary::article::Marker;
+
+    let mut s = Simulation::new();
+    if let Some(fallback) = std::env::var_os("READER_DICTIONARY_ARTICLE_FALLBACK") {
+        let regular = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+        let bold = crate::test_fixture("fonts/NotoSans-Bold.ttf");
+        let fonts =
+            [regular, bold, fallback.into()].map(|path| path.to_string_lossy().into_owned());
+        s.canvas = Canvas::new(WIDTH, HEIGHT, &fonts).unwrap();
+    }
+    let article = "<div lang='en' dir='ltr'>\
+        <ol><li>A definite article introducing a known place or thing.\
+        <blockquote><p>The pilot watched the harbour light.</p>\
+        <dl><dd lang='ar' dir='rtl'>عند المساء يشاهد البحار ضوء الميناء الهادئ قبل أن يقترب من الساحل. ثم يعود إلى القارب.</dd></dl>\
+        </blockquote></li><li>Used before a comparative form to connect two changes.\
+        <blockquote>The sooner we leave, the better.</blockquote></li></ol></div>";
+    write_dictionary(
+        &s.fixture.root.join("dictionaries"),
+        "Bilingual examples",
+        "sametypesequence=h\nlang=eng-ara\n",
+        &[
+            ("The", article.as_bytes()),
+            ("الميناء", "<p lang='en'>A harbour.</p>".as_bytes()),
+        ],
+    );
+    s.open_epub_selection();
+    let selection = s.app.selection.clone();
+    s.tap(s.app.selection_button(SelectionAction::Dictionary));
+    let index = s
+        .app
+        .definitions
+        .iter()
+        .position(|entry| entry.dictionary == "Bilingual examples")
+        .unwrap();
+    s.tap(definition_results_button(s.app.definition_layout().0));
+    s.tap(definition_result_row(s.app.definition_layout().0, index));
+    s.draw(Some("dictionary-structured-article.png"));
+    let popup = s.app.definition_layout().0;
+    s.tap(definition_actions(popup)[1]);
+    assert!(s.app.definition_expanded);
+    s.draw(None);
+    let parent_text = s.app.definitions[index].text.clone();
+    let rows = s.app.dictionary_navigation.view.layout.get().unwrap();
+    let markers: Vec<_> = rows.iter().filter_map(|line| line.marker).collect();
+    assert_eq!(markers, [Marker::Number(1), Marker::Number(2)]);
+    let rtl_rows: Vec<_> = rows.iter().filter(|line| line.rtl == Some(true)).collect();
+    assert!(rtl_rows.len() >= 2);
+    assert!(
+        rtl_rows
+            .iter()
+            .all(|line| line.indent == MARKER_GUTTER + 2 * EXAMPLE_INSET)
+    );
+    assert!(rows[0].indent < rtl_rows[0].indent);
+    assert_eq!(rtl_rows[0].end_inset, 2 * EXAMPLE_INSET);
+    assert!(
+        rows.iter()
+            .any(|line| line.placed.get().is_some_and(|layout| layout.justified))
+    );
+    assert!(!parent_text.contains("1."));
+    assert_eq!(s.app.finish_find("الميناء"), Change::Partial);
+    let find = s.app.dictionary_navigation.view.find.as_ref().unwrap();
+    assert_eq!(&parent_text[find.hits[find.index].clone()], "الميناء");
+    let frame_with_find = s.draw(None);
+    s.hold_definition_word("الميناء");
+    assert!(s.app.definition_expanded);
+    assert_eq!(s.app.definitions[0].text, "A harbour.");
+    s.back();
+    assert_eq!(s.app.list_page, index);
+    assert!(s.app.dictionary_navigation.view.find.is_some());
+    assert_eq!(s.draw(None), frame_with_find);
+    s.back();
+    assert!(s.app.definition_over_book());
+    s.back();
+    assert_eq!(s.app.screen, Screen::Book);
+    assert_eq!(s.app.selection, selection);
+
+    s.app.dictionary_settings.large_window = true;
+    s.app.dictionary_settings.justify_text = false;
+    s.tap(s.app.selection_button(SelectionAction::Dictionary));
+    assert!(s.app.definition_expanded);
+    s.tap(definition_results_button(s.app.definition_layout().0));
+    s.tap(definition_result_row(s.app.definition_layout().0, index));
+    s.draw(None);
+    let rows = s.app.dictionary_navigation.view.layout.get().unwrap();
+    assert!(
+        rows.iter()
+            .all(|line| line.placed.get().is_none_or(|layout| !layout.justified))
+    );
+    s.back();
+    assert_eq!(s.app.screen, Screen::Book);
+    assert_eq!(s.app.selection, selection);
+}
+
+#[test]
+fn dictionary_html_uses_locale_for_neutral_paragraphs_and_explicit_direction_first() {
+    let mut paragraph = dictionary::article::Paragraph {
+        range: 0..4,
+        indent: 0,
+        list_item: false,
+        marker: None,
+        direction: None,
+        language: parley::Language::parse("ar").ok(),
+    };
+    assert!(paragraph_rtl("2026", &paragraph));
+    assert!(!paragraph_rtl("A 2026", &paragraph));
+    paragraph.direction = Some(parley::BaseDirection::Ltr);
+    assert!(!paragraph_rtl("بحر", &paragraph));
+    paragraph.direction = Some(parley::BaseDirection::Rtl);
+    assert!(paragraph_rtl("A 2026", &paragraph));
+    paragraph.direction = Some(parley::BaseDirection::Auto);
+    assert!(!paragraph_rtl("2026", &paragraph));
+}
+
+#[test]
+fn dictionary_cross_reference_opens_the_originating_source_and_restores_the_passage() {
+    let mut s = Simulation::new();
+    let root = s.fixture.root.join("dictionaries");
+    let article = b"<p>See <a href='bword://Harbour%20Light'>the harbour<br>reference</a> for the closest meaning.</p>\
+        <p><a href='bword://elsewhere'>Unlisted sense</a>, <a href='https://example.invalid'>Web article</a>, \
+        and <a href='elsewhere'>Bare target</a>.</p>";
+    write_dictionary(
+        &root,
+        "Reference glossary",
+        "sametypesequence=h\n",
+        &[
+            (
+                "harbour light",
+                b"<p>A light marking the entry to the harbour.</p>",
+            ),
+            ("The", article),
+        ],
+    );
+    write_dictionary(
+        &root,
+        "Other glossary",
+        "sametypesequence=m\n",
+        &[
+            ("elsewhere", b"Only available from the other source."),
+            (
+                "harbour light",
+                b"Different meaning from a dictionary with the same display name.",
+            ),
+        ],
+    );
+    let duplicate = root.join("Other glossary.ifo");
+    let metadata = fs::read_to_string(&duplicate)
+        .unwrap()
+        .replace("bookname=Other glossary", "bookname=Reference glossary");
+    fs::write(&duplicate, metadata).unwrap();
+
+    s.open_epub_selection();
+    let selection = s.app.selection.clone();
+    let location = s.app.current_history_location();
+    let passage = s.draw(None);
+    s.tap(s.app.selection_button(SelectionAction::Dictionary));
+    let index = s
+        .app
+        .definitions
+        .iter()
+        .position(|entry| entry.source == Path::new("Reference glossary.ifo"))
+        .unwrap();
+    s.tap(definition_results_button(s.app.definition_layout().0));
+    s.tap(definition_result_row(s.app.definition_layout().0, index));
+    s.draw(Some("dictionary-cross-reference.png"));
+    let link_point = |s: &Simulation, label: &str| {
+        let entry = &s.app.definitions[s.app.list_page];
+        let link = entry
+            .article
+            .as_ref()
+            .unwrap()
+            .links
+            .iter()
+            .position(|link| &entry.text[link.range.clone()] == label)
+            .unwrap();
+        let (popup, _, rows) = s.app.definition_layout();
+        let view = &s.app.dictionary_navigation.view;
+        let rect = body(popup);
+        view.layout
+            .get()
+            .unwrap()
+            .iter()
+            .skip(view.first_line(rows))
+            .take(rows)
+            .enumerate()
+            .filter_map(|(row, line)| {
+                let (_, left, right) = line
+                    .links
+                    .get()?
+                    .iter()
+                    .find(|(index, _, _)| *index == link)?;
+                let x = line.bounds(rect).x + (right + left) / 2;
+                let y = rect.y + row as i32 * LINE + LINE / 2;
+                Some((x as f32, y as f32))
+            })
+            .last()
+            .unwrap()
+    };
+    let before = s.app.lookup_history.dictionary.clone();
+    for label in ["Web article", "Bare target"] {
+        let (x, y) = link_point(&s, label);
+        assert_eq!(s.app.input(Input::Tap(x, y)), Change::None);
+    }
+    let (x, y) = link_point(&s, "Unlisted sense");
+    assert_eq!(s.app.input(Input::Tap(x, y)), Change::Partial);
+    assert_eq!(
+        s.app.notice.as_deref(),
+        Some("Reference not found in this dictionary")
+    );
+    assert_eq!(s.app.list_page, index);
+    assert_eq!(s.app.lookup_history.dictionary, before);
+    assert!(s.app.spelling_lookup.is_none());
+    assert_eq!(s.app.finish_find("closest"), Change::Partial);
+    let previous = s.draw(None);
+    let (x, y) = link_point(&s, "the harbour\nreference");
+    assert_eq!(s.app.input(Input::Tap(x, y)), Change::Partial);
+    assert_eq!(s.app.definition_word, "Harbour Light");
+    assert_eq!(s.app.definitions.len(), 1);
+    assert_eq!(
+        s.app.definitions[0].text,
+        "A light marking the entry to the harbour."
+    );
+    assert_eq!(
+        s.app.definitions[0].source,
+        Path::new("Reference glossary.ifo")
+    );
+    assert!(s.app.spelling_lookup.is_none());
+    s.back();
+    assert_eq!(s.app.list_page, index);
+    assert_eq!(s.draw(None), previous);
+    s.back();
+    assert_eq!(s.app.current_history_location(), location);
+    assert_eq!(s.app.selection, selection);
+    assert_eq!(s.draw(None), passage);
 }
 
 #[test]

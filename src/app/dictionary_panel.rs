@@ -8,11 +8,13 @@ const DEFINITION_TEXT: primitive_ui::TextStyle =
     primitive_ui::TextStyle::new(FONT_SIZE).break_long_words();
 const LINE: i32 = 47;
 const MAX_DEPTH: usize = 8;
+const EXAMPLE_INSET: i32 = 36;
+const MARKER_GUTTER: i32 = 112;
 
 /// One job belongs to one popup. Dropping the popup cancels its storage work
 /// and disconnects its result channel before another selected word can receive it.
 pub(super) struct SpellingLookup {
-    receiver: std::sync::mpsc::Receiver<io::Result<Vec<dictionary::Definition>>>,
+    receiver: std::sync::mpsc::Receiver<io::Result<Vec<dictionary::LookupEntry>>>,
     cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub(super) deadline: Instant,
 }
@@ -26,7 +28,7 @@ impl Drop for SpellingLookup {
 
 impl SpellingLookup {
     pub(super) fn start(
-        work: impl FnOnce(&std::sync::atomic::AtomicBool) -> io::Result<Vec<dictionary::Definition>>
+        work: impl FnOnce(&std::sync::atomic::AtomicBool) -> io::Result<Vec<dictionary::LookupEntry>>
         + Send
         + 'static,
     ) -> io::Result<Self> {
@@ -57,7 +59,7 @@ pub(super) struct Navigation {
 }
 struct Previous {
     word: String,
-    definitions: Vec<dictionary::Definition>,
+    definitions: Vec<dictionary::LookupEntry>,
     index: usize,
     expanded: bool,
     suggestions_pending: bool,
@@ -95,8 +97,13 @@ struct Find {
 struct TextLine {
     range: Range<usize>,
     soft_wrap: bool,
+    indent: i32,
+    end_inset: i32,
+    rtl: Option<bool>,
+    marker: Option<dictionary::article::Marker>,
     placed: OnceCell<PlacedLine>,
     words: OnceCell<Vec<(Range<usize>, i32, i32)>>,
+    links: OnceCell<Vec<(usize, i32, i32)>>,
 }
 
 #[derive(Debug)]
@@ -110,6 +117,7 @@ struct PlacedRun {
 struct PlacedLine {
     runs: Vec<PlacedRun>,
     justified: bool,
+    rtl: Option<bool>,
 }
 
 fn body(popup: Rect) -> Rect {
@@ -154,10 +162,141 @@ fn layout(canvas: &mut Canvas, text: &str, width: i32) -> Vec<TextLine> {
             soft_wrap: range.end < text.len()
                 && !text[range.clone()].ends_with(['\n', '\r', '\u{0085}', '\u{2028}', '\u{2029}']),
             range,
+            indent: 0,
+            end_inset: 0,
+            rtl: None,
+            marker: None,
             placed: OnceCell::new(),
             words: OnceCell::new(),
+            links: OnceCell::new(),
         })
         .collect()
+}
+
+fn article_layout(
+    canvas: &mut Canvas,
+    result: &dictionary::LookupEntry,
+    width: i32,
+) -> Vec<TextLine> {
+    let Some(article) = result
+        .article
+        .as_ref()
+        .filter(|article| !article.paragraphs.is_empty())
+    else {
+        return layout(canvas, &result.text, width);
+    };
+    let mut prior = 0;
+    let mut paragraphs = article.paragraphs.iter().peekable();
+    let mut rows = Vec::new();
+    for paragraph in result.text.split_inclusive('\n') {
+        let start = prior;
+        prior += paragraph.len();
+        let paragraph = paragraph.trim_end_matches('\n');
+        let style = paragraphs.next_if(|style| style.range.start == start);
+        let (indent, end_inset) = style.map_or((0, 0), |style| {
+            let nested = (i32::from(style.indent) * EXAMPLE_INSET).min(width / 6);
+            let gutter = if style.list_item { MARKER_GUTTER } else { 0 };
+            ((nested + gutter).min(width / 3), nested)
+        });
+        let rtl = style.map(|style| paragraph_rtl(paragraph, style));
+        for (index, mut line) in layout(canvas, paragraph, width - indent - end_inset)
+            .into_iter()
+            .enumerate()
+        {
+            line.range.start += start;
+            line.range.end += start;
+            line.indent = indent;
+            line.end_inset = end_inset;
+            line.rtl = rtl;
+            if index == 0 {
+                line.marker = style.and_then(|style| style.marker);
+            }
+            rows.push(line);
+        }
+    }
+    rows
+}
+
+fn paragraph_rtl(text: &str, style: &dictionary::article::Paragraph) -> bool {
+    use unicode_bidi::BidiClass::{AL, L, R};
+
+    match style.direction {
+        Some(parley::BaseDirection::Ltr) => return false,
+        Some(parley::BaseDirection::Rtl) => return true,
+        _ => {}
+    }
+    if let Some(direction) = text
+        .chars()
+        .map(unicode_bidi::bidi_class)
+        .find(|class| matches!(class, L | R | AL))
+    {
+        return direction != L;
+    }
+    // When there is no strong character, use the declared language's script
+    // to position a line of numbers or symbols. Explicit dir="auto" still
+    // uses Unicode's default direction for neutral text.
+    style.direction.is_none()
+        && style
+            .language
+            .is_some_and(|language| match language.script() {
+                Some(script) => {
+                    matches!(script, "Arab" | "Hebr" | "Thaa" | "Syrc" | "Nkoo" | "Adlm")
+                }
+                None => matches!(
+                    language.language(),
+                    "ar" | "ara"
+                        | "fa"
+                        | "fas"
+                        | "he"
+                        | "heb"
+                        | "ur"
+                        | "urd"
+                        | "ps"
+                        | "pus"
+                        | "yi"
+                        | "yid"
+                        | "dv"
+                        | "div"
+                        | "sd"
+                        | "snd"
+                        | "ug"
+                        | "uig"
+                ),
+            })
+}
+
+impl TextLine {
+    fn bounds(&self, row: Rect) -> Rect {
+        Rect::new(
+            row.x
+                + if self.rtl == Some(true) {
+                    self.end_inset
+                } else {
+                    self.indent
+                },
+            row.y,
+            row.w - self.indent - self.end_inset,
+            row.h,
+        )
+    }
+
+    fn draw_marker(&self, canvas: &mut Canvas, rect: Rect) {
+        let text = match self.marker {
+            Some(dictionary::article::Marker::Number(number)) => format!("{number}."),
+            Some(dictionary::article::Marker::Bullet) => "•".to_owned(),
+            None => return,
+        };
+        let width = self.indent.min(MARKER_GUTTER) - 14;
+        let (x, style) = if self.rtl == Some(true) {
+            (rect.right() + 14, primitive_ui::TextStyle::new(30))
+        } else {
+            (
+                rect.x - 14 - width,
+                primitive_ui::TextStyle::new(30).right(),
+            )
+        };
+        canvas.text(Rect::new(x, rect.y + 2, width, LINE), &text, style);
+    }
 }
 
 fn stretchable_space(ch: char) -> bool {
@@ -165,12 +304,20 @@ fn stretchable_space(ch: char) -> bool {
 }
 
 impl PlacedLine {
-    fn new(canvas: &mut Canvas, line: &str, width: i32, justify: bool) -> Self {
-        let bidi = unicode_bidi::BidiInfo::new(line, None);
+    fn new(canvas: &mut Canvas, line: &str, width: i32, justify: bool, rtl: Option<bool>) -> Self {
+        let level = rtl.map(|rtl| {
+            if rtl {
+                unicode_bidi::Level::rtl()
+            } else {
+                unicode_bidi::Level::ltr()
+            }
+        });
+        let bidi = unicode_bidi::BidiInfo::new(line, level);
         let Some(paragraph) = bidi.paragraphs.first() else {
             return Self {
                 runs: Vec::new(),
                 justified: false,
+                rtl,
             };
         };
         let (levels, ranges) = bidi.visual_runs(paragraph, paragraph.range.clone());
@@ -178,9 +325,14 @@ impl PlacedLine {
             return Self {
                 runs,
                 justified: true,
+                rtl,
             };
         }
-        let mut x = 0;
+        let mut x = if rtl == Some(true) {
+            (width - canvas.measure(line, FONT_SIZE)).max(0)
+        } else {
+            0
+        };
         let runs = ranges
             .into_iter()
             .map(|range| {
@@ -198,6 +350,7 @@ impl PlacedLine {
         Self {
             runs,
             justified: false,
+            rtl,
         }
     }
 
@@ -320,6 +473,17 @@ impl PlacedLine {
                 let bounds = Rect::new(rect.x + run.x, rect.y, rect.w - run.x, rect.h);
                 canvas.text(bounds, &line[run.range.clone()], DEFINITION_TEXT);
             }
+        } else if let Some(rtl) = self.rtl {
+            // Canvas auto-detects direction. A nonprinting mark pins the
+            // paragraph base direction across wrapped rows without changing
+            // the dictionary text or the hit-test byte positions.
+            let mark = if rtl { '\u{200f}' } else { '\u{200e}' };
+            let style = if rtl {
+                DEFINITION_TEXT.right()
+            } else {
+                DEFINITION_TEXT
+            };
+            canvas.text(rect, &format!("{mark}{line}"), style);
         } else {
             canvas.text(rect, line, DEFINITION_TEXT);
         }
@@ -481,6 +645,10 @@ impl Reader {
     }
 
     pub(super) fn look_up(&mut self, word: &str) -> Result<()> {
+        self.look_up_entry(word, None)
+    }
+
+    fn look_up_entry(&mut self, word: &str, source: Option<&Path>) -> Result<()> {
         let nested = self.screen == Screen::Definition;
         let word = word.trim();
         if !lookup_history::valid(word) {
@@ -489,7 +657,13 @@ impl Reader {
         if nested && self.dictionary_navigation.trail.len() >= MAX_DEPTH {
             return Err("Go back one lookup to open another definition".into());
         }
-        let results = with_storage(|| self.lookup_sources(word))?;
+        let results = with_storage(|| match source {
+            Some(source) => self.dictionaries.lookup_reference(source, word),
+            None => self.lookup_sources(word),
+        })?;
+        if source.is_some() && results.is_empty() {
+            return Err("Reference not found in this dictionary".into());
+        }
         let entry = self.vocabulary_entry(word);
         let reviewing = if self.screen == Screen::VocabularyWord {
             self.vocabulary_view.word.as_deref() == Some(word)
@@ -538,7 +712,11 @@ impl Reader {
         if repeated {
             self.vocabulary_view.repeated = Some((word.to_owned(), entry));
         }
-        self.start_spelling_lookup(word);
+        if source.is_some() {
+            self.spelling_lookup = None;
+        } else {
+            self.start_spelling_lookup(word);
+        }
         Ok(())
     }
 
@@ -630,16 +808,25 @@ impl Reader {
             Change::None
         }
     }
-    fn dictionary_word_at(&self, popup: Rect, x: f32, y: f32) -> Option<String> {
+    fn dictionary_row_at(&self, popup: Rect, x: f32, y: f32) -> Option<(&TextLine, i32)> {
         let rect = body(popup);
         if !rect.contains(x, y) {
             return None;
         }
         let view = &self.dictionary_navigation.view;
-        let n = view.first_line((rect.h / LINE) as usize)
-            + (y as i32 - rect.y) as usize / LINE as usize;
+        let rows = (rect.h / LINE) as usize;
+        let row = (y as i32 - rect.y) as usize / LINE as usize;
+        if row >= rows {
+            return None;
+        }
+        let n = view.first_line(rows) + row;
         let line = view.layout.get()?.get(n)?;
-        let pos = x as i32 - rect.x;
+        let pos = x as i32 - line.bounds(rect).x;
+        Some((line, pos))
+    }
+
+    fn dictionary_word_at(&self, popup: Rect, x: f32, y: f32) -> Option<String> {
+        let (line, pos) = self.dictionary_row_at(popup, x, y)?;
         let (bytes, _, _) = line
             .words
             .get()?
@@ -647,6 +834,25 @@ impl Reader {
             .find(|(_, left, right)| (*left..*right).contains(&pos))?;
         let text = &self.definitions.get(self.list_page)?.text;
         Some(text[crate::selection::word_range(text, bytes.start)?].to_owned())
+    }
+
+    fn dictionary_reference_at(
+        &self,
+        popup: Rect,
+        x: f32,
+        y: f32,
+    ) -> Option<(&Path, &dictionary::article::Link)> {
+        let (line, pos) = self.dictionary_row_at(popup, x, y)?;
+        let (index, _, _) = line
+            .links
+            .get()?
+            .iter()
+            .find(|(_, start, end)| (*start..*end).contains(&pos))?;
+        let current = self.definitions.get(self.list_page)?;
+        Some((
+            &current.source,
+            current.article.as_ref()?.links.get(*index)?,
+        ))
     }
     fn find_step(&mut self, step: isize) -> Change {
         let rows = self.definition_layout().2;
@@ -916,6 +1122,16 @@ impl Reader {
                     return Change::Partial;
                 }
                 if body(popup).contains(x, y) {
+                    if let Some((source, reference)) = self.dictionary_reference_at(popup, x, y) {
+                        let Some(target) = reference.target.clone() else {
+                            return Change::None;
+                        };
+                        let source = source.to_owned();
+                        return match self.look_up_entry(&target, Some(&source)) {
+                            Ok(()) => Change::Partial,
+                            Err(error) => self.report(error),
+                        };
+                    }
                     let step = if x < (popup.x + popup.w / 2) as f32 {
                         -1
                     } else {
@@ -1064,24 +1280,65 @@ impl Reader {
             if text.is_empty() {
                 canvas.text(rect, HEADWORD_ONLY, CAPTION);
             }
-            let lines = view.layout.get_or_init(|| layout(canvas, text, rect.w));
+            let lines = view
+                .layout
+                .get_or_init(|| article_layout(canvas, result, rect.w));
             let current = view.find.as_ref().map(|f| &f.hits[f.index]);
             let first = view.first_line(rows);
             for (row, line) in lines.iter().skip(first).take(rows).enumerate() {
                 let y = rect.y + row as i32 * LINE;
+                let line_rect = line.bounds(Rect::new(rect.x, y, rect.w, LINE));
+                line.draw_marker(canvas, line_rect);
                 let content = text[line.range.clone()].trim_end();
                 let placement = line.placed.get_or_init(|| {
                     PlacedLine::new(
                         canvas,
                         content,
-                        rect.w,
+                        line_rect.w,
                         self.dictionary_settings.justify_text && line.soft_wrap,
+                        line.rtl,
                     )
                 });
                 line.words.get_or_init(|| {
                     let words: Vec<_> = crate::selection::word_ranges(content).collect();
                     placement.range_boxes(canvas, content, line.range.start, &words)
                 });
+                if let Some(article) = &result.article {
+                    let links = line.links.get_or_init(|| {
+                        let first = article
+                            .links
+                            .partition_point(|link| link.range.end <= line.range.start);
+                        let mut boxes = Vec::new();
+                        for (index, link) in article
+                            .links
+                            .iter()
+                            .enumerate()
+                            .skip(first)
+                            .take_while(|(_, link)| link.range.start < line.range.end)
+                        {
+                            let span = link.range.start.saturating_sub(line.range.start)
+                                ..link.range.end.min(line.range.end) - line.range.start;
+                            boxes.extend(
+                                placement
+                                    .range_boxes(canvas, content, line.range.start, &[span])
+                                    .into_iter()
+                                    .map(|(_, left, right)| {
+                                        (index, left.max(0), right.min(line_rect.w))
+                                    })
+                                    .filter(|(_, left, right)| left < right),
+                            );
+                        }
+                        boxes
+                    });
+                    for &(index, left, right) in links {
+                        if article.links[index].target.is_some() {
+                            canvas.fill(
+                                Rect::new(line_rect.x + left, y + LINE - 3, right - left, 2),
+                                0,
+                            );
+                        }
+                    }
+                }
                 if let Some(hit) = current
                     && line.range.start < hit.end
                     && hit.start < line.range.end
@@ -1095,12 +1352,12 @@ impl Reader {
                         std::slice::from_ref(&part),
                     ) {
                         canvas.fill(
-                            Rect::new(rect.x + left, y, (right - left).max(2), LINE),
+                            Rect::new(line_rect.x + left, y, (right - left).max(2), LINE),
                             205,
                         );
                     }
                 }
-                placement.draw(canvas, Rect::new(rect.x, y, rect.w, LINE), content);
+                placement.draw(canvas, line_rect, content);
             }
             if lines.len() > rows {
                 let height = (rect.h * rows as i32 / lines.len() as i32).max(12);

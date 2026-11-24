@@ -34,8 +34,10 @@ reading. Its first count must agree with the visible chapter. A missing or
 recovered-placeholder member, unsupported writing mode, changed identity,
 invalid prefix or conflicting sample leaves the header chapter-local. The
 default reading footer uses `Chapter x of y - Page m of n` with its progress
-track and Exit. Whole-book percentages and Contents marks have separate
-position rules.
+track and Exit. The optional header uses the exact page fraction for its
+percentage, including when it shows publisher or generated edition labels.
+It keeps the existing progress estimate until exact screen pagination is ready.
+The bottom progress track and Contents marks have their own position rules.
 [Installed layout observation](../src/session.rs) · [Validated counts](../src/session/screen_pages.rs) · [Background worker](../src/session/screen_pages/background.rs)
 
 ## Cache and storage

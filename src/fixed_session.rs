@@ -12,7 +12,9 @@ use primitive_ui::{CAPTION, Canvas, GrayImage, Input, Rect, TextStyle};
 use crate::Result;
 use crate::comic::{Comic, ImagePage};
 use crate::djvu::{Djvu, MAX_DJVU_BYTES};
-use crate::fixed::{MAX_PDF_BYTES, Pdf, PdfLink, PdfOutlineItem, RenderRequest, pdf_open_timing};
+use crate::fixed::{
+    MAX_PDF_BYTES, Pdf, PdfLink, PdfLinkTarget, PdfOutlineItem, RenderRequest, pdf_open_timing,
+};
 use crate::fixed_epub::{FixedEpub, FixedSpread, SpreadPlan};
 use crate::fixed_text::{PdfPageText, PdfTextRect};
 use crate::library::hidden_flows::{HiddenFlows, PageFlows, ResolvedPoint};
@@ -1263,17 +1265,40 @@ impl FixedReading {
     }
 
     pub(crate) fn visible_links(&self) -> Vec<PdfLink> {
-        let FixedDocument::Pdf(pdf) = &self.source else {
-            return Vec::new();
-        };
         self.visible_pages()
-            .flat_map(|page| {
-                pdf.page_links(page)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter(move |link| self.visible_rectangle(page, link.bounds).is_some())
-            })
+            .flat_map(|page| self.visible_pdf_page_links(page))
             .collect()
+    }
+
+    fn visible_pdf_page_links(&self, page: usize) -> impl Iterator<Item = PdfLink> + '_ {
+        let links = match &self.source {
+            FixedDocument::Pdf(pdf) => pdf.page_links(page).unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        links
+            .into_iter()
+            .filter(move |link| self.visible_rectangle(page, link.bounds).is_some())
+    }
+
+    pub(crate) fn nearest_link(&self, x: f32, y: f32, internal_only: bool) -> Option<PdfLink> {
+        let page = self.page_at(y)?;
+        let point = self.source_point(page, x, y)?;
+        let size = self.visible.iter().find(|entry| entry.index == page)?.size;
+        let source = Point::new(point.x * f64::from(size.0), point.y * f64::from(size.1));
+        self.visible_pdf_page_links(page)
+            .filter(|link| match link.target {
+                PdfLinkTarget::Page(_) => true,
+                PdfLinkTarget::External => !internal_only && link.uri.is_some(),
+                PdfLinkTarget::Unavailable => false,
+            })
+            .map(|link| {
+                let rect = source_rect(size, link.bounds);
+                let start = (rect.origin() - source).hypot2();
+                let end = (Point::new(rect.x1, rect.y1) - source).hypot2();
+                (start.min(end), link)
+            })
+            .min_by(|(a, _), (b, _)| a.total_cmp(b))
+            .map(|(_, link)| link)
     }
 
     fn word_at(&self, page: usize, text: &PdfPageText, x: f32, y: f32) -> Option<usize> {

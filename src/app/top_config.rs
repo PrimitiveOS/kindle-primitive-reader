@@ -335,8 +335,8 @@ impl Reader {
                 .detail("Settings for new books; existing books stay unchanged"),
             Item::new("Reading gestures", Action::Show(Screen::Gestures))
                 .detail("Assign taps, holds and swipes"),
-            Item::new("Link taps", Action::Show(Screen::LinkTapSettings))
-                .detail("Choose which links open on a tap"),
+            Item::new("Links", Action::Show(Screen::LinkSettings))
+                .detail("Link taps and return gesture"),
             Item::new(
                 "Invert page-turn buttons",
                 Action::SetReadingControls(ReadingControls {

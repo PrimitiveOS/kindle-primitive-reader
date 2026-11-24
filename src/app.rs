@@ -243,7 +243,7 @@ enum Screen {
     CustomEdits,
     CustomBookmarks,
     Links,
-    LinkTapSettings,
+    LinkSettings,
     Bookmarks,
     Typography,
     ReadingFonts,
@@ -386,7 +386,7 @@ impl Screen {
             Self::CustomTitle => "Chapter title",
             Self::GeneratedContents => "Generated outline",
             Self::Links => "Links on this page",
-            Self::LinkTapSettings => "Link taps",
+            Self::LinkSettings => "Links",
             Self::Bookmarks | Self::FixedBookmarks => "Bookmarks",
             Self::Typography => "Text settings",
             Self::ReadingFonts => "Reading font",
@@ -813,6 +813,7 @@ pub struct Reader {
     map_window: fixed_book_map::MapWindow,
     back: Vec<HistoryLocation>,
     forward: Vec<HistoryLocation>,
+    swipe_back_notice_pending: bool,
     notice: Option<String>,
     dirty: bool,
     save_at: Option<Instant>,
@@ -858,7 +859,7 @@ pub struct Reader {
     online: Option<online_panel::Panel>,
     annotation_search: annotation_search::AnnotationSearch,
     definition_word: String,
-    definitions: Vec<dictionary::Definition>,
+    definitions: Vec<dictionary::LookupEntry>,
     definition_results_page: Option<usize>,
     definition_expanded: bool,
     dictionary_navigation: dictionary_panel::Navigation,
@@ -1020,6 +1021,7 @@ impl Reader {
             map_window: fixed_book_map::MapWindow::default(),
             back: Vec::new(),
             forward: Vec::new(),
+            swipe_back_notice_pending: false,
             notice: None,
             dirty: false,
             save_at: None,
@@ -1220,8 +1222,7 @@ impl Reader {
             self.pdf_result_regions.clear();
             self.pdf_selection = None;
             self.matches_return_to_reading = false;
-            self.back.clear();
-            self.forward.clear();
+            self.clear_location_history();
             self.auto_turn
                 .configure(self.controls.auto_turn_interval(), Instant::now());
             self.selection = None;
@@ -1359,8 +1360,7 @@ impl Reader {
         self.restore_character_pages();
         self.fixed = None;
         self.matches_return_to_reading = false;
-        self.back.clear();
-        self.forward.clear();
+        self.clear_location_history();
         self.auto_turn
             .configure(self.controls.auto_turn_interval(), Instant::now());
         self.selection = None;
@@ -1821,6 +1821,11 @@ impl Reader {
         }
         if self.screen == Screen::PublisherPages {
             return self.publisher_page_window(first, ROWS_PER_PAGE);
+        }
+        if let Screen::ReadingHistory(page) = self.screen
+            && let Some(report) = self.history_report_window(page, first, rows)
+        {
+            return report;
         }
         if self.screen == Screen::Matches {
             let range = self
@@ -2418,8 +2423,8 @@ impl Reader {
         if self.screen == Screen::Links {
             return self.page_link_items();
         }
-        if self.screen == Screen::LinkTapSettings {
-            return self.link_tap_settings_items();
+        if self.screen == Screen::LinkSettings {
+            return self.link_settings_items();
         }
         if self.screen == Screen::EndActionSettings {
             return self.end_action_rows();
@@ -3362,6 +3367,9 @@ impl Reader {
                     }
                 }
                 self.update_search_presentation(&controls);
+                if controls.swipe_to_go_back != self.controls.swipe_to_go_back {
+                    self.swipe_back_notice_pending = false;
+                }
                 self.controls = controls;
                 self.update_footer_clock(Instant::now());
             }
@@ -3448,8 +3456,7 @@ impl Reader {
                 self.touch_locked = false;
                 self.ocr = None;
                 self.selection = None;
-                self.back.clear();
-                self.forward.clear();
+                self.clear_location_history();
                 self.auto_turn.configure(None, Instant::now());
                 self.show(Screen::Library);
             }
@@ -4469,8 +4476,15 @@ impl Reader {
     }
 
     fn push_history(&mut self, previous: impl Into<HistoryLocation>) {
+        self.swipe_back_notice_pending = false;
         self.forward.clear();
         Self::remember_location(&mut self.back, previous.into());
+    }
+
+    fn clear_location_history(&mut self) {
+        self.back.clear();
+        self.forward.clear();
+        self.swipe_back_notice_pending = false;
     }
 
     fn remember_location(history: &mut Vec<HistoryLocation>, entry: HistoryLocation) {
@@ -4511,6 +4525,7 @@ impl Reader {
             .ok_or("Open a document first")?;
         self.go_to_location(&next)?;
         self.forward.pop();
+        self.swipe_back_notice_pending = false;
         Self::remember_location(&mut self.back, current);
         Ok(())
     }
@@ -4568,11 +4583,13 @@ impl Reader {
     }
 
     fn needs_screen_page_count(&self) -> bool {
+        let header = self.controls.top_header;
         self.stats_awake
             && self.screen == Screen::Book
-            && (self.controls.top_header.page_number || self.controls.top_header.page_count)
             && self.top_header_visible()
-            && self.top_header_page_labels().is_none()
+            && (header.reading_percent
+                || ((header.page_number || header.page_count)
+                    && self.top_header_page_labels().is_none()))
     }
 
     fn sync_auto_turn(&mut self, now: Instant) {
@@ -5415,18 +5432,7 @@ impl Reader {
                 return self.exit();
             }
             if let Some((link, link_x, link_y)) = self.reflow_tap_link(x, y) {
-                return match link {
-                    link_taps::ReflowLink::Address(address) => self.show_link_address(address),
-                    link_taps::ReflowLink::Internal(target) => {
-                        if self.open_note_at(target.clone(), link_x, link_y) {
-                            return Change::Partial;
-                        }
-                        match self.follow(target) {
-                            Ok(()) => Change::Partial,
-                            Err(error) => self.report(error),
-                        }
-                    }
-                };
+                return self.open_reflow_link(link, link_x, link_y);
             }
             if let Some(change) = self.tap_footer(x, y) {
                 return change;
@@ -7924,6 +7930,9 @@ impl App for Reader {
         if self.end_dialog.is_some() {
             return self.end_dialog_input(input);
         }
+        if self.link_popup.is_some() {
+            return self.input(input);
+        }
         if self.range_edit.is_some() {
             return self.range_input(input);
         }
@@ -7949,6 +7958,7 @@ impl App for Reader {
         }
         self.assigned_gesture(input, Some(start_x))
             .or_else(|| self.reading_edge_swipe(input, start_x))
+            .or_else(|| self.swipe_nearest_link(input, start_x))
             .unwrap_or_else(|| self.input(input))
     }
 
@@ -8125,6 +8135,9 @@ impl App for Reader {
             return change;
         }
         if let Some(change) = self.assigned_gesture(input, None) {
+            return change;
+        }
+        if let Some(change) = self.swipe_back_input(input) {
             return change;
         }
         if matches!(self.screen, Screen::Book | Screen::Fixed)
@@ -8329,9 +8342,7 @@ impl App for Reader {
                             .unwrap()
                             / ROWS_PER_PAGE;
                     }
-                    Screen::Gestures | Screen::LinkTapSettings => {
-                        self.show(Screen::ReadingControls)
-                    }
+                    Screen::Gestures | Screen::LinkSettings => self.show(Screen::ReadingControls),
                     Screen::ReadingFonts => self.show(Screen::Typography),
                     Screen::DictionaryOptions(i) => {
                         self.show(Screen::Dictionaries);
@@ -9259,6 +9270,10 @@ impl App for ReaderRuntime {
 
     fn input(&mut self, input: Input) -> Change {
         self.0.input(self.0.controls.invert_page_turn_input(input))
+    }
+
+    fn swipe(&mut self, input: Input, start_x: f32) -> Change {
+        self.0.swipe(input, start_x)
     }
 
     fn press_point(&self, input: Input) -> Option<(f32, f32)> {
@@ -10628,10 +10643,14 @@ mod tests {
         app.open_path(&fixture.book).unwrap();
         let original = position(&app.active.as_ref().unwrap().reading);
         app.definitions = ["The movement of the sea", "A flow of water"]
-            .map(|text| dictionary::Definition {
-                dictionary: "Sample".into(),
-                word: "Tide".into(),
-                text: text.into(),
+            .map(|text| dictionary::LookupEntry {
+                definition: dictionary::Definition {
+                    dictionary: "Sample".into(),
+                    word: "Tide".into(),
+                    text: text.into(),
+                },
+                article: None,
+                source: PathBuf::new(),
             })
             .into();
         app.show(Screen::Definition);

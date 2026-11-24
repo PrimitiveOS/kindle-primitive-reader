@@ -60,7 +60,7 @@ Choose when Reader saves your position, bookmarks and notes, or save them immedi
 
 Browse page bookmarks, highlights and notes across books from **Library › Bookmark browser**. Choose History, collections, selected books, archived records or a folder. Select books by author, series, language or keyword, and inspect available covers and descriptions. Preview a mark, then tap **View in book** to open its passage. [Bookmark browser](docs/bookmark-browser.md)
 
-Open **Tools › Reading statistics** for daily reading history, a month calendar and hourly day timelines. Older screen-time totals remain explicitly undated. [Reading statistics and limits](docs/reading-statistics.md)
+Open **Tools › Reading statistics** for daily reading history, a month calendar and hourly day timelines. Use Time range to browse weekly or monthly totals by book. Older screen-time totals remain explicitly undated. [Reading statistics and limits](docs/reading-statistics.md)
 
 Publisher numeric references for quotation marks and dashes follow CREngine's compatibility table while preserving older saved positions. [Numeric character references](docs/numeric-character-references.md)
 
@@ -209,9 +209,9 @@ Install Reader from PrimitiveOS Store or follow the manual install guide.
 - Save a named preset in Text › Reading profiles and apply it to another book.
 - The optional top status header counts rendered pages across supported EPUBs.
   [Page numbering and supported layouts](docs/whole-book-screen-pages.md)
-- Open Settings › Link taps to change direct link taps or enlarge the tap area
-  around local links in reflowable books. Navigation › Links on this page also
-  opens a list of links on the visible page. [Link controls](docs/link-taps.md)
+- Open Settings › Links to set tap behavior, enlarge the tap area around local
+  links in reflowable books, or enable swipes to follow a link and go back.
+  Navigation › Links on this page lists links on the visible page. [Link controls](docs/link-taps.md)
 - Choose Large window or Justify text in Search › Dictionaries to change the
   dictionary popup. [Dictionary settings and screenshots](docs/dictionary-popup-display.md)
 

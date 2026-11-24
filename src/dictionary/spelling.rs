@@ -144,7 +144,7 @@ impl DictionarySources {
         order: &[PathBuf],
         disabled: &[PathBuf],
         cancel: &AtomicBool,
-    ) -> io::Result<Vec<Definition>> {
+    ) -> io::Result<Vec<LookupEntry>> {
         if !eligible(query) {
             return Ok(Vec::new());
         }
@@ -198,7 +198,7 @@ impl DictionarySources {
             return Ok(Vec::new());
         }
         let queries = SuggestionQueries::new(&names);
-        let mut by_word: Vec<Vec<Definition>> = (0..names.len()).map(|_| Vec::new()).collect();
+        let mut by_word: Vec<Vec<LookupEntry>> = (0..names.len()).map(|_| Vec::new()).collect();
         let mut budget = LookupBudget {
             index_bytes: MAX_TOTAL_INDEX_BYTES,
             dictzip_bytes: MAX_DZ_LOOKUP_BYTES,
@@ -223,9 +223,12 @@ impl DictionarySources {
                 }
             }
         }
-        let mut results = Vec::new();
+        let mut results: Vec<LookupEntry> = Vec::new();
         for entry in by_word.into_iter().flatten() {
-            if !results.contains(&entry) {
+            if !results
+                .iter()
+                .any(|found| found.definition == entry.definition)
+            {
                 results.push(entry);
             }
             if results.len() == MAX_SUGGESTED_SENSES {
@@ -281,7 +284,7 @@ impl SuggestionQueries {
         info: &Info,
         budget: &mut LookupBudget,
         check: &impl Fn() -> io::Result<()>,
-    ) -> io::Result<Vec<Vec<Definition>>> {
+    ) -> io::Result<Vec<Vec<LookupEntry>>> {
         let mut aliases: Vec<Ranked<usize>> = (0..self.count).map(|_| Ranked::default()).collect();
         let mut visited = 0usize;
         let alias_result = visit_synonyms(&file.root, &file.path, info, budget, |name, ordinal| {
@@ -339,7 +342,7 @@ impl SuggestionQueries {
             Ok(())
         })?;
         hits.into_iter()
-            .map(|h| read_definitions(&mut data, info, budget, h.values))
+            .map(|h| read_definitions(&mut data, info, &file.key, budget, h.values))
             .collect()
     }
 }

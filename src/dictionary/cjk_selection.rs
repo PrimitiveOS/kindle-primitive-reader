@@ -107,7 +107,8 @@ impl DictionarySources {
                 )?;
                 check()?;
                 let rank = matches.rank;
-                let definitions = read_definitions(&mut data, &info, &mut budget, matches.values)?;
+                let definitions =
+                    read_definitions(&mut data, &info, &file.key, &mut budget, matches.values)?;
                 check()?;
                 Ok::<_, io::Error>((!definitions.is_empty()).then_some(rank))
             });
