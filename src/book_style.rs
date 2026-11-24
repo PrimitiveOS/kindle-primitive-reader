@@ -146,7 +146,7 @@ impl BoxMargin {
 }
 
 impl CssLength {
-    fn for_dpi(self, dpi: u16) -> Self {
+    pub(crate) fn for_dpi(self, dpi: u16) -> Self {
         match self {
             Self::Physical(_) if dpi == 0 => Self::Pixels(0.),
             Self::Pixels(px) | Self::Physical(px) if dpi != 0 && dpi != 96 => {
@@ -602,6 +602,8 @@ impl BookStyle {
         let publisher_wrapper_width = settings.is_some_and(|config| {
             config.block_width == crate::BlockWidthMode::PublisherWithWrappers
         });
+        let publisher_horizontal_margins =
+            settings.is_some_and(|config| config.publisher_horizontal_margins);
         let forced_margin_geometry = nested_margin_collapse
             && settings.is_some_and(|config| config.preserve_forced_page_margins);
         let logical = settings.filter(|settings| settings.logical_font_size.is_some());
@@ -769,8 +771,16 @@ impl BookStyle {
                             });
                     }
                     Property::HorizontalMargin(side, value) => {
-                        style.horizontal_margin[*side] =
-                            value.unwrap_or(parent.horizontal_margin[*side]);
+                        style.horizontal_margin[*side] = match value {
+                            Some(BoxMargin::Length(length)) if publisher_horizontal_margins => {
+                                let font = relative_font(style.size_scale);
+                                let root = result
+                                    .first()
+                                    .map_or(font, |root| relative_font(root.size_scale));
+                                BoxMargin::Length(length.computed(font, root))
+                            }
+                            value => value.unwrap_or(parent.horizontal_margin[*side]),
+                        };
                     }
                     Property::PaddingBoth(_) | Property::Margins(_) => {
                         unreachable!("shorthands are expanded before cascading")
@@ -809,7 +819,9 @@ impl BookStyle {
                                     || crate::block_margins::collapsible_wrapper(
                                         &element.tag,
                                     )))
-                            || ((publisher_block_height || forced_margin_geometry)
+                            || ((publisher_block_height
+                                || forced_margin_geometry
+                                || publisher_horizontal_margins)
                                 && element.tag == "p") =>
                     {
                         let target = style

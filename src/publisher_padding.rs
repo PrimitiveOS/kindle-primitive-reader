@@ -1,8 +1,9 @@
 //! Publisher block boxes, measured against their parent content area.
+mod horizontal_margins;
 mod wrappers;
 
 use crate::{
-    BlockWidthMode,
+    BlockWidthMode, Settings,
     book_style::{BoxMargin, CssLength, ImageLength, Style, WritingMode},
     source::{Source, is_block_tag},
     table_layout::Cell,
@@ -214,7 +215,7 @@ pub(crate) fn layout(
         font,
         borders,
         &crate::table_layout::TableFlow::identity(source),
-        BlockWidthMode::Ignore,
+        Settings::default(),
         measure,
     )
 }
@@ -226,9 +227,10 @@ pub(crate) fn layout_with_flow(
     font: f32,
     borders: Option<&crate::table_borders::Borders>,
     flow: &crate::table_layout::TableFlow<'_>,
-    block_width: BlockWidthMode,
+    settings: Settings,
     measure: impl FnMut(&crate::source::Block) -> (u32, u32),
 ) -> Option<Vec<BoxArea>> {
+    let block_width = settings.block_width;
     let width_candidates = if block_width != BlockWidthMode::Ignore {
         text_box_candidates(source, styles, |style| {
             matches!(
@@ -244,10 +246,18 @@ pub(crate) fn layout_with_flow(
     } else {
         Vec::new()
     };
+    let margin_candidates = if settings.publisher_horizontal_margins {
+        text_box_candidates(source, styles, |style| {
+            horizontal_margins::candidate(style, settings, width)
+        })
+    } else {
+        Vec::new()
+    };
     if flow.is_identity()
         && borders.is_none()
         && !width_candidates.contains(&TextBoxCandidate::Simple)
         && !wrapper_candidates.contains(&true)
+        && !margin_candidates.contains(&TextBoxCandidate::Simple)
         && !styles.iter().zip(&source.elements).any(|(style, element)| {
             !style.flow.suppressed
                 && ((element.tag == "table" && style.border_collapse)
@@ -306,6 +316,11 @@ pub(crate) fn layout_with_flow(
         {
             area = published;
             area.sized_wrapper = wrapper;
+        }
+        if margin_candidates.get(idx) == Some(&TextBoxCandidate::Simple)
+            && let Some(inset) = horizontal_margins::inset(area, &styles[idx], settings)
+        {
+            area = inset;
         }
         if let Some(cell) = cells[idx]
             && area.width as f32 / f32::from(cell.columns) >= 2.5 * font
@@ -407,7 +422,7 @@ mod tests {
             40.,
             None,
             &flow,
-            BlockWidthMode::Ignore,
+            Settings::default(),
             |block| {
                 assert!(!styles[block.element].flow.suppressed);
                 measured += 1;

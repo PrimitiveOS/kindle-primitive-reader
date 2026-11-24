@@ -618,7 +618,7 @@ mod flow_tests {
             40.,
             Some(&borders),
             &flow,
-            crate::BlockWidthMode::Ignore,
+            crate::Settings::default(),
             |_| (40, 80),
         )
         .unwrap();

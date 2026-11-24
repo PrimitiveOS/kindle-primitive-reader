@@ -358,6 +358,9 @@ pub struct Settings {
     pub preserve_forced_page_margins: bool,
     #[doc(hidden)]
     pub block_width: BlockWidthMode,
+    /// Apply positive physical sides to supported auto-width publisher paragraphs.
+    #[doc(hidden)]
+    pub publisher_horizontal_margins: bool,
     /// Honor definite publisher heights on supported horizontal text boxes.
     #[doc(hidden)]
     pub publisher_block_height: bool,
@@ -435,6 +438,7 @@ impl Default for Settings {
             block_margins: BlockMarginMode::Ignore,
             preserve_forced_page_margins: false,
             block_width: BlockWidthMode::Ignore,
+            publisher_horizontal_margins: false,
             publisher_block_height: false,
             float_mode: FloatMode::Ignore,
             empty_break_mode: EmptyBreakMode::Current,

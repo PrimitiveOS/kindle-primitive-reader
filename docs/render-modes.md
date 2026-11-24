@@ -107,8 +107,8 @@ The native oracle asserts the stock word origin and the width and origin of
 each solid paint band. Reader tests additionally check line wrapping,
 restored source quotes and touch hit testing. Reader wraps the 260-pixel
 sample in two lines under its own text metrics. Remaining box sizing work
-includes complex ancestor boxes, nonzero horizontal margins, overflow,
-and boxes with images, tables, or floats.
+includes complex ancestor boxes, negative horizontal margins, combined
+fixed widths and margins, overflow, and boxes with images, tables, or floats.
 [CREngine width resolution](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L7909-L7982) · [CREngine auto margins](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L8178-L8202) · [Native oracle](../scripts/koreader-render-modes-check.lua) · [Reader capture](screenshots/render-modes-reader-web-width.png)
 
 Run `cargo test --locked --lib publisher_width` for the Reader comparison.
@@ -147,6 +147,48 @@ oracle.
 [Native Web capture](screenshots/render-modes-stock-web.png) ·
 [Reader Web width and wrappers](screenshots/render-modes-reader-web-wrappers.png) ·
 [Reader wrapper continued](screenshots/render-modes-reader-wrapper-continuation.png)
+
+### Positive physical margins on auto-width paragraphs
+
+The pinned renderer subtracts the resolved left and right margins from
+an ordinary auto-width paragraph’s available width. Its left edge then
+moves by the left margin. This lets publishers inset a paragraph evenly,
+indent an entry from just one side, or leave extra room at the end of a
+line. Legacy, Flat, Book and Web agree on the authored cases.
+
+Reader’s internal policy applies the same geometry to plain paragraphs
+directly in the document body. Its existing text bounds carry the
+result through wrapping, background paint, saved selections and link
+targets. Automatic sides contribute zero. With a nonzero content DPI,
+a small positive fixed-point declaration may produce a one-pixel inset.
+
+| Authored declaration, 1,156 px content width | Child text and band start | Painted band width |
+| --- | ---: | ---: |
+| Left 40 px, right 24 px | x = 94 | 1,092 px |
+| Left 1.4 em, right 2% | x = 109 | 1,078 px |
+| Left 0.01 em, right auto | x = 55 | 1,155 px |
+
+The native and Reader tests assert all three horizontal measurements
+at a 40-pixel font size and 96 DPI. Reader’s text metrics wrap the first
+sample onto one additional line. Reader also tests scaled absolute lengths, narrower
+wrapping, link targets and byte-identical frames with publisher styles
+disabled. Explicit or maximum widths, decorated boxes, negative sides
+and insets that leave less than one em of text keep their existing layout.
+The policy is internal and defaults off.
+
+Generate the authored specimen with
+`python3 scripts/generate-render-horizontal-margins-fixture.py`.
+Run the pinned oracle with the same arguments as the Render Mode probe.
+For Reader, run `cargo test --locked --lib publisher_horizontal_margins`
+and set `READER_HORIZONTAL_MARGIN_CAPTURES` to an existing folder to
+save the frames. The optional original check takes a local EPUB and a
+private list of source passages and prints only the measured shifts.
+[CREngine’s physical sides](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L7584-L7594) ·
+[Auto-width calculation](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L7985-L7988) ·
+[Native oracle](../scripts/koreader-render-horizontal-margins-check.lua) ·
+[KOReader Web](screenshots/render-horizontal-margins-stock-web.png) ·
+[Reader default](screenshots/render-horizontal-margins-reader-default.png) ·
+[Reader with the policy](screenshots/render-horizontal-margins-reader-inset.png)
 
 ## Definite heights on ordinary paragraphs
 
