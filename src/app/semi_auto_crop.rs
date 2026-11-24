@@ -8,7 +8,7 @@ mod continuous_tests;
 
 const AUTO: Rect = Rect::new(489, PAGE_HEIGHT as i32 + 5, 170, 60);
 const RESET: Rect = Rect::new(671, PAGE_HEIGHT as i32 + 5, 170, 60);
-const APPLY: Rect = Rect::new(853, PAGE_HEIGHT as i32 + 5, 180, 60);
+pub(super) const APPLY: Rect = Rect::new(853, PAGE_HEIGHT as i32 + 5, 180, 60);
 
 #[derive(Clone, Copy)]
 pub(super) struct Draft {

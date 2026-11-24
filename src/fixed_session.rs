@@ -1884,6 +1884,16 @@ impl FixedReading {
         target: Option<&FixedJump>,
         original: View,
     ) -> Result<()> {
+        let view = self.view_at_jump_target(page, target, original)?;
+        self.present(page, view)
+    }
+
+    fn view_at_jump_target(
+        &mut self,
+        page: usize,
+        target: Option<&FixedJump>,
+        original: View,
+    ) -> Result<View> {
         let mut view = self.resolve_crop(
             page,
             View {
@@ -1892,11 +1902,12 @@ impl FixedReading {
                 ..original
             },
         )?;
+        let continuous = view.continuous && view.width_fit && self.supports_continuous();
         if let (Some(target), Some(scan)) = (target, ScanPage::from_document(&self.source)) {
             let size = scan.page_size(page)?;
             let metrics = view_metrics(size, &view, self.frame_size());
             let mut request = viewport(size, &mut view, self.frame_size());
-            if self.is_continuous() {
+            if continuous {
                 request.y = -metrics.top;
             }
             let correction = scan.correction(page, size, &view, &mut self.deskew_cache)?;
@@ -1934,14 +1945,14 @@ impl FixedReading {
             };
             view.offset_x = offset.x as f32;
             view.offset_y = offset.y as f32;
-            if self.is_continuous() {
+            if continuous {
                 let last_pixel = (metrics.height.round() - 1.0).max(0.0);
                 view.offset_y = view.offset_y.clamp(-last_pixel, 0.0);
             }
-        } else if view.width_fit && !self.is_continuous() {
+        } else if view.width_fit && !continuous {
             view.offset_y = f32::MAX;
         }
-        self.present(page, view)
+        Ok(view)
     }
 
     pub(crate) fn fit(&mut self, width_fit: bool) -> Result<()> {
@@ -2869,6 +2880,13 @@ impl FixedReading {
                 tile.axis,
                 tile.count_tenths,
             ));
+        }
+        if view.crop_margin() != self.view.crop_margin()
+            && CropMode::for_view(view).is_some_and(CropMode::uses_margin)
+            && let Some(anchor) = self.history_point()
+        {
+            view =
+                self.view_at_jump_target(self.page, Some(&FixedJump::LinkPoint(anchor)), view)?;
         }
         self.restore_view_with(view, save)
     }

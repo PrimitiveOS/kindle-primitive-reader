@@ -226,6 +226,7 @@ fn fixed_profile_edits_each_overlap_in_landscape_and_keeps_older_values_above_84
     assert!(
         app.items()
             .iter()
+            .filter(|item| item.title.contains("overlap"))
             .all(|item| item.detail.as_deref().unwrap().ends_with("Excluded"))
     );
     assert_eq!(app.current_history_location(), location);
@@ -736,9 +737,9 @@ fn saved_font_weight_and_gamma_replace_only_their_legacy_flags_on_set() {
     assert_eq!(app.editor.string(), "0.75");
     press_key(&mut app, Key::Go);
     assert_eq!(app.profiles[0].value(weight), Some(0.75));
-    assert_eq!(app.profiles[0].legacy_font_rendering(weight), None);
+    assert_eq!(app.profiles[0].legacy_value_label(weight), None);
     assert_eq!(
-        app.profiles[0].legacy_font_rendering(gamma),
+        app.profiles[0].legacy_value_label(gamma),
         Some("High contrast (legacy)")
     );
 
@@ -747,7 +748,7 @@ fn saved_font_weight_and_gamma_replace_only_their_legacy_flags_on_set() {
     let refused = draw_test_candidate(&mut app, 3, LogicalTurn::Upright, "", false);
     app.finish_viewport(refused, ViewportDecision::Abort);
     assert_eq!(app.editor.string(), "1.35");
-    assert!(app.profiles[0].legacy_font_rendering(gamma).is_some());
+    assert!(app.profiles[0].legacy_value_label(gamma).is_some());
     let shown = draw_test_candidate(&mut app, 4, turn, "landscape-profile-font-contrast", false);
     app.finish_viewport(shown, ViewportDecision::Commit);
     press_key(&mut app, Key::Go);
@@ -788,4 +789,176 @@ fn saved_font_weight_and_gamma_replace_only_their_legacy_flags_on_set() {
     assert_eq!(app.viewport_request(), Some(ViewportRequest::Fixed(turn)));
     assert!(!app.viewport_needs_stage(shown));
     assert_eq!(open(&fixture, &fixture.book).profiles[0], app.profiles[0]);
+}
+
+#[test]
+fn saved_scan_values_keep_adaptive_pdf_and_crop_position_until_apply() {
+    let fixture = Fixture::new();
+    let path = fixture.root.join("Survey.pdf");
+    let source = crate::pdf_crop::source_margin_tests::fixture("edge-specks");
+    fs::write(&path, &source).unwrap();
+    let mut app = open(&fixture, &path);
+    app.activate(Action::FixedScroll(true)).unwrap();
+    app.activate(Action::SemiAutoCrop).unwrap();
+    tap(&mut app, crate::app::semi_auto_crop::APPLY);
+    assert_eq!(app.screen, Screen::Fixed);
+    app.activate(Action::ScanContrast(true)).unwrap();
+    app.save_reading_profile("Survey scans").unwrap();
+    app.edit_profile_fields(0).unwrap();
+    app.set_profile_fields(false).unwrap();
+    app.toggle_profile_field(Field::ScanContrast).unwrap();
+    app.save_profile_fields(0).unwrap();
+
+    let upright = draw_test_candidate(&mut app, 1, LogicalTurn::Upright, "", false);
+    app.finish_viewport(upright, ViewportDecision::Commit);
+    app.set_reading_orientation(ReadingOrientation::LandscapeLeft)
+        .unwrap();
+    let turn = LogicalTurn::Counterclockwise;
+    let shown = draw_test_candidate(&mut app, 2, turn, "", false);
+    app.finish_viewport(shown, ViewportDecision::Commit);
+    assert_eq!(app.viewport_request(), Some(ViewportRequest::Fixed(turn)));
+    app.input(Input::Swipe {
+        dx: 0.0,
+        dy: -140.0,
+        start_y: 800.0,
+    });
+    app.tick(Instant::now() + Duration::from_secs(1));
+    let before = app.fixed.as_ref().unwrap().reading.preferences();
+    let fixed = app.fixed.as_ref().unwrap();
+    assert!(before.continuous && before.semi_auto_crop && before.scan_contrast);
+    let document = fixed.id;
+    let seeds = app.library.state(document).unwrap().pdf_crop_seeds.clone();
+    let page = fixed.reading.page();
+    let position = fixed.reading.history_point().unwrap();
+    let profile = app.profiles[0].clone();
+
+    let gamma = ValueField::ScanGamma;
+    let margin = ValueField::CropMargin;
+    show_editor(&mut app, gamma);
+    assert_eq!(app.profiles[0].legacy_value_label(gamma), Some("Adaptive"));
+    let [minus, reset, plus] = app.numeric_layout().steps(STEPS, false);
+    tap(&mut app, reset);
+    tap(&mut app, minus);
+    assert_eq!(app.editor.string(), "0.9");
+    assert_eq!(
+        app.input(Input::LongTap((plus.x + 12) as f32, (plus.y + 12) as f32)),
+        Change::Partial
+    );
+    assert_eq!(app.editor.string(), "1.9");
+    type_value(&mut app, "1.95");
+    press_key(&mut app, Key::Go);
+    assert!(app.notice.as_deref().unwrap().contains("0.8 to 50.0"));
+    assert_eq!(app.input(Input::PageBack), Change::Partial);
+    assert_eq!(app.profiles[0], profile);
+    tap_contents_item(&mut app, gamma.label());
+    type_value(&mut app, "1.9");
+    press_key(&mut app, Key::Go);
+    assert_eq!(app.profiles[0].value(gamma), Some(1.9));
+    assert_eq!(app.profiles[0].legacy_value_label(gamma), None);
+
+    tap_contents_item(&mut app, margin.label());
+    tap(&mut app, minus);
+    assert_eq!(app.editor.string(), "0.09");
+    assert_eq!(
+        app.input(Input::LongTap((plus.x + 12) as f32, (plus.y + 12) as f32)),
+        Change::Partial
+    );
+    assert_eq!(app.editor.string(), "0.19");
+    type_value(&mut app, "1.501");
+    press_key(&mut app, Key::Go);
+    assert!(
+        app.notice
+            .as_deref()
+            .unwrap()
+            .contains("0.00 in to 1.50 in")
+    );
+    tap(&mut app, reset);
+    type_value(&mut app, "0.37");
+    let aborted = draw_test_candidate(&mut app, 3, LogicalTurn::Upright, "", false);
+    app.finish_viewport(aborted, ViewportDecision::Abort);
+    assert_eq!(app.editor.string(), "0.37");
+    assert_eq!(app.profiles[0].value(margin), Some(0.10));
+    let shown = draw_test_candidate(&mut app, 4, turn, "landscape-profile-scan-margin", false);
+    app.finish_viewport(shown, ViewportDecision::Commit);
+    press_key(&mut app, Key::Go);
+    assert_eq!(app.profiles[0].value(margin), Some(0.37));
+    assert_eq!(app.profiles[0].selection(), [Field::ScanContrast]);
+    assert_eq!(app.fixed.as_ref().unwrap().reading.preferences(), before);
+    assert_eq!(
+        app.fixed.as_ref().unwrap().reading.history_point(),
+        Some(position)
+    );
+
+    app.show(Screen::ReadingProfile(0));
+    tap_contents_item(&mut app, "Apply to this book");
+    let active = &app.fixed.as_ref().unwrap().reading;
+    assert_eq!(active.preferences().scan_gamma_tenths, Some(19));
+    assert!(!active.preferences().scan_contrast);
+    assert_eq!(active.preferences().crop, before.crop);
+    assert_eq!(active.preferences().crop_margin(), 10);
+
+    app.edit_profile_fields(0).unwrap();
+    app.toggle_profile_field(Field::CropMargin).unwrap();
+    app.save_profile_fields(0).unwrap();
+    app.show(Screen::ReadingProfile(0));
+    tap_contents_item(&mut app, "Apply to this book");
+    let active = &app.fixed.as_ref().unwrap().reading;
+    assert_eq!(active.preferences().crop_margin(), 37);
+    assert_ne!(active.preferences().crop, before.crop);
+    assert_eq!(active.viewport().dimensions(), (1680, 1264));
+    assert_eq!(active.page(), page);
+    assert!((active.history_point().unwrap().y - position.y).abs() < 1.0);
+    assert_eq!(app.library.state(document).unwrap().pdf_crop_seeds, seeds);
+    assert_eq!(fs::read(&path).unwrap(), source);
+    assert_eq!(app.viewport_request(), Some(ViewportRequest::Fixed(turn)));
+    assert!(!app.viewport_needs_stage(shown));
+    assert_eq!(open(&fixture, &path).profiles[0], app.profiles[0]);
+}
+
+#[test]
+fn saved_scan_values_follow_the_fixed_provider_and_keep_djvu_adaptive() {
+    use crate::reading_profiles::{FixedProfile, FixedProvider};
+
+    for provider in [
+        FixedProvider::Pdf,
+        FixedProvider::Comic,
+        FixedProvider::Djvu,
+    ] {
+        let fixed = FixedProfile::from_view(
+            provider,
+            FixedPreferences {
+                scan_contrast: true,
+                ..Default::default()
+            },
+        );
+        let mut profile = Profile::Fixed {
+            name: "Scans".into(),
+            fixed,
+            fields: None,
+        };
+        let numeric_gamma = provider != FixedProvider::Djvu;
+        let crop_margin = provider == FixedProvider::Pdf;
+        for (field, supported) in [
+            (ValueField::ScanGamma, numeric_gamma),
+            (ValueField::CropMargin, crop_margin),
+        ] {
+            let before = profile.clone();
+            assert_eq!(profile.editable_values().contains(&field), supported);
+            assert_eq!(profile.value(field).is_some(), supported);
+            assert_eq!(profile.set_value(field, field.default()).is_ok(), supported);
+            if !supported {
+                assert_eq!(profile, before);
+            }
+        }
+        if provider == FixedProvider::Djvu {
+            assert_eq!(
+                profile,
+                Profile::Fixed {
+                    name: "Scans".into(),
+                    fixed,
+                    fields: None
+                }
+            );
+        }
+    }
 }

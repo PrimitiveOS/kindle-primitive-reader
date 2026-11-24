@@ -1,7 +1,11 @@
 //! Values editable in a saved profile without applying it to a book.
-use super::{Field, Profile};
+use super::{Field, FixedProvider, Profile};
+use crate::document_defaults::FixedDefaults;
 use crate::font_render::{GAMMA_LEVELS, NORMAL_GAMMA};
-use crate::library::BookPreferences;
+use crate::library::{
+    BookPreferences, DEFAULT_CROP_MARGIN, MAX_CROP_MARGIN, SCAN_GAMMA_DEFAULT, SCAN_GAMMA_MAX,
+    SCAN_GAMMA_MIN,
+};
 use std::{io, ops::RangeInclusive};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -13,6 +17,8 @@ pub(crate) enum ValueField {
     FontWeight,
     FontContrast,
     Margin(MarginEdge),
+    CropMargin,
+    ScanGamma,
     HorizontalOverlap,
     VerticalOverlap,
 }
@@ -85,6 +91,8 @@ impl ValueField {
             Self::FontWeight => "Font weight",
             Self::FontContrast => "Font contrast",
             Self::Margin(edge) => edge.label(),
+            Self::CropMargin => "Crop margin",
+            Self::ScanGamma => "Scan contrast",
             Self::HorizontalOverlap => "Horizontal overlap",
             Self::VerticalOverlap => "Vertical overlap",
         }
@@ -99,6 +107,8 @@ impl ValueField {
             Self::FontWeight => -3.0..=5.5,
             Self::FontContrast => GAMMA_LEVELS[0]..=GAMMA_LEVELS[GAMMA_LEVELS.len() - 1],
             Self::Margin(_) => 0.0..=f64::from(crate::document_defaults::MAX_SAVED_MARGIN),
+            Self::CropMargin => 0.0..=f64::from(MAX_CROP_MARGIN) / 100.0,
+            Self::ScanGamma => f64::from(SCAN_GAMMA_MIN) / 10.0..=f64::from(SCAN_GAMMA_MAX) / 10.0,
             Self::HorizontalOverlap | Self::VerticalOverlap => 0.0..=90.0,
         }
     }
@@ -112,6 +122,8 @@ impl ValueField {
             Self::FontWeight => 0.0,
             Self::FontContrast => GAMMA_LEVELS[usize::from(NORMAL_GAMMA)],
             Self::Margin(_) => f64::from(crate::Settings::default().margin),
+            Self::CropMargin => f64::from(DEFAULT_CROP_MARGIN) / 100.0,
+            Self::ScanGamma => f64::from(SCAN_GAMMA_DEFAULT) / 10.0,
             Self::HorizontalOverlap | Self::VerticalOverlap => 36.0,
         }
     }
@@ -120,6 +132,8 @@ impl ValueField {
         match self {
             Self::FontSize => 0.5,
             Self::FontWeight => 0.25,
+            Self::CropMargin => 0.01,
+            Self::ScanGamma => 0.1,
             _ => 1.0,
         }
     }
@@ -129,6 +143,7 @@ impl ValueField {
             Self::FontSize => 10,
             Self::ContentZoom => 20,
             Self::WordExpansion | Self::FontWeight => 4,
+            Self::CropMargin | Self::ScanGamma => 10,
             _ => 5,
         }
     }
@@ -140,6 +155,8 @@ impl ValueField {
             Self::FontContrast => format!("{value:.2}"),
             Self::ContentZoom => format!("{value} dpi"),
             Self::Margin(_) => format!("{value} px"),
+            Self::CropMargin => format!("{value:.2} in"),
+            Self::ScanGamma => format!("{value:.1}"),
             _ => format!("{value}%"),
         }
     }
@@ -167,11 +184,25 @@ impl ValueField {
         if self == Self::FontContrast {
             return gamma_index(value).is_some();
         }
-        self.limits().contains(&value) && (self.supports_decimals() || value.fract() == 0.0)
+        self.limits().contains(&value)
+            && if let Some(scale) = self.decimal_scale() {
+                (value * scale).round() / scale == value
+            } else {
+                self.supports_decimals() || value.fract() == 0.0
+            }
     }
 
     fn supports_decimals(self) -> bool {
         matches!(self, Self::FontSize | Self::FontWeight | Self::FontContrast)
+            || self.decimal_scale().is_some()
+    }
+
+    fn decimal_scale(self) -> Option<f64> {
+        match self {
+            Self::CropMargin => Some(100.0),
+            Self::ScanGamma => Some(10.0),
+            _ => None,
+        }
     }
 
     pub(crate) fn stepped(self, value: f64, steps: i16) -> f64 {
@@ -181,7 +212,9 @@ impl ValueField {
             return GAMMA_LEVELS[next as usize];
         }
         let limits = self.limits();
-        (value + f64::from(steps) * self.step()).clamp(*limits.start(), *limits.end())
+        let next = (value + f64::from(steps) * self.step()).clamp(*limits.start(), *limits.end());
+        self.decimal_scale()
+            .map_or(next, |scale| (next * scale).round() / scale)
     }
 
     pub(crate) fn input_error(self) -> String {
@@ -200,6 +233,8 @@ impl ValueField {
             Self::FontWeight => Field::FontWeight,
             Self::FontContrast => Field::FontContrast,
             Self::Margin(_) => Field::Margins,
+            Self::CropMargin => Field::CropMargin,
+            Self::ScanGamma => Field::ScanContrast,
             Self::HorizontalOverlap | Self::VerticalOverlap => Field::PanOverlap,
         };
         selection.contains(&field)
@@ -222,7 +257,22 @@ impl Profile {
                 ValueField::LineSpacing,
                 ValueField::WordExpansion,
             ],
-            Self::Fixed { .. } => &[ValueField::HorizontalOverlap, ValueField::VerticalOverlap],
+            Self::Fixed { fixed, .. } => match fixed.provider {
+                FixedProvider::Pdf => &[
+                    ValueField::HorizontalOverlap,
+                    ValueField::VerticalOverlap,
+                    ValueField::CropMargin,
+                    ValueField::ScanGamma,
+                ],
+                FixedProvider::Comic => &[
+                    ValueField::HorizontalOverlap,
+                    ValueField::VerticalOverlap,
+                    ValueField::ScanGamma,
+                ],
+                FixedProvider::Djvu => {
+                    &[ValueField::HorizontalOverlap, ValueField::VerticalOverlap]
+                }
+            },
         }
     }
 
@@ -264,7 +314,7 @@ impl Profile {
         Ok(())
     }
 
-    pub(crate) fn legacy_font_rendering(&self, field: ValueField) -> Option<&'static str> {
+    pub(crate) fn legacy_value_label(&self, field: ValueField) -> Option<&'static str> {
         match (self, field) {
             (Self::Text { preferences, .. }, ValueField::FontWeight) if preferences.bold_text => {
                 Some("Bold (legacy)")
@@ -273,6 +323,9 @@ impl Profile {
                 if preferences.text_contrast =>
             {
                 Some("High contrast (legacy)")
+            }
+            (Self::Fixed { fixed, .. }, ValueField::ScanGamma) if fixed.values().scan_contrast => {
+                Some("Adaptive")
             }
             _ => None,
         }
@@ -329,6 +382,20 @@ impl Profile {
             (Self::Fixed { fixed, .. }, ValueField::VerticalOverlap) => {
                 Some(f64::from(fixed.values().zoom_overlap_v()))
             }
+            (Self::Fixed { fixed, .. }, ValueField::CropMargin)
+                if fixed.provider == FixedProvider::Pdf =>
+            {
+                Some(f64::from(fixed.values().crop_margin()) / 100.0)
+            }
+            (Self::Fixed { fixed, .. }, ValueField::ScanGamma)
+                if fixed.provider != FixedProvider::Djvu =>
+            {
+                let gamma = fixed
+                    .values()
+                    .scan_gamma_tenths
+                    .unwrap_or(SCAN_GAMMA_DEFAULT);
+                Some(f64::from(gamma) / 10.0)
+            }
             _ => None,
         }
     }
@@ -364,18 +431,31 @@ impl Profile {
             (Self::Text { preferences, .. }, ValueField::Margin(edge)) => {
                 edge.set(preferences, value as u32);
             }
-            (
-                Self::Fixed { fixed, .. },
-                field @ (ValueField::HorizontalOverlap | ValueField::VerticalOverlap),
-            ) => {
-                fixed.set_overlap(field == ValueField::HorizontalOverlap, value as u8);
+            (Self::Fixed { fixed, .. }, field) => {
+                let mut view = fixed.values();
+                match field {
+                    ValueField::HorizontalOverlap => view.zoom_overlap_h = Some(value as u8),
+                    ValueField::VerticalOverlap => view.zoom_overlap_v = Some(value as u8),
+                    ValueField::CropMargin if fixed.provider == FixedProvider::Pdf => {
+                        let hundredths = (value * 100.0).round() as u8;
+                        view.crop_margin_hundredths =
+                            (hundredths != DEFAULT_CROP_MARGIN).then_some(hundredths);
+                    }
+                    ValueField::ScanGamma if fixed.provider != FixedProvider::Djvu => {
+                        let tenths = (value * 10.0).round() as u16;
+                        view.scan_contrast = false;
+                        view.scan_gamma_tenths = (tenths != SCAN_GAMMA_DEFAULT).then_some(tenths);
+                    }
+                    _ => return Err(unavailable()),
+                }
+                fixed.settings = FixedDefaults::from_view(view);
             }
-            _ => {
-                return Err(io::Error::other(
-                    "That setting is unavailable in this profile",
-                ));
-            }
+            _ => return Err(unavailable()),
         }
         Ok(())
     }
+}
+
+fn unavailable() -> io::Error {
+    io::Error::other("That setting is unavailable in this profile")
 }

@@ -297,11 +297,44 @@ local horizontal = value_action(commands, fixed_section, "horizontal overlap")
 local vertical = value_action(commands, fixed_section, "vertical overlap")
 local pdf_live_horizontal = profiles.document.configurable.zoom_overlap_h
 local pdf_live_vertical = profiles.document.configurable.zoom_overlap_v
+local pdf_live_margin = profiles.document.configurable.page_margin
+local pdf_live_contrast = profiles.document.configurable.contrast
+assert(pdf.kopt_page_margin == 0.10 and pdf.kopt_contrast == 1.0)
+assert(pdf.kopt_white_threshold == nil)
 set_number(horizontal, menu, pdf_live_horizontal, 0, 84, 36, 45)
 set_number(vertical, menu, pdf_live_vertical, 0, 84, 36, 57)
 assert(pdf.kopt_zoom_overlap_h == 45 and pdf.kopt_zoom_overlap_v == 57)
 assert(profiles.document.configurable.zoom_overlap_h == pdf_live_horizontal)
 assert(profiles.document.configurable.zoom_overlap_v == pdf_live_vertical)
+local margin_choices = value_action(commands, fixed_section, "margin").sub_item_table_func()
+local gamma_choices = value_action(commands, fixed_section, "contrast").sub_item_table_func()
+local margins = {0.05, 0.10, 0.25, 0.40, 0.55, 0.70, 0.85, 1.00}
+local gammas = {0.8, 1.0, 1.5, 2.0, 4.0, 6.0, 10.0, 50.0}
+assert(#margin_choices == #margins and margin_choices[2].checked_func())
+assert(#gamma_choices == #gammas and gamma_choices[2].checked_func())
+for i = 1, #margins do
+    margin_choices[i].callback()
+    gamma_choices[i].callback()
+    assert(pdf.kopt_page_margin == margins[i] and margin_choices[i].checked_func())
+    assert(pdf.kopt_contrast == gammas[i] and gamma_choices[i].checked_func())
+end
+margin_choices[5].callback()
+gamma_choices[4].callback()
+assert(profiles.document.configurable.page_margin == pdf_live_margin)
+assert(profiles.document.configurable.contrast == pdf_live_contrast)
+for _, row in ipairs(require("ui/data/koptoptions")) do
+    for _, opt in ipairs(row.options) do
+        if opt.name == "page_margin" then
+            local more = opt.more_options_param
+            assert(more.value_min == 0 and more.value_max == 1.50)
+            assert(more.value_step == 0.01 and more.value_hold_step == 0.10)
+        elseif opt.name == "contrast" then
+            local more = opt.more_options_param
+            assert(more.value_min == 0.8 and more.value_max == 50)
+            assert(more.value_step == 0.1 and more.value_hold_step == 1)
+        end
+    end
+end
 choose(commands, "Duplicate").callback(menu)
 stock_name("PDF", "PDF copy")
 assert(profiles.data["PDF copy"].kopt_zoom_overlap_h == 45)
@@ -323,6 +356,7 @@ events = {}
 profiles:onProfileExecute("PDF copy", {qm_show = false})
 assert(events[1].name == "BatchedUpdate" and events[#events].name == "BatchedUpdateDone")
 assert(sent_setting("zoom_overlap_h") == 45 and sent_setting("zoom_overlap_v") == 57)
+assert(sent_setting("page_margin") == 0.55 and sent_setting("contrast") == 2.0)
 assert(sent_setting("embedded_css") == nil and sent_setting("line_spacing") == pdf.kopt_line_spacing)
 events = {}
 profiles:onProfileExecute("Scanned pages", {qm_show = false})
@@ -337,6 +371,7 @@ profile_ui.instance = {rolling = true}
 events = {}
 profiles:onProfileExecute("Text", {qm_show = false})
 assert(sent_setting("embedded_css") ~= nil and sent_setting("zoom_overlap_h") == nil)
+assert(sent_setting("page_margin") == nil and sent_setting("contrast") == nil)
 assert(sent_setting("line_spacing") == 137 and sent_setting("zoom_overlap_v") == nil)
 assert(sent_setting("font_size") == 31.5 and sent_setting("render_dpi") == 167)
 assert(sent_setting("font_gamma") == 25 and sent_setting("font_base_weight") == 1)
@@ -359,4 +394,5 @@ print("Stock saved margins: nine L/R pair presets 5–140, T/B exact 0–140 wit
 print("Stock saved font size: 12–44, default 22, step 0.5, held step 5; content zoom presets 0/48/96/167/212/300 dpi.")
 print("Stock saved line spacing: 50–200%, default 100%, held step 5; profile-only change dispatches 137%.")
 print("Stock saved horizontal and vertical overlap: 0–84%, default 36%, held step 5; profile-only values dispatch independently.")
+print("Stock saved scans: eight Margin and Contrast presets, isolated until Apply. Live exact range/steps match the stock option definitions.")
 print("Stock factory, action removal, rename/duplicate/delete, format gate and batched execution verified.")

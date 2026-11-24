@@ -17,7 +17,7 @@ Applying a profile preserves the current book's page or source anchor and annota
 
 ## Comparison with KOReader
 
-The pinned stock **Profiles** entry appears in Tools on frame 006 of the SDL reference. **New with current book settings** captures different action lists for rolling and fixed documents. The stock editor can change or remove individual saved actions, and Execute dispatches supported actions for the open format in order. Reader covers the current-book capture, explicit apply, field selection and profile management for reflowable books, PDFs, DjVu and comics. Reader can edit font size, content zoom, line spacing, word spacing and expansion, page margins, font weight and contrast, and the two zoom overlap values directly. Other values can be copied from the current book with Replace. Stock also offers editable values for additional actions, profiles for other fixed formats, empty profiles, automatic execution and a general action list. [Stock factory and commands](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/profiles.koplugin/main.lua#L98) · [Stock format settings](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/profiles.koplugin/main.lua#L346) · [Stock action editor](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/dispatcher.lua#L1054) · [Stock apply and format gating](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/dispatcher.lua#L1372)
+The pinned stock **Profiles** entry appears in Tools on frame 006 of the SDL reference. **New with current book settings** captures different action lists for rolling and fixed documents. The stock editor can change or remove individual saved actions, and Execute dispatches supported actions for the open format in order. Reader covers the current-book capture, explicit apply, field selection and profile management for reflowable books, PDFs, DjVu and comics. Reader can edit font size, content zoom, line spacing, word spacing and expansion, page margins, font weight and contrast, zoom overlap, and supported scan controls directly. Other values can be copied from the current book with Replace. Stock also offers editable values for additional actions, profiles for other fixed formats, empty profiles, automatic execution and a general action list. [Stock factory and commands](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/profiles.koplugin/main.lua#L98) · [Stock format settings](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/profiles.koplugin/main.lua#L346) · [Stock action editor](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/dispatcher.lua#L1054) · [Stock apply and format gating](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/dispatcher.lua#L1372)
 
 The executable fixture runs stock snapshot creation, the font size, content zoom, line spacing, word spacing and expansion, page margins, font rendering, and overlap editors with their shipped defaults, action removal, duplicate, rename and confirmed deletion, and batched application with format gating. Run with LuaJIT and the pinned source directory as the sole argument. Desktop Reader tests use the production lists, keyboard submit, confirmation and rendering paths with an authored EPUB and two PDFs of different page sizes. They cover stored-profile compatibility, source and position guards, protected crop geometry, retry after failed saves, typed backup validation, draft cancellation and preservation of excluded fields. The DjVu and CBZ tests use the production providers. [Stock fixture](../scripts/koreader-reading-profiles-check.lua) · [Desktop workflows](../src/app/profile_panel/tests.rs)
 
@@ -30,8 +30,9 @@ The executable fixture runs stock snapshot creation, the font size, content zoom
 Open a profile and tap **Edit values**. Reflowable profiles have **Font
 size**, **Content zoom**, **Line spacing**, **Word spacing**, **Word
 expansion**, **Page margins**, and **Font rendering**. Fixed-page profiles
-have **Horizontal overlap** and **Vertical overlap**. Tap a value to enter a
-number or use its step buttons. **Set** saves the value in the profile.
+have **Horizontal overlap**, **Vertical overlap**, and scan controls for
+supported formats. Tap a value to enter a number or use its step buttons.
+**Set** saves the value in the profile.
 **Back** discards the draft.
 The open book keeps its settings until **Apply to this book** is used.
 Edit values keeps the existing Included settings selection, including
@@ -95,6 +96,27 @@ verified weight 0.75 and gamma 1.25, including one-level and five-level
 contrast stepping and the stored index of 21 for gamma 1.25.
 [Stock font rendering options](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/creoptions.lua#L571)
 · [Landscape saved contrast](screenshots/landscape-profile-font-contrast.png)
+
+For PDF profiles, **Crop margin** accepts 0.00–1.50 inches, with a 0.10
+default. Tap to step by 0.01 or hold to step by 0.10. Apply updates the
+padding around detected bounds in Auto or Semi-auto crop and keeps the
+book's own crop mode and seeds. Reader reprojects the current source
+position into the new bounds. Page edges can limit the resulting position.
+
+For PDF and comic profiles, **Scan contrast** accepts gamma 0.8–50.0,
+with a 1.0 default. Tap to step by 0.1 or hold to step by 1.0. A profile
+with saved **Adaptive** contrast keeps that setting until you commit a
+numeric value with Set. DjVu continues to save its Normal or Higher
+contrast through Save current settings or Replace. Crop margin and Scan
+contrast each have their own Included settings switch.
+
+The stock profile dispatcher offered eight presets for both actions and
+applied the stored values only on execution. The pinned Mac runtime's
+PDF spinners used the same exact bounds and steps and applied a margin
+of 0.19 and gamma of 1.9. Reader offers direct entry at that precision in
+saved profiles as well. [Stock crop margin](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/koptoptions.lua#L123)
+· [Stock scan contrast](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/koptoptions.lua#L489)
+· [Landscape saved crop margin](screenshots/landscape-profile-scan-margin.png)
 
 The pinned callbacks also tested line spacing from 50% to 200% with a
 100% default and independent overlap values from 0% to 84% with a 36% default.

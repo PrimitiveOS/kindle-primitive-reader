@@ -1683,6 +1683,8 @@ impl Reader {
                                 _,
                                 reading_profiles::ValueField::FontSize
                                     | reading_profiles::ValueField::FontWeight
+                                    | reading_profiles::ValueField::CropMargin
+                                    | reading_profiles::ValueField::ScanGamma
                             )
                     )
                 ) {

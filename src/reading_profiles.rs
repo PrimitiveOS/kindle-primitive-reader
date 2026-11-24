@@ -231,16 +231,6 @@ impl FixedProfile {
         self.settings.apply(FixedPreferences::default())
     }
 
-    fn set_overlap(&mut self, horizontal: bool, value: u8) {
-        let mut values = self.values();
-        if horizontal {
-            values.zoom_overlap_h = Some(value);
-        } else {
-            values.zoom_overlap_v = Some(value);
-        }
-        self.settings = FixedDefaults::from_view(values);
-    }
-
     pub(crate) fn project(
         self,
         fields: &[Field],

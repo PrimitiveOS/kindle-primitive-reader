@@ -31,7 +31,7 @@ impl Reader {
                         || field.display(value),
                         |size| format!("{size} px (legacy)"),
                     )
-                } else if let Some(legacy) = profile.legacy_font_rendering(field) {
+                } else if let Some(legacy) = profile.legacy_value_label(field) {
                     legacy.into()
                 } else {
                     field.display(value)
@@ -270,10 +270,14 @@ impl Reader {
         if self
             .profiles
             .get(index)
-            .and_then(|profile| profile.legacy_font_rendering(field))
+            .and_then(|profile| profile.legacy_value_label(field))
             .is_some()
         {
-            details.push_str("\nSet replaces the legacy setting.");
+            details.push_str(if field == ValueField::ScanGamma {
+                "\nSet replaces adaptive contrast."
+            } else {
+                "\nSet replaces the legacy setting."
+            });
         }
         if matches!(field, ValueField::Margin(edge) if edge.is_vertical())
             && self.profiles.get(index).and_then(Profile::margins_linked) == Some(true)
