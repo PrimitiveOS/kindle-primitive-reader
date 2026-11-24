@@ -152,7 +152,8 @@ pub(super) fn action_icon(action: &Action) -> Icon {
             | Screen::ChapterNavigation
             | Screen::SearchSettings
             | Screen::FooterSettings,
-        ) => SLIDERS,
+        )
+        | Action::EditSearchPresentation(_) => SLIDERS,
         Action::Show(Screen::Typography | Screen::ReadingProfiles)
         | Action::ShowFonts
         | Action::Text(_) => TEXT,

@@ -339,7 +339,7 @@ mod tests {
             .unwrap()
             .remove(0);
         assert_eq!(range, 0..source.len());
-        let (snippet, shown) = super::super::snippet(&source, range);
+        let (snippet, shown) = super::super::snippet(&source, range, None);
         assert_eq!(snippet[shown].chars().count(), 256);
         assert!(snippet.ends_with('…'));
         assert!(snippet.len() < 1024);

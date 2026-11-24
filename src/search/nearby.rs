@@ -168,7 +168,7 @@ impl NearbySearch {
                             offset: source_spans.last().unwrap().end,
                             ..start.clone()
                         };
-                        let (snippet, matched) = snippet(rendered, span);
+                        let (snippet, matched) = snippet(rendered, span, None);
                         return Ok(Some(SearchHit {
                             chapter: ci,
                             chapter_title: text.label,

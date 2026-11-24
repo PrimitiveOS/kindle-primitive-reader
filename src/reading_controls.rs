@@ -22,6 +22,10 @@ pub(crate) const MAX_VERY_LONG_PRESS_TENTHS: u16 = 200;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 pub(crate) struct ReadingControls {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub search_rows: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub search_context_words: Option<u8>,
     pub hide_nonlinear_default: bool,
     #[serde(skip_serializing_if = "crate::highlight_style::HighlightStyle::is_default")]
     pub highlight_style: crate::highlight_style::HighlightStyle,

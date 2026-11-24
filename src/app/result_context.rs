@@ -132,7 +132,12 @@ fn chapter_path<'a, T, K: Ord>(
 
 /// Keep the matched word on screen even when its preceding CJK or wide text
 /// would fill a complete row. All cuts are at extended grapheme boundaries.
-fn row_excerpt(text: &str, matched: Range<usize>, expand: bool) -> (Cow<'_, str>, Range<usize>) {
+fn row_excerpt(
+    text: &str,
+    matched: Range<usize>,
+    expand: bool,
+    prefix_graphemes: usize,
+) -> (Cow<'_, str>, Range<usize>) {
     let mut range = matched;
     if range.is_empty() || text.get(range.clone()).is_none() {
         return (Cow::Borrowed(text), 0..0);
@@ -157,10 +162,10 @@ fn row_excerpt(text: &str, matched: Range<usize>, expand: bool) -> (Cow<'_, str>
     let breaks: Vec<_> = icu_segmenter::GraphemeClusterSegmenter::new()
         .segment_str(prefix)
         .collect();
-    if breaks.len() <= 17 {
+    if breaks.len() <= prefix_graphemes + 1 {
         return (Cow::Borrowed(text), range);
     }
-    let tail = &breaks[breaks.len() - 17..];
+    let tail = &breaks[breaks.len() - (prefix_graphemes + 1)..];
     let mut start = tail[0];
     if let Some(next) = tail
         .windows(2)
@@ -304,8 +309,14 @@ fn reflow_context(
 
 impl Reader {
     pub(super) fn draw_match_rows(&self, canvas: &mut Canvas, group: &Rows<'_>) {
-        let first = self.list_page * ROWS_PER_PAGE;
-        for offset in 0..group.rows.len() {
+        use primitive_ui::{HAIRLINE, SECONDARY, chevron};
+
+        if group.rows.is_empty() {
+            return;
+        }
+        canvas.card(group.bounds);
+        let first = self.list_page * self.match_geometry().rows;
+        for (offset, detail) in group.rows.iter().enumerate() {
             let Some(row) = group.row_rect(offset) else {
                 continue;
             };
@@ -322,22 +333,94 @@ impl Reader {
             let Some((text, range, expand)) = hit else {
                 continue;
             };
-            let (shown, emphasis) = row_excerpt(text, range.clone(), expand);
-            let pad = canvas.px(32);
-            let title = Rect::new(
-                row.x + pad,
-                row.y + canvas.px(17),
-                row.w - 2 * pad - canvas.px(56),
-                canvas.px(50),
-            );
-            let ink = if canvas.is_control_pressed(row) {
-                255
+            let pressed = canvas.control_pressed(row, false);
+            if pressed {
+                canvas.panel(row.inset(4), 16, 2, 0);
+            }
+            let ink = if pressed { 255 } else { 20 };
+            let detail_ink = if pressed { 255 - SECONDARY } else { SECONDARY };
+            let left = row.x + 32;
+            let right = row.right() - 84;
+            let available = right - left;
+            let stacked = row.h >= 102;
+            let detail_width = if stacked {
+                available
             } else {
-                20
+                available * 24 / 100
             };
-            canvas.emphasized_text(title, &shown, TextStyle::new(38).ink(ink), emphasis);
+            let title_width = if stacked {
+                available
+            } else {
+                available - detail_width - 12
+            };
+            let detail_size = (row.h / 3).clamp(20, 28);
+            let detail_height = detail_size * 13 / 10 + 3;
+            let tall = if stacked {
+                row.h - detail_height - 14
+            } else {
+                row.h - 10
+            };
+            let title_size = if (73..100).contains(&tall) {
+                (tall / 2 - 1) * 10 / 13
+            } else {
+                (tall * 10 / 13).min(38)
+            };
+            let line_height = (title_size * 13).div_euclid(10) + 1;
+            let lines = (tall / line_height).clamp(1, 3) as usize;
+            // Dense rows retain the match, even in a run of wide characters.
+            // Taller rows can use more of the saved context on either side.
+            let prefix = if lines > 1 { 52 } else { 20 };
+            let (shown, emphasis) = row_excerpt(text, range.clone(), expand, prefix);
+            let rendered_lines = if lines > 1
+                && canvas.measure_with_weight(&shown, title_size, true) > title_width
+            {
+                lines as i32
+            } else {
+                1
+            };
+            let title_height = (rendered_lines * line_height + 2).min(tall);
+            let stack_height = title_height + detail_height + 6;
+            let title_y = row.y
+                + if stacked {
+                    (row.h - stack_height) / 2
+                } else {
+                    (row.h - title_height) / 2
+                };
+            canvas.emphasized_text(
+                Rect::new(left, title_y, title_width, title_height),
+                &shown,
+                TextStyle::new(title_size).ink(ink).lines(lines),
+                emphasis,
+            );
+            if let Some(detail) = detail.detail {
+                let detail_y = if stacked {
+                    title_y + title_height + 6
+                } else {
+                    row.y + (row.h - detail_height) / 2
+                };
+                let detail_x = if stacked { left } else { right - detail_width };
+                canvas.text(
+                    Rect::new(detail_x, detail_y, detail_width, detail_height),
+                    detail,
+                    TextStyle::new(detail_size).ink(detail_ink),
+                );
+            }
+            let size = (row.h - 10).min(40);
+            chevron(
+                canvas,
+                Rect::new(
+                    row.right() - 32 - size,
+                    row.y + (row.h - size) / 2,
+                    size,
+                    size,
+                ),
+                ink,
+            );
             if self.focused_result == Some(index) {
-                canvas.fill(Rect::new(row.x + 10, row.y + 22, 5, row.h - 44), ink);
+                canvas.fill(Rect::new(row.x + 10, row.y + 8, 4, row.h - 16), ink);
+            }
+            if offset + 1 < group.rows.len() {
+                canvas.fill(Rect::new(left, row.bottom() - 2, row.w - 64, 2), HAIRLINE);
             }
         }
     }
@@ -445,13 +528,13 @@ mod tests {
     fn matching_style_keeps_entire_reflow_words_and_original_unicode_clusters() {
         let text = "The whole café remains.";
         let start = text.find("afé").unwrap();
-        let (shown, emphasis) = row_excerpt(text, start..start + "afé".len(), true);
+        let (shown, emphasis) = row_excerpt(text, start..start + "afé".len(), true, 16);
         assert_eq!(&shown[emphasis], "café");
-        let (shown, emphasis) = row_excerpt(text, start..start + "afé".len(), false);
+        let (shown, emphasis) = row_excerpt(text, start..start + "afé".len(), false, 16);
         assert_eq!(&shown[emphasis], "afé");
         let s = format!("{} علامة رصيف", "水\u{301}".repeat(32));
         let i = s.find("علامة").unwrap();
-        let (shown, range) = row_excerpt(&s, i..i + "علامة".len(), true);
+        let (shown, range) = row_excerpt(&s, i..i + "علامة".len(), true, 16);
         assert_eq!(&shown[range], "علامة");
         assert!(shown.starts_with('…'));
         assert!(!shown.starts_with("…\u{301}"));
@@ -526,15 +609,17 @@ mod tests {
             }
             let count = available(&app);
             let index = external_index.unwrap_or(count - 1);
-            assert!(index >= ROWS_PER_PAGE && index < count);
-            while app.list_page < index / ROWS_PER_PAGE {
+            let geometry = app.match_geometry();
+            assert!(index >= geometry.rows && index < count);
+            while app.list_page < index / geometry.rows {
                 assert_eq!(app.input(Input::PageForward), Change::Partial);
             }
             if authored && fixed {
                 capture_test_screen(&app, &fonts, "READER_CONTEXT_LIST_SCREENSHOT", false);
             }
             let x = (LIST_X + 72) as f32;
-            let y = (LIST_Y + (index % ROWS_PER_PAGE) as i32 * ROW_HEIGHT + 44) as f32;
+            let row = geometry.row(index % geometry.rows);
+            let y = (row.y + row.h / 2) as f32;
             let preview_start = Instant::now();
             assert_eq!(app.input(Input::LongTap(x, y)), Change::Partial);
             let hold_ms = preview_start.elapsed().as_millis();
@@ -554,10 +639,10 @@ mod tests {
             }
             let (excerpt, range) = if fixed {
                 let hit = &app.pdf_hits[index];
-                row_excerpt(&hit.snippet, hit.matched.clone(), false)
+                row_excerpt(&hit.snippet, hit.matched.clone(), false, 16)
             } else {
                 let hit = &app.hits[index];
-                row_excerpt(&hit.snippet, hit.matched.clone(), true)
+                row_excerpt(&hit.snippet, hit.matched.clone(), true, 16)
             };
             let emphasized_word = format!("{:x}", md5::compute(excerpt[range].as_bytes()));
             let label = context.label.clone();
@@ -565,7 +650,7 @@ mod tests {
             assert_eq!(app.current_history_location().unwrap(), origin);
             assert_eq!(app.input(Input::PageBack), Change::Partial);
             assert!(app.result_context.is_none());
-            assert_eq!(app.list_page, index / ROWS_PER_PAGE);
+            assert_eq!(app.list_page, index / geometry.rows);
             assert_eq!(app.focused_result, Some(index));
             assert_eq!(app.input(Input::LongTap(x, y)), Change::Partial);
             assert_eq!(app.input(Input::Tap(x, y)), Change::Partial);

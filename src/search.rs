@@ -96,6 +96,7 @@ pub struct SearchHit {
 pub struct Search {
     query: ReflowQuery,
     flow_config: FlowConfig,
+    context_words: Option<u8>,
     publication: Option<(u64, usize)>,
     next_chapter: usize,
     hits: usize,
@@ -135,6 +136,7 @@ impl Search {
         Ok(Self {
             query,
             flow_config: FlowConfig::default(),
+            context_words: None,
             publication: None,
             next_chapter: 0,
             hits: 0,
@@ -149,6 +151,12 @@ impl Search {
     /// Request a smaller result set for an explicit bounded comparison.
     pub fn at_most(mut self, limit: usize) -> Self {
         self.limit = limit.min(MAX_REFLOW_SEARCH_HITS);
+        self
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn with_context_words(mut self, words: u8) -> Self {
+        self.context_words = Some(words);
         self
     }
 
@@ -259,7 +267,7 @@ impl Search {
                 };
                 let offset = first.start;
                 let end = source_spans.last().unwrap().end;
-                let (snippet, matched) = snippet(rendered, range);
+                let (snippet, matched) = snippet(rendered, range, self.context_words);
                 let allocation = std::mem::size_of::<SearchHit>()
                     + text.label.len()
                     + 2 * text.href.len()
@@ -475,6 +483,7 @@ fn soft_hyphens_are_invisible_to_search_and_preserved_in_match_offsets() {
 #[cfg(feature = "kindle")]
 pub(crate) struct PdfSearch {
     query: fixed_pattern::FixedPattern,
+    context_words: Option<u8>,
     pub(crate) next_page: usize,
     pub(crate) text_pages: usize,
     pub(crate) skipped: usize,
@@ -520,12 +529,18 @@ impl PdfSearch {
     ) -> Result<Self> {
         Ok(Self {
             query: fixed_pattern::FixedPattern::new(query, match_case, ignore_accents)?,
+            context_words: None,
             next_page: 0,
             text_pages: 0,
             skipped: 0,
             retained_bytes: 0,
             memory_limited: false,
         })
+    }
+
+    pub(crate) fn with_context_words(mut self, words: u8) -> Self {
+        self.context_words = Some(words);
+        self
     }
 
     #[cfg(test)]
@@ -554,7 +569,7 @@ impl PdfSearch {
         }
         for range in self.ranges(text, limit.saturating_sub(results.len())) {
             let words = matching_words(text, &range);
-            let (snippet, matched) = snippet(&text.text, range);
+            let (snippet, matched) = snippet(&text.text, range, self.context_words);
             let allocation = size_of::<PdfSearchHit>()
                 + snippet.capacity()
                 + words.len() * size_of::<PdfTextRect>();
@@ -886,12 +901,20 @@ impl FoldedText {
     }
 }
 
-fn snippet(text: &str, matched: Range<usize>) -> (String, Range<usize>) {
-    let first = text[..matched.start]
-        .char_indices()
-        .rev()
-        .nth(CONTEXT_CHARACTERS - 1)
-        .map_or(0, |(index, _)| index);
+fn snippet(text: &str, matched: Range<usize>, words: Option<u8>) -> (String, Range<usize>) {
+    let before = &text[..matched.start];
+    let after = &text[matched.end..];
+    let words = words.map(usize::from);
+    let first = if let Some(words) = words {
+        crate::selection::bounded_context_range(before, words, true)
+            .map_or(matched.start, |range| range.start)
+    } else {
+        before
+            .char_indices()
+            .rev()
+            .nth(CONTEXT_CHARACTERS - 1)
+            .map_or(0, |(index, _)| index)
+    };
     // Regexps may select an entire paragraph. Keep the complete source anchors
     // while bounding the memory kept by the results list.
     let shown_end = text[matched.clone()]
@@ -900,8 +923,20 @@ fn snippet(text: &str, matched: Range<usize>) -> (String, Range<usize>) {
         .map_or(matched.end, |(offset, _)| matched.start + offset);
     let last = if shown_end < matched.end {
         shown_end
+    } else if let Some(words) = words {
+        let length = crate::selection::bounded_context_range(after, words, false)
+            .map_or(0, |range| range.end);
+        // Short punctuation on the edge belongs with the final visible word.
+        matched.end
+            + length
+            + after[length..]
+                .char_indices()
+                .take(8)
+                .take_while(|(_, ch)| !ch.is_whitespace() && !ch.is_alphanumeric())
+                .last()
+                .map_or(0, |(index, ch)| index + ch.len_utf8())
     } else {
-        text[matched.end..]
+        after
             .char_indices()
             .nth(CONTEXT_CHARACTERS)
             .map_or(text.len(), |(index, _)| matched.end + index)
@@ -929,6 +964,24 @@ fn snippet(text: &str, matched: Range<usize>) -> (String, Range<usize>) {
 mod tests {
 
     use super::*;
+
+    #[test]
+    fn search_presentation_counts_unicode_words_and_keeps_match_byte_offsets() {
+        let text = "một hai ba bốn năm sáu dấu! bảy tám chín mười mười một hai.";
+        let start = text.find("dấu").unwrap();
+        let end = start + "dấu".len();
+        let (short, emphasis) = snippet(text, start..end, Some(1));
+        assert_eq!(short, "…sáu dấu! bảy…");
+        assert_eq!(&short[emphasis], "dấu");
+        let (full, emphasis) = snippet(text, start..end, Some(5));
+        assert_eq!(full, "…hai ba bốn năm sáu dấu! bảy tám chín mười mười…");
+        assert_eq!(&full[emphasis], "dấu");
+        let long = format!("{} dấu {}", "é".repeat(900), "á".repeat(900));
+        let start = long.find("dấu").unwrap();
+        let (bounded, emphasis) = snippet(&long, start..start + "dấu".len(), Some(50));
+        assert!(bounded.chars().count() <= 1031);
+        assert_eq!(&bounded[emphasis], "dấu");
+    }
 
     #[test]
     fn ordinary_reflow_folds_publication_punctuation_without_changing_other_providers() {
