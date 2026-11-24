@@ -990,8 +990,9 @@ impl Reader {
                     (false, _) => last,
                 });
             } else {
-                let page = active.reading.page + 1;
-                let count = active.reading.probe.page_count();
+                let (page, count) = active.reading.whole_book_screen_pages().unwrap_or_else(|| {
+                    (active.reading.page + 1, active.reading.probe.page_count())
+                });
                 status.push(match (header.page_number, header.page_count) {
                     (true, true) => format!("{page}/{count}"),
                     (true, false) => page.to_string(),

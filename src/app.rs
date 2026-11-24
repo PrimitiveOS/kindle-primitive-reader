@@ -1247,6 +1247,7 @@ impl Reader {
             user_styles: self.style_store.data.snapshot(id)?,
             user_hyphenation: self.user_hyphenation.clone(),
             chapter_offsets: Default::default(),
+            screen_pages: Default::default(),
             engine: Engine::Parley,
             book: absolute,
             fonts,
@@ -9233,6 +9234,7 @@ pub fn run_probe(engine: Engine, book: PathBuf, fonts: Vec<PathBuf>, home: &Path
         user_styles: Default::default(),
         user_hyphenation: Default::default(),
         chapter_offsets: Default::default(),
+        screen_pages: Default::default(),
         engine,
         book,
         fonts,
@@ -15227,6 +15229,91 @@ mod tests {
             "night pages should invert the header strip with the reading page"
         );
         capture_test_screen(&app, &fonts, "READER_TOP_HEADER_NIGHT_SCREENSHOT", false);
+    }
+
+    #[test]
+    fn exact_screen_pages_feed_the_opt_in_header_and_keep_the_chapter_footer() {
+        let fixture = Fixture::new();
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/Silkscreen-Regular.ttf"),
+        ];
+        let mut app = fixture.app();
+        app.fonts = fonts.clone();
+        app.open_path(&fixture.book).unwrap();
+        assert!(app.top_header_caption().is_none());
+        app.activate(Action::TopStatusHeader(true)).unwrap();
+        let reading = &app.active.as_ref().unwrap().reading;
+        let original_position = position(reading);
+        let first = reading.probe.page_count();
+        let hrefs: Vec<_> = reading
+            .probe
+            .chapter_entries()
+            .iter()
+            .map(|entry| entry.href.clone())
+            .collect();
+        assert!(
+            app.top_header_caption()
+                .unwrap()
+                .contains(&format!("1/{first}"))
+        );
+        let original_footer = app.status_caption().unwrap();
+        assert_eq!(
+            original_footer,
+            format!("Chapter 1 of 1 - Page 1 of {first}")
+        );
+        let mut canvas = Canvas::new(
+            WIDTH,
+            HEIGHT,
+            &fonts
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        let before = primitive_app::frame(&app, &mut canvas, false);
+        capture_test_screen(&app, &fonts, "READER_LOCAL_SCREEN_PAGE_SCREENSHOT", false);
+        let jump = |path: &str| {
+            Action::Jump(Destination {
+                path: path.to_owned(),
+                fragment: None,
+            })
+        };
+        app.activate(jump(&hrefs[1])).unwrap();
+        let second = app.active.as_ref().unwrap().reading.probe.page_count();
+        let total = first + second;
+        assert!(
+            app.top_header_caption()
+                .unwrap()
+                .contains(&format!("{next}/{total}", next = first + 1))
+        );
+        app.activate(jump(&hrefs[0])).unwrap();
+        assert!(
+            app.top_header_caption()
+                .unwrap()
+                .contains(&format!("1/{total}"))
+        );
+        assert_eq!(
+            app.status_caption().as_deref(),
+            Some(original_footer.as_str())
+        );
+        assert_eq!(
+            position(&app.active.as_ref().unwrap().reading),
+            original_position
+        );
+        let after = primitive_app::frame(&app, &mut canvas, false);
+        let header_end = crate::reading_controls::TopHeader::HEIGHT as usize * WIDTH as usize;
+        assert!(before[..header_end] != after[..header_end]);
+        assert!(
+            before[header_end..] == after[header_end..],
+            "the document pane and chapter footer should have the same pixels"
+        );
+        capture_test_screen(
+            &app,
+            &fonts,
+            "READER_WHOLE_BOOK_SCREEN_PAGE_SCREENSHOT",
+            false,
+        );
     }
 
     #[test]

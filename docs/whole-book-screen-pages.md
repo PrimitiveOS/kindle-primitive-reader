@@ -19,7 +19,20 @@ books with several spine items use source-byte weights. A source-byte offset or
 character-count edition page cannot establish the count of rendered leaves.
 [Chapter layout](../src/session.rs) · [Edition labels](../src/app/publisher_pages.rs) · [Reading status calculations](../src/app/reading_footer.rs)
 
-## First implementation
+## Implemented foundation
+
+The optional top header reads an exact prefix once Reader has successfully
+laid out and displayed every spine item under one regular paged EPUB layout.
+Before then it shows its existing chapter-local numbers. Edition labels take
+precedence. Each sample carries the chapter's source revision and leaf count.
+The in-memory generation checks the ordered spine, active settings and
+publication revision, applied user CSS and hyphenation, and the archive and
+ordered fallback font file stamps. A file changing during load loses its
+sample. USB return clears the generation. This slice accepts horizontal,
+single-leaf Parley layouts from complete EPUB archives.
+[Installed layout observation](../src/session.rs) · [Validated counts](../src/session/screen_pages.rs)
+
+## Background completion
 
 - Start when the paged reflow header is visible and requests a screen number
   or count. Use valid edition labels immediately when available. Schedule the
